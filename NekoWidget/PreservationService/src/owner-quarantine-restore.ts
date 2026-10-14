@@ -1,4 +1,5 @@
-import { ServiceError } from './contracts';
+import { ServiceError, sha256, type ToolBackupPart } from './contracts';
+import { parseToolIndex } from './documents';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
 import { loadOwnerPurgeReplay } from './purge-intent-replay';
 import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
@@ -6,6 +7,7 @@ import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
 import type { S3PurgeIntentStore } from './s3-purge-intent';
 
 const unavailable = () => new ServiceError('OWNER_QUARANTINE_RESTORE_UNAVAILABLE', 503);
+type RestoredToolPart = Omit<ToolBackupPart, 'payload'> & { bytes: number };
 
 /** Writes only to a migrated, empty and offline D1/R2 target. The owner is
  * inserted disabled, without sessions or notice contact. Even a fully staged
@@ -36,16 +38,102 @@ export class OwnerQuarantineRestore {
       (SELECT count(*) FROM pa_purge_fences) AS fences,
       (SELECT count(*) FROM pa_owner_recovery_versions) AS owner_copies,
       (SELECT count(*) FROM pa_record_recovery_versions) AS record_copies,
+      (SELECT count(*) FROM pa_tool_snapshot_references) AS tool_references,
+      (SELECT count(*) FROM pa_tool_part_delete_claims) AS tool_delete_claims,
       (SELECT delete_intent_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS record_policy,
       (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS owner_policy`).first<{ owners: number; records: number; fences: number;
-        owner_copies: number; record_copies: number; record_policy: number; owner_policy: number }>();
+        owner_copies: number; record_copies: number; tool_references: number;
+        tool_delete_claims: number; record_policy: number; owner_policy: number }>();
     if (!row || row.owners !== 0 || row.records !== 0 || row.fences !== 0
       || row.owner_copies !== 0 || row.record_copies !== 0
+      || row.tool_references !== 0 || row.tool_delete_claims !== 0
       || row.record_policy !== 0 || row.owner_policy !== 0) throw unavailable();
     const listed = await this.bucket.list({ prefix: `personal/${ownerId}/`, limit: 1 });
     if (listed.objects.length !== 0 || listed.truncated) throw unavailable();
+  }
+
+  private async restoredMetadata(ownerId: string, recordId: string) {
+    const row = await this.db.prepare(`SELECT revision,metadata,photo_key,photo_bytes,deleted
+      FROM pa_records WHERE owner_id=? AND record_id=?`).bind(ownerId, recordId)
+      .first<{ revision: number; metadata: unknown; photo_key: string | null;
+        photo_bytes: number; deleted: number }>();
+    if (!row || row.deleted !== 0 || row.revision !== 1) throw unavailable();
+    const raw = row.metadata;
+    const metadata = raw instanceof Uint8Array ? raw : raw instanceof ArrayBuffer
+      ? new Uint8Array(raw) : Array.isArray(raw) ? new Uint8Array(raw) : null;
+    if (metadata === null) throw unavailable();
+    const result = await this.records.readMetadata({ ownerId, recordId, revision: row.revision,
+      metadata, photoKey: row.photo_key, photoBytes: row.photo_bytes, deleted: false });
+    if (!result) throw unavailable();
+    return result;
+  }
+
+  /** The edge table is derived data. Rebuild it only from authenticated current
+   * metadata in this empty, offline target. V1 dependencies remain bound to the
+   * original index; v2 edges must be complete before any staged success. */
+  private async rebuildToolReferences(ownerId: string, parts: Map<string, RestoredToolPart>): Promise<void> {
+    let expectedReferences = 0;
+    for (const [snapshotId, descriptor] of parts) {
+      if (descriptor.kind !== 'index') continue;
+      const metadata = await this.restoredMetadata(ownerId, snapshotId);
+      const tag = metadata.document.toolBackup;
+      if (!tag || tag.kind !== 'index' || tag.snapshotId !== snapshotId) throw unavailable();
+      const index = parseToolIndex(tag);
+      const edges: D1PreparedStatement[] = [];
+      for (const file of index.files) {
+        const photo = file.path.endsWith('.jpg');
+        const source = (file.sourceSnapshotID ?? index.snapshotID).toLowerCase();
+        let bytes = 0;
+        // At most one bounded JSON file is assembled; never retain all restored
+        // plaintext indices or photos while walking an owner's snapshot graph.
+        const chunks: Uint8Array[] = [];
+        for (let offset = 0; offset < file.records.length; offset++) {
+          const id = file.records[offset]!.toLowerCase();
+          const part = parts.get(id);
+          if (!part || part.kind !== (photo ? 'photo' : 'json') || part.snapshotId !== source
+            || part.path !== file.path || part.part !== offset || part.count !== file.records.length) {
+            throw unavailable();
+          }
+          bytes += part.bytes;
+          if (!Number.isSafeInteger(bytes) || bytes > file.bytes) throw unavailable();
+          if (photo) {
+            if (part.sha256 !== file.sha256) throw unavailable();
+          } else {
+            const document = (await this.restoredMetadata(ownerId, id)).document;
+            const chunk = document.toolBackup;
+            if (!chunk || chunk.kind !== 'json' || chunk.snapshotId !== source || chunk.path !== file.path
+              || chunk.part !== offset || chunk.count !== file.records.length || chunk.sha256 !== part.sha256) {
+              throw unavailable();
+            }
+            chunks.push(Uint8Array.from(atob(chunk.payload), c => c.charCodeAt(0)));
+          }
+          if (index.version === 2) {
+            edges.push(this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
+              VALUES(?,?,?)`).bind(ownerId, snapshotId, id));
+            expectedReferences++;
+            if (!Number.isSafeInteger(expectedReferences)) throw unavailable();
+          }
+        }
+        if (bytes !== file.bytes) throw unavailable();
+        if (!photo) {
+          const fileBytes = new Uint8Array(bytes);
+          let at = 0;
+          for (const chunk of chunks) { fileBytes.set(chunk, at); at += chunk.length; chunk.fill(0); }
+          try { if (await sha256(fileBytes) !== file.sha256) throw unavailable(); }
+          finally { fileBytes.fill(0); }
+        }
+      }
+      for (let offset = 0; offset < edges.length; offset += 50) {
+        await this.db.batch(edges.slice(offset, offset + 50));
+      }
+    }
+    const closure = await this.db.prepare(`SELECT
+      (SELECT count(*) FROM pa_tool_snapshot_references WHERE owner_id=?) AS refs,
+      (SELECT count(*) FROM pa_tool_part_delete_claims WHERE owner_id=?) AS claims`)
+      .bind(ownerId, ownerId).first<{ refs: number; claims: number }>();
+    if (!closure || closure.refs !== expectedReferences || closure.claims !== 0) throw unavailable();
   }
 
   private async restorePhoto(key: string, ciphertext: Uint8Array): Promise<void> {
@@ -110,6 +198,7 @@ export class OwnerQuarantineRestore {
     let photos = 0;
     let historyRows = 0;
     let expectedUsedBytes = 0;
+    const toolParts = new Map<string, RestoredToolPart>();
     for (const expected of owner.records) {
       const group = markerGroups.get(expected.recordId);
       if (!group) throw unavailable();
@@ -141,6 +230,14 @@ export class OwnerQuarantineRestore {
         || commits.size !== expected.revision) throw unavailable();
       const image = selected.image;
       try {
+        const metadata = await this.records.readMetadata(image);
+        const tag = metadata?.document.toolBackup;
+        if (tag) {
+          if (image.revision !== 1 || (tag.kind === 'index' && tag.snapshotId !== expected.recordId)) throw unavailable();
+          const { payload, ...part } = tag;
+          toolParts.set(expected.recordId, { ...part,
+            bytes: tag.kind === 'photo' ? image.photoBytes : atob(payload).length });
+        }
         if (image.photoKey !== null) {
           if (image.photoCiphertext === null) throw unavailable();
           await this.restorePhoto(image.photoKey, image.photoCiphertext);
@@ -190,6 +287,8 @@ export class OwnerQuarantineRestore {
         image.photoCiphertext?.fill(0);
       }
     }
+    await this.rebuildToolReferences(ownerId, toolParts);
+    await this.requireNoPurgeIntent(ownerId);
     const count = await this.db.prepare(`SELECT o.disabled,
       (SELECT count(*) FROM pa_records WHERE owner_id=o.owner_id) AS records,
       (SELECT count(*) FROM pa_sessions WHERE owner_id=o.owner_id) AS sessions,

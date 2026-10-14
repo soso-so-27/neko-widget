@@ -48,7 +48,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
     case pilotRegistrationPending(String)
     case requestRejected, uploadTimedOut, servicePaused
-    case deletionNotReceived, deletionPending, deletionNotAccepted, exportUnsupported
+    case deletionNotReceived, deletionPending, deletionNotAccepted, exportUnsupported, toolPartReferenced
     case exportThrottled(seconds: Int)
 
     /// Fixed support codes only: never include a URL, owner, token or raw error.
@@ -72,6 +72,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .toolPartReferenced: "この写真は別の保管コピーで使われています。必要な写真は残します。"
         case .deletionNotReceived: "削除依頼の受付がまだ確認できません。受付結果を再確認するか、同じ依頼を再送してください。"
         case .deletionPending: "この保管先は削除処理中です。削除状況を確認してください。"
         case .deletionNotAccepted: "削除依頼は受け付けられませんでした。この操作では削除は始まっていません。"
@@ -229,6 +230,7 @@ struct ManagedPreservationRecord: Codable, Identifiable, Sendable {
     let recordId: UUID
     let revision: Int
     let document: ManagedPreservationDocument
+    var toolPhotoReusable: Bool? = nil
     var id: UUID { recordId }
 }
 
@@ -324,6 +326,10 @@ struct ManagedPreservationRetention: Decodable, Equatable, Sendable {
 }
 
 struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
+    struct ToolSnapshots: Decodable, Equatable, Sendable {
+        let maximumIndexVersion: Int
+        let strictPartDeletion: Bool
+    }
     struct Storage: Decodable, Equatable, Sendable {
         let usedBytes: Int64
         let reservedBytes: Int64
@@ -342,6 +348,7 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
     let accounting: String
     let storage: Storage
     let records: Records
+    var toolSnapshots: ToolSnapshots? = nil
 
     func validated() throws -> Self {
         let space = storage
@@ -863,9 +870,9 @@ actor ManagedPreservationClient {
         return result.revision
     }
 
-    func delete(_ record: ManagedPreservationRecord, checkpoint: SessionCheckpoint? = nil) async throws {
+    func delete(_ record: ManagedPreservationRecord, checkpoint: SessionCheckpoint? = nil, requireUnreferenced: Bool = false) async throws {
         try validate(record)
-        let data = try await authenticated("DELETE", path: recordPath(record.id), revision: record.revision, checkpoint: checkpoint)
+        let data = try await authenticated("DELETE", path: recordPath(record.id), revision: record.revision, checkpoint: checkpoint, strictToolDeletion: requireUnreferenced)
         let result: Mutation = try decode(data)
         guard result.recordId == record.id, result.revision > record.revision else {
             throw ManagedPreservationError.invalidResponse
@@ -887,7 +894,8 @@ actor ManagedPreservationClient {
     private func authenticated(_ method: String, path: String, query: [URLQueryItem] = [],
                                body: Data? = nil, revision: Int? = nil,
                                maximumBytes: Int = 65_536, responseFile: URL? = nil,
-                               expectedMIMEType: String = "application/json", checkpoint: SessionCheckpoint? = nil) async throws -> Data {
+                               expectedMIMEType: String = "application/json", checkpoint: SessionCheckpoint? = nil,
+                               strictToolDeletion: Bool = false) async throws -> Data {
         // Validate and capture in one actor turn, before the first suspension.
         // A caller's earlier check cannot bind a later request after sign-in changes.
         if let checkpoint { try requireSessionCheckpoint(checkpoint) }
@@ -896,7 +904,7 @@ actor ManagedPreservationClient {
         do {
             let data = try await request(method, path: path, query: query, body: body,
                                          token: captured.token, revision: revision, maximumBytes: maximumBytes,
-                                         responseFile: responseFile, expectedMIMEType: expectedMIMEType)
+                                         responseFile: responseFile, expectedMIMEType: expectedMIMEType, strictToolDeletion: strictToolDeletion)
             try ensureEpoch(capturedEpoch)
             guard credential?.ownerId == captured.ownerId, credential?.token == captured.token,
                   captured.expiresAt > Date(), try store.load() == captured else {
@@ -915,7 +923,7 @@ actor ManagedPreservationClient {
     private func request(_ method: String, path: String, query: [URLQueryItem] = [], body: Data? = nil,
                          token: String? = nil, revision: Int? = nil, maximumBytes: Int = 65_536,
                          expectedStatus: Int? = nil, beforeDispatch: (() throws -> Void)? = nil,
-                         responseFile: URL? = nil, expectedMIMEType: String = "application/json") async throws -> Data {
+                         responseFile: URL? = nil, expectedMIMEType: String = "application/json", strictToolDeletion: Bool = false) async throws -> Data {
         try Task.checkCancellation()
         guard let origin = configuration.origin,
               var parts = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
@@ -931,6 +939,7 @@ actor ManagedPreservationClient {
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let revision { request.setValue(String(revision), forHTTPHeaderField: "If-Match") }
+        if strictToolDeletion { request.setValue("1", forHTTPHeaderField: "X-Tool-Delete-Unreferenced") }
         do {
             let (data, response): (Data, URLResponse)
             try beforeDispatch?()
@@ -979,6 +988,7 @@ actor ManagedPreservationClient {
                 case "NEW_SAVE_REQUIRES_MEMBERSHIP": throw ManagedPreservationError.membershipRequired
                 case "PRESERVATION_CONSENT_REQUIRED": throw ManagedPreservationError.consentRequired
                 case "REVISION_CONFLICT", "ARCHIVE_CHANGED": throw ManagedPreservationError.conflict
+                case "TOOL_PART_REFERENCED": throw ManagedPreservationError.toolPartReferenced
                 case "RECORD_NOT_FOUND", "RECORD_DELETED": throw ManagedPreservationError.notFound
                 case "ARCHIVE_CAPACITY_REACHED": throw ManagedPreservationError.capacityReached
                 case "ACCESS_UNCONFIRMED": throw ManagedPreservationError.accessUnconfirmed

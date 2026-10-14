@@ -15,6 +15,7 @@ export const ownerContentTables = [
   'pa_record_legacy_baseline', 'pa_record_recovery_versions', 'pa_records',
   'pa_recovery_repair_failures', 'pa_recovery_write_leases', 'pa_retention',
   'pa_sessions', 'pa_uploads', 'pa_tool_owner_trials', 'pa_tool_trial_records',
+  'pa_tool_snapshot_references', 'pa_tool_part_delete_claims',
 ] as const;
 export const purgeWorkTables = [
   'pa_owner_deletion_requests', 'pa_owner_purge_events', 'pa_purge_execution_claims', 'pa_purge_fences',
@@ -31,6 +32,7 @@ export const ownerCursorTables = [
  * changes are still required before any row may be removed.
  */
 export const ownerD1DeleteOrder = [
+  'pa_tool_snapshot_references', 'pa_tool_part_delete_claims',
   'pa_tool_trial_records', 'pa_tool_owner_trials',
   'pa_membership_challenges',
   'pa_notice_claims', 'pa_notice_submissions', 'pa_sessions',

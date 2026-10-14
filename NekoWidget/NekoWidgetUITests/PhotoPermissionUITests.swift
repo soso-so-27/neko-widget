@@ -1686,6 +1686,25 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--managed-preservation-membership-ui-fixture", "--preservation-tool-delete-pending-ui-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let resume = app.buttons["preservation-resume-tool-deletion"]
+        XCTAssertTrue(app.navigationBars["サービスに保管"].waitForExistence(timeout: 10), app.debugDescription)
+        for _ in 0..<12 where !resume.isHittable { app.swipeUp() }
+        XCTAssertTrue(resume.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["preservation-transfer-foreground-guidance"].exists)
+        resume.tap()
+        let complete = app.staticTexts["この保管コピーを削除しました。別のコピーに必要な写真は残っています。"]
+        for _ in 0..<12 where !complete.isHittable { app.swipeDown() }
+        XCTAssertTrue(complete.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(resume.exists)
+    }
+
+    @MainActor
     func testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity() {
         continueAfterFailure = false
         let app = XCUIApplication()

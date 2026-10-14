@@ -55,12 +55,16 @@ struct ManagedPreservationView: View {
             Text("この画面だけに残っている編集は失われます。サービスに保管済みのメモは変更しません。必要な文章を控えてから破棄してください。")
         }
         .task { coordinator.start() }
-        .onDisappear { exporter.cancelPreparation(); coordinator.stop() }
+        .onDisappear { AppIdleTimer.setPreventSleep(false, for: "tool-preservation"); exporter.cancelPreparation(); coordinator.stop() }
+        .onChange(of: coordinator.toolBackupProgress) { _, value in
+            AppIdleTimer.setPreventSleep(value != nil && scenePhase == .active, for: "tool-preservation")
+        }
         .sheet(item: $exporter.payload) { payload in
             RecordExportActivity(payload: payload) { exporter.finishSharing(payload, failed: $0) }
                 .onDisappear { exporter.finishSharing(payload) }
         }
         .onChange(of: scenePhase) { _, phase in
+            AppIdleTimer.setPreventSleep(phase == .active && coordinator.toolBackupProgress != nil, for: "tool-preservation")
             if phase == .background {
                 confirmsMembershipLink = false
                 exporter.cancelPreparation(); coordinator.stop(); needsResume = true
@@ -575,7 +579,7 @@ struct ManagedPreservationView: View {
                     Text("元の記録を上書きせず、保存時点の内容を別に開けるようにします。")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button("このツールの保管コピーを削除", role: .destructive) { confirmsDeletion = true }
-                    Text("添付写真を含めてサービスから削除します。途中で止まった場合は、同じコピーの削除を再開してください。端末に復元した記録は残ります。")
+                    Text("このコピーだけで使う添付写真もサービスから削除します。ほかのコピーに必要な写真と、端末に復元した記録は残ります。途中で止まった場合は「ツールの保存・復元」から削除を再開できます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             } else {
@@ -614,8 +618,22 @@ struct ManagedPreservationView: View {
 
     private var toolBackupSection: some View {
         Section("ツールの保存・復元") {
+            Text("保存・復元中は、この画面を開いたままにしてください。別のアプリへの移動や画面ロックで中断します。途中まで送れた分から再開できます。")
+                .font(.footnote).foregroundStyle(.secondary)
+                .accessibilityIdentifier("preservation-transfer-foreground-guidance")
+            ForEach(coordinator.pendingToolDeletions) { pending in
+                VStack(alignment: .leading) {
+                    Text("削除が途中の保管コピーがあります")
+                    Text(pending.index.createdAt, format: .dateTime.year().month().day().hour().minute()).font(.caption)
+                    Button("このコピーの削除を再開") { coordinator.resumeToolDeletion(pending) }
+                        .disabled(coordinator.isBusy)
+                        .accessibilityIdentifier("preservation-resume-tool-deletion")
+                }
+            }
             Text("うちの子を見せる・預けるとき・病院で見せる・迷子のとき・避難に備える、の入力内容と添付写真をまとめて保管します。")
             Text("連絡先や健康の情報を含みます。共有相手には送られません。端末に保存済みの内容が対象です。")
+                .font(.footnote).foregroundStyle(.secondary)
+            Text("変わっていない添付写真は前の保管コピーと共用し、重複して送信しません。コピーを削除しても、ほかのコピーに必要な写真は残ります。")
                 .font(.footnote).foregroundStyle(.secondary)
             Toggle("内容を確認し、サービスへの保管に同意する", isOn: $coordinator.consentToToolBackup)
             if let date = coordinator.pendingToolBackupDate {
@@ -626,7 +644,15 @@ struct ManagedPreservationView: View {
             Button(coordinator.pendingToolBackupDate == nil ? "ツールを保管する" : "中断した保管を再開する") { coordinator.saveTools() }
                 .disabled(!coordinator.consentToToolBackup || coordinator.membership?.canSave != true || coordinator.isBusy)
                 .accessibilityIdentifier("preservation-save-tools")
-            if let progress = coordinator.toolBackupProgress { Text(progress) }
+            if coordinator.pendingToolBackupDate != nil, let error = coordinator.errorMessage {
+                Text(error).foregroundStyle(.red)
+                    .accessibilityIdentifier("preservation-tool-resume-error")
+            }
+            if let progress = coordinator.toolBackupProgress {
+                Text(progress)
+                Text("処理中は自動ロックを一時停止しています。完了すると元に戻ります。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             NavigationLink("復元したツールを開く") { RestoredToolsView() }
         }
     }
@@ -639,6 +665,7 @@ struct ManagedPreservationView: View {
 struct ManagedPreservationMembershipFixture: View {
     @State private var fixture: PreservationNativeFixture?
     @State private var failure: String?
+    @State private var deletionJournal: URL?
     private var testsCopyResult: Bool { CommandLine.arguments.contains("--preservation-copy-result-ui-fixture") }
     private var testsAccountDeletion: Bool { CommandLine.arguments.contains("--preservation-account-deletion-ui-fixture") }
     private var testsExportReauthentication: Bool { CommandLine.arguments.contains("--preservation-export-reauthentication-ui-fixture") }
@@ -663,13 +690,25 @@ struct ManagedPreservationMembershipFixture: View {
             do {
                 try SharingRuntimeSelfTestRunner.testManagedPreservationUsageBoundary()
                 if testsCopyResult { try await SharingRuntimeSelfTestRunner.testManagedPreservationMembershipBoundary() }
-                fixture = try PreservationNativeFixture.make(testsAccountDeletion ? .deletionResultLost
+                let prepared = try PreservationNativeFixture.make(testsAccountDeletion ? .deletionResultLost
                     : testsCopyResult ? .pilotCopyResultLost : .firstFailure,
                     sessionDuration: testsExportReauthentication ? 180 : 600)
+                if CommandLine.arguments.contains("--preservation-tool-delete-pending-ui-fixture") {
+                    await prepared.server.enableToolDeletionFixture()
+                    let index = ToolBackupIndex(version: 2, snapshotID: UUID(), createdAt: Date(), files: [
+                        .init(path: "CareHandoff/plan.json", bytes: 2, sha256: ToolBackupIndex.hash(Data("{}".utf8)), records: [UUID()])])
+                    let journal = try ToolBackupFiles.deletionJournal(index, owner: prepared.session.ownerId)
+                    try ToolBackupFiles.write(JSONEncoder().encode(ToolBackupFiles.Saved(owner: prepared.session.ownerId, index: index)), to: journal)
+                    deletionJournal = journal
+                }
+                fixture = prepared
             }
             catch { failure = "試験用の保管画面を準備できませんでした。" }
         }
-        .onDisappear { try? fixture?.cleanup() }
+        .onDisappear {
+            try? fixture?.cleanup()
+            if let deletionJournal { try? FileManager.default.removeItem(at: deletionJournal) }
+        }
     }
 }
 #endif
