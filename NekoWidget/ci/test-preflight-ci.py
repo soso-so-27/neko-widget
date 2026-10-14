@@ -1702,6 +1702,44 @@ class PreservationAllPutBytesBudgetTests(unittest.TestCase):
         self.assertIn("no native, live-cloud or release evidence", result["reason"])
 
 
+class ToolBuildRecoveryBudgetTests(unittest.TestCase):
+    def setUp(self):
+        spec=importlib.util.spec_from_file_location("tool_budget_fixture",Path(__file__).with_name("test-plan-ios-ci.py"))
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);module.planner=planner
+        self.fixture=module.ToolBuildRecoveryTests();self.fixture.setUp()
+        digests=patch.object(planner,"TOOL_LOG_DIGESTS",self.fixture.digests)
+        digests.start();self.addCleanup(digests.stop)
+
+    def test_source_failure_first_candidate_and_time_are_retained_unknown_and_active_block(self):
+        f=self.fixture
+        with f.mocks():proof=f.prove()
+        plan={"head":f.head,"scope":planner.TOOL_PRESERVATION_SCOPE,"target_minutes":200,"ready":False,
+              "required_jobs":list(f.required),"cost":{"status":"unmeasured","samples":[]}}
+        measured=preflight.tool_recovery_cost(plan,proof,False,{"upload_minutes":9})
+        self.assertEqual(measured["cost"]["owning_jobs"],[planner.BUILD])
+        self.assertFalse(measured["cost"]["source_build_success"])
+        self.assertEqual(measured["cost"]["samples"],[])
+        self.assertEqual(measured["required_backend_runs"],[proof["backend_evidence"]])
+        source=dict(f.source,created_at=(f.now-dt.timedelta(minutes=60)).isoformat(),failed_tests=[],unsupported_failed_tests=[])
+        diagnostic={"id":90,"path":preflight.DIAGNOSTIC_WORKFLOW,"status":"completed","conclusion":"failure",
+                    "created_at":(f.now-dt.timedelta(minutes=80)).isoformat(),"failed_tests":[],"unsupported_failed_tests":[]}
+        result=preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic,source],f.now,correction_evidence=proof)
+        self.assertTrue(result["ready"])
+        self.assertEqual(set(result["task"]["failed_runs"]),{90,planner.TOOL_BUILD_SOURCE_RUN})
+        self.assertEqual(result["task"]["minutes_since_first_ci"],80)
+        self.assertEqual(result["task"]["projected_total_minutes"],110)
+        self.assertFalse(result["task"]["first_baseline_measurement"])
+        for state,conclusion in (("in_progress",None),("completed","failure")):
+            extra=dict(source,id=99,status=state,conclusion=conclusion,created_at=(f.now-dt.timedelta(minutes=10)).isoformat())
+            self.assertFalse(preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic,source,extra],f.now,correction_evidence=proof)["ready"])
+        small=copy.deepcopy(measured);small["target_minutes"]=100
+        result=preflight.apply_task_gate(small,[diagnostic,source],f.now,correction_evidence=proof)
+        self.assertFalse(result["ready"])
+        self.assertIn("cumulative_cost_requires_replanning",result["task"]["blockers"])
+        with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),[diagnostic],f.now,correction_evidence=proof)
+        with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),[source],f.now,correction_evidence=dict(proof,candidate_sha="f"*40))
+
+
 class ToolPreservationBudgetTests(unittest.TestCase):
     def test_fixed_diagnostic_uses_owning_closed_product_proof_without_general_helper_changes(self):
         source, head = planner.TOOL_PRESERVATION_SOURCE, "a" * 40
