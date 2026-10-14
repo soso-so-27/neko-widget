@@ -63,7 +63,9 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if BillingInternalDiagnosticsLaunch.isActive {
+            if CommandLine.arguments.contains("--tool-backup-ui-fixture") {
+                ToolBackupFixtureView()
+            } else if BillingInternalDiagnosticsLaunch.isActive {
                 BillingInternalDiagnosticsRootView()
             } else if CommandLine.arguments.contains("--moderation-resolution-ui-fixture") {
                 moderationResolutionFixture

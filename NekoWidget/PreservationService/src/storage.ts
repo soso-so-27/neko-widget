@@ -1,6 +1,6 @@
 import { ServiceError, sha256, type ArchiveDocument, type KeyCustody, type MembershipAuthority,
   type PhotoValidator, type Session } from './contracts';
-import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument } from './documents';
+import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument, toolIndexRecordIDs } from './documents';
 import { RecordRecoveryCopy, type CommittedRecordImage,
   type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
@@ -450,6 +450,23 @@ export class ArchiveStore {
     const photo = decodePhoto(request.photoBase64);
     if ((photo === null) !== (document.photoFile === null)) throw new ServiceError('INVALID_RECORD');
     const photoSHA256 = photo === null ? null : await sha256(photo);
+    if (document.toolBackup?.kind === 'photo' && document.toolBackup.sha256 !== photoSHA256) throw new ServiceError('INVALID_RECORD');
+    if (document.toolBackup && document.toolBackup.kind !== 'photo'
+      && await sha256(Uint8Array.from(atob(document.toolBackup.payload), c => c.charCodeAt(0))) !== document.toolBackup.sha256) throw new ServiceError('INVALID_RECORD');
+    if (document.toolBackup && request.expectedRevision !== null) throw new ServiceError('REVISION_CONFLICT', 409);
+    let toolIndexGeneration: number | null = null;
+    if (document.toolBackup?.kind === 'index') {
+      if (document.toolBackup.snapshotId !== id) throw new ServiceError('INVALID_RECORD');
+      toolIndexGeneration = await this.generation(session.ownerId);
+      const refs = toolIndexRecordIDs(document.toolBackup);
+      // Bound each query below D1's parameter limit; no per-photo download/KMS.
+      for (let at = 0; at < refs.length; at += 90) {
+        const batch = refs.slice(at, at + 90);
+        const result = await this.d.db.prepare(`SELECT record_id FROM pa_records WHERE owner_id=? AND deleted=0
+          AND revision=1 AND record_id IN (${batch.map(() => '?').join(',')})`).bind(session.ownerId, ...batch).all();
+        if (result.results.length !== batch.length) throw new ServiceError('REVISION_CONFLICT', 409);
+      }
+    }
     const initialFingerprint = await sha256(JSON.stringify({ document, photoSHA256 }));
     if (request.expectedRevision === null && existing) {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
@@ -475,6 +492,7 @@ export class ArchiveStore {
       if (!existing || existing.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.ensureCurrentRecovery(existing, session);
       const old = await this.metadata(existing);
+      if (old.document.toolBackup) throw new ServiceError('REVISION_CONFLICT', 409);
       if (old.photoSHA256 !== photoSHA256) throw new ServiceError('PHOTO_REPLACEMENT_REQUIRES_NEW_RECORD', 409);
       // Server update time; captured/written dates are not invented or silently replaced.
       document.updatedAt = new Date(this.d.now()).toISOString();
@@ -596,9 +614,11 @@ export class ArchiveStore {
         this.d.db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,
           metadata,photo_key,photo_bytes,quota_bytes)
           SELECT ?,?,1,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM pa_uploads WHERE operation_id=? AND state='active' AND expires_at>?)
-          AND ${activeSession} AND ${commitFence.sql} AND NOT EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?) RETURNING revision`)
+          AND ${activeSession} AND ${commitFence.sql} AND NOT EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?)
+          AND (? IS NULL OR (SELECT generation FROM pa_inventory WHERE owner_id=?)=?) RETURNING revision`)
           .bind(session.ownerId, id, initialFingerprint, operation, bytes(metadata), photo === null ? null : key, photo?.length ?? 0,
-            size, operation, this.d.now(), ...this.sessionBindings(session), ...commitFence.bindings, session.ownerId, id),
+            size, operation, this.d.now(), ...this.sessionBindings(session), ...commitFence.bindings, session.ownerId, id,
+            toolIndexGeneration, session.ownerId, toolIndexGeneration),
         this.d.db.prepare(`DELETE FROM pa_uploads WHERE operation_id=? AND EXISTS
           (SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=?)`)
           .bind(operation, session.ownerId, id, operation),

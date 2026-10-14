@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C02610140000000000000001 /* ToolPreservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610140000000000000002 /* ToolPreservation.swift */; };
+		C02610140000000000000003 /* RestoredToolsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610140000000000000004 /* RestoredToolsView.swift */; };
         D02609300000000000000001 /* VeterinaryVisitStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000002 /* VeterinaryVisitStore.swift */; };
         D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000004 /* VeterinaryVisitView.swift */; };
 		C02609290000000000000011 /* CareHandoffPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02609290000000000000012 /* CareHandoffPlan.swift */; };
@@ -285,6 +287,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C02610140000000000000002 /* ToolPreservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPreservation.swift; sourceTree = "<group>"; };
+		C02610140000000000000004 /* RestoredToolsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoredToolsView.swift; sourceTree = "<group>"; };
         D02609300000000000000002 /* VeterinaryVisitStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitStore.swift; sourceTree = "<group>"; };
         D02609300000000000000004 /* VeterinaryVisitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitView.swift; sourceTree = "<group>"; };
 		C02609290000000000000012 /* CareHandoffPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareHandoffPlan.swift; sourceTree = "<group>"; };
@@ -712,6 +716,7 @@
 		C00000000000000000000003 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				C02610140000000000000002 /* ToolPreservation.swift */,
 				E02609220000000000000007 /* MembershipAccessContext.swift */,
 				F00000000000000000000210 /* JSONExporter.swift */,
 				F00000000000000000000211 /* LibraryStore.swift */,
@@ -797,6 +802,7 @@
 		C00000000000000000000005 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				C02610140000000000000004 /* RestoredToolsView.swift */,
 				D02609100000000000000300 /* OfficialWindowView.swift */,
 				F00000000000000000000230 /* AppPresentationModels.swift */,
 				5F72EFC6FCCF44BA89D8E53B /* WindowSupportResumeView.swift */,
@@ -1077,6 +1083,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C02610140000000000000001 /* ToolPreservation.swift in Sources */,
+				C02610140000000000000003 /* RestoredToolsView.swift in Sources */,
 				D02609100000000000000301 /* OfficialWindowView.swift in Sources */,
 				D02609100000000000000201 /* OfficialWindowStore.swift in Sources */,
 				D02609100000000000000101 /* OfficialWindowCatalog.swift in Sources */,

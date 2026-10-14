@@ -72,7 +72,8 @@ enum ManagedPreservationExport {
         }
         return try PhotoMemoryNoteExporter.createArchive(text: document.text,
             capturedAt: document.capturedAt, writtenAt: document.writtenAt,
-            updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight)
+            updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight,
+            toolBackupJSON: try document.toolBackup.map { try JSONEncoder().encode($0) })
     }
 
     @MainActor static func prepareAll(client: ManagedPreservationClient,
@@ -171,7 +172,8 @@ enum ManagedPreservationExport {
             completed += 1
             return PhotoMemoryNoteBulkEntry(recordID: snapshot.record.id, revision: snapshot.record.revision,
                 text: document.text, capturedAt: document.capturedAt, writtenAt: document.writtenAt,
-                updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight)
+                updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight,
+                toolBackupJSON: try document.toolBackup.map { try JSONEncoder().encode($0) })
         }
         func finish() async throws {
             try await session.requireCurrent()
@@ -235,7 +237,8 @@ enum ManagedPreservationExport {
                 return PhotoMemoryNoteBulkEntry(recordID: listed.id, revision: listed.revision,
                     text: document.text, capturedAt: document.capturedAt,
                     writtenAt: document.writtenAt, updatedAt: document.updatedAt,
-                    catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight)
+                    catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight,
+                    toolBackupJSON: try document.toolBackup.map { try JSONEncoder().encode($0) })
             }, progress: progress)
         do {
             try Task.checkCancellation()
@@ -303,9 +306,14 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var exportAuthenticationNeeded = false
     @Published private(set) var preparedExportSignIn: ManagedPreservationChallenge?
     @Published var consentToNewSave = false
+    @Published var consentToToolBackup = false
+    @Published private(set) var toolBackupProgress: String?
+    @Published private(set) var restoredToolBackup: ToolBackupFiles.Saved?
+    @Published private(set) var pendingToolBackupDate: Date?
     @Published var editedText = ""
 
     let draft: ManagedPreservationDraft?
+    private let toolBackupSource: UUID?
     private let client: ManagedPreservationClient
     private let onExport: ExportHandler?
     private let draftStore: ManagedPreservationSessionStore
@@ -338,7 +346,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
 
     init(configuration: ManagedPreservationConfiguration = .current,
          draft: ManagedPreservationDraft? = nil, onExport: ExportHandler? = nil,
-         client injectedClient: ManagedPreservationClient? = nil) {
+         client injectedClient: ManagedPreservationClient? = nil, toolBackupSource: UUID? = nil) {
+        self.toolBackupSource = toolBackupSource
         isEnabled = configuration.isEnabled
         client = injectedClient ?? ManagedPreservationClient(configuration: configuration)
         draftStore = ManagedPreservationSessionStore(origin: configuration.origin?.absoluteString ?? "disabled")
@@ -522,7 +531,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func loadMore() {
         guard let after = nextCursor, let generation = listingGeneration else { return }
         run { ticket in
-            let page = try await self.client.list(after: after)
+            let page = try await self.visiblePage(after: after)
             try self.check(ticket)
             guard page.generation == generation,
                   Set(self.records.map(\.id)).isDisjoint(with: page.items.map(\.id)) else {
@@ -597,6 +606,75 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
+    func saveTools() {
+        guard consentToToolBackup, membership?.canSave == true, !isBusy else { return }
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            self.toolBackupProgress = "ツールの保存内容を確認中…"
+            defer { self.toolBackupProgress = nil }
+            let sourceID = self.toolBackupSource
+            let prepared = try await Task.detached {
+                let source = try sourceID.map { try ToolBackupFiles.restoredSource($0, owner: owner) }
+                if let pending = try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: sourceID) { return (pending, false) }
+                return (try ToolBackupFiles.capture(owner: owner, source: source, sourceSnapshotID: sourceID), true)
+            }.value
+            let saved = prepared.0
+            do { try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id)) }
+            catch {
+                if prepared.1 { try? FileManager.default.removeItem(at: ToolBackupFiles.directory(saved.id)) }
+                throw error
+            }
+            try self.check(ticket)
+            self.pendingToolBackupDate = saved.index.createdAt
+            try await ToolBackupTransfer.upload(saved, client: self.client) { completed, total in
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "ツールを保管中 \(completed) / \(total)" } }
+            }
+            guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
+            self.statusMessage = "ツールの記録と添付写真を保管しました。保存時点の内容を復元できます。"
+            self.consentToToolBackup = false
+            try await self.loadFirstPage(ticket)
+        }
+    }
+
+    func restoreTools(_ record: ManagedPreservationRecord) {
+        guard record.document.toolBackup?.kind == "index", !isBusy else { return }
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            self.toolBackupProgress = "ツールの記録を復元中…"
+            defer { self.toolBackupProgress = nil }
+            let saved = try await ToolBackupTransfer.restore(record, client: self.client) { completed, total in
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "ツールを復元中 \(completed) / \(total)" } }
+            }
+            guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
+            self.restoredToolBackup = saved
+            self.statusMessage = "復元しました。「復元したツール」から通信なしでも開けます。元の記録はそのままです。"
+        }
+    }
+
+    func discardPendingToolBackup() {
+        guard !isBusy else { return }
+        run { ticket in
+            let owner = try await self.requireCurrentOwner(ticket)
+            guard let pending = try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: self.toolBackupSource) else { return }
+            self.toolBackupProgress = "中断した保管コピーを削除中…"
+            defer { self.toolBackupProgress = nil }
+            try await ToolBackupTransfer.confirmPendingAttemptBeforeDeletion(pending, client: self.client)
+            try await ToolBackupTransfer.delete(pending.index, client: self.client) { completed, total in
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "中断した保管コピーを削除中 \(completed) / \(total)" } }
+            }
+            guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
+            let folder = ToolBackupFiles.directory(pending.id)
+            // Remove only this prepared upload, preserving any restored edits.
+            for name in Array(ToolBackupIndex.manifests.keys) + ["index-wire.json", "sent.json", "attempt.json", "uploaded.json", "pending.json"] {
+                let url = folder.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            }
+            self.pendingToolBackupDate = nil
+            self.statusMessage = "中断した保管コピーを削除しました。ツールの元の記録は残っています。新しく保存し直せます。"
+            try await self.loadFirstPage(ticket)
+        }
+    }
+
     func confirmCopyResult() {
         guard let draft, !isBusy, copyState == .needsConfirmation else { return }
         run { ticket in
@@ -666,7 +744,16 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard let original = selected else { return }
         retainUnsentEdit()
         run { ticket in
-            try await self.client.delete(original.record)
+            if let part = original.document.toolBackup {
+                guard part.kind == "index", let bytes = Data(base64Encoded: part.payload) else { throw ToolBackupError.invalid }
+                let index = try JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
+                guard index.snapshotID == original.record.id else { throw ToolBackupError.invalid }
+                self.toolBackupProgress = "保管コピーを削除中…"
+                defer { self.toolBackupProgress = nil }
+                try await ToolBackupTransfer.delete(index, client: self.client) { completed, total in
+                    await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "保管コピーを削除中 \(completed) / \(total)" } }
+                }
+            } else { try await self.client.delete(original.record) }
             try self.check(ticket)
             self.selected = nil; self.editedText = ""
             self.statusMessage = "保管したコピーを削除しました。端末の元の写真・メモは削除していません。"
@@ -850,7 +937,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             records = []; pendingMemoDrafts = []; copyState = .deviceOnly
             authenticatedOwnerID = nil
         }
-        let page = try await client.list()
+        let page = try await visiblePage()
         try check(ticket)
         records = page.items; nextCursor = page.nextCursor
         listingGeneration = page.generation; hasMore = page.nextCursor != nil
@@ -861,6 +948,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
         try check(ticket)
         guard owner == requestedOwner else { throw ManagedPreservationError.staleSession }
         authenticatedOwnerID = owner
+        // A damaged local pending snapshot must not hide unrelated cloud records.
+        pendingToolBackupDate = (try? ToolBackupFiles.pending(owner: owner, sourceSnapshotID: toolBackupSource))?.index.createdAt
         copyState = copyStates[owner] ?? .deviceOnly
         var ownDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
         do {
@@ -880,6 +969,27 @@ final class ManagedPreservationCoordinator: ObservableObject {
         saveFailureCode = error is CancellationError ? "S05" : known?.preservationSupportCode ?? "S99"
         saveFailureMessage = error is CancellationError ? ManagedPreservationError.interrupted.errorDescription
             : known?.errorDescription ?? ManagedPreservationError.unavailable.errorDescription
+    }
+
+    /// Internal pieces never become empty user-facing pages. Advance through
+    /// them with the same owner checkpoint and inventory generation fence.
+    private func visiblePage(after: String? = nil) async throws -> ManagedPreservationPage {
+        let checkpoint = try await client.captureSessionCheckpoint()
+        var page = try await client.list(after: after, forExport: true)
+        let generation = page.generation
+        while true {
+            try await client.requireSessionCheckpoint(checkpoint)
+            let visible = page.items.filter { $0.document.toolBackup == nil || $0.document.toolBackup?.kind == "index" }
+            if !visible.isEmpty || page.nextCursor == nil {
+                return ManagedPreservationPage(items: visible, nextCursor: page.nextCursor, generation: generation)
+            }
+            let cursor = page.nextCursor!
+            let next = try await client.list(after: cursor, forExport: true)
+            guard next.generation == generation,
+                  next.items.allSatisfy({ $0.id.uuidString.lowercased() > cursor.lowercased() }),
+                  next.nextCursor.map({ $0.lowercased() > cursor.lowercased() }) ?? true else { throw ManagedPreservationError.conflict }
+            page = next
+        }
     }
 
     private func loadMembership(_ ticket: UUID, owner: String) {
@@ -1064,7 +1174,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
                 self.errorMessage = error is CancellationError
                     ? ManagedPreservationError.interrupted.errorDescription
-                    : (known?.errorDescription ?? ManagedPreservationError.unavailable.errorDescription)
+                    : (known?.errorDescription ?? (error as? ToolBackupError)?.errorDescription ?? ManagedPreservationError.unavailable.errorDescription)
             }
         }
     }
@@ -1094,6 +1204,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             setCopyState(.needsConfirmation, owner: owner)
         }
         consentToNewSave = false
+        consentToToolBackup = false; restoredToolBackup = nil; toolBackupProgress = nil; pendingToolBackupDate = nil
         copyState = .deviceOnly
         membership = nil; membershipMessage = nil
         noticeContact = nil

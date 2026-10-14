@@ -4,7 +4,8 @@
   "sourceMain": "21a6dfa7b4d7d5f80c4b60ba4db29b41f46f8dc8",
   "scope": "policy-and-financing-package-only",
   "userInstruction": "容量・継続運営費・公開条件の確定させて",
-  "policyStatus": "selected-for-implementation",
+  "policyStatus": "superseded-historical-proposal-not-current-authorization",
+  "supersededBy": "2026-10-14-tool-preservation.md",
   "remoteApplied": false,
   "publicReady": false,
   "permissions": {

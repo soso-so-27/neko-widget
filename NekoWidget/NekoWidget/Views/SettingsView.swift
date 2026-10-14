@@ -204,6 +204,10 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-managed-preservation")
                 }
+                NavigationLink { RestoredToolsView() } label: {
+                    Label("復元したツール", systemImage: "arrow.counterclockwise")
+                }
+                .accessibilityIdentifier("settings-restored-tools")
                 if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
                     PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
                 }

@@ -12,8 +12,10 @@ final class CareHandoffStore: ObservableObject {
     @Published private(set) var pendingPhotoCleanup = false
     private var repository: CareHandoffRepository?
     private let directory: URL
+    private let allowsCandidateRefresh: Bool
 
-    init(directory: URL? = nil) {
+    init(directory: URL? = nil, allowsCandidateRefresh: Bool = true) {
+        self.allowsCandidateRefresh = allowsCandidateRefresh
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory,
             in: .userDomainMask)[0].appendingPathComponent("CareHandoff", isDirectory: true)
         reload()
@@ -113,6 +115,7 @@ final class CareHandoffStore: ObservableObject {
     /// Text only; photos, private fields and already edited/legacy values stay put.
     @discardableResult
     func refreshCandidates(_ id: UUID, using source: EvacuationStore) throws -> Bool {
+        guard allowsCandidateRefresh else { return false }
         guard loadError == nil, saveError == nil, let repository,
               source.loadError == nil, source.saveError == nil,
               let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }

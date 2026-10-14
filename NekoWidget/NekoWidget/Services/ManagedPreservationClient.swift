@@ -166,9 +166,10 @@ struct ManagedPreservationDocument: Codable, Equatable, Sendable {
     var catNames: [String]
     var photoFile: String?
     var weight: PhotoMemoWeightValue? = nil
+    var toolBackup: ToolBackupPart? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile, weight
+        case formatVersion, text, capturedAt, writtenAt, updatedAt, catNames, photoFile, weight, toolBackup
     }
 
     func encode(to encoder: Encoder) throws {
@@ -181,11 +182,13 @@ struct ManagedPreservationDocument: Codable, Equatable, Sendable {
         try values.encode(catNames, forKey: .catNames)
         try values.encode(photoFile, forKey: .photoFile)
         try values.encodeIfPresent(weight, forKey: .weight)
+        try values.encodeIfPresent(toolBackup, forKey: .toolBackup)
     }
 
     func validated() throws -> Self {
         do { try weight?.validate() } catch { throw ManagedPreservationError.invalidRecord }
-        guard (1...2).contains(formatVersion), weight == nil || formatVersion == 2,
+        try toolBackup?.validate(photo: photoFile != nil)
+        guard (1...3).contains(formatVersion), (formatVersion == 3) == (toolBackup != nil), weight == nil || formatVersion == 2,
               text.count <= 500, text.utf8.count <= 65_536,
               catNames.count <= 100,
               catNames.allSatisfy({ !$0.isEmpty && $0.count <= 200 && $0.utf8.count <= 800 }),
@@ -218,6 +221,7 @@ extension ManagedPreservationDocument {
         catNames = try values.decode([String].self, forKey: .catNames)
         photoFile = try values.decode(String?.self, forKey: .photoFile)
         weight = try values.decodeIfPresent(PhotoMemoWeightValue.self, forKey: .weight)
+        toolBackup = try values.decodeIfPresent(ToolBackupPart.self, forKey: .toolBackup)
     }
 }
 
@@ -749,7 +753,8 @@ actor ManagedPreservationClient {
 
     func list(after: String? = nil, forExport: Bool = false) async throws -> ManagedPreservationPage {
         if let after, UUID(uuidString: after) == nil { throw ManagedPreservationError.invalidRecord }
-        let query = [URLQueryItem(name: "limit", value: "20")]
+        // Ten maximum-sized tool indexes fit the existing 4 MiB read bound.
+        let query = [URLQueryItem(name: "limit", value: "10")]
             + (after.map { [URLQueryItem(name: "after", value: $0)] } ?? [])
         let data: Data
         if forExport {
@@ -766,8 +771,8 @@ actor ManagedPreservationClient {
         return page
     }
 
-    func detail(_ id: UUID) async throws -> ManagedPreservationExportSnapshot {
-        let data = try await authenticated("GET", path: recordPath(id), maximumBytes: 30 * 1024 * 1024)
+    func detail(_ id: UUID, checkpoint: SessionCheckpoint? = nil) async throws -> ManagedPreservationExportSnapshot {
+        let data = try await authenticated("GET", path: recordPath(id), maximumBytes: 30 * 1024 * 1024, checkpoint: checkpoint)
         let snapshot = try decodeExportRecord(data)
         guard snapshot.record.id == id else { throw ManagedPreservationError.invalidResponse }
         return snapshot
@@ -839,7 +844,7 @@ actor ManagedPreservationClient {
 
     /// Existing edits use the current revision and unchanged photo copy. Server enforces both.
     func put(_ draft: ManagedPreservationDraft, expectedRevision: Int? = nil,
-             consent: Bool) async throws -> Int {
+             consent: Bool, checkpoint: SessionCheckpoint? = nil) async throws -> Int {
         if expectedRevision == nil && !consent { throw ManagedPreservationError.consentRequired }
         if let expectedRevision, expectedRevision <= 0 { throw ManagedPreservationError.invalidRecord }
         let document = try draft.document.validated()
@@ -849,7 +854,7 @@ actor ManagedPreservationClient {
                           document: document, photoBase64: draft.jpegData?.base64EncodedString())
         let body = try ManagedPreservationWire.encoder().encode(payload)
         guard body.count <= 30 * 1024 * 1024 else { throw ManagedPreservationError.invalidRecord }
-        let data = try await authenticated("PUT", path: recordPath(draft.recordID), body: body)
+        let data = try await authenticated("PUT", path: recordPath(draft.recordID), body: body, checkpoint: checkpoint)
         let result: Mutation = try decode(data)
         guard result.recordId == draft.recordID, result.revision > 0,
               expectedRevision == nil || result.revision > expectedRevision! else {
@@ -858,9 +863,9 @@ actor ManagedPreservationClient {
         return result.revision
     }
 
-    func delete(_ record: ManagedPreservationRecord) async throws {
+    func delete(_ record: ManagedPreservationRecord, checkpoint: SessionCheckpoint? = nil) async throws {
         try validate(record)
-        let data = try await authenticated("DELETE", path: recordPath(record.id), revision: record.revision)
+        let data = try await authenticated("DELETE", path: recordPath(record.id), revision: record.revision, checkpoint: checkpoint)
         let result: Mutation = try decode(data)
         guard result.recordId == record.id, result.revision > record.revision else {
             throw ManagedPreservationError.invalidResponse
@@ -882,7 +887,10 @@ actor ManagedPreservationClient {
     private func authenticated(_ method: String, path: String, query: [URLQueryItem] = [],
                                body: Data? = nil, revision: Int? = nil,
                                maximumBytes: Int = 65_536, responseFile: URL? = nil,
-                               expectedMIMEType: String = "application/json") async throws -> Data {
+                               expectedMIMEType: String = "application/json", checkpoint: SessionCheckpoint? = nil) async throws -> Data {
+        // Validate and capture in one actor turn, before the first suspension.
+        // A caller's earlier check cannot bind a later request after sign-in changes.
+        if let checkpoint { try requireSessionCheckpoint(checkpoint) }
         guard try hasSession(), let captured = credential else { throw ManagedPreservationError.authenticationRequired }
         let capturedEpoch = epoch
         do {

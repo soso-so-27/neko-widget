@@ -12,8 +12,10 @@ final class EvacuationStore: ObservableObject {
     @Published private(set) var pendingPhotoCleanup = false
     private var repository: EvacuationRepository?
     private let directory: URL
+    private let allowsCandidateRefresh: Bool
 
-    init(directory: URL? = nil) {
+    init(directory: URL? = nil, allowsCandidateRefresh: Bool = true) {
+        self.allowsCandidateRefresh = allowsCandidateRefresh
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory,
             in: .userDomainMask)[0].appendingPathComponent("EvacuationPreparation", isDirectory: true)
         reload()
@@ -119,6 +121,7 @@ final class EvacuationStore: ObservableObject {
     /// Only unedited candidate text is refreshed when its editor is entered.
     @discardableResult
     func refreshCandidates(_ id: UUID, using source: CareHandoffStore) throws -> Bool {
+        guard allowsCandidateRefresh else { return false }
         guard loadError == nil, saveError == nil, let repository,
               source.loadError == nil, source.saveError == nil,
               let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
