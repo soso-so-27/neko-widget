@@ -3069,15 +3069,26 @@ TOOL_PLAN_FAILURE_PLACEHOLDERS = {
     115700711905: UNEXPANDED_SHARING_JOB, 115700712155: UNEXPANDED_SHARING_JOB,
     115700712279: UNEXPANDED_SHARING_JOB, 115700712661: UNEXPANDED_SHARING_JOB,
 }
+TOOL_PRIVACY_FIX = "9f6eb812bce1162c77cb3ee5a59d2b4c2ef4eaa4"
+TOOL_PRIVACY_PATH = "NekoWidget/NekoWidget/Views/RestoredToolsView.swift"
+TOOL_PRIVACY_PAIR = ("81e811d42d82c9b212fd250ce98dd8e9ff63b8dc", "1b322e4dbc41b525fda45f8394d9eca20db67f87")
+TOOL_PRIVACY_FAILED_SOURCE = "af0fe064e9743217dfd0e803f5137c5719da3a86"
+TOOL_PRIVACY_FAILED_RUN, TOOL_PRIVACY_FAILED_PLAN, TOOL_PRIVACY_FAILED_BUILD = 38519777820, 115706572465, 115707088449
+TOOL_PRIVACY_FAILED_PLACEHOLDERS = {
+    115707089857: UNEXPANDED_SHARING_JOB, 115707090348: UNEXPANDED_SHARING_JOB,
+    115707090398: UNEXPANDED_SHARING_JOB, 115707275689: UNEXPANDED_SHARING_JOB,
+    115707090659: "needs.plan.outputs.smoke_name",
+}
 TOOL_LOG_DIGESTS = {
     115686804115: "ffe004dd05f28e7ac8b7e0818a23b1d70327adabae61c3dddb0ecc85e29b7165",
     115686619818: "ff654eae740a0b7e877f6aa0a4f2b9259d27079651a3292c029647763e09b86c",
     115700231933: "5b5524d4b0ecb7e17f375387272b27e20f8642ebac8921fb4b220b371915cfd8",
+    115707088449: "f8cdd11b3ad240055730fb2a6ded67fde1d071e3212087307eb39ed98ad61f45",
 }
 
 
 def tool_fixed_observation(path):
-    """Five immutable, read-only endpoints; never render captured log escapes."""
+    """Six immutable, read-only endpoints; never render captured log escapes."""
     prefix = "repos/soso-so-27/neko-widget/"
     allowed = {prefix + "git/commits/" + sha for sha in (TOOL_BUILD_SOURCE, TOOL_PR_MERGE)}
     allowed |= {prefix + f"actions/jobs/{job}/logs" for job in TOOL_LOG_DIGESTS}
@@ -3114,7 +3125,7 @@ def tool_build_steps():
 
 
 def tool_recovery_inputs(head):
-    """Restore the signed release bytes; permit only approved CI control changes."""
+    """Approved controls, original release bytes and the fixed DEBUG-error privacy repair."""
     try:
         if not isinstance(head, str) or not SHA.fullmatch(head) or head == TOOL_BUILD_SOURCE: return False
         git("merge-base", "--is-ancestor", TOOL_BUILD_SOURCE, head)
@@ -3141,6 +3152,9 @@ def tool_recovery_inputs(head):
             seen.add(path)
             if path == release:
                 if fields != [":100644", "100644", "8cc1d532e0c53346aacdf0c9f634baabcd170fdf", TOOL_RESTORED_RELEASE, "M"]: return False
+            elif path == TOOL_PRIVACY_PATH:
+                if fields != [":100644", "100644", *TOOL_PRIVACY_PAIR, "M"]: return False
+                git("merge-base", "--is-ancestor", TOOL_PRIVACY_FIX, head)
             elif path in TOOL_RECOVERY_CONTROLS:
                 if fields[4] != "M": return False
             elif not is_handoff(path): return False
@@ -3149,8 +3163,8 @@ def tool_recovery_inputs(head):
         before, after = (git("show", f"{ref}:{checks}") for ref in (TOOL_BUILD_SOURCE, head))
         line = '    "test-media-staging-release-config.py",\n'
         if after.count(line) != 1 or after.replace(line, "", 1) != before: return False
-        # Every tracked product, dependency, workflow, signature and test fixture
-        # remains identical to the frozen source outside the explicit control set.
+        # The only product delta is the fixed pair above: two DEBUG catch messages.
+        # Shipping bytes, success paths, dependencies, workflow and signatures stay fixed.
         return tool_preservation_immutable_inputs(TOOL_BUILD_SOURCE)
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError, IndexError):
         return False
@@ -3260,6 +3274,58 @@ def tool_plan_failure_proof(head, repository, api, now):
     if api(f"{prefix}/workflows/ios-build.yml/runs?{query}") != {"total_count": 1, "workflow_runs": [run]}:
         raise ValueError("Failed tool plan execution history differs")
     return tool_plan_failure_record()
+
+
+def tool_privacy_failure_record():
+    return {"run_id": TOOL_PRIVACY_FAILED_RUN, "sha": TOOL_PRIVACY_FAILED_SOURCE, "job_id": TOOL_PRIVACY_FAILED_BUILD,
+            "log_sha256": TOOL_LOG_DIGESTS[TOOL_PRIVACY_FAILED_BUILD], "failed_step": TOOL_BUILD_FAILED_STEP,
+            "correction_sha": TOOL_PRIVACY_FIX, "path": TOOL_PRIVACY_PATH, "blob_pair": list(TOOL_PRIVACY_PAIR),
+            "source_build_success": False, "failure_screen_rendering_verified": False}
+
+
+def tool_privacy_failure_inputs(head):
+    try:
+        git("merge-base", "--is-ancestor", TOOL_PRIVACY_FIX, head)
+        return (git("ls-tree", head, "--", TOOL_PRIVACY_PATH) == f"100644 blob {TOOL_PRIVACY_PAIR[1]}\t{TOOL_PRIVACY_PATH}"
+                and git("ls-tree", TOOL_PRIVACY_FAILED_SOURCE, "--", TOOL_PRIVACY_PATH) == f"100644 blob {TOOL_PRIVACY_PAIR[0]}\t{TOOL_PRIVACY_PATH}"
+                and tool_recovery_inputs(TOOL_PRIVACY_FAILED_SOURCE))
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return False
+
+
+def tool_privacy_failure_proof(head, repository, api, now, original_proof):
+    if not tool_privacy_failure_inputs(head): raise ValueError("Fixed DEBUG privacy repair inputs differ")
+    prefix = f"/repos/{repository}/actions"
+    run = api(f"{prefix}/runs/{TOOL_PRIVACY_FAILED_RUN}")
+    tool_run_identity(run, TOOL_PRIVACY_FAILED_RUN, TOOL_PRIVACY_FAILED_SOURCE, "ios-build.yml", "push", "failure", now)
+    jobs = executed_jobs(run, repository, api)
+    expected = {TOOL_PRIVACY_FAILED_PLAN, TOOL_PRIVACY_FAILED_BUILD} | set(TOOL_PRIVACY_FAILED_PLACEHOLDERS)
+    if len(jobs) != len(expected) or {job.get("id") for job in jobs} != expected: raise ValueError("DEBUG privacy failure job map differs")
+    for job in jobs:
+        tool_job_identity(job, run)
+        if job["id"] == TOOL_PRIVACY_FAILED_PLAN:
+            if job.get("name") != PLAN_JOB or not covers_jobs([job], (PLAN_JOB,), TOOL_PRIVACY_FAILED_SOURCE, now) or not moderation_steps_succeeded(job, ("Select checks",)):
+                raise ValueError("DEBUG privacy source plan did not succeed")
+            record = tool_plan_record(api(f"{prefix}/jobs/{job['id']}/logs"), TOOL_PRIVACY_FAILED_SOURCE, corrected=True)
+            # Validate the old proof directly; do not recursively demand this new repair from its source.
+            if (record.get("test_correction_evidence") != {**original_proof, "candidate_sha": TOOL_PRIVACY_FAILED_SOURCE}
+                    or record.get("required_backend_runs") != [original_proof["backend_evidence"]]): raise ValueError("DEBUG privacy source plan proof differs")
+        elif job["id"] == TOOL_PRIVACY_FAILED_BUILD:
+            if job.get("name") != BUILD or job.get("conclusion") != "failure" or not isinstance(job.get("steps"), list): raise ValueError("Fixed DEBUG privacy Build failure missing")
+            for index, name in enumerate(tool_build_steps()):
+                matched = [step for step in job["steps"] if step.get("name") == name]
+                result = "success" if index < 2 else "failure" if index == 2 else "skipped"
+                if len(matched) != 1 or (matched[0].get("status"), matched[0].get("conclusion")) != ("completed", result): raise ValueError("Unexpected DEBUG privacy Build step state")
+            if [step.get("name") for step in job["steps"] if step.get("conclusion") in {"failure", "cancelled", "timed_out"}] != [TOOL_BUILD_FAILED_STEP]: raise ValueError("Additional DEBUG privacy Build failure")
+        elif (job.get("name") != TOOL_PRIVACY_FAILED_PLACEHOLDERS[job["id"]]
+                or job.get("conclusion") != "skipped" or job.get("steps") != []): raise ValueError("DEBUG privacy source executed native work")
+    log = tool_fixed_observation(f"repos/{repository}/actions/jobs/{TOOL_PRIVACY_FAILED_BUILD}/logs")
+    if (tool_log_digest(log) != TOOL_LOG_DIGESTS[TOOL_PRIVACY_FAILED_BUILD]
+            or "FAIL: test_product_code_never_persists_raw_error_text" not in log
+            or "NekoWidget/Views/RestoredToolsView.swift" not in log or "FAILED (failures=1)" not in log): raise ValueError("Fixed DEBUG privacy failure transcript differs")
+    query = urllib.parse.urlencode({"head_sha": TOOL_PRIVACY_FAILED_SOURCE, "event": "push", "per_page": 100})
+    if api(f"{prefix}/workflows/ios-build.yml/runs?{query}") != {"total_count": 1, "workflow_runs": [run]}: raise ValueError("DEBUG privacy source execution history differs")
+    return tool_privacy_failure_record()
 
 
 def tool_wait_candidate_backend(head, repository, api):
@@ -3378,12 +3444,13 @@ def tool_recovery_source(head, repository, api, now):
                     ("Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
                      "Verify legacy notice evidence migration with synthetic owners", "Bundle the private authority without deployment or provisioning",
                      "Bundle the private owner deletion executor without deployment")): raise ValueError("New candidate backend did not execute all required steps")
-        return {"kind": "tool-preservation-signed-release-build-recovery-v1", "candidate_sha": head,
+        proof = {"kind": "tool-preservation-signed-release-build-recovery-v1", "candidate_sha": head,
                 "run_id": TOOL_BUILD_SOURCE_RUN, "sha": TOOL_BUILD_SOURCE,
                 "jobs": [{"name": name, "job_id": TOOL_BUILD_SOURCE_JOBS[name]} for name in native],
                 "failed_build_job_id": TOOL_BUILD_SOURCE_JOBS[BUILD], "failed_build_log_sha256": TOOL_LOG_DIGESTS[TOOL_BUILD_SOURCE_JOBS[BUILD]],
                 "backend_evidence": backend, "failed_plan_evidence": plan_failure,
                 "owning_jobs_to_execute": [BUILD], "source_build_success": False}
+        return {**proof, "failed_fixture_build_evidence": tool_privacy_failure_proof(head, repository, api, now, proof)}
     except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError, IndexError) as error:
         raise CorrectionEvidenceUnavailable("Fixed tool source/native/backend proof unavailable") from error
 
@@ -3449,8 +3516,11 @@ def tool_preservation_only(paths, base, head):
         for path in TOOL_RECOVERY_CONTROLS:
             approved = git("ls-tree", "refs/remotes/origin/main", "--", path)
             if any(git("ls-tree", ref, "--", path) != approved for ref in (base, head)): return False
+        product_blobs = dict(TOOL_PRESERVATION_BLOBS)
+        if git("ls-tree", head, "--", TOOL_PRIVACY_PATH) == f"100644 blob {TOOL_PRIVACY_PAIR[1]}\t{TOOL_PRIVACY_PATH}":
+            product_blobs[TOOL_PRIVACY_PATH] = (product_blobs[TOOL_PRIVACY_PATH][0], TOOL_PRIVACY_PAIR[1])
         return tool_preservation_paths_only(paths) and reviewed_hub_only(paths, base, head,
-            product_blobs=TOOL_PRESERVATION_BLOBS, companion_paths=frozenset(), companion_digests={}, companion_name="unused")
+            product_blobs=product_blobs, companion_paths=frozenset(), companion_digests={}, companion_name="unused")
     registration = 'TOOL_PRESERVATION_SCOPE = "reviewed-tool-preservation-ui-v1"'
     if git("show", "refs/remotes/origin/main:NekoWidget/ci/ios_ci_scope.py").splitlines().count(registration) != 1: return False
     if TOOL_PRESERVATION_CONTROLS != {"NekoWidget/ci/" + name for name in (
