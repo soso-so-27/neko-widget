@@ -70,6 +70,11 @@ private struct RestoredToolWorkspace: View {
                 Text(saved.index.createdAt, format: .dateTime.year().month().day().hour().minute())
                 Text("保存当時の記録です。ここでの編集は、この復元した記録だけに反映されます。")
                     .font(.footnote).foregroundStyle(.secondary)
+                if ManagedPreservationConfiguration.current.isEnabled {
+                    NavigationLink("この記録をサービスに保管する") {
+                        ManagedPreservationView(toolBackupSource: saved.id)
+                    }
+                }
             }
             if has("CareHandoff") {
                 NavigationLink("預けるとき") {
@@ -179,6 +184,15 @@ struct ToolBackupFixtureView: View {
             let entry = ShowcasePhotoStore.Entry(scopeID: "", photoIdentifier: "absent-from-photokit", imageFileName: name)
             try ToolBackupFiles.write(JSONEncoder().encode([entry]), to: source.appendingPathComponent("ShowcasePhotos/selected.json"))
             try ToolBackupFiles.write(image, to: source.appendingPathComponent("ShowcasePhotos/" + name))
+            var lost = LostCatDraft()
+            lost.name = "迷子の控え"; lost.contact = "保存当時の連絡先"; lost.faceFileName = name
+            try ToolBackupFiles.write(JSONEncoder().encode(["saved-cat": lost]), to: source.appendingPathComponent("LostCatDrafts/drafts.json"))
+            try ToolBackupFiles.write(image, to: source.appendingPathComponent("LostCatDrafts/" + name))
+            let vet = VeterinaryVisitStore(directory: source.appendingPathComponent("VeterinaryVisits"))
+            var visit = try await vet.current(catID: UUID(), catName: "同じ名前") { try $0() }
+            visit.observations = "保存当時の診察"; visit.startedOn = "2026-09-30"
+            visit.completedAt = Date(timeIntervalSince1970: 1_790_726_400)
+            _ = try await vet.save(visit, expectedRevision: visit.revision)
             let owner = UUID().uuidString.lowercased()
             let candidate = try ToolBackupFiles.capture(owner: owner, source: source)
             try await ToolBackupValidation.validate(candidate.index, at: ToolBackupFiles.directory(candidate.id))
@@ -188,7 +202,7 @@ struct ToolBackupFixtureView: View {
             let credential = ManagedPreservationSessionStore.Credential(token: String(repeating: "t", count: 43), ownerId: owner,
                                                                        expiresAt: Date().addingTimeInterval(600))
             guard try store.save(credential, replacing: nil) else { throw ToolBackupError.invalid }
-            defer { _ = try? store.clear(ifMatching: credential) }
+            defer { if let current = try? store.load() { _ = try? store.clear(ifMatching: current) } }
             let pieces = try ToolBackupFiles.drafts(candidate)
             let server = ToolBackupFixtureServer(maximum: pieces.count)
             let configuration = ManagedPreservationConfiguration(isEnabled: true, origin: origin, membershipAudience: "tool.fixture")
@@ -198,9 +212,21 @@ struct ToolBackupFixtureView: View {
                 try await ToolBackupTransfer.upload(candidate, client: client) { _, _ in }
                 throw ToolBackupError.invalid
             } catch ManagedPreservationError.unavailable { }
+            await server.hide(pieces[0].0)
+            do {
+                try await ToolBackupTransfer.confirmPendingAttemptBeforeDeletion(candidate, client: client)
+                throw ToolBackupError.invalid
+            } catch ToolBackupError.uncertain { }
+            guard try ToolBackupFiles.pending(owner: owner)?.id == candidate.id else { throw ToolBackupError.invalid }
+            await server.hide(nil)
             try await ToolBackupTransfer.upload(candidate, client: client) { _, _ in }
+            let coordinator = ManagedPreservationCoordinator(configuration: configuration, client: client)
+            coordinator.start()
+            for _ in 0..<100 where coordinator.isBusy { try await Task.sleep(for: .milliseconds(100)) }
+            guard coordinator.records.map(\.id) == [candidate.id] else { throw ToolBackupError.invalid }
+            coordinator.stop()
             let index = try await client.detail(candidate.id)
-            let missingID = pieces[0].0
+            let missingID = pieces[pieces.count - 2].0
             await server.hide(missingID)
             do {
                 _ = try await ToolBackupTransfer.restore(index.record, client: client) { _, _ in }
@@ -209,7 +235,15 @@ struct ToolBackupFixtureView: View {
             guard !FileManager.default.fileExists(atPath: ToolBackupFiles.directory(candidate.id).appendingPathComponent("contents").path)
             else { throw ToolBackupError.invalid }
             await server.hide(nil)
+            let firstReads = await server.readCount(pieces[0].0)
+            // A fresh explicit same-owner authentication may continue verified
+            // files without starting a large restore from the beginning.
+            let renewed = ManagedPreservationSessionStore.Credential(token: String(repeating: "r", count: 43), ownerId: owner,
+                                                                     expiresAt: Date().addingTimeInterval(600))
+            guard try store.save(renewed, replacing: credential) else { throw ToolBackupError.invalid }
+            try await client.reloadSessionFromSecureStorage()
             let restored = try await ToolBackupTransfer.restore(index.record, client: client) { _, _ in }
+            guard await server.readCount(pieces[0].0) == firstReads else { throw ToolBackupError.invalid }
             let restoredRoot = ToolBackupFiles.directory(restored.id).appendingPathComponent("contents")
             guard try Data(contentsOf: source.appendingPathComponent("CareHandoff/plan.json")) == careBytes,
                   try Data(contentsOf: restoredRoot.appendingPathComponent("CareHandoff/plan.json")) == careBytes,
@@ -218,8 +252,57 @@ struct ToolBackupFixtureView: View {
             let restoredCare = CareHandoffStore(directory: restoredRoot.appendingPathComponent("CareHandoff"), allowsCandidateRefresh: false)
             guard restoredCare.plan.cats.count == 2, restoredCare.plan.cats[0].id != restoredCare.plan.cats[1].id,
                   restoredCare.plan.cats[0].healthDetails == "保存当時の薬" else { throw ToolBackupError.invalid }
+            let restoredVisits = try await VeterinaryVisitStore(directory: restoredRoot.appendingPathComponent("VeterinaryVisits")).visits()
+            guard restoredVisits.first?.startedOn == "2026-09-30", restoredVisits.first?.completedAt == visit.completedAt else { throw ToolBackupError.invalid }
+            do {
+                _ = try ToolBackupFiles.restoredSource(restored.id, owner: UUID().uuidString)
+                throw ToolBackupError.invalid
+            } catch ManagedPreservationError.staleSession { }
+            let next = try ToolBackupFiles.capture(owner: owner, source: restoredRoot, sourceSnapshotID: restored.id)
+            defer { try? FileManager.default.removeItem(at: ToolBackupFiles.directory(next.id)) }
+            guard try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: restored.id)?.id == next.id,
+                  try ToolBackupFiles.pending(owner: owner) == nil else { throw ToolBackupError.invalid }
+            // A lost DELETE reply leaves the index available for explicit retry.
+            do {
+                try await ToolBackupTransfer.delete(candidate.index, client: client) { _, _ in }
+                throw ToolBackupError.invalid
+            } catch ManagedPreservationError.unavailable { }
+            _ = try await client.detail(candidate.id)
+            let deletedFirstReads = await server.readCount(pieces[0].0)
+            let deletionRenewed = ManagedPreservationSessionStore.Credential(token: String(repeating: "d", count: 43), ownerId: owner,
+                                                                            expiresAt: Date().addingTimeInterval(600))
+            guard try store.save(deletionRenewed, replacing: renewed) else { throw ToolBackupError.invalid }
+            try await client.reloadSessionFromSecureStorage()
+            try await ToolBackupTransfer.delete(candidate.index, client: client) { _, _ in }
+            guard await server.isEmpty(), await server.readCount(pieces[0].0) == deletedFirstReads,
+                  try ToolBackupFiles.saved().contains(where: { $0.id == restored.id }) else { throw ToolBackupError.invalid }
+            try verifyLargeIndex()
             saved = restored; result = "保存・再開・欠落拒否・復元・元記録保全を確認"
         } catch { result = "失敗: \(error)" }
+    }
+    private func verifyLargeIndex() throws {
+        let id = UUID(), owner = UUID().uuidString
+        var files: [ToolBackupIndex.File] = [.init(path: "VeterinaryVisits/state.json", bytes: 2,
+            sha256: ToolBackupIndex.hash(Data("{}".utf8)), records: [UUID()])]
+        files += (0..<900).map { _ in .init(path: "VeterinaryVisits/" + UUID().uuidString + ".jpg", bytes: 1000,
+            sha256: String(repeating: "0", count: 64), records: [UUID()]) }
+        let index = ToolBackupIndex(snapshotID: id, createdAt: Date(), files: files)
+        try index.validate()
+        let data = try JSONEncoder().encode(index)
+        guard data.count > 128 * 1024 else { throw ToolBackupError.invalid }
+        let value = ToolBackupFiles.Saved(owner: owner, index: index)
+        let folder = ToolBackupFiles.directory(id)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try ToolBackupFiles.write(JSONEncoder().encode(value), to: folder.appendingPathComponent("pending.json"))
+        guard try ToolBackupFiles.pending(owner: owner)?.index == index else { throw ToolBackupError.invalid }
+        let part = ToolBackupPart(snapshotId: id.uuidString.lowercased(), kind: "index", path: "index.json", part: 0, count: 1,
+                                  sha256: ToolBackupIndex.hash(data), payload: data.base64EncodedString())
+        try part.validate(photo: false)
+        let bytes = try JSONEncoder().encode(part)
+        let archive = try PhotoMemoryNoteExporter.createArchive(text: "ツールの保存", capturedAt: nil, writtenAt: nil,
+            updatedAt: nil, catNames: [], jpegData: nil, toolBackupJSON: bytes)
+        defer { try? archive.cleanup() }
+        guard try Data(contentsOf: archive.fileURL).range(of: bytes) != nil else { throw ToolBackupError.invalid }
     }
 }
 
@@ -227,13 +310,34 @@ private actor ToolBackupFixtureServer {
     let maximum: Int
     var records: [UUID: [String: Any]] = [:]
     var losesReply = true
+    var deleteCount = 0
+    var throttlesList = true
     var hidden: UUID?
+    var reads: [UUID: Int] = [:]
     init(maximum: Int) { self.maximum = maximum }
     func hide(_ id: UUID?) { hidden = id }
+    func readCount(_ id: UUID) -> Int { reads[id, default: 0] }
+    func isEmpty() -> Bool { records.isEmpty }
     func request(_ request: URLRequest) throws -> (Data, URLResponse) {
         let url = request.url!
-        func response(_ json: [String: Any], status: Int = 200) throws -> (Data, URLResponse) {
-            (try JSONSerialization.data(withJSONObject: json), HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        func response(_ json: [String: Any], status: Int = 200, headers: [String: String]? = nil) throws -> (Data, URLResponse) {
+            var fields = headers ?? [:]; fields["Content-Type"] = "application/json"
+            return (try JSONSerialization.data(withJSONObject: json), HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: fields)!)
+        }
+        if url.path == "/v1/records" {
+            let after = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "after" })?.value
+            let all = Array(records.values)
+            if after == nil {
+                var hiddenPart = all.first { (($0["document"] as? [String: Any])?["toolBackup"] as? [String: Any])?["kind"] as? String != "index" }!
+                hiddenPart["recordId"] = "00000000-0000-0000-0000-000000000001"
+                return try response(["items": [hiddenPart], "nextCursor": hiddenPart["recordId"]!, "generation": 1])
+            }
+            if throttlesList {
+                throttlesList = false
+                return try response(["error": ["code": "RATE_LIMITED"]], status: 429, headers: ["Retry-After": "1"])
+            }
+            let index = all.first { (($0["document"] as? [String: Any])?["toolBackup"] as? [String: Any])?["kind"] as? String == "index" }!
+            return try response(["items": [index], "nextCursor": NSNull(), "generation": 1])
         }
         if url.path == "/v1/usage" {
             return try response(["version": 1, "accounting": "encrypted-records-v1",
@@ -241,6 +345,12 @@ private actor ToolBackupFixtureServer {
                 "records": ["saved": records.count, "pending": 0, "maximumRecords": maximum, "creationLimitReached": records.count >= maximum]])
         }
         guard let id = UUID(uuidString: url.lastPathComponent) else { throw ToolBackupError.invalid }
+        if request.httpMethod == "DELETE" {
+            guard records.removeValue(forKey: id) != nil else { return try response(["error": ["code": "RECORD_NOT_FOUND"]], status: 404) }
+            deleteCount += 1
+            if deleteCount == 2 { throw ManagedPreservationError.unavailable }
+            return try response(["recordId": id.uuidString.lowercased(), "revision": 2])
+        }
         if request.httpMethod == "PUT" {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             let photo = (body["photoBase64"] as? String).flatMap { Data(base64Encoded: $0) }
@@ -249,6 +359,7 @@ private actor ToolBackupFixtureServer {
             if losesReply { losesReply = false; throw ManagedPreservationError.unavailable }
             return try response(["recordId": id.uuidString.lowercased(), "revision": 1])
         }
+        reads[id, default: 0] += 1
         guard id != hidden, let record = records[id] else { return try response(["error": ["code": "RECORD_NOT_FOUND"]], status: 404) }
         return try response(record)
     }

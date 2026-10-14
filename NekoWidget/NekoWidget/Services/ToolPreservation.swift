@@ -32,7 +32,7 @@ struct ToolBackupPart: Codable, Equatable, Sendable {
 }
 
 enum ToolBackupError: Error, LocalizedError {
-    case invalid, changed, empty, capacity, storage
+    case invalid, changed, empty, capacity, storage, uncertain
     var errorDescription: String? {
         switch self {
         case .invalid: "ツールの記録を確認できませんでした。不足や破損がない保存データを選び直してください。"
@@ -40,6 +40,7 @@ enum ToolBackupError: Error, LocalizedError {
         case .empty: "保存するツールの記録がまだありません。"
         case .capacity: "この保存に必要な空き容量・件数が足りません。記録を途中まで保存した状態を、保存完了として扱うことはありません。"
         case .storage: "ツールの保存・復元を完了できませんでした。元の記録はそのまま残っています。"
+        case .uncertain: "直前の送信結果をまだ確認できません。中断した保管を再開して結果を確認してから、取り消してください。"
         }
     }
 }
@@ -93,6 +94,7 @@ enum ToolBackupFiles {
         var id: UUID { index.snapshotID }
         let owner: String
         let index: ToolBackupIndex
+        var sourceSnapshotID: UUID? = nil
     }
     static var root: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -136,7 +138,7 @@ enum ToolBackupFiles {
                 return item
             }.sorted { $0.index.createdAt > $1.index.createdAt }
     }
-    static func pending(owner: String) throws -> Saved? {
+    static func pending(owner: String, sourceSnapshotID: UUID? = nil) throws -> Saved? {
         guard FileManager.default.fileExists(atPath: root.path) else { return nil }
         let folders = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             .filter { UUID(uuidString: $0.lastPathComponent) != nil }.sorted { $0.path < $1.path }
@@ -147,7 +149,7 @@ enum ToolBackupFiles {
             let saved = try JSONDecoder().decode(Saved.self, from: read(pending, maximum: 512 * 1024))
             try saved.index.validate()
             guard saved.id.uuidString == folder.lastPathComponent else { throw ToolBackupError.invalid }
-            if saved.owner == owner { return saved }
+            if saved.owner == owner && saved.sourceSnapshotID == sourceSnapshotID { return saved }
         }
         return nil
     }
@@ -162,8 +164,20 @@ enum ToolBackupFiles {
         if photoKeys.contains(key), let name = object as? String { return [name] }
         return []
     }
-    static func capture(owner: String, source: URL? = nil) throws -> Saved {
+    static func restoredSource(_ id: UUID, owner: String) throws -> URL {
+        let source = directory(id).appendingPathComponent("contents", isDirectory: true)
+        let attributes = try source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard attributes.isDirectory == true, attributes.isSymbolicLink != true else { throw ToolBackupError.invalid }
+        let receipt = try JSONDecoder().decode(Saved.self, from: read(source.appendingPathComponent("restored.json"), maximum: 512 * 1024))
+        guard receipt.id == id, receipt.owner == owner else { throw ManagedPreservationError.staleSession }
+        return source
+    }
+    static func capture(owner: String, source: URL? = nil, sourceSnapshotID: UUID? = nil) throws -> Saved {
         let source = source ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let sourceSnapshotID {
+            let expected = try restoredSource(sourceSnapshotID, owner: owner)
+            guard source.standardizedFileURL == expected.standardizedFileURL else { throw ToolBackupError.invalid }
+        }
         let id = UUID(), destination = directory(id)
         guard !FileManager.default.fileExists(atPath: destination.path) else { throw ToolBackupError.storage }
         try protect(destination)
@@ -198,7 +212,7 @@ enum ToolBackupFiles {
         for (url, original) in originalManifests {
             guard try read(url, maximum: 8 * 1024 * 1024) == original else { throw ToolBackupError.changed }
         }
-        let result = Saved(owner: owner, index: .init(snapshotID: id, createdAt: Date(), files: files))
+        let result = Saved(owner: owner, index: .init(snapshotID: id, createdAt: Date(), files: files), sourceSnapshotID: sourceSnapshotID)
         try result.index.validate()
         // Keep exact wire bytes across process restarts and encoder versions.
         try write(JSONEncoder().encode(result.index), to: destination.appendingPathComponent("index-wire.json"))
@@ -229,12 +243,90 @@ enum ToolBackupFiles {
 }
 
 enum ToolBackupTransfer {
+    static func confirmPendingAttemptBeforeDeletion(_ saved: ToolBackupFiles.Saved, client: ManagedPreservationClient) async throws {
+        let checkpoint = try await client.captureSessionCheckpoint()
+        guard try await client.sessionOwnerID() == saved.owner else { throw ManagedPreservationError.staleSession }
+        let folder = ToolBackupFiles.directory(saved.id)
+        let attemptURL = folder.appendingPathComponent("attempt.json")
+        guard FileManager.default.fileExists(atPath: attemptURL.path) else { return }
+        let id = try JSONDecoder().decode(UUID.self, from: ToolBackupFiles.read(attemptURL, maximum: 128))
+        let receiptURL = folder.appendingPathComponent("sent.json")
+        var sent = Set<UUID>()
+        if FileManager.default.fileExists(atPath: receiptURL.path) {
+            sent = try JSONDecoder().decode(Set<UUID>.self, from: ToolBackupFiles.read(receiptURL, maximum: 128 * 1024))
+        }
+        if sent.contains(id) { return }
+        guard let expected = try ToolBackupFiles.drafts(saved).first(where: { $0.0 == id })?.1 else { throw ToolBackupError.invalid }
+        do {
+            let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
+            guard snapshot.record.revision == 1, snapshot.document.toolBackup == expected else { throw ToolBackupError.invalid }
+        } catch ManagedPreservationError.notFound {
+            // A timed-out PUT can still be executing remotely. A momentary 404
+            // must not erase our only retry identity or claim deletion complete.
+            throw ToolBackupError.uncertain
+        }
+        try await client.requireSessionCheckpoint(checkpoint)
+        sent.insert(id)
+        try ToolBackupFiles.write(JSONEncoder().encode(sent), to: receiptURL)
+    }
+
+    /// Delete only records bound to this snapshot. Keep its index until last so
+    /// an interrupted deletion remains visible and can be explicitly retried.
+    static func delete(_ index: ToolBackupIndex, client: ManagedPreservationClient,
+                       progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
+        try index.validate()
+        let checkpoint = try await client.captureSessionCheckpoint()
+        guard let owner = try await client.sessionOwnerID() else { throw ManagedPreservationError.authenticationRequired }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let binding = ToolBackupIndex.hash(Data(owner.utf8) + (try encoder.encode(index)))
+        let receipt = ToolBackupFiles.root.appendingPathComponent("delete-" + binding + ".json")
+        let allIDs = Set(index.files.flatMap(\.records) + [index.snapshotID])
+        var deleted = Set<UUID>()
+        if FileManager.default.fileExists(atPath: receipt.path) {
+            deleted = try JSONDecoder().decode(Set<UUID>.self, from: ToolBackupFiles.read(receipt, maximum: 128 * 1024))
+            guard deleted.isSubset(of: allIDs) else { throw ToolBackupError.invalid }
+        }
+        var completed = 0
+        let total = index.files.reduce(1) { $0 + $1.records.count }
+        for file in index.files {
+            for (offset, id) in file.records.enumerated() {
+                try await client.requireSessionCheckpoint(checkpoint)
+                if deleted.contains(id) { completed += 1; await progress(completed, total); continue }
+                do {
+                    let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
+                    guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
+                          part.snapshotId == index.snapshotID.uuidString.lowercased(), part.path == file.path,
+                          part.part == offset, part.count == file.records.count,
+                          part.kind == (file.path.hasSuffix(".jpg") ? "photo" : "json") else { throw ToolBackupError.invalid }
+                    try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record) }
+                } catch ManagedPreservationError.notFound { }
+                try await client.requireSessionCheckpoint(checkpoint)
+                deleted.insert(id)
+                try ToolBackupFiles.write(JSONEncoder().encode(deleted), to: receipt)
+                completed += 1; await progress(completed, total)
+            }
+        }
+        try await client.requireSessionCheckpoint(checkpoint)
+        if !deleted.contains(index.snapshotID) { do {
+            let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(index.snapshotID) }
+            guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
+                  part.kind == "index", let bytes = Data(base64Encoded: part.payload),
+                  try JSONDecoder().decode(ToolBackupIndex.self, from: bytes) == index else { throw ToolBackupError.invalid }
+            try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record) }
+        } catch ManagedPreservationError.notFound { } }
+        try await client.requireSessionCheckpoint(checkpoint)
+        deleted.insert(index.snapshotID)
+        try ToolBackupFiles.write(JSONEncoder().encode(deleted), to: receipt)
+        await progress(total, total)
+    }
+
     static func upload(_ saved: ToolBackupFiles.Saved, client: ManagedPreservationClient,
                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
         let checkpoint = try await client.captureSessionCheckpoint()
         guard try await client.sessionOwnerID() == saved.owner else { throw ManagedPreservationError.staleSession }
         let pieces = try ToolBackupFiles.drafts(saved)
         let receiptURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("sent.json")
+        let attemptURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("attempt.json")
         var sent = Set<UUID>()
         if FileManager.default.fileExists(atPath: receiptURL.path) {
             sent = try JSONDecoder().decode(Set<UUID>.self, from: ToolBackupFiles.read(receiptURL, maximum: 128 * 1024))
@@ -243,15 +335,19 @@ enum ToolBackupTransfer {
         let usage = try await client.usage()
         if let maximum = usage.records.maximumRecords,
            Int64(pieces.count - sent.count) > maximum - usage.records.saved - usage.records.pending {
-            // A PUT may have committed before its reply/local receipt was lost.
-            // Reconcile those stable IDs before treating them as new quota.
-            for (id, piece) in pieces where !sent.contains(id) {
+            // Sequential writes can leave only the last attempted PUT uncertain.
+            // Do not scan all missing IDs on every short authentication session.
+            if FileManager.default.fileExists(atPath: attemptURL.path) {
+                let id = try JSONDecoder().decode(UUID.self, from: ToolBackupFiles.read(attemptURL, maximum: 128))
+                guard let piece = pieces.first(where: { $0.0 == id })?.1 else { throw ToolBackupError.invalid }
                 try await client.requireSessionCheckpoint(checkpoint)
-                do {
-                    let existing = try await client.detail(id)
+                if !sent.contains(id) { do {
+                    let existing = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
                     guard existing.record.revision == 1, existing.document.toolBackup == piece else { throw ToolBackupError.invalid }
                     sent.insert(id)
-                } catch ManagedPreservationError.notFound { }
+                    try await client.requireSessionCheckpoint(checkpoint)
+                    try ToolBackupFiles.write(JSONEncoder().encode(sent), to: receiptURL)
+                } catch ManagedPreservationError.notFound { } }
             }
             try await client.requireSessionCheckpoint(checkpoint)
         }
@@ -276,6 +372,7 @@ enum ToolBackupTransfer {
                 capturedAt: nil, writtenAt: saved.index.createdAt, updatedAt: saved.index.createdAt,
                 catNames: [], photoFile: jpeg == nil ? nil : "photo.jpg", toolBackup: item.1)
             // Stable IDs make even an uncertain PUT idempotent. No overwrite path.
+            try ToolBackupFiles.write(JSONEncoder().encode(item.0), to: attemptURL)
             let revision = try await waitingForRateLimit(client: client, checkpoint: checkpoint) {
                 try await client.put(.init(recordID: item.0, document: document, jpegData: jpeg), consent: true)
             }
