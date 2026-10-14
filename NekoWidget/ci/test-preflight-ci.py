@@ -1722,12 +1722,13 @@ class ToolBuildRecoveryBudgetTests(unittest.TestCase):
         self.assertEqual(measured["required_backend_runs"],[proof["backend_evidence"]])
         source=dict(f.source,created_at=(f.now-dt.timedelta(minutes=60)).isoformat(),failed_tests=[],unsupported_failed_tests=[])
         plan_failure=dict(f.failed_plan,created_at=(f.now-dt.timedelta(minutes=10)).isoformat(),failed_tests=[],unsupported_failed_tests=[])
+        privacy_failure=dict(f.privacy,created_at=(f.now-dt.timedelta(minutes=5)).isoformat(),failed_tests=[],unsupported_failed_tests=[])
         diagnostic={"id":90,"path":preflight.DIAGNOSTIC_WORKFLOW,"status":"completed","conclusion":"failure",
                     "created_at":(f.now-dt.timedelta(minutes=80)).isoformat(),"failed_tests":[],"unsupported_failed_tests":[]}
-        retained=[diagnostic,source,plan_failure]
+        retained=[diagnostic,source,plan_failure,privacy_failure]
         result=preflight.apply_task_gate(copy.deepcopy(measured),retained,f.now,correction_evidence=proof)
         self.assertTrue(result["ready"])
-        self.assertEqual(set(result["task"]["failed_runs"]),{90,planner.TOOL_BUILD_SOURCE_RUN,planner.TOOL_PLAN_FAILURE_RUN})
+        self.assertEqual(set(result["task"]["failed_runs"]),{90,planner.TOOL_BUILD_SOURCE_RUN,planner.TOOL_PLAN_FAILURE_RUN,planner.TOOL_PRIVACY_FAILED_RUN})
         self.assertEqual(result["task"]["minutes_since_first_ci"],80)
         self.assertEqual(result["task"]["projected_total_minutes"],110)
         self.assertFalse(result["task"]["first_baseline_measurement"])
@@ -1747,6 +1748,14 @@ class ToolBuildRecoveryBudgetTests(unittest.TestCase):
         for field,value in (("run_id",1),("job_id",1),("log_sha256","f"*64),("native_jobs_executed",True),("success_evidence",True)):
             altered=dict(proof,failed_plan_evidence=dict(proof["failed_plan_evidence"],**{field:value}))
             with self.subTest(proof_field=field),self.assertRaises(ValueError):
+                preflight.apply_task_gate(copy.deepcopy(measured),retained,f.now,correction_evidence=altered)
+        with self.assertRaises(ValueError):preflight.apply_task_gate(copy.deepcopy(measured),retained[:-1],f.now,correction_evidence=proof)
+        for field,value in (("head_sha","f"*40),("run_attempt",2),("event","pull_request"),("status","in_progress"),("conclusion","success")):
+            with self.subTest(privacy_field=field),self.assertRaises(ValueError):
+                preflight.apply_task_gate(copy.deepcopy(measured),retained[:-1]+[dict(privacy_failure,**{field:value})],f.now,correction_evidence=proof)
+        for field,value in (("job_id",1),("log_sha256","f"*64),("blob_pair",["f"*40,"e"*40]),("source_build_success",True),("failure_screen_rendering_verified",True)):
+            altered=dict(proof,failed_fixture_build_evidence=dict(proof["failed_fixture_build_evidence"],**{field:value}))
+            with self.subTest(privacy_proof_field=field),self.assertRaises(ValueError):
                 preflight.apply_task_gate(copy.deepcopy(measured),retained,f.now,correction_evidence=altered)
 
 
