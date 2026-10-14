@@ -3991,6 +3991,25 @@ class ToolBuildRecoveryInputTests(unittest.TestCase):
                 with self.assertRaises(ValueError):planner.tool_fixed_observation(bad)
             self.assertEqual(command.call_count,1)
 
+    def test_only_exact_debug_message_pair_is_added_to_the_historical_closure(self):
+        p=planner
+        row=[":100644","100644",*p.TOOL_PRIVACY_PAIR,"M"]
+        self.assertTrue(self.verify(extra={p.TOOL_PRIVACY_PATH:row}))
+        for index,value in ((0,":000000"),(1,"100755"),(2,"c"*40),(3,"d"*40),(4,"A")):
+            changed=list(row);changed[index]=value
+            self.assertFalse(self.verify(extra={p.TOOL_PRIVACY_PATH:changed}))
+        def check(*,ancestor=True,before=True,after=True,approved=True,mode="100644"):
+            def git(*args):
+                if args[0]=="merge-base":
+                    if not ancestor:raise subprocess.CalledProcessError(1,args)
+                    return ""
+                blob=p.TOOL_PRIVACY_PAIR[0] if args[1]==p.TOOL_PRIVACY_FAILED_SOURCE else p.TOOL_PRIVACY_PAIR[1]
+                if (args[1]==p.TOOL_PRIVACY_FAILED_SOURCE and not before) or (args[1]!=p.TOOL_PRIVACY_FAILED_SOURCE and not after):blob="f"*40
+                return f"{mode} blob {blob}\t{p.TOOL_PRIVACY_PATH}"
+            with patch.object(p,"git",side_effect=git),patch.object(p,"tool_recovery_inputs",return_value=approved):return p.tool_privacy_failure_inputs("a"*40)
+        self.assertTrue(check())
+        for value in ({"ancestor":False},{"before":False},{"after":False},{"approved":False},{"mode":"120000"}):self.assertFalse(check(**value))
+
 
 class ToolBuildRecoveryTests(unittest.TestCase):
     def setUp(self):
@@ -4040,6 +4059,12 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             self.source_jobs.append(entry)
         for identifier in p.TOOL_BUILD_SOURCE_PLACEHOLDERS:
             self.source_jobs.append(dict(job(identifier,p.UNEXPANDED_SHARING_JOB,self.source,()),conclusion="skipped"))
+        self.privacy=run(p.TOOL_PRIVACY_FAILED_RUN,p.TOOL_PRIVACY_FAILED_SOURCE,result="failure")
+        self.privacy_jobs=[job(p.TOOL_PRIVACY_FAILED_PLAN,p.PLAN_JOB,self.privacy,("Select checks",)),
+                           job(p.TOOL_PRIVACY_FAILED_BUILD,p.BUILD,self.privacy,self.build_steps)]
+        self.privacy_jobs[1]["conclusion"]="failure"
+        for index,step in enumerate(self.privacy_jobs[1]["steps"]):step["conclusion"]="success" if index<2 else "failure" if index==2 else "skipped"
+        self.privacy_jobs.extend(dict(job(identifier,name,self.privacy,()),conclusion="skipped") for identifier,name in p.TOOL_PRIVACY_FAILED_PLACEHOLDERS.items())
         steps=("Typecheck the disabled service","Verify local identity, custody and storage boundaries",
                "Verify legacy notice evidence migration with synthetic owners","Bundle the private authority without deployment or provisioning",
                "Bundle the private owner deletion executor without deployment")
@@ -4053,7 +4078,8 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             f"repos/{self.repo}/git/commits/{p.TOOL_BUILD_SOURCE}":{"sha":p.TOOL_BUILD_SOURCE,"tree":{"sha":p.TOOL_PR_TREE},"parents":[{"sha":v} for v in ("460a732dc0a563e257e1b929a395d992b53f4b1d",p.TOOL_PR_BASE)]},
             f"repos/{self.repo}/actions/jobs/{p.TOOL_PR_JOB}/logs":f"+{p.TOOL_PR_MERGE}:refs/remotes/pull/289/merge\ncheckout {p.TOOL_PR_MERGE}\n",
             f"repos/{self.repo}/actions/jobs/{p.TOOL_BUILD_SOURCE_JOBS[p.BUILD]}/logs":"reviewed_code_changed\n# tests 2\n# pass 1\n# fail 1\n",
-            f"repos/{self.repo}/actions/jobs/{p.TOOL_PLAN_FAILURE_JOB}/logs":'IOS_CI_EVIDENCE_JSON={"stage":"lookup_blocked","reason":"evidence_lookup_failed","error":"CorrectionEvidenceUnavailable"}\nEvidence lookup failed; no Mac checks were authorized.\n'}
+            f"repos/{self.repo}/actions/jobs/{p.TOOL_PLAN_FAILURE_JOB}/logs":'IOS_CI_EVIDENCE_JSON={"stage":"lookup_blocked","reason":"evidence_lookup_failed","error":"CorrectionEvidenceUnavailable"}\nEvidence lookup failed; no Mac checks were authorized.\n',
+            f"repos/{self.repo}/actions/jobs/{p.TOOL_PRIVACY_FAILED_BUILD}/logs":"FAIL: test_product_code_never_persists_raw_error_text\nNekoWidget/Views/RestoredToolsView.swift\nFAILED (failures=1)\n"}
         self.digests={identifier:p.tool_log_digest(self.observations[f"repos/{self.repo}/actions/jobs/{identifier}/logs"]) for identifier in p.TOOL_LOG_DIGESTS}
 
     def record(self,sha):
@@ -4064,6 +4090,16 @@ class ToolBuildRecoveryTests(unittest.TestCase):
         if sha==self.head:
             record["test_correction_evidence"]=self.prove()
             record["required_backend_runs"]=[record["test_correction_evidence"]["backend_evidence"]]
+        if sha==p.TOOL_PRIVACY_FAILED_SOURCE:
+            native=tuple(name for name in self.required if name!=p.BUILD)
+            backend={"run_id":p.TOOL_PR_RUN,"job_id":p.TOOL_PR_JOB,"event":"pull_request","candidate_sha":p.TOOL_BUILD_SOURCE,
+                     "checkout_sha":p.TOOL_PR_MERGE,"tree":p.TOOL_PR_TREE,"push_evidence":False}
+            record["test_correction_evidence"]={"kind":"tool-preservation-signed-release-build-recovery-v1","candidate_sha":sha,
+                "run_id":p.TOOL_BUILD_SOURCE_RUN,"sha":p.TOOL_BUILD_SOURCE,
+                "jobs":[{"name":name,"job_id":p.TOOL_BUILD_SOURCE_JOBS[name]} for name in native],
+                "failed_build_job_id":p.TOOL_BUILD_SOURCE_JOBS[p.BUILD],"failed_build_log_sha256":p.TOOL_LOG_DIGESTS[p.TOOL_BUILD_SOURCE_JOBS[p.BUILD]],
+                "backend_evidence":backend,"failed_plan_evidence":p.tool_plan_failure_record(),"owning_jobs_to_execute":[p.BUILD],"source_build_success":False}
+            record["required_backend_runs"]=[backend]
         if sha==self.main:record.update(evidence_run_id=1003,evidence_sha=self.head)
         return record
 
@@ -4076,10 +4112,11 @@ class ToolBuildRecoveryTests(unittest.TestCase):
             if "event=push" in endpoint:return self.push_backend
             return {"total_count":1,"workflow_runs":[self.pr]}
         if endpoint.startswith("workflows/ios-build.yml/runs?"):
+            if "head_sha="+p.TOOL_PRIVACY_FAILED_SOURCE in endpoint:return {"total_count":1,"workflow_runs":[self.privacy]}
             if "head_sha="+p.TOOL_PLAN_FAILURE_SOURCE in endpoint:return {"total_count":1,"workflow_runs":[self.failed_plan]}
             if "head_sha="+p.TOOL_BUILD_SOURCE in endpoint:return {"total_count":1,"workflow_runs":[self.source]}
             return {"workflow_runs":[self.candidate]}
-        owners=[(self.source,self.source_jobs),(self.failed_plan,self.failed_plan_jobs),(self.pr,self.pr_jobs),(self.candidate,self.candidate_jobs),(self.current,self.current_jobs)]
+        owners=[(self.source,self.source_jobs),(self.failed_plan,self.failed_plan_jobs),(self.privacy,self.privacy_jobs),(self.pr,self.pr_jobs),(self.candidate,self.candidate_jobs),(self.current,self.current_jobs)]
         for run,jobs in owners:
             if endpoint==f"runs/{run['id']}":return run
             if endpoint==f"runs/{run['id']}/jobs?filter=latest&per_page=100&page=1":return {"total_count":len(jobs),"jobs":jobs}
@@ -4091,6 +4128,7 @@ class ToolBuildRecoveryTests(unittest.TestCase):
     @contextlib.contextmanager
     def mocks(self):
         with patch.object(planner,"tool_recovery_inputs",return_value=True),patch.object(planner,"tool_build_steps",return_value=self.build_steps), \
+                patch.object(planner,"tool_privacy_failure_inputs",return_value=True), \
                 patch.object(planner,"git",return_value=""), \
                 patch.object(planner,"tool_fixed_observation",side_effect=self.observations.__getitem__), \
                 patch.object(planner,"TOOL_LOG_DIGESTS",self.digests):yield
@@ -4238,6 +4276,35 @@ class ToolBuildRecoveryTests(unittest.TestCase):
                 with self.subTest(key=key),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
                 self.observations[key]=old
 
+    def test_fixed_privacy_failure_retains_old_proof_and_requires_complete_new_build(self):
+        original=copy.deepcopy(self.privacy_jobs)
+        with self.mocks():
+            self.assertEqual(self.prove()["failed_fixture_build_evidence"],planner.tool_privacy_failure_record())
+            self.assertFalse(self.prove()["failed_fixture_build_evidence"]["failure_screen_rendering_verified"])
+            for index,job in enumerate(original):
+                for field,value in (("id",1),("run_id",1),("head_sha","f"*40),("run_attempt",2),("status","queued"),("name","unknown"),("conclusion","cancelled")):
+                    self.privacy_jobs=copy.deepcopy(original);self.privacy_jobs[index][field]=value
+                    with self.subTest(job=job["id"],field=field),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                self.privacy_jobs=copy.deepcopy(original);self.privacy_jobs.pop(index)
+                with self.subTest(missing=job["id"]),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.privacy_jobs=copy.deepcopy(original)+[copy.deepcopy(original[-1])]
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.privacy_jobs=copy.deepcopy(original)
+            for step in self.privacy_jobs[1]["steps"]:
+                old=step["conclusion"];step["conclusion"]="success" if old!="success" else "failure"
+                with self.subTest(step=step["name"]),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+                step["conclusion"]=old
+            self.privacy_jobs[-1]["steps"]=[{"name":"native execution"}]
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            self.privacy_jobs=copy.deepcopy(original)
+            with patch.object(planner,"tool_privacy_failure_inputs",return_value=False),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+            old_record=self.record
+            def wrong_record(sha):
+                record=old_record(sha)
+                if sha==planner.TOOL_PRIVACY_FAILED_SOURCE:record["test_correction_evidence"]["source_build_success"]=True
+                return record
+            with patch.object(self,"record",side_effect=wrong_record),self.assertRaises(planner.CorrectionEvidenceUnavailable):self.prove()
+
 
 class ToolBackendWaitTests(unittest.TestCase):
     def setUp(self):
@@ -4336,7 +4403,7 @@ class ToolPreservationScopeTests(unittest.TestCase):
         return {path: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
                        "A" if before == "0" * 40 else "M"] for path, (before, after) in planner.TOOL_PRESERVATION_BLOBS.items()}
 
-    def select(self, rows=None, raw=None, entries=None, registration=True, project=None, tests=None, ancestor=True, manifests=None):
+    def select(self, rows=None, raw=None, entries=None, registration=True, project=None, tests=None, ancestor=True, manifests=None, recovery=False):
         rows = self.rows() if rows is None else rows
         before, after = self.project() if project is None else project
         source = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
@@ -4358,14 +4425,17 @@ class ToolPreservationScopeTests(unittest.TestCase):
                     return (manifests or {}).get(args[3], f"100644 blob {'f'*40}\tREADME.md\0")
                 ref,path=args[1],args[3]
                 if (ref,path) in (entries or {}): return entries[(ref,path)]
-                if path in planner.TOOL_PRESERVATION_CONTROLS: return f"100644 blob {'e'*40}\t{path}"
+                if recovery and path=="NekoWidget/ci/release-testflight.py": return f"100644 blob {planner.TOOL_RESTORED_RELEASE}\t{path}"
+                if recovery and path==planner.TOOL_PRIVACY_PATH:return f"100644 blob {rows[path][3]}\t{path}" if path in rows else ""
+                if path in planner.TOOL_RECOVERY_CONTROLS: return f"100644 blob {'e'*40}\t{path}"
                 if path in planner.TOOL_PRESERVATION_IMMUTABLE: return f"100644 blob {planner.TOOL_PRESERVATION_IMMUTABLE[path]}\t{path}"
                 if path in planner.TOOL_PRESERVATION_IMMUTABLE_TREES: return f"040000 tree {planner.TOOL_PRESERVATION_IMMUTABLE_TREES[path]}\t{path}"
                 if path == "NekoWidget/PreservationService": return f"040000 tree {planner.TOOL_PRESERVATION_SERVICE_TREES[0 if ref==self.base else 1]}\t{path}"
                 raise AssertionError(args)
             raise AssertionError(args)
         manifest = f"100644 blob {'f'*40}\tREADME.md\0"
-        with patch.object(planner,"git",side_effect=git), patch.object(planner,"TOOL_PRESERVATION_IMMUTABLE_TREE_SHA256",planner.hashlib.sha256(manifest.encode()).hexdigest()):
+        with patch.object(planner,"git",side_effect=git), patch.object(planner,"TOOL_PRESERVATION_IMMUTABLE_TREE_SHA256",planner.hashlib.sha256(manifest.encode()).hexdigest()), \
+                patch.object(planner,"tool_recovery_inputs",return_value=recovery):
             return planner.runtime_scope(list(rows), {}, {"GITHUB_SHA":self.head,"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/codex/tools"})
 
     def test_exact_inputs_require_four_native_jobs_and_one_real_preservation_backend(self):
@@ -4380,6 +4450,17 @@ class ToolPreservationScopeTests(unittest.TestCase):
         self.assertEqual(len(set(planner.TOOL_PRESERVATION_TESTS)),8)
         self.assertEqual(planner.tool_preservation_requirements(self.head),[
             {"workflow":planner.PRESERVATION_WORKFLOW,"job":planner.PRESERVATION_JOB,"head_sha":self.head,"success_required":True}])
+
+    def test_recovery_binds_the_new_view_as_an_exact_addition_from_main(self):
+        rows=self.rows();rows[planner.TOOL_PRIVACY_PATH][3]=planner.TOOL_PRIVACY_PAIR[1]
+        self.assertEqual(self.select(rows,recovery=True),planner.TOOL_PRESERVATION_SCOPE)
+        for index,value in ((0,":100644"),(1,"100755"),(2,"c"*40),(3,"d"*40),(4,"M")):
+            changed=copy.deepcopy(rows);changed[planner.TOOL_PRIVACY_PATH][index]=value
+            self.assertEqual(self.select(changed,recovery=True),scope.FULL_SCOPE)
+        for path in rows:
+            changed=copy.deepcopy(rows);changed.pop(path)
+            self.assertEqual(self.select(changed,recovery=True),scope.FULL_SCOPE)
+        self.assertEqual(self.select(rows|{"NekoWidget/Shared/unknown.swift":[":000000","100644","0"*40,"d"*40,"A"]},recovery=True),scope.FULL_SCOPE)
 
     def test_partial_unknown_blobs_modes_handoffs_and_mixed_controls_fail_closed(self):
         rows=self.rows()

@@ -784,6 +784,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         and correction_evidence.get("failed_build_job_id") == planner.TOOL_BUILD_SOURCE_JOBS[planner.BUILD]
         and correction_evidence.get("failed_build_log_sha256") == planner.TOOL_LOG_DIGESTS[planner.TOOL_BUILD_SOURCE_JOBS[planner.BUILD]]
         and correction_evidence.get("failed_plan_evidence") == planner.tool_plan_failure_record()
+        and correction_evidence.get("failed_fixture_build_evidence") == planner.tool_privacy_failure_record()
         and correction_evidence.get("owning_jobs_to_execute") == [planner.BUILD]
         and correction_evidence.get("source_build_success") is False)
     if result.get("scope") == planner.TOOL_PRESERVATION_SCOPE and correction_evidence is not None and not tool_correction:
@@ -805,6 +806,13 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                 or (plans[0].get("status"), plans[0].get("conclusion")) != ("completed", "failure")):
             raise ValueError("Fixed tool plan failure missing from task history")
         fixed_owner_failures.add(planner.TOOL_PLAN_FAILURE_RUN)
+        privacy = [run for run in runs if run["id"] == planner.TOOL_PRIVACY_FAILED_RUN]
+        if (len(privacy) != 1 or privacy[0].get("head_sha") != planner.TOOL_PRIVACY_FAILED_SOURCE
+                or privacy[0].get("head_branch") != planner.TOOL_BUILD_BRANCH or privacy[0].get("event") != "push"
+                or privacy[0].get("path") != IOS_WORKFLOW or privacy[0].get("run_attempt") != 1
+                or (privacy[0].get("status"), privacy[0].get("conclusion")) != ("completed", "failure")):
+            raise ValueError("Fixed DEBUG privacy Build failure missing from task history")
+        fixed_owner_failures.add(planner.TOOL_PRIVACY_FAILED_RUN)
         if any(run["id"] not in fixed_owner_failures and run["path"] != DIAGNOSTIC_WORKFLOW for run in failed):
             blockers.append("tool_recovery_has_unknown_failure")
     if internal_correction:
