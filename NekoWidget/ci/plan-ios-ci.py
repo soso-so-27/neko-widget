@@ -601,6 +601,21 @@ PRESERVATION_PUBLIC_RETENTION_IMMUTABLE = {
 # One reviewed all-PUT admission counter, migration and frozen policy input.
 # Register controls on main first; no mixed product/control companion exception.
 # Read-only owner storage accounting; controls must land on main first.
+# Exact JSON-order retry correction; main-approved controls, no grant/schema changes.
+PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE = "preservation-tool-trial-fingerprint-v1"
+PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS = {
+    "NekoWidget/PreservationService/src/tool-owner-trial.ts": (
+        "3c39843e8e54799615e53ab5ba2ecaaa390d324b", "5f1530e6ad057e32827778e2600efc0034dfb840"),
+    "NekoWidget/PreservationService/test/tool-owner-trial.integration.test.ts": (
+        "bc134fabf24fbd4b4b1495fff1b19d2fabf18d65", "2228af7ccbae9d2df25ec609437dae619998f6e3"),
+}
+PRESERVATION_TOOL_TRIAL_FINGERPRINT_PATHS = frozenset(PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS)
+PRESERVATION_TOOL_TRIAL_FINGERPRINT_CONTROLS = frozenset({
+    "NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/preflight-ci.py",
+    "NekoWidget/ci/test-plan-ios-ci.py", "NekoWidget/ci/test-preflight-ci.py",
+})
+PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256 = "365f35310ba5ffa6e3ce505a0c59bcdc71b4ffe55c30a2392a79edc45f2d0479"
+
 PRESERVATION_STORAGE_USAGE_SCOPE = "preservation-storage-usage-v1"
 PRESERVATION_STORAGE_USAGE_BLOBS = {
     "NekoWidget/PreservationService/src/owner-storage-usage.ts": (
@@ -1875,6 +1890,48 @@ def preservation_public_retention_requirements(head):
              "head_sha": head, "success_required": True}]
 
 
+def preservation_tool_trial_fingerprint_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_TOOL_TRIAL_FINGERPRINT_PATHS
+            and all(path in PRESERVATION_TOOL_TRIAL_FINGERPRINT_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_tool_trial_fingerprint_backend_only(paths, base, head):
+    """One exact trial retry fix and tests; every other tracked input stays fixed."""
+    if not preservation_tool_trial_fingerprint_paths_only(paths): return False
+    approved = git("merge-base", "refs/remotes/origin/main", head)
+    registration = 'PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE = "preservation-tool-trial-fingerprint-v1"'
+    if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1: return False
+    if (set(PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS) != {
+                "NekoWidget/PreservationService/src/tool-owner-trial.ts",
+                "NekoWidget/PreservationService/test/tool-owner-trial.integration.test.ts"}
+            or not re.fullmatch(r"[0-9a-f]{64}", PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256)
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS.values())): return False
+    for path in PRESERVATION_TOOL_TRIAL_FINGERPRINT_CONTROLS:
+        trusted = git("ls-tree", approved, "--", path)
+        if not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), trusted): return False
+        if any(git("ls-tree", ref, "--", path) != trusted for ref in (base, head)): return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS,
+            companion_paths=frozenset(), companion_digests={}, companion_name="unused"): return False
+    for ref in (base, head):
+        for path, pair in PRESERVATION_TOOL_TRIAL_FINGERPRINT_BLOBS.items():
+            blob = pair[0 if ref == base else 1]
+            expected = "" if blob == "0" * 40 else f"100644 blob {blob}\t{path}"
+            if git("ls-tree", ref, "--", path) != expected: return False
+        rows = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
+        # Only ordinary handoffs are excluded. Release candidate notes remain pinned.
+        frozen = [row for row in rows if not (row.split("\t", 1)[1].startswith("handoffs/") and row.split("\t", 1)[1].endswith(".md"))
+                  and row.split("\t", 1)[1] not in PRESERVATION_TOOL_TRIAL_FINGERPRINT_PATHS | PRESERVATION_TOOL_TRIAL_FINGERPRINT_CONTROLS]
+        if hashlib.sha256(("\0".join(frozen) + "\0").encode()).hexdigest() != PRESERVATION_TOOL_TRIAL_FINGERPRINT_CLOSURE_SHA256: return False
+    return True
+
+
+def preservation_tool_trial_fingerprint_requirements(head):
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "event": "push", "success_required": True}]
+
+
 def preservation_storage_usage_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_STORAGE_USAGE_PATHS
@@ -2910,6 +2967,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_R2_VIEW_SCOPE and preservation_r2_view_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_NOTICE_MESSAGE_ID_SCOPE and preservation_notice_message_id_paths_only(paths):
+        return (PRESERVATION_JOB,)
+    if runtime_scope == PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE and preservation_tool_trial_fingerprint_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_STORAGE_USAGE_SCOPE and preservation_storage_usage_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -4743,6 +4802,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (MODERATION_AI_SCOPE, moderation_ai_paths_only, moderation_ai_backend_only),
                                        (MODERATION_ENROLLMENT_SCOPE, moderation_enrollment_paths_only, moderation_enrollment_backend_only),
                                        (PRESERVATION_RECOVERY_CHUNKS_SCOPE, preservation_recovery_chunks_paths_only, preservation_recovery_chunks_backend_only),
+                                       (PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE, preservation_tool_trial_fingerprint_paths_only, preservation_tool_trial_fingerprint_backend_only),
                                        (PRESERVATION_STORAGE_USAGE_SCOPE, preservation_storage_usage_paths_only, preservation_storage_usage_backend_only),
                                        (PRESERVATION_TOOL_OWNER_TRIAL_SCOPE, preservation_tool_owner_trial_paths_only, preservation_tool_owner_trial_backend_only),
                                        (PRESERVATION_ALL_PUT_BYTES_SCOPE, preservation_all_put_bytes_paths_only, preservation_all_put_bytes_backend_only),
@@ -7430,7 +7490,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, JPEG_BODY_TRANSPORT_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_STORAGE_USAGE_SCOPE, PRESERVATION_TOOL_OWNER_TRIAL_SCOPE, PRESERVATION_ALL_PUT_BYTES_SCOPE, PRESERVATION_PUBLIC_RETENTION_SCOPE, PRESERVATION_NOTICE_MESSAGE_ID_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, JPEG_BODY_TRANSPORT_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE, PRESERVATION_STORAGE_USAGE_SCOPE, PRESERVATION_TOOL_OWNER_TRIAL_SCOPE, PRESERVATION_ALL_PUT_BYTES_SCOPE, PRESERVATION_PUBLIC_RETENTION_SCOPE, PRESERVATION_NOTICE_MESSAGE_ID_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -7453,6 +7513,8 @@ def main() -> None:
                  if selected_scope == PRESERVATION_R2_VIEW_SCOPE else {}),
               **({"required_backend_runs": preservation_notice_message_id_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_NOTICE_MESSAGE_ID_SCOPE else {}),
+              **({"required_backend_runs": preservation_tool_trial_fingerprint_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE else {}),
               **({"required_backend_runs": preservation_storage_usage_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_STORAGE_USAGE_SCOPE else {}),
               **({"required_backend_runs": preservation_tool_owner_trial_requirements(env["GITHUB_SHA"])}
@@ -7505,6 +7567,7 @@ def main() -> None:
             backend = {JPEG_SCOPE: (JPEG_JOB, JPEG_WORKFLOW),
                        PRESERVATION_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_UPLOAD_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_STORAGE_USAGE_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_TOOL_OWNER_TRIAL_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_R2_VIEW_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
