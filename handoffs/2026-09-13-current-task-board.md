@@ -1,4 +1,12 @@
-## 2026-10-14 月980円を維持・ツールの保存と復元を本線反映（未配布）
+## 2026-10-14 クラウド接続と配布準備（実試用・配布前）
+
+- [最新の接続・配布準備と費用残件](2026-10-14-tool-cloud-distribution-preparation.md)。月980円を維持し、3人枠や旧予備費込み見積を販売人数・通常1人原価・費用承認へ転用しない。
+- 既存の保管Workerをツール保存v3へ実更新し、version `b502db9a`の凍結bundle完全一致と追加migration34を確認。旧本人1名・記録1件、secret参照・公開範囲・設定・期限を保持し、通常記録へのwrite0。初回SQL改行比較の停止を診断し、DDL再実行なしでcodeだけ継続した。
+- [PR295](https://github.com/soso-so-27/neko-widget/pull/295)の制御を先にmain承認し、[PR296](https://github.com/soso-so-27/neko-widget/pull/296)の新署名readinessと配布CLIをmain `a1403ef`へ反映。[候補CI38533784539](https://github.com/soso-so-27/neko-widget/actions/runs/38533784539)の新Build39全成功（22分40秒）と旧3native・固定PR backend・元失敗を実CLIで適格化、mainも証拠再利用で成功。配布CLI dry-runは未使用255／既254・内部保管＋owner-only reports・billing OFFで成功。Apple uploadは未実施。
+- pilotと費用reviewは期限切れのまま。AWS本日ログイン未完のため現credit/planを確定していない。限定試用grant（本人・固定snapshot・byte/試行数・有限期限）と実量/全費目を具体化してから受付を再開する。既存pilot SQLだけで1snapshot/20MiBを強制できず、migration34のbyte上限は一般モード用。実5ツールのクラウド保存・別iPhone復元は未確認。
+- 追加契約・AWS有料化・一般公開・課金開始・定期タスクの作成/変更/再実行なし。readiness期限は10/14 19:26:58 JSTで、配布直前にも確認する。AWS有料継続と運用/保持原資の費用承認は残る。
+
+## 2026-10-14 月980円を維持・ツールの保存と復元を本線反映（履歴：PR289時点、未配布）
 
 - 最新指定は[ツールを含む保存・復元](2026-10-14-tool-preservation.md)。3人枠と旧予備費込みの予算案を販売設計・通常の1人原価・承認済み費用として使わない。下の同日資料は履歴。
 - ツール5種類の記録と選択JPEG、本人同意、通信中断からの再開、元記録を上書きしない復元、復元コピーの同本人への再保管とコピー全体の削除を実装。[PR289](https://github.com/soso-so-27/neko-widget/pull/289)をmain `4e3bc4a`へ反映。バックエンド全検査、4画面の診断実描画、元候補の写真・両OS runtime・UI8操作、[最終Build](https://github.com/soso-so-27/neko-widget/actions/runs/38522165824)の39必須stepが成功。旧失敗は[詳細記録](2026-10-14-tool-preservation.md)に保持。公開・配布・実クラウド配備は未実施。
