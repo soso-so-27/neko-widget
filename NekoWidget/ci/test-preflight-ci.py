@@ -1702,6 +1702,65 @@ class PreservationAllPutBytesBudgetTests(unittest.TestCase):
         self.assertIn("no native, live-cloud or release evidence", result["reason"])
 
 
+class ToolPreservationBudgetTests(unittest.TestCase):
+    def test_fixed_diagnostic_uses_owning_closed_product_proof_without_general_helper_changes(self):
+        source, head = planner.TOOL_PRESERVATION_SOURCE, "a" * 40
+        expected = frozenset({"NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py", "NekoWidget/ci/verify-app-icon.py"})
+        self.assertEqual(preflight.DIAGNOSTIC_HELPER_PATHS, expected)
+        for valid in (True, False):
+            with patch.object(planner,"tool_preservation_diagnostic_inputs",return_value=valid) as gate:
+                self.assertEqual(preflight.diagnostic_source_matches(source,head),valid)
+                gate.assert_called_once_with(source,head)
+        with patch.object(planner,"tool_preservation_diagnostic_inputs",side_effect=AssertionError("other source")), \
+                patch.object(planner,"git",side_effect=subprocess.CalledProcessError(1,"git")):
+            self.assertFalse(preflight.diagnostic_source_matches("c"*40,head))
+
+    def test_candidate_requires_four_native_jobs_and_same_sha_preservation(self):
+        head = "a" * 40
+        with patch.object(planner, "git", side_effect=["", head, "b" * 40]), \
+                patch.object(planner, "comparison_base", return_value="b" * 40), \
+                patch.object(planner, "changed_paths", return_value=list(planner.TOOL_PRESERVATION_PATHS)), \
+                patch.object(planner, "runtime_scope", return_value=planner.TOOL_PRESERVATION_SCOPE):
+            result = preflight.candidate_plan("origin/main", 30, False, {"upload_minutes": 9, "observations": []})
+        self.assertEqual(result["required_jobs"], list(planner.required_jobs_from_scope(planner.TOOL_PRESERVATION_SCOPE)))
+        self.assertEqual(len(result["required_jobs"]), 4)
+        self.assertEqual(result["required_backend_runs"], planner.tool_preservation_requirements(head))
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["unmapped_files"], [])
+        self.assertIn("same-SHA Preservation Node all tests/migration/private bundles", result["reason"])
+
+    def test_old_timings_do_not_measure_new_scope_and_task_failures_remain(self):
+        selected = planner.TOOL_PRESERVATION_SCOPE
+        history = {"upload_minutes": 9, "observations": [
+            {"scope": previous, "candidate_minutes": minutes, "run_id": index, "outcome": "success"}
+            for index, (previous, minutes) in enumerate(((scope.FULL_SCOPE, 98),
+                    (scope.TOOLS_HUB_SCOPE, 18.85), (scope.REVIEWED_MANAGED_PRESERVATION_SCOPE, 23.4)))]}
+        self.assertEqual(preflight.observe_cost(selected, history, False), {"status": "unmeasured", "samples": []})
+        self.assertEqual(preflight.observe_cost(selected, history, True), {"status": "unmeasured", "samples": []})
+        with self.assertRaises(ValueError): preflight.observe_cost(selected, history, False, True)
+        result = {"scope": selected, "head": "a" * 40, "ready": False, "target_minutes": 30,
+                  "cost": preflight.observe_cost(selected, history, False)}
+        self.assertTrue(preflight.apply_task_gate(result, [], measure_baseline=True)["ready"])
+        now = dt.datetime.now(dt.timezone.utc)
+        runs = [{"id": i, "path": workflow, "status": status, "conclusion": conclusion,
+                 "created_at": (now - dt.timedelta(minutes=12 - i)).isoformat()}
+                for i, workflow, status, conclusion in (
+                    (1, preflight.IOS_WORKFLOW, "completed", "failure"),
+                    (2, planner.PRESERVATION_WORKFLOW, "completed", "failure"),
+                    (3, preflight.DIAGNOSTIC_WORKFLOW, "in_progress", None))]
+        with patch.object(planner, "git", return_value="codex/tool-preservation"), \
+                patch.object(preflight, "github", side_effect=lambda path: {"total_count": 0, "jobs": []}
+                    if "/jobs?" in path else {"total_count": 3, "workflow_runs": runs}):
+            observed = preflight.read_task_runs(result["head"])
+        self.assertEqual({run["id"] for run in observed}, {1, 2, 3})
+        gated = preflight.apply_task_gate(result, observed, now, measure_baseline=True)
+        self.assertFalse(gated["ready"])
+        self.assertFalse(gated["task"]["first_baseline_measurement"])
+        self.assertEqual(gated["task"]["minutes_since_first_ci"], 11)
+        self.assertEqual(set(gated["task"]["failed_runs"]), {1, 2})
+        self.assertEqual(gated["task"]["active_runs"], [3])
+
+
 class PreservationNoticeMessageIdBudgetTests(unittest.TestCase):
     def test_separate_unmeasured_scope_retains_first_run_history_and_upload_gates(self):
         selected = planner.PRESERVATION_NOTICE_MESSAGE_ID_SCOPE

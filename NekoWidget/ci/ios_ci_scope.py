@@ -672,7 +672,81 @@ INTERNAL_REPORT_METADATA_REPAIR_BLOBS = {
     'NekoWidget/ci/moderation-v2-readiness.json': 'c468264db0056dec7603e7c9f215fa081ab78df6',
 }
 INTERNAL_REPORT_METADATA_REPAIR_PATHS = frozenset(INTERNAL_REPORT_METADATA_REPAIR_BLOBS)
-SCOPES = (INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+# Fixed product 14e1135; focused feedback remains separate from the required graph.
+# The separately reviewed control must land on main before this route is used.
+TOOL_PRESERVATION_SCOPE = "reviewed-tool-preservation-ui-v1"
+TOOL_PRESERVATION_BLOBS = {'NekoWidget/NekoWidget.xcodeproj/project.pbxproj': ('ec3aa65cd43617a6b6a0e4f255b8f4386cd41b9e',
+                                                     'd299764d0cc68f8c0b4af95f23c0ca91bb893007'),
+ 'NekoWidget/NekoWidget/App/NekoWidgetApp.swift': ('f76e457d6787d77462f5e9d6f612a023407cf872',
+                                                   '6d9aeb2593c12bb6c0b0624e58936efa6fce5ff6'),
+ 'NekoWidget/NekoWidget/Services/CareHandoffStore.swift': ('b5e42d22994a646a79756e147053273b2540408e',
+                                                           '250734b7b1eb8d9c073a920fe5b425cb2dfac228'),
+ 'NekoWidget/NekoWidget/Services/CatPreparednessStore.swift': ('c878f82c16074896837021a3f10193a961845675',
+                                                               '02acc837965b38eac28e7f145d0c8de3464bd588'),
+ 'NekoWidget/NekoWidget/Services/EvacuationStore.swift': ('e2ccb44d3ae8f36beae808ac7eabde9f492114d6',
+                                                          '01a1a9521c4f8a023331ca379de944bba8d326e1'),
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift': ('213c8e93785b785635ec2d69618538e6450bb2e2',
+                                                                    '9c7b25524d7be8644537c134a17a780c0da2ea3c'),
+ 'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift': ('4f8b7f5b7518f59a012521e57b22cd51acb715d0',
+                                                                         '70108a39bb5c49e5fb379e3ab9126b11d1aee8f4'),
+ 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift': ('287e777c34e850b9d00e8f7f04edaeccc3f88a5e',
+                                                                  '04a0a0a802aac3136b4c94aa4d7df537114b4242'),
+ 'NekoWidget/NekoWidget/Services/ToolPreservation.swift': ('0000000000000000000000000000000000000000',
+                                                           'a64ef0a777e4cb447eb3797fd17a3400589c7690'),
+ 'NekoWidget/NekoWidget/Views/ManagedPreservationView.swift': ('3960967840c1520f840dc499c92e290020b04ab6',
+                                                               '99a19b30543ab06e852f0e8370174f0d5250d0f4'),
+ 'NekoWidget/NekoWidget/Views/RestoredToolsView.swift': ('0000000000000000000000000000000000000000',
+                                                         '81e811d42d82c9b212fd250ce98dd8e9ff63b8dc'),
+ 'NekoWidget/NekoWidget/Views/SettingsView.swift': ('a62cd558efd0a9b96eb28a362fa4d45815069c6b',
+                                                    'a700baa54958e30e41d5e3455a94da83ee50bf61'),
+ 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift': ('8fc872b2fcae3fa4649424d9ec7d20641ae5e9ee',
+                                                               'b4cf25fdf60e3314bec5c6164241b1e703138c84'),
+ 'NekoWidget/PreservationService/src/contracts.ts': ('a3d351a8ffc7dd2aa901f00c500d932a60c81703',
+                                                     'ddc776610a94f8e4f5f528febab3ce61d27de39b'),
+ 'NekoWidget/PreservationService/src/documents.ts': ('fd0c2556e397255101b279ab8b692f92c98d4d6c',
+                                                     '1e3f97e2dd32b19fab2f2837667b23a8a5a6db33'),
+ 'NekoWidget/PreservationService/src/storage.ts': ('dddb89a26736e7580c69f5dd7cfd422adc5ccb92',
+                                                   'f5c115e209a14d1b2902e3869ac3818200297bd2'),
+ 'NekoWidget/PreservationService/test/tool-document.test.ts': ('0000000000000000000000000000000000000000',
+                                                               '9ba41668a56387a789e255e2f542a8be9cf97dbf'),
+ 'NekoWidget/PreservationService/test/tool-storage.integration.test.ts': ('0000000000000000000000000000000000000000',
+                                                                          'c22e65649de4351e78087a544e2b7efb5bed9515'),
+ 'handoffs/2026-10-14-public-policy.json': ('4c7e6d9a4ce8bf933ee284f01b395f147a66c662',
+                                            'bd47b7553954901a52ecd70bf0f00f3e015e9c3b')}
+TOOL_PRESERVATION_PATHS = frozenset(TOOL_PRESERVATION_BLOBS)
+TOOL_PRESERVATION_SOURCE = "14e113561c2543289256eb7168a4bba473e6bc68"
+TOOL_PRESERVATION_CONTROLS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "preflight-ci.py", "release-testflight.py",
+    "test-plan-ios-ci.py", "test-preflight-ci.py", "test-release-testflight.py"))
+TOOL_PRESERVATION_IMMUTABLE_TREE_SHA256 = "6480dd5b2f1ca995cff087c5de62043afa4ddd84417764a47e9f6e1dec807b7d"
+TOOL_PRESERVATION_ADDITIONS = frozenset(('NekoWidget/NekoWidget/Services/ToolPreservation.swift', 'NekoWidget/NekoWidget/Views/RestoredToolsView.swift', 'NekoWidget/PreservationService/test/tool-document.test.ts', 'NekoWidget/PreservationService/test/tool-storage.integration.test.ts'))
+TOOL_PRESERVATION_IMMUTABLE = {'.github/workflows/ios-build.yml': '5e8de065dc2c11a0085d9c04cf5e2462f3a98f90',
+ '.github/workflows/ios-ui-diagnostic.yml': '862c2d00497dd20349440edd1010c5633971684e',
+ '.github/workflows/preservation-service.yml': '8bef1a5e40cd3cb1da4c6780e369530bfb77ce99',
+ '.github/workflows/preservation-image-validator.yml': '60d26ce8d94730f7fa81eb09bb19d15f111b497f',
+ '.github/workflows/sharing-service.yml': '7dda83f373dbf254c0c5d2931a2a1834d1f6a8b6',
+ 'NekoWidget/ci/run-sharing-runtime-matrix.sh': '875b4e1e1cf3cb084a164a9df09ee08f6ef85164'}
+TOOL_PRESERVATION_IMMUTABLE_TREES = {'NekoWidget/Shared': 'a7b8d03f81a1ba7eee6a7689f6737b8e74ab3253',
+ 'NekoWidget/NekoWidgetWidget': 'ea9be13387a69bdc482a15e1533f17805767d6f6',
+ 'NekoWidget/SharingService': '6fe0cb54c58f4fa6504ea4398889c13adb827588',
+ 'NekoWidget/BillingVerificationService': 'd3be3620dd75ccf83331f9e4ea434ce760e51106',
+ 'NekoWidget/PreservationImageValidator': '7ba58342c98a0f69ab642a9d69ccf9eeb92491db',
+ 'NekoWidget/ci/fixtures': '909b481af565c2594b6dfb5cef0c81d158f30f13'}
+TOOL_PRESERVATION_SERVICE_TREES = ('2c49f4f5985f49ee394426b89eb8bcec7bfe9910', 'fae9e52b364f3a4432992cbe76ba01c94c91a30c')
+TOOL_PRESERVATION_PROJECT = "NekoWidget/NekoWidget.xcodeproj/project.pbxproj"
+TOOL_PRESERVATION_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + method for method in (
+    "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity",
+    "testManagedPreservationDisabledHidesEntries",
+    "testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
+    "testManagedPreservationMembershipLinkConsentAndRetry",
+    "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes",
+    "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
+    "testMemoryNoteExportCancellationKeepsText",
+    "testPersonalArchiveExportCancellationKeepsPhotoAndText",
+))
+
+
+SCOPES = (TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REPORT_REPLY_ENTRY_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -2387,7 +2461,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = (frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -3332,6 +3406,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == TOOL_PRESERVATION_SCOPE:
+        return bool(paths) and len(paths) == len(set(paths)) and sources == TOOL_PRESERVATION_PATHS
     if scope == INTERNAL_REPORT_SCOPE:
         return (bool(paths) and len(paths) == len(set(paths)) and
                 (sources == INTERNAL_REPORT_PATHS or
@@ -3417,6 +3493,7 @@ def accepts_paths(scope: str, paths) -> bool:
         REVIEWED_WINDOW_SUPPORT_SCOPE: WINDOW_SUPPORT_PATHS | {REVIEW_MANIFEST} | WINDOW_SUPPORT_COMPANION_PATHS,
         REVIEWED_RECORD_PORTABILITY_SCOPE: RECORD_PORTABILITY_PATHS | {REVIEW_MANIFEST} | RECORD_PORTABILITY_COMPANION_PATHS,
         REVIEWED_MANAGED_PRESERVATION_SCOPE: MANAGED_PRESERVATION_PATHS | {REVIEW_MANIFEST} | MANAGED_PRESERVATION_COMPANION_PATHS,
+        TOOL_PRESERVATION_SCOPE: TOOL_PRESERVATION_PATHS,
         ARCHIVE_PICKER_SCOPE: ARCHIVE_PICKER_PATHS | {ARCHIVE_PICKER_MANIFEST},
         ICON_SCOPE: ICON_PATHS | ICON_DOC_PATHS,
     }
@@ -3550,6 +3627,8 @@ MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == TOOL_PRESERVATION_SCOPE:
+        return TOOL_PRESERVATION_TESTS
     if scope == INTERNAL_REPORT_SCOPE:
         return MODERATION_RESOLUTION_TESTS + ("NekoWidgetUITests/MomentDeliveryComposerUITests/testInternalReportActionUsesExplicitAvailabilityAndConsent",)
     if scope == OWNER_CLOUD_SCOPE:

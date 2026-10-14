@@ -983,6 +983,64 @@ class ModerationResolutionBackendEvidenceTests(unittest.TestCase):
             self.responses[key] = original
 
 
+class ToolPreservationBackendEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        # Reuse only the synthetic API fixture shape; no fixed durable reuse is invoked.
+        self.fixture = ModerationAIDurableBackendReuseTests()
+        self.fixture.setUp()
+        f = self.fixture
+        self.sha, self.now, self.responses = f.candidate, f.now, copy.deepcopy(f.responses)
+        old = self.responses.pop(f.index("preservation-service.yml", f.source))
+        self.responses[f.index("preservation-service.yml", self.sha)] = old
+        for response in self.responses.values():
+            if "workflow_runs" in response:
+                for run in response["workflow_runs"]: run["head_sha"] = self.sha
+            if "jobs" in response:
+                for job in response["jobs"]: job["head_sha"] = self.sha
+        self.indexes = [f.index(w, self.sha) for w in ("preservation-service.yml",)]
+        self.job_keys = [f.jobs_path(r) for r in (37911654217,)]
+
+    def prove(self):
+        return planner.tool_preservation_backend_evidence(self.sha, self.fixture.repo, self.responses.__getitem__, self.now,
+                                                              branch="codex/moderation-ai-durable-20261009")
+
+    def test_same_sha_push_and_all_executed_owning_steps_required(self):
+        result = self.prove()
+        self.assertEqual(sum(len(row["job_ids"]) for row in result.values()), 1)
+        self.assertTrue(all(row["sha"] == self.sha and row["event"] == "push" for row in result.values()))
+        for key in self.job_keys:
+            original = copy.deepcopy(self.responses[key])
+            for n, job in enumerate(original["jobs"]):
+                for field, value in (("head_sha", "d" * 40), ("conclusion", "skipped"), ("status", "in_progress"), ("run_id", 4)):
+                    self.responses[key] = copy.deepcopy(original); self.responses[key]["jobs"][n][field] = value
+                    with self.subTest(job=job["name"], field=field), self.assertRaises(ValueError): self.prove()
+                for step in range(len(job["steps"])):
+                    if job["steps"][step]["name"] in ("Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts"): continue
+                    self.responses[key] = copy.deepcopy(original); self.responses[key]["jobs"][n]["steps"][step]["conclusion"] = "skipped"
+                    with self.subTest(job=job["name"], step=step), self.assertRaises(ValueError): self.prove()
+            self.responses[key] = original
+            self.responses[key]["jobs"].append(copy.deepcopy(original["jobs"][0])); self.responses[key]["total_count"] += 1
+            with self.assertRaises(ValueError): self.prove()
+            self.responses[key] = original
+
+    def test_absent_dispatch_pr_wrong_owner_stale_newer_failure_and_incomplete_fail_closed(self):
+        for key in self.indexes:
+            original = copy.deepcopy(self.responses[key])
+            for field, value in (("head_sha", "d" * 40), ("event", "workflow_dispatch"), ("event", "pull_request"),
+                    ("run_attempt", 2), ("head_branch", "codex/other"), ("head_branch", "main"), ("head_branch", "diagnostic/resolution"), ("workflow_id", 88),
+                    ("path", ".github/workflows/other.yml"), ("head_repository", {"full_name": "other/repo"}),
+                    ("updated_at", "2020-01-01T00:00:00Z"), ("status", "in_progress"), ("conclusion", "failure")):
+                self.responses[key] = copy.deepcopy(original); self.responses[key]["workflow_runs"][0][field] = value
+                with self.subTest(key=key, field=field), self.assertRaises(ValueError): self.prove()
+            for invalid in ({"total_count": 0, "workflow_runs": []}, {"total_count": 2, "workflow_runs": original["workflow_runs"]}):
+                self.responses[key] = invalid
+                with self.assertRaises(ValueError): self.prove()
+            newer = copy.deepcopy(original["workflow_runs"][0]); newer.update(id=123456, run_number=2, conclusion="failure")
+            self.responses[key] = {"total_count": 2, "workflow_runs": original["workflow_runs"] + [newer]}
+            with self.assertRaises(ValueError): self.prove()
+            self.responses[key] = original
+
+
 class ModerationAIDurableBackendReuseTests(unittest.TestCase):
     def setUp(self):
         self.candidate = planner.MODERATION_AI_DURABLE_REUSE_CANDIDATE
@@ -3882,6 +3940,131 @@ class PreservationRecoveryChunksScopeTests(unittest.TestCase):
                 self.assertIn("does not certify that job's success", summary)
 
 
+class ToolPreservationScopeTests(unittest.TestCase):
+    base, head = "b" * 40, "a" * 40
+
+    def project(self):
+        before = ("A00000000000000000000021 /* Sources */ = {\n isa = PBXSourcesBuildPhase;\n files = (\n OLD_APP,\n );\n};\n"
+                  "A00000000000000000000025 /* Sources */ = {\n isa = PBXSourcesBuildPhase;\n files = (\n OLD_WIDGET,\n );\n};\n"
+                  "Services = {\n children = (\n );\n};\nViews = {\n children = (\n );\n};\n")
+        definitions, entries, refs = [], [], []
+        for n, name in ((1, "ToolPreservation.swift"), (3, "RestoredToolsView.swift")):
+            build, file = f"C0261014000000000000000{n}", f"C0261014000000000000000{n+1}"
+            definitions += [f"{build} /* {name} in Sources */ = {{isa = PBXBuildFile; fileRef = {file} /* {name} */; }};",
+                            f'{file} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {name}; sourceTree = "<group>"; }};']
+            entries.append(f"{build} /* {name} in Sources */,\n")
+            refs.append(f"{file} /* {name} */,\n")
+        after = "\n".join(definitions) + "\n" + before.replace(" OLD_APP,\n", "".join(entries) + " OLD_APP,\n")
+        after = after.replace("Services = {\n children = (\n", "Services = {\n children = (\n" + refs[0])
+        after = after.replace("Views = {\n children = (\n", "Views = {\n children = (\n" + refs[1])
+        return before, after
+
+    def rows(self):
+        return {path: [":000000" if before == "0" * 40 else ":100644", "100644", before, after,
+                       "A" if before == "0" * 40 else "M"] for path, (before, after) in planner.TOOL_PRESERVATION_BLOBS.items()}
+
+    def select(self, rows=None, raw=None, entries=None, registration=True, project=None, tests=None, ancestor=True, manifests=None):
+        rows = self.rows() if rows is None else rows
+        before, after = self.project() if project is None else project
+        source = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
+            "    func " + test.rsplit("/", 1)[1] + "() {}" for test in planner.TOOL_PRESERVATION_TESTS) + "\n}\n"
+        def git(*args):
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor: raise subprocess.CalledProcessError(1, args)
+                return self.base
+            if args[0] == "rev-parse": return self.head
+            if args[0] == "diff": return raw if raw is not None else "".join(" ".join(row)+"\0"+path+"\0" for path,row in rows.items())
+            if args[0] == "show":
+                value = args[1]
+                if value.startswith("refs/remotes/origin/main:"): return 'TOOL_PRESERVATION_SCOPE = "reviewed-tool-preservation-ui-v1"' if registration else "unapproved"
+                if value.endswith(planner.TOOL_PRESERVATION_PROJECT): return before if value.startswith(self.base+":") else after
+                if value.endswith(planner.MEMORY_TEST_PATH): return source if tests is None else tests
+                raise AssertionError(args)
+            if args[0] == "ls-tree":
+                if args[1:3] == ("-r", "-z"):
+                    return (manifests or {}).get(args[3], f"100644 blob {'f'*40}\tREADME.md\0")
+                ref,path=args[1],args[3]
+                if (ref,path) in (entries or {}): return entries[(ref,path)]
+                if path in planner.TOOL_PRESERVATION_CONTROLS: return f"100644 blob {'e'*40}\t{path}"
+                if path in planner.TOOL_PRESERVATION_IMMUTABLE: return f"100644 blob {planner.TOOL_PRESERVATION_IMMUTABLE[path]}\t{path}"
+                if path in planner.TOOL_PRESERVATION_IMMUTABLE_TREES: return f"040000 tree {planner.TOOL_PRESERVATION_IMMUTABLE_TREES[path]}\t{path}"
+                if path == "NekoWidget/PreservationService": return f"040000 tree {planner.TOOL_PRESERVATION_SERVICE_TREES[0 if ref==self.base else 1]}\t{path}"
+                raise AssertionError(args)
+            raise AssertionError(args)
+        manifest = f"100644 blob {'f'*40}\tREADME.md\0"
+        with patch.object(planner,"git",side_effect=git), patch.object(planner,"TOOL_PRESERVATION_IMMUTABLE_TREE_SHA256",planner.hashlib.sha256(manifest.encode()).hexdigest()):
+            return planner.runtime_scope(list(rows), {}, {"GITHUB_SHA":self.head,"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/codex/tools"})
+
+    def test_exact_inputs_require_four_native_jobs_and_one_real_preservation_backend(self):
+        selected=planner.TOOL_PRESERVATION_SCOPE
+        self.assertEqual(self.select(),selected)
+        self.assertEqual(len(planner.TOOL_PRESERVATION_BLOBS),19)
+        self.assertEqual(len(planner.TOOL_PRESERVATION_ADDITIONS),4)
+        self.assertEqual(planner.required_jobs(list(self.rows()),selected),
+                         (planner.BUILD,planner.BOOTSTRAP_SMOKE)+scope.sharing_jobs(selected))
+        self.assertEqual(scope.lanes(selected),("runtime","app-ui"))
+        self.assertEqual(scope.lane_tests(selected,"app-ui"),planner.TOOL_PRESERVATION_TESTS)
+        self.assertEqual(len(set(planner.TOOL_PRESERVATION_TESTS)),8)
+        self.assertEqual(planner.tool_preservation_requirements(self.head),[
+            {"workflow":planner.PRESERVATION_WORKFLOW,"job":planner.PRESERVATION_JOB,"head_sha":self.head,"success_required":True}])
+
+    def test_partial_unknown_blobs_modes_handoffs_and_mixed_controls_fail_closed(self):
+        rows=self.rows()
+        for path in rows:
+            self.assertEqual(self.select({p:r for p,r in rows.items() if p!=path}),scope.FULL_SCOPE)
+            for index,value in ((0,":100755"),(1,"120000"),(2,"c"*40),(3,"d"*40),(4,"D")):
+                changed=copy.deepcopy(rows);changed[path][index]=value
+                self.assertEqual(self.select(changed),scope.FULL_SCOPE)
+        for path in ("NekoWidget/Shared/unknown.swift","NekoWidget/NekoWidgetWidget/unknown.swift",
+                     "NekoWidget/PreservationService/package-lock.json","NekoWidget/ci/ios_ci_scope.py",
+                     "handoffs/unknown.json",planner.PRESERVATION_WORKFLOW):
+            self.assertEqual(self.select(rows|{path:[":100644","100644","c"*40,"d"*40,"M"]}),scope.FULL_SCOPE)
+        for mode,status,before in (("100644","A","0"*40),("100644","M","c"*40)):
+            self.assertEqual(self.select(rows|{"handoffs/normal.md":[":000000" if status=="A" else ":100644",mode,before,"d"*40,status]}),planner.TOOL_PRESERVATION_SCOPE)
+        self.assertEqual(self.select(rows|{"handoffs/unsafe.md":[":100644","100755","c"*40,"d"*40,"M"]}),scope.FULL_SCOPE)
+        raw="".join(" ".join(r)+"\0"+p+"\0" for p,r in rows.items())
+        for invalid in ("",raw+raw,raw.rsplit("\0",2)[0]): self.assertEqual(self.select(raw=invalid),scope.FULL_SCOPE)
+
+    def test_project_only_adds_two_app_sources_and_preserves_widget_phase(self):
+        before,after=self.project()
+        self.assertTrue(planner.tool_preservation_project_only(before,after))
+        moved=after.replace("C02610140000000000000001 /* ToolPreservation.swift in Sources */,\n", "").replace(
+            " OLD_WIDGET,\n", "C02610140000000000000001 /* ToolPreservation.swift in Sources */,\n OLD_WIDGET,\n")
+        for invalid in (after+"OTHER_SETTING=YES;\n",moved,after.replace("sourcecode.swift","text",1)):
+            self.assertFalse(planner.tool_preservation_project_only(before,invalid))
+            self.assertEqual(self.select(project=(before,invalid)),scope.FULL_SCOPE)
+
+    def test_immutable_inputs_registration_selector_and_required_method_are_enforced(self):
+        self.assertEqual(self.select(registration=False),scope.FULL_SCOPE)
+        self.assertEqual(self.select(ancestor=False),scope.FULL_SCOPE)
+        self.assertEqual(self.select(tests="final class SoloMemoriesUITests: XCTestCase {}"),scope.FULL_SCOPE)
+        for path in (*planner.TOOL_PRESERVATION_IMMUTABLE,*planner.TOOL_PRESERVATION_IMMUTABLE_TREES,
+                     "NekoWidget/PreservationService",*planner.TOOL_PRESERVATION_CONTROLS):
+            for ref in (self.base,self.head):
+                self.assertEqual(self.select(entries={(ref,path):""}),scope.FULL_SCOPE)
+
+    def test_every_other_tracked_input_is_frozen_in_both_parent_trees(self):
+        row = f"100644 blob {'f'*40}\tREADME.md\0"
+        for ref in (self.base, self.head):
+            for invalid in ("", row + row, row.replace("100644", "100755"), row.replace("f"*40, "d"*40),
+                            row + f"100644 blob {'f'*40}\tNekoWidget/Config.xcconfig\0", "malformed\0"):
+                self.assertEqual(self.select(manifests={ref:invalid}), scope.FULL_SCOPE)
+
+    def test_native_plan_declares_backend_at_actual_tested_sha_without_claiming_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/"event").write_text("{}")
+            env={"GITHUB_EVENT_NAME":"push","GITHUB_REF":"refs/heads/codex/tools","GITHUB_SHA":self.head,
+                 "GITHUB_REPOSITORY":"owner/repo","GITHUB_RUN_ID":"7","GITHUB_EVENT_PATH":str(root/"event"),
+                 "GITHUB_OUTPUT":str(root/"output"),"GITHUB_STEP_SUMMARY":str(root/"summary")}
+            output=io.StringIO()
+            with patch.dict(os.environ,env),contextlib.redirect_stdout(output),patch.object(planner,"changed_paths",return_value=list(self.rows())),patch.object(planner,"runtime_scope",return_value=planner.TOOL_PRESERVATION_SCOPE),patch.object(planner,"find_evidence",return_value=None):
+                planner.main()
+            record=json.loads(output.getvalue().split("IOS_CI_PLAN_JSON=",1)[1].splitlines()[0])
+            self.assertEqual(record["required_backend_runs"],planner.tool_preservation_requirements(self.head))
+            self.assertEqual(len(record["required_jobs"]),4)
+            self.assertIsNone(record["evidence_run_id"])
+
+
 class PreservationPublicRetentionScopeTests(unittest.TestCase):
     base, head = "b" * 40, "a" * 40
 
@@ -5122,6 +5305,58 @@ class PurchaseCatalogScopeTests(unittest.TestCase):
         with patch.object(planner, "comparison_base", return_value=self.base), \
                 patch.object(planner, "git", side_effect=subprocess.CalledProcessError(1, "git")):
             self.assertEqual(planner.runtime_scope(sorted(scope.PURCHASE_CATALOG_PATHS), {}, {"GITHUB_SHA": self.head}), scope.FULL_SCOPE)
+
+
+class ToolPreservationDiagnosticInputTests(unittest.TestCase):
+    source, head, base = planner.TOOL_PRESERVATION_SOURCE, "a" * 40, "b" * 40
+
+    def rows(self):
+        return {path: [":100644", "100644", "c"*40, "d"*40, "M"]
+                for path in planner.TOOL_PRESERVATION_CONTROLS}
+
+    def verify(self, rows=None, *, raw=None, source=None, approved=True, product=True, immutable=True, ancestor=True, registration=True):
+        rows = self.rows() if rows is None else rows
+        def git(*args):
+            if args[0] == "merge-base":
+                if "--is-ancestor" in args and not ancestor: raise subprocess.CalledProcessError(1,args)
+                return self.base
+            if args[0] == "show": return f'TOOL_PRESERVATION_SOURCE = "{self.source}"' if registration else "unapproved"
+            if args[0] == "diff":
+                if "--name-only" in args:
+                    return "\0".join(rows if args[-2] == self.source else planner.TOOL_PRESERVATION_PATHS) + "\0"
+                return raw if raw is not None else "".join(" ".join(fields)+"\0"+path+"\0" for path,fields in rows.items())
+            if args[0] == "ls-tree": return f"100644 blob {('d' if approved or args[1] != self.head else 'e')*40}\t{args[3]}"
+            raise AssertionError(args)
+        with patch.object(planner,"git",side_effect=git), \
+                patch.object(planner,"tool_preservation_only",return_value=product) as gate, \
+                patch.object(planner,"tool_preservation_immutable_inputs",return_value=immutable):
+            result = planner.tool_preservation_diagnostic_inputs(source or self.source,self.head)
+            if gate.called:
+                self.assertEqual(set(gate.call_args.args[0]),planner.TOOL_PRESERVATION_PATHS)
+                self.assertEqual(gate.call_args.args[1:],(self.base,self.head))
+            return result
+
+    def test_only_fixed_source_unchanged_products_and_all_approved_controls_qualify(self):
+        self.assertTrue(self.verify())
+        for kwargs in ({"source":"e"*40},{"approved":False},{"product":False},{"immutable":False},
+                       {"ancestor":False},{"registration":False}):
+            self.assertFalse(self.verify(**kwargs),kwargs)
+
+    def test_normal_handoff_only_and_no_source_mode_type_unknown_or_duplicate_changes(self):
+        rows=self.rows()
+        for status,before in (("M","c"*40),("A","0"*40)):
+            note=[":100644" if status=="M" else ":000000","100644",before,"d"*40,status]
+            self.assertTrue(self.verify(rows|{"handoffs/review.md":note}))
+        for path in (planner.MEMORY_TEST_PATH, planner.TOOL_PRESERVATION_PROJECT,
+                     "NekoWidget/ci/run-sharing-runtime-matrix.sh", planner.PRESERVATION_WORKFLOW,
+                     "handoffs/2026-10-14-public-policy.json", "unknown"):
+            self.assertFalse(self.verify(rows|{path:[":100644","100644","c"*40,"d"*40,"M"]}),path)
+        path=next(iter(rows))
+        for index,value in ((0,":000000"),(1,"100755"),(1,"120000"),(1,"160000"),(2,"0"*40),(3,"0"*40),(4,"D"),(4,"A"),(4,"R100")):
+            changed=copy.deepcopy(rows);changed[path][index]=value
+            self.assertFalse(self.verify(changed),(index,value))
+        raw="".join(" ".join(fields)+"\0"+path+"\0" for path,fields in rows.items())
+        for invalid in ("",raw+raw,raw.rsplit("\0",2)[0]): self.assertFalse(self.verify(raw=invalid))
 
 
 class PreservationExportScopeTests(unittest.TestCase):
@@ -7860,6 +8095,24 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(backend.call_args.kwargs, {"branch": "codex/movie"})
         with patch.object(planner, "moderation_resolution_backend_evidence", side_effect=ValueError("missing")), self.assertRaises(ValueError):
             planner.find_evidence(self.env, required, self.api, self.now)
+
+    def test_tool_preservation_main_reuse_requires_its_own_candidate_backend(self):
+        required = planner.required_jobs_from_scope(planner.TOOL_PRESERVATION_SCOPE)
+        self.assertFalse(any(planner.required_jobs_from_scope(selected) == required
+                             for selected in planner.SCOPES if selected != planner.TOOL_PRESERVATION_SCOPE))
+        self.assertIsNone(planner.test_correction_scope(required))
+        self.jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success",
+                      "completed_at": "2026-09-07T11:00:00Z"} for name in required]
+        with patch.object(planner, "tool_preservation_backend_evidence", return_value={}) as backend:
+            self.assertEqual(planner.find_evidence(self.env, required, self.api, self.now), (10, self.sha))
+            self.assertEqual(backend.call_args.args[:2], (self.sha, "owner/repo"))
+            self.assertEqual(backend.call_args.kwargs, {"branch": "codex/movie"})
+        with patch.object(planner, "tool_preservation_backend_evidence", side_effect=ValueError("missing")), self.assertRaises(ValueError):
+            planner.find_evidence(self.env, required, self.api, self.now)
+        with patch.object(planner, "tool_preservation_backend_evidence", side_effect=AssertionError("unrelated scope")):
+            self.jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success",
+                          "completed_at": "2026-09-07T11:00:00Z"} for name in planner.FULL]
+            self.assertEqual(planner.find_evidence(self.env, planner.FULL, self.api, self.now), (10, self.sha))
 
     def test_main_uses_exact_commit_evidence(self):
         self.assertEqual(planner.find_evidence(self.env, planner.FULL, self.api, self.now), (10, self.sha))
