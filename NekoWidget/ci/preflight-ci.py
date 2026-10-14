@@ -257,6 +257,8 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         raise ValueError("Preflight requires a dedicated task branch")
     runs = {}
     refs = task_refs(branch)
+    if branch == planner.TOOL_RELEASE_BRANCH:
+        refs.update(task_refs(planner.TOOL_BUILD_BRANCH))
     if branch in (planner.REPORT_RUNTIME_BRANCH,planner.REPORT_RUNTIME_ORDER_BRANCH):
         refs.update(task_refs(planner.REPLY_READINESS_BRANCH))
         retained_ids=(38318066862,planner.REPLY_READINESS_RUN,planner.REPORT_RUNTIME_BUILD_RUN,38325044657,planner.REPORT_RUNTIME_FAILED_RELEASE)
@@ -776,8 +778,18 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
             raise ValueError('Fixed internal Release failure differs from retained task history')
         if any(run['id'] != planner.INTERNAL_REPORT_CORRECTION_RUN and run['path'] != DIAGNOSTIC_WORKFLOW for run in failed):
             blockers.append('internal_report_has_unresolved_candidate_failure')
+    tool_release = (isinstance(correction_evidence, dict) and correction_evidence.get("kind") == planner.TOOL_RELEASE_KIND)
+    if tool_release and (result.get("scope") != planner.TOOL_PRESERVATION_SCOPE
+            or correction_evidence.get("release_base_sha") != planner.TOOL_RELEASE_BASE
+            or correction_evidence.get("release_base_run_id") != planner.TOOL_RELEASE_BASE_RUN
+            or correction_evidence.get("release_blob_pairs") != {path: list(pair) for path, pair in planner.TOOL_RELEASE_BLOBS.items()}
+            or correction_evidence.get("unchanged_input_count") != planner.TOOL_RELEASE_INPUT_COUNT
+            or correction_evidence.get("unchanged_input_sha256") != planner.TOOL_RELEASE_INPUT_SHA256
+            or correction_evidence.get("new_build_required") is not True
+            or correction_evidence.get("current_signed_readiness_required") is not True):
+        raise ValueError("Unregistered signed tool release preparation proof")
     tool_correction = (result.get("scope") == planner.TOOL_PRESERVATION_SCOPE and isinstance(correction_evidence, dict)
-        and correction_evidence.get("kind") == "tool-preservation-signed-release-build-recovery-v1"
+        and correction_evidence.get("kind") in ("tool-preservation-signed-release-build-recovery-v1", planner.TOOL_RELEASE_KIND)
         and correction_evidence.get("candidate_sha") == result.get("head")
         and correction_evidence.get("run_id") == planner.TOOL_BUILD_SOURCE_RUN
         and correction_evidence.get("sha") == planner.TOOL_BUILD_SOURCE
@@ -1011,11 +1023,19 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
 
 def tool_recovery_cost(result, proof, include_upload, history):
     if (result.get("scope") != planner.TOOL_PRESERVATION_SCOPE or not isinstance(proof, dict)
-            or proof.get("kind") != "tool-preservation-signed-release-build-recovery-v1"
+            or proof.get("kind") not in ("tool-preservation-signed-release-build-recovery-v1", planner.TOOL_RELEASE_KIND)
             or proof.get("candidate_sha") != result.get("head") or proof.get("run_id") != planner.TOOL_BUILD_SOURCE_RUN
             or proof.get("sha") != planner.TOOL_BUILD_SOURCE): return result
     upload = float(history["upload_minutes"]) if include_upload else 0
     if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload timing reference")
+    if proof["kind"] == planner.TOOL_RELEASE_KIND:
+        return {**result, "full_cost_before_recovery": result["cost"], "required_backend_runs": [proof["backend_evidence"]],
+                "cost_review_required": False, "ready": True,
+                "cost": {"status": "reference", "ci_minutes": [23.9, 30], "with_upload_minutes": [23.9 + upload, 30 + upload],
+                         "owning_jobs": [planner.BUILD], "source_build_success": False, "samples": [],
+                         "reference_run": planner.TOOL_RELEASE_BASE_RUN, "reference_build_seconds": 1434,
+                         "includes_future_rework": False,
+                         "note": "A new complete Build39 is required for the exact CLI/readiness pair.23m54 is the previous actual Build reference;30m is the unchanged timeout/replanning reservation, not a measured upper duration or queue guarantee. Preserve all original failure/active/first-candidate history; upload remains a separate explicit request."}}
     return {**result, "full_cost_before_recovery": result["cost"], "required_backend_runs": [proof["backend_evidence"]],
             "cost_review_required": False, "ready": True,
             "cost": {"status": "reference", "ci_minutes": [30, 30], "with_upload_minutes": [30 + upload] * 2,
@@ -1600,8 +1620,9 @@ def main(argv=None):
                     read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"]))
             correction = None
             if result["scope"] == planner.TOOL_PRESERVATION_SCOPE:
-                if branch != planner.TOOL_BUILD_BRANCH: raise ValueError("Tool recovery requires its fixed candidate branch")
-                correction = planner.tool_recovery_source(result["head"], REPOSITORY,
+                if branch not in (planner.TOOL_BUILD_BRANCH, planner.TOOL_RELEASE_BRANCH): raise ValueError("Tool recovery requires its fixed candidate branch")
+                source = planner.tool_release_readiness_source if branch == planner.TOOL_RELEASE_BRANCH else planner.tool_recovery_source
+                correction = source(result["head"], REPOSITORY,
                     lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
             metadata_repair = None
             if is_metadata_repair:
