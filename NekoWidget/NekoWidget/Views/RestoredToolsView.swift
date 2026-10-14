@@ -245,7 +245,7 @@ private actor ToolBackupFixtureServer {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             let photo = (body["photoBase64"] as? String).flatMap { Data(base64Encoded: $0) }
             records[id] = ["recordId": id.uuidString.lowercased(), "revision": 1, "document": body["document"]!,
-                           "photoBase64": body["photoBase64"] ?? NSNull(), "photoSHA256": photo.map(ToolBackupIndex.hash) as Any? ?? NSNull()]
+                           "photoBase64": body["photoBase64"] ?? NSNull(), "photoSHA256": photo.map { ToolBackupIndex.hash($0) as Any } ?? NSNull()]
             if losesReply { losesReply = false; throw ManagedPreservationError.unavailable }
             return try response(["recordId": id.uuidString.lowercased(), "revision": 1])
         }

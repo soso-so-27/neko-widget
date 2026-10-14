@@ -68,3 +68,32 @@ it('preserves immutable tool pieces across retries, owner isolation and expired 
   expect((await f.archive.read(f.session.token, id)).document.toolBackup).toEqual(tool);
 });
 
+it('publishes an index only with every owner-local immutable piece present and the inventory unchanged', async () => {
+  const f = await fixture(), id = crypto.randomUUID(), snapshotId = crypto.randomUUID();
+  const data = '{}', hash = await sha256(data);
+  const tool = { snapshotId, kind: 'json', path: 'CareHandoff/plan.json', part: 0, count: 1, sha256: hash, payload: btoa(data) };
+  const pieceDocument = { ...document, formatVersion: 3, photoFile: null, toolBackup: tool };
+  const payload = btoa(JSON.stringify({ version: 1, snapshotID: snapshotId.toUpperCase(), createdAt: 1,
+    files: [{ path: tool.path, bytes: 2, sha256: hash, records: [id.toUpperCase()] }] }));
+  const indexDocument = { ...pieceDocument, toolBackup: { ...tool, kind: 'index', path: 'index.json', payload, sha256: await sha256(atob(payload)) } };
+  const indexRequest = f.request({ document: indexDocument, photoBase64: null });
+  await expect(f.archive.put(f.session.token, snapshotId, indexRequest)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  await f.archive.put(f.session.token, id, f.request({ document: pieceDocument, photoBase64: null }));
+  const raced = new ArchiveStore({ ...f.options, membership: { status: async () => {
+    // Independent authorized mutation between reference check and index commit.
+    await binding.DB.prepare('UPDATE pa_records SET revision=revision+1 WHERE owner_id=? AND record_id=?').bind(f.session.ownerId, id).run();
+    return 'active';
+  } } });
+  await expect(raced.put(f.session.token, snapshotId, indexRequest)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?').bind(f.session.ownerId, snapshotId).first()).toBeNull();
+  // Use a fresh immutable piece after the deliberately raced test row.
+  const id2 = crypto.randomUUID();
+  await f.archive.put(f.session.token, id2, f.request({ document: pieceDocument, photoBase64: null }));
+  const completePayload = btoa(JSON.stringify({ version: 1, snapshotID: snapshotId, createdAt: 1,
+    files: [{ path: tool.path, bytes: 2, sha256: hash, records: [id2] }] }));
+  const complete = f.request({ photoBase64: null, document: { ...indexDocument,
+    toolBackup: { ...indexDocument.toolBackup, payload: completePayload, sha256: await sha256(atob(completePayload)) } } });
+  expect(await f.archive.put(f.session.token, snapshotId, complete)).toEqual({ recordId: snapshotId, revision: 1 });
+  expect(await f.archive.put(f.session.token, snapshotId, complete)).toEqual({ recordId: snapshotId, revision: 1 });
+});
+

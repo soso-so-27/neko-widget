@@ -609,10 +609,16 @@ final class ManagedPreservationCoordinator: ObservableObject {
             let owner = try await self.requireCurrentOwner(ticket)
             self.toolBackupProgress = "ツールの保存内容を確認中…"
             defer { self.toolBackupProgress = nil }
-            let saved = try await Task.detached {
-                try ToolBackupFiles.pending(owner: owner) ?? ToolBackupFiles.capture(owner: owner)
+            let prepared = try await Task.detached {
+                if let pending = try ToolBackupFiles.pending(owner: owner) { return (pending, false) }
+                return (try ToolBackupFiles.capture(owner: owner), true)
             }.value
-            try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id))
+            let saved = prepared.0
+            do { try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id)) }
+            catch {
+                if prepared.1 { try? FileManager.default.removeItem(at: ToolBackupFiles.directory(saved.id)) }
+                throw error
+            }
             try self.check(ticket)
             try await ToolBackupTransfer.upload(saved, client: self.client) { completed, total in
                 await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "ツールを保管中 \(completed) / \(total)" } }
@@ -928,7 +934,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     /// them with the same owner checkpoint and inventory generation fence.
     private func visiblePage(after: String? = nil) async throws -> ManagedPreservationPage {
         let checkpoint = try await client.captureSessionCheckpoint()
-        var page = try await client.list(after: after)
+        var page = try await client.list(after: after, forExport: true)
         let generation = page.generation
         while true {
             try await client.requireSessionCheckpoint(checkpoint)
@@ -937,7 +943,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 return ManagedPreservationPage(items: visible, nextCursor: page.nextCursor, generation: generation)
             }
             let cursor = page.nextCursor!
-            let next = try await client.list(after: cursor)
+            let next = try await client.list(after: cursor, forExport: true)
             guard next.generation == generation,
                   next.items.allSatisfy({ $0.id.uuidString.lowercased() > cursor.lowercased() }),
                   next.nextCursor.map({ $0.lowercased() > cursor.lowercased() }) ?? true else { throw ManagedPreservationError.conflict }

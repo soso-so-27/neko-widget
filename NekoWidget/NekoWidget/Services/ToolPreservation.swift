@@ -127,7 +127,7 @@ enum ToolBackupFiles {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
         return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             .filter { UUID(uuidString: $0.lastPathComponent) != nil }
-            .compactMap { folder in
+            .compactMap { folder -> Saved? in
                 let manifest = folder.appendingPathComponent("contents/restored.json")
                 guard FileManager.default.fileExists(atPath: manifest.path) else { return nil }
                 let item = try JSONDecoder().decode(Saved.self, from: read(manifest, maximum: 512 * 1024))
@@ -263,21 +263,24 @@ enum ToolBackupTransfer {
         for (offset, item) in pieces.enumerated() {
             try Task.checkCancellation()
             try await client.requireSessionCheckpoint(checkpoint)
+            if sent.contains(item.0) {
+                // Successful acknowledgements are durable and bound to this
+                // immutable local snapshot/owner. The server checks the complete
+                // referenced inventory again before accepting its final index.
+                await progress(offset + 1, pieces.count)
+                continue
+            }
             let jpeg = item.1.kind == "photo" ? try ToolBackupFiles.read(
                 ToolBackupFiles.directory(saved.id).appendingPathComponent(item.1.path), maximum: 20 * 1024 * 1024) : nil
             let document = ManagedPreservationDocument(formatVersion: 3, text: item.1.kind == "index" ? "ツールの保存" : "ツールの保存データ",
                 capturedAt: nil, writtenAt: saved.index.createdAt, updatedAt: saved.index.createdAt,
                 catNames: [], photoFile: jpeg == nil ? nil : "photo.jpg", toolBackup: item.1)
             // Stable IDs make even an uncertain PUT idempotent. No overwrite path.
-            if sent.contains(item.0) {
-                let existing = try await client.detail(item.0)
-                guard existing.record.revision == 1, existing.document.toolBackup == item.1,
-                      existing.jpegData == jpeg else { throw ToolBackupError.invalid }
-            } else {
-                let revision = try await client.put(.init(recordID: item.0, document: document, jpegData: jpeg), consent: true)
-                guard revision == 1 else { throw ToolBackupError.invalid }
-                sent.insert(item.0)
+            let revision = try await waitingForRateLimit(client: client, checkpoint: checkpoint) {
+                try await client.put(.init(recordID: item.0, document: document, jpegData: jpeg), consent: true)
             }
+            guard revision == 1 else { throw ToolBackupError.invalid }
+            sent.insert(item.0)
             try await client.requireSessionCheckpoint(checkpoint)
             try ToolBackupFiles.write(JSONEncoder().encode(sent), to: receiptURL)
             await progress(offset + 1, pieces.count)
@@ -306,17 +309,34 @@ enum ToolBackupTransfer {
             try await client.requireSessionCheckpoint(checkpoint)
             return existing
         }
-        let staging = ToolBackupFiles.root.appendingPathComponent("restore-" + UUID().uuidString, isDirectory: true)
+        let saved = ToolBackupFiles.Saved(owner: owner, index: index)
+        // Bind resumable files to the exact owner and immutable index. Only
+        // complete, hash-verified files survive a connection/session interruption.
+        let binding = ToolBackupIndex.hash(Data(owner.utf8) + bytes)
+        let staging = ToolBackupFiles.root.appendingPathComponent("restore-" + binding, isDirectory: true)
         try ToolBackupFiles.protect(staging)
+        let sourceReceipt = staging.appendingPathComponent("source.json")
+        if FileManager.default.fileExists(atPath: sourceReceipt.path) {
+            let previous = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(sourceReceipt, maximum: 512 * 1024))
+            guard previous.owner == owner, previous.index == index else { throw ToolBackupError.invalid }
+        } else { try ToolBackupFiles.write(JSONEncoder().encode(saved), to: sourceReceipt) }
         var completed = 0
         let total = index.files.reduce(0) { $0 + $1.records.count }
         do {
             for file in index.files {
+                let cached = staging.appendingPathComponent(file.path)
+                if FileManager.default.fileExists(atPath: cached.path) {
+                    let data = try ToolBackupFiles.read(cached, maximum: 20 * 1024 * 1024)
+                    guard data.count == file.bytes, ToolBackupIndex.hash(data) == file.sha256 else { throw ToolBackupError.invalid }
+                    try await client.requireSessionCheckpoint(checkpoint)
+                    completed += file.records.count; await progress(completed, total)
+                    continue
+                }
                 var data = Data()
                 for (offset, id) in file.records.enumerated() {
                     try Task.checkCancellation()
                     try await client.requireSessionCheckpoint(checkpoint)
-                    let snapshot = try await client.detail(id)
+                    let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id) }
                     try await client.requireSessionCheckpoint(checkpoint)
                     guard snapshot.record.revision == 1, let piece = snapshot.document.toolBackup,
                           piece.snapshotId == part.snapshotId, piece.path == file.path,
@@ -339,15 +359,28 @@ enum ToolBackupTransfer {
             let restored = destination.appendingPathComponent("contents", isDirectory: true)
             try ToolBackupFiles.protect(destination)
             guard !FileManager.default.fileExists(atPath: restored.path) else { throw ToolBackupError.storage }
-            let saved = ToolBackupFiles.Saved(owner: owner, index: index)
             try ToolBackupFiles.write(JSONEncoder().encode(saved), to: staging.appendingPathComponent("restored.json"))
             try FileManager.default.moveItem(at: staging, to: restored)
             return saved
         } catch {
-            // Only this operation's unpublished staging directory is removed.
-            try? FileManager.default.removeItem(at: staging)
+            // Never publish partial contents. Verified files stay private for
+            // an explicit retry after the same owner authenticates again.
             throw error
         }
+    }
+
+    private static func waitingForRateLimit<T: Sendable>(client: ManagedPreservationClient,
+        checkpoint: ManagedPreservationClient.SessionCheckpoint,
+        operation: @Sendable () async throws -> T) async throws -> T {
+        for attempt in 0...1 {
+            try await client.requireSessionCheckpoint(checkpoint)
+            do { return try await operation() }
+            catch ManagedPreservationError.rateLimited where attempt == 0 {
+                try await Task.sleep(for: .seconds(60))
+                try await client.requireSessionCheckpoint(checkpoint)
+            }
+        }
+        throw ManagedPreservationError.rateLimited
     }
 }
 
