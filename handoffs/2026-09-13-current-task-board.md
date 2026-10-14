@@ -3,7 +3,8 @@
 - [最新の接続・配布準備と費用残件](2026-10-14-tool-cloud-distribution-preparation.md)。月980円を維持し、3人枠や旧予備費込み見積を販売人数・通常1人原価・費用承認へ転用しない。
 - 既存の保管Workerをツール保存v3へ実更新し、version `b502db9a`の凍結bundle完全一致と追加migration34を確認。旧本人1名・記録1件、secret参照・公開範囲・設定・期限を保持し、通常記録へのwrite0。初回SQL改行比較の停止を診断し、DDL再実行なしでcodeだけ継続した。
 - [PR295](https://github.com/soso-so-27/neko-widget/pull/295)の制御を先にmain承認し、[PR296](https://github.com/soso-so-27/neko-widget/pull/296)の新署名readinessと配布CLIをmain `a1403ef`へ反映。[候補CI38533784539](https://github.com/soso-so-27/neko-widget/actions/runs/38533784539)の新Build39全成功（22分40秒）と旧3native・固定PR backend・元失敗を実CLIで適格化、mainも証拠再利用で成功。配布CLI dry-runは未使用255／既254・内部保管＋owner-only reports・billing OFFで成功。Apple uploadは未実施。
-- pilotと費用reviewは期限切れのまま。AWS本日ログイン未完のため現credit/planを確定していない。限定試用grant（本人・固定snapshot・byte/試行数・有限期限）と実量/全費目を具体化してから受付を再開する。既存pilot SQLだけで1snapshot/20MiBを強制できず、migration34のbyte上限は一般モード用。実5ツールのクラウド保存・別iPhone復元は未確認。
+- AWSは利用者が既存の正しいアカウントへログインし、現在の無料プラン・残クレジット・当月利用コスト・期限2027-03-25をrootが画面から確認した。具体額はローカル証拠 `aws-current-user-screen-cost.json`、今すぐPaidへの変更は不要。全費目/請求書/通常1人原価ではない。直接操作のChrome profileが異なりCLIも未refreshだが、再ログインや数値の手入力を次工程の条件にしない。
+- pilotと費用reviewは期限切れのまま。限定試用grant（本人・固定snapshot・byte/試行数・有限期限）と実量/全費目を具体化してから受付を再開する。既存pilot SQLだけで1snapshot/20MiBを強制できず、migration34のbyte上限は一般モード用。実5ツールのクラウド保存・別iPhone復元は未確認。
 - 追加契約・AWS有料化・一般公開・課金開始・定期タスクの作成/変更/再実行なし。readiness期限は10/14 19:26:58 JSTで、配布直前にも確認する。AWS有料継続と運用/保持原資の費用承認は残る。
 
 ## 2026-10-14 月980円を維持・ツールの保存と復元を本線反映（履歴：PR289時点、未配布）
