@@ -1,3 +1,9 @@
+## 2026-10-15 nekonomado.com購入・通知送信元と配達結果の接続準備
+
+- [購入結果と通知の接続準備](2026-10-15-notice-domain-connection.md)。利用者が `nekonomado.com` と年額を指定し、最終画面で規約・毎年の自動更新も承認。checkout表示10.46米ドル/1年で購入し、登録Active・2027-10-15まで・自動更新ONを確認。旧ハイフン付き候補は購入していない。980円維持。
+- 新domainのEmail SendingはEnabled/DNS Configured。MX/SPF/DKIM/DMARCの6レコード設定と公開DNSを確認。旧domain用6eventのQueueと混ぜず、新domain専用Queue＋deliveredだけの購読を準備。旧接続/設定/データは保持し、メール送信・Worker consumer/mail binding・secret追加・cron/定期タスク変更は0。
+- 次は本人の会員終了日/連絡先と実配達を結ぶWorker設定、失敗隔離、安全なGC/保持運用、一般枠/継続費用と公開原稿。今回の接続準備を通知送信開始・LP公開先変更・AWS有料化・一般販売の承認へ広げない。
+
 ## 2026-10-15 AWS再接続・全S3保存量と通知用ドメインの購入前見積
 
 - [AWS実測・請求・通知接続の残件](2026-10-15-aws-cost-reconciliation.md)。既存accountでCLI再接続成功、S3 bucket全versions metadataは129個/22,633,934 bytes。当月AWS見込はcredit差引0.00米ドル、FREE残119.36米ドル・期限2027-03-25 13:30 JST。下の期限切れ/未取得は当時の履歴。本文取得/削除0、復元成功の追加証拠ではない。

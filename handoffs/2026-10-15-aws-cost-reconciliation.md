@@ -2,6 +2,8 @@
 
 **980円維持。AWS認証・S3全版本のmetadata・当月請求の未取得を解消。通知用ドメインは購入前、一般運用は接続前。** [直前の費用・公開準備](2026-10-15-nondevice-launch-readiness.md)の後続であり、その資料の「AWS期限切れ・未取得」は当時の状態。
 
+後続：[利用者指定の `nekonomado.com` 購入・通知の接続準備](2026-10-15-notice-domain-connection.md)。以下のハイフン付きdomainは当時の候補で、購入していない。新domainの購入と規約/自動更新は承認・実施済み。
+
 ## 実際に確認できた費用と保存量
 
 - 正規AWS CLI loginで既存profileを更新し、STSで既存ねこのまどaccountとの一致を確認した。cached sessionからの400とremote認証の失敗は成功へ読み替えず、最後の通常loginの終了0とSTSを接続成功の根拠にする。新しいIAM key・権限追加・Paid切替なし。
