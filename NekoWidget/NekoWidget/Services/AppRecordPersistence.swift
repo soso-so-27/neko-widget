@@ -297,6 +297,58 @@ final class AppRecordPersistence: ObservableObject {
         try AppRecordDataset.writeBackedUp(JSONEncoder().encode(value), to: bindingURL)
         enabled = value.enabled
     }
+    /// Only disposable transport payloads of an acknowledged automatic upload
+    /// are released. Live roots, previous roots, receipts and restored copies
+    /// are outside this file list and remain intact.
+    private func releaseUploadedPayload(_ id: UUID?, owner: String) {
+        guard let id else { return }
+        let folder = ToolBackupFiles.directory(id)
+        let receipt = folder.appendingPathComponent("uploaded.json")
+        guard let bytes = try? ToolBackupFiles.read(receipt, maximum: 512 * 1024),
+              let saved = try? JSONDecoder().decode(ToolBackupFiles.Saved.self, from: bytes),
+              saved.id == id, saved.owner == owner, saved.index.version == 3,
+              (try? saved.index.validate()) != nil else { return }
+        for file in saved.index.files {
+            let url = folder.appendingPathComponent(file.path)
+            if FileManager.default.fileExists(atPath: url.path) { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+    private struct PartGC: Codable {
+        let owner: String
+        let origin: String
+        var ids: Set<UUID>
+    }
+    private var partGCURL: URL { AppRecordDataset.control.appendingPathComponent("automatic-part-gc.json") }
+    private func partGC(_ value: Binding) throws -> PartGC {
+        guard FileManager.default.fileExists(atPath: partGCURL.path) else {
+            return PartGC(owner: value.owner, origin: value.origin, ids: [])
+        }
+        let queue = try JSONDecoder().decode(PartGC.self, from: ToolBackupFiles.read(partGCURL, maximum: 8 * 1024 * 1024))
+        guard queue.owner == value.owner, queue.origin == value.origin else { throw ManagedPreservationError.staleSession }
+        return queue
+    }
+    private func queueParts(_ index: ToolBackupIndex, value: Binding) throws {
+        var queue = try partGC(value)
+        queue.ids.formUnion(index.files.flatMap(\.records))
+        try AppRecordDataset.writeBackedUp(JSONEncoder().encode(queue), to: partGCURL)
+    }
+    private func collectParts(_ value: Binding, retaining: Set<UUID>,
+                              checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
+        var queue = try partGC(value)
+        for id in queue.ids.subtracting(retaining) {
+            try await require(value, checkpoint)
+            do {
+                let snapshot = try await client.detail(id)
+                guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
+                      ["json", "photo"].contains(part.kind) else { throw ToolBackupError.invalid }
+                try await client.delete(snapshot.record, checkpoint: checkpoint, requireUnreferenced: true)
+            } catch ManagedPreservationError.notFound { }
+              catch ManagedPreservationError.toolPartReferenced { continue }
+            try await require(value, checkpoint)
+            queue.ids.remove(id)
+            try AppRecordDataset.writeBackedUp(JSONEncoder().encode(queue), to: partGCURL)
+        }
+    }
     func setActive(_ value: Bool) {
         active = value
         if !value { loop?.cancel(); loop = nil; return }
@@ -404,6 +456,7 @@ final class AppRecordPersistence: ObservableObject {
             let checkpoint = try await client.captureSessionCheckpoint()
             try await require(value, checkpoint)
             let currentFingerprint = try AppRecordDataset.fingerprint()
+            releaseUploadedPayload(value.snapshotID, owner: value.owner)
             let headID = AppRecordHead.id(origin: value.origin, owner: value.owner)
             // No network polling for an unchanged dataset. Foreground entry and
             // commits request one check; conflict detection also occurs at CAS.
@@ -423,6 +476,7 @@ final class AppRecordPersistence: ObservableObject {
                     if let previous = value.pendingPrevious { value.retiring = Array(Set((value.retiring ?? []) + [previous])) }
                     value.pendingPrevious = nil
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value)
+                    releaseUploadedPayload(pending, owner: value.owner)
                 } else if let remote, try AppRecordDataset.isEmpty() || value.fingerprint == currentFingerprint {
                     title = "記録を復元しています…"
                     let record = try await index(remote.1)
@@ -440,7 +494,8 @@ final class AppRecordPersistence: ObservableObject {
             // Retry only queued, previously accepted automatic snapshots. The
             // server head reference refuses removal of the current snapshot.
             let retained: Set<UUID>
-            if !(value.retiring ?? []).isEmpty, let remote {
+            let hasPartCandidates = try !partGC(value).ids.isEmpty
+            if (!(value.retiring ?? []).isEmpty || hasPartCandidates), let remote {
                 let current = try await index(remote.1)
                 let decoded = try JSONDecoder().decode(ToolBackupIndex.self, from: Data(base64Encoded: current.document.toolBackup!.payload)!)
                 retained = Set(decoded.files.flatMap(\.records))
@@ -456,11 +511,13 @@ final class AppRecordPersistence: ObservableObject {
                         old = try JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
                     }
                     guard old.version == 3 else { throw ToolBackupError.invalid }
+                    try queueParts(old, value: value)
                     try await ToolBackupTransfer.delete(old, client: client, retaining: retained) { _, _ in }
                 } catch ManagedPreservationError.notFound { }
                 try await require(value, checkpoint)
                 value.retiring?.removeAll { $0 == retiring }; try write(value)
             }
+            try await collectParts(value, retaining: retained, checkpoint: checkpoint)
             if value.fingerprint == currentFingerprint, value.pending == nil {
                 title = "保存済み"; detail = nil; return
             }
@@ -475,6 +532,16 @@ final class AppRecordPersistence: ObservableObject {
                 previous = try JSONDecoder().decode(ToolBackupIndex.self, from: Data(base64Encoded: record.document.toolBackup!.payload)!)
             } else { previous = nil }
             let saved: ToolBackupFiles.Saved
+            if let pending = value.pending,
+               !FileManager.default.fileExists(atPath: ToolBackupFiles.directory(pending).appendingPathComponent("pending.json").path) {
+                // OS backup deliberately excludes transport staging. A head
+                // accepted before its reply was lost was reconciled above;
+                // otherwise recapture current live records under a fresh ID.
+                try await require(value, checkpoint)
+                guard try AppRecordDataset.fingerprint() == currentFingerprint else { throw ToolBackupError.changed }
+                value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; value.pendingPrevious = nil
+                try write(value)
+            }
             if let pending = value.pending {
                 saved = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
                     ToolBackupFiles.directory(pending).appendingPathComponent("pending.json"), maximum: 512 * 1024))
@@ -505,14 +572,17 @@ final class AppRecordPersistence: ObservableObject {
             if let previous = value.pendingPrevious { value.retiring = Array(Set((value.retiring ?? []) + [previous])) }
             value.pendingPrevious = nil
             value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; try write(value)
+            releaseUploadedPayload(saved.id, owner: value.owner)
             title = try AppRecordDataset.fingerprint() == value.fingerprint ? "保存済み" : "変更を保存待ち"
             detail = nil
             // Reclaim only the previous automatically published index, after
             // the new CAS head is durable. Shared pieces are server-protected.
             if let previous {
                 try await require(value, checkpoint)
+                try queueParts(previous, value: value)
                 try await ToolBackupTransfer.delete(previous, client: client, retaining: Set(saved.index.files.flatMap(\.records))) { _, _ in }
                 value.retiring?.removeAll { $0 == previous.snapshotID }; try write(value)
+                try await collectParts(value, retaining: Set(saved.index.files.flatMap(\.records)), checkpoint: checkpoint)
             }
         } catch ToolBackupError.changed { title = "変更を保存待ち"; requested = true; nextAttempt = .distantPast }
           catch is CancellationError { title = "未送信の変更があります" }
@@ -532,6 +602,20 @@ final class AppRecordPersistence: ObservableObject {
             detail = (error as? LocalizedError)?.errorDescription ?? "保存を完了できませんでした。端末の記録は残っています。"
         }
     }
+#if DEBUG
+    func verifyMissingStagingRecovery() async throws {
+        guard CommandLine.arguments.contains("--app-records-ui-fixture"), var value = try binding() else { throw ToolBackupError.invalid }
+        value.pending = UUID(); value.pendingFingerprint = try AppRecordDataset.fingerprint()
+        value.pendingBase = value.revision; value.pendingPrevious = value.snapshotID
+        try write(value)
+        await retry()
+        guard title == "保存済み", let accepted = try binding(), accepted.pending == nil,
+              let id = accepted.snapshotID else { throw ToolBackupError.storage }
+        let uploaded = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
+            ToolBackupFiles.directory(id).appendingPathComponent("uploaded.json"), maximum: 512 * 1024))
+        guard uploaded.index.files.allSatisfy({ !FileManager.default.fileExists(atPath: ToolBackupFiles.directory(id).appendingPathComponent($0.path).path) }) else { throw ToolBackupError.storage }
+    }
+#endif
 }
 
 /// Authentication and the one-time consent live in settings; ordinary tool
@@ -886,6 +970,7 @@ struct AppRecordPersistenceFixtureView: View {
             let records = try await PhotoMemoryNoteStore.shared.records()
             guard let first = records.first, let photo = try await PhotoMemoryNoteStore.shared.photoURL(for: first.id),
                   FileManager.default.fileExists(atPath: photo.path) else { throw ToolBackupError.invalid }
+            try await next.persistence.verifyMissingStagingRecovery()
             fixture = next; next.persistence.setActive(true)
             result = "自動復元・通常画面・元記録保全を確認"
         } catch { result = "自動復元の検査失敗" }
@@ -911,7 +996,7 @@ private struct AppRecordFixtureContent: View {
                 if !result.isEmpty { Text(result).accessibilityIdentifier("app-record-fixture-result") }
                 NavigationLink("保存・復元") { AppRecordSettingsView(configuration: fixture.configuration, client: fixture.authenticationClient(), persistence: persistence) }
                 NavigationLink("預けるとき") { CareHandoffView(profiles: [], unregisteredPhotos: [], store: .shared, reuseStore: .shared) }
-                NavigationLink("写真メモ") { PhotoMemoryNotesListView(photos: [], store: .shared) }
+                NavigationLink("写真メモ") { PhotoMemoryNotesListView(photos: [], store: .shared, openPhotos: {}) }
                 Button("別端末での自動復元を検査", action: switchDevice).disabled(persistence.busy || persistence.title != "保存済み")
             }.navigationTitle("自動保存の検査")
                 .navigationDestination(for: MemoriesRoute.self) { route in
