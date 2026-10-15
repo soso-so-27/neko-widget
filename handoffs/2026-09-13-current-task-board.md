@@ -1,3 +1,9 @@
+## 2026-10-15 実機以外の公開準備・費用の整理
+
+- [新しい観測・費用小計・運用接続順序](2026-10-15-nondevice-launch-readiness.md)。980円維持。実台帳は31記録・写真約22.3MB、直近30日のContainer資源を読取り集計。最大投入試算を現状実費や普通1人の平均にしない。S3全版本/請求はAWS認証期限切れで未取得、総原価は未確定。
+- LPのツール保存・復元/手動操作/個人保管/保持条件をローカル修正し、型・conversion検査と実ブラウザー確認。[ストア原稿](2026-10-15-membership-store-copy-draft.md)・S3読取りcollector・一般運用の接続順序も準備。公開・審査提出・購入開始・有料切替は0。
+- 実機以外にもS3/請求の測定、会員終了追跡、実到達通知、全履歴を守った整理、一般枠/予算/公開条件の接続が残る。現設定のtracking/send/events/cleanup/billingはNO。既存本人退会削除cron 1件とCodex配信保守1件は維持し、追加/変更/再実行0。
+
 ## 2026-10-15 ツール保存改善を本線・クラウド反映、内部256をAppleへアップロード済み
 
 - [最新の反映結果と残件](2026-10-15-tool-storage-completion-internal256.md)。PR314をmain `a7975512`へ反映し、本線のiOS判定・backend CI成功、元Build39・両OS runtime・UI9・backend8を保持、正式Photosの全2ケースと終端marker成功をdefault graphで確認。旧Photos失敗・queued run・最初のcontroller準備失敗は保持する。
