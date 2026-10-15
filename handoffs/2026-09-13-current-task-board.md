@@ -1,3 +1,9 @@
+## 2026-10-15 通知のサーバー接続・実メールの受信トレイ到達
+
+- [接続・実メール1通・残る運用条件](2026-10-15-notice-app-connection-and-real-delivery.md)。保管サーバーに `notice@nekonomado.com` の送信元制限binding、source6設定、secretを追加。100%稼働version `d0adaee7` と既存実行コード/既存binding/DB集計/受付/期限/cron不変を確認。980円維持、追加契約・購入0。
+- 本人が選んだ個人用Gmailへ試験メール1通を送信し、実private Queue event→製品の送信記録/receipt v2/合成30日猶予を照合。本人も「受信トレイに届いた」と回答。試験consumer/Worker/DBだけ撤去し、既存データ変更・削除0。未送信段階のHTTP/応答field検査失敗と、修正前後の証拠は保持する。
+- 一般通知は未稼働。tracking/send/events/cleanupはNO、Queueはconsumer0（有限保持）。実会員終了/現在の本人連絡先との運用接続、安全な整理、一般枠/保持原資/公開条件は残る。今回の到達試験をcron追加/再実行、AWS有料化、一般販売や一斉メールの承認へ広げない。既存256/成功検査を維持。
+
 ## 2026-10-15 nekonomado.com購入・通知送信元と配達結果の接続準備
 
 - [購入結果と通知の接続準備](2026-10-15-notice-domain-connection.md)。利用者が `nekonomado.com` と年額を指定し、最終画面で規約・毎年の自動更新も承認。checkout表示10.46米ドル/1年で購入し、登録Active・2027-10-15まで・自動更新ONを確認。旧ハイフン付き候補は購入していない。980円維持。
