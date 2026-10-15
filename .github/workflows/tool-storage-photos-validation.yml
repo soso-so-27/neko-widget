@@ -43,6 +43,7 @@ jobs:
         with:
           ref: fb5a1dce3696703e3942c77c34287c9319886eb1
           path: product
+          fetch-depth: 2
           persist-credentials: false
       - name: Verify fixed source and original history
         shell: bash
@@ -83,6 +84,7 @@ jobs:
         with:
           ref: fb5a1dce3696703e3942c77c34287c9319886eb1
           path: product
+          fetch-depth: 2
           persist-credentials: false
       - name: Recheck fixed source and original history
         shell: bash

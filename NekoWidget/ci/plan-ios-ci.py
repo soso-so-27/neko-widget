@@ -4051,8 +4051,14 @@ TOOL_STORAGE_FORMAL_WORKFLOW = ".github/workflows/tool-storage-photos-validation
 TOOL_STORAGE_FORMAL_CONTROLS = frozenset({"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"})
 TOOL_STORAGE_FORMAL_ADDITIONS = frozenset({TOOL_STORAGE_FORMAL_WORKFLOW,
     "NekoWidget/ci/verify-tool-storage-photos-controller.py", "NekoWidget/ci/test-tool-storage-photos-controller.py"})
-TOOL_STORAGE_FORMAL_ARTIFACTS = {'.github/workflows/tool-storage-photos-validation.yml': 'a79acffa41ec1a74b4b1ddb73f5707941c96609b', 'NekoWidget/ci/verify-tool-storage-photos-controller.py': '83836d8a0128d5ef2f6454278b8c3e6d39c8d53c', 'NekoWidget/ci/test-tool-storage-photos-controller.py': '2d0bc695edc9df5c995ae69d8292f30b66bdf512'}  # Exact reviewed three blobs, not execution pins.
-TOOL_STORAGE_FORMAL_CONTROL_BEFORE = dict(TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE)  # Exact eight controls for this registration diff.
+TOOL_STORAGE_FORMAL_ARTIFACTS = {'.github/workflows/tool-storage-photos-validation.yml': '1765842d4efe79213ec288c0275da2d83f82dd3a', 'NekoWidget/ci/verify-tool-storage-photos-controller.py': '2c5cfac08acdfb263b2dedc1caed4a2684fb7243', 'NekoWidget/ci/test-tool-storage-photos-controller.py': '451e74ad3aed565566bc02aa90487a6dc1f6f8dc'}  # Corrected depth2 controller; None blocks pending exact artifacts.
+TOOL_STORAGE_FORMAL_ARTIFACTS_BEFORE = {'.github/workflows/tool-storage-photos-validation.yml': 'a79acffa41ec1a74b4b1ddb73f5707941c96609b', 'NekoWidget/ci/verify-tool-storage-photos-controller.py': '83836d8a0128d5ef2f6454278b8c3e6d39c8d53c', 'NekoWidget/ci/test-tool-storage-photos-controller.py': '2d0bc695edc9df5c995ae69d8292f30b66bdf512'}
+TOOL_STORAGE_FORMAL_FIRST_FAILURE = {'id': 38676316408, 'head_sha': 'd6b11049e128eb2d8f45434e7a5d61be52af8ba2', 'head_branch': 'main', 'event': 'workflow_dispatch', 'workflow_id': 385071462, 'path': '.github/workflows/tool-storage-photos-validation.yml', 'run_number': 1, 'run_attempt': 1, 'created_at': '2026-10-15T03:26:57Z', 'run_started_at': '2026-10-15T03:26:57Z', 'updated_at': '2026-10-15T03:27:11Z', 'status': 'completed', 'conclusion': 'failure', 'repository': {'id': 1335079243, 'full_name': 'soso-so-27/neko-widget'}, 'head_repository': {'id': 1335079243, 'full_name': 'soso-so-27/neko-widget'}, 'head_commit': {'id': 'd6b11049e128eb2d8f45434e7a5d61be52af8ba2', 'tree_id': 'd51aa017f87ee89006fd35d14f1837e897572e74'}}
+TOOL_STORAGE_FORMAL_FIRST_FAILURE_CRITICAL_SHA256 = '2a46f47f798e0371e981704fa0f3e6e5ba3e1b11a6ffc402718efa755c2d58f8'
+TOOL_STORAGE_FORMAL_FIRST_FAILURE_JOBS_SHA256 = '80e00027012f399929bc28fd078cc46ffd22151f5f9da9f7048853dac1beb08b'
+TOOL_STORAGE_FORMAL_FIRST_FAILURE_PAYLOAD_SHA256 = '3a0254b4dd137f21fabd9c45825a1b1081ba43de1721ee4c1b38c133fefbe4be'
+TOOL_STORAGE_FORMAL_FIRST_FAILURE_RAW_SHA256 = 'e83d162ec6c2f0610aa042f37e96ad9294cd336ab9e7811e1fa0bef8f64c2718'
+TOOL_STORAGE_FORMAL_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': '988ee6e14988a5a0179d8e64f2764d3c2839081c', 'NekoWidget/ci/plan-ios-ci.py': '3f62b74398bf7a109406bee30d5aa7bda0f7652d', 'NekoWidget/ci/preflight-ci.py': '58468dee2e3eca2b865149f2c0af4195875d36bb', 'NekoWidget/ci/release-testflight.py': 'b96df9ab917d46559d2c15030a8740565e8dc174', 'NekoWidget/ci/test-ci-lanes.py': 'af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6', 'NekoWidget/ci/test-plan-ios-ci.py': 'e922a9f9e2a62b5d1798f4fc71e5d165cf729324', 'NekoWidget/ci/test-preflight-ci.py': 'f26aa0e943ce4a98e3c95cd786a3394b5b360011', 'NekoWidget/ci/test-release-testflight.py': '3a9d1056842b4d4ea6d13c1eb5a5bcdd4143cad4'}  # Only this map repinned; original FRESH source controls remain immutable.
 TOOL_STORAGE_FORMAL_OBSERVED = None  # Actual controller/run/jobs/raw; inactive until observed.
 TOOL_STORAGE_FORMAL_QUEUED_AT = "2026-10-15T02:37:02Z"
 TOOL_STORAGE_FORMAL_ORIGINAL_JOBS_SHA256 = "6af2c2b3626df05a7635cb82f4681508c52b9b6974d06d53a13259df4b07f3ee"
@@ -4620,7 +4626,10 @@ def tool_storage_formal_configured():
         and pins['branch'] == 'main'
         and all(type(pins[key]) is int and pins[key] > 0 for key in
                 ('workflow_id', 'run_id', 'precheck_job_id', 'photos_job_id'))
-        and pins['run_id'] not in {TOOL_STORAGE_FRESH_PHOTOS_RUN, TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN}
+        and pins['run_id'] not in {TOOL_STORAGE_FRESH_PHOTOS_RUN, TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN, TOOL_STORAGE_FORMAL_FIRST_FAILURE['id']}
+        and pins['workflow_id'] == TOOL_STORAGE_FORMAL_FIRST_FAILURE['workflow_id']
+        and pins['controller_sha'] != TOOL_STORAGE_FORMAL_FIRST_FAILURE['head_sha']
+        and not {pins['precheck_job_id'], pins['photos_job_id']} & {116230623798, 116230680503}
         and pins['precheck_job_id'] != pins['photos_job_id']
         and not {pins['precheck_job_id'], pins['photos_job_id']} &
                 (set(TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS)
@@ -4813,7 +4822,8 @@ def tool_storage_formal_control_only(paths, base, head):
                         or after.get(path) != f'100644 blob {fields[3]}\t{path}'
                         or fields[2] == fields[3]): return False
             elif path in TOOL_STORAGE_FORMAL_ADDITIONS:
-                if fields != [':000000', '100644', '0' * 40, TOOL_STORAGE_FORMAL_ARTIFACTS[path], 'A']: return False
+                if (fields != [':100644', '100644', TOOL_STORAGE_FORMAL_ARTIFACTS_BEFORE[path], TOOL_STORAGE_FORMAL_ARTIFACTS[path], 'M']
+                        or before.get(path) != f'100644 blob {fields[2]}\t{path}' or fields[2] == fields[3]): return False
             elif not tool_storage_handoff(path) or (fields[:2], fields[4]) not in (([':000000', '100644'], 'A'), ([':100644', '100644'], 'M')): return False
         if seen != set(paths): return False
         if not TOOL_STORAGE_FORMAL_ADDITIONS <= set(paths) and any(before.get(path) != after.get(path) for path in TOOL_STORAGE_FORMAL_ADDITIONS): return False
@@ -4840,6 +4850,11 @@ def tool_storage_formal_manifest(log, phase, controller, now):
         'original_job_ids': sorted(set(TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS),
         'original_jobs_sha256': TOOL_STORAGE_FORMAL_ORIGINAL_JOBS_SHA256,
         'original_attempt1_sha256': TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256,
+         'first_controller_run_id': TOOL_STORAGE_FORMAL_FIRST_FAILURE['id'],
+        'first_controller_sha': TOOL_STORAGE_FORMAL_FIRST_FAILURE['head_sha'],
+        'first_controller_run_critical_sha256': TOOL_STORAGE_FORMAL_FIRST_FAILURE_CRITICAL_SHA256,
+        'first_controller_jobs_sha256': TOOL_STORAGE_FORMAL_FIRST_FAILURE_JOBS_SHA256,
+        'first_controller_failure_raw_sha256': TOOL_STORAGE_FORMAL_FIRST_FAILURE_RAW_SHA256,
         'observations_sha256': TOOL_STORAGE_FORMAL_OBSERVED[('precheck' if phase == 'precheck' else 'photos') + '_observations_sha256']}
     if set(record) != set(expected) | {'checked_at'} or any(record[key] != value for key, value in expected.items()):
         raise ValueError('Formal controller source manifest differs')
@@ -4874,6 +4889,52 @@ def tool_storage_formal_premerge_observation(validation_head):
         'validation_head': validation_head, 'release_qualified': False}
 
 
+def tool_storage_formal_first_controller_failure(api, now):
+    """Retain the sole known pre-native controller failure; never Photos proof."""
+    expected = TOOL_STORAGE_FORMAL_FIRST_FAILURE
+    prefix = '/repos/soso-so-27/neko-widget/actions'
+    run = api(f"{prefix}/runs/{expected['id']}")
+    if (tool_storage_formal_run_critical(run) != expected
+            or tool_storage_formal_digest(tool_storage_formal_run_critical(run)) != TOOL_STORAGE_FORMAL_FIRST_FAILURE_CRITICAL_SHA256):
+        raise ValueError('First controller failure identity/history changed')
+    updated = dt.datetime.fromisoformat(run['updated_at'].replace('Z', '+00:00'))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
+        raise ValueError('First controller failure is stale or in the future')
+    response = api(f"{prefix}/runs/{expected['id']}/jobs?filter=all&per_page=100&page=1")
+    jobs = response.get('jobs')
+    if (type(response.get('total_count')) is not int or response['total_count'] != 2
+            or not isinstance(jobs, list) or len(jobs) != 2
+            or tool_storage_formal_digest(jobs) != TOOL_STORAGE_FORMAL_FIRST_FAILURE_JOBS_SHA256
+            or tool_storage_formal_digest(response) != TOOL_STORAGE_FORMAL_FIRST_FAILURE_PAYLOAD_SHA256):
+        raise ValueError('First controller full two-job records changed or another attempt executed')
+    old = {job['id']: job for job in jobs}
+    if set(old) != {116230623798, 116230680503}:
+        raise ValueError('First controller jobs differ')
+    linux, mac = old[116230623798], old[116230680503]
+    if (linux.get('name') != 'Verify fixed Photos source and original history'
+            or (linux.get('status'), linux.get('conclusion')) != ('completed', 'failure')
+            or mac.get('name') != 'Formal full Photos validation for frozen tool source'
+            or (mac.get('status'), mac.get('conclusion')) != ('completed', 'skipped') or mac.get('steps') != []
+            or any(job.get('run_id') != expected['id'] or job.get('head_sha') != expected['head_sha']
+                or type(job.get('run_attempt')) is not int or job['run_attempt'] != 1 for job in jobs)
+            or [(step.get('name'), step.get('number'), step.get('status'), step.get('conclusion'))
+                for step in linux.get('steps', []) if step.get('conclusion') != 'success']
+                != [('Verify fixed source and original history', 4, 'completed', 'failure')]):
+        raise ValueError('First failure was not solely the observed pre-native source verification')
+    raw = api(f'{prefix}/jobs/116230623798/logs')
+    if tool_log_digest(raw) != TOOL_STORAGE_FORMAL_FIRST_FAILURE_RAW_SHA256:
+        raise ValueError('First controller failure raw log changed')
+    return {'run_id': expected['id'], 'sha': expected['head_sha'], 'event': expected['event'],
+        'workflow_id': expected['workflow_id'], 'path': expected['path'], 'run_attempt': 1,
+        'status': 'completed', 'conclusion': 'failure', 'job_ids': [116230623798, 116230680503],
+        'critical_run_sha256': TOOL_STORAGE_FORMAL_FIRST_FAILURE_CRITICAL_SHA256,
+        'jobs_sha256': TOOL_STORAGE_FORMAL_FIRST_FAILURE_JOBS_SHA256,
+        'payload_sha256': TOOL_STORAGE_FORMAL_FIRST_FAILURE_PAYLOAD_SHA256,
+        'raw_log_sha256': TOOL_STORAGE_FORMAL_FIRST_FAILURE_RAW_SHA256,
+        'native_jobs_executed': 0, 'release_evidence': False}
+
+
+
 def tool_storage_formal_photos_proof(repository, api, now, validation_head, *, premerge=False):
     if repository != 'soso-so-27/neko-widget' or not tool_storage_formal_configured(): raise ValueError('Formal Photos is not observed')
     context = None
@@ -4883,6 +4944,7 @@ def tool_storage_formal_photos_proof(repository, api, now, validation_head, *, p
             or not tool_storage_formal_equivalent_inputs(TOOL_STORAGE_FRESH_PHOTOS_SOURCE, validation_head)
             or not tool_storage_signature(validation_head)):
         raise ValueError('Formal Photos main inputs/current signature differ')
+    first_failure = tool_storage_formal_first_controller_failure(api, now)
     pins = TOOL_STORAGE_FORMAL_OBSERVED
     prefix = '/repos/' + repository + '/actions'
     source = api(f'{prefix}/runs/{TOOL_STORAGE_FRESH_PHOTOS_RUN}')
@@ -4922,8 +4984,12 @@ def tool_storage_formal_photos_proof(repository, api, now, validation_head, *, p
     indexed = index.get('workflow_runs')
     controller = api(f"{prefix}/runs/{pins['run_id']}")
     keys = ('id', 'head_sha', 'head_branch', 'workflow_id', 'path', 'event', 'run_attempt', 'status', 'conclusion', 'updated_at')
-    if (type(index.get('total_count')) is not int or index['total_count'] != 1 or not isinstance(indexed, list) or len(indexed) != 1
-            or not isinstance(indexed[0], dict) or any(indexed[0].get(key) != controller.get(key) for key in keys)
+    if (type(index.get('total_count')) is not int or index['total_count'] != 2 or not isinstance(indexed, list) or len(indexed) != 2
+            or any(not isinstance(row, dict) or type(row.get('id')) is not int for row in indexed)
+            or {row['id'] for row in indexed} != {TOOL_STORAGE_FORMAL_FIRST_FAILURE['id'], pins['run_id']}
+            or len({row['id'] for row in indexed}) != 2
+            or any(next(row for row in indexed if row['id'] == pins['run_id']).get(key) != controller.get(key) for key in keys)
+            or tool_storage_formal_run_critical(next(row for row in indexed if row['id'] == TOOL_STORAGE_FORMAL_FIRST_FAILURE['id'])) != TOOL_STORAGE_FORMAL_FIRST_FAILURE
             or controller.get('id') != pins['run_id'] or controller.get('head_sha') != pins['controller_sha']
             or controller.get('head_branch') != pins['branch'] or controller.get('workflow_id') != pins['workflow_id']
             or controller.get('path') != TOOL_STORAGE_FORMAL_WORKFLOW or controller.get('event') != 'workflow_dispatch'
@@ -4978,9 +5044,13 @@ def tool_storage_formal_photos_proof(repository, api, now, validation_head, *, p
         if tool_log_digest(raw) != pins[raw_key]: raise ValueError('Standalone raw log differs')
         manifests[role] = tool_storage_formal_manifest(raw, phase, controller, now)
         if role == 'photos' and not moderation_chained_photos_success(raw): raise ValueError('Formal full two-case Photos/TCC/fixture/Widget completion is missing')
+    if tool_storage_formal_digest(api(f'{prefix}/workflows/tool-storage-photos-validation.yml/runs?{query}')) != tool_storage_formal_digest(index):
+        raise ValueError('Controller global index changed at final fence')
+    if tool_storage_formal_first_controller_failure(api, now) != first_failure:
+        raise ValueError('First controller failure changed at final fence')
     # A concurrent old queue allocation must invalidate even a completed controller.
     if tool_storage_formal_original_jobs(source, api) != jobs: raise ValueError('Original history changed at final fence')
-    return {'kind': TOOL_STORAGE_FORMAL_KIND, **({'validation_context': context} if context else {}),
+    return {'kind': TOOL_STORAGE_FORMAL_KIND, 'first_controller_failure': first_failure, 'controller_index_sha256': tool_storage_formal_digest(index), **({'validation_context': context} if context else {}),
         'compiled_source_sha': TOOL_STORAGE_FRESH_PHOTOS_SOURCE,
         'compiled_tree': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE, 'original_run_id': source['id'],
         'original_attempt': 1, 'original_status': source['status'], 'original_conclusion': 'failure',
@@ -5027,6 +5097,11 @@ def tool_storage_formal_graph(run, validation_head, api, now, jobs):
     proof['required_steps'] = list(TOOL_STORAGE_BACKEND_STEPS)
     # Verify once more after backend reads; no selection of whichever race wins.
     if tool_storage_formal_original_jobs(run, api) != original_jobs: raise ValueError('Original jobs changed after backend verification')
+    final_index = api('/repos/' + repo + '/actions/workflows/tool-storage-photos-validation.yml/runs?event=workflow_dispatch&per_page=100')
+    if tool_storage_formal_digest(final_index) != formal['controller_index_sha256']:
+        raise ValueError('Controller index changed after backend verification')
+    if tool_storage_formal_first_controller_failure(api, now) != formal['first_controller_failure']:
+        raise ValueError('First controller history changed after backend verification')
     return {'backend_evidence': backends, 'formal_photos': formal,
         'native_evidence': {'run_id': run['id'], 'sha': run['head_sha'], 'run_attempt': 1,
             'status': run['status'], 'conclusion': run['conclusion'], 'retained_jobs': formal['retained_jobs']}}
