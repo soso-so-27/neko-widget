@@ -3138,6 +3138,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if runtime_scope == BILLING_OPERATOR_SCOPE and source_paths(paths) and source_paths(paths) <= BILLING_OPERATOR_PATHS:
         return (PLAN_JOB,)
+    if runtime_scope == ORCHESTRATION_SCOPE and tool_storage_formal_control_paths_only(paths):
+        return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and tool_storage_control_paths_only(paths):
         return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
@@ -4030,6 +4032,39 @@ def tool_storage_paths_only(paths):
             and sources in (TOOL_STORAGE_PATHS, TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH}))
 
 
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE = "fb5a1dce3696703e3942c77c34287c9319886eb1"
+TOOL_STORAGE_FRESH_PHOTOS_RUN = 38667725132
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE = "6720274ee20b7d7649c86c62687f425455f1d28f"
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS = {"plan": 116203398345, "build": 116203650095,
+    "photos": 116203650168, "runtime": 116203650195, "app-ui": 116203650126}
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS = frozenset({116207475176, 116210547790})
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE_CREATED_AT = "2026-10-15T01:49:33Z"
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE_FINISHED_AT = "2026-10-15T02:27:23Z"
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLAN_SHA256 = "8a5275e9834ab345f7324bae19f50be5cb02e8a72bab062fe0b50687bddb9eb2"
+TOOL_STORAGE_FRESH_PHOTOS_SOURCE_UI_SHA256 = "d4606df163ea58af1cc1ec10d5f37ce15b5fddf093719fb1bf37024b31ed0438"
+TOOL_STORAGE_FRESH_PHOTOS_FAILURE_SHA256 = "91a0bf3657a29a832a035fbda77029921657bac857e06b286632c27ff547d811"
+TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN = 38667725016
+TOOL_STORAGE_FRESH_PHOTOS_BACKEND_JOB = 116203397775
+TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': '988ee6e14988a5a0179d8e64f2764d3c2839081c', 'NekoWidget/ci/plan-ios-ci.py': 'a1a7ef06f9704a0393ee79e9bbb298592f387b68', 'NekoWidget/ci/preflight-ci.py': '58468dee2e3eca2b865149f2c0af4195875d36bb', 'NekoWidget/ci/release-testflight.py': 'b96df9ab917d46559d2c15030a8740565e8dc174', 'NekoWidget/ci/test-ci-lanes.py': 'af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6', 'NekoWidget/ci/test-plan-ios-ci.py': 'a6b0b05873558e3d251ad636432bf2c475ef5127', 'NekoWidget/ci/test-preflight-ci.py': 'f26aa0e943ce4a98e3c95cd786a3394b5b360011', 'NekoWidget/ci/test-release-testflight.py': '3a9d1056842b4d4ea6d13c1eb5a5bcdd4143cad4'}
+TOOL_STORAGE_FORMAL_KIND = "tool-storage-fb5-standalone-formal-photos-v1"
+TOOL_STORAGE_FORMAL_WORKFLOW = ".github/workflows/tool-storage-photos-validation.yml"
+TOOL_STORAGE_FORMAL_CONTROLS = frozenset({"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"})
+TOOL_STORAGE_FORMAL_ADDITIONS = frozenset({TOOL_STORAGE_FORMAL_WORKFLOW,
+    "NekoWidget/ci/verify-tool-storage-photos-controller.py", "NekoWidget/ci/test-tool-storage-photos-controller.py"})
+TOOL_STORAGE_FORMAL_ARTIFACTS = {'.github/workflows/tool-storage-photos-validation.yml': 'a79acffa41ec1a74b4b1ddb73f5707941c96609b', 'NekoWidget/ci/verify-tool-storage-photos-controller.py': '83836d8a0128d5ef2f6454278b8c3e6d39c8d53c', 'NekoWidget/ci/test-tool-storage-photos-controller.py': '2d0bc695edc9df5c995ae69d8292f30b66bdf512'}  # Exact reviewed three blobs, not execution pins.
+TOOL_STORAGE_FORMAL_CONTROL_BEFORE = dict(TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE)  # Exact eight controls for this registration diff.
+TOOL_STORAGE_FORMAL_OBSERVED = None  # Actual controller/run/jobs/raw; inactive until observed.
+TOOL_STORAGE_FORMAL_QUEUED_AT = "2026-10-15T02:37:02Z"
+TOOL_STORAGE_FORMAL_ORIGINAL_JOBS_SHA256 = "6af2c2b3626df05a7635cb82f4681508c52b9b6974d06d53a13259df4b07f3ee"
+TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256 = "4589373b8f337bd1e175521f74a574bbce697de771d8e7aea430ab1db30b9d2e"
+TOOL_STORAGE_FORMAL_PRECHECK_STEPS = ("Check out approved controller", "Check out frozen product",
+    "Verify fixed source and original history", "Upload source-history precheck")
+TOOL_STORAGE_FORMAL_PHOTOS_STEPS = ("Check out approved controller", "Check out frozen product",
+    "Recheck fixed source and original history", "Run unchanged full Simulator smoke test", "Upload formal Photos artifacts")
+TOOL_STORAGE_FORMAL_ORIGINAL = {'id': 38667725132, 'head_sha': 'fb5a1dce3696703e3942c77c34287c9319886eb1', 'head_branch': 'codex/tool-storage-fresh-validation-20261015', 'event': 'push', 'workflow_id': 335014238, 'path': '.github/workflows/ios-build.yml', 'run_number': 1857, 'run_attempt': 1, 'created_at': '2026-10-15T01:49:33Z', 'run_started_at': '2026-10-15T01:49:33Z', 'updated_at': '2026-10-15T02:27:23Z', 'status': 'completed', 'conclusion': 'failure', 'repository': {'id': 1335079243, 'full_name': 'soso-so-27/neko-widget'}, 'head_repository': {'id': 1335079243, 'full_name': 'soso-so-27/neko-widget'}, 'head_commit': {'id': 'fb5a1dce3696703e3942c77c34287c9319886eb1', 'tree_id': '6720274ee20b7d7649c86c62687f425455f1d28f'}}
+TOOL_STORAGE_FORMAL_QUEUED = {'id': 38667725132, 'head_sha': 'fb5a1dce3696703e3942c77c34287c9319886eb1', 'head_branch': 'codex/tool-storage-fresh-validation-20261015', 'event': 'push', 'workflow_id': 335014238, 'path': '.github/workflows/ios-build.yml', 'run_number': 1857, 'run_attempt': 1, 'created_at': '2026-10-15T01:49:33Z', 'run_started_at': '2026-10-15T02:37:02Z', 'updated_at': '2026-10-15T02:37:02Z', 'status': 'queued', 'conclusion': None, 'repository': {'id': 1335079243, 'full_name': 'soso-so-27/neko-widget'}, 'head_repository': {'id': 1335079243, 'full_name': 'soso-so-27/neko-widget'}, 'head_commit': {'id': 'fb5a1dce3696703e3942c77c34287c9319886eb1', 'tree_id': '6720274ee20b7d7649c86c62687f425455f1d28f'}}
+
+
 def tool_storage_registration():
     if (set(TOOL_STORAGE_BLOBS) != TOOL_STORAGE_PATHS or len(TOOL_STORAGE_BLOBS) != 22
             or TOOL_STORAGE_CONTROLS != TOOL_PRESERVATION_CONTROLS | {"NekoWidget/ci/test-ci-lanes.py"}
@@ -4100,7 +4135,7 @@ def tool_storage_only(paths, base, head):
               (([":000000", "100644"], "A"), ([":100644", "100644"], "M"))): return False
     if seen != set(paths): return False
     for ref, position in ((base, 0), (head, 1)):
-        rows = tool_storage_tree(ref)
+        rows = tool_storage_product_tree(ref)
         for path, pair in products.items():
             expected = None if pair[position] == "0" * 40 else f"100644 blob {pair[position]}\t{path}"
             if rows.get(path) != expected: return False
@@ -4115,7 +4150,7 @@ def tool_storage_inputs(head):
     if (not SHA.fullmatch(head) or not tool_storage_registration()
             or TOOL_STORAGE_READINESS_PAIR is None or not tool_storage_approved(head, head)):
         return False
-    rows = tool_storage_tree(head)
+    rows = tool_storage_product_tree(head)
     expected = {path: pair[1] for path, pair in TOOL_STORAGE_BLOBS.items()}
     expected[TOOL_STORAGE_READINESS_PATH] = TOOL_STORAGE_READINESS_PAIR[1]
     return all(rows.get(path) == f"100644 blob {blob}\t{path}" for path, blob in expected.items())
@@ -4533,8 +4568,474 @@ def tool_storage_photos_retry_diagnostic(api, now):
     return {**expected, "diagnostic_only": True, "release_evidence": False}
 
 
+def tool_storage_formal_backend_identity(api, proof):
+    """Exactly this normal owning push, never the old fixed PR proof."""
+    prefix = "/repos/soso-so-27/neko-widget/actions"
+    query = urllib.parse.urlencode({"head_sha": TOOL_STORAGE_FRESH_PHOTOS_SOURCE, "event": "push", "per_page": 100})
+    index = api(f"{prefix}/workflows/preservation-service.yml/runs?{query}")
+    runs = index.get("workflow_runs")
+    if (type(index.get("total_count")) is not int or index["total_count"] != 1
+            or not isinstance(runs, list) or len(runs) != 1 or runs[0].get("id") != TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN
+            or runs[0].get("head_sha") != TOOL_STORAGE_FRESH_PHOTOS_SOURCE
+            or runs[0].get("head_branch") != TOOL_STORAGE_FRESH_BRANCH or runs[0].get("event") != "push"
+            or runs[0].get("workflow_id") != 363932714 or runs[0].get("path") != PRESERVATION_WORKFLOW
+            or type(runs[0].get("run_attempt")) is not int or runs[0]["run_attempt"] != 1
+            or (runs[0].get("status"), runs[0].get("conclusion")) != ("completed", "success")
+            or any(runs[0].get(side, {}).get("full_name") != "soso-so-27/neko-widget" for side in ("repository", "head_repository"))
+            or proof.get("run_id") != TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN
+            or proof.get("sha") != TOOL_STORAGE_FRESH_PHOTOS_SOURCE or proof.get("event") != "push"
+            or proof.get("branch") != TOOL_STORAGE_FRESH_BRANCH or proof.get("job_ids") != [TOOL_STORAGE_FRESH_PHOTOS_BACKEND_JOB]):
+        raise ValueError("Fixed fresh Photos backend push differs")
+
+
+def tool_storage_product_tree(ref):
+    if tool_storage_formal_artifacts_configured() and all(git("ls-tree", ref, "--", path)
+            == f"100644 blob {blob}\t{path}" for path, blob in TOOL_STORAGE_FORMAL_ARTIFACTS.items()):
+        approved = git("merge-base", "refs/remotes/origin/main", ref)
+        if any(git("ls-tree", approved, "--", path) != f"100644 blob {blob}\t{path}"
+                for path, blob in TOOL_STORAGE_FORMAL_ARTIFACTS.items()):
+            raise ValueError("Standalone controller is not main-approved")
+        return tool_storage_formal_tree(ref)
+    return tool_storage_tree(ref)
+
+
+def tool_storage_formal_artifacts_configured():
+    return (isinstance(TOOL_STORAGE_FORMAL_ARTIFACTS, dict)
+        and set(TOOL_STORAGE_FORMAL_ARTIFACTS) == TOOL_STORAGE_FORMAL_ADDITIONS
+        and all(isinstance(blob, str) and SHA.fullmatch(blob) and blob != '0' * 40
+                for blob in TOOL_STORAGE_FORMAL_ARTIFACTS.values()))
+
+
+def tool_storage_formal_configured():
+    pins = TOOL_STORAGE_FORMAL_OBSERVED
+    keys = {'controller_sha', 'branch', 'workflow_id', 'run_id', 'precheck_job_id',
+        'photos_job_id', 'precheck_raw_log_sha256', 'photos_raw_log_sha256',
+        'precheck_steps_sha256', 'photos_steps_sha256', 'precheck_observations_sha256', 'photos_observations_sha256'}
+    return (tool_storage_formal_artifacts_configured()
+        and isinstance(TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256, str)
+        and re.fullmatch(r'[0-9a-f]{64}', TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256)
+        and isinstance(pins, dict) and set(pins) == keys
+        and isinstance(pins['controller_sha'], str) and SHA.fullmatch(pins['controller_sha'])
+        and pins['controller_sha'] != TOOL_STORAGE_FRESH_PHOTOS_SOURCE
+        and pins['branch'] == 'main'
+        and all(type(pins[key]) is int and pins[key] > 0 for key in
+                ('workflow_id', 'run_id', 'precheck_job_id', 'photos_job_id'))
+        and pins['run_id'] not in {TOOL_STORAGE_FRESH_PHOTOS_RUN, TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN}
+        and pins['precheck_job_id'] != pins['photos_job_id']
+        and not {pins['precheck_job_id'], pins['photos_job_id']} &
+                (set(TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS)
+        and all(isinstance(pins[key], str) and re.fullmatch(r'[0-9a-f]{64}', pins[key]) for key in
+                ('precheck_raw_log_sha256', 'photos_raw_log_sha256', 'precheck_steps_sha256', 'photos_steps_sha256',
+                    'precheck_observations_sha256', 'photos_observations_sha256')))
+
+
+def tool_storage_formal_source_candidate(run):
+    # A queued original is a source of retained evidence, never a successful run.
+    return (tool_storage_formal_configured() and isinstance(run, dict)
+        and run.get('id') == TOOL_STORAGE_FRESH_PHOTOS_RUN
+        and run.get('head_sha') == TOOL_STORAGE_FRESH_PHOTOS_SOURCE
+        and run.get('head_branch') == TOOL_STORAGE_FRESH_BRANCH
+        and run.get('event') == 'push' and run.get('workflow_id') == 335014238
+        and run.get('path') == '.github/workflows/ios-build.yml'
+        and type(run.get('run_attempt')) is int and run['run_attempt'] == 1
+        and (run.get('status'), run.get('conclusion')) == ('queued', None)
+        and run.get('created_at') == TOOL_STORAGE_FRESH_PHOTOS_SOURCE_CREATED_AT
+        and run.get('updated_at') == TOOL_STORAGE_FORMAL_QUEUED_AT
+        and run.get('run_started_at') == TOOL_STORAGE_FORMAL_QUEUED_AT
+        and tool_storage_formal_run_critical(run) == TOOL_STORAGE_FORMAL_QUEUED)
+
+
+def tool_storage_formal_run_critical(value):
+    if not isinstance(value, dict): return None
+    result = {key: value.get(key) for key in ('id', 'head_sha', 'head_branch', 'event', 'workflow_id',
+        'path', 'run_number', 'run_attempt', 'created_at', 'run_started_at', 'updated_at', 'status', 'conclusion')}
+    for key in ('repository', 'head_repository'):
+        if not isinstance(value.get(key), dict): return None
+        result[key] = {field: value[key].get(field) for field in ('id', 'full_name')}
+    if not isinstance(value.get('head_commit'), dict): return None
+    result['head_commit'] = {key: value['head_commit'].get(key) for key in ('id', 'tree_id')}
+    if any(type(result[key]) is not int for key in ('id', 'workflow_id', 'run_number', 'run_attempt')): return None
+    return result
+
+
+def tool_storage_formal_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
+        ensure_ascii=True).encode('utf-8')).hexdigest()
+
+
+def tool_storage_formal_original_jobs(run, api):
+    if not tool_storage_formal_source_candidate(run):
+        raise ValueError('Standalone formal Photos source is not the fixed queued original')
+    prefix = '/repos/soso-so-27/neko-widget/actions/runs/' + str(TOOL_STORAGE_FRESH_PHOTOS_RUN)
+    current = api(prefix)
+    if not tool_storage_formal_source_candidate(current) or any(current.get(key) != run.get(key) for key in
+            ('id', 'head_sha', 'event', 'head_branch', 'workflow_id', 'path', 'run_attempt',
+             'status', 'conclusion', 'created_at', 'updated_at', 'run_started_at')):
+        raise ValueError('Original queue changed during standalone proof')
+    original = api(prefix + '/attempts/1')
+    expected = {'id': TOOL_STORAGE_FRESH_PHOTOS_RUN, 'head_sha': TOOL_STORAGE_FRESH_PHOTOS_SOURCE,
+        'head_branch': TOOL_STORAGE_FRESH_BRANCH, 'event': 'push', 'workflow_id': 335014238,
+        'path': '.github/workflows/ios-build.yml', 'run_attempt': 1,
+        'status': 'completed', 'conclusion': 'failure', 'created_at': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_CREATED_AT,
+        'updated_at': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_FINISHED_AT}
+    if (type(original.get('run_attempt')) is not int or any(original.get(key) != value for key, value in expected.items())
+            or any(original.get(side, {}).get('full_name') != 'soso-so-27/neko-widget'
+                for side in ('repository', 'head_repository'))):
+        raise ValueError('Immutable original attempt1 failure differs')
+    if (tool_storage_formal_run_critical(original) != TOOL_STORAGE_FORMAL_ORIGINAL
+            or tool_storage_formal_digest(tool_storage_formal_run_critical(original)) != TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256):
+        raise ValueError('Immutable critical original metadata differs')
+    response = api(prefix + '/jobs?filter=all&per_page=100&page=1')
+    jobs = response.get('jobs')
+    if (type(response.get('total_count')) is not int or response['total_count'] != 7
+            or not isinstance(jobs, list) or len(jobs) != 7
+            or any(not isinstance(job, dict) or type(job.get('id')) is not int
+                or job.get('run_id') != run['id'] or job.get('head_sha') != run['head_sha']
+                or type(job.get('run_attempt')) is not int or job['run_attempt'] != 1
+                or job.get('status') != 'completed' for job in jobs)
+            or {job['id'] for job in jobs} != set(TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS
+            or tool_storage_formal_digest(jobs) != TOOL_STORAGE_FORMAL_ORIGINAL_JOBS_SHA256):
+        raise ValueError('Original all-seven history changed or a new job/attempt appeared')
+    names = {'plan': PLAN_JOB, 'build': BUILD, 'photos': BOOTSTRAP_SMOKE,
+        'runtime': lane_job(TOOL_STORAGE_SCOPE, 'runtime'), 'app-ui': lane_job(TOOL_STORAGE_SCOPE, 'app-ui')}
+    old = {job['id']: job for job in jobs}
+    for role, identifier in TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.items():
+        if old[identifier].get('name') != names[role] or old[identifier].get('conclusion') != ('failure' if role == 'photos' else 'success'):
+            raise ValueError('Original owning job outcome differs')
+    failed = old[TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['photos']]
+    steps = failed.get('steps')
+    if (not isinstance(steps, list) or any(not isinstance(step, dict) or step.get('status') != 'completed' for step in steps)
+            or [(step.get('name'), step.get('number'), step.get('conclusion')) for step in steps if step.get('conclusion') != 'success']
+                != [('Run Simulator smoke test', 3, 'failure')]):
+        raise ValueError('Original Photos failure is not the observed exact completed failure')
+    for identifier in TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS:
+        job = old[identifier]
+        if job.get('name') != UNEXPANDED_SHARING_JOB or job.get('conclusion') != 'skipped' or job.get('steps') != []:
+            raise ValueError('Original unexpanded downstream executed')
+    return jobs
+
+
+def tool_storage_formal_tree(ref):
+    # Only this literal controller's three additions are removed for the original
+    # 1163-row closure calculation. Generic tool_storage_tree is unchanged.
+    if not tool_storage_formal_artifacts_configured(): raise ValueError('Controller artifacts are not frozen')
+    rows = [row for row in git('ls-tree', '-r', '-z', ref).split('\0') if row]
+    if not rows or any(not re.fullmatch(r'100644 blob [0-9a-f]{40}\t[^\0]+', row) for row in rows):
+        raise ValueError('Malformed standalone tool tree')
+    paths = [row.split('\t', 1)[1] for row in rows]
+    if len(paths) != len(set(paths)): raise ValueError('Duplicate standalone tree path')
+    mapped = dict(zip(paths, rows))
+    for path, blob in TOOL_STORAGE_FORMAL_ARTIFACTS.items():
+        if mapped.get(path) != f'100644 blob {blob}\t{path}': raise ValueError('Controller artifact differs')
+    frozen = [row for row, path in zip(rows, paths) if not tool_storage_handoff(path)
+        and path not in TOOL_STORAGE_PATHS | TOOL_STORAGE_CONTROLS | {TOOL_STORAGE_READINESS_PATH} | TOOL_STORAGE_FORMAL_ADDITIONS]
+    if len(frozen) != TOOL_STORAGE_CLOSURE_COUNT or hashlib.sha256(('\0'.join(frozen) + '\0').encode()).hexdigest() != TOOL_STORAGE_CLOSURE_SHA256:
+        raise ValueError('Standalone original closure differs')
+    return mapped
+
+
+def tool_storage_formal_equivalent_inputs(source, head):
+    try:
+        if (source != TOOL_STORAGE_FRESH_PHOTOS_SOURCE or not SHA.fullmatch(head) or source == head
+                or git('rev-parse', 'HEAD') != head or not tool_storage_inputs(source)
+                or git('rev-parse', source + '^{tree}') != TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE): return False
+        git('merge-base', '--is-ancestor', source, head)
+        approved = git('merge-base', 'refs/remotes/origin/main', head)
+        marker = 'TOOL_STORAGE_FORMAL_KIND = "tool-storage-fb5-standalone-formal-photos-v1"'
+        if git('show', f'{approved}:NekoWidget/ci/plan-ios-ci.py').splitlines().count(marker) != 1: return False
+        before, after = tool_storage_tree(source), tool_storage_formal_tree(head)
+        for path in TOOL_STORAGE_CONTROLS:
+            if before.get(path) != f'100644 blob {TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE[path]}\t{path}': return False
+            trusted = git('ls-tree', approved, '--', path)
+            if not re.fullmatch(r'100644 blob [0-9a-f]{40}\t' + re.escape(path), trusted) or after.get(path) != trusted: return False
+            if path not in TOOL_STORAGE_FORMAL_CONTROLS and before.get(path) != after.get(path): return False
+        for path, blob in TOOL_STORAGE_FORMAL_ARTIFACTS.items():
+            if path in before or git('ls-tree', approved, '--', path) != f'100644 blob {blob}\t{path}': return False
+        frozen = lambda rows: {path: row for path, row in rows.items()
+            if path not in TOOL_STORAGE_FORMAL_CONTROLS | TOOL_STORAGE_FORMAL_ADDITIONS and not tool_storage_handoff(path)}
+        if frozen(before) != frozen(after): return False
+        raw_text = git('diff', '--raw', '--no-renames', '--no-abbrev', '-z', source, head)
+        if not raw_text.endswith('\0'): return False
+        raw = raw_text.split('\0')
+        if raw[-1:] == ['']: raw.pop()
+        if len(raw) % 2: return False
+        seen, changed = set(), set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if path in seen or len(fields) != 5: return False
+            seen.add(path)
+            if path in TOOL_STORAGE_FORMAL_CONTROLS:
+                if (fields[:2] != [':100644', '100644'] or fields[4] != 'M'
+                        or before.get(path) != f'100644 blob {fields[2]}\t{path}'
+                        or after.get(path) != f'100644 blob {fields[3]}\t{path}'): return False
+                changed.add(path)
+            elif path in TOOL_STORAGE_FORMAL_ADDITIONS:
+                if fields != [':000000', '100644', '0' * 40, TOOL_STORAGE_FORMAL_ARTIFACTS[path], 'A']: return False
+                changed.add(path)
+            elif not tool_storage_handoff(path) or (fields[:2], fields[4]) not in (([':000000', '100644'], 'A'), ([':100644', '100644'], 'M')): return False
+        return changed == TOOL_STORAGE_FORMAL_CONTROLS | TOOL_STORAGE_FORMAL_ADDITIONS
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def tool_storage_formal_control_paths_only(paths):
+    return (isinstance(paths, (list, tuple)) and bool(paths) and all(isinstance(path, str) for path in paths)
+        and len(paths) == len(set(paths)) and {path for path in paths if not tool_storage_handoff(path)}
+            in (TOOL_STORAGE_FORMAL_CONTROLS, TOOL_STORAGE_FORMAL_CONTROLS | TOOL_STORAGE_FORMAL_ADDITIONS))
+
+
+def tool_storage_formal_control_only(paths, base, head):
+    try:
+        if (not tool_storage_formal_control_paths_only(paths) or not tool_storage_formal_artifacts_configured()
+                or not isinstance(TOOL_STORAGE_FORMAL_CONTROL_BEFORE, dict)
+                or set(TOOL_STORAGE_FORMAL_CONTROL_BEFORE) != TOOL_STORAGE_CONTROLS): return False
+        before = {row.split('\t', 1)[1]: row for row in git('ls-tree', '-r', '-z', base).split('\0') if row}
+        after = tool_storage_formal_tree(head)
+        for path, blob in TOOL_STORAGE_FORMAL_CONTROL_BEFORE.items():
+            if before.get(path) != f'100644 blob {blob}\t{path}': return False
+            if path not in TOOL_STORAGE_FORMAL_CONTROLS and before.get(path) != after.get(path): return False
+        frozen = lambda rows: {path: row for path, row in rows.items()
+            if path not in TOOL_STORAGE_FORMAL_CONTROLS | TOOL_STORAGE_FORMAL_ADDITIONS and not tool_storage_handoff(path)}
+        if frozen(before) != frozen(after): return False
+        raw_text = git('diff', '--raw', '--no-renames', '--no-abbrev', '-z', base, head)
+        if not raw_text.endswith('\0'): return False
+        raw = raw_text.split('\0')
+        if raw[-1:] == ['']: raw.pop()
+        if len(raw) != 2 * len(paths): return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if path in seen or path not in paths or len(fields) != 5: return False
+            seen.add(path)
+            if path in TOOL_STORAGE_FORMAL_CONTROLS:
+                if (fields[:2] != [':100644', '100644'] or fields[4] != 'M'
+                        or fields[2] != TOOL_STORAGE_FORMAL_CONTROL_BEFORE[path]
+                        or after.get(path) != f'100644 blob {fields[3]}\t{path}'
+                        or fields[2] == fields[3]): return False
+            elif path in TOOL_STORAGE_FORMAL_ADDITIONS:
+                if fields != [':000000', '100644', '0' * 40, TOOL_STORAGE_FORMAL_ARTIFACTS[path], 'A']: return False
+            elif not tool_storage_handoff(path) or (fields[:2], fields[4]) not in (([':000000', '100644'], 'A'), ([':100644', '100644'], 'M')): return False
+        if seen != set(paths): return False
+        if not TOOL_STORAGE_FORMAL_ADDITIONS <= set(paths) and any(before.get(path) != after.get(path) for path in TOOL_STORAGE_FORMAL_ADDITIONS): return False
+        return tool_storage_signature(head)
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def tool_storage_formal_manifest(log, phase, controller, now):
+    records = [json.loads(line.split('FORMAL_PHOTOS_SOURCE_JSON=', 1)[1]) for line in log.splitlines() if 'FORMAL_PHOTOS_SOURCE_JSON=' in line]
+    if len(records) != 1 or not isinstance(records[0], dict): raise ValueError('One exact source manifest is required')
+    record = records[0]
+    expected = {'schema_version': 1, 'kind': 'tool-storage-formal-photos-source-precheck-v1',
+        'repository': 'soso-so-27/neko-widget', 'controller_sha': controller['head_sha'],
+        'controller_ref': 'refs/heads/main', 'controller_run_id': controller['id'], 'controller_run_attempt': 1,
+        'phase': phase, 'product_sha': TOOL_STORAGE_FRESH_PHOTOS_SOURCE,
+        'product_tree': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE,
+        'product_parents': ['052910e36722874685c6dc4295f01e50dfc40e19', TOOL_STORAGE_PR_SOURCE],
+        'harness_sha256': '11a1dac0485a951c4a55ffabc50f8d0f7225601210c7fc32601ea00f309c92d9',
+        'original_run_id': TOOL_STORAGE_FRESH_PHOTOS_RUN, 'original_run_attempt': 1,
+        'original_status': 'queued', 'original_updated_at': TOOL_STORAGE_FORMAL_QUEUED_AT,
+        'original_attempt1_conclusion': 'failure', 'original_attempt1_created_at': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_CREATED_AT,
+        'original_attempt1_finished_at': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_FINISHED_AT,
+        'original_job_ids': sorted(set(TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS),
+        'original_jobs_sha256': TOOL_STORAGE_FORMAL_ORIGINAL_JOBS_SHA256,
+        'original_attempt1_sha256': TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256,
+        'observations_sha256': TOOL_STORAGE_FORMAL_OBSERVED[('precheck' if phase == 'precheck' else 'photos') + '_observations_sha256']}
+    if set(record) != set(expected) | {'checked_at'} or any(record[key] != value for key, value in expected.items()):
+        raise ValueError('Formal controller source manifest differs')
+    checked = dt.datetime.fromisoformat(record['checked_at'].replace('Z', '+00:00'))
+    if not dt.timedelta(0) <= now - checked <= dt.timedelta(hours=24): raise ValueError('Formal source manifest is stale')
+    return record
+
+
+def tool_storage_formal_premerge_observation(validation_head):
+    """Explicit root observation only. Never called by graph/reusable/main/release."""
+    if validation_head != TOOL_STORAGE_FRESH_PHOTOS_SOURCE or not tool_storage_inputs(validation_head):
+        raise ValueError('Premerge observation requires only the literal compiled source')
+    policy = git('rev-parse', 'HEAD')
+    if (policy != git('merge-base', 'refs/remotes/origin/main', policy)
+            or git('status', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=none')
+            or git('rev-parse', validation_head + '^{tree}') != TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE):
+        raise ValueError('Premerge observation requires a clean approved main policy')
+    rows = tool_storage_formal_tree(policy)
+    marker = 'TOOL_STORAGE_FORMAL_KIND = "tool-storage-fb5-standalone-formal-photos-v1"'
+    if git('show', f'{policy}:NekoWidget/ci/plan-ios-ci.py').splitlines().count(marker) != 1:
+        raise ValueError('Premerge policy is not registered')
+    for path in TOOL_STORAGE_CONTROLS - TOOL_STORAGE_FORMAL_CONTROLS:
+        if rows.get(path) != f'100644 blob {TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE[path]}\t{path}':
+            raise ValueError('Premerge policy changed another control')
+    # Product is still the exact before batch on control main. This helper does
+    # not authorize a CLI --sha source or provide a qualified graph object.
+    for path, pair in TOOL_STORAGE_BLOBS.items():
+        expected = None if pair[0] == '0' * 40 else f'100644 blob {pair[0]}\t{path}'
+        if rows.get(path) != expected: raise ValueError('Premerge policy has mixed product inputs')
+    if not tool_storage_signature(policy): raise ValueError('Premerge current signed readiness differs')
+    return {'kind': 'premerge-source-only', 'policy_sha': policy,
+        'validation_head': validation_head, 'release_qualified': False}
+
+
+def tool_storage_formal_photos_proof(repository, api, now, validation_head, *, premerge=False):
+    if repository != 'soso-so-27/neko-widget' or not tool_storage_formal_configured(): raise ValueError('Formal Photos is not observed')
+    context = None
+    if premerge:
+        context = tool_storage_formal_premerge_observation(validation_head)
+    elif (validation_head == TOOL_STORAGE_FRESH_PHOTOS_SOURCE
+            or not tool_storage_formal_equivalent_inputs(TOOL_STORAGE_FRESH_PHOTOS_SOURCE, validation_head)
+            or not tool_storage_signature(validation_head)):
+        raise ValueError('Formal Photos main inputs/current signature differ')
+    pins = TOOL_STORAGE_FORMAL_OBSERVED
+    prefix = '/repos/' + repository + '/actions'
+    source = api(f'{prefix}/runs/{TOOL_STORAGE_FRESH_PHOTOS_RUN}')
+    jobs = tool_storage_formal_original_jobs(source, api)
+    old = {job['id']: job for job in jobs}
+    required_steps = {'build': tool_build_steps(), 'runtime': OWNER_CLOUD_RUNTIME_STEPS,
+        'app-ui': OWNER_CLOUD_RUNTIME_STEPS, 'plan': ('Check out repository', 'Test CI selection and evidence boundaries', 'Select checks')}
+    for role, names in required_steps.items():
+        job = old[TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS[role]]
+        completed = dt.datetime.fromisoformat(job['completed_at'].replace('Z', '+00:00'))
+        if not dt.timedelta(0) <= now - completed <= dt.timedelta(hours=24): raise ValueError('Retained native job is stale')
+        steps = job.get('steps')
+        if not isinstance(steps, list) or any(not isinstance(step, dict) or step.get('status') != 'completed' or step.get('conclusion') not in {'success', 'skipped'} for step in steps):
+            raise ValueError('Retained native job has unknown/failed steps')
+        for name in names:
+            found = [step for step in steps if step.get('name') == name]
+            if len(found) != 1 or found[0].get('conclusion') != 'success': raise ValueError('Retained owning step did not execute')
+    plan_log = api(f"{prefix}/jobs/{TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['plan']}/logs")
+    ui_log = api(f"{prefix}/jobs/{TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['app-ui']}/logs")
+    fail_log = api(f"{prefix}/jobs/{TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['photos']}/logs")
+    if (tool_log_digest(plan_log) != TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLAN_SHA256
+            or tool_log_digest(ui_log) != TOOL_STORAGE_FRESH_PHOTOS_SOURCE_UI_SHA256
+            or tool_log_digest(fail_log) != TOOL_STORAGE_FRESH_PHOTOS_FAILURE_SHA256 or not tool_storage_ui_results(ui_log)):
+        raise ValueError('Retained native raw plan/UI9/failure differs')
+    plans = [json.loads(line.split('IOS_CI_PLAN_JSON=', 1)[1]) for line in plan_log.splitlines() if 'IOS_CI_PLAN_JSON=' in line]
+    plans = [plan for plan in plans if isinstance(plan, dict) and plan.get('head_sha') == TOOL_STORAGE_FRESH_PHOTOS_SOURCE and plan.get('repository') == repository]
+    if (len(plans) != 1 or type(plans[0].get('schema_version')) is not int or plans[0]['schema_version'] != 1
+            or plans[0].get('scope') != TOOL_STORAGE_SCOPE or plans[0].get('required_jobs') != list(required_jobs_from_scope(TOOL_STORAGE_SCOPE))
+            or plans[0].get('required_backend_runs') != tool_storage_push_requirements(TOOL_STORAGE_FRESH_PHOTOS_SOURCE)
+            or any(plans[0].get(key) is not None for key in ('evidence_run_id', 'evidence_sha', 'test_correction_evidence'))):
+        raise ValueError('Retained source plan graph differs')
+    identity = api(f'{prefix}/workflows/tool-storage-photos-validation.yml')
+    if identity.get('id') != pins['workflow_id'] or identity.get('path') != TOOL_STORAGE_FORMAL_WORKFLOW or identity.get('state') != 'active':
+        raise ValueError('Standalone workflow identity differs')
+    query = urllib.parse.urlencode({'event': 'workflow_dispatch', 'per_page': 100})
+    index = api(f'{prefix}/workflows/tool-storage-photos-validation.yml/runs?{query}')
+    indexed = index.get('workflow_runs')
+    controller = api(f"{prefix}/runs/{pins['run_id']}")
+    keys = ('id', 'head_sha', 'head_branch', 'workflow_id', 'path', 'event', 'run_attempt', 'status', 'conclusion', 'updated_at')
+    if (type(index.get('total_count')) is not int or index['total_count'] != 1 or not isinstance(indexed, list) or len(indexed) != 1
+            or not isinstance(indexed[0], dict) or any(indexed[0].get(key) != controller.get(key) for key in keys)
+            or controller.get('id') != pins['run_id'] or controller.get('head_sha') != pins['controller_sha']
+            or controller.get('head_branch') != pins['branch'] or controller.get('workflow_id') != pins['workflow_id']
+            or controller.get('path') != TOOL_STORAGE_FORMAL_WORKFLOW or controller.get('event') != 'workflow_dispatch'
+            or type(controller.get('run_attempt')) is not int or controller['run_attempt'] != 1
+            or (controller.get('status'), controller.get('conclusion')) != ('completed', 'success')
+            or any(controller.get(side, {}).get('full_name') != repository for side in ('repository', 'head_repository'))):
+        raise ValueError('Standalone is not the one fixed successful dispatch')
+    updated = dt.datetime.fromisoformat(controller['updated_at'].replace('Z', '+00:00'))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24): raise ValueError('Standalone controller is stale')
+    # Controller tree is a separately approved main commit, never compiled fb5.
+    controller_tree = tool_storage_formal_tree(pins['controller_sha'])
+    for path, pair in TOOL_STORAGE_BLOBS.items():
+        expected = None if pair[0] == '0' * 40 else f'100644 blob {pair[0]}\t{path}'
+        if controller_tree.get(path) != expected:
+            raise ValueError('Controller main has mixed or changed product inputs')
+    for path in TOOL_STORAGE_CONTROLS:
+        if controller_tree.get(path) != git('ls-tree', pins['controller_sha'], '--', path): raise ValueError('Controller tree is incomplete')
+        if path not in TOOL_STORAGE_FORMAL_CONTROLS and controller_tree.get(path) != f'100644 blob {TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE[path]}\t{path}':
+            raise ValueError('Controller changed another owning control')
+    approved = git('merge-base', 'refs/remotes/origin/main', git('rev-parse', 'HEAD'))
+    git('merge-base', '--is-ancestor', pins['controller_sha'], approved)
+    if not premerge:
+        git('merge-base', '--is-ancestor', pins['controller_sha'], validation_head)
+    response = api(f"{prefix}/runs/{pins['run_id']}/jobs?filter=all&per_page=100&page=1")
+    external_jobs = response.get('jobs')
+    if (type(response.get('total_count')) is not int or response['total_count'] != 2 or not isinstance(external_jobs, list) or len(external_jobs) != 2
+            or any(not isinstance(job, dict) or type(job.get('id')) is not int or job.get('run_id') != pins['run_id']
+                or job.get('head_sha') != pins['controller_sha'] or type(job.get('run_attempt')) is not int or job['run_attempt'] != 1
+                or (job.get('status'), job.get('conclusion')) != ('completed', 'success') for job in external_jobs)
+            or {job['id'] for job in external_jobs} != {pins['precheck_job_id'], pins['photos_job_id']}):
+        raise ValueError('Standalone must execute exactly the Linux precheck and full Photos jobs')
+    external = {job['id']: job for job in external_jobs}
+    manifests = {}
+    for role, identifier, name, steps, raw_key, phase in (
+            ('precheck', pins['precheck_job_id'], 'Verify fixed Photos source and original history', TOOL_STORAGE_FORMAL_PRECHECK_STEPS, 'precheck_raw_log_sha256', 'precheck'),
+            ('photos', pins['photos_job_id'], 'Formal full Photos validation for frozen tool source', TOOL_STORAGE_FORMAL_PHOTOS_STEPS, 'photos_raw_log_sha256', 'pre-native')):
+        job = external[identifier]
+        if job.get('name') != name or not isinstance(job.get('steps'), list): raise ValueError('Standalone owning name/steps differ')
+        actual = job['steps']
+        if any(not isinstance(step, dict) or (step.get('status'), step.get('conclusion')) != ('completed', 'success') for step in actual):
+            raise ValueError('Standalone has a missing/failed/skipped/active step')
+        if tool_storage_formal_digest(actual) != pins[role + '_steps_sha256']:
+            raise ValueError('Standalone observed steps differ or include an unknown step')
+        # Setup/post actions are permitted only as the exact observed successful
+        # metadata; each named executable workflow step must occur once.
+        for required in steps:
+            found = [step for step in actual if step.get('name') == required]
+            if len(found) != 1: raise ValueError('Standalone executable step missing/duplicated')
+        completed = dt.datetime.fromisoformat(job['completed_at'].replace('Z', '+00:00'))
+        if not dt.timedelta(0) <= now - completed <= dt.timedelta(hours=24): raise ValueError('Standalone job is stale')
+        raw = api(f'{prefix}/jobs/{identifier}/logs')
+        if tool_log_digest(raw) != pins[raw_key]: raise ValueError('Standalone raw log differs')
+        manifests[role] = tool_storage_formal_manifest(raw, phase, controller, now)
+        if role == 'photos' and not moderation_chained_photos_success(raw): raise ValueError('Formal full two-case Photos/TCC/fixture/Widget completion is missing')
+    # A concurrent old queue allocation must invalidate even a completed controller.
+    if tool_storage_formal_original_jobs(source, api) != jobs: raise ValueError('Original history changed at final fence')
+    return {'kind': TOOL_STORAGE_FORMAL_KIND, **({'validation_context': context} if context else {}),
+        'compiled_source_sha': TOOL_STORAGE_FRESH_PHOTOS_SOURCE,
+        'compiled_tree': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE, 'original_run_id': source['id'],
+        'original_attempt': 1, 'original_status': source['status'], 'original_conclusion': 'failure',
+        'failed_photos_job_id': TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['photos'],
+        'failed_photos_raw_log_sha256': TOOL_STORAGE_FRESH_PHOTOS_FAILURE_SHA256,
+        'history_job_ids': sorted(job['id'] for job in jobs),
+        'retained_jobs': [{'role': role, 'job_id': identifier, 'run_attempt': 1}
+            for role, identifier in TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.items() if role != 'photos'],
+        'controller': {'run_id': controller['id'], 'sha': controller['head_sha'], 'branch': controller['head_branch'],
+            'event': controller['event'], 'workflow_id': controller['workflow_id'], 'path': controller['path'],
+            'run_attempt': 1, 'job_ids': [pins['precheck_job_id'], pins['photos_job_id']],
+            'precheck_raw_log_sha256': pins['precheck_raw_log_sha256'], 'photos_raw_log_sha256': pins['photos_raw_log_sha256'],
+            'precheck_steps_sha256': pins['precheck_steps_sha256'], 'photos_steps_sha256': pins['photos_steps_sha256'],
+            'source_manifests': manifests}}
+
+
+def tool_storage_formal_graph(run, validation_head, api, now, jobs):
+    if not tool_storage_formal_source_candidate(run): raise ValueError('Not the fixed standalone Photos source')
+    original_jobs = tool_storage_formal_original_jobs(run, api)
+    if jobs != original_jobs: raise ValueError('Selected source jobs differ from full immutable history')
+    formal = tool_storage_formal_photos_proof('soso-so-27/neko-widget', api, now, validation_head)
+    repo = 'soso-so-27/neko-widget'
+    backends = tool_preservation_backend_evidence(TOOL_STORAGE_FRESH_PHOTOS_SOURCE, repo, api, now, branch=TOOL_STORAGE_FRESH_BRANCH)
+    proof = backends['preservation-service.yml']
+    tool_storage_formal_backend_identity(api, proof)
+    backend = api(f"/repos/{repo}/actions/runs/{proof['run_id']}")
+    if (backend.get('id') != TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN or backend.get('head_sha') != TOOL_STORAGE_FRESH_PHOTOS_SOURCE
+            or backend.get('head_branch') != TOOL_STORAGE_FRESH_BRANCH or backend.get('event') != 'push'
+            or backend.get('workflow_id') != 363932714 or backend.get('path') != PRESERVATION_WORKFLOW
+            or type(backend.get('run_attempt')) is not int or backend['run_attempt'] != 1
+            or (backend.get('status'), backend.get('conclusion')) != ('completed', 'success')
+            or any(backend.get(side, {}).get('full_name') != repo for side in ('repository', 'head_repository'))):
+        raise ValueError('Standalone fixed normal backend changed')
+    backend_jobs = executed_jobs(backend, repo, api)
+    if (len(backend_jobs) != 1 or backend_jobs[0].get('id') != TOOL_STORAGE_FRESH_PHOTOS_BACKEND_JOB
+            or backend_jobs[0].get('name') != PRESERVATION_JOB or backend_jobs[0].get('run_id') != backend['id']
+            or backend_jobs[0].get('head_sha') != backend['head_sha'] or type(backend_jobs[0].get('run_attempt')) is not int
+            or backend_jobs[0]['run_attempt'] != 1 or (backend_jobs[0].get('status'), backend_jobs[0].get('conclusion')) != ('completed', 'success')):
+        raise ValueError('Standalone backend owning job differs')
+    for name in TOOL_STORAGE_BACKEND_STEPS:
+        found = [step for step in backend_jobs[0]['steps'] if step.get('name') == name]
+        if len(found) != 1 or (found[0].get('status'), found[0].get('conclusion')) != ('completed', 'success'):
+            raise ValueError('Standalone backend all eight owning steps required')
+    proof['required_steps'] = list(TOOL_STORAGE_BACKEND_STEPS)
+    # Verify once more after backend reads; no selection of whichever race wins.
+    if tool_storage_formal_original_jobs(run, api) != original_jobs: raise ValueError('Original jobs changed after backend verification')
+    return {'backend_evidence': backends, 'formal_photos': formal,
+        'native_evidence': {'run_id': run['id'], 'sha': run['head_sha'], 'run_attempt': 1,
+            'status': run['status'], 'conclusion': run['conclusion'], 'retained_jobs': formal['retained_jobs']}}
+
+
 def tool_storage_graph(run, validation_head, api, now, jobs):
     """Main and release share the exact fresh native graph and all eight backend steps."""
+    if run.get("head_sha") == TOOL_STORAGE_FRESH_PHOTOS_SOURCE:
+        return tool_storage_formal_graph(run, validation_head, api, now, jobs)
     sha = run.get("head_sha")
     repo = "soso-so-27/neko-widget"
     if (not isinstance(sha, str) or not SHA.fullmatch(sha) or type(run.get("id")) is not int or run["id"] <= 0
@@ -5607,6 +6108,14 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
             pass
         # Do not let a partial/mutated fixed batch fall through as generic UI.
+        return FULL_SCOPE
+    if tool_storage_formal_control_paths_only(paths):
+        try:
+            base = comparison_base(event, env)
+            if base and tool_storage_formal_control_only(paths, base, env["GITHUB_SHA"]):
+                return ORCHESTRATION_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            pass
         return FULL_SCOPE
     if tool_storage_control_paths_only(paths):
         try:
@@ -7535,6 +8044,9 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if required == required_jobs_from_scope(TOOL_STORAGE_SCOPE) and run.get("head_sha") == TOOL_STORAGE_FRESH_PHOTOS_SOURCE:
+        tool_storage_graph(run, validation_head, api, now, jobs)
+        return True
     if required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
         if run.get("head_branch") == TOOL_RELEASE_BRANCH:
             return covers_tool_release_readiness(run, validation_head, required, api, now, jobs)
@@ -7640,6 +8152,12 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
             run_id = run.get("id") if isinstance(run, dict) else None
             evidence_log("candidate_rejected", run_id=run_id if type(run_id) is int else None, reason=reason)
         return False
+    if repository == "soso-so-27/neko-widget" and tool_storage_formal_source_candidate(run):
+        return (type(current.get("run_attempt")) is int and current["run_attempt"] == 1
+            and current.get("id") != run["id"] and current.get("event") == "push" and current.get("head_branch") == "main"
+            and current.get("workflow_id") == 335014238 and current.get("path") == ".github/workflows/ios-build.yml"
+            and all(current.get(side, {}).get("full_name") == repository for side in ("repository", "head_repository"))
+            and tool_storage_formal_equivalent_inputs(run["head_sha"], current.get("head_sha")))
     try:
         finished = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
         age = now - finished
@@ -7749,6 +8267,8 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
     Never select an older success over a newer failure/skip. Ambiguous or
     incomplete responses cannot authorize evidence reuse.
     """
+    if repository == "soso-so-27/neko-widget" and tool_storage_formal_source_candidate(run):
+        return tool_storage_formal_original_jobs(run, api)
     attempt = run.get("run_attempt", 1)
     if type(attempt) is not int or not 1 <= attempt <= 50:
         raise ValueError("Invalid workflow attempt")
@@ -8221,6 +8741,13 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
     if current["head_sha"] != env["GITHUB_SHA"] or git("rev-parse", "HEAD") != env["GITHUB_SHA"]:
         evidence_log("lookup_blocked", reason="current_checkout_mismatch")
         raise ValueError("Current run and checkout do not match")
+    if required == required_jobs_from_scope(TOOL_STORAGE_SCOPE) and tool_storage_formal_configured():
+        source = api(f"{prefix}/runs/{TOOL_STORAGE_FRESH_PHOTOS_RUN}")
+        if reusable_run(source, current, repo, now, audit=True):
+            jobs = executed_jobs(source, repo, api)
+            tool_storage_graph(source, env["GITHUB_SHA"], api, now, jobs)
+            return source["id"], source["head_sha"]
+        raise ValueError("Fixed standalone Photos source is unavailable")
     seen, blocked = set(), False
     # Search the exact commit first. An unrelated older run/API failure must
     # not prevent checking an available same-SHA candidate.

@@ -10972,5 +10972,292 @@ class ToolStorageFreshBranchTests(unittest.TestCase):
                 with patch.dict(self.f.backend,{field:value}),self.assertRaises(ValueError):self.f.prove()
 
 
+class ToolStorageStandalonePhotosTests(unittest.TestCase):
+    def setUp(self):
+        self.f=ToolStorageCompletionGraphTests();self.f.setUp();f=self.f
+        f.now=dt.datetime(2026,10,15,3,30,tzinfo=dt.timezone.utc);f.sha=planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE
+        f.run.update(id=planner.TOOL_STORAGE_FRESH_PHOTOS_RUN,head_sha=f.sha,head_branch=planner.TOOL_STORAGE_FRESH_BRANCH,
+            status='queued',conclusion=None,created_at=planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_CREATED_AT,
+            updated_at=planner.TOOL_STORAGE_FORMAL_QUEUED_AT,run_started_at=planner.TOOL_STORAGE_FORMAL_QUEUED_AT)
+        f.run.update(copy.deepcopy(planner.TOOL_STORAGE_FORMAL_QUEUED))
+        roles={'plan':planner.PLAN_JOB,'build':planner.BUILD,'photos':planner.BOOTSTRAP_SMOKE,
+            'runtime':planner.lane_job(planner.TOOL_STORAGE_SCOPE,'runtime'),'app-ui':planner.lane_job(planner.TOOL_STORAGE_SCOPE,'app-ui')}
+        for role,identifier in planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS.items():
+            job=next(job for job in f.jobs if job['name']==roles[role])
+            job.update(id=identifier,run_id=f.run['id'],head_sha=f.sha,completed_at='2026-10-15T02:27:22Z')
+            for i,step in enumerate(job['steps'],1):step['number']=i+1
+            if role=='photos':
+                job['conclusion']='failure';job['steps'][1]['conclusion']='failure';job['steps'][1]['number']=3
+        for job,identifier in zip(f.jobs[-2:],sorted(planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLACEHOLDERS)):
+            job.update(id=identifier,run_id=f.run['id'],head_sha=f.sha,completed_at='2026-10-15T02:27:22Z')
+        self.original=copy.deepcopy(planner.TOOL_STORAGE_FORMAL_ORIGINAL)
+        f.plan.update(head_sha=f.sha,required_backend_runs=planner.tool_storage_push_requirements(f.sha))
+        self.plan_log='IOS_CI_PLAN_JSON='+json.dumps(f.plan)
+        self.ui_log='\n'.join(f"Test Case '-[NekoWidgetUITests.{test.removeprefix('NekoWidgetUITests/').replace('/', ' ')}]' {status}"
+            for test in scope.native_tests(planner.TOOL_STORAGE_SCOPE) for status in ('started','passed'))
+        self.fail_log='original failed exact photo log'
+        self.photos_log='\n'.join(f"Test Case '-[NekoWidgetUITests.PhotoPermissionUITests {case}]' {status}"
+            for case in ('testGrantFullPhotoLibraryAccess','testMainlineAcceptanceScreensWithAuthorizedLibrary') for status in ('started','passed'))+'\nSimulator smoke test passed at 2026-10-15T03:30:00Z'
+        self.artifacts={path:'c'*40 for path in planner.TOOL_STORAGE_FORMAL_ADDITIONS}
+        self.controller=dict(f.run,id=900,head_sha='d'*40,head_branch='main',event='workflow_dispatch',
+            workflow_id=901,path=planner.TOOL_STORAGE_FORMAL_WORKFLOW,status='completed',conclusion='success',updated_at=f.now.isoformat())
+        self.external=[]
+        for identifier,name,names in ((902,'Verify fixed Photos source and original history',planner.TOOL_STORAGE_FORMAL_PRECHECK_STEPS),
+                (903,'Formal full Photos validation for frozen tool source',planner.TOOL_STORAGE_FORMAL_PHOTOS_STEPS)):
+            self.external.append({'id':identifier,'name':name,'run_id':900,'head_sha':'d'*40,'run_attempt':1,
+                'status':'completed','conclusion':'success','completed_at':f.now.isoformat(),
+                'steps':[{'name':n,'status':'completed','conclusion':'success'} for n in names]})
+        self.pins={'controller_sha':'d'*40,'branch':'main','workflow_id':901,'run_id':900,'precheck_job_id':902,'photos_job_id':903,
+            'precheck_raw_log_sha256':'0'*64,'photos_raw_log_sha256':'0'*64,
+            'precheck_steps_sha256':planner.tool_storage_formal_digest(self.external[0]['steps']),
+            'photos_steps_sha256':planner.tool_storage_formal_digest(self.external[1]['steps']),
+            'precheck_observations_sha256':'a'*64,'photos_observations_sha256':'b'*64}
+        for name,value in (('TOOL_STORAGE_FORMAL_ARTIFACTS',self.artifacts),('TOOL_STORAGE_FORMAL_OBSERVED',self.pins),
+                ('TOOL_STORAGE_FORMAL_ORIGINAL_JOBS_SHA256',planner.tool_storage_formal_digest(f.jobs)),
+                ('TOOL_STORAGE_FRESH_PHOTOS_SOURCE_PLAN_SHA256',planner.tool_log_digest(self.plan_log)),
+                ('TOOL_STORAGE_FRESH_PHOTOS_SOURCE_UI_SHA256',planner.tool_log_digest(self.ui_log)),
+                ('TOOL_STORAGE_FRESH_PHOTOS_FAILURE_SHA256',planner.tool_log_digest(self.fail_log))):
+            binding=patch.object(planner,name,value);binding.start();self.addCleanup(binding.stop)
+        self.precheck_log='FORMAL_PHOTOS_SOURCE_JSON='+json.dumps(self.manifest('precheck'))
+        self.photos_log='FORMAL_PHOTOS_SOURCE_JSON='+json.dumps(self.manifest('pre-native'))+'\n'+self.photos_log
+        self.pins['precheck_raw_log_sha256']=planner.tool_log_digest(self.precheck_log)
+        self.pins['photos_raw_log_sha256']=planner.tool_log_digest(self.photos_log)
+        f.backend.update(id=planner.TOOL_STORAGE_FRESH_PHOTOS_BACKEND_RUN,head_sha=f.sha,head_branch=planner.TOOL_STORAGE_FRESH_BRANCH,
+            status='completed',conclusion='success',updated_at=f.now.isoformat())
+        f.backend_jobs[0].update(id=planner.TOOL_STORAGE_FRESH_PHOTOS_BACKEND_JOB,run_id=f.backend['id'],head_sha=f.sha,completed_at=f.now.isoformat())
+        self.alljobs=f.jobs;self.after_alljobs=None;self.history_reads=0
+        self.controller_index_extra=None;self.backend_index_extra=None
+    def manifest(self,phase):
+        f=self.f
+        return {'schema_version':1,'kind':'tool-storage-formal-photos-source-precheck-v1','repository':f.repo,
+            'controller_sha':'d'*40,'controller_ref':'refs/heads/main','controller_run_id':900,'controller_run_attempt':1,
+            'phase':phase,'product_sha':f.sha,'product_tree':planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE,
+            'product_parents':['052910e36722874685c6dc4295f01e50dfc40e19',planner.TOOL_STORAGE_PR_SOURCE],
+            'harness_sha256':'11a1dac0485a951c4a55ffabc50f8d0f7225601210c7fc32601ea00f309c92d9',
+            'original_run_id':f.run['id'],'original_run_attempt':1,'original_status':'queued','original_updated_at':planner.TOOL_STORAGE_FORMAL_QUEUED_AT,
+            'original_attempt1_conclusion':'failure','original_attempt1_created_at':planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_CREATED_AT,
+            'original_attempt1_finished_at':planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_FINISHED_AT,
+            'original_job_ids':sorted(job['id'] for job in f.jobs),'original_jobs_sha256':planner.tool_storage_formal_digest(f.jobs),
+            'original_attempt1_sha256':planner.TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256,
+            'observations_sha256':self.pins[('precheck' if phase=='precheck' else 'photos')+'_observations_sha256'],
+            'checked_at':f.now.isoformat()}
+    def api(self,path):
+        f=self.f
+        if path.endswith('/runs/'+str(f.run['id'])):return f.run
+        if path.endswith('/attempts/1'):return self.original
+        if '/runs/'+str(f.run['id'])+'/jobs?' in path:
+            self.history_reads+=1;rows=self.after_alljobs if self.history_reads>1 and self.after_alljobs is not None else self.alljobs
+            return {'total_count':len(rows),'jobs':rows}
+        if path.endswith('/workflows/tool-storage-photos-validation.yml'):
+            return {'id':901,'path':planner.TOOL_STORAGE_FORMAL_WORKFLOW,'state':'active'}
+        if '/workflows/tool-storage-photos-validation.yml/runs?' in path:
+            rows=[self.controller]+([self.controller_index_extra] if self.controller_index_extra else [])
+            return {'total_count':len(rows),'workflow_runs':rows}
+        if path.endswith('/runs/900'):return self.controller
+        if '/runs/900/jobs?' in path:return {'total_count':len(self.external),'jobs':self.external}
+        if path.endswith('/workflows/preservation-service.yml'):
+            return {'id':363932714,'path':planner.PRESERVATION_WORKFLOW,'state':'active'}
+        if '/workflows/preservation-service.yml/runs?' in path:
+            rows=[f.backend]+([self.backend_index_extra] if self.backend_index_extra else [])
+            return {'total_count':len(rows),'workflow_runs':rows}
+        if path.endswith('/runs/'+str(f.backend['id'])):return f.backend
+        if '/runs/'+str(f.backend['id'])+'/jobs?' in path:return {'total_count':len(f.backend_jobs),'jobs':f.backend_jobs}
+        logs={planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['plan']:self.plan_log,
+            planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['app-ui']:self.ui_log,
+            planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_JOBS['photos']:self.fail_log,902:self.precheck_log,903:self.photos_log}
+        if path.endswith('/logs'):return logs[int(path.split('/')[-2])]
+        raise AssertionError(path)
+    def mocks(self):
+        stack=self.f.mocks()
+        stack.enter_context(patch.object(planner,'tool_storage_formal_equivalent_inputs',return_value=True))
+        stack.enter_context(patch.object(planner,'tool_storage_signature',return_value=True))
+        rows={path:f'100644 blob {blob}\t{path}' for path,blob in planner.TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE.items()}
+        rows.update({path:f'100644 blob {pair[0]}\t{path}' for path,pair in planner.TOOL_STORAGE_BLOBS.items() if pair[0]!='0'*40})
+        stack.enter_context(patch.object(planner,'tool_storage_formal_tree',return_value=rows))
+        def git(*args):return rows.get(args[-1],'') if args[0]=='ls-tree' else self.f.main
+        stack.enter_context(patch.object(planner,'git',side_effect=git))
+        return stack
+    def prove(self):
+        self.history_reads=0
+        with self.mocks():
+            jobs=planner.executed_jobs(self.f.run,self.f.repo,self.api)
+            return planner.tool_storage_graph(self.f.run,self.f.main,self.api,self.f.now,jobs)
+    def test_literal_standalone_preserves_failure_and_separate_actual_heads(self):
+        got=self.prove();formal=got['formal_photos']
+        self.assertEqual(got['native_evidence']['status'],'queued');self.assertIsNone(got['native_evidence']['conclusion'])
+        self.assertEqual(formal['original_conclusion'],'failure');self.assertEqual(formal['controller']['event'],'workflow_dispatch')
+        self.assertEqual(formal['controller']['sha'],'d'*40);self.assertEqual(formal['compiled_source_sha'],self.f.sha)
+        self.assertEqual(len(formal['history_job_ids']),7);self.assertNotIn('backend_substitution',got)
+        self.assertEqual(got['backend_evidence']['preservation-service.yml']['event'],'push')
+    def test_unobserved_pins_and_unknown_original_identity_never_qualify(self):
+        for name in ('TOOL_STORAGE_FORMAL_ARTIFACTS','TOOL_STORAGE_FORMAL_OBSERVED'):
+            with patch.object(planner,name,None),self.assertRaises(ValueError):self.prove()
+        for field,value in (('id',99),('head_sha','e'*40),('head_branch',planner.TOOL_STORAGE_BRANCH),('event','workflow_dispatch'),
+                ('run_attempt',2),('run_attempt',3),('status','in_progress'),('status','completed'),('conclusion','success')):
+            with patch.dict(self.f.run,{field:value}),self.assertRaises((ValueError,AssertionError)):self.prove()
+    def test_original_raw_build_failure_history_and_new_attempt_reject(self):
+        for name in ('plan_log','ui_log','fail_log'):
+            with patch.object(self,name,getattr(self,name)+'changed'),self.assertRaises(ValueError):self.prove()
+        for job in self.f.jobs:
+            with patch.dict(job,{'run_attempt':2}),self.assertRaises(ValueError):self.prove()
+        with patch.object(self,'alljobs',self.alljobs+[dict(self.alljobs[0],id=888)]),self.assertRaises(ValueError):self.prove()
+        self.after_alljobs=self.alljobs+[dict(self.alljobs[0],id=888)]
+        with self.assertRaises(ValueError):self.prove()
+    def test_external_controller_identity_unique_two_jobs_and_no_reruns(self):
+        for field,value in (('id',99),('head_sha',self.f.sha),('head_branch','codex/unknown'),('event','push'),
+                ('workflow_id',335014238),('run_attempt',2),('status','in_progress'),('conclusion','failure')):
+            with patch.dict(self.controller,{field:value}),self.assertRaises((ValueError,AssertionError)):self.prove()
+        self.controller_index_extra=dict(self.controller,id=999)
+        with self.assertRaises(ValueError):self.prove()
+        self.controller_index_extra=None
+        extra=dict(self.external[0],id=888,status='in_progress',conclusion=None)
+        self.external.append(extra)
+        with self.assertRaises(ValueError):self.prove()
+    def test_all_controller_steps_execute_and_unknown_extra_steps_reject(self):
+        for job in self.external:
+            for step in job['steps']:
+                with patch.dict(step,{'conclusion':'skipped'}),self.assertRaises(ValueError):self.prove()
+            job['steps'].append({'name':'Unknown','status':'completed','conclusion':'success'})
+            with self.assertRaises(ValueError):self.prove()
+            job['steps'].pop()
+    def test_full_two_cases_terminal_and_source_manifest_required(self):
+        for bad in ('',self.photos_log.replace('passed','skipped',1),self.photos_log.replace('Simulator smoke test passed',''),
+                self.photos_log+'\n##[error]unknown',self.photos_log+'\n'+self.photos_log):
+            with patch.object(self,'photos_log',bad),patch.dict(self.pins,{'photos_raw_log_sha256':planner.tool_log_digest(bad)}),self.assertRaises(ValueError):self.prove()
+        for key,value in (('product_sha','e'*40),('product_tree','e'*40),('controller_sha',self.f.sha),('phase','precheck'),
+                ('harness_sha256','e'*64),('original_attempt1_conclusion','success'),('observations_sha256','e'*64)):
+            record=self.manifest('pre-native');record[key]=value
+            raw='FORMAL_PHOTOS_SOURCE_JSON='+json.dumps(record)+'\n'+self.photos_log.split('\n',1)[1]
+            with patch.object(self,'photos_log',raw),patch.dict(self.pins,{'photos_raw_log_sha256':planner.tool_log_digest(raw)}),self.assertRaises(ValueError):self.prove()
+    def test_normal_backend_same_source_branch_push_all8_mandatory(self):
+        for field,value in (('event','pull_request'),('head_sha','e'*40),('head_branch',planner.TOOL_STORAGE_BRANCH),('run_attempt',2),('conclusion','failure')):
+            with patch.dict(self.f.backend,{field:value}),self.assertRaises(ValueError):self.prove()
+        for step in self.f.backend_jobs[0]['steps']:
+            with patch.dict(step,{'conclusion':'skipped'}),self.assertRaises(ValueError):self.prove()
+        self.backend_index_extra=dict(self.f.backend,id=99)
+        with self.assertRaises(ValueError):self.prove()
+    def test_signature_closure_stale_and_source_only_default_graph_reject(self):
+        with self.mocks():
+            for name in ('tool_storage_signature','tool_storage_formal_equivalent_inputs'):
+                with patch.object(planner,name,return_value=False),self.assertRaises(ValueError):
+                    planner.tool_storage_graph(self.f.run,self.f.main,self.api,self.f.now,self.f.jobs)
+            with self.assertRaises(ValueError):planner.tool_storage_graph(self.f.run,self.f.sha,self.api,self.f.now,self.f.jobs)
+            with patch.dict(self.controller,{'updated_at':(self.f.now-dt.timedelta(hours=25)).isoformat()}),self.assertRaises(ValueError):self.prove()
+    def test_premerge_observation_is_explicit_and_never_ordinary_graph(self):
+        with self.mocks(),patch.object(planner,'tool_storage_formal_premerge_observation',return_value={
+                'kind':'premerge-source-only','release_qualified':False}) as observe:
+            got=planner.tool_storage_formal_photos_proof(self.f.repo,self.api,self.f.now,self.f.sha,premerge=True)
+            self.assertFalse(got['validation_context']['release_qualified']);self.assertEqual(observe.call_count,1)
+            with self.assertRaises(ValueError):planner.tool_storage_formal_photos_proof(self.f.repo,self.api,self.f.now,self.f.sha)
+    def test_same_structural_candidate_for_main_and_direct_lookup(self):
+        f=self.f;current=dict(f.run,id=999,head_sha=f.main,head_branch='main',status='in_progress')
+        with self.mocks():
+            self.assertTrue(planner.reusable_run(f.run,current,f.repo,f.now))
+            with patch.object(planner,'TOOL_STORAGE_FORMAL_OBSERVED',None):self.assertFalse(planner.reusable_run(f.run,current,f.repo,f.now))
+            env={'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/main','GITHUB_RUN_ID':'999','GITHUB_SHA':f.main,'GITHUB_REPOSITORY':f.repo}
+            def api(path):return current if path.endswith('/runs/999') else self.api(path)
+            self.assertEqual(planner.find_evidence(env,f.required,api,f.now),(f.run['id'],f.sha))
+    def test_premerge_requires_controller_on_approved_main_without_controller_ancestor_of_fb5(self):
+        f=self.f;calls=[]
+        rows={path:f'100644 blob {blob}\t{path}' for path,blob in planner.TOOL_STORAGE_FRESH_PHOTOS_CONTROL_BEFORE.items()}
+        def git(*args):
+            calls.append(args)
+            if args[0]=='ls-tree':return rows[args[-1]]
+            if args==('rev-parse','HEAD'):return f.main
+            if args==('merge-base','refs/remotes/origin/main',f.main):return f.main
+            if args==('merge-base','--is-ancestor','d'*40,f.main):return ''
+            if args==('merge-base','--is-ancestor','d'*40,f.sha):
+                raise AssertionError('New controller cannot be ancestor of older fb5')
+            raise AssertionError(args)
+        with self.mocks(),patch.object(planner,'git',side_effect=git), \
+                patch.object(planner,'tool_storage_formal_premerge_observation',return_value={'release_qualified':False}):
+            got=planner.tool_storage_formal_photos_proof(f.repo,self.api,f.now,f.sha,premerge=True)
+            self.assertFalse(got['validation_context']['release_qualified'])
+        self.assertIn(('merge-base','--is-ancestor','d'*40,f.main),calls)
+        self.assertNotIn(('merge-base','--is-ancestor','d'*40,f.sha),calls)
+        def rejected_git(*args):
+            if args==('merge-base','--is-ancestor','d'*40,f.main):
+                raise subprocess.CalledProcessError(1,['git',*args])
+            return git(*args)
+        with self.mocks(),patch.object(planner,'git',side_effect=rejected_git),self.assertRaises(subprocess.CalledProcessError):
+            planner.tool_storage_formal_photos_proof(f.repo,self.api,f.now,f.main)
+
+
+class ToolStorageStandaloneClosureTests(unittest.TestCase):
+    def setUp(self):
+        self.artifacts={path:'c'*40 for path in planner.TOOL_STORAGE_FORMAL_ADDITIONS}
+        self.row=f"100644 blob {'d'*40}\timmutable.txt"
+        self.rows='\0'.join([self.row]+[f'100644 blob {blob}\t{path}' for path,blob in self.artifacts.items()])+'\0'
+    def test_only_exact_controller_additions_removed_from_old_closure(self):
+        with patch.object(planner,'TOOL_STORAGE_FORMAL_ARTIFACTS',self.artifacts),patch.object(planner,'TOOL_STORAGE_CLOSURE_COUNT',1), \
+                patch.object(planner,'TOOL_STORAGE_CLOSURE_SHA256',hashlib.sha256((self.row+'\0').encode()).hexdigest()), \
+                patch.object(planner,'git',side_effect=lambda *args:self.rows):
+            self.assertEqual(len(planner.tool_storage_formal_tree('a'*40)),4)
+            for bad in (self.rows+f"100644 blob {'e'*40}\tunknown.txt\0",self.rows.replace('100644','100755',1),self.rows+self.row+'\0'):
+                with patch.object(self,'rows',bad),self.assertRaises(ValueError):planner.tool_storage_formal_tree('a'*40)
+            with patch.object(self,'rows',self.rows.replace('c'*40,'e'*40,1)),self.assertRaises(ValueError):planner.tool_storage_formal_tree('a'*40)
+    def test_dedicated_plan_only_shape_is_exact_and_inactive_proof_remains_none(self):
+        paths=list(planner.TOOL_STORAGE_FORMAL_CONTROLS | planner.TOOL_STORAGE_FORMAL_ADDITIONS)
+        self.assertTrue(planner.tool_storage_formal_control_paths_only(paths))
+        self.assertEqual(planner.required_jobs(paths,planner.ORCHESTRATION_SCOPE),(planner.PLAN_JOB,))
+        for bad in (None,[],paths[:-1],paths+['unknown.txt'],paths+paths):self.assertFalse(planner.tool_storage_formal_control_paths_only(bad))
+        self.assertFalse(planner.tool_storage_formal_configured())
+
+
+class ToolStorageStandaloneControlRegistrationTests(unittest.TestCase):
+    def setUp(self):
+        self.base='a'*40;self.head='b'*40
+        self.before={path:f'100644 blob {blob}\t{path}' for path,blob in planner.TOOL_STORAGE_FORMAL_CONTROL_BEFORE.items()}
+        self.before.update({path:f'100644 blob {pair[0]}\t{path}' for path,pair in planner.TOOL_STORAGE_BLOBS.items() if pair[0]!='0'*40})
+        self.before[planner.TOOL_STORAGE_READINESS_PATH]=f'100644 blob {planner.TOOL_STORAGE_READINESS_PAIR[1]}\t{planner.TOOL_STORAGE_READINESS_PATH}'
+        self.after=dict(self.before)
+        for path in planner.TOOL_STORAGE_FORMAL_CONTROLS:self.after[path]=f"100644 blob {'d'*40}\t{path}"
+        for path,blob in planner.TOOL_STORAGE_FORMAL_ARTIFACTS.items():self.after[path]=f'100644 blob {blob}\t{path}'
+        self.paths=list(planner.TOOL_STORAGE_FORMAL_CONTROLS|planner.TOOL_STORAGE_FORMAL_ADDITIONS)
+        self.raw=''.join(f":100644 100644 {self.before[path].split()[2]} {self.after[path].split()[2]} M\0{path}\0" for path in planner.TOOL_STORAGE_FORMAL_CONTROLS)
+        self.raw+=''.join(f":000000 100644 {'0'*40} {blob} A\0{path}\0" for path,blob in planner.TOOL_STORAGE_FORMAL_ARTIFACTS.items())
+    def prove(self):
+        def git(*args):
+            if args[0]=='ls-tree':return '\0'.join(self.before.values())+'\0'
+            if args[0]=='diff':return self.raw
+            raise AssertionError(args)
+        with patch.object(planner,'git',side_effect=git),patch.object(planner,'tool_storage_formal_tree',return_value=self.after), \
+                patch.object(planner,'tool_storage_signature',return_value=True):
+            return planner.tool_storage_formal_control_only(self.paths,self.base,self.head)
+    def test_only_exact_two_control_modifications_and_three_additions_are_plan_only(self):
+        self.assertTrue(self.prove())
+        with patch.object(planner,'comparison_base',return_value=self.base),patch.object(planner,'tool_storage_formal_control_only',return_value=True):
+            self.assertEqual(planner.runtime_scope(self.paths,{}, {'GITHUB_SHA':self.head}),planner.ORCHESTRATION_SCOPE)
+        for path in self.after:
+            if path in planner.TOOL_STORAGE_FORMAL_CONTROLS|planner.TOOL_STORAGE_FORMAL_ADDITIONS:continue
+            saved=self.after[path];self.after[path]=f"100644 blob {'e'*40}\t{path}"
+            self.assertFalse(self.prove());self.after[path]=saved
+    def test_unknown_modes_unfrozen_addition_truncation_and_signature_reject(self):
+        for bad in (self.raw+self.raw,self.raw.replace(':000000',':100755',1),self.raw.replace('a79acffa41ec1a74b4b1ddb73f5707941c96609b','e'*40),self.raw[:-1]):
+            with patch.object(self,'raw',bad):self.assertFalse(self.prove())
+        with patch.object(planner,'TOOL_STORAGE_FORMAL_CONTROL_BEFORE',None):self.assertFalse(self.prove())
+    def test_source_to_main_equivalence_preserves_all_other_products_and_controls(self):
+        source=planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE;approved='c'*40
+        before=dict(self.before)
+        before.update({path:f'100644 blob {pair[1]}\t{path}' for path,pair in planner.TOOL_STORAGE_BLOBS.items()})
+        after=dict(self.after);after.update({path:f'100644 blob {pair[1]}\t{path}' for path,pair in planner.TOOL_STORAGE_BLOBS.items()})
+        def prove():
+            def git(*args):
+                if args[0]=='rev-parse':return self.head if args[1]=='HEAD' else planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE_TREE
+                if args[0]=='merge-base':return '' if '--is-ancestor' in args else approved
+                if args[0]=='show':return 'TOOL_STORAGE_FORMAL_KIND = "tool-storage-fb5-standalone-formal-photos-v1"'
+                if args[0]=='ls-tree':return after.get(args[-1],'')
+                if args[0]=='diff':return self.raw
+                raise AssertionError(args)
+            with patch.object(planner,'git',side_effect=git),patch.object(planner,'tool_storage_inputs',return_value=True), \
+                    patch.object(planner,'tool_storage_tree',return_value=before),patch.object(planner,'tool_storage_formal_tree',return_value=after):
+                return planner.tool_storage_formal_equivalent_inputs(source,self.head)
+        self.assertTrue(prove())
+        for path in after:
+            if path in planner.TOOL_STORAGE_FORMAL_CONTROLS|planner.TOOL_STORAGE_FORMAL_ADDITIONS:continue
+            saved=after[path];after[path]=f"100644 blob {'e'*40}\t{path}"
+            self.assertFalse(prove());after[path]=saved
+
+
 if __name__ == "__main__":
     unittest.main()

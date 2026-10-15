@@ -1,0 +1,108 @@
+name: Formal Photos validation for frozen tool source
+run-name: "Formal full Photos validation: fb5a1dce3696703e3942c77c34287c9319886eb1"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Exact frozen product source
+        required: true
+        default: fb5a1dce3696703e3942c77c34287c9319886eb1
+        type: string
+      controller_ref:
+        description: Exact approved main controller commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tool-storage-formal-photos-fb5a1dce
+  cancel-in-progress: false
+
+env:
+  NEKO_FORMAL_PHOTOS_SOURCE_REF: ${{ inputs.source_ref }}
+  NEKO_FORMAL_PHOTOS_CONTROLLER_REF: ${{ inputs.controller_ref }}
+
+jobs:
+  precheck:
+    name: Verify fixed Photos source and original history
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out approved controller
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Check out frozen product
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: fb5a1dce3696703e3942c77c34287c9319886eb1
+          path: product
+          persist-credentials: false
+      - name: Verify fixed source and original history
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 controller/NekoWidget/ci/test-tool-storage-photos-controller.py
+          python3 controller/NekoWidget/ci/verify-tool-storage-photos-controller.py precheck \
+            --controller controller --product product \
+            --output "$RUNNER_TEMP/formal-photos-precheck" --phase precheck
+      - name: Upload source-history precheck
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: formal-photos-precheck-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/formal-photos-precheck
+          if-no-files-found: warn
+          retention-days: 7
+
+  photos:
+    name: Formal full Photos validation for frozen tool source
+    needs: precheck
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      SMOKE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-18-6
+      NEKO_IOS_RUNTIME_SCOPE: reviewed-tool-storage-completion-v1
+    steps:
+      - name: Check out approved controller
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Check out frozen product
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: fb5a1dce3696703e3942c77c34287c9319886eb1
+          path: product
+          persist-credentials: false
+      - name: Recheck fixed source and original history
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 controller/NekoWidget/ci/verify-tool-storage-photos-controller.py precheck
+          --controller controller --product product
+          --output "$RUNNER_TEMP/formal-photos-pre-native" --phase pre-native
+      - name: Run unchanged full Simulator smoke test
+        working-directory: product/NekoWidget
+        shell: bash
+        run: bash ci/run-simulator-smoke.sh
+      - name: Upload formal Photos artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: formal-full-photos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/neko-smoke-artifacts
+            ${{ runner.temp }}/formal-photos-pre-native
+          if-no-files-found: warn
+          retention-days: 7
