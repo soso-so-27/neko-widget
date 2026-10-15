@@ -165,7 +165,13 @@ TOOL_STORAGE_PHOTOS_SOURCE_UI_SHA256 = "45e5ee10d34d408eb8b8323bd7f6e0b8298f934e
 # Conditional preparation only. Root must observe and independently review the
 # exact new Photos job and the diagnostic identity/log before filling these.
 TOOL_STORAGE_PHOTOS_RETRY_JOB = None
-TOOL_STORAGE_PHOTOS_DIAGNOSTIC = None
+TOOL_STORAGE_PHOTOS_DIAGNOSTIC = {
+    "run_id": 38657177844, "job_id": 116169594925,
+    "source_sha": "8d0a10ef010a5494c2d3e2cd38eb7c2d06680954",
+    "branch": "diagnostic/photo-bootstrap-hang-20261015",
+    "workflow_id": 362697969, "path": ".github/workflows/ios-ui-diagnostic.yml",
+    "raw_log_sha256": "b32b87b3337a6905cd3cbf86beddf4dff911fdb07518f6099bed87e085644ce8",
+}
 
 TOOL_STORAGE_BACKEND_STEPS = (
     "Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts",
