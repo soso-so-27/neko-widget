@@ -11244,7 +11244,8 @@ class ToolStorageStandaloneClosureTests(unittest.TestCase):
         self.assertTrue(planner.tool_storage_formal_control_paths_only(paths))
         self.assertEqual(planner.required_jobs(paths,planner.ORCHESTRATION_SCOPE),(planner.PLAN_JOB,))
         for bad in (None,[],paths[:-1],paths+['unknown.txt'],paths+paths):self.assertFalse(planner.tool_storage_formal_control_paths_only(bad))
-        self.assertFalse(planner.tool_storage_formal_configured())
+        with patch.object(planner,'TOOL_STORAGE_FORMAL_OBSERVED',None):
+            self.assertFalse(planner.tool_storage_formal_configured())
 
 
 class ToolStorageStandaloneControlRegistrationTests(unittest.TestCase):
@@ -11315,6 +11316,80 @@ class ToolStorageStandaloneControlRegistrationTests(unittest.TestCase):
         self.assertTrue(self.prove())
         path=next(iter(planner.TOOL_STORAGE_FORMAL_ADDITIONS));self.before[path]=f"100644 blob {'e'*40}\t{path}"
         self.assertFalse(self.prove())
+
+
+class ToolStorageFormalLookupActivationTests(unittest.TestCase):
+    def lookup(self, *, repo='soso-so-27/neko-widget', dedicated=False, configured=True, candidate=None, graph_error=False, head='a'*40):
+        now=dt.datetime(2026,10,15,4,tzinfo=dt.timezone.utc);calls=[]
+        current={'id':999,'head_sha':head,'head_branch':'main','event':'push','run_attempt':1,'workflow_id':335014238,
+            'path':'.github/workflows/ios-build.yml','repository':{'full_name':repo},'head_repository':{'full_name':repo}}
+        source=copy.deepcopy(planner.TOOL_STORAGE_FORMAL_QUEUED)
+        env={'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/main','GITHUB_REPOSITORY':repo,'GITHUB_RUN_ID':'999','GITHUB_SHA':head}
+        def api(path):
+            calls.append(path)
+            if path.endswith('/runs/999'):return current
+            if path.endswith('/runs/'+str(planner.TOOL_STORAGE_FRESH_PHOTOS_RUN)):
+                if repo!='soso-so-27/neko-widget' or not dedicated or head==planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE:
+                    raise AssertionError('Fixed-source API stolen before eligible validation context')
+                return source
+            if '/workflows/ios-build.yml/runs?' in path:return {'workflow_runs':([candidate] if candidate else [])}
+            raise AssertionError(path)
+        with patch.object(planner,'tool_storage_formal_configured',return_value=configured), \
+                patch.object(planner,'tool_storage_formal_equivalent_inputs',return_value=dedicated) as equivalence, \
+                patch.object(planner,'git',return_value=head),patch.object(planner,'executed_jobs',return_value=[]), \
+                patch.object(planner,'reusable_run',return_value=True),patch.object(planner,'covers_jobs',return_value=True), \
+                patch.object(planner,'tool_storage_graph',side_effect=ValueError('unqualified actual graph') if graph_error else None) as graph:
+            value=planner.find_evidence(env,planner.required_jobs_from_scope(planner.TOOL_STORAGE_SCOPE),api,now)
+            return value,calls,graph.call_args,equivalence.call_count
+    def test_active_pins_do_not_fetch_fixed_source_for_unrelated_validation_context(self):
+        value,calls,_,_=self.lookup(dedicated=False)
+        self.assertIsNone(value);self.assertFalse(any(path.endswith('/runs/'+str(planner.TOOL_STORAGE_FRESH_PHOTOS_RUN)) for path in calls))
+        self.assertEqual(sum('/workflows/ios-build.yml/runs?' in path for path in calls),2)
+    def test_active_pins_do_not_target_another_repository_even_if_equivalence_is_true(self):
+        value,calls,_,equivalence_calls=self.lookup(repo='other/recipient',dedicated=True)
+        self.assertIsNone(value);self.assertEqual(equivalence_calls,0)
+        self.assertFalse(any(path.endswith('/runs/'+str(planner.TOOL_STORAGE_FRESH_PHOTOS_RUN)) for path in calls))
+    def test_c033_and_ordinary_candidate_success_listing_is_preserved_when_not_dedicated(self):
+        for sha in (planner.TOOL_STORAGE_PR_SOURCE,'e'*40):
+            candidate={'id':123,'head_sha':sha}
+            value,calls,call,_=self.lookup(candidate=candidate,dedicated=False,head=sha)
+            self.assertEqual(value,(123,sha));self.assertEqual(call.args[0],candidate)
+            self.assertFalse(any(path.endswith('/runs/'+str(planner.TOOL_STORAGE_FRESH_PHOTOS_RUN)) for path in calls))
+    def test_only_literal_dedicated_main_uses_default_shared_graph_and_failure_never_falls_back(self):
+        value,calls,call,_=self.lookup(dedicated=True)
+        self.assertEqual(value,(planner.TOOL_STORAGE_FRESH_PHOTOS_RUN,planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE))
+        self.assertEqual(call.args[1],'a'*40);self.assertEqual(call.kwargs,{})
+        self.assertFalse(any('/workflows/ios-build.yml/runs?' in path for path in calls))
+        with self.assertRaisesRegex(ValueError,'unqualified actual graph'):self.lookup(dedicated=True,graph_error=True)
+    def test_missing_pins_or_source_only_head_cannot_enter_standalone_lookup(self):
+        value,calls,_,_=self.lookup(configured=False,dedicated=True)
+        self.assertIsNone(value);self.assertFalse(any(path.endswith('/runs/'+str(planner.TOOL_STORAGE_FRESH_PHOTOS_RUN)) for path in calls))
+        value,calls,_,_=self.lookup(head=planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE,dedicated=True)
+        self.assertIsNone(value);self.assertFalse(any(path.endswith('/runs/'+str(planner.TOOL_STORAGE_FRESH_PHOTOS_RUN)) for path in calls))
+    def test_unobserved_negative_fixture_is_independent_of_activated_global_pins(self):
+        active=ToolStorageStandalonePhotosTests();active.setUp();self.addCleanup(active.doCleanups)
+        self.assertTrue(planner.tool_storage_formal_configured())
+        fixture=ToolStorageStandaloneClosureTests();fixture.setUp()
+        fixture.test_dedicated_plan_only_shape_is_exact_and_inactive_proof_remains_none()
+        self.assertTrue(planner.tool_storage_formal_configured())
+
+
+class ToolStorageActualObservedRegistrationTests(unittest.TestCase):
+    def test_actual_registered_tuple_is_active_but_cannot_become_source_first_failure_or_unknown_scope(self):
+        actual=copy.deepcopy(planner.TOOL_STORAGE_FORMAL_OBSERVED)
+        self.assertTrue(planner.tool_storage_formal_configured())
+        self.assertIsInstance(actual,dict);self.assertEqual(len(actual),12)
+        for key,value in (('controller_sha',planner.TOOL_STORAGE_FRESH_PHOTOS_SOURCE),
+                ('controller_sha',planner.TOOL_STORAGE_FORMAL_FIRST_FAILURE['head_sha']),
+                ('branch','codex/unknown'),('workflow_id',335014238),
+                ('run_id',planner.TOOL_STORAGE_FORMAL_FIRST_FAILURE['id']),
+                ('photos_job_id',116230680503),('photos_job_id',actual['precheck_job_id']),
+                ('photos_raw_log_sha256','invalid'),('photos_observations_sha256',None)):
+            changed=dict(actual,**{key:value})
+            with patch.object(planner,'TOOL_STORAGE_FORMAL_OBSERVED',changed):
+                self.assertFalse(planner.tool_storage_formal_configured())
+        with patch.object(planner,'TOOL_STORAGE_FORMAL_OBSERVED',dict(actual,unexpected='unknown')):
+            self.assertFalse(planner.tool_storage_formal_configured())
 
 
 if __name__ == "__main__":
