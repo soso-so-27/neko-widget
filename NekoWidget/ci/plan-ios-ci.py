@@ -1637,7 +1637,17 @@ BILLING_CALLER_JOB = "Validate private billing caller"
 BILLING_WORKFLOW = ".github/workflows/sharing-service.yml"
 BILLING_JOB_TIMEOUT_MINUTES = 5
 BILLING_PATHS = frozenset(('NekoWidget/SharingService/README.md', 'NekoWidget/SharingService/gateway/.gitattributes', 'NekoWidget/SharingService/gateway/family-entry.mjs', 'NekoWidget/SharingService/gateway/family-router.mjs', 'NekoWidget/SharingService/gateway/family-router.test.mjs', 'NekoWidget/SharingService/gateway/family-runtime.test.mjs', 'NekoWidget/SharingService/gateway/family-v5-frozen.json', 'NekoWidget/SharingService/gateway/family-v5-frozen.mjs', 'NekoWidget/SharingService/gateway/render-live-config.mjs', 'NekoWidget/SharingService/gateway/render-live-config.test.mjs', 'NekoWidget/SharingService/src/billing-gateway.ts', 'NekoWidget/SharingService/test/billing-gateway.node-tests.mjs'))
-BILLING_REVIEWED_TREES = {'BillingVerificationService': 'd3be3620dd75ccf83331f9e4ea434ce760e51106', 'SharingService': '77fb64e39fe827a7f88a24db16419aaf1695f7aa', 'PreservationImageValidator': 'b6d89e568187fc23c49887fbb5ae259e54789212', 'PreservationService': '2938f8aef3762bdbf9e7708ccd39d80acab032e4'}
+# Reviewed contract-end/notice candidate: both private Node authorities change,
+# while native, verifier and JPEG inputs remain fixed. Unknown sibling paths,
+# any other dependency tree, modes/types or workflow bytes still require FULL.
+BILLING_PATHS |= frozenset('NekoWidget/PreservationService/' + name for name in (
+    'migrations/0038_notice_send_budget.sql', 'src/billing-authority.ts',
+    'src/billing-link-protocol.ts', 'src/index.ts', 'src/membership-links.ts',
+    'src/notice-delivery.ts', 'src/notice-dispatch.ts', 'src/notice-submissions.ts',
+    'src/providers.ts', 'src/retention-ledger.ts', 'test/billing-authority.test.ts',
+    'test/notice-dispatch.test.ts', 'test/pilot-wiring.test.ts', 'test/retention-ledger.test.ts',
+))
+BILLING_REVIEWED_TREES = {'BillingVerificationService': 'd3be3620dd75ccf83331f9e4ea434ce760e51106', 'SharingService': 'ea5bcf577b4285ef62eec5445843dbf360536baa', 'PreservationImageValidator': '7ba58342c98a0f69ab642a9d69ccf9eeb92491db', 'PreservationService': '5a033b2c2dc94a65b75d36aa73f359bbb2333925'}
 BILLING_WORKFLOW_DIGEST = "492e25862dc87f5c329ba99cc3b602bf3cc1baa7bc257851c55ab0788596e6fd"
 BILLING_COMPANION_PATHS = JPEG_COMPANION_PATHS
 BILLING_COMPANION_DIGESTS = {
