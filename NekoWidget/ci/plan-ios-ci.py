@@ -4058,8 +4058,8 @@ TOOL_STORAGE_FORMAL_FIRST_FAILURE_CRITICAL_SHA256 = '2a46f47f798e0371e981704fa0f
 TOOL_STORAGE_FORMAL_FIRST_FAILURE_JOBS_SHA256 = '80e00027012f399929bc28fd078cc46ffd22151f5f9da9f7048853dac1beb08b'
 TOOL_STORAGE_FORMAL_FIRST_FAILURE_PAYLOAD_SHA256 = '3a0254b4dd137f21fabd9c45825a1b1081ba43de1721ee4c1b38c133fefbe4be'
 TOOL_STORAGE_FORMAL_FIRST_FAILURE_RAW_SHA256 = 'e83d162ec6c2f0610aa042f37e96ad9294cd336ab9e7811e1fa0bef8f64c2718'
-TOOL_STORAGE_FORMAL_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': '988ee6e14988a5a0179d8e64f2764d3c2839081c', 'NekoWidget/ci/plan-ios-ci.py': '3f62b74398bf7a109406bee30d5aa7bda0f7652d', 'NekoWidget/ci/preflight-ci.py': '58468dee2e3eca2b865149f2c0af4195875d36bb', 'NekoWidget/ci/release-testflight.py': 'b96df9ab917d46559d2c15030a8740565e8dc174', 'NekoWidget/ci/test-ci-lanes.py': 'af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6', 'NekoWidget/ci/test-plan-ios-ci.py': 'e922a9f9e2a62b5d1798f4fc71e5d165cf729324', 'NekoWidget/ci/test-preflight-ci.py': 'f26aa0e943ce4a98e3c95cd786a3394b5b360011', 'NekoWidget/ci/test-release-testflight.py': '3a9d1056842b4d4ea6d13c1eb5a5bcdd4143cad4'}  # Only this map repinned; original FRESH source controls remain immutable.
-TOOL_STORAGE_FORMAL_OBSERVED = None  # Actual controller/run/jobs/raw; inactive until observed.
+TOOL_STORAGE_FORMAL_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': '988ee6e14988a5a0179d8e64f2764d3c2839081c', 'NekoWidget/ci/test-plan-ios-ci.py': '71729da3912c12c9b512d03910f64e80def891ab', 'NekoWidget/ci/test-release-testflight.py': '3a9d1056842b4d4ea6d13c1eb5a5bcdd4143cad4', 'NekoWidget/ci/plan-ios-ci.py': 'f6ba0a8a8778cfadeb6a59fcb410304ce671cd06', 'NekoWidget/ci/test-ci-lanes.py': 'af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6', 'NekoWidget/ci/preflight-ci.py': '58468dee2e3eca2b865149f2c0af4195875d36bb', 'NekoWidget/ci/release-testflight.py': 'b96df9ab917d46559d2c15030a8740565e8dc174', 'NekoWidget/ci/test-preflight-ci.py': 'f26aa0e943ce4a98e3c95cd786a3394b5b360011'}
+TOOL_STORAGE_FORMAL_OBSERVED = {'controller_sha': 'e0b68d2b9bdf4ed46f69e52ccfe2ec64afd61906', 'branch': 'main', 'workflow_id': 385071462, 'run_id': 38678383169, 'precheck_job_id': 116237087305, 'photos_job_id': 116237161983, 'precheck_raw_log_sha256': '6e735f3d220821fec7857902025442d30d723d0310a7790ad0bb35a27811c7e1', 'photos_raw_log_sha256': 'b4ea11abdaadfc4a7092fa75e9dd443146e3ac8497b13f2aa79439d19092b973', 'precheck_steps_sha256': '4dfb099cbfe28b7bc301d322ee3b50eafa9adfa4fec11507d173d96f43f0cb1d', 'photos_steps_sha256': 'aba0736813f04b29125ecab7f7cef6809b9ac925c3cbc9f56d2650ce80a164c3', 'precheck_observations_sha256': 'fe37ce68d44b0889e318fd2caf68974bfd3f5496e4b033a20343a2dbecbabad3', 'photos_observations_sha256': '8692721923fd38d7d3652448442b257add81bdc86c7e0c6745e705e4a51ac5df'}
 TOOL_STORAGE_FORMAL_QUEUED_AT = "2026-10-15T02:37:02Z"
 TOOL_STORAGE_FORMAL_ORIGINAL_JOBS_SHA256 = "6af2c2b3626df05a7635cb82f4681508c52b9b6974d06d53a13259df4b07f3ee"
 TOOL_STORAGE_FORMAL_ATTEMPT1_SHA256 = "4589373b8f337bd1e175521f74a574bbce697de771d8e7aea430ab1db30b9d2e"
@@ -8816,7 +8816,9 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
     if current["head_sha"] != env["GITHUB_SHA"] or git("rev-parse", "HEAD") != env["GITHUB_SHA"]:
         evidence_log("lookup_blocked", reason="current_checkout_mismatch")
         raise ValueError("Current run and checkout do not match")
-    if required == required_jobs_from_scope(TOOL_STORAGE_SCOPE) and tool_storage_formal_configured():
+    if (repo == "soso-so-27/neko-widget" and required == required_jobs_from_scope(TOOL_STORAGE_SCOPE)
+            and tool_storage_formal_configured() and env["GITHUB_SHA"] != TOOL_STORAGE_FRESH_PHOTOS_SOURCE
+            and tool_storage_formal_equivalent_inputs(TOOL_STORAGE_FRESH_PHOTOS_SOURCE, env["GITHUB_SHA"])):
         source = api(f"{prefix}/runs/{TOOL_STORAGE_FRESH_PHOTOS_RUN}")
         if reusable_run(source, current, repo, now, audit=True):
             jobs = executed_jobs(source, repo, api)
