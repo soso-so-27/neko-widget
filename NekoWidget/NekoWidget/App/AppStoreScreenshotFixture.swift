@@ -323,6 +323,7 @@ struct AppStoreScreenshotFixtureRootView: View {
         transport: PersonalArchiveFixtureTransport())
     var widgetPhotoIdentifier: String? = nil
     var widgetPhotoShownAt: Date? = nil
+    var photoAccess = true
     @State private var selectedPhotoIdentifier: String?
     @State private var selectedPhotoShownAt: Date?
     @State private var showsFamilyWindow = false
@@ -449,7 +450,7 @@ struct AppStoreScreenshotFixtureRootView: View {
                 return (profile.identifier, photos.filter { assigned.contains($0.localIdentifier) })
             }),
             catProfilesActions: .noOp,
-            hasPhotoAccess: true,
+            hasPhotoAccess: photoAccess,
             isLimitedAccess: false,
             isScanning: false,
             shouldOfferWidgetPlacementGuide: false,

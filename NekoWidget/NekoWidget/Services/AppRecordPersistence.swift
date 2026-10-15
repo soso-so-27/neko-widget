@@ -911,7 +911,7 @@ enum AppRecordCapture {
                 bytes = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
             } else if tool == "ShowcasePhotos" {
                 let object = try JSONSerialization.jsonObject(with: bytes)
-                var state = object as? [String: Any] ?? ["entries": object]
+                var state = object as? [String: Any] ?? ["entries": object, "scopes": [:]]
                 guard var entries = state["entries"] as? [[String: Any]] else { throw ToolBackupError.invalid }
                 for i in entries.indices { entries[i]["isRestoredCopy"] = true }
                 state["entries"] = entries
@@ -1147,6 +1147,12 @@ private final class AppRecordFixture {
         let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
             UIColor.systemOrange.setFill(); context.cgContext.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         }.jpegData(compressionQuality: 0.9)!
+        let showcaseDirectory = AppRecordDataset.directory("ShowcasePhotos")
+        let showcaseName = UUID().uuidString + ".jpg"
+        let showcase = ShowcasePhotoStore.Entry(scopeID: "", photoIdentifier: "fixture-owned-showcase",
+                                                imageFileName: showcaseName, isPinned: true, isRestoredCopy: true)
+        try AppRecordDataset.writeBackedUp(JSONEncoder().encode([showcase]), to: showcaseDirectory.appendingPathComponent("selected.json"))
+        try AppRecordDataset.writeBackedUp(image, to: showcaseDirectory.appendingPathComponent(showcaseName))
         var plan = CareHandoffPlan()
         var photos: [String: Data] = [:]
         for profile in profiles {
@@ -1264,6 +1270,7 @@ private struct AppRecordFixtureContent: View {
                 NavigationLink("保存・復元") { AppRecordSettingsView(configuration: fixture.configuration, client: fixture.authenticationClient(), persistence: persistence) }
                 NavigationLink("預けるとき") { CareHandoffView(profiles: [], unregisteredPhotos: [], store: .shared, reuseStore: .shared) }
                 NavigationLink("写真メモ") { PhotoMemoryNotesListView(photos: [], store: .shared, openPhotos: {}) }
+                NavigationLink("通常のツール画面") { AppStoreScreenshotFixtureRootView(photoAccess: false) }
                 Button("別端末での自動復元を検査", action: switchDevice).disabled(persistence.busy || persistence.title != "保存済み")
             }.navigationTitle("自動保存の検査")
                 .navigationDestination(for: MemoriesRoute.self) { route in

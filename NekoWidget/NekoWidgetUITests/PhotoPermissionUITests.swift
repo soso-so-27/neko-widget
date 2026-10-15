@@ -1786,7 +1786,7 @@ final class SoloMemoriesUITests: XCTestCase {
         wait(for: [completes], timeout: 20)
         capture("automatic-save-one-time-consent")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 3回")
+        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 4回")
         app.buttons["預けるとき"].tap()
         let cats = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-"))
         XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
@@ -1799,7 +1799,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let status = app.staticTexts["app-record-fixture-status"]
         let updates = expectation(for: NSPredicate(format: "label == %@", "保存済み"), evaluatedWith: status)
         wait(for: [updates], timeout: 25)
-        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 3回")
+        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 4回")
         capture("automatic-save-from-ordinary-care-edit-no-photo-resend")
         app.buttons["別端末での自動復元を検査"].tap()
         XCTAssertTrue(app.staticTexts["自動復元・通常画面・元記録保全を確認"].waitForExistence(timeout: 20), app.debugDescription)
@@ -1816,6 +1816,14 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(app.staticTexts["memory-note-photo-unavailable"].exists)
         capture("automatic-restore-photo-memo-without-photokit-link")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["通常のツール画面"].tap()
+        app.tabBars.buttons["ツール"].tap()
+        let showcase = app.buttons["tools-showcase-open"]
+        XCTAssertTrue(showcase.waitForExistence(timeout: 10)); showcase.tap()
+        XCTAssertTrue(app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        capture("automatic-restore-showcase-opens-without-photo-library-access")
         app.terminate()
     }
     @MainActor
