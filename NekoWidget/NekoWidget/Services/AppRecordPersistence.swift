@@ -986,21 +986,33 @@ struct AppRecordPersistenceFixtureView: View {
         switching = true; defer { switching = false }
         previous.persistence.setActive(false)
         let oldRoot = AppRecordDataset.support
+        var phase = "元記録を読む"
+        var target: AppRecordFixture?
         do {
             let old = try Data(contentsOf: oldRoot.appendingPathComponent("CareHandoff/plan.json"))
+            phase = "新端末へ切替"
             try AppRecordDataset.nextFixtureDevice()
             let next = AppRecordFixture(configuration: previous.configuration, server: previous.server, profiles: previous.profiles)
+            target = next
+            phase = "復元を実行"
             await next.persistence.enable()
+            phase = "通常ストアの件数を照合"
             guard try Data(contentsOf: oldRoot.appendingPathComponent("CareHandoff/plan.json")) == old,
                   CareHandoffStore.shared.plan.cats.count == 2,
                   try await PhotoMemoryNoteStore.shared.records().count == 1 else { throw ToolBackupError.invalid }
             let records = try await PhotoMemoryNoteStore.shared.records()
+            phase = "復元した添付写真を照合"
             guard let first = records.first, let photo = try await PhotoMemoryNoteStore.shared.photoURL(for: first.id),
                   FileManager.default.fileExists(atPath: photo.path) else { throw ToolBackupError.invalid }
+            phase = "転送準備の欠落から再開"
             try await next.persistence.verifyMissingStagingRecovery()
             fixture = next; next.persistence.setActive(true)
             result = "自動復元・通常画面・元記録保全を確認"
-        } catch { result = "自動復元の検査失敗" }
+        } catch {
+            // Synthetic fixture only. Keep the first actionable failure visible
+            // rather than spending another native run on an opaque timeout.
+            result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "") / \(String(describing: error))"
+        }
     }
 }
 
