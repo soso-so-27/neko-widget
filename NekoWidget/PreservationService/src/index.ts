@@ -6,7 +6,7 @@ import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './p
 import { MembershipLinks } from './membership-links';
 import { envelopeKeyCustody } from './key-custody';
 import { readRequestJSON as body, readPhotoUploadJSON } from './request-json';
-import { RetentionLedger, type VerifiedMembershipStatus } from './retention-ledger';
+import { RetentionLedger, type VerifiedMembershipObservation } from './retention-ledger';
 import { NoticeSubmissions, validNoticeEventSource } from './notice-submissions';
 import { NoticeDispatch, type NoticeMailProvider } from './notice-dispatch';
 import { type NoticeEventSource } from './notice-events';
@@ -36,7 +36,7 @@ export interface Env {
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
   OWNER_RECOVERY_COMPRESSION_ENABLED?: string;
-  NOTICE_SEND_ENABLED?: string; NOTICE_EVENTS_ENABLED?: string;
+  NOTICE_SEND_ENABLED?: string; NOTICE_EVENTS_ENABLED?: string; NOTICE_RUN_MONITOR_ENABLED?: string;
   NOTICE_RECIPIENT_TAG_SECRET?: string; NOTICE_EVENT_QUEUE_NAME?: string;
   NOTICE_ACCOUNT_ID?: string; NOTICE_ZONE_ID?: string; NOTICE_SUBSCRIPTION_ID?: string;
   NOTICE_DOMAIN?: string; NOTICE_SENDER?: string; NOTICE_EMAIL?: NoticeMailProvider;
@@ -58,7 +58,7 @@ export interface Services { auth: DurableAuth; archive: ArchiveStore; verifier: 
   membership?: MembershipLinks; retention?: RetentionLedger; ownerRecovery?: OwnerRecoveryCopy; }
 interface NoticeServices { auth: DurableAuth; retention: RetentionLedger;
   ownerRecovery: OwnerRecoveryCopy;
-  statusForOwner: (ownerId: string) => Promise<VerifiedMembershipStatus>; }
+  statusForOwner: (ownerId: string) => Promise<VerifiedMembershipObservation>; }
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const string = (value: unknown) => {
@@ -133,7 +133,7 @@ export async function route(request: Request, services: Services, context?: Pick
       await services.auth.requireSession(token);
       return response({ version: 1, status: 'unlinked', dueAt: null, paused: false });
     }
-    const state = await services.retention.observe(session.ownerId, membership.status);
+    const state = await services.retention.observe(session.ownerId, membership.status, membership.endedAt ?? null);
     const current = await services.auth.requireSession(token);
     if (current.ownerId !== session.ownerId || current.sessionHash !== session.sessionHash) {
       throw new ServiceError('SESSION_INVALID', 401);
@@ -315,7 +315,7 @@ function configuredNoticeServices(env: Env): NoticeServices {
         JOIN pa_owners o ON o.owner_id=l.owner_id WHERE l.owner_id=? AND o.disabled=0`)
         .bind(ownerId).first<{ billing_account_id: string }>();
       if (!link) return 'unknown';
-      try { return await authority.status(link.billing_account_id); }
+      try { return await authority.retentionStatus(link.billing_account_id); }
       catch { return 'unknown'; }
     } };
 }
@@ -344,7 +344,7 @@ async function reconcileDeliveredNotices(env: Env, services: NoticeServices): Pr
     try {
       await submissions.promoteDelivered(item.messageId,
         candidate => services.auth.verifiedNoticeContactForCandidate(candidate),
-        accountId => authority.status(accountId));
+        accountId => authority.retentionStatus(accountId));
     } catch {
       // One corrupt or temporarily unreadable contact must not starve later
       // notices. Leave this row unpromoted and surface failure after the scan.
@@ -352,6 +352,28 @@ async function reconcileDeliveredNotices(env: Env, services: NoticeServices): Pr
     }
   }
   return failed;
+}
+
+/** Fixed service-wide allowance. Provider timeouts consume reservations too.
+ * No caller or owner can raise the 50/day and 1,500/calendar-month ceilings.
+ */
+export async function reserveNoticeSend(db: D1Database, now = Date.now()): Promise<boolean> {
+  if (!Number.isSafeInteger(now) || now <= 0) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+  const day = Math.floor(now / 86_400_000), date = new Date(now);
+  const month = date.getUTCFullYear() * 12 + date.getUTCMonth();
+  const result = await db.prepare(`UPDATE pa_notice_send_budget SET day_utc=?,
+    reserved_sends=CASE WHEN day_utc=? THEN reserved_sends+1 ELSE 1 END,
+    month_utc=?,month_reserved_sends=CASE WHEN month_utc=? THEN month_reserved_sends+1 ELSE 1 END,
+    last_attempt_at=? WHERE singleton=1 AND day_utc<=? AND month_utc<=? AND last_attempt_at<=?
+      AND (day_utc<? OR reserved_sends<50) AND (month_utc<? OR month_reserved_sends<1500)
+    RETURNING reserved_sends`).bind(day, day, month, month, now, day, month, now, day, month).run();
+  if (result.results.length === 1) return true;
+  const state = await db.prepare('SELECT day_utc,month_utc,last_attempt_at FROM pa_notice_send_budget WHERE singleton=1')
+    .first<{ day_utc: number; month_utc: number; last_attempt_at: number }>();
+  if (!state || state.day_utc > day || state.month_utc > month || state.last_attempt_at > now) {
+    throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+  }
+  return false;
 }
 export default {
   async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
@@ -407,8 +429,21 @@ export default {
     }
   },
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
-    if (env.NOTICE_SEND_ENABLED === 'YES' && (env.CLEANUP_ENABLED !== 'YES'
-        || env.RETENTION_TRACKING_ENABLED !== 'YES' || env.NOTICE_EVENTS_ENABLED !== 'YES'
+    // Monitoring never grants send permission. NOTICE_SEND_ENABLED=NO is the
+    // immediate send stop; tracking/events can continue preserving evidence.
+    const monitored = env.NOTICE_RUN_MONITOR_ENABLED === 'YES';
+    if (monitored && (!env.DB || env.RETENTION_TRACKING_ENABLED !== 'YES' || env.NOTICE_EVENTS_ENABLED !== 'YES')) {
+      throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+    }
+    const startedAt = Date.now();
+    if (monitored) {
+      const started = await env.DB.prepare(`UPDATE pa_notice_send_budget SET last_run_started_at=?,
+        last_run_error_code=NULL WHERE singleton=1 AND last_run_started_at<=? RETURNING singleton`)
+        .bind(startedAt, startedAt).run();
+      if (started.results.length !== 1) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
+    }
+    try {
+    if (env.NOTICE_SEND_ENABLED === 'YES' && (env.RETENTION_TRACKING_ENABLED !== 'YES' || env.NOTICE_EVENTS_ENABLED !== 'YES'
         || env.PRESERVATION_ENABLED !== 'YES')) throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
     if (!env.DB) {
       if (env.CLEANUP_ENABLED === 'YES' || env.RECOVERY_BACKFILL_ENABLED === 'YES'
@@ -446,32 +481,30 @@ export default {
       if (!env.MEMBERSHIP_AUTHORITY) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       try {
         await configuredNoticeServices(env).retention
-          .refreshBatch(boundBillingAuthority(env.MEMBERSHIP_AUTHORITY).status);
+          .refreshBatch(boundBillingAuthority(env.MEMBERSHIP_AUTHORITY).retentionStatus);
       } catch { maintenanceFailures++; }
     }
-    // Backup repair continues when public sign-in and cleanup are off. A
-    // transient S3 failure must not leave a D1-only generation indefinitely.
-    if (env.CLEANUP_ENABLED !== 'YES') {
-      if (maintenanceFailures > 0) throw new ServiceError('PRESERVATION_UNAVAILABLE', 503);
-      return;
+    // Notification delivery must not require enabling unrelated photo/session
+    // cleanup. Backup repair above remains independent and fail-closed.
+    if (env.CLEANUP_ENABLED === 'YES') {
+      // Never thaw a fenced owner from D1 alone. Time Travel can roll back a
+      // deletion claim while the independent S3 erasing event still exists.
+      // A future release path must replay S3 before re-enabling access.
+      if (env.ARCHIVE) {
+        try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
+        catch { maintenanceFailures++; }
+      } else maintenanceFailures++;
+      try {
+        await env.DB.batch([
+          env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN
+            (SELECT challenge_id FROM pa_membership_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+          env.DB.prepare(`DELETE FROM pa_auth_challenges WHERE challenge_id IN
+            (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+          env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
+            (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+        ]);
+      } catch { maintenanceFailures++; }
     }
-    // Never thaw a fenced owner from D1 alone. Time Travel can roll back a
-    // deletion claim while the independent S3 erasing event still exists.
-    // A future release path must replay S3 before re-enabling access.
-    if (env.ARCHIVE) {
-      try { await cleanupArchive({ db: env.DB, bucket: env.ARCHIVE, now: () => Date.now() }); }
-      catch { maintenanceFailures++; }
-    } else maintenanceFailures++;
-    try {
-      await env.DB.batch([
-        env.DB.prepare(`DELETE FROM pa_membership_challenges WHERE challenge_id IN
-          (SELECT challenge_id FROM pa_membership_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
-        env.DB.prepare(`DELETE FROM pa_auth_challenges WHERE challenge_id IN
-          (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
-        env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
-          (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
-      ]);
-    } catch { maintenanceFailures++; }
     if (env.NOTICE_EVENTS_ENABLED === 'YES') {
       if (env.RETENTION_TRACKING_ENABLED !== 'YES') throw new ServiceError('NOTICE_NOT_CONFIGURED', 503);
       const services = configuredNoticeServices(env);
@@ -487,6 +520,7 @@ export default {
           mail: env.NOTICE_EMAIL,
           statusForOwner: services.statusForOwner,
           currentContact: candidate => services.auth.verifiedNoticeContactForCandidate(candidate),
+          reserveSend: () => reserveNoticeSend(env.DB),
         }).run();
         dispatchFailures = result.failed;
       }
@@ -495,6 +529,19 @@ export default {
       }
     }
     if (maintenanceFailures > 0) throw new ServiceError('PRESERVATION_UNAVAILABLE', 503);
+    } catch (error) {
+      if (monitored) {
+        const code = error instanceof ServiceError && /^[A-Z0-9_]{1,64}$/u.test(error.code) ? error.code : 'NOTICE_RUN_FAILED';
+        try { await env.DB.prepare(`UPDATE pa_notice_send_budget SET last_run_error_code=?
+          WHERE singleton=1 AND last_run_started_at=?`).bind(code, startedAt).run(); } catch {}
+      }
+      throw error;
+    }
+    if (monitored) {
+      const finished = await env.DB.prepare(`UPDATE pa_notice_send_budget SET last_run_finished_at=?,last_run_error_code=NULL
+        WHERE singleton=1 AND last_run_started_at=? RETURNING singleton`).bind(Date.now(), startedAt).run();
+      if (finished.results.length !== 1) throw new ServiceError('NOTICE_RUN_UNCONFIRMED', 503);
+    }
   },
   async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
     if (env.NOTICE_EVENTS_ENABLED !== 'YES' || env.RETENTION_TRACKING_ENABLED !== 'YES'
@@ -520,7 +567,7 @@ export default {
         await processDeliveredNoticeEvent(message.body, { source, submissions,
           ledger: services.retention, now: () => Date.now(),
           statusForOwner: services.statusForOwner,
-          statusForBillingAccount: accountId => authority.status(accountId),
+          statusForBillingAccount: accountId => authority.retentionStatus(accountId),
           currentContact: candidate => services.auth.verifiedNoticeContactForCandidate(candidate),
         });
         message.ack();

@@ -1,5 +1,5 @@
 import { ServiceError, sha256, type PhotoValidator } from './contracts';
-import { type BillingLinkAuthority, type MembershipStatus, linkTranscript } from './billing-link-protocol';
+import { type BillingLinkAuthority, type MembershipStatus, type RetentionMembershipObservation, linkTranscript } from './billing-link-protocol';
 import { encodePhoto } from './documents';
 import { type KeyWrappingAuthority } from './key-custody';
 import { readBoundedBody } from './bounded-body';
@@ -16,8 +16,10 @@ async function invoke(binding: Fetcher, path: string, body: unknown, maximum = 4
     // Never follow a provider redirect (response.ok below rejects every 3xx).
     // JPEG startup uses configured SDK retry budgets, not independent wall
     // deadlines. This caller has 60s; the container's reserved lease is 120s.
-    // Other authorities keep their existing 10s deadline.
-    redirect: 'manual', signal: AbortSignal.timeout(path === '/images/validate-jpeg' ? 60_000 : 10_000),
+    // A retention observation can refresh one Apple lineage (30s) before its
+    // committed DB read; ordinary authorities keep their 10s deadline.
+    redirect: 'manual', signal: AbortSignal.timeout(path === '/images/validate-jpeg' ? 60_000
+      : path === '/membership/verified-retention-status' ? 45_000 : 10_000),
   });
   if (!response.ok || !response.body) throw new ServiceError('DEPENDENCY_UNAVAILABLE', 503);
   try {
@@ -67,7 +69,9 @@ export function boundKeyWrapper(binding: Fetcher, callerSecret: string): KeyWrap
     },
   };
 }
-export function boundBillingAuthority(binding: Fetcher): BillingLinkAuthority {
+export function boundBillingAuthority(binding: Fetcher): BillingLinkAuthority & {
+  retentionStatus(billingAccountId: string): Promise<RetentionMembershipObservation>;
+} {
   return {
     async verify(challenge, proof) {
       const value = await invoke(binding, '/membership/verify-link', { challenge, proof }, 4096);
@@ -85,6 +89,17 @@ export function boundBillingAuthority(binding: Fetcher): BillingLinkAuthority {
         throw new ServiceError('MEMBERSHIP_UNCONFIRMED', 503);
       }
       return value.status as MembershipStatus;
+    },
+    async retentionStatus(billingAccountId) {
+      const value = await invoke(binding, '/membership/verified-retention-status', { billingAccountId }, 4096);
+      if (Object.keys(value).sort().join(',') !== 'billingAccountId,endedAt,status,version'
+          || value.version !== 1 || value.billingAccountId !== billingAccountId
+          || !['active', 'grace', 'expired', 'unknown'].includes(value.status as string)
+          || (value.status === 'expired' ? !Number.isSafeInteger(value.endedAt)
+            || (value.endedAt as number) <= 0 || (value.endedAt as number) > Date.now() : value.endedAt !== null)) {
+        throw new ServiceError('MEMBERSHIP_UNCONFIRMED', 503);
+      }
+      return { status: value.status as MembershipStatus, endedAt: value.endedAt as number | null };
     },
   };
 }

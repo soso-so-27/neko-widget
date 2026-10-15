@@ -90,8 +90,12 @@ export class MembershipLinks implements MembershipAuthority {
       JOIN pa_owners o ON o.owner_id=l.owner_id WHERE l.owner_id=? AND o.disabled=0`)
       .bind(ownerId).first<{ billing_account_id: string }>();
     if (!link) return { linked: false as const, status: 'unknown' as const };
-    try { return { linked: true as const, status: await this.d.authority.status(link.billing_account_id) }; }
-    catch { return { linked: true as const, status: 'unknown' as const }; }
+    try {
+      const observation = this.d.authority.retentionStatus
+        ? await this.d.authority.retentionStatus(link.billing_account_id)
+        : { status: await this.d.authority.status(link.billing_account_id), endedAt: null };
+      return { linked: true as const, ...observation };
+    } catch { return { linked: true as const, status: 'unknown' as const, endedAt: null }; }
   }
   async forSession(token: string) {
     const session = await this.d.auth.requireSession(token);

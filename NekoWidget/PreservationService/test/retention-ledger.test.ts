@@ -16,6 +16,26 @@ async function fixture(start = Date.UTC(2026, 8, 23, 12)) {
 const day = 24 * 60 * 60 * 1000;
 
 describe('twelve-month preservation export period', () => {
+  it('starts from a verified contract end and only extends an existing clock', async () => {
+    const f = await fixture(); const end = f.now() - 10 * day;
+    const first = await f.ledger.observeMembership(f.ownerId, { status: 'expired', endedAt: end });
+    expect(first.expiredAt).toBe(end);
+    expect(first.dueAt).toBe(Date.UTC(2027, 8, 13, 12));
+    f.at(first.dueAt! - 40 * day);
+    await f.ledger.markFinalNoticeDelivered(f.ownerId, first.episode, f.now(), 'synthetic-old-end-receipt');
+    const laterEnd = end + day;
+    const later = await f.ledger.observeMembership(f.ownerId, { status: 'expired', endedAt: laterEnd });
+    expect(later.episode).toBe(first.episode + 1);
+    expect(later.dueAt).toBeGreaterThan(first.dueAt!);
+    expect(later.finalNoticeDeliveredAt).toBeNull();
+    expect((await f.ledger.observeMembership(f.ownerId, { status: 'expired', endedAt: end })).dueAt).toBe(later.dueAt);
+    await expect(f.ledger.observeMembership(f.ownerId, { status: 'expired', endedAt: f.now() + 1 }))
+      .rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+    f.later(1);
+    expect((await f.ledger.observeMembership(f.ownerId, { status: 'unknown', endedAt: null })).pausedAt).toBe(f.now());
+    f.later(1);
+    expect((await f.ledger.observeMembership(f.ownerId, { status: 'active', endedAt: null })).dueAt).toBeNull();
+  });
   it('coalesces repeated unchanged observations without delaying a changed billing state', async () => {
     const f = await fixture();
     const first = await f.ledger.observe(f.ownerId, 'expired');

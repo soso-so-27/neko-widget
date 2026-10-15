@@ -4,6 +4,8 @@ import worker, { configuredServices, type Env } from '../src/index';
 import { randomToken, sha256 } from '../src/contracts';
 import { RetentionLedger } from '../src/retention-ledger';
 import { vi } from 'vitest';
+import { NoticeDispatch } from '../src/notice-dispatch';
+import { NoticeSubmissions } from '../src/notice-submissions';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 beforeAll(async () => { await binding.ARCHIVE.put('__owner_deletion/v1/format.json', '{"version":1}'); });
@@ -54,6 +56,36 @@ it('records retention with cleanup disabled without executing cleanup or sending
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(databaseCalls).toBe(1);
   } finally {refresh.mockRestore();}
+});
+
+it('dispatches and reconciles notices with cleanup disabled, without any cleanup query', async () => {
+  const settings=generalEnv(); let databaseCalls=0;
+  const db=new Proxy(binding.DB,{get(target,property){
+    if(property==='prepare')return(sql:string)=>{
+      databaseCalls++;
+      if(sql.includes('SELECT owner_snapshot_required'))return{first:async()=>({owner_snapshot_required:0})};
+      if(sql.includes('pa_notice_send_budget'))return target.prepare(sql);
+      throw new Error('unexpected cleanup or write');
+    };
+    const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;
+  }});
+  const refresh=vi.spyOn(RetentionLedger.prototype,'refreshBatch').mockResolvedValue(0);
+  const pending=vi.spyOn(NoticeSubmissions.prototype,'nextPendingPromotions').mockResolvedValue([]);
+  const dispatch=vi.spyOn(NoticeDispatch.prototype,'run').mockResolvedValue({reviewed:0,submitted:0,skipped:0,failed:0});
+  try {
+    await worker.scheduled({} as ScheduledEvent,{...settings,DB:db,PRESERVATION_ENABLED:'YES',CLEANUP_ENABLED:'NO',
+      RETENTION_TRACKING_ENABLED:'YES',NOTICE_EVENTS_ENABLED:'YES',NOTICE_SEND_ENABLED:'YES',
+      NOTICE_RUN_MONITOR_ENABLED:'YES',
+      NOTICE_ACCOUNT_ID:'a'.repeat(32),NOTICE_ZONE_ID:'b'.repeat(32),NOTICE_SUBSCRIPTION_ID:'c'.repeat(32),
+      NOTICE_DOMAIN:'example.com',NOTICE_SENDER:'notice@example.com',NOTICE_RECIPIENT_TAG_SECRET:randomToken(),
+      NOTICE_EMAIL:{send:async()=>{throw new Error('no real mail');}}});
+    expect(refresh).toHaveBeenCalledTimes(1);expect(pending).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledTimes(1);expect(databaseCalls).toBe(3);
+    const runtime=await binding.DB.prepare('SELECT last_run_started_at,last_run_finished_at,last_run_error_code FROM pa_notice_send_budget WHERE singleton=1')
+      .first<{last_run_started_at:number;last_run_finished_at:number;last_run_error_code:string|null}>();
+    expect(runtime!.last_run_finished_at).toBeGreaterThanOrEqual(runtime!.last_run_started_at);
+    expect(runtime!.last_run_error_code).toBeNull();
+  } finally {refresh.mockRestore();pending.mockRestore();dispatch.mockRestore();}
 });
 
 it('cannot bypass owner/write admission by omitting both environment and pilot mode', async () => {
