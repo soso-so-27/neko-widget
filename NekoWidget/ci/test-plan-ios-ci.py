@@ -10936,5 +10936,41 @@ class ToolStoragePhotosAttempt2Tests(unittest.TestCase):
             planner.executed_jobs(other, f.repo, lambda path: {'total_count':2, 'jobs':duplicate})
 
 
+class ToolStorageFreshBranchTests(unittest.TestCase):
+    def setUp(self):
+        self.f=ToolStorageCompletionGraphTests();self.f.setUp()
+        self.f.run['head_branch']=planner.TOOL_STORAGE_FRESH_BRANCH
+        self.f.backend['head_branch']=planner.TOOL_STORAGE_FRESH_BRANCH
+    def test_only_normal_fresh_four_and_same_sha_eight_step_push_graph(self):
+        with self.f.mocks():
+            got=self.f.prove()
+            self.assertEqual(len(got['native_evidence']['job_ids']),4)
+            self.assertEqual(got['native_evidence']['sha'],self.f.sha)
+            self.assertEqual(got['backend_evidence']['preservation-service.yml']['required_steps'],list(planner.TOOL_STORAGE_BACKEND_STEPS))
+            self.assertNotIn('backend_substitution',got);self.assertNotIn('photos_retry',got)
+    def test_fixed_original_source_cannot_move_to_the_fresh_branch(self):
+        self.f.run['head_sha']=planner.TOOL_STORAGE_PR_SOURCE
+        with self.f.mocks(),self.assertRaises(ValueError):self.f.prove()
+        original={'id':planner.TOOL_STORAGE_PR_NATIVE_RUN,'head_sha':planner.TOOL_STORAGE_PR_SOURCE,
+            'head_branch':planner.TOOL_STORAGE_FRESH_BRANCH,'event':'push','workflow_id':335014238,
+            'path':'.github/workflows/ios-build.yml','run_attempt':2,'status':'completed','conclusion':'success'}
+        self.assertFalse(planner.tool_storage_photos_retry_candidate(original))
+    def test_exact_branch_backend_branch_inputs_readiness_and_all_jobs_required(self):
+        with self.f.mocks():
+            for branch in ('codex/other',planner.TOOL_STORAGE_FRESH_BRANCH+'-other','main'):
+                with patch.dict(self.f.run,{'head_branch':branch}),self.assertRaises(ValueError):self.f.prove()
+            with patch.dict(self.f.backend,{'head_branch':planner.TOOL_STORAGE_BRANCH}),self.assertRaises(ValueError):self.f.prove()
+            for helper in ('tool_storage_inputs','tool_storage_readiness'):
+                with patch.object(planner,helper,return_value=False),self.assertRaises(ValueError):self.f.prove()
+            for job in self.f.jobs[:4]:
+                with patch.dict(job,{'conclusion':'skipped'}),self.assertRaises(ValueError):self.f.prove()
+            for step in self.f.backend_jobs[0]['steps']:
+                with patch.dict(step,{'conclusion':'skipped'}),self.assertRaises(ValueError):self.f.prove()
+    def test_dispatch_foreign_backend_sha_or_attempt_cannot_replace_owning_push(self):
+        with self.f.mocks():
+            for field,value in (('event','workflow_dispatch'),('event','pull_request'),('head_sha','c'*40),('run_attempt',2),('conclusion','failure')):
+                with patch.dict(self.f.backend,{field:value}),self.assertRaises(ValueError):self.f.prove()
+
+
 if __name__ == "__main__":
     unittest.main()

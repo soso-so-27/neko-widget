@@ -121,6 +121,7 @@ TOOL_STORAGE_CLOSURE_SHA256 = "9f99d7dfac6012d74eb6ad8d11bc75ff702db772f1c1ed9b2
 TOOL_STORAGE_READINESS_BEFORE = "f599ffbfebe28bb59c2bf96c5e2d32b076281dbc"
 TOOL_STORAGE_READINESS_PAIR = (TOOL_STORAGE_READINESS_BEFORE, "8858703e587f6b372e084e3e42968c768562282e")
 TOOL_STORAGE_BRANCH = "codex/tool-storage-completion-20261014"
+TOOL_STORAGE_FRESH_BRANCH = "codex/tool-storage-fresh-validation-20261015"
 TOOL_STORAGE_FIRST_CANDIDATE_AT = "2026-10-14T12:59:13Z"
 TOOL_STORAGE_DIAGNOSTIC_TESTS = (
     "SoloMemoriesUITests/testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity",
@@ -4538,7 +4539,9 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
     repo = "soso-so-27/neko-widget"
     if (not isinstance(sha, str) or not SHA.fullmatch(sha) or type(run.get("id")) is not int or run["id"] <= 0
             or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
-            or run.get("event") != "push" or run.get("head_branch") != TOOL_STORAGE_BRANCH
+            or run.get("event") != "push"
+            or run.get("head_branch") not in ({TOOL_STORAGE_BRANCH} if sha == TOOL_STORAGE_PR_SOURCE
+                else {TOOL_STORAGE_BRANCH, TOOL_STORAGE_FRESH_BRANCH})
             or type(run.get("run_attempt")) is not int or not (run["run_attempt"] == 1 or tool_storage_photos_retry_candidate(run))
             or (run.get("status"), run.get("conclusion")) != ("completed", "success")
             or run.get("repository", {}).get("full_name") != repo or run.get("head_repository", {}).get("full_name") != repo
@@ -4619,13 +4622,13 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
                     "job_ids": [next(job["id"] for job in jobs if job["name"] == name) for name in required],
                     **({"run_attempt": 2, "jobs": [{"job_id": job["id"], "run_attempt": job["run_attempt"]}
                         for job in jobs if job["name"] in required]} if photos_retry else {})}}
-    backends = tool_preservation_backend_evidence(sha, repo, api, now, branch=TOOL_STORAGE_BRANCH)
+    backends = tool_preservation_backend_evidence(sha, repo, api, now, branch=run["head_branch"])
     proof = backends["preservation-service.yml"]
     backend_run = api(f"/repos/{repo}/actions/runs/{proof['run_id']}")
     if (backend_run.get("id") != proof["run_id"] or backend_run.get("head_sha") != sha
             or backend_run.get("workflow_id") != 363932714
             or backend_run.get("path") != PRESERVATION_WORKFLOW or backend_run.get("event") != "push"
-            or backend_run.get("head_branch") != TOOL_STORAGE_BRANCH
+            or backend_run.get("head_branch") != run["head_branch"]
             or type(backend_run.get("run_attempt")) is not int or backend_run["run_attempt"] != 1
             or (backend_run.get("status"), backend_run.get("conclusion")) != ("completed", "success")
             or backend_run.get("repository", {}).get("full_name") != repo
