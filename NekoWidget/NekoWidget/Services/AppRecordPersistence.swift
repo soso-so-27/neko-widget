@@ -1299,7 +1299,7 @@ struct AppRecordPersistenceFixtureView: View {
         .disabled(switching)
         .task {
             do { fixture = try await AppRecordFixture.make(); fixture?.persistence.setActive(true) }
-            catch { result = "検査準備失敗: \(AppRecordFixture.preparationPhase) / \(String(describing: error))" }
+            catch { result = "検査準備失敗: \(AppRecordFixture.preparationPhase)" }
             while !Task.isCancelled {
                 if let fixture { let (_, photos) = await fixture.server.counts(); counts = "写真の送信 \(photos)回" }
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -1356,9 +1356,8 @@ struct AppRecordPersistenceFixtureView: View {
             fixture = next; next.persistence.setActive(true)
             result = "自動復元・通常画面・元記録保全を確認"
         } catch {
-            // Synthetic fixture only. Keep the first actionable failure visible
-            // rather than spending another native run on an opaque timeout.
-            result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "") / \(String(describing: error))"
+            // Keep the failing fixture stage visible without raw error details.
+            result = "自動復元の検査失敗: \(phase) / \(target?.persistence.title ?? "") / \(target?.persistence.detail ?? "")"
         }
     }
 }
