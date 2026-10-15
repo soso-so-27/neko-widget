@@ -1369,26 +1369,28 @@ private struct AppRecordFixtureContent: View {
     let result: String
     let counts: String
     let switchDevice: () -> Void
+    @State private var path: [MemoriesRoute] = []
     @ObservedObject private var persistence: AppRecordPersistence
     init(fixture: AppRecordFixture, result: String, counts: String, switchDevice: @escaping () -> Void) {
         self.fixture = fixture; self.result = result; self.counts = counts; self.switchDevice = switchDevice
         persistence = fixture.persistence
     }
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Text(persistence.title).accessibilityIdentifier("app-record-fixture-status")
                 Text(counts).accessibilityIdentifier("app-record-fixture-photo-count")
                 if !result.isEmpty { Text(result).accessibilityIdentifier("app-record-fixture-result") }
                 NavigationLink("保存・復元") { AppRecordSettingsView(configuration: fixture.configuration, client: fixture.authenticationClient(), persistence: persistence) }
                 NavigationLink("預けるとき") { CareHandoffView(profiles: [], unregisteredPhotos: [], store: .shared, reuseStore: .shared) }
-                NavigationLink("写真メモ") { PhotoMemoryNotesListView(photos: [], store: .shared, openPhotos: {}) }
+                NavigationLink("写真メモ", value: MemoriesRoute.memoryNotes)
                 NavigationLink("入力中の復元を検査") { AppRecordDraftProtectionFixture(fixture: fixture) }
                 NavigationLink("通常のツール画面") { AppStoreScreenshotFixtureRootView(photoAccess: false) }
                 Button("別端末での自動復元を検査", action: switchDevice).disabled(persistence.busy || persistence.title != "保存済み")
             }.navigationTitle("自動保存の検査")
                 .navigationDestination(for: MemoriesRoute.self) { route in
                     switch route {
+                    case .memoryNotes: PhotoMemoryNotesListView(photos: [], store: .shared, openPhotos: {})
                     case let .memoryNote(id): PhotoMemoryNoteDetailView(recordID: id, photos: [], store: .shared)
                     case let .memoryNotePhoto(id):
                         PhotoMemoryNotePhotoDestination(recordID: id, photos: [], store: .shared) { _ in Text("元写真なし") }

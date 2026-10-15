@@ -1762,7 +1762,7 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    private func verifyAutomaticRecordSavingAndRestore(_ app: XCUIApplication) {
+    private func prepareAutomaticRecordSavingAndRestore(_ app: XCUIApplication) {
         app.launchArguments = ["--app-records-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 10), app.debugDescription)
@@ -1810,6 +1810,11 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("automatic-restore-keeps-normal-tool-edit-and-cat-identity")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
+    }
+
+    @MainActor
+    private func verifyAutomaticRecordSavingAndRestore(_ app: XCUIApplication) {
+        prepareAutomaticRecordSavingAndRestore(app)
         app.buttons["写真メモ"].tap()
         let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(note.waitForExistence(timeout: 10)); note.tap()
@@ -1818,6 +1823,14 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("automatic-restore-photo-memo-without-photokit-link")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.terminate()
+    }
+
+    @MainActor
+    func testAutomaticRestoreProtectsUnsavedMemoDraft() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        prepareAutomaticRecordSavingAndRestore(app)
         app.buttons["入力中の復元を検査"].tap()
         let draft = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(draft.waitForExistence(timeout: 10)); draft.tap(); draft.typeText("編集中の文章")
@@ -1833,6 +1846,15 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["通常のツール画面"].waitForExistence(timeout: 10), app.debugDescription)
         let resumed = expectation(for: NSPredicate(format: "label == %@", "復元しました"), evaluatedWith: app.staticTexts["app-record-fixture-status"])
         wait(for: [resumed], timeout: 25)
+        capture("automatic-restore-resumes-after-editor-is-closed")
+        app.terminate()
+    }
+
+    @MainActor
+    func testAutomaticRestoredShowcaseWithoutPhotoAccess() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        prepareAutomaticRecordSavingAndRestore(app)
         app.buttons["通常のツール画面"].tap()
         app.tabBars.buttons["ツール"].tap()
         let showcase = app.buttons["tools-showcase-open"]
