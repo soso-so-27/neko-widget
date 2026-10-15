@@ -1772,7 +1772,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(consent.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["ツールを保管する"].exists)
         XCTAssertFalse(app.buttons["app-record-enable"].isEnabled)
-        consent.tap()
+        // SwiftUI's labelled row can have an inert center at this text size;
+        // use its native UISwitch as the existing veterinary tests do.
+        let thumb = consent.switches.firstMatch
+        XCTAssertTrue(thumb.exists, consent.debugDescription); thumb.tap()
+        let consentEnabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: consent)
+        XCTAssertEqual(XCTWaiter.wait(for: [consentEnabled], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["app-record-enable"].isEnabled)
         app.buttons["app-record-enable"].tap()
         let saved = app.staticTexts["app-record-save-status"]
         XCTAssertTrue(NSPredicate(format: "label == %@", "保存済み").evaluate(with: saved) || saved.waitForExistence(timeout: 10))

@@ -87,7 +87,7 @@ export async function route(request: Request, services: Services, context?: Pick
   const url = new URL(request.url);
   if (url.protocol !== 'https:') throw new ServiceError('HTTPS_REQUIRED');
   const path = url.pathname;
-  if (!['/v1/records', '/v1/export-page'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
+  if (!['/v1/records', '/v1/export-page', '/v1/tool-cleanup'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
   if (request.method === 'POST' && path === '/v1/auth/challenges') {
     if (Object.keys(await body(request, 1024)).length) throw new ServiceError('INVALID_REQUEST');
     return response(await services.auth.issueChallenge());
@@ -145,6 +145,14 @@ export async function route(request: Request, services: Services, context?: Pick
   }
   if (request.method === 'GET' && path === '/v1/usage') {
     return response(await services.archive.usage(token));
+  }
+  if (request.method === 'GET' && path === '/v1/tool-cleanup') {
+    if ([...url.searchParams.keys()].some(key => key !== 'after') || url.searchParams.getAll('after').length > 1) throw new ServiceError('INVALID_REQUEST');
+    return response(await services.archive.toolCleanupCandidates(token, url.searchParams.get('after') ?? ''));
+  }
+  const abandonedSnapshot = /^\/v1\/tool-snapshots\/([0-9a-f-]+)\/abandon$/u.exec(path)?.[1];
+  if (request.method === 'POST' && abandonedSnapshot) {
+    return payloadWork.run(async () => response(await services.archive.abandonToolSnapshot(token, abandonedSnapshot)), request.signal);
   }
   if (path === '/v1/membership' || path.startsWith('/v1/membership/')) {
     if (!services.membership) throw new ServiceError('MEMBERSHIP_NOT_CONFIGURED', 503);

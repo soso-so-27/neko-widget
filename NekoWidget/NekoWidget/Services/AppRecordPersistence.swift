@@ -313,41 +313,22 @@ final class AppRecordPersistence: ObservableObject {
             if FileManager.default.fileExists(atPath: url.path) { try? FileManager.default.removeItem(at: url) }
         }
     }
-    private struct PartGC: Codable {
-        let owner: String
-        let origin: String
-        var ids: Set<UUID>
-    }
-    private var partGCURL: URL { AppRecordDataset.control.appendingPathComponent("automatic-part-gc.json") }
-    private func partGC(_ value: Binding) throws -> PartGC {
-        guard FileManager.default.fileExists(atPath: partGCURL.path) else {
-            return PartGC(owner: value.owner, origin: value.origin, ids: [])
-        }
-        let queue = try JSONDecoder().decode(PartGC.self, from: ToolBackupFiles.read(partGCURL, maximum: 8 * 1024 * 1024))
-        guard queue.owner == value.owner, queue.origin == value.origin else { throw ManagedPreservationError.staleSession }
-        return queue
-    }
-    private func queueParts(_ index: ToolBackupIndex, value: Binding) throws {
-        var queue = try partGC(value)
-        queue.ids.formUnion(index.files.flatMap(\.records))
-        try AppRecordDataset.writeBackedUp(JSONEncoder().encode(queue), to: partGCURL)
-    }
-    private func collectParts(_ value: Binding, retaining: Set<UUID>,
+    private func collectParts(_ value: Binding,
                               checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
-        var queue = try partGC(value)
-        for id in queue.ids.subtracting(retaining) {
+        var after: UUID?
+        for _ in 0..<4 {
             try await require(value, checkpoint)
-            do {
-                let snapshot = try await client.detail(id)
-                guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
-                      ["json", "photo"].contains(part.kind) else { throw ToolBackupError.invalid }
-                try await client.delete(snapshot.record, checkpoint: checkpoint, requireUnreferenced: true)
-            } catch ManagedPreservationError.notFound { }
-              catch ManagedPreservationError.toolPartReferenced { continue }
-            try await require(value, checkpoint)
-            queue.ids.remove(id)
-            try AppRecordDataset.writeBackedUp(JSONEncoder().encode(queue), to: partGCURL)
+            let candidates = try await client.toolCleanupCandidates(after: after, checkpoint: checkpoint)
+            if candidates.items.isEmpty && candidates.nextCursor == nil { return }
+            for item in candidates.items {
+                try await require(value, checkpoint)
+                do { try await client.deleteToolCleanupCandidate(item, checkpoint: checkpoint) }
+                catch ManagedPreservationError.notFound { }
+                catch ManagedPreservationError.toolPartReferenced { continue }
+            }
+            after = candidates.nextCursor
         }
+        requested = true
     }
     func setActive(_ value: Bool) {
         active = value
@@ -494,8 +475,7 @@ final class AppRecordPersistence: ObservableObject {
             // Retry only queued, previously accepted automatic snapshots. The
             // server head reference refuses removal of the current snapshot.
             let retained: Set<UUID>
-            let hasPartCandidates = try !partGC(value).ids.isEmpty
-            if (!(value.retiring ?? []).isEmpty || hasPartCandidates), let remote {
+            if !(value.retiring ?? []).isEmpty, let remote {
                 let current = try await index(remote.1)
                 let decoded = try JSONDecoder().decode(ToolBackupIndex.self, from: Data(base64Encoded: current.document.toolBackup!.payload)!)
                 retained = Set(decoded.files.flatMap(\.records))
@@ -511,13 +491,12 @@ final class AppRecordPersistence: ObservableObject {
                         old = try JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
                     }
                     guard old.version == 3 else { throw ToolBackupError.invalid }
-                    try queueParts(old, value: value)
                     try await ToolBackupTransfer.delete(old, client: client, retaining: retained) { _, _ in }
                 } catch ManagedPreservationError.notFound { }
                 try await require(value, checkpoint)
                 value.retiring?.removeAll { $0 == retiring }; try write(value)
             }
-            try await collectParts(value, retaining: retained, checkpoint: checkpoint)
+            try await collectParts(value, checkpoint: checkpoint)
             if value.fingerprint == currentFingerprint, value.pending == nil {
                 title = "保存済み"; detail = nil; return
             }
@@ -539,8 +518,11 @@ final class AppRecordPersistence: ObservableObject {
                 // otherwise recapture current live records under a fresh ID.
                 try await require(value, checkpoint)
                 guard try AppRecordDataset.fingerprint() == currentFingerprint else { throw ToolBackupError.changed }
+                try await client.abandonToolSnapshot(pending, checkpoint: checkpoint)
+                try await require(value, checkpoint)
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; value.pendingPrevious = nil
                 try write(value)
+                try await collectParts(value, checkpoint: checkpoint)
             }
             if let pending = value.pending {
                 saved = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
@@ -555,7 +537,13 @@ final class AppRecordPersistence: ObservableObject {
                 try await require(value, checkpoint); try write(value)
             }
             title = "保存中…"
-            try await ToolBackupTransfer.upload(saved, client: client) { _, _ in }
+            do { try await ToolBackupTransfer.upload(saved, client: client) { _, _ in } }
+            catch ManagedPreservationError.snapshotAbandoned {
+                try await require(value, checkpoint)
+                value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; value.pendingPrevious = nil
+                try write(value)
+                throw ToolBackupError.changed
+            }
             try await require(value, checkpoint)
             let indexBytes = try ToolBackupFiles.read(ToolBackupFiles.directory(saved.id).appendingPathComponent("index-wire.json"), maximum: ToolBackupIndex.maximumIndexBytes)
             let retiring = Array(Set((value.retiring ?? []) + (value.pendingPrevious.map { [$0] } ?? []))).sorted { $0.uuidString < $1.uuidString }
@@ -579,10 +567,9 @@ final class AppRecordPersistence: ObservableObject {
             // the new CAS head is durable. Shared pieces are server-protected.
             if let previous {
                 try await require(value, checkpoint)
-                try queueParts(previous, value: value)
                 try await ToolBackupTransfer.delete(previous, client: client, retaining: Set(saved.index.files.flatMap(\.records))) { _, _ in }
                 value.retiring?.removeAll { $0 == previous.snapshotID }; try write(value)
-                try await collectParts(value, retaining: Set(saved.index.files.flatMap(\.records)), checkpoint: checkpoint)
+                try await collectParts(value, checkpoint: checkpoint)
             }
         } catch ToolBackupError.changed { title = "変更を保存待ち"; requested = true; nextAttempt = .distantPast }
           catch is CancellationError { title = "未送信の変更があります" }
@@ -804,6 +791,8 @@ struct AppRecordSavedPhoto: View {
 private actor AppRecordFixtureServer {
     var records: [UUID: [String: Any]] = [:]
     var deleted = Set<UUID>()
+    var claimed = Set<UUID>()
+    var abandoned = Set<UUID>()
     var requests = 0
     var photoPuts = 0
     func counts() -> (Int, Int) { (requests, photoPuts) }
@@ -815,6 +804,37 @@ private actor AppRecordFixtureServer {
                 headerFields: ["Content-Type": "application/json"])!)
         }
         func failure(_ code: String, _ status: Int) throws -> (Data, URLResponse) { try response(["error": ["code": code]], status) }
+        func referenced(_ id: UUID) -> Bool {
+            records.values.contains { record in
+                guard let document = record["document"] as? [String: Any] else { return false }
+                if let text = document["text"] as? String, let data = text.data(using: .utf8),
+                   let head = try? JSONDecoder().decode(AppRecordHead.self, from: data), head.snapshotID == id { return true }
+                if let part = document["toolBackup"] as? [String: Any], part["kind"] as? String == "index",
+                   let payload = part["payload"] as? String, let data = Data(base64Encoded: payload),
+                   let index = try? JSONDecoder().decode(ToolBackupIndex.self, from: data) { return index.files.contains { $0.records.contains(id) } }
+                return false
+            }
+        }
+        if url.path == "/v1/tool-cleanup" {
+            let items = claimed.compactMap { id -> [String: Any]? in
+                guard let record = records[id], !referenced(id), let document = record["document"] as? [String: Any],
+                      let part = document["toolBackup"] as? [String: Any], let kind = part["kind"] as? String else { return nil }
+                if kind != "index", let source = part["snapshotId"] as? String, let snapshot = UUID(uuidString: source), records[snapshot] != nil { return nil }
+                return ["recordId": id.uuidString.lowercased(), "kind": kind]
+            }
+            return try response(["items": Array(items.prefix(50)), "hasMore": items.count > 50])
+        }
+        if request.httpMethod == "POST", url.path.hasPrefix("/v1/tool-snapshots/"),
+           let id = UUID(uuidString: url.pathComponents.dropLast().last ?? "") {
+            guard !referenced(id) else { return try failure("REVISION_CONFLICT", 409) }
+            abandoned.insert(id)
+            for (partID, record) in records {
+                guard let document = record["document"] as? [String: Any], let part = document["toolBackup"] as? [String: Any],
+                      let source = part["snapshotId"] as? String, UUID(uuidString: source) == id, !referenced(partID) else { continue }
+                claimed.insert(partID)
+            }
+            return try response(["snapshotId": id.uuidString.lowercased()])
+        }
         if url.path == "/v1/membership" { return try response(["linked": true, "status": "active"]) }
         if url.path == "/v1/notice-contact" { return try response(["version": 1, "email": "synthetic@example.invalid", "source": "apple"]) }
         if url.path == "/v1/retention" { return try response(["version": 1, "status": "active", "dueAt": NSNull(), "paused": false]) }
@@ -833,6 +853,8 @@ private actor AppRecordFixtureServer {
         if request.httpMethod == "PUT" {
             guard !deleted.contains(id), let body = try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any],
                   let document = body["document"] as? [String: Any] else { return try failure("REVISION_CONFLICT", 409) }
+            if let part = document["toolBackup"] as? [String: Any], let source = part["snapshotId"] as? String,
+               let snapshot = UUID(uuidString: source), abandoned.contains(snapshot) { return try failure("TOOL_SNAPSHOT_ABANDONED", 409) }
             let expected = body["expectedRevision"] as? Int
             let old = records[id]
             if let old, expected == nil {
@@ -861,6 +883,11 @@ private actor AppRecordFixtureServer {
                    index.files.contains(where: { $0.records.contains(id) }) { return try failure("TOOL_PART_REFERENCED", 409) }
             }
             records.removeValue(forKey: id); deleted.insert(id)
+            if let document = old["document"] as? [String: Any], let part = document["toolBackup"] as? [String: Any],
+               part["kind"] as? String == "index", let payload = part["payload"] as? String, let data = Data(base64Encoded: payload),
+               let index = try? JSONDecoder().decode(ToolBackupIndex.self, from: data) {
+                for partID in index.files.flatMap(\.records) where !referenced(partID) { claimed.insert(partID) }
+            }
             return try response(["recordId": id.uuidString.lowercased(), "revision": (old["revision"] as! Int) + 1])
         }
         guard let record = records[id] else { return try failure("RECORD_NOT_FOUND", 404) }

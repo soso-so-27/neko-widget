@@ -468,6 +468,10 @@ export class ArchiveStore {
     let toolIndexGeneration: number | null = null;
     let sharedToolReferences: string[] = [];
     const appHead = parseAppRecordHead(document);
+    if (document.toolBackup && await this.d.db.prepare(`SELECT 1 FROM pa_tool_snapshot_abandonments
+      WHERE owner_id=? AND snapshot_id=?`).bind(session.ownerId, document.toolBackup.snapshotId).first()) {
+      throw new ServiceError('TOOL_SNAPSHOT_ABANDONED', 409);
+    }
     if (appHead) {
       toolIndexGeneration = await this.generation(session.ownerId);
       const target = await this.row(session.ownerId, appHead.snapshotID.toLowerCase());
@@ -706,10 +710,11 @@ export class ArchiveStore {
           metadata,photo_key,photo_bytes,quota_bytes)
           SELECT ?,?,1,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM pa_uploads WHERE operation_id=? AND state='active' AND expires_at>?)
           AND ${activeSession} AND ${commitFence.sql} AND NOT EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?)
-          AND (? IS NULL OR (SELECT generation FROM pa_inventory WHERE owner_id=?)=?) RETURNING revision`)
+          AND (? IS NULL OR (SELECT generation FROM pa_inventory WHERE owner_id=?)=?)
+          AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_abandonments WHERE owner_id=? AND snapshot_id=?) RETURNING revision`)
           .bind(session.ownerId, id, initialFingerprint, operation, bytes(metadata), photo === null ? null : key, photo?.length ?? 0,
             size, operation, this.d.now(), ...this.sessionBindings(session), ...commitFence.bindings, session.ownerId, id,
-            toolIndexGeneration, session.ownerId, toolIndexGeneration),
+            toolIndexGeneration, session.ownerId, toolIndexGeneration, session.ownerId, document.toolBackup?.snapshotId ?? ''),
         this.d.db.prepare(`DELETE FROM pa_uploads WHERE operation_id=? AND EXISTS
           (SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=?)`)
           .bind(operation, session.ownerId, id, operation),
@@ -718,6 +723,9 @@ export class ArchiveStore {
         ...sharedToolReferences.map(partID => this.d.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
           SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=? AND deleted=0)`)
           .bind(session.ownerId, id, partID, session.ownerId, id, operation)),
+        ...(document.toolBackup ? [this.d.db.prepare(`INSERT INTO pa_tool_record_sources(owner_id,record_id,snapshot_id,kind)
+          SELECT owner_id,record_id,?,? FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=? AND deleted=0`)
+          .bind(document.toolBackup.snapshotId, document.toolBackup.kind, session.ownerId, id, operation)] : []),
       ]);
       if (result[0]?.results.length !== 1 || (copied && result[2]?.meta.changes !== 1)) {
         await this.d.auth.requireSession(token);
@@ -812,6 +820,58 @@ export class ArchiveStore {
     await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);
     await this.acknowledgeOwnerInventory(session.ownerId);
     return { recordId: id, revision: expected + 1 };
+  }
+  async abandonToolSnapshot(token: string, snapshotID: string) {
+    recordId(snapshotID);
+    const session = await this.d.auth.requireSession(token);
+    this.requireRecovery();
+    await this.requireWritePolicy();
+    await this.acknowledgeOwnerInventory(session.ownerId);
+    const generation = await this.generation(session.ownerId);
+    // This private lookup contains IDs/kinds only. Accepted v3 pieces always
+    // receive it in their D1 commit; no owner-wide KMS scan on device recovery.
+    const parts = (await this.d.db.prepare(`SELECT s.record_id FROM pa_tool_record_sources s JOIN pa_records r
+      ON r.owner_id=s.owner_id AND r.record_id=s.record_id WHERE s.owner_id=? AND s.snapshot_id=? AND r.deleted=0`)
+      .bind(session.ownerId, snapshotID).all<{ record_id: string }>()).results.map(row => row.record_id);
+    // A concurrently published head wins. No snapshot may be cancelled after
+    // it becomes the accepted dataset; all later part commits check this fence.
+    const result = await this.d.db.batch([
+      this.d.db.prepare(`INSERT OR IGNORE INTO pa_tool_snapshot_abandonments(owner_id,snapshot_id,abandoned_at)
+        SELECT ?,?,? WHERE ${activeSession}
+        AND (SELECT generation FROM pa_inventory WHERE owner_id=?)=?
+        AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_references WHERE owner_id=? AND part_id=?)`)
+        .bind(session.ownerId, snapshotID, this.d.now(), ...this.sessionBindings(session), session.ownerId, generation, session.ownerId, snapshotID),
+      ...parts.map(id => this.d.db.prepare(`INSERT OR IGNORE INTO pa_tool_part_delete_claims(owner_id,part_id)
+        SELECT ?,? WHERE EXISTS(SELECT 1 FROM pa_tool_snapshot_abandonments WHERE owner_id=? AND snapshot_id=?)
+        AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_references WHERE owner_id=? AND part_id=?)`)
+        .bind(session.ownerId, id, session.ownerId, snapshotID, session.ownerId, id)),
+    ]);
+    if (!result[0]?.meta.changes && !await this.d.db.prepare(`SELECT 1 FROM pa_tool_snapshot_abandonments
+      WHERE owner_id=? AND snapshot_id=?`).bind(session.ownerId, snapshotID).first()) throw new ServiceError('REVISION_CONFLICT', 409);
+    await this.acknowledgeOwnerInventory(session.ownerId);
+    return { snapshotId: snapshotID };
+  }
+  async toolCleanupCandidates(token: string, after = '') {
+    if (after) recordId(after);
+    const session = await this.d.auth.requireSession(token);
+    const rows = (await this.d.db.prepare(`SELECT r.* FROM pa_tool_part_delete_claims c JOIN pa_records r
+      ON r.owner_id=c.owner_id AND r.record_id=c.part_id WHERE c.owner_id=? AND r.deleted=0 AND r.revision=1
+      AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_references f WHERE f.owner_id=c.owner_id AND f.part_id=c.part_id)
+      AND c.part_id>? ORDER BY c.part_id LIMIT 201`).bind(session.ownerId, after).all<Row>()).results;
+    const items: { recordId: string; kind: string }[] = [];
+    for (let offset = 0; offset < Math.min(rows.length,200); offset += 8) {
+      const found = await Promise.all(rows.slice(offset,Math.min(offset+8,200)).map(async row => {
+        const part = (await this.metadata(row)).document.toolBackup;
+        if (!part) return null;
+        if (part.kind === 'index') { if (parseToolIndex(part).version !== 3) return null; }
+        else if (await this.d.db.prepare(`SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND deleted=0`)
+          .bind(session.ownerId, part.snapshotId).first()) return null;
+        return { recordId: row.record_id, kind: part.kind };
+      }));
+      for (const item of found) if (item) items.push(item);
+    }
+    const nextCursor = items.length > 50 ? items[49]!.recordId : rows.length > 200 ? rows[199]!.record_id : null;
+    return { items: items.slice(0, 50), hasMore: nextCursor !== null, nextCursor };
   }
   async cleanup(limit = 20) { return cleanupArchive(this.d, limit); }
 }

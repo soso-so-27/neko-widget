@@ -273,6 +273,9 @@ export class OwnerQuarantineRestore {
               image.metadata?.slice().buffer ?? null, image.photoKey,
               image.photoBytes, image.quotaBytes, image.deleted ? 1 : 0),
         ];
+        const source = toolParts.get(expected.recordId);
+        if (source) statements.push(this.db.prepare(`INSERT INTO pa_tool_record_sources(owner_id,record_id,snapshot_id,kind)
+          VALUES(?,?,?,?)`).bind(ownerId, expected.recordId, source.snapshotId, source.kind));
         for (const historical of [...commits.values()].sort((a, b) => a.revision - b.revision)) {
           statements.push(this.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,
             revision,record_object_key,record_version_id,record_sha256,record_bytes,

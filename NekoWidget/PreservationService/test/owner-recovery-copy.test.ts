@@ -109,25 +109,33 @@ it('binds each acknowledged record and tombstone to a current owner-wide manifes
       writtenAt: null, updatedAt: null, catNames: [], photoFile: null }, photoBase64: null };
   expect(await archive.put(session.token, recordId, request))
     .toEqual({ recordId, revision: 1 });
+  // The cancellation changes inventory too: its acknowledgement must use a
+  // fresh owner generation and remain idempotent with real S3 codecs enabled.
+  const abandoned = crypto.randomUUID();
+  expect(await archive.abandonToolSnapshot(session.token, abandoned)).toEqual({ snapshotId: abandoned });
+  expect(await archive.abandonToolSnapshot(session.token, abandoned)).toEqual({ snapshotId: abandoned });
+  const afterCancel = crypto.randomUUID();
+  expect(await archive.put(session.token, afterCancel, request)).toEqual({ recordId: afterCancel, revision: 1 });
+  await archive.remove(session.token, afterCancel, 1);
   const live = await f.copy.capture(db, session.ownerId);
-  expect(live.records).toHaveLength(1);
-  expect(live.records[0]).toMatchObject({ recordId, revision: 1, deleted: false });
+  expect(live.records).toHaveLength(2);
+  expect(live.records.find(item => item.recordId === recordId)).toMatchObject({ recordId, revision: 1, deleted: false });
   expect(await f.copy.copyCurrent(db, session.ownerId, now)).toMatchObject({ key: expect.any(String) });
   expect(await archive.remove(session.token, recordId, 1))
     .toEqual({ recordId, revision: 2 });
   const deleted = await f.copy.capture(db, session.ownerId);
   expect(deleted.generation).toBeGreaterThan(live.generation);
-  expect(deleted.records).toHaveLength(1);
-  expect(deleted.records[0]).toMatchObject({ recordId, revision: 2, deleted: true });
-  expect(deleted.records[0]?.marker.key).not.toBe(live.records[0]?.marker.key);
+  expect(deleted.records).toHaveLength(2);
+  expect(deleted.records.find(item => item.recordId === recordId)).toMatchObject({ recordId, revision: 2, deleted: true });
+  expect(deleted.records.find(item => item.recordId === recordId)?.marker.key).not.toBe(live.records.find(item => item.recordId === recordId)?.marker.key);
   f.setPageSize(2);
   const candidate = await new OwnerArchiveRecovery(f.s3, f.copy,
     new RecordRecoveryCopy(f.keys, f.s3)).assembleQuarantineCandidate(session.ownerId, now + 1);
   expect(candidate.status).toBe('ready-for-quarantine');
   if (candidate.status !== 'ready-for-quarantine') throw new Error('expected candidate');
   expect(candidate.owner.disabled).toBe(true);
-  expect(candidate.owner.records).toMatchObject([{ recordId, revision: 2, deleted: true }]);
-  expect(candidate.verifiedRecords).toBe(1);
+  expect(candidate.owner.records.find(item => item.recordId === recordId)).toMatchObject({ recordId, revision: 2, deleted: true });
+  expect(candidate.verifiedRecords).toBe(2);
   f.omitFromListing(deleted.records[0]!.marker.key);
   expect(await new OwnerArchiveRecovery(f.s3, f.copy,
     new RecordRecoveryCopy(f.keys, f.s3)).assembleQuarantineCandidate(session.ownerId, now + 2))

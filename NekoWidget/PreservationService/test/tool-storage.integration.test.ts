@@ -153,6 +153,18 @@ it('bounds concurrent metadata unwraps at the configured 200-record snapshot bou
   expect(Date.now() - start).toBeLessThan(35_000);
   expect(await binding.DB.prepare('SELECT count(*) AS n FROM pa_tool_snapshot_references WHERE owner_id=?')
     .bind(f.session.ownerId).first()).toEqual({ n: 199 });
+  // A missing transport folder must not scan/decrypt this whole owner merely
+  // to fence its abandoned snapshot. Cleanup uses the same eight-way bound.
+  opened = 0; peak = 0;
+  await archive.abandonToolSnapshot(f.session.token, crypto.randomUUID());
+  expect(opened).toBe(0);
+  await f.archive.remove(f.session.token, snapshotId, 1);
+  const cleanupStart = Date.now();
+  const page = await archive.toolCleanupCandidates(f.session.token);
+  expect(page.items).toHaveLength(50); expect(page.hasMore).toBe(true);
+  expect(page.nextCursor).toBe(page.items.at(-1)!.recordId);
+  expect(opened).toBe(199); expect(peak).toBeGreaterThan(1); expect(peak).toBeLessThanOrEqual(8);
+  expect(Date.now() - cleanupStart).toBeLessThan(35_000);
 }, 45_000);
 
 it('reuses one photo across snapshots and protects both legacy and shared dependencies during deletion', async () => {
@@ -268,3 +280,42 @@ it('keeps an automatic head and immutable JSON references atomic across devices,
   await expect(other.archive.put(other.session.token, crypto.randomUUID(), other.request({ photoBase64: null,
     document: await headDocument(previous) }))).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
 }, 30_000);
+
+it('retains server cleanup intent after an index and the sending device are lost', async () => {
+  const f = await fixture(), other = await fixture();
+  const a = await snapshot(f); await a.publish({ ...a.index, version: 3 });
+  await f.archive.remove(f.session.token, a.id, 1);
+  // A fresh device needs no old index or local GC receipt to find its parts.
+  expect((await f.archive.toolCleanupCandidates(f.session.token)).items.map(x => x.recordId).sort())
+    .toEqual([a.jsonID, a.photoID].sort());
+  expect(await other.archive.toolCleanupCandidates(other.session.token)).toEqual({ items: [], hasMore: false, nextCursor: null });
+  for (const id of [a.jsonID, a.photoID]) await f.archive.remove(f.session.token, id, 1, true);
+  expect(await f.archive.toolCleanupCandidates(f.session.token)).toEqual({ items: [], hasMore: false, nextCursor: null });
+});
+
+it('fences abandoned partial and complete transfers, including a late in-flight part', async () => {
+  const f = await fixture();
+  const a = await snapshot(f); await a.publish({ ...a.index, version: 3 });
+  const headID = crypto.randomUUID(), indexHash = await sha256(JSON.stringify({ ...a.index, version: 3 }));
+  await f.archive.put(f.session.token, headID, f.request({ photoBase64: null, document: { ...document,
+    formatVersion: 1, photoFile: null, text: JSON.stringify({ kind: 'app-records-v1', snapshotID: a.id, indexHash }) } }));
+  await expect(f.archive.abandonToolSnapshot(f.session.token, a.id)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  const pending = crypto.randomUUID();
+  const raced = new ArchiveStore({ ...f.options, photos: { validateJPEG: async () => {
+    await f.archive.abandonToolSnapshot(f.session.token, pending); return true;
+  } } });
+  const part = { snapshotId: pending, kind: 'photo', path: `CareHandoff/${crypto.randomUUID()}.jpg`, part: 0, count: 1,
+    sha256: await sha256(photo), payload: '' };
+  const id = crypto.randomUUID();
+  await expect(raced.put(f.session.token, id, f.request({ document: { ...document, formatVersion: 3, toolBackup: part } })))
+    .rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).first()).toBeNull();
+  await expect(f.archive.put(f.session.token, id, f.request({ document: { ...document, formatVersion: 3, toolBackup: part } })))
+    .rejects.toMatchObject({ code: 'TOOL_SNAPSHOT_ABANDONED' });
+  const b = await snapshot(f); await b.publish({ ...b.index, version: 3 });
+  await f.archive.abandonToolSnapshot(f.session.token, b.id);
+  expect((await f.archive.toolCleanupCandidates(f.session.token)).items).toEqual([{ recordId: b.id, kind: 'index' }]);
+  await f.archive.remove(f.session.token, b.id, 1);
+  expect((await f.archive.toolCleanupCandidates(f.session.token)).items.map(x => x.recordId).sort()).toEqual([b.jsonID, b.photoID].sort());
+}, 15_000);
