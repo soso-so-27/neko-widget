@@ -10416,6 +10416,7 @@ class ToolStorageCompletionScopeTests(unittest.TestCase):
             if args[0] == "ls-tree":
                 revision,p=args[1],args[3]
                 if p in planner.TOOL_STORAGE_CONTROLS: return f"100644 blob {'e' * 40}\t{p}"
+                if p not in planner.TOOL_STORAGE_BLOBS: return ""
                 pair=planner.TOOL_STORAGE_BLOBS[p];blob=pair[0 if revision==self.base else 1]
                 return "" if blob=="0"*40 else f"100644 blob {blob}\t{p}"
             raise AssertionError(args)
