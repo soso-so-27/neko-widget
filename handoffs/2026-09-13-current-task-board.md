@@ -1,3 +1,9 @@
+## 2026-10-15 契約終了日の実照会・自動通知の待機開始
+
+- [実終了日・自動実行・残る本人接続](2026-10-15-notice-app-connection-and-real-delivery.md)。PR323→324をmain反映し、private契約照会・保管authority・archiveの3serviceと0038を実配備。Appleから既存Sandbox契約の実終了日を取得し、全lineageの新鮮さ/unknown保留/再加入を扱う。980円維持、新契約・購入0、一般購入受付は閉じたまま。
+- 新domain用consumer1件＋保管本体の15分cron1件を登録。実自動実行の開始/終了・errorなしを確認してから送信YES、cleanupはNO。送信予算はアプリ共通でUTC日50/UTC暦月1,500、失敗/不明も消費する。手動cron実行・Codex定期追加/再実行・既存退会削除cron変更0。31記録/22,378,689 bytes・本人リンク0・retention0・送信0を最終確認した。
+- **本人接続は未完了**。内部テスト枠中は既存アプリが接続ボタンを隠すため、期限10/15 20:17 JST後の更新→本人のiPhone署名接続→実保持期限の反映を待つ。管理者リンク・試用短縮/追加/延長はしない。一般枠/保持原資/安全な世代整理/公開・課金・審査条件も別に残る。下のconsumer0/全gate NOは当時の履歴。既存256と成功検査を維持し、再配布0。
+
 ## 2026-10-15 通知のサーバー接続・実メールの受信トレイ到達
 
 - [接続・実メール1通・残る運用条件](2026-10-15-notice-app-connection-and-real-delivery.md)。保管サーバーに `notice@nekonomado.com` の送信元制限binding、source6設定、secretを追加。100%稼働version `d0adaee7` と既存実行コード/既存binding/DB集計/受付/期限/cron不変を確認。980円維持、追加契約・購入0。
