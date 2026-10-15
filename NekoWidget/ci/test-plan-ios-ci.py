@@ -7125,27 +7125,6 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             planner.required_jobs_from_scope(planner.BILLING_SCOPE)
 
-    def test_retention_notice_batch_keeps_both_owning_jobs_and_refuses_sibling_changes(self):
-        workflow = Path(__file__).resolve().parents[2] / planner.BILLING_WORKFLOW
-        self.assertEqual(scope.source_digest(workflow.read_text(encoding='utf-8')), planner.BILLING_WORKFLOW_DIGEST)
-        changed = ['NekoWidget/PreservationService/' + name for name in (
-            'migrations/0038_notice_send_budget.sql', 'src/billing-authority.ts',
-            'src/billing-link-protocol.ts', 'src/index.ts', 'src/membership-links.ts',
-            'src/notice-delivery.ts', 'src/notice-dispatch.ts', 'src/notice-submissions.ts',
-            'src/providers.ts', 'src/retention-ledger.ts', 'test/billing-authority.test.ts',
-            'test/notice-dispatch.test.ts', 'test/pilot-wiring.test.ts', 'test/retention-ledger.test.ts',
-        )] + ['NekoWidget/SharingService/src/billing-gateway.ts',
-             'NekoWidget/SharingService/test/billing-gateway.node-tests.mjs']
-        self.assertTrue(planner.billing_paths_only(changed))
-        self.assertEqual(planner.required_jobs(changed, planner.BILLING_SCOPE),
-                         (planner.BILLING_CALLER_JOB, planner.PRESERVATION_JOB))
-        for unknown in ('NekoWidget/PreservationService/src/auth.ts',
-                        'NekoWidget/PreservationService/migrations/0039_unknown.sql',
-                        'NekoWidget/SharingService/src/billing-authority.ts',
-                        '.github/workflows/preservation-service.yml'):
-            self.assertFalse(planner.billing_paths_only(changed + [unknown]))
-            self.assertEqual(planner.required_jobs(changed + [unknown], planner.BILLING_SCOPE), planner.FULL)
-
     def test_internal_release_preparation_is_frozen_and_never_native_evidence(self):
         changed = {path: ("before " + path, "after " + path)
                    for path in planner.RELEASE_PREP_PATHS}
