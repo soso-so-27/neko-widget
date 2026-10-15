@@ -2,6 +2,7 @@ import { ServiceError, contactEmailValid, type KeyCustody } from './contracts';
 import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from './identity-index';
 import { S3RecoveryCopy, type RecoveryObject } from './s3-recovery-copy';
 import { compressOwnerSnapshot, openOwnerSnapshot } from './owner-snapshot-codec';
+import { canonicalJSON, ImmutableRecordTree, type TreeRef } from './immutable-record-tree';
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const ownerPattern = new RegExp(`^${uuid}$`, 'u');
@@ -12,6 +13,9 @@ const hex = /^[0-9a-f]{64}$/u;
 const unavailable = () => new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
 const safeInteger = (value: unknown, minimum = 0): value is number =>
   Number.isSafeInteger(value) && (value as number) >= minimum;
+// Typed sealed byte arrays retain their full JSON representation; key order is
+// not part of the logical image, including across v2/v3 migration races.
+const logicalImage = (image: OwnerRecoveryImage): string => canonicalJSON(JSON.parse(JSON.stringify(image)));
 
 export interface OwnerRecoveryImage {
   ownerId: string;
@@ -42,6 +46,7 @@ type EncodedImage = Omit<OwnerRecoveryImage, 'credential' | 'contact'> & {
   contact: { sealedEmailBase64: string; emailTag: string | null;
     verifiedAt: number; updatedAt: number } | null;
 };
+type PagedImage = Omit<EncodedImage, 'version' | 'records'> & { version: 3; recordsTree: TreeRef };
 interface OwnerRow {
   owner_id: string; generation: number; identity_key: string; epoch: number; disabled: number;
   purge_fence_id: string | null; created_at: number; credential_epoch: number;
@@ -149,7 +154,7 @@ export class OwnerRecoveryCopy {
   private readonly indexKey: Promise<CryptoKey>;
 
   constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy,
-    identityIndexSecret: string, private readonly options: { compressWrites?: boolean } = {}) {
+    identityIndexSecret: string, private readonly options: { compressWrites?: boolean; pagedWrites?: boolean } = {}) {
     this.indexKey = identityIndexKey(identityIndexSecret);
   }
 
@@ -275,7 +280,11 @@ export class OwnerRecoveryCopy {
       };
       let reference = await current();
       if (!reference) {
-        const written = await this.copy(image);
+        const prior = this.options.pagedWrites ? await db.prepare(`SELECT object_key,version_id,sha256,bytes
+          FROM pa_owner_recovery_versions WHERE owner_id=? AND generation<?
+          ORDER BY generation DESC LIMIT 1`).bind(ownerId,image.generation).first<RefRow>() : null;
+        const written = await this.copy(image, prior ? {key:prior.object_key,versionId:prior.version_id,
+          sha256:prior.sha256,bytes:prior.bytes} : undefined);
         await db.prepare(`INSERT INTO pa_owner_recovery_versions(owner_id,generation,object_key,
           version_id,sha256,bytes,confirmed_at)
           SELECT ?,g.generation,?,?,?,?,? FROM pa_owner_recovery_generations g
@@ -286,8 +295,8 @@ export class OwnerRecoveryCopy {
         reference = await current();
       }
       if (!reference) throw unavailable();
-      const restored = await this.read(ownerId, reference);
-      if (JSON.stringify(restored) !== JSON.stringify(image)) throw unavailable();
+      const restored = await this.read(ownerId, reference, image);
+      if (logicalImage(restored) !== logicalImage(image)) throw unavailable();
       return reference;
     } catch { throw unavailable(); }
   }
@@ -377,7 +386,7 @@ export class OwnerRecoveryCopy {
     const generations = new Map<number, OwnerRecoveryImage>();
     for (const item of images) {
       const previous = generations.get(item.generation);
-      if (previous && JSON.stringify(previous) !== JSON.stringify(item)) {
+      if (previous && logicalImage(previous) !== logicalImage(item)) {
         return { status: 'quarantined' };
       }
       generations.set(item.generation, item);
@@ -462,7 +471,7 @@ export class OwnerRecoveryCopy {
     return this.selectRecoveredOwner(ownerId, references, now);
   }
 
-  async copy(image: OwnerRecoveryImage): Promise<RecoveryObject> {
+  async copy(image: OwnerRecoveryImage, previous?: RecoveryObject): Promise<RecoveryObject> {
     valid(image);
     const payload: EncodedImage = { ...image, version: 2,
       credential: { ownerEpoch: image.credential.ownerEpoch,
@@ -474,7 +483,17 @@ export class OwnerRecoveryCopy {
         updatedAt: image.contact.updatedAt },
     };
     try {
-      const json = new TextEncoder().encode(JSON.stringify(payload));
+      let wire: EncodedImage | PagedImage = payload;
+      if (this.options.pagedWrites) {
+        const tree = new ImmutableRecordTree(image.ownerId,'owner-inventory-v1',this.keys,this.s3);
+        // Only D1-confirmed, owner-authenticated prior roots reach this argument.
+        const prior = previous ? await this.readWire(image.ownerId,previous) : null;
+        const root = await tree.create(image.records.map(record=>({key:record.recordId.replaceAll('-',''),value:record})),
+          prior?.version === 3 ? prior.recordsTree : undefined);
+        const { records: _records, version: _version, ...header } = payload;
+        wire = {...header,version:3,recordsTree:root};
+      }
+      const json = new TextEncoder().encode(JSON.stringify(wire));
       const plaintext = this.options.compressWrites ? await compressOwnerSnapshot(json) : json;
       const sealed = await this.keys.seal(plaintext,
         { ownerId: image.ownerId, purpose: 'recovery' });
@@ -483,7 +502,7 @@ export class OwnerRecoveryCopy {
     } catch { throw unavailable(); }
   }
 
-  async read(ownerId: string, reference: RecoveryObject): Promise<OwnerRecoveryImage> {
+  private async readWire(ownerId: string, reference: RecoveryObject): Promise<EncodedImage | PagedImage> {
     if (!ownerPattern.test(ownerId) || ownerKeyPattern.exec(reference.key)?.[1] !== ownerId
       || !hex.test(reference.sha256) || !safeInteger(reference.bytes, 1)
       || typeof reference.versionId !== 'string' || !reference.versionId
@@ -493,8 +512,10 @@ export class OwnerRecoveryCopy {
       const opened = await this.keys.open(sealed, { ownerId, purpose: 'recovery' });
       const json = await openOwnerSnapshot(opened);
       const payload: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(json));
-      if (!exact(payload, 'billing,contact,createdAt,credential,disabled,epoch,generation,identityKey,inventoryGeneration,ownerId,purgeFenceId,records,retention,version')
-        || payload.version !== 2 || payload.ownerId !== ownerId
+      const legacy = exact(payload, 'billing,contact,createdAt,credential,disabled,epoch,generation,identityKey,inventoryGeneration,ownerId,purgeFenceId,records,retention,version') && payload.version === 2;
+      const paged = exact(payload, 'billing,contact,createdAt,credential,disabled,epoch,generation,identityKey,inventoryGeneration,ownerId,purgeFenceId,recordsTree,retention,version') && payload.version === 3;
+      if ((!legacy && !paged) || !payload || typeof payload !== 'object'
+        || payload.ownerId !== ownerId
         || !exact(payload.credential, 'ownerEpoch,sealedCredentialsBase64,updatedAt')
         || (payload.contact !== null && !exact(payload.contact,
           'emailTag,sealedEmailBase64,updatedAt,verifiedAt'))
@@ -503,10 +524,39 @@ export class OwnerRecoveryCopy {
           'checkedAt,dueAt,episode,expiredAt,finalNoticeDeliveredAt,finalNoticeReceipt,noticeNotBeforeAt,pausedAt,revision,status'))) {
         throw unavailable();
       }
+      return payload as unknown as EncodedImage | PagedImage;
+    } catch { throw unavailable(); }
+  }
+
+  /** Supplying expected is restricted to the internally captured D1 image.
+   * Acknowledgement compares the complete logical inventory hash and verifies
+   * the exact root page; explicit recovery expands and verifies every page.
+   */
+  async read(ownerId: string, reference: RecoveryObject, expected?: OwnerRecoveryImage): Promise<OwnerRecoveryImage> {
+    try {
+      const payload = await this.readWire(ownerId,reference);
+      let records: OwnerRecoveryImage['records'];
+      if (payload.version === 3) {
+        const tree = new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
+        await tree.verifyRoot(payload.recordsTree);
+        if (expected) {
+          valid(expected);
+          if (expected.ownerId !== ownerId || payload.recordsTree.count !== expected.records.length
+            || payload.recordsTree.hash !== await tree.logicalHash(expected.records.map(record=>({key:record.recordId.replaceAll('-',''),value:record})))) throw unavailable();
+          records = expected.records;
+        } else {
+          records = (await tree.entries(payload.recordsTree)).map(entry=>{
+            const record = entry.value as OwnerRecoveryImage['records'][number];
+            if (!record || record.recordId?.replaceAll('-','') !== entry.key) throw unavailable();
+            return record;
+          });
+        }
+      } else records = payload.records;
       const credential = payload.credential;
       const contact = payload.contact;
       const { version: _version, ...ownerFields } = payload;
-      const image = { ...ownerFields,
+      if ('recordsTree' in ownerFields) delete (ownerFields as Partial<PagedImage>).recordsTree;
+      const image = { ...ownerFields, records,
         credential: { ownerEpoch: credential.ownerEpoch,
           sealedCredentials: decoded(credential.sealedCredentialsBase64, 131_072),
           updatedAt: credential.updatedAt },

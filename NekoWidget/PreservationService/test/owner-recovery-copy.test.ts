@@ -26,9 +26,9 @@ const image = (): OwnerRecoveryImage => ({ ownerId, generation: 7, identityKey: 
     finalNoticeDeliveredAt: null, finalNoticeReceipt: null },
 });
 
-async function fixture(compressWrites = false) {
+async function fixture(compressWrites = false, pagedWrites = false, directAuthority = false) {
   const authority = await syntheticKeyAuthority();
-  const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
+  const keys = envelopeKeyCustody({ enabled: true, wrapper: directAuthority ? authority.make() : authority.bridge() });
   const identityIndexSecret = randomToken();
   const objects = new Map<string, Uint8Array>();
   const references: RecoveryObject[] = [];
@@ -81,7 +81,7 @@ async function fixture(compressWrites = false) {
       return found;
     },
   } as S3RecoveryCopy;
-  return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret, { compressWrites }), objects, keys, s3,
+  return { copy: new OwnerRecoveryCopy(keys, s3, identityIndexSecret, { compressWrites, pagedWrites }), objects, keys, s3,
     identityIndexSecret,
     omitFromListing(key: string) { omittedFromListing.add(key); },
     setPageSize(value: number) { pageSize = value; },
@@ -90,7 +90,7 @@ async function fixture(compressWrites = false) {
 }
 
 it('binds each acknowledged record and tombstone to a current owner-wide manifest', async () => {
-  const f = await fixture();
+  const f = await fixture(true,true);
   const db = (env as unknown as { DB: D1Database; ARCHIVE: R2Bucket }).DB;
   const bucket = (env as unknown as { ARCHIVE: R2Bucket }).ARCHIVE;
   const now = 1_790_035_200_000;
@@ -158,6 +158,41 @@ async function verifiedImage(f: Awaited<ReturnType<typeof fixture>>): Promise<Ow
         { ownerId, purpose: 'contact' }),
       emailTag: await indexedNoticeEmail(key, ownerId, email) } };
 }
+
+it('pages a twenty-thousand-record owner image and acknowledges an edit without downloading unchanged leaves',async()=>{
+  // Multiple 20k recoveries share one test request. Use the real authenticated
+  // crypto with its synthetic authority directly, avoiding the test runtime's
+  // 10,000-timeout request ceiling. Provider transport has separate coverage.
+  const f=await fixture(true,true,true);const original=await verifiedImage(f);
+  original.inventoryGeneration=20000;
+  original.records=Array.from({length:20000},()=>({recordId:crypto.randomUUID(),revision:1,deleted:false,
+    marker:{key:`recovery/v1/${ownerId}/manifest/${crypto.randomUUID()}`,versionId:randomToken(),sha256:'d'.repeat(64),bytes:400}}))
+    .sort((a,b)=>a.recordId.localeCompare(b.recordId));
+  const first=await f.copy.copy(original);
+  const before=new Set(f.objects.keys());
+  const secondImage={...original,generation:original.generation+1,inventoryGeneration:20001,
+    records:original.records.map((record,index)=>index===10000?{...record,revision:2,deleted:true,
+      marker:{...record.marker,key:`recovery/v1/${ownerId}/manifest/${crypto.randomUUID()}`}}:record)};
+  const second=await f.copy.copy(secondImage,first);
+  const added=[...f.objects].filter(([key])=>!before.has(key));
+  expect(added.length).toBeLessThanOrEqual(7);
+  expect(added.reduce((sum,[,body])=>sum+body.length,0)).toBeLessThan(100000);
+  expect(await f.copy.read(ownerId,second,secondImage)).toEqual(secondImage);
+  expect(await f.copy.read(ownerId,second)).toEqual(secondImage);
+  expect(await f.copy.read(ownerId,first)).toEqual(original);
+  const unchangedBefore=new Set(f.objects.keys());
+  const observation={...secondImage,generation:secondImage.generation+1,
+    retention:{...secondImage.retention!,revision:secondImage.retention!.revision+1,checkedAt:301}};
+  const third=await f.copy.copy(observation,second);
+  expect([...f.objects.keys()].filter(key=>!unchangedBefore.has(key))).toEqual([third.key]);
+  await expect(f.copy.read(ownerId,second,{...secondImage,records:original.records})).rejects.toThrow();
+  const legacy=new OwnerRecoveryCopy(f.keys,f.s3,f.identityIndexSecret);
+  expect(await legacy.read(ownerId,third)).toEqual(observation);
+  const mixed=await legacy.copy(observation);
+  expect((await f.copy.selectRecoveredOwner(ownerId,[third,mixed],1000)).status).toBe('reauth-required');
+  const imported=await f.copy.copy(observation,await legacy.copy(secondImage));
+  expect(await f.copy.read(ownerId,imported)).toEqual(observation);
+},120000);
 
 it('stores and verifies an encrypted owner bootstrap image without exposing the credentials', async () => {
   const f = await fixture();

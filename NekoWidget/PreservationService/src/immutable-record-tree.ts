@@ -167,6 +167,11 @@ export class ImmutableRecordTree {
     if(output.length!==root.count)throw bad();
     return output;
   }
+  /** Verify the authenticated root page without expanding unchanged leaves. */
+  async verifyRoot(root: TreeRef): Promise<void> {
+    if (root.prefix !== '') throw bad();
+    await this.readNode(root);
+  }
   async logicalHash(input: TreeEntry[]): Promise<string> {
     const entries=[...input].sort((a,b)=>a.key.localeCompare(b.key));return (await this.expected(entries)).hash;
   }
