@@ -1363,13 +1363,15 @@ struct AppRecordPersistenceFixtureView: View {
     }
 }
 
+private enum AppRecordFixtureRoute: Hashable { case settings, care, draft, tools }
+
 @MainActor
 private struct AppRecordFixtureContent: View {
     let fixture: AppRecordFixture
     let result: String
     let counts: String
     let switchDevice: () -> Void
-    @State private var path: [MemoriesRoute] = []
+    @State private var path = NavigationPath()
     @ObservedObject private var persistence: AppRecordPersistence
     init(fixture: AppRecordFixture, result: String, counts: String, switchDevice: @escaping () -> Void) {
         self.fixture = fixture; self.result = result; self.counts = counts; self.switchDevice = switchDevice
@@ -1381,13 +1383,21 @@ private struct AppRecordFixtureContent: View {
                 Text(persistence.title).accessibilityIdentifier("app-record-fixture-status")
                 Text(counts).accessibilityIdentifier("app-record-fixture-photo-count")
                 if !result.isEmpty { Text(result).accessibilityIdentifier("app-record-fixture-result") }
-                NavigationLink("保存・復元") { AppRecordSettingsView(configuration: fixture.configuration, client: fixture.authenticationClient(), persistence: persistence) }
-                NavigationLink("預けるとき") { CareHandoffView(profiles: [], unregisteredPhotos: [], store: .shared, reuseStore: .shared) }
+                NavigationLink("保存・復元", value: AppRecordFixtureRoute.settings)
+                NavigationLink("預けるとき", value: AppRecordFixtureRoute.care)
                 NavigationLink("写真メモ", value: MemoriesRoute.memoryNotes)
-                NavigationLink("入力中の復元を検査") { AppRecordDraftProtectionFixture(fixture: fixture) }
-                NavigationLink("通常のツール画面") { AppStoreScreenshotFixtureRootView(photoAccess: false) }
+                NavigationLink("入力中の復元を検査", value: AppRecordFixtureRoute.draft)
+                NavigationLink("通常のツール画面", value: AppRecordFixtureRoute.tools)
                 Button("別端末での自動復元を検査", action: switchDevice).disabled(persistence.busy || persistence.title != "保存済み")
             }.navigationTitle("自動保存の検査")
+                .navigationDestination(for: AppRecordFixtureRoute.self) { route in
+                    switch route {
+                    case .settings: AppRecordSettingsView(configuration: fixture.configuration, client: fixture.authenticationClient(), persistence: persistence)
+                    case .care: CareHandoffView(profiles: [], unregisteredPhotos: [], store: .shared, reuseStore: .shared)
+                    case .draft: AppRecordDraftProtectionFixture(fixture: fixture)
+                    case .tools: AppStoreScreenshotFixtureRootView(photoAccess: false)
+                    }
+                }
                 .navigationDestination(for: MemoriesRoute.self) { route in
                     switch route {
                     case .memoryNotes: PhotoMemoryNotesListView(photos: [], store: .shared, openPhotos: {})

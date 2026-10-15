@@ -1833,7 +1833,7 @@ final class SoloMemoriesUITests: XCTestCase {
         prepareAutomaticRecordSavingAndRestore(app)
         app.buttons["入力中の復元を検査"].tap()
         let draft = app.textViews["photo-memory-note-text"]
-        XCTAssertTrue(draft.waitForExistence(timeout: 10)); draft.tap(); draft.typeText("編集中の文章")
+        XCTAssertTrue(draft.waitForExistence(timeout: 10), app.debugDescription); draft.tap(); draft.typeText("編集中の文章")
         let draftText = draft.value as? String
         app.buttons["photo-memory-note-keyboard-done"].tap()
         app.buttons["別端末の変更を受信"].tap()
@@ -1856,7 +1856,8 @@ final class SoloMemoriesUITests: XCTestCase {
         let app = XCUIApplication()
         prepareAutomaticRecordSavingAndRestore(app)
         app.buttons["通常のツール画面"].tap()
-        app.tabBars.buttons["ツール"].tap()
+        let tools = app.buttons["main-tab-tools"]
+        XCTAssertTrue(tools.waitForExistence(timeout: 10), app.debugDescription); tools.tap()
         let showcase = app.buttons["tools-showcase-open"]
         XCTAssertTrue(showcase.waitForExistence(timeout: 10)); showcase.tap()
         XCTAssertTrue(app.buttons.matching(identifier: "showcase-gallery-photo").firstMatch.waitForExistence(timeout: 10), app.debugDescription)
