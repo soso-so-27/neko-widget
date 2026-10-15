@@ -1818,6 +1818,21 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("automatic-restore-photo-memo-without-photokit-link")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["入力中の復元を検査"].tap()
+        let draft = app.textViews["photo-memory-note-text"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10)); draft.tap(); draft.typeText("編集中の文章")
+        let draftText = draft.value as? String
+        app.buttons["photo-memory-note-keyboard-done"].tap()
+        app.buttons["別端末の変更を受信"].tap()
+        let protected = expectation(for: NSPredicate(format: "label == %@", "入力中の内容を優先しています"), evaluatedWith: app.staticTexts["draft-protection-status"])
+        wait(for: [protected], timeout: 15)
+        XCTAssertEqual(draft.value as? String, draftText)
+        capture("automatic-restore-defers-while-normal-memo-has-unsaved-text")
+        app.buttons["photo-memory-note-close"].tap()
+        app.buttons["変更を破棄"].tap()
+        XCTAssertTrue(app.buttons["通常のツール画面"].waitForExistence(timeout: 10), app.debugDescription)
+        let resumed = expectation(for: NSPredicate(format: "label == %@", "復元しました"), evaluatedWith: app.staticTexts["app-record-fixture-status"])
+        wait(for: [resumed], timeout: 25)
         app.buttons["通常のツール画面"].tap()
         app.tabBars.buttons["ツール"].tap()
         let showcase = app.buttons["tools-showcase-open"]

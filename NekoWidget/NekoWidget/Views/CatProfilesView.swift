@@ -594,6 +594,7 @@ private struct AddCatProfileView: View {
     let onCreated: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    private let initialDraft: CatProfileDraftPresentation
     @State private var draft: CatProfileDraftPresentation
     @State private var isSaving = false
     @State private var showsPhotoPicker = false
@@ -609,10 +610,10 @@ private struct AddCatProfileView: View {
         self.referenceCandidates = referenceCandidates
         self.createProfile = createProfile
         self.onCreated = onCreated
-        _draft = State(initialValue: CatProfileDraftPresentation(
-            lifeReference: initialLifeReference,
-            referencePhotoIdentifier: initialPhotoIdentifier
-        ))
+        let initial = CatProfileDraftPresentation(lifeReference: initialLifeReference,
+            referencePhotoIdentifier: initialPhotoIdentifier)
+        initialDraft = initial
+        _draft = State(initialValue: initial)
     }
 
     var body: some View {
@@ -707,6 +708,7 @@ private struct AddCatProfileView: View {
             }
         }
         .interactiveDismissDisabled(isSaving)
+        .appRecordEditing(retainWhileHidden: draft != initialDraft || isSaving || showsPhotoPicker)
     }
 
     private var selectedPhoto: CatProfilePhotoPresentation? {

@@ -126,6 +126,7 @@ struct ManagedPreservationView: View {
         } message: {
             Text("Appleで本人確認した保管先に、このiPhoneの会員情報を結び付けます。あとから別の本人への付け替えはできません。この操作で購入・自動更新・写真の送信は始まりません。")
         }
+        .appRecordEditing(retainWhileHidden: coordinator.hasUnsecuredMemo)
     }
 
     private var content: some View {

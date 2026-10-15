@@ -293,6 +293,7 @@ struct FamilyWindowView: View {
 #endif
 
     var body: some View {
+        Group {
         if widgetPhotoRequest != nil {
             widgetPhotoContent
         } else {
@@ -321,6 +322,8 @@ struct FamilyWindowView: View {
         guidanceDialogs
 #endif
         }
+        }
+        .appRecordEditing(retainWhileHidden: showsNameEditor || isPreparingNameEditor || preparedDelivery != nil || selectedPhotoItem != nil || isPreparingSelectedPhoto || isDeliveringSelectedPhoto || !deliveryCaption.isEmpty || deliveryPersonalMemo != nil)
     }
 
     private var widgetPhotoContent: some View {

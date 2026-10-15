@@ -304,6 +304,7 @@ private struct VeterinaryConsultationView: View {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("この診察用の控えだけを削除します。元の写真・メモ・保管した記録は残ります。") }
+        .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || pendingSource != nil)
     }
     private func save(completing: Bool = false) async {
         guard var draft = visit, !busy else { return }

@@ -723,5 +723,6 @@ private struct ShowcaseCandidatePicker: View {
                 .background(.regularMaterial)
             }
         }
+        .appRecordEditing(retainWhileHidden: !selected.isEmpty || isSaving)
     }
 }

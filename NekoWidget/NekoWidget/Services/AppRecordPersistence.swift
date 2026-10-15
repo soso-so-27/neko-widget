@@ -8,6 +8,51 @@ import UIKit
 extension Notification.Name {
     static let appRecordsCommitted = Notification.Name("neko.app-records.committed.v1")
     static let appRecordDatasetChanged = Notification.Name("neko.app-records.dataset.v1")
+    static let appRecordEditingFinished = Notification.Name("neko.app-records.editing-finished.v1")
+}
+
+enum AppRecordEditingError: Error { case inProgress }
+
+/// These leases outlive hidden editors and nested presentations. They protect
+/// memory-only drafts, which a fingerprint of committed files cannot detect.
+final class AppRecordEditingLease: ObservableObject, @unchecked Sendable {
+    private let id = UUID()
+    private static var editors = Set<UUID>()
+    func acquire() {
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        Self.editors.insert(id)
+    }
+    func release() {
+        AppRecordDataset.writeLock.lock()
+        let finished = Self.editors.remove(id) != nil && Self.editors.isEmpty
+        AppRecordDataset.writeLock.unlock()
+        if finished { NotificationCenter.default.post(name: .appRecordEditingFinished, object: nil) }
+    }
+    static func requireIdle() throws {
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        guard editors.isEmpty else { throw AppRecordEditingError.inProgress }
+    }
+    deinit { release() }
+}
+
+private struct AppRecordEditingModifier: ViewModifier {
+    @StateObject private var lease = AppRecordEditingLease()
+    @State private var visible = false
+    let retainWhileHidden: Bool
+    func body(content: Content) -> some View {
+        content
+            .onAppear { visible = true; lease.acquire() }
+            .onDisappear { visible = false; if !retainWhileHidden { lease.release() } }
+            .onChange(of: retainWhileHidden) { _, retain in
+                if !visible { if retain { lease.acquire() } else { lease.release() } }
+            }
+    }
+}
+
+extension View {
+    func appRecordEditing(retainWhileHidden: Bool) -> some View {
+        modifier(AppRecordEditingModifier(retainWhileHidden: retainWhileHidden))
+    }
 }
 
 /// One pointer publishes a fully validated dataset. Prior roots are retained;
@@ -209,6 +254,7 @@ enum AppRecordDataset {
     }
     @MainActor static func activate(_ saved: ToolBackupFiles.Saved, origin: String,
                                     expectedFingerprint: String, validateSession: ManagedPreservationClient.LocalSessionFence) async throws {
+        try AppRecordEditingLease.requireIdle()
         guard try fingerprint() == expectedFingerprint else { throw ToolBackupError.changed }
         try requireScope(owner: saved.owner, origin: origin)
         let localIdentity: CatHouseholdIdentityState?
@@ -292,6 +338,7 @@ enum AppRecordDataset {
     }
     private static func publish(_ receipt: Pointer, expectedFingerprint: String) throws {
         writeLock.lock(); defer { writeLock.unlock() }
+        try AppRecordEditingLease.requireIdle()
         guard try fingerprint() == expectedFingerprint else { throw ToolBackupError.changed }
         try requireScope(owner: receipt.owner, origin: receipt.origin)
         // No suspension between the last local fence and pointer publication.
@@ -356,7 +403,9 @@ final class AppRecordPersistence: ObservableObject {
     private var active = false
     private var observer: NSObjectProtocol?
     private var datasetObserver: NSObjectProtocol?
+    private var editingObserver: NSObjectProtocol?
     private var requested = true
+    private var waitingForEditor = false
     private var nextAttempt = Date.distantPast
 
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
@@ -377,6 +426,12 @@ final class AppRecordPersistence: ObservableObject {
         }
         datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in self?.datasetGeneration = UUID() }
+        }
+        editingObserver = NotificationCenter.default.addObserver(forName: .appRecordEditingFinished, object: nil, queue: nil) { [weak self] _ in
+            Task { @MainActor in
+                self?.requested = true
+                self?.nextAttempt = .distantPast
+            }
         }
         do { enabled = try binding()?.enabled == true }
         catch { detail = "保存設定を読み込めません。端末の記録は残っています。" }
@@ -544,6 +599,12 @@ final class AppRecordPersistence: ObservableObject {
             let checkpoint = try await client.captureSessionCheckpoint()
             try await require(value, checkpoint)
             let currentFingerprint = try AppRecordDataset.fingerprint()
+            if waitingForEditor, currentFingerprint == value.fingerprint {
+                // A long editing session must not poll the server every eight
+                // seconds merely because a previously seen restore is waiting.
+                try AppRecordEditingLease.requireIdle()
+                waitingForEditor = false
+            }
             releaseUploadedPayload(value.snapshotID, owner: value.owner)
             let headID = AppRecordHead.id(origin: value.origin, owner: value.owner)
             // No network polling for an unchanged dataset. Foreground entry and
@@ -566,6 +627,7 @@ final class AppRecordPersistence: ObservableObject {
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value)
                     releaseUploadedPayload(pending, owner: value.owner)
                 } else if let remote, try AppRecordDataset.isEmpty() || value.fingerprint == currentFingerprint {
+                    try AppRecordEditingLease.requireIdle()
                     title = "記録を復元しています…"
                     let record = try await index(remote.1)
                     let saved = try await ToolBackupTransfer.restore(record, client: client) { _, _ in }
@@ -681,6 +743,11 @@ final class AppRecordPersistence: ObservableObject {
                 value.retiring?.removeAll { $0 == previous.snapshotID }; try write(value)
                 try await collectParts(value, checkpoint: checkpoint)
             }
+        } catch AppRecordEditingError.inProgress {
+            waitingForEditor = true
+            title = "入力中の内容を優先しています"
+            detail = "入力を保存・終了すると、別の端末の記録の復元を続けます。"
+            requested = true; nextAttempt = Date().addingTimeInterval(8)
         } catch ToolBackupError.changed {
             title = "変更を保存待ち"; requested = true; nextAttempt = .distantPast
 #if DEBUG
@@ -691,6 +758,11 @@ final class AppRecordPersistence: ObservableObject {
           catch { report(error) }
     }
     private func report(_ error: Error) {
+        if error is AppRecordEditingError {
+            title = "入力中の内容を優先しています"
+            detail = "入力を保存・終了してから、復元を再開してください。"
+            requested = true; nextAttempt = .distantPast; return
+        }
         nextAttempt = Date().addingTimeInterval(60)
         if let failure = error as? ManagedPreservationError,
            [.membershipRequired, .servicePaused, .capacityReached, .authenticationRequired, .staleSession].contains(failure) {
@@ -705,6 +777,28 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
 #if DEBUG
+    func verifyEditingPublicationFences() async throws {
+        guard let value = try binding(), let remote = try await remoteHead(AppRecordHead.id(origin: value.origin, owner: value.owner)) else { throw ToolBackupError.invalid }
+        let record = try await index(remote.1)
+        let saved = try await ToolBackupTransfer.restore(record, client: client) { _, _ in }
+        let before = try AppRecordDataset.pointer(), fingerprint = try AppRecordDataset.fingerprint()
+        let lease = AppRecordEditingLease()
+        lease.acquire()
+        do {
+            try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: fingerprint, validateSession: { try $0() })
+            throw ToolBackupError.storage
+        } catch AppRecordEditingError.inProgress { }
+        lease.release()
+        // Opening an editor while validation/network work is suspended must
+        // also be refused at the synchronous pointer publication boundary.
+        do {
+            try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: fingerprint, validateSession: { publish in
+                lease.acquire(); defer { lease.release() }; try publish()
+            })
+            throw ToolBackupError.storage
+        } catch AppRecordEditingError.inProgress { }
+        guard try AppRecordDataset.pointer() == before, try AppRecordDataset.fingerprint() == fingerprint else { throw ToolBackupError.storage }
+    }
     func verifyMissingStagingRecovery() async throws {
         guard CommandLine.arguments.contains("--app-records-ui-fixture"), var value = try binding() else { throw ToolBackupError.invalid }
         let originalBinding = try ToolBackupFiles.read(bindingURL, maximum: 8192)
@@ -971,6 +1065,14 @@ private actor AppRecordFixtureServer {
     var requests = 0
     var photoPuts = 0
     func counts() -> (Int, Int) { (requests, photoPuts) }
+    func advanceHeadRevision() throws {
+        guard let id = records.first(where: { _, row in
+            guard let doc = row["document"] as? [String: Any], let text = doc["text"] as? String,
+                  let bytes = text.data(using: .utf8), let head = try? JSONDecoder().decode(AppRecordHead.self, from: bytes) else { return false }
+            return head.kind == "app-records-v1"
+        })?.key, var row = records[id], let revision = row["revision"] as? Int else { throw ToolBackupError.invalid }
+        row["revision"] = revision + 1; records[id] = row
+    }
     func request(_ request: URLRequest) throws -> (Data, URLResponse) {
         requests += 1
         guard let url = request.url, url.host?.hasSuffix(".app-record-fixture.invalid") == true else { throw ToolBackupError.invalid }
@@ -1084,6 +1186,7 @@ private final class AppRecordFixture {
     func authenticationClient() -> ManagedPreservationClient {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
+    static var preparationPhase = "開始"
     static func make() async throws -> AppRecordFixture {
         let cacheURL = AppRecordDataset.support.appendingPathComponent("cache-read-probe.json")
         let small = Data("{}".utf8), large = Data("{\"pending\":\"longer replacement\"}".utf8)
@@ -1097,11 +1200,13 @@ private final class AppRecordFixture {
         guard try ToolBackupFiles.read(cacheURL, maximum: 4096) == small else { throw ToolBackupError.storage }
         try FileManager.default.removeItem(at: cacheURL)
         // Unknown or incomplete stores never authorize replacing a device.
+        preparationPhase = "空でない・不正なデータの保護"
         let vetURL = AppRecordDataset.directory("VeterinaryVisits").appendingPathComponent("state.json")
         try ToolBackupFiles.write(Data("{\"schema\":99,\"visits\":[]}".utf8), to: vetURL)
         do { _ = try AppRecordDataset.isEmpty(); throw ToolBackupError.storage }
         catch ToolBackupError.invalid { }
         try FileManager.default.removeItem(at: vetURL.deletingLastPathComponent())
+        preparationPhase = "猫情報の保護"
         let identityEncoder = JSONEncoder(); identityEncoder.dateEncodingStrategy = .iso8601
         let legacy = CatHouseholdIdentityState.legacyUnscoped(lifeReference: nil, curation: .empty)
         var unknown = legacy; unknown.schemaVersion = 99
@@ -1113,13 +1218,15 @@ private final class AppRecordFixture {
         try ToolBackupFiles.write(identityEncoder.encode(withDate), to: AppRecordDataset.identityURL()!)
         guard try !AppRecordDataset.isEmpty() else { throw ToolBackupError.storage }
         try FileManager.default.removeItem(at: AppRecordDataset.identityURL()!)
+        preparationPhase = "検査用認証"
         let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".app-record-fixture.invalid")!
         let configuration = ManagedPreservationConfiguration(isEnabled: true, origin: origin, membershipAudience: "app-record.fixture")
         let credential = ManagedPreservationSessionStore.Credential(token: String(repeating: "t", count: 43), ownerId: UUID().uuidString.lowercased(),
             expiresAt: Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) + 3600))
         guard try ManagedPreservationSessionStore(origin: origin.absoluteString).save(credential, replacing: nil) else { throw ToolBackupError.invalid }
-        let profiles = [CatProfile(displayName: "同じ名前"), CatProfile(displayName: "同じ名前")]
-        let state = CatHouseholdIdentityState(mode: .profiled, profiles: profiles, memberships: [], globalExcludedAssets: [], legacyUnscoped: nil).normalized()
+        preparationPhase = "同名別猫の端末写真の保護"
+        let state = CatHouseholdIdentityState(mode: .profiled, profiles: [CatProfile(displayName: "同じ名前"), CatProfile(displayName: "同じ名前")], memberships: [], globalExcludedAssets: [], legacyUnscoped: nil).normalized()
+        let profiles = state.profiles
         var local = state
         local.profiles[0].keyPhotoLocalIdentifier = "local-first-cat"
         local.profiles[0].photoAlbumLink = CatProfilePhotoAlbumLink(localIdentifier: "local-album", lastKnownAssetLocalIdentifiers: ["local-first-cat"])
@@ -1142,17 +1249,20 @@ private final class AppRecordFixture {
               merged.memberships == local.memberships,
               withoutLocal.profiles.allSatisfy({ $0.keyPhotoLocalIdentifier == nil && $0.photoAlbumLink == nil }),
               withoutLocal.memberships.isEmpty else { throw ToolBackupError.storage }
+        preparationPhase = "猫情報の準備"
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         try ToolBackupFiles.write(encoder.encode(state), to: AppRecordDataset.identityURL()!)
         let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
             UIColor.systemOrange.setFill(); context.cgContext.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         }.jpegData(compressionQuality: 0.9)!
+        preparationPhase = "うちの子の写真の準備"
         let showcaseDirectory = AppRecordDataset.directory("ShowcasePhotos")
         let showcaseName = UUID().uuidString + ".jpg"
         let showcase = ShowcasePhotoStore.Entry(scopeID: "", photoIdentifier: "fixture-owned-showcase",
                                                 imageFileName: showcaseName, isPinned: true, isRestoredCopy: true)
         try AppRecordDataset.writeBackedUp(JSONEncoder().encode([showcase]), to: showcaseDirectory.appendingPathComponent("selected.json"))
         try AppRecordDataset.writeBackedUp(image, to: showcaseDirectory.appendingPathComponent(showcaseName))
+        preparationPhase = "預けるときの準備"
         var plan = CareHandoffPlan()
         var photos: [String: Data] = [:]
         for profile in profiles {
@@ -1162,6 +1272,7 @@ private final class AppRecordFixture {
         }
         plan.contact = "保存の検査用"
         try CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff")).commit(plan, newPhotos: photos)
+        preparationPhase = "写真メモの準備"
         let noteStore = PhotoMemoryNoteStore.shared
         guard let note = try await noteStore.save(text: "保存した写真メモ", for: "fixture-local-only", expectedRevision: nil) else { throw ToolBackupError.invalid }
         let noteURL = AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
@@ -1188,7 +1299,7 @@ struct AppRecordPersistenceFixtureView: View {
         .disabled(switching)
         .task {
             do { fixture = try await AppRecordFixture.make(); fixture?.persistence.setActive(true) }
-            catch { result = "検査準備失敗" }
+            catch { result = "検査準備失敗: \(AppRecordFixture.preparationPhase) / \(String(describing: error))" }
             while !Task.isCancelled {
                 if let fixture { let (_, photos) = await fixture.server.counts(); counts = "写真の送信 \(photos)回" }
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -1240,6 +1351,8 @@ struct AppRecordPersistenceFixtureView: View {
             try originalIdentity.write(to: identityURL, options: [.atomic, .completeFileProtection])
             phase = "転送準備の欠落から再開"
             try await next.persistence.verifyMissingStagingRecovery()
+            phase = "入力中の復元・公開直前の保護"
+            try await next.persistence.verifyEditingPublicationFences()
             fixture = next; next.persistence.setActive(true)
             result = "自動復元・通常画面・元記録保全を確認"
         } catch {
@@ -1270,6 +1383,7 @@ private struct AppRecordFixtureContent: View {
                 NavigationLink("保存・復元") { AppRecordSettingsView(configuration: fixture.configuration, client: fixture.authenticationClient(), persistence: persistence) }
                 NavigationLink("預けるとき") { CareHandoffView(profiles: [], unregisteredPhotos: [], store: .shared, reuseStore: .shared) }
                 NavigationLink("写真メモ") { PhotoMemoryNotesListView(photos: [], store: .shared, openPhotos: {}) }
+                NavigationLink("入力中の復元を検査") { AppRecordDraftProtectionFixture(fixture: fixture) }
                 NavigationLink("通常のツール画面") { AppStoreScreenshotFixtureRootView(photoAccess: false) }
                 Button("別端末での自動復元を検査", action: switchDevice).disabled(persistence.busy || persistence.title != "保存済み")
             }.navigationTitle("自動保存の検査")
@@ -1282,6 +1396,33 @@ private struct AppRecordFixtureContent: View {
                     }
                 }
         }.id(persistence.datasetGeneration)
+    }
+}
+
+@MainActor
+private struct AppRecordDraftProtectionFixture: View {
+    let fixture: AppRecordFixture
+    @ObservedObject private var persistence: AppRecordPersistence
+    @State private var record: PhotoMemoryNoteRecord?
+    init(fixture: AppRecordFixture) { self.fixture = fixture; persistence = fixture.persistence }
+    var body: some View {
+        Group {
+            if let record {
+                PhotoMemoryNoteEditor(record: record, photo: nil, store: .shared, onSaved: {})
+                    .safeAreaInset(edge: .bottom) {
+                        VStack {
+                            Text(persistence.title).accessibilityIdentifier("draft-protection-status")
+                            Button("別端末の変更を受信") {
+                                Task {
+                                    do { try await fixture.server.advanceHeadRevision(); await persistence.retry() }
+                                    catch { }
+                                }
+                            }
+                        }.padding(8).background(.regularMaterial)
+                    }
+            } else { ProgressView() }
+        }
+        .task { record = try? await PhotoMemoryNoteStore.shared.records().first }
     }
 }
 #endif

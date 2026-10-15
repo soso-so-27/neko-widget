@@ -615,6 +615,7 @@ struct PhotoMemoryNoteEditor: View {
                 saveError = "Apple Accountが変わりました。入力内容を控えてから開き直してください。"
             }
         }
+        .appRecordEditing(retainWhileHidden: hasChanges || isSaving)
     }
 
     private func load() async {

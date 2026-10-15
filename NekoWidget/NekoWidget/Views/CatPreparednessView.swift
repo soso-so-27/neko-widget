@@ -308,6 +308,7 @@ struct LostCatDraftView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { saveNow() }
         }
+        .appRecordEditing(retainWhileHidden: saveError || photoBusy || cropRequest != nil || showsDatePicker)
     }
 
     private var catSection: some View {

@@ -1262,6 +1262,7 @@ private struct FamilyRecordEditor: View {
         } message: {
             Text(prepared ? "確認できていない操作があります。追加済みの写真やメモは取り消されません。" : "まだ追加していないメモは保存されません。")
         }
+        .appRecordEditing(retainWhileHidden: text != (target?.text ?? "") || photoAdded || selection != nil || busy || !pending.isEmpty || picking)
     }
     private func validateSource() {
         do { try sourcePhoto?.validate() }

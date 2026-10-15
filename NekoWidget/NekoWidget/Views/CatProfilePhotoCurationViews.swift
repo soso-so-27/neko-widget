@@ -240,6 +240,7 @@ struct CatProfileDetailView: View {
                 )
             }
         }
+        .appRecordEditing(retainWhileHidden: showsNameEditor || isSavingName || showsLifeReferenceEditor || showsKeyPhotoPicker)
     }
 
     private var preparednessCandidates: [CatProfilePhotoPresentation] {
@@ -441,6 +442,7 @@ private struct CatProfileLifeReferenceEditor: View {
             }
         }
         .interactiveDismissDisabled(isSaving)
+        .appRecordEditing(retainWhileHidden: dates != profile.lifeDates || isSaving)
     }
 
     private func dateSection(_ kind: CatProfileLifeReferenceKindPresentation) -> some View {
@@ -980,6 +982,7 @@ struct CatPhotoAssignmentSheet: View {
     let save: ([String: Set<String>]) async -> Bool
 
     @Environment(\.dismiss) private var dismiss
+    private let initialBatch: CatPhotoAssignmentBatchPresentation
     @State private var assignmentBatch: CatPhotoAssignmentBatchPresentation
     @State private var isSaving = false
     @State private var saveFailed = false
@@ -993,12 +996,10 @@ struct CatPhotoAssignmentSheet: View {
         self.photoIdentifiers = photoIdentifiers
         self.profiles = profiles
         self.save = save
-        _assignmentBatch = State(
-            initialValue: CatPhotoAssignmentBatchPresentation(
-                photoIdentifiers: photoIdentifiers,
-                initialAssignmentsByPhotoIdentifier: initialAssignmentsByPhotoIdentifier
-            )
-        )
+        let batch = CatPhotoAssignmentBatchPresentation(photoIdentifiers: photoIdentifiers,
+            initialAssignmentsByPhotoIdentifier: initialAssignmentsByPhotoIdentifier)
+        initialBatch = batch
+        _assignmentBatch = State(initialValue: batch)
     }
 
     var body: some View {
@@ -1068,6 +1069,7 @@ struct CatPhotoAssignmentSheet: View {
             }
         }
         .interactiveDismissDisabled(isSaving)
+        .appRecordEditing(retainWhileHidden: assignmentBatch != initialBatch || isSaving)
     }
 
 }
