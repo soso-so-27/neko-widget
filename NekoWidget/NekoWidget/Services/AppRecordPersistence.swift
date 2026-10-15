@@ -21,6 +21,7 @@ enum AppRecordDataset {
         let datasetID: UUID
         let owner: String
         let origin: String
+        var manifests: [String]? = nil
     }
     #if DEBUG
     private static var fixtureSupport: URL? = CommandLine.arguments.contains("--app-records-ui-fixture")
@@ -51,7 +52,37 @@ enum AppRecordDataset {
         let root = datasets.appendingPathComponent(pointer.datasetID.uuidString, isDirectory: true)
         let receipt = try JSONDecoder().decode(Pointer.self, from: ToolBackupFiles.read(root.appendingPathComponent("dataset.json"), maximum: 4096))
         guard receipt == pointer else { throw ToolBackupError.invalid }
+        for path in receipt.manifests ?? [] {
+            guard knownManifestPaths.contains(path), FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path) else { throw ToolBackupError.invalid }
+        }
         return root
+    }
+    static var knownManifestPaths: Set<String> {
+        Set(ToolBackupIndex.manifests.map { $0.key + "/" + $0.value })
+    }
+    static func liveIdentityPolicy(_ url: URL) -> Bool {
+        let parent = url.deletingLastPathComponent().standardizedFileURL.path
+        return parent.hasPrefix(datasets.standardizedFileURL.path + "/")
+            || parent == support.appendingPathComponent("CatIdentity").standardizedFileURL.path
+    }
+    static func requirePreviouslyPresentManifest(_ path: String, at url: URL) throws {
+        // Bind additions since publication to this exact dataset. An old
+        // binding must never impose its previous inventory on a new root.
+        _ = try root()
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        let binding = control.appendingPathComponent("binding.json")
+        guard FileManager.default.fileExists(atPath: binding.path) else { return }
+        let object = try JSONSerialization.jsonObject(with: ToolBackupFiles.read(binding, maximum: 8192)) as? [String: Any]
+        let storedID = (object?["requiredDatasetID"] as? String).flatMap(UUID.init(uuidString:))
+        guard storedID == (try pointer()?.datasetID) else { return }
+        if (object?["requiredManifests"] as? [String] ?? []).contains(path) { throw ToolBackupError.invalid }
+    }
+    static func presentManifestPaths() throws -> [String] {
+        try ToolBackupIndex.manifests.compactMap { tool, manifest in
+            let url = tool == "CatIdentity" ? identityURL() : directory(tool).appendingPathComponent(manifest)
+            guard let url else { throw ToolBackupError.invalid }
+            return FileManager.default.fileExists(atPath: url.path) ? tool + "/" + manifest : nil
+        }.sorted()
     }
     /// A corrupt pointer must not silently fall back to a fresh empty dataset.
     static func directory(_ name: String) -> URL {
@@ -113,12 +144,15 @@ enum AppRecordDataset {
     }
     static func fingerprint() throws -> String {
         writeLock.lock(); defer { writeLock.unlock() }
+        _ = try root()
         var bytes = Data()
         for (tool, manifest) in ToolBackupIndex.manifests.sorted(by: { $0.key < $1.key }) {
             let url = tool == "CatIdentity" ? identityURL() : directory(tool).appendingPathComponent(manifest)
             bytes.append(Data((tool + "/" + manifest + "\n").utf8))
             if let url, FileManager.default.fileExists(atPath: url.path) {
                 bytes.append(try ToolBackupFiles.read(url, maximum: 8 * 1024 * 1024))
+            } else if let url {
+                try requirePreviouslyPresentManifest(tool + "/" + manifest, at: url)
             }
             bytes.append(0)
         }
@@ -177,9 +211,15 @@ enum AppRecordDataset {
                                     expectedFingerprint: String, validateSession: ManagedPreservationClient.LocalSessionFence) async throws {
         guard try fingerprint() == expectedFingerprint else { throw ToolBackupError.changed }
         try requireScope(owner: saved.owner, origin: origin)
+        let localIdentity: CatHouseholdIdentityState?
+        if let url = identityURL(), FileManager.default.fileExists(atPath: url.path) {
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            localIdentity = try decoder.decode(CatHouseholdIdentityState.self, from: ToolBackupFiles.read(url, maximum: 8 * 1024 * 1024))
+        } else { localIdentity = nil }
         let source = try ToolBackupFiles.restoredSource(saved.id, owner: saved.owner)
         try await ToolBackupValidation.validate(saved.index, at: source)
-        let receipt = Pointer(version: 1, datasetID: UUID(), owner: saved.owner, origin: origin)
+        let receipt = Pointer(version: 1, datasetID: UUID(), owner: saved.owner, origin: origin,
+                              manifests: saved.index.files.map(\.path).filter { knownManifestPaths.contains($0) }.sorted())
         let destination = datasets.appendingPathComponent(receipt.datasetID.uuidString, isDirectory: true)
         try ToolBackupFiles.protect(destination)
         // All referenced bytes are verified before any live store sees this root.
@@ -187,6 +227,14 @@ enum AppRecordDataset {
             let data = try ToolBackupFiles.read(source.appendingPathComponent(file.path), maximum: 20 * 1024 * 1024)
             guard ToolBackupIndex.hash(data) == file.sha256 else { throw ToolBackupError.invalid }
             try ToolBackupFiles.write(data, to: destination.appendingPathComponent(file.path))
+        }
+        let identity = destination.appendingPathComponent("CatIdentity/state.json")
+        if FileManager.default.fileExists(atPath: identity.path) {
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let remote = try decoder.decode(CatHouseholdIdentityState.self, from: ToolBackupFiles.read(identity, maximum: 8 * 1024 * 1024))
+            let merged = try preservingLocalPhotoLinks(remote, local: localIdentity)
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
+            try ToolBackupFiles.write(encoder.encode(merged), to: identity)
         }
         // Restore creates these folders privately; publish them as live data
         // only after validation, preserving OS backup for future offline edits.
@@ -201,6 +249,46 @@ enum AppRecordDataset {
             try publish(receipt, expectedFingerprint: expectedFingerprint)
         }
         NotificationCenter.default.post(name: .appRecordDatasetChanged, object: receipt.datasetID)
+    }
+    /// PhotoKit relationships are device-local and are never uploaded. A
+    /// remote name/date update must not erase this phone's existing curation.
+    /// Carry links only by the exact profile UUID; names are not identities.
+    static func preservingLocalPhotoLinks(_ remote: CatHouseholdIdentityState,
+                                          local: CatHouseholdIdentityState?) throws -> CatHouseholdIdentityState {
+        var portable = remote
+        for i in portable.profiles.indices {
+            portable.profiles[i].keyPhotoLocalIdentifier = nil
+            portable.profiles[i].photoAlbumLink = nil
+        }
+        portable.memberships = []; portable.globalExcludedAssets = []
+        portable.legacyUnscoped?.sourceAlbumIdentifier = nil
+        portable.legacyUnscoped?.lastKnownSourceAssetIdentifiers = nil
+        portable.legacyUnscoped?.legacyExcludedAssetIdentifiers = []
+        portable.legacyUnscoped?.importedCurationMutationRevision = -1
+        guard let local else { return portable.normalized() }
+        guard (1...CatHouseholdIdentityState.currentSchemaVersion).contains(local.schemaVersion),
+              Set(local.profiles.map(\.id)).count == local.profiles.count else { throw ToolBackupError.invalid }
+        var result = portable
+        let profiles = Dictionary(uniqueKeysWithValues: local.profiles.map { ($0.id, $0) })
+        let ids = Set(remote.profiles.map(\.id))
+        for i in result.profiles.indices {
+            guard let own = profiles[result.profiles[i].id] else { continue }
+            result.profiles[i].keyPhotoLocalIdentifier = own.keyPhotoLocalIdentifier
+            result.profiles[i].photoAlbumLink = own.photoAlbumLink
+        }
+        result.memberships = local.memberships.filter { ids.contains($0.profileID) }
+        result.globalExcludedAssets = local.globalExcludedAssets
+        if let own = local.legacyUnscoped {
+            if result.legacyUnscoped == nil {
+                var photoLinks = own; photoLinks.lifeReference = nil; result.legacyUnscoped = photoLinks
+            } else {
+                result.legacyUnscoped?.sourceAlbumIdentifier = own.sourceAlbumIdentifier
+                result.legacyUnscoped?.lastKnownSourceAssetIdentifiers = own.lastKnownSourceAssetIdentifiers
+                result.legacyUnscoped?.legacyExcludedAssetIdentifiers = own.legacyExcludedAssetIdentifiers
+                result.legacyUnscoped?.importedCurationMutationRevision = own.importedCurationMutationRevision
+            }
+        }
+        return result.normalized()
     }
     private static func publish(_ receipt: Pointer, expectedFingerprint: String) throws {
         writeLock.lock(); defer { writeLock.unlock() }
@@ -251,6 +339,8 @@ final class AppRecordPersistence: ObservableObject {
         var pendingBase: Int?
         var pendingPrevious: UUID?
         var retiring: [UUID]?
+        var requiredManifests: [String]? = nil
+        var requiredDatasetID: UUID? = nil
     }
     static let consentVersion = "app-records-automatic-v1"
     @Published private(set) var title = "自動保存は未設定です"
@@ -299,7 +389,18 @@ final class AppRecordPersistence: ObservableObject {
         return value
     }
     private func write(_ value: Binding) throws {
-        try AppRecordDataset.writeBackedUp(JSONEncoder().encode(value), to: bindingURL)
+        var secured = value
+        let present = try AppRecordDataset.presentManifestPaths()
+        // Within one dataset this is monotonic; pausing cannot forget a lost
+        // file. A validated root switch starts that new root's own inventory.
+        let datasetID = try AppRecordDataset.pointer()?.datasetID
+        let existing = try binding()
+        guard existing == nil || existing?.owner == value.owner else { throw ManagedPreservationError.staleSession }
+        let previous = existing?.requiredDatasetID == datasetID ? existing?.requiredManifests ?? [] : []
+        let proposed = value.requiredDatasetID == datasetID ? value.requiredManifests ?? [] : []
+        secured.requiredManifests = Array(Set(previous + proposed + present)).sorted()
+        secured.requiredDatasetID = datasetID
+        try AppRecordDataset.writeBackedUp(JSONEncoder().encode(secured), to: bindingURL)
         enabled = value.enabled
     }
     /// Only disposable transport payloads of an acknowledged automatic upload
@@ -606,6 +707,23 @@ final class AppRecordPersistence: ObservableObject {
 #if DEBUG
     func verifyMissingStagingRecovery() async throws {
         guard CommandLine.arguments.contains("--app-records-ui-fixture"), var value = try binding() else { throw ToolBackupError.invalid }
+        let originalBinding = try ToolBackupFiles.read(bindingURL, maximum: 8192)
+        let missing = "VeterinaryVisits/state.json"
+        var probe = value
+        probe.requiredManifests = Array(Set((value.requiredManifests ?? []) + [missing]))
+        probe.requiredDatasetID = try AppRecordDataset.pointer()?.datasetID
+        try AppRecordDataset.writeBackedUp(JSONEncoder().encode(probe), to: bindingURL)
+        do { _ = try AppRecordDataset.fingerprint(); throw ToolBackupError.storage }
+        catch ToolBackupError.invalid { }
+        pause()
+        try write(value) // An older in-flight value cannot erase the durable requirement.
+        do { _ = try AppRecordDataset.fingerprint(); throw ToolBackupError.storage }
+        catch ToolBackupError.invalid { }
+        probe.requiredDatasetID = UUID() // Another dataset's inventory is irrelevant.
+        try AppRecordDataset.writeBackedUp(JSONEncoder().encode(probe), to: bindingURL)
+        _ = try AppRecordDataset.fingerprint()
+        try AppRecordDataset.writeBackedUp(originalBinding, to: bindingURL)
+        enabled = value.enabled
         let priorID = value.snapshotID
         value.pending = UUID(); value.pendingFingerprint = try AppRecordDataset.fingerprint()
         value.pendingBase = value.revision; value.pendingPrevious = value.snapshotID
@@ -638,6 +756,7 @@ struct AppRecordSettingsView: View {
     @State private var consent = false
     @State private var confirmsLocal = false
     @State private var confirmsRemote = false
+    @State private var confirmsMembership = false
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
          persistence: AppRecordPersistence = .shared) {
         _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client))
@@ -649,8 +768,8 @@ struct AppRecordSettingsView: View {
                 Label(persistence.title, systemImage: "checkmark.icloud")
                     .accessibilityIdentifier("app-record-save-status")
                 if let detail = persistence.detail { Text(detail).font(.footnote) }
-                Text("月額980円の機能です。初回の設定後は、写真メモ・ツールの入力と添付写真、猫プロフィールの変更を自動で保存します。")
-                Text("写真ライブラリ全体、写真原本、動画は対象ではありません。共有相手には送られません。")
+                Text("月額980円の機能です。初回の設定後は、写真メモ・ツールの入力と添付写真、猫の名前・誕生日などの変更を自動で保存します。")
+                Text("写真ライブラリ全体、写真原本、動画は対象ではありません。写真ライブラリの写真選びは、その端末に残します。共有相手には送られません。")
                     .font(.footnote).foregroundStyle(.secondary)
             } header: { Text("記録の保存・復元") }
             if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
@@ -687,6 +806,23 @@ struct AppRecordSettingsView: View {
                     Button("この端末の自動保存を停止") { persistence.pause() }
                 }
             }
+            if authentication.isSignedIn, authentication.accountDeletionState == nil {
+                Section {
+                    if authentication.membershipLoading { ProgressView("会員情報を確認中…") }
+                    if let membership = authentication.membership {
+                        if membership.canSave { Label("変更を保存できる会員情報です", systemImage: "checkmark.circle") }
+                        else if !membership.linked {
+                            Text("保存を始める前に、このiPhoneの会員情報を接続します。")
+                            Button("会員情報を接続") { confirmsMembership = true }
+                                .disabled(authentication.isBusy)
+                                .accessibilityIdentifier("app-record-membership-connect")
+                        } else { Text("会員の有効期間を確認できるまで、新しい変更の送信を待ちます。保存済みの記録は復元できます。") }
+                    }
+                    if let message = authentication.membershipMessage { Text(message).font(.footnote) }
+                    Button("会員情報を確認") { authentication.checkMembership() }
+                        .disabled(authentication.isBusy || authentication.membershipLoading)
+                } header: { Text("会員情報") }
+            }
             Section {
                 NavigationLink("以前の保管記録・書き出し・アカウント管理") { ManagedPreservationView() }
             } footer: {
@@ -696,6 +832,14 @@ struct AppRecordSettingsView: View {
         .navigationTitle("保存・復元")
         .task { authentication.start() }
         .onDisappear { authentication.stop() }
+        .onChange(of: authentication.membership?.canSave) { _, canSave in
+            if canSave == true, persistence.enabled { Task { await persistence.retry() } }
+        }
+        .confirmationDialog("この本人に会員情報を接続しますか？", isPresented: $confirmsMembership, titleVisibility: .visible) {
+            Button("確認して接続する") { authentication.connectMembership(consent: true) }
+        } message: {
+            Text("Appleで本人確認した保存先に、このiPhoneの会員情報を結び付けます。あとから別の本人へ付け替えることはできません。この操作で購入は始まりません。")
+        }
         .confirmationDialog("この端末の内容で続きを保存しますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
             Button("この端末の記録を続ける") { Task { await persistence.resolveConflict(useRemote: false) } }
         } message: { Text("別の端末の記録も、この端末にコピーを残してから切り替えます。") }
@@ -941,6 +1085,17 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static func make() async throws -> AppRecordFixture {
+        let cacheURL = AppRecordDataset.support.appendingPathComponent("cache-read-probe.json")
+        let small = Data("{}".utf8), large = Data("{\"pending\":\"longer replacement\"}".utf8)
+        try ToolBackupFiles.write(small, to: cacheURL)
+        guard try ToolBackupFiles.read(cacheURL, maximum: 4096) == small else { throw ToolBackupError.storage }
+        try ToolBackupFiles.write(large, to: cacheURL)
+        var cached = cacheURL
+        cached.setTemporaryResourceValue(small.count, forKey: .fileSizeKey)
+        guard try ToolBackupFiles.read(cached, maximum: 4096) == large else { throw ToolBackupError.storage }
+        try ToolBackupFiles.write(small, to: cacheURL)
+        guard try ToolBackupFiles.read(cacheURL, maximum: 4096) == small else { throw ToolBackupError.storage }
+        try FileManager.default.removeItem(at: cacheURL)
         // Unknown or incomplete stores never authorize replacing a device.
         let vetURL = AppRecordDataset.directory("VeterinaryVisits").appendingPathComponent("state.json")
         try ToolBackupFiles.write(Data("{\"schema\":99,\"visits\":[]}".utf8), to: vetURL)
@@ -965,6 +1120,28 @@ private final class AppRecordFixture {
         guard try ManagedPreservationSessionStore(origin: origin.absoluteString).save(credential, replacing: nil) else { throw ToolBackupError.invalid }
         let profiles = [CatProfile(displayName: "同じ名前"), CatProfile(displayName: "同じ名前")]
         let state = CatHouseholdIdentityState(mode: .profiled, profiles: profiles, memberships: [], globalExcludedAssets: [], legacyUnscoped: nil).normalized()
+        var local = state
+        local.profiles[0].keyPhotoLocalIdentifier = "local-first-cat"
+        local.profiles[0].photoAlbumLink = CatProfilePhotoAlbumLink(localIdentifier: "local-album", lastKnownAssetLocalIdentifiers: ["local-first-cat"])
+        local.memberships = [CatAssetProfileMembership(assetLocalIdentifier: "local-first-cat", profileID: profiles[0].id, decision: .included)]
+        local = local.normalized()
+        var remote = state
+        remote.profiles[0].displayName = "保存先で変えた名前"
+        remote.profiles.append(CatProfile(displayName: profiles[0].displayName))
+        for i in remote.profiles.indices {
+            remote.profiles[i].keyPhotoLocalIdentifier = "foreign-device-photo"
+            remote.profiles[i].photoAlbumLink = CatProfilePhotoAlbumLink(localIdentifier: "foreign-device-album", lastKnownAssetLocalIdentifiers: [])
+        }
+        remote = remote.normalized()
+        let merged = try AppRecordDataset.preservingLocalPhotoLinks(remote, local: local)
+        let withoutLocal = try AppRecordDataset.preservingLocalPhotoLinks(remote, local: nil)
+        guard merged.profiles.first(where: { $0.id == profiles[0].id })?.displayName == "保存先で変えた名前",
+              merged.profiles.first(where: { $0.id == profiles[0].id })?.keyPhotoLocalIdentifier == "local-first-cat",
+              merged.profiles.first(where: { $0.id == profiles[0].id })?.photoAlbumLink == local.profiles[0].photoAlbumLink,
+              merged.profiles.filter({ $0.id != profiles[0].id }).allSatisfy({ $0.keyPhotoLocalIdentifier == nil }),
+              merged.memberships == local.memberships,
+              withoutLocal.profiles.allSatisfy({ $0.keyPhotoLocalIdentifier == nil && $0.photoAlbumLink == nil }),
+              withoutLocal.memberships.isEmpty else { throw ToolBackupError.storage }
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         try ToolBackupFiles.write(encoder.encode(state), to: AppRecordDataset.identityURL()!)
         let image = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).image { context in
@@ -1035,6 +1212,26 @@ struct AppRecordPersistenceFixtureView: View {
             phase = "復元した添付写真を照合"
             guard let first = records.first, let photo = try await PhotoMemoryNoteStore.shared.photoURL(for: first.id),
                   FileManager.default.fileExists(atPath: photo.path) else { throw ToolBackupError.invalid }
+            phase = "猫情報のバックアップと旧日付を照合"
+            let identityURL = AppRecordDataset.identityURL()!
+            let originalIdentity = try ToolBackupFiles.read(identityURL, maximum: 8 * 1024 * 1024)
+            let reference = CatLifeReference(kind: .birthday, date: CatLifeDate(date: Date(timeIntervalSince1970: 1_000_000_000))!)
+            let legacy = CatHouseholdIdentityState.legacyUnscoped(lifeReference: reference, curation: .empty)
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+            try AppRecordDataset.writeBackedUp(encoder.encode(legacy), to: identityURL)
+            let identityStore = try CatHouseholdIdentityStore(stateURL: identityURL)
+            for old in [nil, CatLifeReference(kind: .birthday, date: CatLifeDate(date: .now)!)] {
+                let loaded = try await identityStore.loadOrMigrate(legacyLifeReference: old, legacyCuration: .empty)
+                guard loaded.legacyUnscoped?.lifeReference == reference else { throw ToolBackupError.storage }
+            }
+            var freshIdentity = identityURL; freshIdentity.removeAllCachedResourceValues()
+            guard try freshIdentity.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == false else { throw ToolBackupError.storage }
+            try FileManager.default.removeItem(at: identityURL)
+            do { _ = try AppRecordDataset.fingerprint(); throw ToolBackupError.storage }
+            catch ToolBackupError.invalid { }
+            do { _ = try await identityStore.load(); throw ToolBackupError.storage }
+            catch ToolBackupError.invalid { }
+            try originalIdentity.write(to: identityURL, options: [.atomic, .completeFileProtection])
             phase = "転送準備の欠落から再開"
             try await next.persistence.verifyMissingStagingRecovery()
             fixture = next; next.persistence.setActive(true)

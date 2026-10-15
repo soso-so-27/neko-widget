@@ -79,7 +79,7 @@ actor CatHouseholdIdentityStore {
             }
 
             let reconciled = current.reconcilingLegacyUnscoped(
-                lifeReference: legacyLifeReference,
+                lifeReference: usesLiveDataset ? current.legacyUnscoped?.lifeReference : legacyLifeReference,
                 curation: legacyCuration,
                 at: date
             )
@@ -131,6 +131,9 @@ actor CatHouseholdIdentityStore {
     private func loadUnlocked(
         repairingSecurityAttributes: Bool
     ) throws -> CatHouseholdIdentityState? {
+#if os(iOS)
+        try AppRecordDataset.requirePreviouslyPresentManifest("CatIdentity/state.json", at: stateURL)
+#endif
         guard FileManager.default.fileExists(atPath: stateURL.path) else { return nil }
         if repairingSecurityAttributes {
             try CatHouseholdIdentityProtectedFile.enforceSecurity(on: stateURL)
@@ -152,6 +155,14 @@ actor CatHouseholdIdentityStore {
             try writeUnlocked(normalized)
         }
         return normalized
+    }
+
+    private var usesLiveDataset: Bool {
+#if os(iOS)
+        AppRecordDataset.liveIdentityPolicy(stateURL)
+#else
+        false
+#endif
     }
 
     private func writeUnlocked(_ state: CatHouseholdIdentityState) throws {
@@ -279,7 +290,7 @@ private enum CatHouseholdIdentityProtectedFile {
 #endif
         var mutableURL = url
         var values = URLResourceValues()
-        values.isExcludedFromBackup = true
+        values.isExcludedFromBackup = excludedFromBackup(url)
         try mutableURL.setResourceValues(values)
         guard hasRequiredSecurity(at: url) else {
             throw CatHouseholdIdentityStoreError.securityAttributesUnavailable
@@ -287,9 +298,10 @@ private enum CatHouseholdIdentityProtectedFile {
     }
 
     static func hasRequiredSecurity(at url: URL) -> Bool {
-        guard let resourceValues = try? url.resourceValues(
+        var fresh = url; fresh.removeAllCachedResourceValues()
+        guard let resourceValues = try? fresh.resourceValues(
             forKeys: [.isExcludedFromBackupKey]
-        ), resourceValues.isExcludedFromBackup == true else { return false }
+        ), resourceValues.isExcludedFromBackup == excludedFromBackup(url) else { return false }
 #if os(iOS) || os(tvOS) || os(watchOS)
 #if targetEnvironment(simulator)
         return true
@@ -302,6 +314,14 @@ private enum CatHouseholdIdentityProtectedFile {
 #endif
 #else
         return true
+#endif
+    }
+
+    private static func excludedFromBackup(_ url: URL) -> Bool {
+#if os(iOS)
+        !AppRecordDataset.liveIdentityPolicy(url)
+#else
+        true
 #endif
     }
 

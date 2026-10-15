@@ -175,6 +175,8 @@ it('reuses one photo across snapshots and protects both legacy and shared depend
   expect(inventory.objects).toHaveLength(1); // No second ciphertext or photo upload.
   await expect(f.archive.remove(f.session.token, a.photoID, 1)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
   await f.archive.remove(f.session.token, b.id, 1);
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?')
+    .bind(f.session.ownerId, a.photoID).first()).toBeNull();
   await expect(f.archive.remove(f.session.token, a.photoID, 1, true)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
   expect((await f.archive.read(f.session.token, a.photoID)).document.toolBackup?.sha256).toBe(await sha256(photo));
   const c = await snapshot(f, { id: a.photoID, origin: a.id }); await c.publish();
@@ -183,8 +185,19 @@ it('reuses one photo across snapshots and protects both legacy and shared depend
   // Reuse still works after the original index is gone: origin is the photo's tag.
   const d = await snapshot(f, { id: a.photoID, origin: a.id }); await d.publish();
   await f.archive.remove(f.session.token, c.id, 1); await f.archive.remove(f.session.token, d.id, 1);
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?')
+    .bind(f.session.ownerId, a.photoID).first()).not.toBeNull();
   await f.archive.remove(f.session.token, a.photoID, 1, true);
   await expect(f.archive.read(f.session.token, a.photoID)).rejects.toMatchObject({ code: 'RECORD_NOT_FOUND' });
+});
+
+it('durably claims a legacy source index parts when its index is retired', async () => {
+  const f = await fixture(), a = await snapshot(f); await a.publish();
+  await f.archive.remove(f.session.token, a.id, 1);
+  for (const id of [a.photoID,a.jsonID]) {
+    expect(await binding.DB.prepare('SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?')
+      .bind(f.session.ownerId,id).first()).not.toBeNull();
+  }
 });
 
 it('rejects incorrect shared photo identity, hash, size and other-owner references', async () => {

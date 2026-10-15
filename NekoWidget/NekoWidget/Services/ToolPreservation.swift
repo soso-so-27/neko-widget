@@ -150,10 +150,14 @@ enum ToolBackupFiles {
 #endif
     }
     static func read(_ url: URL, maximum: Int) throws -> Data {
-        let attributes = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        // Atomic writes may replace this inode within the same run-loop pass.
+        // URL otherwise reuses cached metadata from the previous contents.
+        var fresh = url
+        fresh.removeAllCachedResourceValues()
+        let attributes = try fresh.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard attributes.isRegularFile == true, attributes.isSymbolicLink != true,
               let size = attributes.fileSize, size > 0, size <= maximum else { throw ToolBackupError.invalid }
-        let bytes = try Data(contentsOf: url)
+        let bytes = try Data(contentsOf: fresh)
         guard bytes.count == size else { throw ToolBackupError.changed }
         return bytes
     }
