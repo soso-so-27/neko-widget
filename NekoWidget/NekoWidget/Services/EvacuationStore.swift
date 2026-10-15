@@ -5,7 +5,12 @@ import ImageIO
 
 @MainActor
 final class EvacuationStore: ObservableObject {
-    static let shared = EvacuationStore()
+    private static var sharedCache: (URL, EvacuationStore)?
+    static var shared: EvacuationStore {
+        let root = AppRecordDataset.directory("EvacuationPreparation")
+        if let cached = sharedCache, cached.0 == root { return cached.1 }
+        let value = EvacuationStore(); sharedCache = (root, value); return value
+    }
     @Published private(set) var plan = EvacuationPlan()
     @Published private(set) var loadError: String?
     @Published private(set) var saveError: String?
@@ -16,8 +21,7 @@ final class EvacuationStore: ObservableObject {
 
     init(directory: URL? = nil, allowsCandidateRefresh: Bool = true) {
         self.allowsCandidateRefresh = allowsCandidateRefresh
-        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory,
-            in: .userDomainMask)[0].appendingPathComponent("EvacuationPreparation", isDirectory: true)
+        self.directory = directory ?? AppRecordDataset.directory("EvacuationPreparation")
         reload()
     }
 

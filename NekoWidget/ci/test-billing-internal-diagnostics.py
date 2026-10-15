@@ -23,12 +23,18 @@ class BillingInternalDiagnosticsContractTests(unittest.TestCase):
     def test_debug_argument_bypasses_production_root(self) -> None:
         route = self.app[
             self.app.index("var body: some Scene"):
-            self.app.index("@MainActor\nprivate struct ProductionAppRootView")
+            self.app.index("@MainActor\nstruct ProductionAppRootView")
         ]
         self.assertIn("#if DEBUG", route)
         argument = "BillingInternalDiagnosticsLaunch.isActive"
         self.assertIn(argument, route)
-        self.assertLess(route.index(argument), route.index("ProductionAppRootView()"))
+        self.assertLess(route.index(argument), route.index("AppRecordProductionRoot()"))
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        production_root = persistence[
+            persistence.index("struct AppRecordProductionRoot: View {"):
+            persistence.index("enum AppRecordCapture {")
+        ]
+        self.assertIn("ProductionAppRootView().id(persistence.datasetGeneration)", production_root)
         self.assertIn("BillingInternalDiagnosticsRootView()", route)
         self.assertNotIn("BillingAccountBootstrapCoordinator", route)
         self.assertNotIn("BillingWindowSponsorshipCoordinator", route)

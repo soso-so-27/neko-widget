@@ -60,7 +60,12 @@ enum VeterinaryVisitError: Error, LocalizedError {
 }
 
 actor VeterinaryVisitStore {
+    #if os(iOS)
+    private static let sharedCache = VeterinaryVisitStoreCache()
+    static var shared: VeterinaryVisitStore { sharedCache.current() }
+#else
     static let shared = VeterinaryVisitStore()
+#endif
     private static let lock = NSLock()
     private struct State: Codable {
         var schema = 1
@@ -70,8 +75,12 @@ actor VeterinaryVisitStore {
     private let directory: URL
 
     init(directory: URL? = nil) {
+        #if os(iOS)
+        self.directory = directory ?? AppRecordDataset.directory("VeterinaryVisits")
+#else
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory,
             in: .userDomainMask)[0].appendingPathComponent("VeterinaryVisits", isDirectory: true)
+#endif
     }
 
     func visits() throws -> [VeterinaryVisit] {
@@ -299,8 +308,13 @@ actor VeterinaryVisitStore {
         let bytes = try JSONEncoder().encode(state)
         guard bytes.count <= 8 * 1024 * 1024 else { throw VeterinaryVisitError.storage }
         try write(bytes, to: directory.appendingPathComponent("state.json"))
+        NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: directory)
     }
     private func write(_ data: Data, to url: URL) throws {
+#if os(iOS)
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        try AppRecordDataset.requireWritable(url)
+#endif
         do {
             guard directory.isFileURL else { throw VeterinaryVisitError.storage }
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -313,3 +327,16 @@ actor VeterinaryVisitStore {
         } catch { throw VeterinaryVisitError.storage }
     }
 }
+
+#if os(iOS)
+private final class VeterinaryVisitStoreCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (URL, VeterinaryVisitStore)?
+    func current() -> VeterinaryVisitStore {
+        lock.lock(); defer { lock.unlock() }
+        let root = AppRecordDataset.directory("VeterinaryVisits")
+        if let value, value.0 == root { return value.1 }
+        let store = VeterinaryVisitStore(directory: root); value = (root, store); return store
+    }
+}
+#endif

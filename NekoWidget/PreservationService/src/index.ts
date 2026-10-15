@@ -36,6 +36,7 @@ export interface Env {
   PRESERVATION_ENABLED?: string; CLEANUP_ENABLED?: string; RETENTION_TRACKING_ENABLED?: string;
   RECOVERY_BACKFILL_ENABLED?: string;
   OWNER_RECOVERY_COMPRESSION_ENABLED?: string;
+  OWNER_RECOVERY_PAGED_ENABLED?: string;
   NOTICE_SEND_ENABLED?: string; NOTICE_EVENTS_ENABLED?: string; NOTICE_RUN_MONITOR_ENABLED?: string;
   NOTICE_RECIPIENT_TAG_SECRET?: string; NOTICE_EVENT_QUEUE_NAME?: string;
   NOTICE_ACCOUNT_ID?: string; NOTICE_ZONE_ID?: string; NOTICE_SUBSCRIPTION_ID?: string;
@@ -87,7 +88,7 @@ export async function route(request: Request, services: Services, context?: Pick
   const url = new URL(request.url);
   if (url.protocol !== 'https:') throw new ServiceError('HTTPS_REQUIRED');
   const path = url.pathname;
-  if (!['/v1/records', '/v1/export-page'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
+  if (!['/v1/records', '/v1/export-page', '/v1/tool-cleanup'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
   if (request.method === 'POST' && path === '/v1/auth/challenges') {
     if (Object.keys(await body(request, 1024)).length) throw new ServiceError('INVALID_REQUEST');
     return response(await services.auth.issueChallenge());
@@ -145,6 +146,14 @@ export async function route(request: Request, services: Services, context?: Pick
   }
   if (request.method === 'GET' && path === '/v1/usage') {
     return response(await services.archive.usage(token));
+  }
+  if (request.method === 'GET' && path === '/v1/tool-cleanup') {
+    if ([...url.searchParams.keys()].some(key => key !== 'after') || url.searchParams.getAll('after').length > 1) throw new ServiceError('INVALID_REQUEST');
+    return response(await services.archive.toolCleanupCandidates(token, url.searchParams.get('after') ?? ''));
+  }
+  const abandonedSnapshot = /^\/v1\/tool-snapshots\/([0-9a-f-]+)\/abandon$/u.exec(path)?.[1];
+  if (request.method === 'POST' && abandonedSnapshot) {
+    return payloadWork.run(async () => response(await services.archive.abandonToolSnapshot(token, abandonedSnapshot)), request.signal);
   }
   if (path === '/v1/membership' || path.startsWith('/v1/membership/')) {
     if (!services.membership) throw new ServiceError('MEMBERSHIP_NOT_CONFIGURED', 503);
@@ -255,7 +264,8 @@ export function configuredServices(env: Env): Services {
     const s3 = configuredS3(env);
     recovery = new RecordRecoveryCopy(keys, s3);
     ownerRecovery = new OwnerRecoveryCopy(keys, s3, env.IDENTITY_INDEX_SECRET,
-      { compressWrites: env.OWNER_RECOVERY_COMPRESSION_ENABLED === 'YES' });
+      { compressWrites: env.OWNER_RECOVERY_COMPRESSION_ENABLED === 'YES',
+        pagedWrites: env.OWNER_RECOVERY_PAGED_ENABLED === 'YES' });
   } catch {
     // Bad or missing S3 setup must stop mutations, not strand an owner's read/export.
   }
@@ -306,7 +316,8 @@ function configuredNoticeServices(env: Env): NoticeServices {
   const keys = envelopeKeyCustody({ enabled: true,
     wrapper: boundKeyWrapper(env.KEY_WRAPPER, env.KEY_WRAPPER_CALLER_SECRET) });
   const ownerRecovery = new OwnerRecoveryCopy(keys, configuredS3(env), env.IDENTITY_INDEX_SECRET,
-    { compressWrites: env.OWNER_RECOVERY_COMPRESSION_ENABLED === 'YES' });
+    { compressWrites: env.OWNER_RECOVERY_COMPRESSION_ENABLED === 'YES',
+      pagedWrites: env.OWNER_RECOVERY_PAGED_ENABLED === 'YES' });
   const auth = new DurableAuth({ db: env.DB, keys, identityIndexSecret: env.IDENTITY_INDEX_SECRET, now });
   const authority = boundBillingAuthority(env.MEMBERSHIP_AUTHORITY);
   return { auth, retention: new RetentionLedger(env.DB, now, ownerRecovery), ownerRecovery,

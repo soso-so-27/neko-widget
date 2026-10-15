@@ -728,7 +728,7 @@ struct MainTabView: View {
 
     private var showcaseToolCard: some View {
         Button {
-            if hasPhotoAccess {
+            if hasPhotoAccess || !showcaseStore.availableEntries(in: "").isEmpty {
                 openPreparedShowcase(scopeID: "")
             } else {
                 selectedTab = .photos
@@ -757,7 +757,7 @@ struct MainTabView: View {
 
     private func consumeShowcaseLaunchRequest() {
         guard ShowcaseLaunchRequest.hasPending else { return }
-        guard hasPhotoAccess else {
+        guard hasPhotoAccess || !showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty else {
             selectedTab = .photos
             return
         }

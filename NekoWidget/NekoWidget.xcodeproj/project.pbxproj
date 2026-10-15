@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        C02610150000000000000001 /* AppRecordPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610150000000000000002 /* AppRecordPersistence.swift */; };
 		C02610140000000000000001 /* ToolPreservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610140000000000000002 /* ToolPreservation.swift */; };
 		C02610140000000000000003 /* RestoredToolsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02610140000000000000004 /* RestoredToolsView.swift */; };
         D02609300000000000000001 /* VeterinaryVisitStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609300000000000000002 /* VeterinaryVisitStore.swift */; };
@@ -287,6 +288,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+        C02610150000000000000002 /* AppRecordPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRecordPersistence.swift; sourceTree = "<group>"; };
 		C02610140000000000000002 /* ToolPreservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPreservation.swift; sourceTree = "<group>"; };
 		C02610140000000000000004 /* RestoredToolsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoredToolsView.swift; sourceTree = "<group>"; };
         D02609300000000000000002 /* VeterinaryVisitStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeterinaryVisitStore.swift; sourceTree = "<group>"; };
@@ -717,6 +719,7 @@
 			isa = PBXGroup;
 			children = (
 				C02610140000000000000002 /* ToolPreservation.swift */,
+                C02610150000000000000002 /* AppRecordPersistence.swift */,
 				E02609220000000000000007 /* MembershipAccessContext.swift */,
 				F00000000000000000000210 /* JSONExporter.swift */,
 				F00000000000000000000211 /* LibraryStore.swift */,
@@ -1084,6 +1087,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C02610140000000000000001 /* ToolPreservation.swift in Sources */,
+                C02610150000000000000001 /* AppRecordPersistence.swift in Sources */,
 				C02610140000000000000003 /* RestoredToolsView.swift in Sources */,
 				D02609100000000000000301 /* OfficialWindowView.swift in Sources */,
 				D02609100000000000000201 /* OfficialWindowStore.swift in Sources */,

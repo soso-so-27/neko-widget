@@ -321,6 +321,7 @@ struct PhotoMemoryNoteEditor: View {
     @FocusState private var isWriting: Bool
     @FocusState private var isMeasuring: Bool
     @State private var original: PhotoMemoryNote?
+    @State private var savedPhotoURL: URL?
     @State private var text = ""
     @State private var isLoaded = false
     @State private var isLoading = false
@@ -394,7 +395,7 @@ struct PhotoMemoryNoteEditor: View {
 
     init(record: PhotoMemoryNoteRecord, photo: PhotoPresentation?, store: PhotoMemoryNoteStore,
          archiveStore: PersonalArchiveStore = .shared,
-         careStore: CareHandoffStore = .shared, evacuationStore: EvacuationStore = .shared,
+         careStore: CareHandoffStore? = nil, evacuationStore: EvacuationStore? = nil,
          onSaved: @escaping () -> Void) {
         self.photo = photo
         self.store = store
@@ -402,8 +403,8 @@ struct PhotoMemoryNoteEditor: View {
         self.recordID = record.id
         self.onSaved = onSaved
         self.archiveStore = archiveStore
-        _careStore = ObservedObject(wrappedValue: careStore)
-        _evacuationStore = ObservedObject(wrappedValue: evacuationStore)
+        _careStore = ObservedObject(wrappedValue: careStore ?? .shared)
+        _evacuationStore = ObservedObject(wrappedValue: evacuationStore ?? .shared)
         archiveAccount = nil
         didUpdateArchive = nil
     }
@@ -448,6 +449,13 @@ struct PhotoMemoryNoteEditor: View {
                     .frame(width: 80, height: 80)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .accessibilityHidden(true)
+            }
+        } else if let savedPhotoURL {
+            Section {
+                AppRecordSavedPhoto(url: savedPhotoURL)
+                    .frame(width: 80, height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("保存した写真")
             }
         } else if let photo, photoAccess.photo(for: photo.localIdentifier) != nil {
             Section {
@@ -607,6 +615,7 @@ struct PhotoMemoryNoteEditor: View {
                 saveError = "Apple Accountが変わりました。入力内容を控えてから開き直してください。"
             }
         }
+        .appRecordEditing(retainWhileHidden: hasChanges || isSaving)
     }
 
     private func load() async {
@@ -645,6 +654,7 @@ struct PhotoMemoryNoteEditor: View {
             }
             guard !Task.isCancelled else { return }
             original = loaded
+            if let loaded { savedPhotoURL = try await store.photoURL(for: loaded.id) }
             text = loaded?.text ?? ""
             loadWeight(loaded?.weight)
             if let loaded, let local = try await store.record(id: loaded.id) {

@@ -2,7 +2,7 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-report-ui-continuation",
-    "issuedAtMs": 1792017634349,
+    "issuedAtMs": 1792080640498,
     "expiresAtMs": 1792097788721,
     "policyRevision": 2,
     "keyID": "moderation-v2",
@@ -60,7 +60,7 @@
       "NekoWidget/ci/verify-moderation-upload-payload.py": "e4d2d45b2193f84442257e96096804f655405b0414f54df03b0d0e8e479617a3",
       "NekoWidget/ci/verify-signed-artifact-contents.py": "db15bfbd307acdc691aa739089131ff52e64e47d84899299307d607bf252c9bc",
       "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "0366ead5852907345c0d22f35c7cc4e7e228dcb586cdc7d38f8f882f055fdebf",
-      "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": "ff802ff2461b027f63bf78f7d0b70c26487460d7fdd603a30b8aa4cda595d7bf",
+      "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": "ea57a284e8555cb4adb772899e19a30edb0f83bca355583e9cabaea2a6105b69",
       "NekoWidget/NekoWidget/Info.plist": "ba81dbb5166521c704a9e7982a2a9c6ac2d17ae8989d040ad2b57639bd036547",
       "NekoWidget/NekoWidgetShareExtension/Info.plist": "6aaf8d0b7e21456642a54b8a92864cd77838cfcf9ae85ac169c98c88033d01aa",
       "NekoWidget/NekoWidgetWidget/Info.plist": "094f5a0f7331fb92ea686286a7c32ef40b4e4ff6b594b8953792740758c67790",
@@ -86,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "nyMDUVMjxSuY1fP0nNVMsT-4Pc5bBsyc9ykLmO-5LqNFcmFjmxwvLcB7ci7gOck9ia7JFgAsmV8pBHYBY6wRCg"
+      "signatureBase64url": "rR-9O41V-G3kwHhLn7WaaqRW1uKX0swHg89NDXh_XZgz7rYPzqLoBflN4sWfILRWHuBvfroe8ekHzZWnpjemAg"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "DXCjh9hbayWpcaMlDCUAd2cun8khl5FBsgnGnA-0L-dJx8-4YWSsQBjRnJ7ImMrl9mar2ZbzBtxdDA-bs73EAw"
+      "signatureBase64url": "DjPJI894xXD3gidjEZ6QMXndAV90llqzV2RGA5do_s6XXV0bkhcgGW7fUNLoBftHhXB7QumhkyK4PBreWSmOCQ"
     }
   ]
 }

@@ -18,6 +18,7 @@ struct ManagedPreservationView: View {
     @State private var confirmsToolDiscard = false
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
+    private let allowsManualSaving: Bool
 
     init(configuration: ManagedPreservationConfiguration = .current,
          draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil,
@@ -25,6 +26,7 @@ struct ManagedPreservationView: View {
          allowsRecordBrowsing: Bool = true,
          onUnsecuredMemoChange: ((Bool) -> Void)? = nil) {
         self.allowsRecordBrowsing = allowsRecordBrowsing
+        self.allowsManualSaving = client != nil || draft != nil || toolBackupSource != nil
         self.onUnsecuredMemoChange = onUnsecuredMemoChange
         let exporter = RecordExportController()
         _exporter = StateObject(wrappedValue: exporter)
@@ -124,6 +126,7 @@ struct ManagedPreservationView: View {
         } message: {
             Text("Appleで本人確認した保管先に、このiPhoneの会員情報を結び付けます。あとから別の本人への付け替えはできません。この操作で購入・自動更新・写真の送信は始まりません。")
         }
+        .appRecordEditing(retainWhileHidden: coordinator.hasUnsecuredMemo)
     }
 
     private var content: some View {
@@ -167,7 +170,7 @@ struct ManagedPreservationView: View {
                 // A selected-copy entry must not become a second route for
                 // editing unrelated records. The settings entry retains browsing.
                 if allowsRecordBrowsing {
-                    toolBackupSection
+                    if allowsManualSaving { toolBackupSection }
                     if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
                     recordsSection
                 }

@@ -63,7 +63,9 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if CommandLine.arguments.contains("--tool-backup-ui-fixture") {
+            if CommandLine.arguments.contains("--app-records-ui-fixture") {
+                AppRecordPersistenceFixtureView()
+            } else if CommandLine.arguments.contains("--tool-backup-ui-fixture") {
                 ToolBackupFixtureView()
             } else if BillingInternalDiagnosticsLaunch.isActive {
                 BillingInternalDiagnosticsRootView()
@@ -115,10 +117,10 @@ struct NekoWidgetApp: App {
             } else if CommandLine.arguments.contains("--sharing-runtime-self-test") {
                 SharingRuntimeSelfTestRootView()
             } else {
-                ProductionAppRootView()
+                AppRecordProductionRoot()
             }
 #else
-            ProductionAppRootView()
+            AppRecordProductionRoot()
 #endif
         }
     }
@@ -136,7 +138,7 @@ struct NekoWidgetApp: App {
 }
 
 @MainActor
-private struct ProductionAppRootView: View {
+struct ProductionAppRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = AppViewModel()
     @StateObject private var plusPurchases = PlusPurchaseStore.productionShared

@@ -149,6 +149,10 @@ final class EvacuationRepository {
     }
 
     func commit(_ plan: EvacuationPlan, newPhotos: [String: Data] = [:]) throws {
+#if os(iOS)
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        try AppRecordDataset.requireWritable(manifest)
+#endif
         try plan.validate()
         let data = try JSONEncoder().encode(plan)
         guard data.count <= 3_000_000 else { throw EvacuationStorageError.tooLarge }
@@ -165,6 +169,7 @@ final class EvacuationRepository {
                 try write(bytes, url)
             }
             try write(data, manifest)
+            NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: manifest)
         } catch {
             created.forEach { try? FileManager.default.removeItem(at: $0) }
             throw error

@@ -153,6 +153,18 @@ it('bounds concurrent metadata unwraps at the configured 200-record snapshot bou
   expect(Date.now() - start).toBeLessThan(35_000);
   expect(await binding.DB.prepare('SELECT count(*) AS n FROM pa_tool_snapshot_references WHERE owner_id=?')
     .bind(f.session.ownerId).first()).toEqual({ n: 199 });
+  // A missing transport folder must not scan/decrypt this whole owner merely
+  // to fence its abandoned snapshot. Cleanup uses the same eight-way bound.
+  opened = 0; peak = 0;
+  await archive.abandonToolSnapshot(f.session.token, crypto.randomUUID());
+  expect(opened).toBe(0);
+  await f.archive.remove(f.session.token, snapshotId, 1);
+  const cleanupStart = Date.now();
+  const page = await archive.toolCleanupCandidates(f.session.token);
+  expect(page.items).toHaveLength(50); expect(page.hasMore).toBe(true);
+  expect(page.nextCursor).toBe(page.items.at(-1)!.recordId);
+  expect(opened).toBe(199); expect(peak).toBeGreaterThan(1); expect(peak).toBeLessThanOrEqual(8);
+  expect(Date.now() - cleanupStart).toBeLessThan(35_000);
 }, 45_000);
 
 it('reuses one photo across snapshots and protects both legacy and shared dependencies during deletion', async () => {
@@ -163,6 +175,8 @@ it('reuses one photo across snapshots and protects both legacy and shared depend
   expect(inventory.objects).toHaveLength(1); // No second ciphertext or photo upload.
   await expect(f.archive.remove(f.session.token, a.photoID, 1)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
   await f.archive.remove(f.session.token, b.id, 1);
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?')
+    .bind(f.session.ownerId, a.photoID).first()).toBeNull();
   await expect(f.archive.remove(f.session.token, a.photoID, 1, true)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
   expect((await f.archive.read(f.session.token, a.photoID)).document.toolBackup?.sha256).toBe(await sha256(photo));
   const c = await snapshot(f, { id: a.photoID, origin: a.id }); await c.publish();
@@ -171,8 +185,19 @@ it('reuses one photo across snapshots and protects both legacy and shared depend
   // Reuse still works after the original index is gone: origin is the photo's tag.
   const d = await snapshot(f, { id: a.photoID, origin: a.id }); await d.publish();
   await f.archive.remove(f.session.token, c.id, 1); await f.archive.remove(f.session.token, d.id, 1);
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?')
+    .bind(f.session.ownerId, a.photoID).first()).not.toBeNull();
   await f.archive.remove(f.session.token, a.photoID, 1, true);
   await expect(f.archive.read(f.session.token, a.photoID)).rejects.toMatchObject({ code: 'RECORD_NOT_FOUND' });
+});
+
+it('durably claims a legacy source index parts when its index is retired', async () => {
+  const f = await fixture(), a = await snapshot(f); await a.publish();
+  await f.archive.remove(f.session.token, a.id, 1);
+  for (const id of [a.photoID,a.jsonID]) {
+    expect(await binding.DB.prepare('SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?')
+      .bind(f.session.ownerId,id).first()).not.toBeNull();
+  }
 });
 
 it('rejects incorrect shared photo identity, hash, size and other-owner references', async () => {
@@ -229,3 +254,117 @@ it('rejects a commit when a deletion claim appears after reference validation', 
   expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?').bind(f.session.ownerId, b.id).first()).toBeNull();
 });
 
+
+it('keeps an automatic head and immutable JSON references atomic across devices, cleanup and retries', async () => {
+  const f = await fixture({ maximumRecords: 5, quotaBytes: 1_000_000 });
+  const a = await snapshot(f);
+  const initial = { ...a.index, version: 3 };
+  await a.publish(initial);
+  const headID = crypto.randomUUID();
+  const headDocument = async (index: typeof initial) => ({ ...document, formatVersion: 1,
+    photoFile: null, text: JSON.stringify({ kind: 'app-records-v1', snapshotID: index.snapshotID,
+      indexHash: await sha256(JSON.stringify(index)) }) });
+  const putHead = async (index: typeof initial, expectedRevision: number | null) => f.archive.put(f.session.token, headID,
+    f.request({ expectedRevision, photoBase64: null, document: await headDocument(index) }));
+  await putHead(initial, null);
+  await expect(f.archive.remove(f.session.token, a.id, 1)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+  await expect(f.archive.remove(f.session.token, headID, 1)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+  let previous = initial;
+  for (let revision = 1; revision <= 20; revision++) {
+    const next = { ...initial, snapshotID: crypto.randomUUID(), files: initial.files.map(file => ({ ...file, sourceSnapshotID: initial.snapshotID })) };
+    const payload = btoa(JSON.stringify(next));
+    await f.archive.put(f.session.token, next.snapshotID, f.request({ photoBase64: null,
+      document: { ...document, formatVersion: 3, photoFile: null, toolBackup: { snapshotId: next.snapshotID,
+        kind: 'index', path: 'index.json', part: 0, count: 1, sha256: await sha256(atob(payload)), payload } } }));
+    expect(await putHead(next, revision)).toEqual({ recordId: headID, revision: revision + 1 });
+    // Device B cannot overwrite the accepted head with the stale revision.
+    await expect(putHead(previous, revision)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    await f.archive.remove(f.session.token, previous.snapshotID, 1);
+    // Lost-response rebasing must never publish the deleted prior index.
+    await expect(putHead(previous, revision + 1)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    await expect(f.archive.remove(f.session.token, a.jsonID, 1, true)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+    expect(await binding.DB.prepare('SELECT count(*) AS n FROM pa_records WHERE owner_id=? AND deleted=0')
+      .bind(f.session.ownerId).first()).toEqual({ n: 4 });
+    previous = next;
+  }
+  expect(await binding.DB.prepare('SELECT part_id,source_revision FROM pa_tool_snapshot_references WHERE owner_id=? AND snapshot_id=?')
+    .bind(f.session.ownerId, headID).first()).toEqual({ part_id: previous.snapshotID, source_revision: 21 });
+  const other = await fixture();
+  await expect(other.archive.put(other.session.token, crypto.randomUUID(), other.request({ photoBase64: null,
+    document: await headDocument(previous) }))).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+}, 30_000);
+
+it('reuses only exact authenticated v3 index proofs and still fences every live dependency',async()=>{
+  const f=await fixture({quotaBytes:1_000_000});const a=await snapshot(f);
+  await a.publish({...a.index,version:3});
+  const reused={...a.index,version:3,snapshotID:crypto.randomUUID(),previousIndexID:a.id,
+    files:a.index.files.map(file=>({...file,sourceSnapshotID:a.id}))};
+  const request=async(index:typeof reused)=>{
+    const payload=btoa(JSON.stringify(index));return f.request({photoBase64:null,document:{...document,
+      formatVersion:3,photoFile:null,toolBackup:{snapshotId:index.snapshotID,kind:'index',path:'index.json',
+        part:0,count:1,sha256:await sha256(atob(payload)),payload}}});
+  };
+  const keys={...f.options.keys,open:async(...args:Parameters<KeyCustody['open']>)=>{
+    if ([a.photoID,a.jsonID].some(id=>args[1].recordId===id+'/document')) throw Error('unchanged piece must not be unwrapped');
+    return f.options.keys.open(...args);
+  }};
+  expect(await new ArchiveStore({...f.options,keys}).put(f.session.token,reused.snapshotID,await request(reused)))
+    .toEqual({recordId:reused.snapshotID,revision:1});
+  const forged={...reused,snapshotID:crypto.randomUUID(),files:reused.files.map((file,i)=>i===0?{...file,sha256:'f'.repeat(64)}:file)};
+  await expect(f.archive.put(f.session.token,forged.snapshotID,await request(forged))).rejects.toMatchObject({code:'INVALID_RECORD'});
+  const other=await fixture();
+  const foreign={...reused,snapshotID:crypto.randomUUID()};
+  await expect(other.archive.put(other.session.token,foreign.snapshotID,await request(foreign)))
+    .rejects.toMatchObject({code:'REVISION_CONFLICT'});
+  // An absent hint is merely a missed optimization: immutable pieces must be
+  // fully verified again, so old-server/device retries remain compatible.
+  await f.archive.remove(f.session.token,a.id,1);
+  const fallback={...reused,snapshotID:crypto.randomUUID()};
+  expect(await f.archive.put(f.session.token,fallback.snapshotID,await request(fallback))).toMatchObject({revision:1});
+  const racedIndex={...reused,snapshotID:crypto.randomUUID(),previousIndexID:reused.snapshotID};
+  const raced=new ArchiveStore({...f.options,keys:{...f.options.keys,seal:async(value,context)=>{
+    if(context.recordId===racedIndex.snapshotID+'/document') await binding.DB.prepare(
+      'UPDATE pa_records SET revision=revision+1 WHERE owner_id=? AND record_id=?').bind(f.session.ownerId,a.photoID).run();
+    return f.options.keys.seal(value,context);
+  }}});
+  await expect(raced.put(f.session.token,racedIndex.snapshotID,await request(racedIndex))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+});
+
+it('retains server cleanup intent after an index and the sending device are lost', async () => {
+  const f = await fixture(), other = await fixture();
+  const a = await snapshot(f); await a.publish({ ...a.index, version: 3 });
+  await f.archive.remove(f.session.token, a.id, 1);
+  // A fresh device needs no old index or local GC receipt to find its parts.
+  expect((await f.archive.toolCleanupCandidates(f.session.token)).items.map(x => x.recordId).sort())
+    .toEqual([a.jsonID, a.photoID].sort());
+  expect(await other.archive.toolCleanupCandidates(other.session.token)).toEqual({ items: [], hasMore: false, nextCursor: null });
+  for (const id of [a.jsonID, a.photoID]) await f.archive.remove(f.session.token, id, 1, true);
+  expect(await f.archive.toolCleanupCandidates(f.session.token)).toEqual({ items: [], hasMore: false, nextCursor: null });
+});
+
+it('fences abandoned partial and complete transfers, including a late in-flight part', async () => {
+  const f = await fixture();
+  const a = await snapshot(f); await a.publish({ ...a.index, version: 3 });
+  const headID = crypto.randomUUID(), indexHash = await sha256(JSON.stringify({ ...a.index, version: 3 }));
+  await f.archive.put(f.session.token, headID, f.request({ photoBase64: null, document: { ...document,
+    formatVersion: 1, photoFile: null, text: JSON.stringify({ kind: 'app-records-v1', snapshotID: a.id, indexHash }) } }));
+  await expect(f.archive.abandonToolSnapshot(f.session.token, a.id)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  const pending = crypto.randomUUID();
+  const raced = new ArchiveStore({ ...f.options, photos: { validateJPEG: async () => {
+    await f.archive.abandonToolSnapshot(f.session.token, pending); return true;
+  } } });
+  const part = { snapshotId: pending, kind: 'photo', path: `CareHandoff/${crypto.randomUUID()}.jpg`, part: 0, count: 1,
+    sha256: await sha256(photo), payload: '' };
+  const id = crypto.randomUUID();
+  await expect(raced.put(f.session.token, id, f.request({ document: { ...document, formatVersion: 3, toolBackup: part } })))
+    .rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(f.session.ownerId, id).first()).toBeNull();
+  await expect(f.archive.put(f.session.token, id, f.request({ document: { ...document, formatVersion: 3, toolBackup: part } })))
+    .rejects.toMatchObject({ code: 'TOOL_SNAPSHOT_ABANDONED' });
+  const b = await snapshot(f); await b.publish({ ...b.index, version: 3 });
+  await f.archive.abandonToolSnapshot(f.session.token, b.id);
+  expect((await f.archive.toolCleanupCandidates(f.session.token)).items).toEqual([{ recordId: b.id, kind: 'index' }]);
+  await f.archive.remove(f.session.token, b.id, 1);
+  expect((await f.archive.toolCleanupCandidates(f.session.token)).items.map(x => x.recordId).sort()).toEqual([b.jsonID, b.photoID].sort());
+}, 15_000);

@@ -119,6 +119,15 @@ struct ManagedPreservationSessionStore: Sendable {
         return try readCredential()
     }
 
+    /// Bind a local publication to the exact credential while sign-in,
+    /// sign-out and deletion-receipt changes share this same process lock.
+    func withCurrentCredential(_ expected: Credential, perform: () throws -> Void) throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard try readCredential() == expected, expected.expiresAt > Date(),
+              try readDeletionReceipt() == nil else { throw ManagedPreservationError.staleSession }
+        try perform()
+    }
+
     private func readCredential() throws -> Credential? {
         var request = query
         request[kSecReturnData] = true

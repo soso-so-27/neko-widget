@@ -14,6 +14,7 @@ final class ShowcasePhotoStore: ObservableObject {
         let imageFileName: String
         /// The old manifest has no value. Its hand-picked photos stay fixed.
         var isPinned: Bool? = nil
+        var isRestoredCopy: Bool? = nil
 
         var id: String { scopeID + ":" + photoIdentifier }
         var pinned: Bool { isPinned ?? true }
@@ -45,9 +46,7 @@ final class ShowcasePhotoStore: ObservableObject {
     private var busyScopes = Set<String>()
 
     init(directory: URL? = nil) {
-        let base = directory ?? FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0].appendingPathComponent("ShowcasePhotos", isDirectory: true)
+        let base = directory ?? AppRecordDataset.directory("ShowcasePhotos")
         self.directory = base
         self.manifest = base.appendingPathComponent("selected.json")
         let loaded: FileState
@@ -78,7 +77,7 @@ final class ShowcasePhotoStore: ObservableObject {
     var availableEntries: [Entry] {
         guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
                 || PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited else {
-            return []
+            return entries.filter { $0.isRestoredCopy == true && FileManager.default.fileExists(atPath: directory.appendingPathComponent($0.imageFileName).path) }
         }
         let result = PHAsset.fetchAssets(
             withLocalIdentifiers: entries.map(\.photoIdentifier), options: nil
@@ -87,7 +86,7 @@ final class ShowcasePhotoStore: ObservableObject {
         result.enumerateObjects { asset, _, _ in
             if !asset.isHidden { accessible.insert(asset.localIdentifier) }
         }
-        return entries.filter { accessible.contains($0.photoIdentifier)
+        return entries.filter { ($0.isRestoredCopy == true || accessible.contains($0.photoIdentifier))
             && FileManager.default.fileExists(atPath: directory
                 .appendingPathComponent($0.imageFileName).path) }
     }
@@ -294,9 +293,11 @@ final class ShowcasePhotoStore: ObservableObject {
     }
 
     private func commit(_ next: FileState, undoable: Bool) throws {
+        try AppRecordDataset.requireWritable(manifest)
         guard !hasCorruptManifest else { throw Error.corruptManifest }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
+        AppRecordDataset.committed(manifest)
         let previous = state
         state = next
         entries = next.entries

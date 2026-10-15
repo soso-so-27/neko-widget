@@ -171,7 +171,7 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
     .rejects.toMatchObject({ code: 'OWNER_QUARANTINE_RESTORE_UNAVAILABLE' });
 });
 
-async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 'path' | 'source' | 'hash' | 'bytes' | 'json-hash' | 'manifest' | 'photo-name') {
+async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 'path' | 'source' | 'hash' | 'bytes' | 'json-hash' | 'manifest' | 'photo-name' | 'head') {
   const authority = await syntheticKeyAuthority();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
   const secret = randomToken(), stored = new Map<string, Uint8Array>(), references: RecoveryObject[] = [];
@@ -228,7 +228,7 @@ async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 
   const jsonFile = (id: string) => ({ path: 'CareHandoff/plan.json', bytes: json.length, sha256: jsonHash, records: [id] });
   const photoFile = { path: photoPath, bytes: photo.length, sha256: photoHash, records: [photoId] };
   const originalIndex = await publish(original, original, 'index', 'index.json', new TextEncoder().encode(JSON.stringify({
-    version: 1, snapshotID: original, createdAt: 1, files: [jsonFile(jsonIds[0]!), photoFile] }))) ;
+    version: change === 'head' ? 3 : 1, snapshotID: original, createdAt: 1, files: [jsonFile(jsonIds[0]!), photoFile] }))) ;
   const reused = { ...photoFile, records: [...photoFile.records], sourceSnapshotID: original };
   if (change === 'missing') reused.records = [crypto.randomUUID()];
   if (change === 'path') reused.path = `CareHandoff/${crypto.randomUUID()}.jpg`;
@@ -239,9 +239,26 @@ async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 
   const newerJson = jsonFile(jsonIds[1]!);
   if (change === 'json-hash') newerJson.sha256 = 'c'.repeat(64);
   if (change === 'manifest') newerJson.path = 'CareHandoff/other.json';
-  await publish(newer, newer, 'index', 'index.json', new TextEncoder().encode(JSON.stringify({
-    version: 2, snapshotID: newer, createdAt: 2, files: [newerJson, reused] }))) ;
-  if (change === 'deleted-source') {
+  const newerIndex = { version: change === 'head' ? 3 : 2, snapshotID: newer, createdAt: 2,
+    files: [change === 'head' ? { ...jsonFile(jsonIds[0]!), sourceSnapshotID: original } : newerJson, reused] };
+  await publish(newer, newer, 'index', 'index.json', new TextEncoder().encode(JSON.stringify(newerIndex)));
+  const headID = crypto.randomUUID();
+  if (change === 'head') {
+    const operation = crypto.randomUUID();
+    for (let revision = 1; revision <= 2; revision++) {
+      const snapshotID = revision === 1 ? original : newer;
+      const index = revision === 1 ? { version: 3, snapshotID: original, createdAt: 1, files: [jsonFile(jsonIds[0]!), photoFile] } : newerIndex;
+      const document: ArchiveDocument = { formatVersion: 1, text: JSON.stringify({ kind: 'app-records-v1', snapshotID,
+        indexHash: await sha256(JSON.stringify(index)) }), capturedAt: null, writtenAt: null, updatedAt: null, catNames: [], photoFile: null };
+      const metadata = await keys.seal(new TextEncoder().encode(JSON.stringify({ version: 1, ownerId, recordId: headID,
+        revision, document, photoSHA256: null, photoBytes: 0 })), { ownerId, purpose: 'record', recordId: `${headID}/document` });
+      const copied = await records.copy({ ownerId, recordId: headID, revision, initialFingerprint: 'd'.repeat(64),
+        initialOperation: operation, metadata, photoKey: null, photoBytes: 0, quotaBytes: metadata.length, deleted: false, photoCiphertext: null });
+      const marker = await records.commit(ownerId, headID, revision, copied);
+      if (revision === 2) ownerRecords.push({ recordId: headID, revision, deleted: false, marker });
+    }
+  }
+  if (change === 'deleted-source' || change === 'head') {
     const tombstone = await records.copy({ ...originalIndex, revision: 2, deleted: true,
       metadata: null, photoKey: null, photoBytes: 0, photoCiphertext: null, quotaBytes: 0 });
     await records.prepareDelete(ownerId, original, 1, tombstone);
@@ -255,13 +272,13 @@ async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 
   await owners.copy({ ownerId, generation: 1, epoch: 0, disabled: false, purgeFenceId: null, createdAt: 100,
     identityKey: await indexedOwnerIdentity(await identityIndexKey(secret), issuer, subject),
     credential: { ownerEpoch: 0, sealedCredentials: credential, updatedAt: 100 }, contact: null,
-    billing: null, retention: null, inventoryGeneration: 5,
+    billing: null, retention: null, inventoryGeneration: ownerRecords.length + 1,
     records: ownerRecords.sort((a, b) => a.recordId.localeCompare(b.recordId)) });
   const { DB: db, ARCHIVE: bucket } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
   const purge = { async listOwnerVersionsPage() { return { versions: [], nextCursor: null }; } } as unknown as S3PurgeIntentStore;
   return { restore: new OwnerQuarantineRestore(new OwnerArchiveRecovery(s3, owners, records), records,
     db, bucket, purge, { async assertNotRequested() {} }), db, bucket, original, newer, photoId, jsonIds,
-    references, objectCount: references.length };
+    references, objectCount: references.length, headID };
 }
 
 it.each([undefined, 'deleted-source'] as const)('rebuilds v2 photo edges without duplicating the photo or requiring its original index (%s)', async change => {
@@ -286,3 +303,19 @@ it.each(['missing', 'path', 'source', 'hash', 'bytes', 'json-hash', 'manifest', 
     expect(await f.db.prepare('SELECT count(*) AS n FROM pa_sessions').first()).toEqual({ n: 0 });
     expect(f.references).toHaveLength(f.objectCount);
   });
+
+
+it('restores a mutable automatic head and v3 JSON references before publishing disabled staged success', async () => {
+  const f = await sharedToolRestoreFixture('head');
+  expect(await f.restore.restore(ownerId, 1_000)).toEqual({ status: 'staged-disabled', ownerId, records: 6, photos: 1 });
+  expect(await f.db.prepare('SELECT part_id,source_revision FROM pa_tool_snapshot_references WHERE owner_id=? AND snapshot_id=?')
+    .bind(ownerId, f.headID).first()).toEqual({ part_id: f.newer, source_revision: 2 });
+  expect(await f.db.prepare('SELECT count(*) AS n FROM pa_tool_snapshot_references WHERE owner_id=?').bind(ownerId).first()).toEqual({ n: 3 });
+  expect(await f.db.prepare('SELECT deleted FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(ownerId, f.original).first()).toEqual({ deleted: 1 });
+  await expect(f.db.prepare('UPDATE pa_records SET deleted=1 WHERE owner_id=? AND record_id=?')
+    .bind(ownerId, f.newer).run()).rejects.toThrow();
+  await expect(f.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id,source_revision)
+    VALUES(?,?,?,2)`).bind(ownerId, f.headID, f.original).run()).rejects.toThrow();
+  expect(await f.db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').bind(ownerId).first()).toEqual({ disabled: 1 });
+});

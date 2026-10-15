@@ -1476,6 +1476,14 @@ final class AppViewModel: ObservableObject {
         normalized = normalized.normalized()
         guard normalized.catLifeReference != settings.catLifeReference else { return }
 
+        if catHouseholdIdentity?.mode == .legacyUnscoped {
+            do {
+                _ = try await mutateCatHouseholdIdentity { state in
+                    state = state.reconcilingLegacyUnscoped(lifeReference: normalized.catLifeReference, curation: self.catCandidateCuration)
+                }
+            } catch { setError(error); return }
+        }
+
         settings = normalized
         snapshot.settings = normalized
         snapshot.updatedAt = .now
@@ -2761,6 +2769,11 @@ final class AppViewModel: ObservableObject {
                 legacyCuration: catCandidateCuration
             )
             catHouseholdIdentity = loaded
+            if loaded.mode == .legacyUnscoped,
+               let url = CatHouseholdIdentityStore.defaultStateURL(), AppRecordDataset.liveIdentityPolicy(url) {
+                settings.catLifeReference = loaded.legacyUnscoped?.lifeReference
+                snapshot.settings.catLifeReference = settings.catLifeReference
+            }
             catIdentityLoadState = .ready
             SharedLog.app.info(
                 "cat-identity",

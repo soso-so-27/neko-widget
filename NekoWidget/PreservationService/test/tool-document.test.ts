@@ -41,6 +41,14 @@ it('accepts native v1 and v2 file contracts and preserves direct original photo 
   expect(parseToolIndex(indexPart([manifest, reused], 2)).files).toEqual([manifest, reused]);
   expect(() => parseToolIndex(indexPart([manifest, reused]))).toThrow('INVALID_RECORD');
 });
+it('v3 reuses immutable JSON while older index contracts reject that reference', () => {
+  const shared = { ...manifest, sourceSnapshotID: 'dddddddd-dddd-dddd-dddd-dddddddddddd' };
+  expect(parseToolIndex(indexPart([shared], 3)).files).toEqual([shared]);
+  for (const version of [1, 2]) expect(() => parseToolIndex(indexPart([shared], version))).toThrow('INVALID_RECORD');
+  for (const path of ['PhotoMemoryNotes/state.json', 'CatIdentity/state.json']) {
+    expect(parseToolIndex(indexPart([{ ...manifest, path }], 3)).files[0]?.path).toBe(path);
+  }
+});
 it('rejects an index missing its tool manifest or using paths native restoration cannot read', () => {
   for (const files of [
     [photo],

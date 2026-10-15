@@ -48,7 +48,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     case membershipLinkConsent, membershipLinkConflict, membershipLinkExpired, billingIdentityUnavailable, billingIdentityChanged
     case pilotRegistrationPending(String)
     case requestRejected, uploadTimedOut, servicePaused
-    case deletionNotReceived, deletionPending, deletionNotAccepted, exportUnsupported, toolPartReferenced
+    case deletionNotReceived, deletionPending, deletionNotAccepted, exportUnsupported, toolPartReferenced, snapshotAbandoned
     case exportThrottled(seconds: Int)
 
     /// Fixed support codes only: never include a URL, owner, token or raw error.
@@ -73,6 +73,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .toolPartReferenced: "この写真は別の保管コピーで使われています。必要な写真は残します。"
+        case .snapshotAbandoned: "中断した送信を整理しました。端末の記録から保存をやり直します。"
         case .deletionNotReceived: "削除依頼の受付がまだ確認できません。受付結果を再確認するか、同じ依頼を再送してください。"
         case .deletionPending: "この保管先は削除処理中です。削除状況を確認してください。"
         case .deletionNotAccepted: "削除依頼は受け付けられませんでした。この操作では削除は始まっていません。"
@@ -497,6 +498,17 @@ actor ManagedPreservationClient {
         return SessionCheckpoint(epoch: epoch, credential: credential)
     }
 
+    /// The final local dataset publication has no await between this secure
+    /// credential comparison and its atomic pointer write.
+    typealias LocalSessionFence = @Sendable (_ publication: () throws -> Void) throws -> Void
+    func localSessionFence(_ checkpoint: SessionCheckpoint) throws -> LocalSessionFence {
+        try requireSessionCheckpoint(checkpoint)
+        let store = self.store, credential = checkpoint.credential
+        return { publication in
+            try store.withCurrentCredential(credential, perform: publication)
+        }
+    }
+
     func savedDeletionState() throws -> ManagedPreservationSessionStore.DeletionReceipt.State? {
         try store.deletionReceipt()?.state
     }
@@ -878,6 +890,32 @@ actor ManagedPreservationClient {
             throw ManagedPreservationError.invalidResponse
         }
     }
+    struct ToolCleanup: Decodable, Sendable {
+        struct Item: Decodable, Sendable { let recordId: UUID; let kind: String }
+        let items: [Item]
+        let hasMore: Bool
+        let nextCursor: UUID?
+    }
+    func toolCleanupCandidates(after: UUID? = nil, checkpoint: SessionCheckpoint) async throws -> ToolCleanup {
+        let query = after.map { [URLQueryItem(name: "after", value: $0.uuidString.lowercased())] } ?? []
+        let data = try await authenticated("GET", path: "/v1/tool-cleanup", query: query, maximumBytes: 16 * 1024, checkpoint: checkpoint)
+        let value: ToolCleanup = try decode(data)
+        guard value.hasMore == (value.nextCursor != nil), value.items.count <= 50, Set(value.items.map(\.recordId)).count == value.items.count,
+              value.items.allSatisfy({ ["index", "json", "photo"].contains($0.kind) }) else { throw ManagedPreservationError.invalidResponse }
+        return value
+    }
+    func deleteToolCleanupCandidate(_ item: ToolCleanup.Item, checkpoint: SessionCheckpoint) async throws {
+        let data = try await authenticated("DELETE", path: recordPath(item.recordId), revision: 1,
+            checkpoint: checkpoint, strictToolDeletion: item.kind != "index")
+        let result: Mutation = try decode(data)
+        guard result.recordId == item.recordId, result.revision == 2 else { throw ManagedPreservationError.invalidResponse }
+    }
+    func abandonToolSnapshot(_ id: UUID, checkpoint: SessionCheckpoint) async throws {
+        struct Reply: Decodable { let snapshotId: UUID }
+        let data = try await authenticated("POST", path: "/v1/tool-snapshots/" + id.uuidString.lowercased() + "/abandon", maximumBytes: 1024, checkpoint: checkpoint)
+        let value: Reply = try decode(data)
+        guard value.snapshotId == id else { throw ManagedPreservationError.invalidResponse }
+    }
 
     private func validate(_ record: ManagedPreservationRecord) throws {
         guard record.revision > 0 else { throw ManagedPreservationError.invalidResponse }
@@ -989,6 +1027,7 @@ actor ManagedPreservationClient {
                 case "PRESERVATION_CONSENT_REQUIRED": throw ManagedPreservationError.consentRequired
                 case "REVISION_CONFLICT", "ARCHIVE_CHANGED": throw ManagedPreservationError.conflict
                 case "TOOL_PART_REFERENCED": throw ManagedPreservationError.toolPartReferenced
+                case "TOOL_SNAPSHOT_ABANDONED": throw ManagedPreservationError.snapshotAbandoned
                 case "RECORD_NOT_FOUND", "RECORD_DELETED": throw ManagedPreservationError.notFound
                 case "ARCHIVE_CAPACITY_REACHED": throw ManagedPreservationError.capacityReached
                 case "ACCESS_UNCONFIRMED": throw ManagedPreservationError.accessUnconfirmed
