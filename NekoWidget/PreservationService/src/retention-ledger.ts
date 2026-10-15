@@ -1,6 +1,8 @@
 import { ServiceError } from './contracts';
+import type { RetentionMembershipObservation } from './billing-link-protocol';
 
 export type VerifiedMembershipStatus = 'active' | 'grace' | 'expired' | 'unknown';
+export type VerifiedMembershipObservation = VerifiedMembershipStatus | RetentionMembershipObservation;
 const yearInMonths = 12;
 const thirtyDays = 30 * 24 * 60 * 60 * 1000;
 const finalNoticeWindow = 60 * 24 * 60 * 60 * 1000;
@@ -147,7 +149,7 @@ export class RetentionLedger {
   }
 
   /** Fair, bounded scan. A provider failure becomes an explicit pause, never an expiry. */
-  async refreshBatch(statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipStatus>,
+  async refreshBatch(statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipObservation>,
     limit = 20): Promise<number> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
     const rows = await this.db.prepare(`SELECT l.owner_id,l.billing_account_id
@@ -156,10 +158,10 @@ export class RetentionLedger {
       WHERE o.disabled=0 ORDER BY COALESCE(r.checked_at,0),l.owner_id LIMIT ?`)
       .bind(limit).all<{ owner_id: string; billing_account_id: string }>();
     for (const row of rows.results) {
-      let status: VerifiedMembershipStatus;
+      let status: VerifiedMembershipObservation;
       try { status = await statusForBillingAccount(row.billing_account_id); }
       catch { status = 'unknown'; }
-      await this.observe(row.owner_id, status);
+      await this.observeMembership(row.owner_id, status);
     }
     return rows.results.length;
   }
@@ -172,12 +174,19 @@ export class RetentionLedger {
     return row;
   }
 
+  async observeMembership(ownerId: string, observation: VerifiedMembershipObservation): Promise<RetentionState> {
+    return this.observe(ownerId, typeof observation === 'string' ? observation : observation.status,
+      typeof observation === 'string' ? null : observation.endedAt);
+  }
+
   /** Call with a fresh private-billing result, or unknown on explicit check failure. */
-  async observe(ownerId: string, status: VerifiedMembershipStatus): Promise<RetentionState> {
+  async observe(ownerId: string, status: VerifiedMembershipStatus, verifiedEndedAt: number | null = null): Promise<RetentionState> {
     if (!ownerPattern.test(ownerId) || !['active', 'grace', 'expired', 'unknown'].includes(status)) {
       throw new ServiceError('RETENTION_UNAVAILABLE', 503);
     }
     const observedAt = clock(this.now());
+    if (verifiedEndedAt !== null && (status !== 'expired' || !Number.isSafeInteger(verifiedEndedAt)
+        || verifiedEndedAt <= 0 || verifiedEndedAt > observedAt)) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
     // A ledger row is allowed only for a fixed owner↔billing link, never an
     // unlinked or disabled owner supplied by a caller.
     await this.db.prepare(`INSERT OR IGNORE INTO pa_retention(owner_id)
@@ -187,7 +196,8 @@ export class RetentionLedger {
       const current = await this.read(ownerId);
       if (observedAt < current.checked_at || (observedAt === current.checked_at
           && status !== current.verified_status)) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
-      if (observedAt === current.checked_at) return this.acknowledge(ownerId, current);
+      if (observedAt === current.checked_at && (verifiedEndedAt === null
+          || current.expired_at !== null && verifiedEndedAt <= current.expired_at)) return this.acknowledge(ownerId, current);
       const stable = status === current.verified_status
         && (status === 'expired'
           ? current.expired_at !== null && current.due_at !== null && current.paused_at === null
@@ -199,7 +209,8 @@ export class RetentionLedger {
             : current.expired_at === null && current.due_at === null && current.paused_at === null
               && current.final_notice_delivered_at === null && current.final_notice_receipt === null)
         && ((current.final_notice_delivered_at === null) === (current.final_notice_receipt === null));
-      if (stable && observedAt - current.checked_at < unchangedObservationInterval) {
+      if (stable && (verifiedEndedAt === null || current.expired_at !== null && verifiedEndedAt <= current.expired_at)
+          && observedAt - current.checked_at < unchangedObservationInterval) {
         return this.acknowledge(ownerId, current);
       }
       let episode = current.episode;
@@ -213,12 +224,19 @@ export class RetentionLedger {
         expiredAt = null; dueAt = null; pausedAt = null; noticeNotBeforeAt = 0; noticeAt = null; receipt = null;
       } else if (status === 'expired') {
         if (expiredAt === null) {
-          episode += 1; expiredAt = observedAt; dueAt = nextYear(observedAt);
+          episode += 1; expiredAt = verifiedEndedAt ?? observedAt; dueAt = nextYear(expiredAt);
           pausedAt = null; noticeNotBeforeAt = observedAt; noticeAt = null; receipt = null;
         } else if (pausedAt !== null) {
           if (dueAt === null || observedAt < pausedAt) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
           dueAt = clock(dueAt + observedAt - pausedAt); pausedAt = null;
           noticeNotBeforeAt = observedAt;
+        }
+        if (verifiedEndedAt !== null && verifiedEndedAt > expiredAt) {
+          // A later verified subscription end wins even if no active state was
+          // observed between scans. Existing preservation time never shrinks.
+          episode += 1; expiredAt = verifiedEndedAt;
+          dueAt = Math.max(dueAt!, nextYear(verifiedEndedAt));
+          noticeNotBeforeAt = observedAt; noticeAt = null; receipt = null;
         }
       } else if (expiredAt !== null) {
         // An outage may last longer than the original notice window. Require

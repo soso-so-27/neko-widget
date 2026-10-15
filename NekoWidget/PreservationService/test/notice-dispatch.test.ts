@@ -2,7 +2,8 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NoticeDispatch, NOTICE_SUBJECT, NOTICE_TEXT } from '../src/notice-dispatch';
 import { NoticeSubmissions } from '../src/notice-submissions';
-import { RetentionLedger, type VerifiedMembershipStatus } from '../src/retention-ledger';
+import { RetentionLedger, type VerifiedMembershipObservation } from '../src/retention-ledger';
+import { reserveNoticeSend } from '../src/index';
 import type { NoticeEventSource } from '../src/notice-events';
 
 const db = (env as unknown as { DB: D1Database }).DB;
@@ -17,11 +18,14 @@ afterEach(async () => {
     await db.prepare('UPDATE pa_owners SET disabled=1 WHERE owner_id=?').bind(ownerId).run();
   }
   await db.prepare("UPDATE pa_notice_scan_cursor SET due_at=0,owner_id='' WHERE id=1").run();
+  await db.prepare(`INSERT INTO pa_notice_send_budget(singleton,day_utc,reserved_sends,month_utc,month_reserved_sends,last_attempt_at)
+    VALUES(1,0,0,0,0,0) ON CONFLICT(singleton) DO UPDATE SET day_utc=0,reserved_sends=0,
+    month_utc=0,month_reserved_sends=0,last_attempt_at=0`).run();
 });
 const secret = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
   .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 
-async function fixture() {
+async function fixture(reserveSend?: () => Promise<boolean>) {
   let now = Date.UTC(2026, 8, 23, 12);
   const ownerId = crypto.randomUUID();
   createdOwners.push(ownerId);
@@ -41,7 +45,7 @@ async function fixture() {
   let statusCalls = 0;
   let contactCalls = 0;
   let failNextSend = false;
-  let status: (call: number) => VerifiedMembershipStatus = () => 'expired';
+  let status: (call: number) => VerifiedMembershipObservation = () => 'expired';
   let contact: (call: number) => { email: string; updatedAt: number } | null = () =>
     ({ email: 'owner@example.net', updatedAt });
   const dispatch = new NoticeDispatch({ ledger, submissions, source,
@@ -52,6 +56,7 @@ async function fixture() {
     } },
     statusForOwner: async () => status(++statusCalls),
     currentContact: async () => contact(++contactCalls),
+    ...(reserveSend ? { reserveSend } : {}),
   });
   return { ownerId, ledger, sent, dispatch, at: (value: number) => { now = value; },
     failNextSend: () => { failNextSend = true; },
@@ -61,6 +66,36 @@ async function fixture() {
 }
 
 describe('gated final-notice dispatch, without external email', () => {
+  it('reserves a shared allowance atomically, caps a day/month and rejects missing controls or clock reversal', async () => {
+    const now = Date.UTC(2026, 9, 15, 12);
+    const concurrent = await Promise.all(Array.from({ length: 55 }, () => reserveNoticeSend(db, now)));
+    expect(concurrent.filter(Boolean)).toHaveLength(50);
+    await expect(reserveNoticeSend(db, now - 1)).rejects.toMatchObject({ code: 'NOTICE_NOT_CONFIGURED' });
+    expect(await reserveNoticeSend(db, now + day)).toBe(true);
+    await db.prepare('UPDATE pa_notice_send_budget SET month_reserved_sends=1500 WHERE singleton=1').run();
+    expect(await reserveNoticeSend(db, now + 2 * day)).toBe(false);
+    expect(await reserveNoticeSend(db, Date.UTC(2026, 10, 1))).toBe(true);
+    await db.prepare('DELETE FROM pa_notice_send_budget WHERE singleton=1').run();
+    await expect(reserveNoticeSend(db, Date.UTC(2026, 10, 2))).rejects.toMatchObject({ code: 'NOTICE_NOT_CONFIGURED' });
+  });
+
+  it('does not refund an allowance after an uncertain provider failure and never calls a provider without one', async () => {
+    const now = Date.UTC(2026, 9, 15, 12);
+    const f = await fixture(() => reserveNoticeSend(db, now)); f.failNextSend();
+    expect((await f.dispatch.run()).failed).toBe(1);
+    expect((await db.prepare('SELECT reserved_sends FROM pa_notice_send_budget WHERE singleton=1').first())?.reserved_sends).toBe(1);
+    await db.prepare('UPDATE pa_notice_send_budget SET reserved_sends=50 WHERE singleton=1').run();
+    const g = await fixture(() => reserveNoticeSend(db, now));
+    expect((await g.dispatch.run()).submitted).toBe(0);
+    expect(g.sent).toHaveLength(0);
+  });
+
+  it('stops an old notice when a later contract end is verified just before provider dispatch', async () => {
+    const f = await fixture();
+    f.status(call => call === 1 ? 'expired' : { status: 'expired', endedAt: Date.UTC(2026, 8, 24, 12) });
+    expect((await f.dispatch.run()).submitted).toBe(0);
+    expect(f.sent).toHaveLength(0);
+  });
   it('sends a generic single notice, records submission but not delivery, and suppresses an immediate repeat', async () => {
     const f = await fixture();
     expect(await f.dispatch.run()).toEqual({ reviewed: 1, submitted: 1, skipped: 0, failed: 0 });

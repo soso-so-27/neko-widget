@@ -1,7 +1,7 @@
 import { contactEmailValid, ServiceError } from './contracts';
 import { parseDeliveredNoticeEvent, noticeMessageIdValid, type NoticeEventSource } from './notice-events';
 import { NOTICE_DELIVERY_EVIDENCE_WINDOW_MS, NOTICE_SUBMISSION_RETRY_DELAY_MS, RetentionLedger,
-  type ExpiryReviewCandidate, type NoticeReviewCandidate, type VerifiedMembershipStatus } from './retention-ledger';
+  type ExpiryReviewCandidate, type NoticeReviewCandidate, type VerifiedMembershipObservation } from './retention-ledger';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 
 const day = 24 * 60 * 60 * 1000;
@@ -295,7 +295,7 @@ export class NoticeSubmissions {
    */
   async promoteDelivered(messageId: string,
     currentContact: (candidate: NoticeReviewCandidate) => Promise<VerifiedNoticeContact | null>,
-    statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipStatus>): Promise<boolean> {
+    statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipObservation>): Promise<boolean> {
     const now = this.now();
     if (!noticeMessageIdValid(messageId) || !Number.isSafeInteger(now) || now <= 0) throw unavailable();
     const row = await this.db.prepare(`SELECT s.*,l.billing_account_id FROM pa_notice_submissions s
@@ -308,11 +308,11 @@ export class NoticeSubmissions {
     const contact = await currentContact(candidate);
     if (!contact || contact.updatedAt !== row.contact_updated_at
         || await this.recipientTag(row.owner_id, contact.email) !== row.recipient_tag) return false;
-    let status: VerifiedMembershipStatus;
+    let status: VerifiedMembershipObservation;
     try { status = await statusForBillingAccount(row.billing_account_id); }
     catch { status = 'unknown'; }
     const observed = await new RetentionLedger(this.db, this.now, this.ownerRecovery)
-      .observe(row.owner_id, status);
+      .observeMembership(row.owner_id, status);
     if (observed.status !== 'expired' || observed.pausedAt !== null
         || observed.episode !== row.episode || observed.dueAt !== row.due_at
         || row.delivered_at > now || row.delivered_at < now - NOTICE_DELIVERY_EVIDENCE_WINDOW_MS) return false;

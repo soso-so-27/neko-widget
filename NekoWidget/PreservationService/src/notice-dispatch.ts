@@ -1,7 +1,7 @@
 import { ServiceError } from './contracts';
 import type { NoticeEventSource } from './notice-events';
 import { NoticeSubmissions, validNoticeEventSource, type VerifiedNoticeContact } from './notice-submissions';
-import { RetentionLedger, type NoticeReviewCandidate, type VerifiedMembershipStatus } from './retention-ledger';
+import { RetentionLedger, type NoticeReviewCandidate, type VerifiedMembershipObservation } from './retention-ledger';
 
 const unavailable = () => new ServiceError('NOTICE_SEND_UNAVAILABLE', 503);
 
@@ -24,20 +24,21 @@ export class NoticeDispatch {
     submissions: NoticeSubmissions;
     source: NoticeEventSource;
     mail: NoticeMailProvider;
-    statusForOwner: (ownerId: string) => Promise<VerifiedMembershipStatus>;
+    statusForOwner: (ownerId: string) => Promise<VerifiedMembershipObservation>;
     currentContact: (candidate: NoticeReviewCandidate) => Promise<VerifiedNoticeContact | null>;
+    reserveSend?: () => Promise<boolean>;
   }) {
     if (!validNoticeEventSource(d.source)) throw unavailable();
   }
 
   private async verifyExpired(ownerId: string) {
-    let status: VerifiedMembershipStatus;
+    let status: VerifiedMembershipObservation;
     try { status = await this.d.statusForOwner(ownerId); }
     catch { status = 'unknown'; }
     // A changed or unavailable status is enough to stop dispatch. The regular
     // retention refresh records the pause; this path never promotes expiry.
-    if (status !== 'expired') return null;
-    return this.d.ledger.observe(ownerId, status);
+    if ((typeof status === 'string' ? status : status.status) !== 'expired') return null;
+    return this.d.ledger.observeMembership(ownerId, status);
   }
 
   /** Runs only behind the separate notification gate. Selection is advisory;
@@ -77,6 +78,9 @@ export class NoticeDispatch {
             || !await this.d.submissions.readyForDispatch(current, latestContact, claimId)) {
           skipped++; continue;
         }
+        // Reserve the account-wide daily allowance before any external call.
+        // An uncertain provider outcome consumes it; it is never refunded.
+        if (this.d.reserveSend && !await this.d.reserveSend()) { skipped++; break; }
         const sent = await this.d.mail.send({ to: latestContact.email, from: this.d.source.sender,
           subject: NOTICE_SUBJECT, text: NOTICE_TEXT });
         // Provider acceptance is not delivery. The Queue event must later match.

@@ -9,9 +9,12 @@ export interface LinkChallenge {
 }
 export interface BillingProof { billingKeyId: string; timestamp: string; nonce: string; signature: string; }
 export type MembershipStatus = 'active' | 'grace' | 'expired' | 'unknown';
+/** Private, freshly verified billing facts for the preservation clock. */
+export type RetentionMembershipObservation = { status: MembershipStatus; endedAt: number | null };
 export interface BillingLinkAuthority {
   verify(challenge: LinkChallenge, proof: BillingProof): Promise<void>;
   status(billingAccountId: string): Promise<MembershipStatus>;
+  retentionStatus?(billingAccountId: string): Promise<RetentionMembershipObservation>;
 }
 export function validAudience(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(value);

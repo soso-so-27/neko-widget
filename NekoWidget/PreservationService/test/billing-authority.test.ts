@@ -22,7 +22,8 @@ const bindings = env as unknown as { DB: D1Database; TEST_BILLING_MIGRATIONS: D1
 const db = bindings.DB;
 const audience = 'preservation.synthetic-test';
 const enabled: BillingAuthorityEnv = { DB: db, PRESERVATION_BILLING_ENABLED: 'YES',
-  PRESERVATION_LINK_AUDIENCE: audience, BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: 'YES' };
+  PRESERVATION_LINK_AUDIENCE: audience, BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: 'YES',
+  RETENTION_BILLING_REFRESH: { fetch: async () => new Response(null, { status: 204 }) } as unknown as Fetcher };
 const makeWorker = (overrides: Partial<BillingAuthorityEnv> = {}) => new BillingAuthority(createExecutionContext(), { ...enabled, ...overrides });
 const request = (path: string, value: unknown) => new Request(`https://private.invalid/membership/${path}`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
@@ -56,13 +57,14 @@ async function fixture() {
 }
 
 let transactionCounter = 0;
-async function entitlement(billingAccountId: string, appleStatus: 1 | 2 | 3 | 4 | 5) {
+async function entitlement(billingAccountId: string, appleStatus: 1 | 2 | 3 | 4 | 5, expiresOffset = 7 * 86_400_000, upgraded = false) {
   const now = Date.now(); const originalTransactionId = `${now}${++transactionCounter}`;
+  const expiresAt = now + expiresOffset, purchasedAt = Math.min(now - 1000, expiresAt - 1000);
   const transaction: VerifiedBillingTransaction = { billingAccountId, originalTransactionId, transactionId: originalTransactionId,
     productId: 'jp.synthetic.monthly', subscriptionGroupId: 'synthetic', bundleId: 'jp.synthetic.app', environment: 'Sandbox',
-    ownershipType: 'PURCHASED', transactionReason: 'PURCHASE', purchaseDateMs: now - 1000, originalPurchaseDateMs: now - 1000,
-    expiresDateMs: now + 7 * 86_400_000, signedDateMs: now,
-    revocationDateMs: appleStatus === 5 ? now : null, revocationReason: null, isUpgraded: false };
+    ownershipType: 'PURCHASED', transactionReason: 'PURCHASE', purchaseDateMs: purchasedAt, originalPurchaseDateMs: purchasedAt,
+    expiresDateMs: expiresAt, signedDateMs: now,
+    revocationDateMs: appleStatus === 5 ? now : null, revocationReason: null, isUpgraded: upgraded };
   await db.prepare(`INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id)
     VALUES (?,?,'Sandbox','synthetic')`).bind(originalTransactionId, billingAccountId).run();
   await requestBillingReconciliation(enabled as SharingEnv, originalTransactionId);
@@ -79,6 +81,7 @@ async function entitlement(billingAccountId: string, appleStatus: 1 | 2 | 3 | 4 
 }
 
 describe('private preservation billing authority', () => {
+  const retention = (id: string, worker = makeWorker()) => worker.fetch(request('verified-retention-status', { billingAccountId: id }));
   beforeAll(async () => {
     expect(bindings.TEST_BILLING_MIGRATIONS).toHaveLength(3);
     await applyD1Migrations(db, bindings.TEST_BILLING_MIGRATIONS, 'test_billing_migrations');
@@ -86,6 +89,78 @@ describe('private preservation billing authority', () => {
   beforeEach(async () => {
     await db.prepare(`UPDATE billing_runtime_gate SET generation=generation+1,updated_at=unixepoch(),
       effective_entitlement_enabled=1,subscription_reconciliation_enabled=1 WHERE singleton=1`).run();
+  });
+
+  it('uses the verified end date and the complete lineage set for retention, without changing paid access', async () => {
+    const f = await fixture();
+    await entitlement(f.billingAccountId, 2, -7 * 86_400_000);
+    await entitlement(f.billingAccountId, 2, -2 * 86_400_000);
+    const state = await (await retention(f.billingAccountId)).json() as { status: string; endedAt: number };
+    expect(state.status).toBe('expired');
+    expect(state.endedAt).toBeGreaterThan(Date.now() - 3 * 86_400_000);
+    await db.prepare(`INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id)
+      VALUES (?,?,'Sandbox','synthetic')`).bind(`${Date.now()}999`, f.billingAccountId).run();
+    expect(await (await retention(f.billingAccountId)).json()).toMatchObject({ status: 'unknown', endedAt: null });
+    await entitlement(f.billingAccountId, 1);
+    expect(await (await retention(f.billingAccountId)).json()).toMatchObject({ status: 'active', endedAt: null });
+  });
+
+  it('never infers a retention end from stale, retry, missing or contradictory authority', async () => {
+    const missing = await fixture();
+    expect(await (await retention(missing.billingAccountId)).json()).toMatchObject({ status: 'unknown', endedAt: null });
+    for (const [appleStatus, offset] of [[1, -1000], [2, 86_400_000], [3, -86_400_000]] as const) {
+      const f = await fixture(); await entitlement(f.billingAccountId, appleStatus, offset);
+      expect(await (await retention(f.billingAccountId)).json()).toMatchObject({ status: 'unknown', endedAt: null });
+    }
+    const f = await fixture(); await entitlement(f.billingAccountId, 2, -86_400_000);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 37 * 3_600_000);
+    try { expect(await (await retention(f.billingAccountId)).json()).toMatchObject({ status: 'unknown', endedAt: null }); }
+    finally { clock.mockRestore(); }
+    expect((await retention(f.billingAccountId, makeWorker({ PRESERVATION_BILLING_ENABLED: 'NO' }))).status).toBe(503);
+    expect((await retention(f.billingAccountId, makeWorker({ BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: 'NO' }))).status).toBe(503);
+    expect((await publicWorker.fetch(request('verified-retention-status', { billingAccountId: f.billingAccountId }))).status).toBe(404);
+  });
+
+  it('uses verified revocation, protects grace and refuses upgraded authority', async () => {
+    const revoked=await fixture();await entitlement(revoked.billingAccountId,5);
+    const revocation=await (await retention(revoked.billingAccountId)).json() as {status:string;endedAt:number};
+    expect(revocation.status).toBe('expired');expect(revocation.endedAt).toBeLessThanOrEqual(Date.now());
+    const upgraded=await fixture();await entitlement(upgraded.billingAccountId,1,7*86_400_000,true);
+    expect(await (await retention(upgraded.billingAccountId)).json()).toMatchObject({status:'unknown',endedAt:null});
+    const grace=await fixture();await entitlement(grace.billingAccountId,4);
+    expect(await (await retention(grace.billingAccountId)).json()).toMatchObject({status:'grace',endedAt:null});
+    const clock=vi.spyOn(Date,'now').mockReturnValue(Date.now()+86_400_001);
+    try {expect(await (await retention(grace.billingAccountId)).json()).toMatchObject({status:'unknown',endedAt:null});}
+    finally {clock.mockRestore();}
+  });
+
+  it('accounts for the reconciler second precision without accepting a later source second', async () => {
+    const f=await fixture();const now=Date.now();
+    for(const [offset,expected] of [[999,'expired'],[1000,'unknown']] as const){
+      const dbView=new Proxy(db,{get(target,key){
+        if(key==='prepare')return(sql:string)=>sql.includes('LEFT JOIN billing_effective_entitlement_current')
+          ? {bind:()=>({all:async()=>({results:[{ownership_type:'PURCHASED',apple_status:2,
+              expires_date_ms:now-86_400_000,revocation_date_ms:null,revocation_reason:null,is_upgraded:0,
+              grace_period_expires_date_ms:null,authority_stale_at_ms:now+3_600_000,
+              evaluated_at_ms:now-offset,source_fetched_at_ms:now}]})})} : target.prepare(sql);
+        const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value;
+      }});
+      expect(await (await retention(f.billingAccountId,makeWorker({DB:dbView}))).json()).toMatchObject({status:expected});
+    }
+  });
+
+  it('rejects malformed or foreign private retention responses without falling back to the paid-status API', async () => {
+    const id = crypto.randomUUID();
+    for (const extra of [{ billingAccountId: crypto.randomUUID() }, { endedAt: Date.now() + 86_400_000 },
+      { status: 'active', endedAt: Date.now() }, { status: 'expired', endedAt: null }]) {
+      const paths: string[] = [];
+      const adapter = boundBillingAuthority({ fetch: async (request: RequestInfo) => {
+        paths.push(String(request));
+        return Response.json({ version: 1, billingAccountId: id, status: 'expired', endedAt: Date.now() - 1000, ...extra });
+      } } as unknown as Fetcher);
+      await expect(adapter.retentionStatus(id)).rejects.toMatchObject({ code: 'MEMBERSHIP_UNCONFIRMED' });
+      expect(paths).toEqual(['https://preservation-internal/membership/verified-retention-status']);
+    }
   });
 
   it('keeps default public fetch closed and requires explicit private configuration before DB access', async () => {
