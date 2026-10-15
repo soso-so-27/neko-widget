@@ -50,14 +50,23 @@ async function fixture(issue=true) {
   for(let n=0;n<19;n++) {
     const id=crypto.randomUUID(),kind=n<5?'json':'photo',contentBytes=n<5?2:n===18?11484328-10-13*1000:1000;
     const part:ToolBackupPart={snapshotId:snapshot,kind,path:n<5?paths[n]!: `ShowcasePhotos/${crypto.randomUUID()}.jpg`,
-      part:0,count:1,sha256:await sha256(`synthetic-${n}`),payload:kind==='json'?btoa('{}'):''};
+      part:0,count:1,sha256:await sha256(kind==='json'?'{}':`synthetic-${n}`),payload:kind==='json'?btoa('{}'):''};
     seeds.push({id,part,contentBytes});
     await db.prepare(`INSERT INTO pa_tool_trial_records(owner_id,record_id,snapshot_id,kind,path,part,part_count,
       payload_sha256,input_fingerprint,content_bytes,committed) VALUES(?,?,?,?,?,0,1,?,?,?,1)`)
       .bind(session.ownerId,id,snapshot,kind,part.path,part.sha256,'b'.repeat(64),contentBytes).run();
-    // Synthetic existing inventory: index membership can be checked without reading any photo.
-    await db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,metadata,quota_bytes)
-      VALUES(?,?,1,?,?,?,0)`).bind(session.ownerId,id,'b'.repeat(64),crypto.randomUUID(),new Uint8Array([1]).buffer).run();
+    // Existing descriptors must pass the same authenticated metadata closure as
+    // real records; index validation never downloads the seeded photo objects.
+    const document:ArchiveDocument={...legacy,formatVersion:3,text:'synthetic prior tool piece',
+      photoFile:kind==='photo'?'photo.jpg':null,toolBackup:part};
+    const photoKey=kind==='photo'?`personal/${session.ownerId}/${id}/${crypto.randomUUID()}`:null;
+    const metadata=await keys.seal(new TextEncoder().encode(JSON.stringify({version:1,
+      ownerId:session.ownerId,recordId:id,revision:1,document,
+      photoSHA256:kind==='photo'?part.sha256:null,photoBytes:kind==='photo'?contentBytes:0})),
+      {ownerId:session.ownerId,purpose:'record',recordId:`${id}/document`});
+    await db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,
+      metadata,photo_key,photo_bytes,quota_bytes) VALUES(?,?,1,?,?,?,?,?,0)`)
+      .bind(session.ownerId,id,'b'.repeat(64),crypto.randomUUID(),metadata.buffer,photoKey,kind==='photo'?contentBytes:0).run();
   }
   const original=await sha256(JSON.stringify({document:pending.request.document,photoSHA256:pending.part.sha256}));
   await db.prepare(`INSERT INTO pa_tool_trial_records(owner_id,record_id,snapshot_id,kind,path,part,part_count,

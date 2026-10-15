@@ -7,6 +7,16 @@ const countWithin = (value: string, maximum: number) => {
   return true;
 };
 const fail = (): never => { throw new ServiceError('INVALID_RECORD'); };
+const toolManifests: Record<string, string> = {
+  CareHandoff: 'plan.json', EvacuationPreparation: 'plan.json', VeterinaryVisits: 'state.json',
+  ShowcasePhotos: 'selected.json', LostCatDrafts: 'drafts.json', CatPreparedness: 'records.json',
+};
+const toolPhotoName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/iu;
+function validToolPath(path: string): boolean {
+  const pieces = path.split('/');
+  return pieces.length === 2 && Object.hasOwn(toolManifests, pieces[0]!)
+    && (pieces[1] === toolManifests[pieces[0]!] || toolPhotoName.test(pieces[1]!));
+}
 function date(value: unknown): string | null {
   if (value === null) return null;
   if (typeof value !== 'string') return fail();
@@ -78,30 +88,44 @@ function validateToolBackup(input: unknown): ToolBackupPart {
 }
 /** The small completion record references immutable owner-local records. The
  * native restore additionally checks every piece's path, hash and snapshot ID. */
-export function toolIndexRecordIDs(part: ToolBackupPart): string[] {
-  if (part.kind !== 'index') return [];
+export interface ToolIndexFile {
+  path: string; bytes: number; sha256: string; records: string[]; sourceSnapshotID?: string;
+}
+export interface ToolIndex { version: 1 | 2; snapshotID: string; createdAt: number; files: ToolIndexFile[] }
+export function parseToolIndex(part: ToolBackupPart): ToolIndex {
+  if (part.kind !== 'index') return fail();
   let index: { version?: unknown; snapshotID?: unknown; createdAt?: unknown; files?: unknown };
   try { index = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(part.payload), c => c.charCodeAt(0)))); }
   catch { return fail(); }
-  if (!index || index.version !== 1 || typeof index.snapshotID !== 'string' || index.snapshotID.toLowerCase() !== part.snapshotId
+  if (!index || ![1, 2].includes(index.version as number) || typeof index.snapshotID !== 'string' || index.snapshotID.toLowerCase() !== part.snapshotId
     || typeof index.createdAt !== 'number' || !Number.isFinite(index.createdAt)
     || !Array.isArray(index.files) || !index.files.length || index.files.length > 999) return fail();
   const ids = new Set<string>([part.snapshotId]), paths = new Set<string>();
   for (const file of index.files) {
     if (!file || typeof file !== 'object' || typeof file.path !== 'string' || paths.has(file.path)
-      || !/^(CareHandoff|EvacuationPreparation|VeterinaryVisits|ShowcasePhotos|LostCatDrafts|CatPreparedness)\/[A-Za-z0-9-]+\.(json|jpg)$/.test(file.path)
+      || !validToolPath(file.path)
       || !Number.isInteger(file.bytes) || file.bytes <= 0 || file.bytes > (file.path.endsWith('.jpg') ? 20 : 8) * 1024 * 1024
       || typeof file.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(file.sha256) || !Array.isArray(file.records)
       || file.records.length !== (file.path.endsWith('.jpg') ? 1 : Math.ceil(file.bytes / 49152))) return fail();
     paths.add(file.path);
+    if (file.sourceSnapshotID !== undefined && (index.version !== 2 || !file.path.endsWith('.jpg')
+      || typeof file.sourceSnapshotID !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(file.sourceSnapshotID))) return fail();
     for (const id of file.records) {
       if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) || ids.has(id.toLowerCase())) return fail();
       ids.add(id.toLowerCase());
     }
   }
+  for (const path of paths) {
+    const tool = path.split('/')[0]!;
+    if (!paths.has(`${tool}/${toolManifests[tool]}`)) return fail();
+  }
   if (ids.size > 1000) return fail();
-  ids.delete(part.snapshotId);
-  return [...ids];
+  return index as ToolIndex;
+}
+export function toolIndexRecordIDs(part: ToolBackupPart): string[] {
+  if (part.kind !== 'index') return [];
+  return parseToolIndex(part).files.flatMap(file => file.records.map(id => id.toLowerCase()));
 }
 export function decodePhoto(value: unknown): Uint8Array | null {
   if (value === null) return null;

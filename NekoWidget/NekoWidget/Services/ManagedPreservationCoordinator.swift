@@ -310,6 +310,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var toolBackupProgress: String?
     @Published private(set) var restoredToolBackup: ToolBackupFiles.Saved?
     @Published private(set) var pendingToolBackupDate: Date?
+    @Published private(set) var pendingToolDeletions: [ToolBackupFiles.Saved] = []
     @Published var editedText = ""
 
     let draft: ManagedPreservationDraft?
@@ -611,12 +612,16 @@ final class ManagedPreservationCoordinator: ObservableObject {
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
             self.toolBackupProgress = "ツールの保存内容を確認中…"
-            defer { self.toolBackupProgress = nil }
+            defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             let sourceID = self.toolBackupSource
+            let pending = try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: sourceID)
+            let reusable = pending == nil ? try await ToolBackupTransfer.reusablePhotos(client: self.client) : []
+            guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             let prepared = try await Task.detached {
                 let source = try sourceID.map { try ToolBackupFiles.restoredSource($0, owner: owner) }
-                if let pending = try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: sourceID) { return (pending, false) }
-                return (try ToolBackupFiles.capture(owner: owner, source: source, sourceSnapshotID: sourceID), true)
+                if let pending { return (pending, false) }
+                return (try ToolBackupFiles.capture(owner: owner, source: source, sourceSnapshotID: sourceID,
+                    reusablePhotos: reusable, indexVersion: 2), true)
             }.value
             let saved = prepared.0
             do { try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id)) }
@@ -627,7 +632,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             try self.check(ticket)
             self.pendingToolBackupDate = saved.index.createdAt
             try await ToolBackupTransfer.upload(saved, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "ツールを保管中 \(completed) / \(total)" } }
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("保存", completed: completed, total: total) } }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.statusMessage = "ツールの記録と添付写真を保管しました。保存時点の内容を復元できます。"
@@ -641,13 +646,29 @@ final class ManagedPreservationCoordinator: ObservableObject {
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
             self.toolBackupProgress = "ツールの記録を復元中…"
-            defer { self.toolBackupProgress = nil }
+            defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             let saved = try await ToolBackupTransfer.restore(record, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "ツールを復元中 \(completed) / \(total)" } }
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("復元", completed: completed, total: total) } }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.restoredToolBackup = saved
             self.statusMessage = "復元しました。「復元したツール」から通信なしでも開けます。元の記録はそのままです。"
+        }
+    }
+
+    func resumeToolDeletion(_ saved: ToolBackupFiles.Saved) {
+        guard !isBusy else { return }
+        run { ticket in
+            guard try await self.requireCurrentOwner(ticket) == saved.owner else { throw ManagedPreservationError.staleSession }
+            self.toolBackupProgress = "中断したコピーの削除を再開中…"
+            defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
+            try await ToolBackupTransfer.delete(saved.index, client: self.client) { completed, total in
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
+            }
+            try self.check(ticket)
+            self.pendingToolDeletions = try ToolBackupFiles.pendingDeletions(owner: saved.owner)
+            self.statusMessage = "この保管コピーを削除しました。別のコピーに必要な写真は残っています。"
+            try await self.loadFirstPage(ticket)
         }
     }
 
@@ -657,10 +678,10 @@ final class ManagedPreservationCoordinator: ObservableObject {
             let owner = try await self.requireCurrentOwner(ticket)
             guard let pending = try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: self.toolBackupSource) else { return }
             self.toolBackupProgress = "中断した保管コピーを削除中…"
-            defer { self.toolBackupProgress = nil }
+            defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             try await ToolBackupTransfer.confirmPendingAttemptBeforeDeletion(pending, client: self.client)
             try await ToolBackupTransfer.delete(pending.index, client: self.client) { completed, total in
-                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "中断した保管コピーを削除中 \(completed) / \(total)" } }
+                await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             let folder = ToolBackupFiles.directory(pending.id)
@@ -749,9 +770,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 let index = try JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
                 guard index.snapshotID == original.record.id else { throw ToolBackupError.invalid }
                 self.toolBackupProgress = "保管コピーを削除中…"
-                defer { self.toolBackupProgress = nil }
+                defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
                 try await ToolBackupTransfer.delete(index, client: self.client) { completed, total in
-                    await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = "保管コピーを削除中 \(completed) / \(total)" } }
+                    await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
                 }
             } else { try await self.client.delete(original.record) }
             try self.check(ticket)
@@ -950,6 +971,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
         authenticatedOwnerID = owner
         // A damaged local pending snapshot must not hide unrelated cloud records.
         pendingToolBackupDate = (try? ToolBackupFiles.pending(owner: owner, sourceSnapshotID: toolBackupSource))?.index.createdAt
+        do { pendingToolDeletions = try ToolBackupFiles.pendingDeletions(owner: owner) }
+        catch { errorMessage = "途中の削除の記録を読み込めませんでした。ほかの保管コピーは引き続き確認できます。" }
         copyState = copyStates[owner] ?? .deviceOnly
         var ownDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
         do {
@@ -1172,6 +1195,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 if known == .authenticationRequired || known == .staleSession {
                     self.clearAccountPresentation()
                 }
+                if let owner = self.authenticatedOwnerID, self.isSignedIn {
+                    self.pendingToolDeletions = (try? ToolBackupFiles.pendingDeletions(owner: owner)) ?? self.pendingToolDeletions
+                }
                 self.errorMessage = error is CancellationError
                     ? ManagedPreservationError.interrupted.errorDescription
                     : (known?.errorDescription ?? (error as? ToolBackupError)?.errorDescription ?? ManagedPreservationError.unavailable.errorDescription)
@@ -1204,7 +1230,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             setCopyState(.needsConfirmation, owner: owner)
         }
         consentToNewSave = false
-        consentToToolBackup = false; restoredToolBackup = nil; toolBackupProgress = nil; pendingToolBackupDate = nil
+        consentToToolBackup = false; restoredToolBackup = nil; toolBackupProgress = nil; pendingToolBackupDate = nil; pendingToolDeletions = []
         copyState = .deviceOnly
         membership = nil; membershipMessage = nil
         noticeContact = nil

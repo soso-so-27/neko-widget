@@ -115,6 +115,16 @@ describe('explicit owner-requested deletion', () => {
       { key: `recovery/v1/${other.ownerId}/photo/${crypto.randomUUID()}`, versionId: 'other', deleteMarker: false, bytes: 6 });
     await db.prepare('INSERT INTO pa_membership_links(owner_id,billing_account_id,created_at) VALUES(?,?,?)')
       .bind(f.session.ownerId, crypto.randomUUID(), now()).run();
+    const [toolIndex, toolPhoto, claimedPart] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    for (const id of [toolIndex, toolPhoto, claimedPart]) {
+      await db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,
+        metadata,photo_bytes,quota_bytes) VALUES(?,?,1,?,?,?,0,1)`)
+        .bind(f.session.ownerId, id, 'a'.repeat(64), crypto.randomUUID(), new Uint8Array([1]).buffer).run();
+    }
+    await db.prepare('INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id) VALUES(?,?,?)')
+      .bind(f.session.ownerId, toolIndex, toolPhoto).run();
+    await db.prepare('INSERT INTO pa_tool_part_delete_claims(owner_id,part_id) VALUES(?,?)')
+      .bind(f.session.ownerId, claimedPart).run();
     await db.prepare(`INSERT INTO pa_owner_recovery_versions(owner_id,generation,
       object_key,version_id,sha256,bytes,confirmed_at)
       SELECT owner_id,generation,'recovery/v1/'||owner_id||'/owner/'||?,
@@ -139,6 +149,8 @@ describe('explicit owner-requested deletion', () => {
     expect(await db.prepare('SELECT http_request_count,export_lease_id FROM pa_owners WHERE owner_id=?')
       .bind(other.ownerId).first()).toEqual({ http_request_count: 30, export_lease_id: exportLease });
     expect(residue.contentTotal).toBe(0);
+    expect(residue.content.pa_tool_snapshot_references).toBe(0);
+    expect(residue.content.pa_tool_part_delete_claims).toBe(0);
     expect(residue.purgeWorkTotal).toBe(0);
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'completed' });
     await expect(f.journal.assertNotRequested(f.session.ownerId)).rejects.toThrow();

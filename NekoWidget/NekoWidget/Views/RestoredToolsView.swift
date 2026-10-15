@@ -68,6 +68,8 @@ private struct RestoredToolWorkspace: View {
         List {
             Section {
                 Text(saved.index.createdAt, format: .dateTime.year().month().day().hour().minute())
+                Text(saved.index.contentsSummary)
+                    .accessibilityIdentifier("restored-tool-contents-summary")
                 Text("保存当時の記録です。ここでの編集は、この復元した記録だけに反映されます。")
                     .font(.footnote).foregroundStyle(.secondary)
                 if ManagedPreservationConfiguration.current.isEnabled {
@@ -181,6 +183,12 @@ struct ToolBackupFixtureView: View {
     private func verify() async {
         var phase = "source"
         do {
+            AppIdleTimer.setPreventSleep(true, for: "fixture-scan")
+            AppIdleTimer.setPreventSleep(true, for: "fixture-transfer")
+            AppIdleTimer.setPreventSleep(false, for: "fixture-scan")
+            guard UIApplication.shared.isIdleTimerDisabled else { throw ToolBackupError.invalid }
+            AppIdleTimer.setPreventSleep(false, for: "fixture-transfer")
+            guard !UIApplication.shared.isIdleTimerDisabled else { throw ToolBackupError.invalid }
             let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             var care = CareHandoffPlan()
             care.cats = [CareCat(name: "同じ名前", healthStatus: .recorded, healthDetails: "保存当時の薬"), CareCat(name: "同じ名前")]
@@ -222,7 +230,7 @@ struct ToolBackupFixtureView: View {
             guard try store.load() == credential else { throw ToolBackupError.invalid }
             defer { if let current = try? store.load() { _ = try? store.clear(ifMatching: current) } }
             let pieces = try ToolBackupFiles.drafts(candidate)
-            let server = ToolBackupFixtureServer(maximum: pieces.count)
+            let server = ToolBackupFixtureServer(maximum: pieces.count + 10)
             let configuration = ManagedPreservationConfiguration(isEnabled: true, origin: origin, membershipAudience: "tool.fixture")
             let client = ManagedPreservationClient(configuration: configuration,
                 requestOverride: { request, _ in try await server.request(request) })
@@ -241,6 +249,7 @@ struct ToolBackupFixtureView: View {
             await server.hide(nil)
             phase = "upload-resume"
             try await ToolBackupTransfer.upload(candidate, client: client) { _, _ in }
+            guard await server.putCount(pieces[0].0) == 1 else { throw ToolBackupError.invalid }
             phase = "request-owner-binding"
             let bound = try await client.detail(candidate.id)
             let checkpoint = try await client.captureSessionCheckpoint()
@@ -307,17 +316,27 @@ struct ToolBackupFixtureView: View {
                 _ = try ToolBackupFiles.restoredSource(restored.id, owner: UUID().uuidString)
                 throw ToolBackupError.invalid
             } catch ManagedPreservationError.staleSession { }
-            let next = try ToolBackupFiles.capture(owner: owner, source: restoredRoot, sourceSnapshotID: restored.id)
+            phase = "reuse-unchanged-photo"
+            await server.enableReuseListing()
+            await server.setPhotoReuseAllowed(false)
+            guard try await ToolBackupTransfer.reusablePhotos(client: client).isEmpty else { throw ToolBackupError.invalid }
+            await server.setPhotoReuseAllowed(true)
+            let reusable = try await ToolBackupTransfer.reusablePhotos(client: client)
+            let next = try ToolBackupFiles.capture(owner: owner, source: restoredRoot, sourceSnapshotID: restored.id,
+                reusablePhotos: reusable, indexVersion: 2)
             defer { try? FileManager.default.removeItem(at: ToolBackupFiles.directory(next.id)) }
+            guard next.index.files.contains(where: { $0.sourceSnapshotID == candidate.id }),
+                  try ToolBackupFiles.drafts(next).allSatisfy({ $0.1.kind != "photo" }) else { throw ToolBackupError.invalid }
             guard try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: restored.id)?.id == next.id,
                   try ToolBackupFiles.pending(owner: owner) == nil else { throw ToolBackupError.invalid }
+            try await ToolBackupTransfer.upload(next, client: client) { _, _ in }
             phase = "delete-lost-reply"
-            // A lost DELETE reply leaves the index available for explicit retry.
+            // Index-first deletion leaves a durable journal for explicit retry.
             do {
                 try await ToolBackupTransfer.delete(candidate.index, client: client) { _, _ in }
                 throw ToolBackupError.invalid
             } catch ManagedPreservationError.unavailable { }
-            _ = try await client.detail(candidate.id)
+            guard try ToolBackupFiles.pendingDeletions(owner: owner).contains(where: { $0.id == candidate.id }) else { throw ToolBackupError.invalid }
             let deletedFirstReads = await server.readCount(pieces[0].0)
             phase = "delete-reauthentication-and-resume"
             let deletionRenewed = ManagedPreservationSessionStore.Credential(token: String(repeating: "d", count: 43), ownerId: owner,
@@ -325,8 +344,14 @@ struct ToolBackupFixtureView: View {
             guard try store.save(deletionRenewed, replacing: renewed) else { throw ToolBackupError.invalid }
             try await client.reloadSessionFromSecureStorage()
             try await ToolBackupTransfer.delete(candidate.index, client: client) { _, _ in }
-            guard await server.isEmpty(), await server.readCount(pieces[0].0) == deletedFirstReads,
+            guard await server.readCount(pieces[0].0) == deletedFirstReads + 1,
                   try ToolBackupFiles.saved().contains(where: { $0.id == restored.id }) else { throw ToolBackupError.invalid }
+            phase = "restore-after-original-copy-deleted"
+            let nextRecord = try await client.detail(next.id).record
+            let nextRestored = try await ToolBackupTransfer.restore(nextRecord, client: client) { _, _ in }
+            guard nextRestored.index == next.index else { throw ToolBackupError.invalid }
+            try await ToolBackupTransfer.delete(next.index, client: client) { _, _ in }
+            guard await server.isEmpty(), try ToolBackupFiles.pendingDeletions(owner: owner).isEmpty else { throw ToolBackupError.invalid }
             phase = "large-index-and-zip"
             try verifyLargeIndex()
             originalSource = source; originalCareData = careBytes
@@ -360,7 +385,10 @@ struct ToolBackupFixtureView: View {
 }
 
 private actor ToolBackupFixtureServer {
-    let maximum: Int
+    var maximum: Int
+    var reuseListing = false
+    var photoReuseAllowed = true
+    var generation = 1
     var records: [UUID: [String: Any]] = [:]
     var totalRequests = 0
     var losesReply = true
@@ -368,9 +396,13 @@ private actor ToolBackupFixtureServer {
     var throttlesList = true
     var hidden: UUID?
     var reads: [UUID: Int] = [:]
+    var puts: [UUID: Int] = [:]
     init(maximum: Int) { self.maximum = maximum }
+    func enableReuseListing() { reuseListing = true; maximum = 200 }
+    func setPhotoReuseAllowed(_ value: Bool) { photoReuseAllowed = value; generation += 1 }
     func hide(_ id: UUID?) { hidden = id }
     func readCount(_ id: UUID) -> Int { reads[id, default: 0] }
+    func putCount(_ id: UUID) -> Int { puts[id, default: 0] }
     func isEmpty() -> Bool { records.isEmpty }
     func requestCount() -> Int { totalRequests }
     func request(_ request: URLRequest) throws -> (Data, URLResponse) {
@@ -383,6 +415,18 @@ private actor ToolBackupFixtureServer {
         if url.path == "/v1/records" {
             let after = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "after" })?.value
             let all = Array(records.values)
+            if reuseListing {
+                let page = all.filter { ($0["recordId"] as! String) > (after ?? "") }
+                    .sorted { ($0["recordId"] as! String) < ($1["recordId"] as! String) }
+                let items = page.prefix(20).map { record in
+                    var item = record
+                    if ((record["document"] as? [String: Any])?["toolBackup"] as? [String: Any])?["kind"] as? String == "photo" {
+                        item["toolPhotoReusable"] = photoReuseAllowed
+                    }
+                    return item
+                }
+                return try response(["items": items, "nextCursor": page.count > 20 ? items.last!["recordId"]! : NSNull(), "generation": generation])
+            }
             if after == nil {
                 var hiddenPart = all.first { (($0["document"] as? [String: Any])?["toolBackup"] as? [String: Any])?["kind"] as? String != "index" }!
                 hiddenPart["recordId"] = "00000000-0000-0000-0000-000000000001"
@@ -397,21 +441,37 @@ private actor ToolBackupFixtureServer {
         }
         if url.path == "/v1/usage" {
             return try response(["version": 1, "accounting": "encrypted-records-v1",
+                "toolSnapshots": ["maximumIndexVersion": 2, "strictPartDeletion": true],
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 100000000, "availableBytes": 100000000, "overLimit": false],
                 "records": ["saved": records.count, "pending": 0, "maximumRecords": maximum, "creationLimitReached": records.count >= maximum]])
         }
         guard let id = UUID(uuidString: url.lastPathComponent) else { throw ToolBackupError.invalid }
         if request.httpMethod == "DELETE" {
+            if let target = records[id], let document = target["document"] as? [String: Any],
+               let part = document["toolBackup"] as? [String: Any], part["kind"] as? String != "index" {
+                let otherUse = records.values.contains { value in
+                    guard let doc = value["document"] as? [String: Any], let tag = doc["toolBackup"] as? [String: Any],
+                          tag["kind"] as? String == "index", let encoded = tag["payload"] as? String,
+                          let bytes = Data(base64Encoded: encoded), let index = try? JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
+                    else { return false }
+                    return index.files.contains { $0.records.contains(id) }
+                }
+                if otherUse { return try response(["error": ["code": "TOOL_PART_REFERENCED"]], status: 409) }
+                guard request.value(forHTTPHeaderField: "X-Tool-Delete-Unreferenced") == "1" else { throw ToolBackupError.invalid }
+            }
             guard records.removeValue(forKey: id) != nil else { return try response(["error": ["code": "RECORD_NOT_FOUND"]], status: 404) }
+            generation += 1
             deleteCount += 1
             if deleteCount == 2 { throw ManagedPreservationError.unavailable }
             return try response(["recordId": id.uuidString.lowercased(), "revision": 2])
         }
         if request.httpMethod == "PUT" {
+            puts[id, default: 0] += 1
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             let photo = (body["photoBase64"] as? String).flatMap { Data(base64Encoded: $0) }
             records[id] = ["recordId": id.uuidString.lowercased(), "revision": 1, "document": body["document"]!,
                            "photoBase64": body["photoBase64"] ?? NSNull(), "photoSHA256": photo.map { ToolBackupIndex.hash($0) as Any } ?? NSNull()]
+            generation += 1
             if losesReply { losesReply = false; throw ManagedPreservationError.unavailable }
             return try response(["recordId": id.uuidString.lowercased(), "revision": 1])
         }
