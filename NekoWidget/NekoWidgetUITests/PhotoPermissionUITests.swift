@@ -1785,6 +1785,11 @@ final class SoloMemoriesUITests: XCTestCase {
         let completes = expectation(for: NSPredicate(format: "label == %@", "保存済み"), evaluatedWith: saved)
         wait(for: [completes], timeout: 20)
         capture("automatic-save-one-time-consent")
+        let managesSubscription = app.buttons["app-record-membership-manage"]
+        for _ in 0..<4 where !managesSubscription.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(managesSubscription.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(managesSubscription.isHittable)
+        capture("automatic-save-apple-contract-entry")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 4回")
         app.buttons["預けるとき"].tap()

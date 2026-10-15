@@ -190,9 +190,9 @@ test('private billing gateway: real named binding, bounded routes and authoritat
     assert.equal((await fetch('/v1/billing/health')).status, 503);
     await db.prepare('UPDATE billing_runtime_gate SET generation=7 WHERE singleton=1').run();
     await db.prepare('CREATE TABLE billing_transaction_lineages(original_transaction_id TEXT,billing_account_id TEXT,environment TEXT,subscription_group_id TEXT)').run();
-    await db.prepare('CREATE TABLE billing_effective_entitlement_current(original_transaction_id TEXT,billing_account_id TEXT,environment TEXT,subscription_group_id TEXT,source_fetched_at_ms INTEGER,authority_stale_at_ms INTEGER)').run();
+    await db.prepare('CREATE TABLE billing_effective_entitlement_current(original_transaction_id TEXT,billing_account_id TEXT,environment TEXT,subscription_group_id TEXT,source_fetched_at_ms INTEGER,authority_stale_at_ms INTEGER,materialized_grants_plus INTEGER)').run();
     await db.prepare('INSERT INTO billing_transaction_lineages VALUES(?,?,?,?)').bind('210000000012345',accountId,'Sandbox','20999999').run();
-    await db.prepare('INSERT INTO billing_effective_entitlement_current VALUES(?,?,?,?,?,?)').bind('210000000012345',accountId,'Sandbox','20999999',Date.now(),Date.now()+3600000).run();
+    await db.prepare('INSERT INTO billing_effective_entitlement_current VALUES(?,?,?,?,?,?,?)').bind('210000000012345',accountId,'Sandbox','20999999',Date.now(),Date.now()+3600000,0).run();
     assert.equal((await fetch('/retention', { method: 'POST', body: JSON.stringify({ billingAccountId: accountId }) })).status, 204,
       'actual named retention binding operates while purchase admission is expired');
   } catch (error) {
@@ -240,13 +240,14 @@ test('retention observer preserves generations, leases, backoff and closed purch
   const account = randomUUID(), lineage = '210000000012345';
   sqlite.prepare('INSERT INTO billing_accounts(id) VALUES(?)').run(account);
   sqlite.prepare('INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id) VALUES(?,?,?,?)').run(lineage,account,'Sandbox','20999999');
+  let transactionId = lineage, renewalExpiresAt = null;
   const status = () => ({ requestedTransactionId: lineage, environment: 'Sandbox', bundleId: 'jp.nekowidget.app', fetchedAtMs: now,
-    items: [{ status: 2, originalTransactionId: lineage, transaction: { transactionId: lineage, originalTransactionId: lineage, billingAccountId: account,
+    items: [{ status: 2, originalTransactionId: lineage, transaction: { transactionId, originalTransactionId: lineage, billingAccountId: account,
       productId: 'jp.nekowidget.plus.monthly', subscriptionGroupId: '20999999', bundleId: 'jp.nekowidget.app', environment: 'Sandbox', ownershipType: 'PURCHASED',
-      transactionReason: 'PURCHASE', purchaseDateMs: now-10000, originalPurchaseDateMs: now-10000, expiresDateMs: now-5000, signedDateMs: now,
+      transactionReason: 'PURCHASE', purchaseDateMs: now-10000, originalPurchaseDateMs: now-10000, expiresDateMs: renewalExpiresAt ?? now-5000, signedDateMs: now,
       revocationDateMs: null, revocationReason: null, isUpgraded: false }, renewal: { originalTransactionId: lineage, billingAccountId: account,
       productId: 'jp.nekowidget.plus.monthly', autoRenewProductId: 'jp.nekowidget.plus.monthly', autoRenewStatus: 0, isInBillingRetryPeriod: false,
-      gracePeriodExpiresDateMs: null, renewalDateMs: now-5000, signedDateMs: now, environment: 'Sandbox' } }] });
+      gracePeriodExpiresDateMs: null, renewalDateMs: renewalExpiresAt ?? now-5000, signedDateMs: now, environment: 'Sandbox' } }] });
   let calls = 0;
   const fetcher = async () => { calls++; return status(); };
   const request = () => new Request('https://private/internal/retention/refresh', { method: 'POST', body: JSON.stringify({ billingAccountId: account }) });
@@ -264,20 +265,39 @@ test('retention observer preserves generations, leases, backoff and closed purch
     assert.equal((await call({ ENVIRONMENT: 'production' })).status, 503);
     assert.equal((await call({ BILLING_STORE_ENVIRONMENT: 'Production' })).status, 503);
     assert.equal((await call({ PRESERVATION_RETENTION_REFRESH_ENABLED: 'NO' })).status, 503);
+    now += 15*60*1000-1;
+    await refreshRetentionBilling(env, account, fetcher);
+    assert.equal(calls, 1, 'negative Sandbox observations retain the short cache before its boundary');
+    now++;
+    await refreshRetentionBilling(env, account, async () => {
+      calls++;
+      transactionId = '210000000012346';
+      renewalExpiresAt = now + 60*60*1000;
+      const renewed = status();
+      renewed.items[0].status = 1;
+      renewed.items[0].renewal.autoRenewStatus = 1;
+      return renewed;
+    });
+    assert.equal(calls, 2, 'an expired Sandbox subscription can be observed active at the fifteen-minute boundary');
+    assert.equal(sqlite.prepare('SELECT materialized_status FROM billing_effective_entitlement_current').get().materialized_status, 'active');
+    assert.equal(sqlite.prepare('SELECT request_generation FROM billing_reconciliation_jobs').get().request_generation, 8, 'active renewal retains its periodic job');
+    now += 15*60*1000;
+    await refreshRetentionBilling(env, account, fetcher);
+    assert.equal(calls, 2, 'active authority keeps its existing daily cache');
     now += 24*60*60*1000;
     let release, entered; const started = new Promise(resolve => { entered = resolve; });
     const inFlight = refreshRetentionBilling(env, account, async () => { calls++; entered(); await new Promise(resolve => { release = resolve; }); return status(); });
     await started;
     await assert.rejects(refreshRetentionBilling(env, account, fetcher), /temporarily unavailable/);
-    assert.equal(calls, 2, 'concurrent invocation cannot acquire the same lease');
+    assert.equal(calls, 3, 'concurrent invocation cannot acquire the same lease');
     release(); await inFlight;
-    assert.equal(sqlite.prepare('SELECT request_generation FROM billing_effective_entitlement_current').get().request_generation, 8, 'recreated job advances current generation');
+    assert.equal(sqlite.prepare('SELECT request_generation FROM billing_effective_entitlement_current').get().request_generation, 8, 'refresh preserves the retained periodic job generation');
     now += 24*60*60*1000;
     await assert.rejects(refreshRetentionBilling(env, account, async () => { calls++; throw new Error('outage'); }), /temporarily unavailable/);
     const failed = sqlite.prepare('SELECT * FROM billing_reconciliation_jobs').get();
     assert.equal(failed.attempts, 1); assert.equal(failed.lease_token, null);
     await assert.rejects(refreshRetentionBilling(env, account, fetcher), /temporarily unavailable/);
-    assert.equal(calls, 3, 'not-due backoff performs no external request');
+    assert.equal(calls, 4, 'not-due backoff performs no external request');
     assert.deepEqual(sqlite.prepare('SELECT * FROM billing_reconciliation_jobs').get(), failed, 'observation never resets backoff or generation');
     assert.equal((await call()).status, 503, 'stale data remains unknown after an unsuccessful refresh');
     sqlite.prepare('UPDATE billing_reconciliation_jobs SET not_before=0').run();
@@ -302,6 +322,6 @@ test('retention observer preserves generations, leases, backoff and closed purch
     assert.equal(sqlite.prepare('SELECT lease_token FROM billing_reconciliation_jobs').get().lease_token, null);
     for (let i = 0; i < 8; i++) sqlite.prepare('INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id) VALUES(?,?,?,?)').run(String(220000000012345+i),account,'Sandbox','20999999');
     await assert.rejects(refreshRetentionBilling(env, account, fetcher), /temporarily unavailable/);
-    assert.equal(calls, 3, 'ninth lineage is refused before contacting Apple');
+    assert.equal(calls, 4, 'ninth lineage is refused before contacting Apple');
   } finally { Date.now = originalNow; sqlite.close(); }
 });
