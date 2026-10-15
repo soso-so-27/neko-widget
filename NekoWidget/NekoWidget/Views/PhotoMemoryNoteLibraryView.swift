@@ -111,7 +111,6 @@ final class PhotoMemoryNotePhotoAccess: ObservableObject {
         if observer == nil {
             observer = PhotoLibraryObserver { [weak self] in self?.refresh() }
         }
-        observer?.start()
         refresh()
     }
 
@@ -130,10 +129,12 @@ final class PhotoMemoryNotePhotoAccess: ObservableObject {
         }
 #endif
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        guard status == .authorized || status == .limited else {
+        guard !offered.isEmpty, status == .authorized || status == .limited else {
+            observer?.stop()
             visible = [:]
             return
         }
+        observer?.start()
         let byID = Dictionary(offered.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: Array(byID.keys), options: nil)
         assets.enumerateObjects { asset, _, _ in result[asset.localIdentifier] = byID[asset.localIdentifier] }
