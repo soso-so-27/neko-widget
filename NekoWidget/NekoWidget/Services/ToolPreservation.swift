@@ -68,6 +68,7 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     let snapshotID: UUID
     let createdAt: Date
     let files: [File]
+    var previousIndexID: UUID? = nil
     var contentsSummary: String {
         let photos = files.filter { $0.path.hasSuffix(".jpg") }.count
         return "ツールの入力内容・添付写真\(photos)枚"
@@ -97,6 +98,7 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     func validate() throws {
         guard [1, 2, 3].contains(version), createdAt.timeIntervalSince1970.isFinite, !files.isEmpty, files.count <= 999,
               Set(files.map(\.path)).count == files.count else { throw ToolBackupError.invalid }
+        guard previousIndexID == nil || version == 3 && previousIndexID != snapshotID else { throw ToolBackupError.invalid }
         var ids: Set<UUID> = [snapshotID]
         for file in files {
             try Self.validatePath(file.path)

@@ -488,6 +488,24 @@ export class ArchiveStore {
       toolIndexGeneration = await this.generation(session.ownerId);
       const refs = toolIndexRecordIDs(document.toolBackup);
       const index = parseToolIndex(document.toolBackup);
+      const verifiedPaths = new Set<string>();
+      if (index.version === 3 && index.previousIndexID) {
+        const priorRow = await this.row(session.ownerId,index.previousIndexID.toLowerCase());
+        if (priorRow && !priorRow.deleted && priorRow.revision === 1) {
+          const priorPart = (await this.metadata(priorRow)).document.toolBackup;
+          if (priorPart?.kind === 'index' && priorPart.snapshotId === priorRow.record_id) {
+            const priorIndex = parseToolIndex(priorPart);
+            if (priorIndex.version === 3) {
+              const signature = (file: typeof index.files[number], snapshotID: string) => JSON.stringify([
+                file.path,file.bytes,file.sha256,file.records.map(id=>id.toLowerCase()),
+                (file.sourceSnapshotID ?? snapshotID).toLowerCase(),
+              ]);
+              const priorFiles = new Set(priorIndex.files.map(file=>signature(file,priorIndex.snapshotID)));
+              for (const file of index.files) if (priorFiles.has(signature(file,index.snapshotID))) verifiedPaths.add(file.path);
+            }
+          }
+        }
+      }
       if (index.version >= 2) sharedToolReferences = refs;
       // Bound each existence query below D1's parameter limit. Authentication
       // below opens metadata with KMS, but never downloads photo bodies.
@@ -501,7 +519,12 @@ export class ArchiveStore {
       }
       // Validate real immutable pieces, never a client-declared hash alone.
       // The final inventory CAS covers mutations while KMS is awaited.
-      const pieces = index.files.flatMap(file => file.records.map((partID, offset) => ({ file, partID, offset })));
+      // A prior authenticated immutable v3 index already verified these exact
+      // path/size/hash/source/record tuples. Recheck every live D1 dependency and
+      // claim above, but decrypt only new/changed pieces. The final generation
+      // CAS fences deletion of either the prior index or any reused piece.
+      const pieces = index.files.filter(file=>!verifiedPaths.has(file.path))
+        .flatMap(file => file.records.map((partID, offset) => ({ file, partID, offset })));
       const chunksByPath = new Map<string, Uint8Array[]>();
       let nextPiece = 0, failed = false;
       const verifyPieces = async () => {
@@ -535,7 +558,7 @@ export class ArchiveStore {
         const checked = await Promise.allSettled(Array.from({ length: Math.min(8, pieces.length) }, verifyPieces));
         const rejected = checked.find(result => result.status === 'rejected');
         if (rejected?.status === 'rejected') throw rejected.reason;
-        for (const file of index.files.filter(file => !file.path.endsWith('.jpg'))) {
+        for (const file of index.files.filter(file => !file.path.endsWith('.jpg') && !verifiedPaths.has(file.path))) {
           const chunks = chunksByPath.get(file.path);
           if (!chunks || chunks.length !== file.records.length || chunks.some(chunk => !chunk)) throw new ServiceError('INVALID_RECORD');
           if (chunks.reduce((n, chunk) => n + chunk.length, 0) !== file.bytes) throw new ServiceError('INVALID_RECORD');

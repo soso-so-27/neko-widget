@@ -281,6 +281,42 @@ it('keeps an automatic head and immutable JSON references atomic across devices,
     document: await headDocument(previous) }))).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
 }, 30_000);
 
+it('reuses only exact authenticated v3 index proofs and still fences every live dependency',async()=>{
+  const f=await fixture({quotaBytes:1_000_000});const a=await snapshot(f);
+  await a.publish({...a.index,version:3});
+  const reused={...a.index,version:3,snapshotID:crypto.randomUUID(),previousIndexID:a.id,
+    files:a.index.files.map(file=>({...file,sourceSnapshotID:a.id}))};
+  const request=async(index:typeof reused)=>{
+    const payload=btoa(JSON.stringify(index));return f.request({photoBase64:null,document:{...document,
+      formatVersion:3,photoFile:null,toolBackup:{snapshotId:index.snapshotID,kind:'index',path:'index.json',
+        part:0,count:1,sha256:await sha256(atob(payload)),payload}}});
+  };
+  const keys={...f.options.keys,open:async(...args:Parameters<KeyCustody['open']>)=>{
+    if ([a.photoID,a.jsonID].some(id=>args[1].recordId===id+'/document')) throw Error('unchanged piece must not be unwrapped');
+    return f.options.keys.open(...args);
+  }};
+  expect(await new ArchiveStore({...f.options,keys}).put(f.session.token,reused.snapshotID,await request(reused)))
+    .toEqual({recordId:reused.snapshotID,revision:1});
+  const forged={...reused,snapshotID:crypto.randomUUID(),files:reused.files.map((file,i)=>i===0?{...file,sha256:'f'.repeat(64)}:file)};
+  await expect(f.archive.put(f.session.token,forged.snapshotID,await request(forged))).rejects.toMatchObject({code:'INVALID_RECORD'});
+  const other=await fixture();
+  const foreign={...reused,snapshotID:crypto.randomUUID()};
+  await expect(other.archive.put(other.session.token,foreign.snapshotID,await request(foreign)))
+    .rejects.toMatchObject({code:'REVISION_CONFLICT'});
+  // An absent hint is merely a missed optimization: immutable pieces must be
+  // fully verified again, so old-server/device retries remain compatible.
+  await f.archive.remove(f.session.token,a.id,1);
+  const fallback={...reused,snapshotID:crypto.randomUUID()};
+  expect(await f.archive.put(f.session.token,fallback.snapshotID,await request(fallback))).toMatchObject({revision:1});
+  const racedIndex={...reused,snapshotID:crypto.randomUUID(),previousIndexID:reused.snapshotID};
+  const raced=new ArchiveStore({...f.options,keys:{...f.options.keys,seal:async(value,context)=>{
+    if(context.recordId===racedIndex.snapshotID+'/document') await binding.DB.prepare(
+      'UPDATE pa_records SET revision=revision+1 WHERE owner_id=? AND record_id=?').bind(f.session.ownerId,a.photoID).run();
+    return f.options.keys.seal(value,context);
+  }}});
+  await expect(raced.put(f.session.token,racedIndex.snapshotID,await request(racedIndex))).rejects.toMatchObject({code:'REVISION_CONFLICT'});
+});
+
 it('retains server cleanup intent after an index and the sending device are lost', async () => {
   const f = await fixture(), other = await fixture();
   const a = await snapshot(f); await a.publish({ ...a.index, version: 3 });

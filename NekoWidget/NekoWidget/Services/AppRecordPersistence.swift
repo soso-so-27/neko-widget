@@ -277,7 +277,12 @@ final class AppRecordPersistence: ObservableObject {
         observer = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in
                 self?.requested = true
-                if self?.enabled == true { self?.title = "変更を保存待ち" }
+                if let self, self.enabled {
+                    // A delayed notification (including a migration during
+                    // restore) must not relabel already acknowledged bytes.
+                    if let saved = try? self.binding(), let current = try? AppRecordDataset.fingerprint(), saved.fingerprint == current { return }
+                    self.title = "変更を保存待ち"
+                }
             }
         }
         datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: nil) { [weak self] _ in
@@ -431,6 +436,7 @@ final class AppRecordPersistence: ObservableObject {
         guard active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
         busy = true
         defer { busy = false }
+        var phase = "保存設定を確認"
         do {
             guard var value = try binding(), value.enabled else { title = "自動保存は未設定です"; return }
             try await client.reloadSessionFromSecureStorage()
@@ -516,6 +522,7 @@ final class AppRecordPersistence: ObservableObject {
                 // OS backup deliberately excludes transport staging. A head
                 // accepted before its reply was lost was reconciled above;
                 // otherwise recapture current live records under a fresh ID.
+                phase = "欠落した転送を整理"
                 try await require(value, checkpoint)
                 guard try AppRecordDataset.fingerprint() == currentFingerprint else { throw ToolBackupError.changed }
                 try await client.abandonToolSnapshot(pending, checkpoint: checkpoint)
@@ -529,6 +536,7 @@ final class AppRecordPersistence: ObservableObject {
                     ToolBackupFiles.directory(pending).appendingPathComponent("pending.json"), maximum: 512 * 1024))
                 guard saved.owner == value.owner, value.pendingBase == value.revision else { throw ManagedPreservationError.conflict }
             } else {
+                phase = "端末の記録から送信を準備"
                 title = "保存の準備中…"
                 saved = try await AppRecordCapture.prepare(owner: value.owner, origin: value.origin, previous: previous)
                 guard try AppRecordDataset.fingerprint() == currentFingerprint else { throw ToolBackupError.changed }
@@ -537,6 +545,7 @@ final class AppRecordPersistence: ObservableObject {
                 try await require(value, checkpoint); try write(value)
             }
             title = "保存中…"
+            phase = "準備した記録を送信"
             do { try await ToolBackupTransfer.upload(saved, client: client) { _, _ in } }
             catch ManagedPreservationError.snapshotAbandoned {
                 try await require(value, checkpoint)
@@ -571,7 +580,12 @@ final class AppRecordPersistence: ObservableObject {
                 value.retiring?.removeAll { $0 == previous.snapshotID }; try write(value)
                 try await collectParts(value, checkpoint: checkpoint)
             }
-        } catch ToolBackupError.changed { title = "変更を保存待ち"; requested = true; nextAttempt = .distantPast }
+        } catch ToolBackupError.changed {
+            title = "変更を保存待ち"; requested = true; nextAttempt = .distantPast
+#if DEBUG
+            if CommandLine.arguments.contains("--app-records-ui-fixture") { detail = "再試行工程: " + phase }
+#endif
+        }
           catch is CancellationError { title = "未送信の変更があります" }
           catch { report(error) }
     }
@@ -592,12 +606,22 @@ final class AppRecordPersistence: ObservableObject {
 #if DEBUG
     func verifyMissingStagingRecovery() async throws {
         guard CommandLine.arguments.contains("--app-records-ui-fixture"), var value = try binding() else { throw ToolBackupError.invalid }
+        let priorID = value.snapshotID
         value.pending = UUID(); value.pendingFingerprint = try AppRecordDataset.fingerprint()
         value.pendingBase = value.revision; value.pendingPrevious = value.snapshotID
         try write(value)
-        await retry()
-        guard title == "保存済み", let accepted = try binding(), accepted.pending == nil,
-              let id = accepted.snapshotID else { throw ToolBackupError.storage }
+        // The production foreground loop retries a changed capture or an
+        // abandoned batch. Exercise that finite protocol, then require a new
+        // durable acknowledgement instead of an instantaneous UI label.
+        var accepted: Binding?
+        for _ in 0..<3 {
+            await retry()
+            let current = try binding()
+            if current?.pending == nil, current?.snapshotID != priorID,
+               current?.fingerprint == (try AppRecordDataset.fingerprint()) { accepted = current; break }
+            guard title == "変更を保存待ち" else { throw ToolBackupError.storage }
+        }
+        guard let accepted, let id = accepted.snapshotID else { throw ToolBackupError.storage }
         let uploaded = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
             ToolBackupFiles.directory(id).appendingPathComponent("uploaded.json"), maximum: 512 * 1024))
         guard uploaded.index.files.allSatisfy({ !FileManager.default.fileExists(atPath: ToolBackupFiles.directory(id).appendingPathComponent($0.path).path) }) else { throw ToolBackupError.storage }
@@ -760,7 +784,13 @@ enum AppRecordCapture {
         let reusable = previous?.files.map { file -> ToolBackupIndex.File in
             var value = file; value.sourceSnapshotID = file.sourceSnapshotID ?? previous!.snapshotID; return value
         } ?? []
-        let saved = try ToolBackupFiles.capture(owner: owner, source: source, reusablePhotos: reusable, indexVersion: 3)
+        var saved = try ToolBackupFiles.capture(owner: owner, source: source, reusablePhotos: reusable, indexVersion: 3)
+        if let previous {
+            var index = saved.index; index.previousIndexID = previous.snapshotID
+            saved = ToolBackupFiles.Saved(owner: saved.owner, index: index)
+            try ToolBackupFiles.write(JSONEncoder().encode(saved), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("pending.json"))
+            try ToolBackupFiles.write(JSONEncoder().encode(index), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("index-wire.json"))
+        }
         try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id))
         return saved
     }
@@ -768,6 +798,7 @@ enum AppRecordCapture {
 
 struct AppRecordSavedPhoto: View {
     let url: URL
+    var maximumPixelSize = 512
     @State private var image: UIImage?
     var body: some View {
         Group {
@@ -779,7 +810,7 @@ struct AppRecordSavedPhoto: View {
                   let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 512] as CFDictionary) else { image = nil; return }
+                    kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize] as CFDictionary) else { image = nil; return }
             image = UIImage(cgImage: thumbnail)
         }
     }

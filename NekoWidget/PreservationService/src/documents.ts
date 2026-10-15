@@ -92,7 +92,7 @@ function validateToolBackup(input: unknown): ToolBackupPart {
 export interface ToolIndexFile {
   path: string; bytes: number; sha256: string; records: string[]; sourceSnapshotID?: string;
 }
-export interface ToolIndex { version: 1 | 2 | 3; snapshotID: string; createdAt: number; files: ToolIndexFile[] }
+export interface ToolIndex { version: 1 | 2 | 3; snapshotID: string; createdAt: number; files: ToolIndexFile[]; previousIndexID?: string }
 export interface AppRecordHead { kind: 'app-records-v1'; snapshotID: string; indexHash: string; retiring?: string[] }
 export function parseAppRecordHead(document: ArchiveDocument): AppRecordHead | null {
   let value: unknown;
@@ -111,12 +111,15 @@ export function parseAppRecordHead(document: ArchiveDocument): AppRecordHead | n
 }
 export function parseToolIndex(part: ToolBackupPart): ToolIndex {
   if (part.kind !== 'index') return fail();
-  let index: { version?: unknown; snapshotID?: unknown; createdAt?: unknown; files?: unknown };
+  let index: { version?: unknown; snapshotID?: unknown; createdAt?: unknown; files?: unknown; previousIndexID?: unknown };
   try { index = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(part.payload), c => c.charCodeAt(0)))); }
   catch { return fail(); }
   if (!index || ![1, 2, 3].includes(index.version as number) || typeof index.snapshotID !== 'string' || index.snapshotID.toLowerCase() !== part.snapshotId
     || typeof index.createdAt !== 'number' || !Number.isFinite(index.createdAt)
     || !Array.isArray(index.files) || !index.files.length || index.files.length > 999) return fail();
+  if (index.previousIndexID !== undefined && (index.version !== 3 || typeof index.previousIndexID !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(index.previousIndexID)
+    || index.previousIndexID.toLowerCase() === part.snapshotId)) return fail();
   const ids = new Set<string>([part.snapshotId]), paths = new Set<string>();
   for (const file of index.files) {
     if (!file || typeof file !== 'object' || typeof file.path !== 'string' || paths.has(file.path)

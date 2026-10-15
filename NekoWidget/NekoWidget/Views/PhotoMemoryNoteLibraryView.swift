@@ -980,7 +980,7 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
             if let record, let photo = access.photo(for: record.photoIdentifier) {
                 photoContent(photo)
             } else if let savedPhotoURL {
-                ScrollView { AppRecordSavedPhoto(url: savedPhotoURL).accessibilityLabel("保存した写真") }
+                ScrollView { AppRecordSavedPhoto(url: savedPhotoURL, maximumPixelSize: 2048).accessibilityLabel("保存した写真") }
                     .navigationTitle("保存した写真")
             } else if loaded {
                 ContentUnavailableView("元の写真を開けません", systemImage: "photo",
