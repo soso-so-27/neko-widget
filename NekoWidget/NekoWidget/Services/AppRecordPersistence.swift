@@ -1363,7 +1363,11 @@ struct AppRecordPersistenceFixtureView: View {
     }
 }
 
-private enum AppRecordFixtureRoute: Hashable { case settings, care, draft, tools }
+private enum AppRecordFixtureRoute: Hashable { case settings, care }
+private enum AppRecordFixturePresentation: String, Identifiable {
+    case draft, tools
+    var id: String { rawValue }
+}
 
 @MainActor
 private struct AppRecordFixtureContent: View {
@@ -1372,6 +1376,7 @@ private struct AppRecordFixtureContent: View {
     let counts: String
     let switchDevice: () -> Void
     @State private var path = NavigationPath()
+    @State private var presentation: AppRecordFixturePresentation?
     @ObservedObject private var persistence: AppRecordPersistence
     init(fixture: AppRecordFixture, result: String, counts: String, switchDevice: @escaping () -> Void) {
         self.fixture = fixture; self.result = result; self.counts = counts; self.switchDevice = switchDevice
@@ -1386,16 +1391,16 @@ private struct AppRecordFixtureContent: View {
                 NavigationLink("保存・復元", value: AppRecordFixtureRoute.settings)
                 NavigationLink("預けるとき", value: AppRecordFixtureRoute.care)
                 NavigationLink("写真メモ", value: MemoriesRoute.memoryNotes)
-                NavigationLink("入力中の復元を検査", value: AppRecordFixtureRoute.draft)
-                NavigationLink("通常のツール画面", value: AppRecordFixtureRoute.tools)
+                Button("入力中の復元を検査") { presentation = .draft }
+                    .accessibilityIdentifier("app-record-open-draft")
+                Button("通常のツール画面") { presentation = .tools }
+                    .accessibilityIdentifier("app-record-open-tools")
                 Button("別端末での自動復元を検査", action: switchDevice).disabled(persistence.busy || persistence.title != "保存済み")
             }.navigationTitle("自動保存の検査")
                 .navigationDestination(for: AppRecordFixtureRoute.self) { route in
                     switch route {
                     case .settings: AppRecordSettingsView(configuration: fixture.configuration, client: fixture.authenticationClient(), persistence: persistence)
                     case .care: CareHandoffView(profiles: [], unregisteredPhotos: [], store: .shared, reuseStore: .shared)
-                    case .draft: AppRecordDraftProtectionFixture(fixture: fixture)
-                    case .tools: AppStoreScreenshotFixtureRootView(photoAccess: false)
                     }
                 }
                 .navigationDestination(for: MemoriesRoute.self) { route in
@@ -1408,6 +1413,12 @@ private struct AppRecordFixtureContent: View {
                     }
                 }
         }.id(persistence.datasetGeneration)
+            .fullScreenCover(item: $presentation) { screen in
+                switch screen {
+                case .draft: NavigationStack { AppRecordDraftProtectionFixture(fixture: fixture) }
+                case .tools: AppStoreScreenshotFixtureRootView(photoAccess: false)
+                }
+            }
     }
 }
 

@@ -1831,7 +1831,8 @@ final class SoloMemoriesUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         prepareAutomaticRecordSavingAndRestore(app)
-        app.buttons["入力中の復元を検査"].tap()
+        let openDraft = app.buttons["app-record-open-draft"]
+        XCTAssertTrue(openDraft.isEnabled); openDraft.tap()
         let draft = app.textViews["photo-memory-note-text"]
         XCTAssertTrue(draft.waitForExistence(timeout: 10), app.debugDescription); draft.tap(); draft.typeText("編集中の文章")
         let draftText = draft.value as? String
@@ -1855,7 +1856,8 @@ final class SoloMemoriesUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         prepareAutomaticRecordSavingAndRestore(app)
-        app.buttons["通常のツール画面"].tap()
+        let openTools = app.buttons["app-record-open-tools"]
+        XCTAssertTrue(openTools.isEnabled); openTools.tap()
         let tools = app.buttons["main-tab-tools"]
         XCTAssertTrue(tools.waitForExistence(timeout: 10), app.debugDescription); tools.tap()
         let showcase = app.buttons["tools-showcase-open"]
