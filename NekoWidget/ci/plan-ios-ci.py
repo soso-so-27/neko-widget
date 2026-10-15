@@ -151,6 +151,21 @@ TOOL_STORAGE_PR_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': '988ee6e14988
  'NekoWidget/ci/test-plan-ios-ci.py': '6256f878ccb63f4b7fd3be38f8ff0f3e4afc5335',
  'NekoWidget/ci/test-preflight-ci.py': 'f26aa0e943ce4a98e3c95cd786a3394b5b360011',
  'NekoWidget/ci/test-release-testflight.py': '3a9d1056842b4d4ea6d13c1eb5a5bcdd4143cad4'}
+TOOL_STORAGE_PHOTOS_RETRY_KIND = "tool-storage-fixed-photos-attempt2-v1"
+TOOL_STORAGE_PHOTOS_SOURCE_JOBS = {
+    "plan": 116158047063, "build": 116158355006, "photos": 116158354978,
+    "runtime": 116158355048, "app-ui": 116158355092,
+}
+TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS = frozenset({116164339194, 116165047088})
+TOOL_STORAGE_PHOTOS_SOURCE_CREATED_AT = "2026-10-14T23:21:56Z"
+TOOL_STORAGE_PHOTOS_SOURCE_FINISHED_AT = "2026-10-14T23:50:57Z"
+TOOL_STORAGE_PHOTOS_FAILURE_SHA256 = "4e35aa4cf348a6f8b1876d5dd846113c857d63e81857ba10256444cb75daf20c"
+TOOL_STORAGE_PHOTOS_SOURCE_PLAN_SHA256 = "2e8fdbb2e00c7fd6291f8a912893ce050f57d5f029fa815ee089df5677ad58f0"
+TOOL_STORAGE_PHOTOS_SOURCE_UI_SHA256 = "45e5ee10d34d408eb8b8323bd7f6e0b8298f934e438660b5eb8d28287a74b26b"
+# Conditional preparation only. Root must observe and independently review the
+# exact new Photos job and the diagnostic identity/log before filling these.
+TOOL_STORAGE_PHOTOS_RETRY_JOB = None
+TOOL_STORAGE_PHOTOS_DIAGNOSTIC = None
 
 TOOL_STORAGE_BACKEND_STEPS = (
     "Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts",
@@ -4379,6 +4394,138 @@ def tool_storage_diagnostic_inputs(source, head):
         return False
 
 
+def tool_storage_photos_retry_configured():
+    diagnostic = TOOL_STORAGE_PHOTOS_DIAGNOSTIC
+    keys = {"run_id", "job_id", "source_sha", "branch", "workflow_id", "path", "raw_log_sha256"}
+    return (type(TOOL_STORAGE_PHOTOS_RETRY_JOB) is int and TOOL_STORAGE_PHOTOS_RETRY_JOB > 0
+        and TOOL_STORAGE_PHOTOS_RETRY_JOB not in set(TOOL_STORAGE_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS
+        and isinstance(diagnostic, dict) and set(diagnostic) == keys
+        and all(type(diagnostic[key]) is int and diagnostic[key] > 0 for key in ("run_id", "job_id", "workflow_id"))
+        and diagnostic["run_id"] != TOOL_STORAGE_PR_NATIVE_RUN
+        and diagnostic["job_id"] != TOOL_STORAGE_PHOTOS_RETRY_JOB
+        and isinstance(diagnostic["source_sha"], str) and SHA.fullmatch(diagnostic["source_sha"]) is not None
+        and isinstance(diagnostic["branch"], str) and diagnostic["branch"].startswith("diagnostic/")
+        and isinstance(diagnostic["path"], str) and re.fullmatch(r"\.github/workflows/[a-z0-9-]+\.yml", diagnostic["path"]) is not None
+        and isinstance(diagnostic["raw_log_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", diagnostic["raw_log_sha256"]) is not None)
+
+
+def tool_storage_photos_retry_candidate(run):
+    return (tool_storage_photos_retry_configured() and isinstance(run, dict)
+        and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE
+        and type(run.get("run_attempt")) is int and run["run_attempt"] == 2
+        and run.get("event") == "push" and run.get("head_branch") == TOOL_STORAGE_BRANCH
+        and run.get("workflow_id") == 335014238 and run.get("path") == ".github/workflows/ios-build.yml"
+        and (run.get("status"), run.get("conclusion")) == ("completed", "success"))
+
+
+def tool_storage_photos_retry_history(run, api):
+    """One exact attempt2; retain every original job, including the failed one.
+
+    Generic latest-by-name cannot handle the two identical skipped placeholder
+    names. This exception uses their fixed IDs, without weakening other runs.
+    """
+    if not tool_storage_photos_retry_candidate(run):
+        raise ValueError("Fixed Photos attempt2 is not configured or completed")
+    repo = "soso-so-27/neko-widget"
+    prefix = f"/repos/{repo}/actions/runs/{TOOL_STORAGE_PR_NATIVE_RUN}"
+    original = api(prefix + "/attempts/1")
+    expected = {"id": TOOL_STORAGE_PR_NATIVE_RUN, "head_sha": TOOL_STORAGE_PR_SOURCE,
+        "head_branch": TOOL_STORAGE_BRANCH, "event": "push", "workflow_id": 335014238,
+        "path": ".github/workflows/ios-build.yml", "run_attempt": 1,
+        "status": "completed", "conclusion": "failure", "created_at": TOOL_STORAGE_PHOTOS_SOURCE_CREATED_AT,
+        "updated_at": TOOL_STORAGE_PHOTOS_SOURCE_FINISHED_AT}
+    if (type(original.get("run_attempt")) is not int or any(original.get(key) != value for key, value in expected.items())
+            or any(original.get(side, {}).get("full_name") != repo for side in ("repository", "head_repository"))
+            or run.get("created_at") != TOOL_STORAGE_PHOTOS_SOURCE_CREATED_AT):
+        raise ValueError("Original Photos failure run differs")
+    response = api(prefix + "/jobs?filter=all&per_page=100&page=1")
+    history = response.get("jobs")
+    if (type(response.get("total_count")) is not int or not isinstance(history, list)
+            or response["total_count"] != len(history) or not 8 <= len(history) <= 10
+            or any(not isinstance(job, dict) or type(job.get("id")) is not int or job["id"] <= 0
+                or job.get("run_id") != TOOL_STORAGE_PR_NATIVE_RUN or job.get("head_sha") != TOOL_STORAGE_PR_SOURCE
+                or type(job.get("run_attempt")) is not int or job["run_attempt"] not in (1, 2)
+                or job.get("status") != "completed" for job in history)
+            or len({job["id"] for job in history}) != len(history)):
+        raise ValueError("Photos attempt history is incomplete or unexpected")
+    old = {job["id"]: job for job in history if job["run_attempt"] == 1}
+    if set(old) != set(TOOL_STORAGE_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS:
+        raise ValueError("Original native execution was replaced or omitted")
+    names = {"plan": PLAN_JOB, "build": BUILD, "photos": BOOTSTRAP_SMOKE,
+        "runtime": lane_job(TOOL_STORAGE_SCOPE, "runtime"), "app-ui": lane_job(TOOL_STORAGE_SCOPE, "app-ui")}
+    for role, identifier in TOOL_STORAGE_PHOTOS_SOURCE_JOBS.items():
+        job = old[identifier]
+        if job.get("name") != names[role] or job.get("conclusion") != ("failure" if role == "photos" else "success"):
+            raise ValueError("Original native outcome differs")
+        if role != "photos" and (not isinstance(job.get("steps"), list)
+                or any(not isinstance(step, dict) or step.get("status") != "completed"
+                    or step.get("conclusion") not in {"success", "skipped"} for step in job["steps"])):
+            raise ValueError("Another original native step failed")
+    failed = old[TOOL_STORAGE_PHOTOS_SOURCE_JOBS["photos"]]
+    steps = failed.get("steps")
+    if (not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps)
+            or [(step.get("name"), step.get("number"), step.get("conclusion")) for step in steps if step.get("conclusion") != "success"]
+                != [("Run Simulator smoke test", 3, "failure")]
+            or any(step.get("status") != "completed" for step in steps)
+            or any(len(matches := [step for step in steps if step.get("name") == name]) != 1
+                or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success")
+                for name in ("Check out repository", "Upload Simulator smoke-test artifacts"))):
+        raise ValueError("Original Photos has another failure")
+    def placeholder(job):
+        return (job.get("name") == UNEXPANDED_SHARING_JOB and job.get("conclusion") == "skipped" and job.get("steps") == [])
+    if any(not placeholder(old[identifier]) for identifier in TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS):
+        raise ValueError("Original skipped downstream executed")
+    newer = [job for job in history if job["run_attempt"] == 2]
+    photos = [job for job in newer if job["id"] == TOOL_STORAGE_PHOTOS_RETRY_JOB]
+    downstream = [job for job in newer if job["id"] != TOOL_STORAGE_PHOTOS_RETRY_JOB]
+    if (len(photos) != 1 or photos[0].get("name") != BOOTSTRAP_SMOKE or photos[0].get("conclusion") != "success"
+            or not isinstance(photos[0].get("steps"), list)
+            or any(not isinstance(step, dict) or (step.get("status"), step.get("conclusion")) != ("completed", "success") for step in photos[0]["steps"])
+            or len(downstream) > 2 or any(not placeholder(job) for job in downstream)):
+        raise ValueError("Attempt2 must execute only the full Photos job")
+    # Keep original successes with their actual attempt1 metadata. Only empty
+    # downstream placeholders can be superseded; they are never success proof.
+    selected = [old[identifier] for role, identifier in TOOL_STORAGE_PHOTOS_SOURCE_JOBS.items() if role != "photos"]
+    selected += photos + downstream
+    selected += [old[identifier] for identifier in sorted(TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS)][:2 - len(downstream)]
+    return selected, {"kind": TOOL_STORAGE_PHOTOS_RETRY_KIND, "run_id": TOOL_STORAGE_PR_NATIVE_RUN,
+        "source_sha": TOOL_STORAGE_PR_SOURCE, "run_attempt": 2, "original_attempt": 1,
+        "failed_photos_job_id": failed["id"], "failed_photos_raw_log_sha256": TOOL_STORAGE_PHOTOS_FAILURE_SHA256,
+        "photos_job_id": photos[0]["id"], "photos_attempt": 2,
+        "retained_jobs": [{"role": role, "job_id": identifier, "run_attempt": 1}
+            for role, identifier in TOOL_STORAGE_PHOTOS_SOURCE_JOBS.items() if role != "photos"],
+        "history_job_ids": sorted(job["id"] for job in history)}
+
+
+def tool_storage_photos_retry_diagnostic(api, now):
+    """Pinned one-off observation justifies this route, never Photos release proof."""
+    if not tool_storage_photos_retry_configured(): raise ValueError("Photos diagnostic not observed")
+    expected = TOOL_STORAGE_PHOTOS_DIAGNOSTIC
+    prefix = "/repos/soso-so-27/neko-widget/actions"
+    run = api(f"{prefix}/runs/{expected['run_id']}")
+    if (run.get("id") != expected["run_id"] or run.get("head_sha") != expected["source_sha"]
+            or run.get("head_branch") != expected["branch"] or run.get("workflow_id") != expected["workflow_id"]
+            or run.get("path") != expected["path"] or run.get("event") != "workflow_dispatch"
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or any(run.get(side, {}).get("full_name") != "soso-so-27/neko-widget" for side in ("repository", "head_repository"))):
+        raise ValueError("Fixed Photos diagnostic identity differs")
+    updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24): raise ValueError("Photos diagnostic is stale")
+    jobs = executed_jobs(run, "soso-so-27/neko-widget", api)
+    if (len(jobs) != 1 or jobs[0].get("id") != expected["job_id"]
+            or jobs[0].get("run_id") != expected["run_id"] or jobs[0].get("head_sha") != expected["source_sha"]
+            or type(jobs[0].get("run_attempt")) is not int or jobs[0]["run_attempt"] != 1
+            or (jobs[0].get("status"), jobs[0].get("conclusion")) != ("completed", "success")):
+        raise ValueError("Photos diagnostic job differs")
+    raw = api(f"{prefix}/jobs/{expected['job_id']}/logs")
+    case = "NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess"
+    events = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)", raw)
+    if tool_log_digest(raw) != expected["raw_log_sha256"] or events != [(case, "started"), (case, "passed")]:
+        raise ValueError("Exact diagnostic must execute the unchanged permission case")
+    return {**expected, "diagnostic_only": True, "release_evidence": False}
+
+
 def tool_storage_graph(run, validation_head, api, now, jobs):
     """Main and release share the exact fresh native graph and all eight backend steps."""
     sha = run.get("head_sha")
@@ -4386,7 +4533,7 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
     if (not isinstance(sha, str) or not SHA.fullmatch(sha) or type(run.get("id")) is not int or run["id"] <= 0
             or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
             or run.get("event") != "push" or run.get("head_branch") != TOOL_STORAGE_BRANCH
-            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or type(run.get("run_attempt")) is not int or not (run["run_attempt"] == 1 or tool_storage_photos_retry_candidate(run))
             or (run.get("status"), run.get("conclusion")) != ("completed", "success")
             or run.get("repository", {}).get("full_name") != repo or run.get("head_repository", {}).get("full_name") != repo
             or not tool_storage_inputs(sha) or not tool_storage_readiness(validation_head)
@@ -4396,6 +4543,10 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
     updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
     if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
         raise ValueError("Storage completion candidate is stale")
+    photos_retry = None
+    if run["run_attempt"] == 2:
+        selected, photos_retry = tool_storage_photos_retry_history(run, api)
+        if jobs != selected: raise ValueError("Photos attempt2 selected graph differs from full history")
     required = required_jobs_from_scope(TOOL_STORAGE_SCOPE)
     extras = [job for job in jobs if job.get("name") not in set(required) | {PLAN_JOB}]
     # The unchanged workflow has two unused matrix jobs. Only their empty,
@@ -4406,7 +4557,10 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
         raise ValueError("Storage completion native graph has an unexpected execution")
     if (not covers_jobs(jobs, required, sha, now=now)
             or any(type(job.get("id")) is not int or job["id"] <= 0 or job.get("run_id") != run["id"]
-                   or job.get("head_sha") != sha or job.get("run_attempt", 1) != 1 for job in jobs)
+                   or job.get("head_sha") != sha
+                   or job.get("run_attempt", 1) != (2 if photos_retry and
+                       (job["id"] == TOOL_STORAGE_PHOTOS_RETRY_JOB or job["name"] == UNEXPANDED_SHARING_JOB and job["id"] not in TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS) else 1)
+                   for job in jobs)
             or len({job["id"] for job in jobs}) != len(jobs)):
         raise ValueError("Fresh storage completion native execution is incomplete")
     # Exact labels and required executable steps; a full/Gallery subset or a
@@ -4438,16 +4592,27 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
             or any(plans[0].get(key) is not None for key in ("evidence_run_id", "evidence_sha", "test_correction_evidence"))):
         raise ValueError("Storage completion source plan is not the fresh owning graph")
     ui = next(job for job in jobs if job["name"] == lane_job(TOOL_STORAGE_SCOPE, "app-ui"))
-    if not tool_storage_ui_results(api(f"/repos/{repo}/actions/jobs/{ui['id']}/logs")):
+    ui_log = api(f"/repos/{repo}/actions/jobs/{ui['id']}/logs")
+    if not tool_storage_ui_results(ui_log):
         raise ValueError("All nine storage UI cases must start and pass exactly once")
+    if photos_retry:
+        if (tool_log_digest(log) != TOOL_STORAGE_PHOTOS_SOURCE_PLAN_SHA256
+                or tool_log_digest(ui_log) != TOOL_STORAGE_PHOTOS_SOURCE_UI_SHA256
+                or tool_log_digest(api(f"/repos/{repo}/actions/jobs/{photos_retry['failed_photos_job_id']}/logs")) != TOOL_STORAGE_PHOTOS_FAILURE_SHA256
+                or not moderation_chained_photos_success(api(f"/repos/{repo}/actions/jobs/{TOOL_STORAGE_PHOTOS_RETRY_JOB}/logs"))):
+            raise ValueError("Fixed failure, retained logs or full fresh Photos completion differs")
+        photos_retry["diagnostic"] = tool_storage_photos_retry_diagnostic(api, now)
     if sha == TOOL_STORAGE_PR_SOURCE:
         if run["id"] != TOOL_STORAGE_PR_NATIVE_RUN:
             raise ValueError("Only the original storage native run can use the fixed PR proof")
         proof = tool_storage_pr_backend_proof(repo, api, now)
         return {"backend_evidence": {"preservation-service.yml": proof}, "backend_substitution": proof,
+                **({"photos_retry": photos_retry} if photos_retry else {}),
                 "source_required_backend_runs": tool_storage_push_requirements(sha),
                 "native_evidence": {"run_id": run["id"], "sha": sha,
-                    "job_ids": [next(job["id"] for job in jobs if job["name"] == name) for name in required]}}
+                    "job_ids": [next(job["id"] for job in jobs if job["name"] == name) for name in required],
+                    **({"run_attempt": 2, "jobs": [{"job_id": job["id"], "run_attempt": job["run_attempt"]}
+                        for job in jobs if job["name"] in required]} if photos_retry else {})}}
     backends = tool_preservation_backend_evidence(sha, repo, api, now, branch=TOOL_STORAGE_BRANCH)
     proof = backends["preservation-service.yml"]
     backend_run = api(f"/repos/{repo}/actions/runs/{proof['run_id']}")
@@ -7489,7 +7654,8 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
                     and run.get("workflow_id") == current.get("workflow_id") == 335014238
                     and run.get("path") == current.get("path") == ".github/workflows/ios-build.yml"
                     and current.get("event") == "push" and current.get("head_branch") == "main"
-                    and type(run.get("run_attempt")) is int and run["run_attempt"] == 1
+                    and type(run.get("run_attempt")) is int
+                    and (run["run_attempt"] == 1 or tool_storage_photos_retry_candidate(run))
                     and type(current.get("run_attempt")) is int and current["run_attempt"] == 1
                     and current.get("repository", {}).get("full_name") == repository
                     and current.get("head_repository", {}).get("full_name") == repository
@@ -7577,6 +7743,9 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
     attempt = run.get("run_attempt", 1)
     if type(attempt) is not int or not 1 <= attempt <= 50:
         raise ValueError("Invalid workflow attempt")
+    if (repository == "soso-so-27/neko-widget" and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN
+            and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE and attempt == 2):
+        return tool_storage_photos_retry_history(run, api)[0]
     prefix = f"/repos/{repository}/actions/runs/{int(run['id'])}/jobs"
     if attempt == 1:
         result = api(prefix + "?filter=latest&per_page=100&page=1")
