@@ -84,7 +84,8 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     static let maximumIndexBytes = 256 * 1024
     static let manifests = ["CareHandoff": "plan.json", "EvacuationPreparation": "plan.json",
         "VeterinaryVisits": "state.json", "ShowcasePhotos": "selected.json",
-        "LostCatDrafts": "drafts.json", "CatPreparedness": "records.json"]
+        "LostCatDrafts": "drafts.json", "CatPreparedness": "records.json",
+        "PhotoMemoryNotes": "state.json", "CatIdentity": "state.json"]
     static func hash(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
     static func validatePath(_ path: String) throws {
         let pieces = path.split(separator: "/", omittingEmptySubsequences: false)
@@ -94,13 +95,13 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
         else { throw ToolBackupError.invalid }
     }
     func validate() throws {
-        guard [1, 2].contains(version), createdAt.timeIntervalSince1970.isFinite, !files.isEmpty, files.count <= 999,
+        guard [1, 2, 3].contains(version), createdAt.timeIntervalSince1970.isFinite, !files.isEmpty, files.count <= 999,
               Set(files.map(\.path)).count == files.count else { throw ToolBackupError.invalid }
         var ids: Set<UUID> = [snapshotID]
         for file in files {
             try Self.validatePath(file.path)
             let photo = file.path.hasSuffix(".jpg")
-            guard file.sourceSnapshotID == nil || (version == 2 && photo) else { throw ToolBackupError.invalid }
+            guard file.sourceSnapshotID == nil || version == 3 || (version == 2 && photo) else { throw ToolBackupError.invalid }
             guard file.bytes > 0, file.bytes <= (photo ? 20 : 8) * 1024 * 1024,
                   file.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
                   file.records.count == (photo ? 1 : (file.bytes + Self.chunkSize - 1) / Self.chunkSize),
@@ -122,8 +123,12 @@ enum ToolBackupFiles {
         var sourceSnapshotID: UUID? = nil
     }
     static var root: URL {
+#if os(iOS)
+        AppRecordDataset.support.appendingPathComponent("ToolBackups", isDirectory: true)
+#else
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ToolBackups", isDirectory: true)
+#endif
     }
     static func directory(_ id: UUID) -> URL { root.appendingPathComponent(id.uuidString, isDirectory: true) }
     static func protect(_ directory: URL) throws {
@@ -215,7 +220,7 @@ enum ToolBackupFiles {
     }
     static func capture(owner: String, source: URL? = nil, sourceSnapshotID: UUID? = nil,
                         reusablePhotos: [ToolBackupIndex.File] = [], indexVersion: Int = 1) throws -> Saved {
-        guard [1, 2].contains(indexVersion), indexVersion == 2 || reusablePhotos.isEmpty else { throw ToolBackupError.invalid }
+        guard [1, 2, 3].contains(indexVersion), indexVersion >= 2 || reusablePhotos.isEmpty else { throw ToolBackupError.invalid }
         let source = source ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         if let sourceSnapshotID {
             let expected = try restoredSource(sourceSnapshotID, owner: owner)
@@ -229,6 +234,7 @@ enum ToolBackupFiles {
         var files: [ToolBackupIndex.File] = []
         var originalManifests: [(URL, Data)] = []
         for (tool, manifest) in ToolBackupIndex.manifests.sorted(by: { $0.key < $1.key }) {
+            if indexVersion < 3 && ["PhotoMemoryNotes", "CatIdentity"].contains(tool) { continue }
             let toolDirectory = source.appendingPathComponent(tool, isDirectory: true)
             guard FileManager.default.fileExists(atPath: toolDirectory.path) else { continue }
             let attributes = try toolDirectory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
@@ -248,8 +254,8 @@ enum ToolBackupFiles {
                 let data = name == manifest ? metadata : try read(toolDirectory.appendingPathComponent(name), maximum: 20 * 1024 * 1024)
                 let count = name.hasSuffix(".jpg") ? 1 : (data.count + ToolBackupIndex.chunkSize - 1) / ToolBackupIndex.chunkSize
                 let hash = ToolBackupIndex.hash(data)
-                if name.hasSuffix(".jpg"), let reusable = reusablePhotos.first(where: {
-                    $0.path == path && $0.bytes == data.count && $0.sha256 == hash && $0.records.count == 1 && $0.sourceSnapshotID != nil
+                if indexVersion == 3 || name.hasSuffix(".jpg"), let reusable = reusablePhotos.first(where: {
+                    $0.path == path && $0.bytes == data.count && $0.sha256 == hash && $0.records.count == count && $0.sourceSnapshotID != nil
                 }) { files.append(reusable) }
                 else { files.append(.init(path: path, bytes: data.count, sha256: hash, records: (0..<count).map { _ in UUID() })) }
                 try write(data, to: destination.appendingPathComponent(path))
@@ -363,6 +369,7 @@ enum ToolBackupTransfer {
     /// Remove this index first, then only pieces that no other copy needs.
     /// A durable owner-bound journal keeps interrupted work explicitly visible.
     static func delete(_ index: ToolBackupIndex, client: ManagedPreservationClient,
+                       retaining: Set<UUID> = [],
                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
         try index.validate()
         let checkpoint = try await client.captureSessionCheckpoint()
@@ -400,6 +407,13 @@ enum ToolBackupTransfer {
             for (offset, id) in file.records.enumerated() {
                 try await client.requireSessionCheckpoint(checkpoint)
                 if deleted.contains(id) { completed += 1; await progress(completed, total); continue }
+                // The accepted replacement still uses these immutable bytes.
+                // Leaving them live is safe; avoid one GET/DELETE per photo.
+                if retaining.contains(id) {
+                    deleted.insert(id)
+                    try ToolBackupFiles.write(JSONEncoder().encode(deleted), to: receipt)
+                    completed += 1; await progress(completed, total); continue
+                }
                 do {
                     let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
                     guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
@@ -615,6 +629,13 @@ enum ToolBackupValidation {
                 if let current = try? decoder.decode(Showcase.self, from: data) { entries = current.entries }
                 else { entries = try decoder.decode([ShowcasePhotoStore.Entry].self, from: data) }
                 guard Set(entries.map(\.id)).count == entries.count else { throw ToolBackupError.invalid }
+            case "PhotoMemoryNotes":
+                _ = try await PhotoMemoryNoteStore(fileURL: root.appendingPathComponent(file.path)).records()
+            case "CatIdentity":
+                let identityDecoder = JSONDecoder(); identityDecoder.dateDecodingStrategy = .iso8601
+                let state = try identityDecoder.decode(CatHouseholdIdentityState.self, from: data)
+                guard (1...CatHouseholdIdentityState.currentSchemaVersion).contains(state.schemaVersion),
+                      state == state.normalized() else { throw ToolBackupError.invalid }
             default: throw ToolBackupError.invalid
             }
         }

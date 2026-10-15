@@ -10,6 +10,7 @@ const fail = (): never => { throw new ServiceError('INVALID_RECORD'); };
 const toolManifests: Record<string, string> = {
   CareHandoff: 'plan.json', EvacuationPreparation: 'plan.json', VeterinaryVisits: 'state.json',
   ShowcasePhotos: 'selected.json', LostCatDrafts: 'drafts.json', CatPreparedness: 'records.json',
+  PhotoMemoryNotes: 'state.json', CatIdentity: 'state.json',
 };
 const toolPhotoName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/iu;
 function validToolPath(path: string): boolean {
@@ -77,7 +78,7 @@ function validateToolBackup(input: unknown): ToolBackupPart {
     || typeof v.payload !== 'string' || v.payload.length > (v.kind === 'index' ? 349528 : 65536) || typeof v.path !== 'string') return fail();
   if (v.kind === 'index') {
     if (v.path !== 'index.json' || v.part !== 0 || v.count !== 1 || !v.payload) return fail();
-  } else if (!/^(CareHandoff|EvacuationPreparation|VeterinaryVisits|ShowcasePhotos|LostCatDrafts|CatPreparedness)\/[A-Za-z0-9-]+\.(json|jpg)$/.test(v.path)) return fail();
+  } else if (!validToolPath(v.path)) return fail();
   if (v.kind === 'photo') {
     if (!v.path.endsWith('.jpg') || v.part !== 0 || v.count !== 1 || v.payload !== '') return fail();
   } else {
@@ -91,13 +92,29 @@ function validateToolBackup(input: unknown): ToolBackupPart {
 export interface ToolIndexFile {
   path: string; bytes: number; sha256: string; records: string[]; sourceSnapshotID?: string;
 }
-export interface ToolIndex { version: 1 | 2; snapshotID: string; createdAt: number; files: ToolIndexFile[] }
+export interface ToolIndex { version: 1 | 2 | 3; snapshotID: string; createdAt: number; files: ToolIndexFile[] }
+export interface AppRecordHead { kind: 'app-records-v1'; snapshotID: string; indexHash: string; retiring?: string[] }
+export function parseAppRecordHead(document: ArchiveDocument): AppRecordHead | null {
+  let value: unknown;
+  try { value = JSON.parse(document.text); } catch { return null; }
+  if (!value || typeof value !== 'object' || (value as Record<string, unknown>).kind !== 'app-records-v1') return null;
+  const head = value as Record<string, unknown>;
+  if (document.formatVersion !== 1 || document.photoFile !== null || document.toolBackup
+    || Object.keys(head).some(key => !['indexHash', 'kind', 'snapshotID', 'retiring'].includes(key))
+    || typeof head.snapshotID !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(head.snapshotID)
+    || typeof head.indexHash !== 'string' || !/^[0-9a-f]{64}$/.test(head.indexHash)) return fail();
+  if (head.retiring !== undefined && (!Array.isArray(head.retiring) || head.retiring.length > 6
+    || head.retiring.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+      || id.toLowerCase() === (head.snapshotID as string).toLowerCase())
+    || new Set(head.retiring.map(id => id.toLowerCase())).size !== head.retiring.length)) return fail();
+  return head as unknown as AppRecordHead;
+}
 export function parseToolIndex(part: ToolBackupPart): ToolIndex {
   if (part.kind !== 'index') return fail();
   let index: { version?: unknown; snapshotID?: unknown; createdAt?: unknown; files?: unknown };
   try { index = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(part.payload), c => c.charCodeAt(0)))); }
   catch { return fail(); }
-  if (!index || ![1, 2].includes(index.version as number) || typeof index.snapshotID !== 'string' || index.snapshotID.toLowerCase() !== part.snapshotId
+  if (!index || ![1, 2, 3].includes(index.version as number) || typeof index.snapshotID !== 'string' || index.snapshotID.toLowerCase() !== part.snapshotId
     || typeof index.createdAt !== 'number' || !Number.isFinite(index.createdAt)
     || !Array.isArray(index.files) || !index.files.length || index.files.length > 999) return fail();
   const ids = new Set<string>([part.snapshotId]), paths = new Set<string>();
@@ -108,7 +125,7 @@ export function parseToolIndex(part: ToolBackupPart): ToolIndex {
       || typeof file.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(file.sha256) || !Array.isArray(file.records)
       || file.records.length !== (file.path.endsWith('.jpg') ? 1 : Math.ceil(file.bytes / 49152))) return fail();
     paths.add(file.path);
-    if (file.sourceSnapshotID !== undefined && (index.version !== 2 || !file.path.endsWith('.jpg')
+    if (file.sourceSnapshotID !== undefined && (!(index.version === 3 || (index.version === 2 && file.path.endsWith('.jpg')))
       || typeof file.sourceSnapshotID !== 'string'
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(file.sourceSnapshotID))) return fail();
     for (const id of file.records) {

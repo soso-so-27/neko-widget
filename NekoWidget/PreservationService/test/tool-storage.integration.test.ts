@@ -229,3 +229,42 @@ it('rejects a commit when a deletion claim appears after reference validation', 
   expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?').bind(f.session.ownerId, b.id).first()).toBeNull();
 });
 
+
+it('keeps an automatic head and immutable JSON references atomic across devices, cleanup and retries', async () => {
+  const f = await fixture({ maximumRecords: 5, quotaBytes: 1_000_000 });
+  const a = await snapshot(f);
+  const initial = { ...a.index, version: 3 };
+  await a.publish(initial);
+  const headID = crypto.randomUUID();
+  const headDocument = async (index: typeof initial) => ({ ...document, formatVersion: 1,
+    photoFile: null, text: JSON.stringify({ kind: 'app-records-v1', snapshotID: index.snapshotID,
+      indexHash: await sha256(JSON.stringify(index)) }) });
+  const putHead = async (index: typeof initial, expectedRevision: number | null) => f.archive.put(f.session.token, headID,
+    f.request({ expectedRevision, photoBase64: null, document: await headDocument(index) }));
+  await putHead(initial, null);
+  await expect(f.archive.remove(f.session.token, a.id, 1)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+  await expect(f.archive.remove(f.session.token, headID, 1)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+  let previous = initial;
+  for (let revision = 1; revision <= 20; revision++) {
+    const next = { ...initial, snapshotID: crypto.randomUUID(), files: initial.files.map(file => ({ ...file, sourceSnapshotID: initial.snapshotID })) };
+    const payload = btoa(JSON.stringify(next));
+    await f.archive.put(f.session.token, next.snapshotID, f.request({ photoBase64: null,
+      document: { ...document, formatVersion: 3, photoFile: null, toolBackup: { snapshotId: next.snapshotID,
+        kind: 'index', path: 'index.json', part: 0, count: 1, sha256: await sha256(atob(payload)), payload } } }));
+    expect(await putHead(next, revision)).toEqual({ recordId: headID, revision: revision + 1 });
+    // Device B cannot overwrite the accepted head with the stale revision.
+    await expect(putHead(previous, revision)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    await f.archive.remove(f.session.token, previous.snapshotID, 1);
+    // Lost-response rebasing must never publish the deleted prior index.
+    await expect(putHead(previous, revision + 1)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    await expect(f.archive.remove(f.session.token, a.jsonID, 1, true)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+    expect(await binding.DB.prepare('SELECT count(*) AS n FROM pa_records WHERE owner_id=? AND deleted=0')
+      .bind(f.session.ownerId).first()).toEqual({ n: 4 });
+    previous = next;
+  }
+  expect(await binding.DB.prepare('SELECT part_id,source_revision FROM pa_tool_snapshot_references WHERE owner_id=? AND snapshot_id=?')
+    .bind(f.session.ownerId, headID).first()).toEqual({ part_id: previous.snapshotID, source_revision: 21 });
+  const other = await fixture();
+  await expect(other.archive.put(other.session.token, crypto.randomUUID(), other.request({ photoBase64: null,
+    document: await headDocument(previous) }))).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+}, 30_000);

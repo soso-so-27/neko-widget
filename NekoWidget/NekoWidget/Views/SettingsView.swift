@@ -199,8 +199,8 @@ struct SettingsView: View {
 
             Section {
                 if ManagedPreservationConfiguration.current.isEnabled {
-                    NavigationLink { ManagedPreservationView() } label: {
-                        Label("サービスに保管した記録", systemImage: "externaldrive")
+                    NavigationLink { AppRecordSettingsView() } label: {
+                        Label("保存・復元", systemImage: "checkmark.icloud")
                     }
                     .accessibilityIdentifier("settings-managed-preservation")
                 }

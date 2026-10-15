@@ -8,6 +8,7 @@ import ImageIO
 final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
     let store: PhotoMemoryNoteStore
     @Published private(set) var records: [PhotoMemoryNoteRecord] = []
+    @Published private(set) var savedPhotos: [UUID: URL] = [:]
     @Published private(set) var isLoaded = false
     @Published private(set) var failed = false
     @Published private(set) var archive: PersonalArchiveReadingSnapshot?
@@ -40,8 +41,11 @@ final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
         request = token
         do {
             let result = try await store.records()
+            var photos: [UUID: URL] = [:]
+            for record in result { photos[record.id] = try await store.photoURL(for: record.id) }
             guard request == token, !Task.isCancelled else { return }
             records = result
+            savedPhotos = photos
             failed = false
             isLoaded = true
         } catch {
@@ -464,6 +468,11 @@ struct PhotoMemoryNotesListView: View {
                     .frame(width: 112, height: 112)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .accessibilityHidden(true)
+            } else if let local = item.local, let url = library.savedPhotos[local.id] {
+                AppRecordSavedPhoto(url: url)
+                    .frame(width: 112, height: 112)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityHidden(true)
             } else if let data = item.preserved?.jpegData {
                 MemoryReadingThumbnail(data: data)
                     .frame(width: 112, height: 112)
@@ -722,6 +731,7 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var showsArchiveDetails = false
     @State private var addsToVet = false
     @State private var preservingWithService = false
+    @State private var savedPhotoURL: URL?
 
     private var servicePreservationEnabled: Bool {
 #if DEBUG
@@ -764,6 +774,10 @@ struct PhotoMemoryNoteDetailView: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel("写真を大きく見る")
                             .accessibilityIdentifier("memory-note-photo")
+                        } else if let savedPhotoURL {
+                            NavigationLink(value: MemoriesRoute.memoryNotePhoto(record.id)) {
+                                AppRecordSavedPhoto(url: savedPhotoURL).aspectRatio(3.0 / 4.0, contentMode: .fit)
+                            }.accessibilityLabel("保存した写真を大きく見る").accessibilityIdentifier("memory-note-photo")
                         } else if let data = archivedRecord?.jpegData {
                             MemoArchivePhoto(data: data, allowsExpansion: true)
                         } else {
@@ -825,11 +839,13 @@ struct PhotoMemoryNoteDetailView: View {
             }
         }
         .sheet(isPresented: $preservingWithService) {
-            if let record, let photo = access.photo(for: record.photoIdentifier) {
-                ManagedPreservationPhotoView(photo: photo,
-                    context: record.note.context ?? PhotoMemoryNoteContext(capturedAt: photo.creationDate, cats: []),
-                    noteStore: store)
-            }
+#if DEBUG
+            if CommandLine.arguments.contains("--memory-service-preservation-entry-fixture"), let record, let photo = access.photo(for: record.photoIdentifier) {
+                ManagedPreservationPhotoView(photo: photo, context: record.note.context ?? PhotoMemoryNoteContext(capturedAt: photo.creationDate, cats: []), noteStore: store)
+            } else { NavigationStack { AppRecordSettingsView() } }
+#else
+            NavigationStack { AppRecordSettingsView() }
+#endif
         }
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
@@ -868,9 +884,9 @@ struct PhotoMemoryNoteDetailView: View {
                     Menu {
                         if servicePreservationEnabled {
                             Button { preservingWithService = true } label: {
-                                Label("サービスに保管", systemImage: "externaldrive.badge.plus")
+                                Label("保存状況", systemImage: "checkmark.icloud")
                             }
-                            .disabled(record.map { access.photo(for: $0.photoIdentifier) == nil } ?? true)
+
                             .accessibilityIdentifier("memory-note-managed-preserve")
                         }
                         Button(role: .destructive) { confirmsDelete = true } label: { Label("メモを削除", systemImage: "trash") }
@@ -894,8 +910,10 @@ struct PhotoMemoryNoteDetailView: View {
         request = token
         do {
             let result = try await store.record(id: recordID)
+            let savedPhoto = try await store.photoURL(for: recordID)
             guard request == token, !Task.isCancelled else { return }
             record = result
+            savedPhotoURL = savedPhoto
             failed = false
             loaded = true
             archivedRecord = nil
@@ -947,6 +965,7 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var record: PhotoMemoryNoteRecord?
     @State private var loaded = false
+    @State private var savedPhotoURL: URL?
 
     init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
          @ViewBuilder photoContent: @escaping (PhotoPresentation) -> PhotoContent) {
@@ -960,6 +979,9 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
         Group {
             if let record, let photo = access.photo(for: record.photoIdentifier) {
                 photoContent(photo)
+            } else if let savedPhotoURL {
+                ScrollView { AppRecordSavedPhoto(url: savedPhotoURL).accessibilityLabel("保存した写真") }
+                    .navigationTitle("保存した写真")
             } else if loaded {
                 ContentUnavailableView("元の写真を開けません", systemImage: "photo",
                     description: Text("メモに戻って文章を読み返せます。"))
@@ -977,6 +999,7 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
     }
 
     private func reload() async {
+        savedPhotoURL = try? await store.photoURL(for: recordID)
         let value = try? await store.record(id: recordID)
         guard !Task.isCancelled else { return }
         record = value

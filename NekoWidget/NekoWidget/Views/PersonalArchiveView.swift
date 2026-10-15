@@ -78,7 +78,7 @@ struct PersonalArchiveView: View {
                 }
                 .accessibilityIdentifier("personal-archive-guide")
             } footer: {
-                Text("以前iCloudに保管した写真とメモを読み込めます。新しい保管は「サービスに保管」から行います。")
+                Text("以前iCloudに保管した写真とメモを読み込めます。新しい記録の保存方法は、設定の「保存・復元」で確認できます。")
             }
 
             if isLoading || isWorking {
@@ -263,7 +263,7 @@ private struct PersonalArchiveGuideView: View {
     var body: some View {
         List {
             Section {
-                guideRow("以前の保管", "この画面では、以前iCloudに保管した写真とメモを開けます。新しい保管は、メモの「…」から「サービスに保管」を選びます。")
+                guideRow("以前の保管", "この画面では、以前iCloudに保管した写真とメモを開けます。新しい記録は、設定の「保存・復元」で初回設定をすると自動で保存されます。")
                 guideRow("容量と画質", "自分のiCloud容量を使います。容量不足や通信エラーの間は未完了です。写真の原本・動画・Live Photosの動きは保管しません。")
                 DisclosureGroup("写真のサイズ") {
                     Text("写真は長辺最大4,096px・1枚20MB以下のJPEGに変換します。原本は写真アプリなどに残してください。")
@@ -393,9 +393,9 @@ struct PersonalArchiveRecordView: View {
                 Menu {
                     if servicePreservationEnabled {
                         Button { preservingWithService = true } label: {
-                            Label("サービスに保管", systemImage: "externaldrive.badge.plus")
+                            Label("保存状況", systemImage: "checkmark.icloud")
                         }
-                        .disabled(record.jpegData == nil || record.isDeletionPending || record.state == .conflict)
+
                         .accessibilityIdentifier("memory-note-managed-preserve")
                         Divider()
                     }
@@ -439,10 +439,13 @@ struct PersonalArchiveRecordView: View {
         }
         .onDisappear { exporter.cancelPreparation() }
         .sheet(isPresented: $preservingWithService) {
-            if let account {
-                ManagedPreservationPhotoView(archiveRecordID: record.id, archiveStore: store,
-                                             expectedAccount: account)
-            }
+#if DEBUG
+            if CommandLine.arguments.contains("--memory-service-preservation-entry-fixture"), let account {
+                ManagedPreservationPhotoView(archiveRecordID: record.id, archiveStore: store, expectedAccount: account)
+            } else { NavigationStack { AppRecordSettingsView() } }
+#else
+            NavigationStack { AppRecordSettingsView() }
+#endif
         }
         .sheet(isPresented: $editing, onDismiss: { Task { await reloadAfterEdit() } }) {
             if let account {

@@ -1,5 +1,5 @@
 import { ServiceError, sha256, type ToolBackupPart } from './contracts';
-import { parseToolIndex } from './documents';
+import { parseToolIndex, parseAppRecordHead, type AppRecordHead } from './documents';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
 import { loadOwnerPurgeReplay } from './purge-intent-replay';
 import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
@@ -78,7 +78,8 @@ export class OwnerQuarantineRestore {
   /** The edge table is derived data. Rebuild it only from authenticated current
    * metadata in this empty, offline target. V1 dependencies remain bound to the
    * original index; v2 edges must be complete before any staged success. */
-  private async rebuildToolReferences(ownerId: string, parts: Map<string, RestoredToolPart>): Promise<void> {
+  private async rebuildToolReferences(ownerId: string, parts: Map<string, RestoredToolPart>,
+    heads: { id: string; revision: number; head: AppRecordHead }[]): Promise<void> {
     let expectedReferences = 0;
     for (const [snapshotId, descriptor] of parts) {
       if (descriptor.kind !== 'index') continue;
@@ -114,7 +115,7 @@ export class OwnerQuarantineRestore {
             }
             chunks.push(Uint8Array.from(atob(chunk.payload), c => c.charCodeAt(0)));
           }
-          if (index.version === 2) {
+          if (index.version >= 2) {
             edges.push(this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
               VALUES(?,?,?)`).bind(ownerId, snapshotId, id));
             expectedReferences++;
@@ -133,6 +134,16 @@ export class OwnerQuarantineRestore {
       for (let offset = 0; offset < edges.length; offset += 50) {
         await this.db.batch(edges.slice(offset, offset + 50));
       }
+    }
+    for (const { id, revision, head } of heads) {
+      const target = head.snapshotID.toLowerCase();
+      const metadata = await this.restoredMetadata(ownerId, target);
+      const index = metadata.document.toolBackup;
+      if (!index || index.kind !== 'index' || index.sha256 !== head.indexHash
+        || parseToolIndex(index).version !== 3) throw unavailable();
+      await this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id,source_revision)
+        VALUES(?,?,?,?)`).bind(ownerId, id, target, revision).run();
+      expectedReferences++;
     }
     const closure = await this.db.prepare(`SELECT
       (SELECT count(*) FROM pa_tool_snapshot_references WHERE owner_id=?) AS refs,
@@ -204,6 +215,7 @@ export class OwnerQuarantineRestore {
     let historyRows = 0;
     let expectedUsedBytes = 0;
     const toolParts = new Map<string, RestoredToolPart>();
+    const appHeads: { id: string; revision: number; head: AppRecordHead }[] = [];
     for (const expected of owner.records) {
       const group = markerGroups.get(expected.recordId);
       if (!group) throw unavailable();
@@ -236,6 +248,8 @@ export class OwnerQuarantineRestore {
       const image = selected.image;
       try {
         const metadata = await this.records.readMetadata(image);
+        const appHead = metadata ? parseAppRecordHead(metadata.document) : null;
+        if (appHead) appHeads.push({ id: expected.recordId, revision: image.revision, head: appHead });
         const tag = metadata?.document.toolBackup;
         if (tag) {
           if (image.revision !== 1 || (tag.kind === 'index' && tag.snapshotId !== expected.recordId)) throw unavailable();
@@ -292,7 +306,7 @@ export class OwnerQuarantineRestore {
         image.photoCiphertext?.fill(0);
       }
     }
-    await this.rebuildToolReferences(ownerId, toolParts);
+    await this.rebuildToolReferences(ownerId, toolParts, appHeads);
     await this.requireNoPurgeIntent(ownerId);
     const count = await this.db.prepare(`SELECT o.disabled,
       (SELECT count(*) FROM pa_records WHERE owner_id=o.owner_id) AS records,

@@ -32,10 +32,7 @@ actor CatHouseholdIdentityStore {
     private let lockURL: URL
 
     init(
-        stateURL: URL? = SharedContainer.containerURL?.appendingPathComponent(
-            CatHouseholdIdentityStore.filename,
-            isDirectory: false
-        )
+        stateURL: URL? = CatHouseholdIdentityStore.defaultStateURL()
     ) throws {
         guard let stateURL else {
             throw NekoWidgetError.appGroupUnavailable(SharedContainer.appGroupIdentifier)
@@ -44,6 +41,14 @@ actor CatHouseholdIdentityStore {
         self.lockURL = stateURL
             .deletingPathExtension()
             .appendingPathExtension("lock")
+    }
+
+    nonisolated static func defaultStateURL() -> URL? {
+#if os(iOS)
+        return AppRecordDataset.identityURL()
+#else
+        return SharedContainer.containerURL?.appendingPathComponent(filename)
+#endif
     }
 
     /// Returns nil before the first migration. Unsupported newer state is
@@ -150,6 +155,10 @@ actor CatHouseholdIdentityStore {
     }
 
     private func writeUnlocked(_ state: CatHouseholdIdentityState) throws {
+#if os(iOS)
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        try AppRecordDataset.requireWritable(stateURL)
+#endif
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -157,6 +166,7 @@ actor CatHouseholdIdentityStore {
             encoder.encode(state),
             to: stateURL
         )
+        NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: stateURL)
     }
 
     private func withExclusiveLock<Value>(

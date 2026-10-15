@@ -24,7 +24,12 @@ struct CatPreparednessRecord: Codable, Equatable {
 
 @MainActor
 final class CatPreparednessStore: ObservableObject {
-    static let shared = CatPreparednessStore()
+    private static var sharedCache: (URL, CatPreparednessStore)?
+    static var shared: CatPreparednessStore {
+        let root = AppRecordDataset.directory("CatPreparedness")
+        if let cached = sharedCache, cached.0 == root { return cached.1 }
+        let value = CatPreparednessStore(); sharedCache = (root, value); return value
+    }
     enum PhotoRole { case face, body }
 
     @Published private(set) var records: [String: CatPreparednessRecord] = [:]
@@ -32,9 +37,7 @@ final class CatPreparednessStore: ObservableObject {
     private let manifest: URL
 
     init(directory: URL? = nil) {
-        let base = directory ?? FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0].appendingPathComponent("CatPreparedness", isDirectory: true)
+        let base = directory ?? AppRecordDataset.directory("CatPreparedness")
         self.directory = base
         self.manifest = base.appendingPathComponent("records.json")
         if let data = try? Data(contentsOf: manifest),
@@ -111,8 +114,11 @@ final class CatPreparednessStore: ObservableObject {
     }
 
     private func persist(_ next: [String: CatPreparednessRecord]) throws {
+        try AppRecordDataset.requireWritable(manifest)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try AppRecordDataset.requireWritable(manifest)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
+        AppRecordDataset.committed(manifest)
         records = next
     }
 }
@@ -148,7 +154,12 @@ struct LostCatSavedInformation {
 
 @MainActor
 final class LostCatDraftStore: ObservableObject {
-    static let shared = LostCatDraftStore()
+    private static var sharedCache: (URL, LostCatDraftStore)?
+    static var shared: LostCatDraftStore {
+        let root = AppRecordDataset.directory("LostCatDrafts")
+        if let cached = sharedCache, cached.0 == root { return cached.1 }
+        let value = LostCatDraftStore(); sharedCache = (root, value); return value
+    }
     @Published private(set) var drafts: [String: LostCatDraft] = [:]
     private let directory: URL
     private let manifest: URL
@@ -159,9 +170,7 @@ final class LostCatDraftStore: ObservableObject {
 
     init(directory: URL? = nil, legacy: CatPreparednessStore = .shared, allowsCandidateRefresh: Bool = true) {
         self.allowsCandidateRefresh = allowsCandidateRefresh
-        let base = directory ?? FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        )[0].appendingPathComponent("LostCatDrafts", isDirectory: true)
+        let base = directory ?? AppRecordDataset.directory("LostCatDrafts")
         let file = base.appendingPathComponent("drafts.json")
         self.directory = base
         self.manifest = file
@@ -281,13 +290,16 @@ final class LostCatDraftStore: ObservableObject {
     }
 
     private func persistDraft(_ draft: LostCatDraft, for key: String, allowingNewFiles: Set<String> = []) throws {
+        try AppRecordDataset.requireWritable(manifest)
         try requireReadableManifest(allowingNewFiles: allowingNewFiles)
         var next = drafts
         var value = draft
         value.updatedAt = Date()
         next[key] = value
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try AppRecordDataset.requireWritable(manifest)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
+        AppRecordDataset.committed(manifest)
         drafts = next
         hasCommittedManifest = true
     }
@@ -365,7 +377,9 @@ final class LostCatDraftStore: ObservableObject {
         var next = drafts
         next.removeValue(forKey: key)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try AppRecordDataset.requireWritable(manifest)
         try JSONEncoder().encode(next).write(to: manifest, options: .atomic)
+        AppRecordDataset.committed(manifest)
         drafts = next
         hasCommittedManifest = true
         for name in [old.faceFileName, old.bodyFileName].compactMap({ $0 })

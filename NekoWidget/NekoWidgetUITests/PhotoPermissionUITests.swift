@@ -1758,6 +1758,59 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["編集後の元記録を確認"].tap()
         XCTAssertTrue(app.staticTexts["元の記録を保ち、復元コピーだけを編集しました"].waitForExistence(timeout: 5))
         app.terminate()
+        verifyAutomaticRecordSavingAndRestore(app)
+    }
+
+    @MainActor
+    private func verifyAutomaticRecordSavingAndRestore(_ app: XCUIApplication) {
+        app.launchArguments = ["--app-records-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 0回")
+        app.buttons["保存・復元"].tap()
+        let consent = app.switches["app-record-consent"]
+        XCTAssertTrue(consent.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["ツールを保管する"].exists)
+        XCTAssertFalse(app.buttons["app-record-enable"].isEnabled)
+        consent.tap()
+        app.buttons["app-record-enable"].tap()
+        let saved = app.staticTexts["app-record-save-status"]
+        XCTAssertTrue(NSPredicate(format: "label == %@", "保存済み").evaluate(with: saved) || saved.waitForExistence(timeout: 10))
+        let completes = expectation(for: NSPredicate(format: "label == %@", "保存済み"), evaluatedWith: saved)
+        wait(for: [completes], timeout: 20)
+        capture("automatic-save-one-time-consent")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 3回")
+        app.buttons["預けるとき"].tap()
+        let cats = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-"))
+        XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
+        cats.firstMatch.tap()
+        let name = app.textFields["care-cat-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("変更")
+        let edited = name.value as? String
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let status = app.staticTexts["app-record-fixture-status"]
+        let updates = expectation(for: NSPredicate(format: "label == %@", "保存済み"), evaluatedWith: status)
+        wait(for: [updates], timeout: 25)
+        XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 3回")
+        capture("automatic-save-from-ordinary-care-edit-no-photo-resend")
+        app.buttons["別端末での自動復元を検査"].tap()
+        XCTAssertTrue(app.staticTexts["自動復元・通常画面・元記録保全を確認"].waitForExistence(timeout: 20), app.debugDescription)
+        app.buttons["預けるとき"].tap()
+        XCTAssertTrue(cats.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(cats.count, 2)
+        cats.firstMatch.tap()
+        XCTAssertTrue(name.waitForExistence(timeout: 5)); XCTAssertEqual(name.value as? String, edited)
+        capture("automatic-restore-keeps-normal-tool-edit-and-cat-identity")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["写真メモ"].tap()
+        let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 10)); note.tap()
+        XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["memory-note-photo-unavailable"].exists)
+        capture("automatic-restore-photo-memo-without-photokit-link")
+        app.terminate()
     }
     @MainActor
     private func launchWeightMemo(extra: [String] = []) -> XCUIApplication {

@@ -5,7 +5,12 @@ import ImageIO
 
 @MainActor
 final class CareHandoffStore: ObservableObject {
-    static let shared = CareHandoffStore()
+    private static var sharedCache: (URL, CareHandoffStore)?
+    static var shared: CareHandoffStore {
+        let root = AppRecordDataset.directory("CareHandoff")
+        if let cached = sharedCache, cached.0 == root { return cached.1 }
+        let value = CareHandoffStore(); sharedCache = (root, value); return value
+    }
     @Published private(set) var plan = CareHandoffPlan()
     @Published private(set) var loadError: String?
     @Published private(set) var saveError: String?
@@ -16,8 +21,7 @@ final class CareHandoffStore: ObservableObject {
 
     init(directory: URL? = nil, allowsCandidateRefresh: Bool = true) {
         self.allowsCandidateRefresh = allowsCandidateRefresh
-        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory,
-            in: .userDomainMask)[0].appendingPathComponent("CareHandoff", isDirectory: true)
+        self.directory = directory ?? AppRecordDataset.directory("CareHandoff")
         reload()
     }
     func reload() {

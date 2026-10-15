@@ -130,6 +130,7 @@ struct PhotoMemoryNote: Codable, Equatable, Sendable {
     let writtenAt: Date?
     let context: PhotoMemoryNoteContext?
     var weight: PhotoMemoWeight? = nil
+    var photoFile: String? = nil
 
     init(
         id: UUID = UUID(),
@@ -215,7 +216,12 @@ enum PhotoMemoryNoteStoreError: Error, LocalizedError, Equatable {
 /// This is not app-level sync or a guarantee of restoring PhotoKit links on a
 /// different device. No code exports this store to sharing or diagnostics.
 actor PhotoMemoryNoteStore {
+    #if os(iOS)
+    private static let sharedCache = PhotoMemoryNoteStoreCache()
+    static var shared: PhotoMemoryNoteStore { sharedCache.current() }
+#else
     static let shared = PhotoMemoryNoteStore()
+#endif
     nonisolated static let maximumCharacters = 500
 
     private struct Header: Decodable {
@@ -244,7 +250,11 @@ actor PhotoMemoryNoteStore {
     private let fileURLOverride: URL?
 
     init(fileURL: URL? = nil) {
+#if os(iOS)
+        fileURLOverride = fileURL ?? AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+#else
         fileURLOverride = fileURL
+#endif
     }
 
     func note(for identifier: String) throws -> PhotoMemoryNote? {
@@ -252,6 +262,15 @@ actor PhotoMemoryNoteStore {
         Self.commitLock.lock()
         defer { Self.commitLock.unlock() }
         return try load(from: resolvedFileURL()).notes[identifier]
+    }
+
+    func photoURL(for id: UUID) throws -> URL? {
+        guard let record = try record(id: id) else { return nil }
+        let name = record.note.photoFile ?? record.note.id.uuidString + ".jpg"
+        guard UUID(uuidString: String(name.dropLast(4))) != nil, name.hasSuffix(".jpg"),
+              name == URL(fileURLWithPath: name).lastPathComponent else { throw PhotoMemoryNoteStoreError.corruptedState }
+        let url = try resolvedFileURL().deletingLastPathComponent().appendingPathComponent(name)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     /// These APIs need no photo access. A missing original never deletes text.
@@ -444,7 +463,7 @@ actor PhotoMemoryNoteStore {
         let old = state.notes[binding.photoIdentifier], now = Date(), revision = UUID().uuidString
         let weight = weightChange.applying(to: old?.weight)
         try weight?.value.validate()
-        let note = text.isEmpty && weight == nil ? nil : PhotoMemoryNote(id: binding.noteID, text: text, updatedAt: now,
+        var note = text.isEmpty && weight == nil ? nil : PhotoMemoryNote(id: binding.noteID, text: text, updatedAt: now,
             revision: revision, writtenAt: old?.writtenAt, context: old?.context, weight: weight)
         state.notes[binding.photoIdentifier] = note
         binding.inFlight = PhotoMemoryNoteReflection(operationID: operationID, text: text, revision: revision,
@@ -478,7 +497,7 @@ actor PhotoMemoryNoteStore {
         if existing == nil, text.isEmpty, weight == nil { return nil }
 
         let now = Date()
-        let note = text.isEmpty && weight == nil ? nil : PhotoMemoryNote(
+        var note = text.isEmpty && weight == nil ? nil : PhotoMemoryNote(
             id: existing?.id ?? state.archiveBindings?[identifier]?.noteID ?? UUID(),
             text: text,
             updatedAt: now,
@@ -486,6 +505,7 @@ actor PhotoMemoryNoteStore {
             writtenAt: existing == nil ? now : existing?.writtenAt,
             context: preservedContext, weight: weight
         )
+        note?.photoFile = existing?.photoFile
         state.notes[identifier] = note
         if var binding = state.archiveBindings?[identifier] {
             binding.pending = PhotoMemoryNoteReflection(operationID: UUID(), text: text,
@@ -545,6 +565,9 @@ actor PhotoMemoryNoteStore {
             }
             return fileURLOverride
         }
+#if os(iOS)
+        return AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+#else
         do {
             return try FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -557,6 +580,7 @@ actor PhotoMemoryNoteStore {
         } catch {
             throw PhotoMemoryNoteStoreError.storageUnavailable
         }
+#endif
     }
 
     private func load(from url: URL) throws -> State {
@@ -655,6 +679,10 @@ actor PhotoMemoryNoteStore {
 
     private func commit(_ state: State, to url: URL) throws {
         do {
+#if os(iOS)
+            AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+            try AppRecordDataset.requireWritable(url)
+#endif
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let data = try encoder.encode(state)
@@ -684,6 +712,7 @@ actor PhotoMemoryNoteStore {
             // the parent has already been protected. User-authored text is
             // eligible for OS backup. No fallible mutation follows the commit.
             try data.write(to: url, options: options)
+            NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: url)
         } catch {
             throw PhotoMemoryNoteStoreError.storageUnavailable
         }
@@ -712,3 +741,16 @@ enum PhotoMemoryNoteLibraryPolicy {
         func date(captured: Date, updated: Date) -> Date { self == .captured ? captured : updated }
     }
 }
+
+#if os(iOS)
+private final class PhotoMemoryNoteStoreCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (URL, PhotoMemoryNoteStore)?
+    func current() -> PhotoMemoryNoteStore {
+        lock.lock(); defer { lock.unlock() }
+        let url = AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+        if let value, value.0 == url { return value.1 }
+        let store = PhotoMemoryNoteStore(fileURL: url); value = (url, store); return store
+    }
+}
+#endif

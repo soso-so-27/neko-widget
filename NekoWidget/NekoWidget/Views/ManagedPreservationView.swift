@@ -18,6 +18,7 @@ struct ManagedPreservationView: View {
     @State private var confirmsToolDiscard = false
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
+    private let allowsManualSaving: Bool
 
     init(configuration: ManagedPreservationConfiguration = .current,
          draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil,
@@ -25,6 +26,7 @@ struct ManagedPreservationView: View {
          allowsRecordBrowsing: Bool = true,
          onUnsecuredMemoChange: ((Bool) -> Void)? = nil) {
         self.allowsRecordBrowsing = allowsRecordBrowsing
+        self.allowsManualSaving = client != nil || draft != nil || toolBackupSource != nil
         self.onUnsecuredMemoChange = onUnsecuredMemoChange
         let exporter = RecordExportController()
         _exporter = StateObject(wrappedValue: exporter)
@@ -167,7 +169,7 @@ struct ManagedPreservationView: View {
                 // A selected-copy entry must not become a second route for
                 // editing unrelated records. The settings entry retains browsing.
                 if allowsRecordBrowsing {
-                    toolBackupSection
+                    if allowsManualSaving { toolBackupSection }
                     if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
                     recordsSection
                 }

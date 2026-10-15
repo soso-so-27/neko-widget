@@ -497,6 +497,17 @@ actor ManagedPreservationClient {
         return SessionCheckpoint(epoch: epoch, credential: credential)
     }
 
+    /// The final local dataset publication has no await between this secure
+    /// credential comparison and its atomic pointer write.
+    typealias LocalSessionFence = @Sendable (_ publication: () throws -> Void) throws -> Void
+    func localSessionFence(_ checkpoint: SessionCheckpoint) throws -> LocalSessionFence {
+        try requireSessionCheckpoint(checkpoint)
+        let store = self.store, credential = checkpoint.credential
+        return { publication in
+            try store.withCurrentCredential(credential, perform: publication)
+        }
+    }
+
     func savedDeletionState() throws -> ManagedPreservationSessionStore.DeletionReceipt.State? {
         try store.deletionReceipt()?.state
     }

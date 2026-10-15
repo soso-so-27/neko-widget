@@ -403,6 +403,7 @@ private struct VeterinaryRecordConfirmation: View {
     @State private var confirmed = false
     @State private var busy = false
     @State private var error: String?
+    @State private var savedPhotoURL: URL?
     private var wrongCat: Bool { source.note.weight?.catID.map { $0 != visit.catID } ?? false }
     private var photoOnly: Bool { source.note.text.isEmpty && source.note.weight == nil }
     var body: some View {
@@ -414,6 +415,8 @@ private struct VeterinaryRecordConfirmation: View {
                         PhotoAssetImageView(localIdentifier: source.photoIdentifier, catBoundingBox: nil,
                             targetPixelSize: CGSize(width: 1000, height: 1000), showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12))
+                    } else if let savedPhotoURL {
+                        AppRecordSavedPhoto(url: savedPhotoURL).aspectRatio(1, contentMode: .fit)
                     } else { Label("元の写真を開けません。文章と体重だけ追加します。", systemImage: "photo").font(.caption) }
                     if !source.note.text.isEmpty { Text(source.note.text) }
                     if let weight = source.note.weight { PhotoMemoWeightLabel(weight: weight.value) }
@@ -429,7 +432,7 @@ private struct VeterinaryRecordConfirmation: View {
             .navigationTitle("内容を確認").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() }.disabled(busy) } }
             .interactiveDismissDisabled(busy)
-            .task { access.start(photos: photos) }.onDisappear { access.stop() }
+            .task { access.start(photos: photos); savedPhotoURL = try? await noteStore.photoURL(for: source.id) }.onDisappear { access.stop() }
         }
     }
     private func add() async {
@@ -446,7 +449,8 @@ private struct VeterinaryRecordConfirmation: View {
             }
 #endif
             let bytes: Data?
-            if let fixtureBytes { bytes = fixtureBytes }
+            if let savedPhotoURL { bytes = try Data(contentsOf: savedPhotoURL) }
+            else if let fixtureBytes { bytes = fixtureBytes }
             else {
                 bytes = await Task.detached(priority: .userInitiated) { () -> Data? in
                     guard hasPhoto, !Task.isCancelled else { return nil }

@@ -1002,7 +1002,13 @@ final class ManagedPreservationCoordinator: ObservableObject {
         let generation = page.generation
         while true {
             try await client.requireSessionCheckpoint(checkpoint)
-            let visible = page.items.filter { $0.document.toolBackup == nil || $0.document.toolBackup?.kind == "index" }
+            let visible = page.items.filter { record in
+                if (try? AppRecordHead.decode(record.document)) != nil { return false }
+                guard let part = record.document.toolBackup else { return true }
+                guard part.kind == "index", let bytes = Data(base64Encoded: part.payload),
+                      let index = try? JSONDecoder().decode(ToolBackupIndex.self, from: bytes) else { return false }
+                return index.version < 3
+            }
             if !visible.isEmpty || page.nextCursor == nil {
                 return ManagedPreservationPage(items: visible, nextCursor: page.nextCursor, generation: generation)
             }
