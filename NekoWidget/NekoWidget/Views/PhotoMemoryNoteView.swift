@@ -395,7 +395,7 @@ struct PhotoMemoryNoteEditor: View {
 
     init(record: PhotoMemoryNoteRecord, photo: PhotoPresentation?, store: PhotoMemoryNoteStore,
          archiveStore: PersonalArchiveStore = .shared,
-         careStore: CareHandoffStore = .shared, evacuationStore: EvacuationStore = .shared,
+         careStore: CareHandoffStore? = nil, evacuationStore: EvacuationStore? = nil,
          onSaved: @escaping () -> Void) {
         self.photo = photo
         self.store = store
@@ -403,8 +403,8 @@ struct PhotoMemoryNoteEditor: View {
         self.recordID = record.id
         self.onSaved = onSaved
         self.archiveStore = archiveStore
-        _careStore = ObservedObject(wrappedValue: careStore)
-        _evacuationStore = ObservedObject(wrappedValue: evacuationStore)
+        _careStore = ObservedObject(wrappedValue: careStore ?? .shared)
+        _evacuationStore = ObservedObject(wrappedValue: evacuationStore ?? .shared)
         archiveAccount = nil
         didUpdateArchive = nil
     }

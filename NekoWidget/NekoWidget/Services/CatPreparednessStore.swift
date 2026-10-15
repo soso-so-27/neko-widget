@@ -168,13 +168,13 @@ final class LostCatDraftStore: ObservableObject {
     private var manifestUnreadable: Bool
     private var hasCommittedManifest = false
 
-    init(directory: URL? = nil, legacy: CatPreparednessStore = .shared, allowsCandidateRefresh: Bool = true) {
+    init(directory: URL? = nil, legacy: CatPreparednessStore? = nil, allowsCandidateRefresh: Bool = true) {
         self.allowsCandidateRefresh = allowsCandidateRefresh
         let base = directory ?? AppRecordDataset.directory("LostCatDrafts")
         let file = base.appendingPathComponent("drafts.json")
         self.directory = base
         self.manifest = file
-        self.legacy = legacy
+        self.legacy = legacy ?? .shared
         do {
             let data = try Data(contentsOf: file)
             drafts = try JSONDecoder().decode([String: LostCatDraft].self, from: data)
