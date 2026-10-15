@@ -32,6 +32,15 @@ DIAGNOSTIC_HELPER_PATHS = frozenset({
     "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py",
     "NekoWidget/ci/verify-app-icon.py",
 })
+# This exact reviewed pair only appends owning full-CI shard registrations and
+# their tests. Diagnostic selection/preparation and every app/UI-test input are
+# unchanged. It preserves focused diagnosis, never release qualification.
+DIAGNOSTIC_SHARD_ADDITION_PAIRS = {
+    "NekoWidget/ci/ios_ci_scope.py": (
+        "988ee6e14988a5a0179d8e64f2764d3c2839081c", "0f921859fb3a15e9a1ac9c2c1dd15f88470dbadc"),
+    "NekoWidget/ci/test-ci-lanes.py": (
+        "af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6", "2622015e786b04b3f85a6bd507a663b0da328691"),
+}
 DIAGNOSTIC_JOB_NAMES = frozenset({
     "Diagnostic only - one native UI test (not release evidence)",
     "Diagnostic only - up to three native UI tests (not release evidence)",
@@ -429,11 +438,17 @@ def diagnostic_source_matches(source, head):
     seen = set()
     for index in range(0, len(records), 2):
         fields, path = records[index].split(), records[index + 1]
-        if (path not in DIAGNOSTIC_HELPER_PATHS or path in seen or len(fields) != 5
+        if (path in seen or len(fields) != 5
                 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
                 or not all(re.fullmatch(r"[0-9a-f]{40}", value) and value != "0" * 40 for value in fields[2:4])):
             return False
+        if (path not in DIAGNOSTIC_HELPER_PATHS
+                and tuple(fields[2:4]) != DIAGNOSTIC_SHARD_ADDITION_PAIRS.get(path)):
+            return False
         seen.add(path)
+    shard_changes = seen & DIAGNOSTIC_SHARD_ADDITION_PAIRS.keys()
+    if shard_changes and shard_changes != DIAGNOSTIC_SHARD_ADDITION_PAIRS.keys():
+        return False
     # Examining the entire raw diff also proves equality of every other tracked
     # path, including its mode/type. Added/deleted/renamed/symlink helpers fail.
     return True
