@@ -3230,6 +3230,25 @@ class PreflightTests(unittest.TestCase):
             self.assertFalse(preflight.diagnostic_source_matches("main", head))
             git.assert_not_called()
 
+    def test_focused_diagnosis_accepts_only_complete_frozen_shard_registration_pair(self):
+        source, head = "a" * 40, "b" * 40
+        pairs = preflight.DIAGNOSTIC_SHARD_ADDITION_PAIRS
+        self.assertEqual(set(pairs), {"NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/test-ci-lanes.py"})
+        records = [f":100644 100644 {old} {new} M\0{path}\0" for path, (old, new) in pairs.items()]
+        good = "".join(records)
+        with patch.object(planner, "git", side_effect=["", good]):
+            self.assertTrue(preflight.diagnostic_source_matches(source, head))
+        invalid = [*records, good + records[0], good.replace(" M\0", " A\0", 1),
+                   good.replace(":100644", ":100755", 1)]
+        for old, new in pairs.values():
+            invalid += [good.replace(old, "c" * 40), good.replace(new, "d" * 40)]
+        for extra in (".github/workflows/ios-ui-diagnostic.yml", "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+                      "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift", "NekoWidget/ci/run-native-ui.sh"):
+            invalid.append(good + f":100644 100644 {'c'*40} {'d'*40} M\0{extra}\0")
+        for raw in invalid:
+            with patch.object(planner, "git", side_effect=["", raw]):
+                self.assertFalse(preflight.diagnostic_source_matches(source, head), raw)
+
     def test_raw_logs_are_captured_with_escape_sequences_but_not_printed(self):
         response = subprocess.CompletedProcess([], 0, stdout="\x1b[31mfailed\x1b[0m", stderr="")
         with patch.object(preflight.subprocess, "run", return_value=response) as invoke, \

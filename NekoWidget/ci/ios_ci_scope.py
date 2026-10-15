@@ -840,8 +840,15 @@ SOLO_TEST_METHODS = (
 # Main still carries the exact prior 51-method source until the product lands.
 # Only that frozen source may omit this reviewed addition; no unknown inventory.
 SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST = "8a9658354055524d71673806cce28c9738956bf2ebe277b682e6933dbc1e31bf"
+SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST = "8118f420fc1df78f5d7f503dba3a19897e943d884d4ff01f350b406894155930"
+SOLO_AUTOMATIC_RESTORE_METHODS = (
+    "testAutomaticRestoreProtectsUnsavedMemoDraft",
+    "testAutomaticRestoredShowcaseWithoutPhotoAccess",
+)
 SOLO_ADDITIONAL_TEST_METHODS = {
     "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity": 1,
+    "testAutomaticRestoreProtectsUnsavedMemoDraft": 0,
+    "testAutomaticRestoredShowcaseWithoutPhotoAccess": 1,
 }
 
 LANE_JOB_PREFIX = "Sharing checks"
@@ -3811,13 +3818,17 @@ def solo_test_methods(source: str) -> tuple[str, ...]:
         raise ValueError("Unsupported direct Solo test declaration")
     complete = tuple(sorted(SOLO_TEST_METHODS + tuple(SOLO_ADDITIONAL_TEST_METHODS)))
     foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
-    if foreground in actual:
+    if foreground in actual or set(actual) & set(SOLO_AUTOMATIC_RESTORE_METHODS):
         complete = tuple(sorted(complete + (foreground,)))
+    # Admit the unchanged main source while the product tests land separately.
+    # A missing probe in any other source, including partial additions, fails.
+    before_automatic = tuple(name for name in complete if name not in SOLO_AUTOMATIC_RESTORE_METHODS)
     if (len(actual) != len(set(actual))
             or len(complete) != len(set(complete))
             or any(shard not in (0, 1) for shard in SOLO_ADDITIONAL_TEST_METHODS.values())
             or actual != complete and not (
-                actual == SOLO_TEST_METHODS and source_digest(source) == SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST)):
+                actual == SOLO_TEST_METHODS and source_digest(source) == SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST
+                or actual == before_automatic and source_digest(source) == SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST)):
         raise ValueError("SoloMemoriesUITests changed: update both explicit shards")
     return actual
 
@@ -3837,8 +3848,7 @@ def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
                       "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
             methods = solo_test_methods(source)
             offset = 0 if lane == "app-ui-solo-1" else 1
-            # Preserve every prior assignment; append the one new method to
-            # solo-2 instead of shifting later tests between Mac jobs.
+            # Append reviewed additions without moving prior shard assignments.
             assigned = SOLO_TEST_METHODS[offset::2] + tuple(
                 method for method, shard in SOLO_ADDITIONAL_TEST_METHODS.items()
                 if shard == offset and method in methods)
