@@ -146,3 +146,46 @@ AWS profile `neko-preservation-test` はSTSで認証期限切れ。接続可能�
 - 再計算sourceと集計は `C:/dev/neko-evidence/everyday-media-cost-20261015/`。`media-cost-results-final.json` が最新、v1/v2は途中候補として保持。最初の候補では月末目録残高を月平均としていた点とdomain更新年額を初年へ使った点を修正した。Node probeは製品codecそのものをローカル実行し、公開AWS単価3offerを新規取得した。
 - 5算術検査が成功。GB/GiB、月内平均、成長、動画のbit/秒、account単位の無料枠と切上げ、未測定総額null、共通費を確認。保持/権限に関わる設計と数式を独立レビューし、owner読戻し2回・record/marker bytesの見落としを追記して補正した。
 - 製品コード、実限度、既存保管31記録、試用、料金、メール、cron、AWS/Cloudflare契約は変更していない。980円維持、追加契約・購入0。mainの製品/CI入力と既存256・成功検査を保持し、計算資料のためのMac CIや再配布は行わない。一般提供・AWS有料継続・新しい未承認の支出は、具体的な用途/金額を示した承認が別途必要。
+
+## 2026-10-16 実装した自動保存経路の原価再計算
+
+ここからは前節の設計だけの状態に続く実装候補。980円を維持し、初回の説明・同意後は写真メモ/ツール/猫情報の通常変更を自動保存し、本人の同じ保存先から通常ストアへ戻す。毎回の保管操作は廃止する。旧手動コピーと切替前の元データは保持する。一般公開・クラウド反映・新TestFlightはまだ行っていない。
+
+### 予備費を入れない比較条件
+
+**写真メモ1日1件（30件/月）＋メモの編集1日1回、空の状態から最初の30日、年1回の復元を月割り**とした比較。どの利用者もこの量だという観測ではない。写真は既存24枚の暗号化後実平均930,253.92 bytes、メモ本文はUTF-8 500 bytes（日本語約160文字）。保存済みデータが増えた数年後の原価をこの初月額で代表しない。
+
+製品のArchiveStore、record recovery、owner recovery v3ページ目録、暗号codec、v3前index proofをローカルで通し、API回数と実際の管理情報bytesを採取した。外部クラウド呼出0。写真validator/鍵authority/D1/R2/S3は合成fixtureのため、実際のWorkers CPU時間/画像検査時間の測定ではない。写真本体だけを差し替え、記録/marker/目録ページ/owner headerと全S3版、変更のない毎時確認・15分観測、旧index/JSON整理・tombstone、年1復元まで含めた。
+
+| 保存経路の費目 | 1人・最初の30日 |
+| --- | ---: |
+| 写真本体のR2保管 | 0.03円 |
+| 写真・記録・目録・全版本のS3保管 | 0.07円 |
+| S3 PUT | 1.78円 |
+| S3 GET/HEAD | 0.72円 |
+| S3からの本文転送 | 1.64円 |
+| KMSの暗号化/復号要求 | 9.56円 |
+| R2の操作 | 0.02円 |
+| **上記の小計** | **13.81円/人月** |
+
+S3 PUT 2,387回、GET/HEAD 12,215回、KMS 20,122.25回（年1復元の月割りを含む）、S3本文読取97,617,051 bytes。初回本人設定の既知小計0.00557円は一度だけ。予備費0、期限付きcredit適用なし、共有無料枠を各人に重複適用していない。レートは前節と同じ2026-10-14 17時の158.345円/USD、税・カード換算差別。
+
+アプリ共通固定費の料金表小計は月1,088.09円（Workers Paid 5USD＋KMS key 1USD＋購入済domain初年10.46USD/12）。新たに契約する費用ではない。全額をねこのまどで負担する比較では、有料会員N人で一度だけ割る。
+
+| 有料会員数の比較 | 保存経路小計＋共通固定費/人月 |
+| --- | ---: |
+| 10人 | 122.62円 |
+| 100人 | 24.70円 |
+| 1,000人 | 14.90円 |
+
+この表は**アプリ全体の確定原価ではない**。実CPU/D1/DO/画像検査、共有の利用、解約後保持者、Apple手数料/年会費/税は別途必要。現在のbasic Container設定（1GiB memory/4GB disk・idle60秒）で毎日1回cold起動すると仮定したmemory/disk部分は共有枠適用前0.79円/月だが、実CPUや実請求額ではない。公式料金は[Containers](https://developers.cloudflare.com/containers/platform/pricing/)、[R2](https://developers.cloudflare.com/r2/pricing/)、[Workers](https://developers.cloudflare.com/workers/platform/pricing/)、[KMS](https://aws.amazon.com/kms/pricing/)、[S3東京公式offer](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/ap-northeast-1/index.json)。
+
+動画のクラウド保存は現在未対応。「動画0円で提供」という意味ではなく、今回の小計に動画保管サービスを含めていない。写真原本/ライブラリ全体も自動送信しない。
+
+### 安くするために実装した部分と残る制限
+
+変更のない写真/JSONの参照を再利用し、前の検証済みindexと同一fileの暗号化部品を毎回再読込みしない。owner目録は全件JSONの新規複製から、owner/treeに束縛したimmutable pageと小さなheaderへ変更。既存v2読取りは維持し、新v3書込みは設定で有効化する準備段階。2万件中1件の変更でページ書込みが全件量にならない検査、v2/v3混在・D1 ACK・削除境界は成功。無変化の全写真の再送はしない。
+
+一方で、owner目録作成時の全D1 capture、全履歴からの災害復旧、メモ集合JSONの再分割、native indexの999file/1,000piece/256KiB、既存pilot200記録/1GiBは未解消。普通の利用で容量を気にしなくてよい一般提供を完了したとは扱わない。枠の数字を上げるだけではなく、長期保存/復元の性能を確認してから一般枠と継続予算を確定する。
+
+検査と計算の記録は `C:/dev/neko-evidence/integrated-save-restore-20261015/ordinary-cost-output-3.txt`、`calculate-ordinary-cost.py`、`ordinary-cost-results.json`。collectorの末尾 `ORDINARY_COST_EXPORT` は完了した結果JSONを出すための私的export sentinelで、製品検査の成功や失敗に流用しない。最初の候補・取消した広いcollector・修正前の失敗も保持する。今回の原価計算を新規契約、AWS Paid、試用延長、一般販売、既存記録削除、Codex定期追加/再実行の承認へ広げない。
