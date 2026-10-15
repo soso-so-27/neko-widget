@@ -7126,6 +7126,8 @@ class PlanTests(unittest.TestCase):
             planner.required_jobs_from_scope(planner.BILLING_SCOPE)
 
     def test_retention_notice_batch_keeps_both_owning_jobs_and_refuses_sibling_changes(self):
+        workflow = Path(__file__).resolve().parents[2] / planner.BILLING_WORKFLOW
+        self.assertEqual(scope.source_digest(workflow.read_text(encoding='utf-8')), planner.BILLING_WORKFLOW_DIGEST)
         changed = ['NekoWidget/PreservationService/' + name for name in (
             'migrations/0038_notice_send_budget.sql', 'src/billing-authority.ts',
             'src/billing-link-protocol.ts', 'src/index.ts', 'src/membership-links.ts',

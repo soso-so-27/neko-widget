@@ -1648,7 +1648,7 @@ BILLING_PATHS |= frozenset('NekoWidget/PreservationService/' + name for name in 
     'test/notice-dispatch.test.ts', 'test/pilot-wiring.test.ts', 'test/retention-ledger.test.ts',
 ))
 BILLING_REVIEWED_TREES = {'BillingVerificationService': 'd3be3620dd75ccf83331f9e4ea434ce760e51106', 'SharingService': 'ea5bcf577b4285ef62eec5445843dbf360536baa', 'PreservationImageValidator': '7ba58342c98a0f69ab642a9d69ccf9eeb92491db', 'PreservationService': '5a033b2c2dc94a65b75d36aa73f359bbb2333925'}
-BILLING_WORKFLOW_DIGEST = "492e25862dc87f5c329ba99cc3b602bf3cc1baa7bc257851c55ab0788596e6fd"
+BILLING_WORKFLOW_DIGEST = "23d571f1c0ce54355e5d456fa1bc113aca669f9fdbc30c1057641d8e4e2e51cb"
 BILLING_COMPANION_PATHS = JPEG_COMPANION_PATHS
 BILLING_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
