@@ -133,6 +133,46 @@ TOOL_STORAGE_COMPILE_FAILURE = {
     "cause": "ManagedPreservationView.swift:37 expression type-check timeout",
     "ui_executed": False, "fixed_source_sha": TOOL_STORAGE_SOURCE,
 }
+TOOL_STORAGE_PR_SOURCE = "c033abe3de5dabb04636d4707ceb370a4a0fd3e5"
+TOOL_STORAGE_PR_NATIVE_RUN = 38653609078
+TOOL_STORAGE_PR_RUN, TOOL_STORAGE_PR_JOB = 38653642493, 116158156307
+TOOL_STORAGE_PR_NUMBER, TOOL_STORAGE_PR_ID = 311, 4865888681
+TOOL_STORAGE_PR_BASE = "a5279dfd17cf533c534c2e16a70fb01b2084eaef"
+TOOL_STORAGE_PR_CHECKOUT = "9ce7328fddf1cde8a9e5787e569b08bb800dc6b8"
+TOOL_STORAGE_PR_TREE = "87f8d74871dce07db861dd55065a396c0785ca55"
+TOOL_STORAGE_PR_LOG_SHA256 = "cbadac5084da55e30a6bff79c21e554640790db8c1c3643be31aae1028c8786a"
+TOOL_STORAGE_PR_KIND = "tool-storage-fixed-pr-checkout-backend-v1"
+TOOL_STORAGE_PR_CONTROL_PATHS = frozenset({"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"})
+TOOL_STORAGE_PR_CONTROL_BEFORE = {'NekoWidget/ci/ios_ci_scope.py': '988ee6e14988a5a0179d8e64f2764d3c2839081c',
+ 'NekoWidget/ci/plan-ios-ci.py': 'f701198be9dadc702acd2bff7309bd02e06b09dd',
+ 'NekoWidget/ci/preflight-ci.py': '58468dee2e3eca2b865149f2c0af4195875d36bb',
+ 'NekoWidget/ci/release-testflight.py': 'b96df9ab917d46559d2c15030a8740565e8dc174',
+ 'NekoWidget/ci/test-ci-lanes.py': 'af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6',
+ 'NekoWidget/ci/test-plan-ios-ci.py': '6256f878ccb63f4b7fd3be38f8ff0f3e4afc5335',
+ 'NekoWidget/ci/test-preflight-ci.py': 'f26aa0e943ce4a98e3c95cd786a3394b5b360011',
+ 'NekoWidget/ci/test-release-testflight.py': '3a9d1056842b4d4ea6d13c1eb5a5bcdd4143cad4'}
+TOOL_STORAGE_PHOTOS_RETRY_KIND = "tool-storage-fixed-photos-attempt2-v1"
+TOOL_STORAGE_PHOTOS_SOURCE_JOBS = {
+    "plan": 116158047063, "build": 116158355006, "photos": 116158354978,
+    "runtime": 116158355048, "app-ui": 116158355092,
+}
+TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS = frozenset({116164339194, 116165047088})
+TOOL_STORAGE_PHOTOS_SOURCE_CREATED_AT = "2026-10-14T23:21:56Z"
+TOOL_STORAGE_PHOTOS_SOURCE_FINISHED_AT = "2026-10-14T23:50:57Z"
+TOOL_STORAGE_PHOTOS_FAILURE_SHA256 = "4e35aa4cf348a6f8b1876d5dd846113c857d63e81857ba10256444cb75daf20c"
+TOOL_STORAGE_PHOTOS_SOURCE_PLAN_SHA256 = "2e8fdbb2e00c7fd6291f8a912893ce050f57d5f029fa815ee089df5677ad58f0"
+TOOL_STORAGE_PHOTOS_SOURCE_UI_SHA256 = "45e5ee10d34d408eb8b8323bd7f6e0b8298f934e438660b5eb8d28287a74b26b"
+# Conditional preparation only. Root must observe and independently review the
+# exact new Photos job and the diagnostic identity/log before filling these.
+TOOL_STORAGE_PHOTOS_RETRY_JOB = None
+TOOL_STORAGE_PHOTOS_DIAGNOSTIC = {
+    "run_id": 38657177844, "job_id": 116169594925,
+    "source_sha": "8d0a10ef010a5494c2d3e2cd38eb7c2d06680954",
+    "branch": "diagnostic/photo-bootstrap-hang-20261015",
+    "workflow_id": 362697969, "path": ".github/workflows/ios-ui-diagnostic.yml",
+    "raw_log_sha256": "b32b87b3337a6905cd3cbf86beddf4dff911fdb07518f6099bed87e085644ce8",
+}
+
 TOOL_STORAGE_BACKEND_STEPS = (
     "Check out repository", "Set up Node.js", "Install locked dependencies without lifecycle scripts",
     "Typecheck the disabled service", "Verify local identity, custody and storage boundaries",
@@ -4155,10 +4195,162 @@ def tool_storage_control_only(paths, base, head):
     return tool_storage_signature(head)
 
 
-def tool_storage_requirements(head):
+def tool_storage_push_requirements(head):
+    # Preserve the exact declaration emitted by the original running native CI.
     return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
              "head_sha": head, "event": "push", "success_required": True,
              "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}]
+
+
+def tool_storage_requirements(head):
+    if head != TOOL_STORAGE_PR_SOURCE: return tool_storage_push_requirements(head)
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "event": "pull_request", "run_id": TOOL_STORAGE_PR_RUN,
+             "job_id": TOOL_STORAGE_PR_JOB, "pr_number": TOOL_STORAGE_PR_NUMBER,
+             "checkout_sha": TOOL_STORAGE_PR_CHECKOUT, "tree": TOOL_STORAGE_PR_TREE,
+             "proof_kind": TOOL_STORAGE_PR_KIND, "push_evidence": False,
+             "success_required": True, "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}]
+
+
+def tool_storage_pr_git_observation(path):
+    """Two fixed GETs; the release caller's actions-only API boundary stays intact."""
+    prefix = "repos/soso-so-27/neko-widget/git/commits/"
+    if path not in {prefix + TOOL_STORAGE_PR_SOURCE, prefix + TOOL_STORAGE_PR_CHECKOUT}:
+        raise ValueError("Unregistered storage PR Git observation")
+    result = subprocess.run(["gh", "api", "--hostname", "github.com", "--method", "GET", path],
+        capture_output=True, text=True, encoding="utf-8", timeout=45,
+        env={**os.environ, "GH_PROMPT_DISABLED": "1", "GH_DEBUG": ""})
+    if result.returncode: raise ValueError("Fixed storage PR Git identity unavailable")
+    value = json.loads(result.stdout)
+    if not isinstance(value, dict): raise ValueError("Invalid storage PR Git observation")
+    return value
+
+
+def tool_storage_pr_backend_proof(repository, api, now):
+    """Only PR311's real eight-step checkout; never claim absent push success."""
+    if repository != "soso-so-27/neko-widget": raise ValueError("Storage PR repository differs")
+    prefix = f"/repos/{repository}/actions"
+    identity = api(f"{prefix}/workflows/preservation-service.yml")
+    if (identity.get("id") != 363932714 or identity.get("state") != "active"
+            or identity.get("path") != PRESERVATION_WORKFLOW):
+        raise ValueError("Storage PR workflow differs")
+    query = urllib.parse.urlencode({"head_sha": TOOL_STORAGE_PR_SOURCE, "event": "push", "per_page": 100})
+    push_path = f"{prefix}/workflows/preservation-service.yml/runs?{query}"
+    absent = {"total_count": 0, "workflow_runs": []}
+    push = api(push_path)
+    if type(push.get("total_count")) is not int or push != absent:
+        raise ValueError("A storage backend push cannot be replaced")
+    query = urllib.parse.urlencode({"head_sha": TOOL_STORAGE_PR_SOURCE, "event": "pull_request", "per_page": 100})
+    index = api(f"{prefix}/workflows/preservation-service.yml/runs?{query}")
+    runs = index.get("workflow_runs")
+    if (type(index.get("total_count")) is not int or index["total_count"] != 1
+            or not isinstance(runs, list) or len(runs) != 1):
+        raise ValueError("Fixed storage PR index is incomplete or ambiguous")
+    indexed = runs[0]
+    run = api(f"{prefix}/runs/{TOOL_STORAGE_PR_RUN}")
+    keys = ("id", "head_sha", "head_branch", "event", "workflow_id", "path", "status", "conclusion",
+            "run_number", "run_attempt", "updated_at")
+    if any(run.get(key) != indexed.get(key) for key in keys):
+        raise ValueError("Storage PR changed during verification")
+    if (run.get("id") != TOOL_STORAGE_PR_RUN or run.get("head_sha") != TOOL_STORAGE_PR_SOURCE
+            or run.get("head_branch") != TOOL_STORAGE_BRANCH or run.get("event") != "pull_request"
+            or run.get("workflow_id") != 363932714 or run.get("path") != PRESERVATION_WORKFLOW
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or run.get("repository", {}).get("full_name") != repository
+            or run.get("head_repository", {}).get("full_name") != repository
+            or run.get("repository", {}).get("id") != 1335079243
+            or run.get("head_repository", {}).get("id") != 1335079243
+            or run.get("head_commit", {}).get("id") != TOOL_STORAGE_PR_SOURCE
+            or run["head_commit"].get("tree_id") != TOOL_STORAGE_PR_TREE):
+        raise ValueError("Fixed storage PR run identity differs")
+    updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
+        raise ValueError("Storage PR evidence is stale")
+    # GitHub can clear/update these mutable PR pointers after merge. Historical
+    # source identity is bound by the immutable commit, parents and raw checkout.
+    prs = run.get("pull_requests")
+    if not isinstance(prs, list) or len(prs) > 1: raise ValueError("Storage PR pointer differs")
+    if prs and (prs[0].get("number") != TOOL_STORAGE_PR_NUMBER or prs[0].get("id") != TOOL_STORAGE_PR_ID
+            or any(prs[0].get(side, {}).get("ref") != ref
+                or prs[0][side].get("repo", {}).get("id") != 1335079243
+                for side, ref in (("head", TOOL_STORAGE_BRANCH), ("base", "main")))):
+        raise ValueError("Storage PR pointer differs")
+    jobs = executed_jobs(run, repository, api)
+    if (len(jobs) != 1 or jobs[0].get("id") != TOOL_STORAGE_PR_JOB or jobs[0].get("name") != PRESERVATION_JOB
+            or jobs[0].get("run_id") != TOOL_STORAGE_PR_RUN or jobs[0].get("head_sha") != TOOL_STORAGE_PR_SOURCE
+            or type(jobs[0].get("run_attempt")) is not int or jobs[0]["run_attempt"] != 1
+            or not covers_jobs(jobs, (PRESERVATION_JOB,), TOOL_STORAGE_PR_SOURCE, now=now)):
+        raise ValueError("Fixed storage PR owning job differs")
+    steps = jobs[0].get("steps")
+    if not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps):
+        raise ValueError("Storage PR steps unavailable")
+    for name in TOOL_STORAGE_BACKEND_STEPS:
+        matches = [step for step in steps if step.get("name") == name]
+        if len(matches) != 1 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success"):
+            raise ValueError("All eight storage PR steps must execute")
+    expected = ((TOOL_STORAGE_PR_CHECKOUT, [TOOL_STORAGE_PR_BASE, TOOL_STORAGE_PR_SOURCE]),
+                (TOOL_STORAGE_PR_SOURCE, ["0d11066368acdfae9fdd2678ea53e35177be5eec", TOOL_STORAGE_PR_BASE]))
+    for sha, parents in expected:
+        commit = tool_storage_pr_git_observation(f"repos/{repository}/git/commits/{sha}")
+        if (commit.get("sha") != sha or commit.get("tree", {}).get("sha") != TOOL_STORAGE_PR_TREE
+                or [parent.get("sha") for parent in commit.get("parents", [])] != parents):
+            raise ValueError("Storage PR checkout tree/parents differ")
+    raw = api(f"{prefix}/jobs/{TOOL_STORAGE_PR_JOB}/logs")
+    if (tool_log_digest(raw) != TOOL_STORAGE_PR_LOG_SHA256
+            or f"+{TOOL_STORAGE_PR_CHECKOUT}:refs/remotes/pull/{TOOL_STORAGE_PR_NUMBER}/merge" not in raw
+            or f"HEAD is now at {TOOL_STORAGE_PR_CHECKOUT[:7]} Merge {TOOL_STORAGE_PR_SOURCE} into {TOOL_STORAGE_PR_BASE}" not in raw):
+        raise ValueError("Storage PR actual checkout log differs")
+    push = api(push_path)
+    if type(push.get("total_count")) is not int or push != absent:
+        raise ValueError("A backend push appeared during PR verification")
+    return {"kind": TOOL_STORAGE_PR_KIND, "run_id": TOOL_STORAGE_PR_RUN, "job_id": TOOL_STORAGE_PR_JOB,
+            "event": "pull_request", "pr_number": TOOL_STORAGE_PR_NUMBER, "pr_id": TOOL_STORAGE_PR_ID,
+            "candidate_sha": TOOL_STORAGE_PR_SOURCE, "checkout_sha": TOOL_STORAGE_PR_CHECKOUT,
+            "base_sha": TOOL_STORAGE_PR_BASE, "tree": TOOL_STORAGE_PR_TREE, "push_evidence": False,
+            "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}
+
+
+def tool_storage_pr_control_equivalent_inputs(source, head):
+    """Only this source plus the two approved proof controls; all real inputs fixed."""
+    try:
+        if (source != TOOL_STORAGE_PR_SOURCE or not SHA.fullmatch(head) or source == head
+                or git("rev-parse", "HEAD") != head or not tool_storage_inputs(source) or not tool_storage_inputs(head)
+                or git("rev-parse", source + "^{tree}") != TOOL_STORAGE_PR_TREE): return False
+        git("merge-base", "--is-ancestor", source, head)
+        approved = git("merge-base", "refs/remotes/origin/main", head)
+        marker = f'TOOL_STORAGE_PR_SOURCE = "{TOOL_STORAGE_PR_SOURCE}"'
+        if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(marker) != 1: return False
+        before, after = tool_storage_tree(source), tool_storage_tree(head)
+        if (set(TOOL_STORAGE_PR_CONTROL_BEFORE) != TOOL_STORAGE_CONTROLS
+                or TOOL_STORAGE_PR_CONTROL_PATHS != {"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"}): return False
+        for path in TOOL_STORAGE_CONTROLS:
+            if before.get(path) != f"100644 blob {TOOL_STORAGE_PR_CONTROL_BEFORE[path]}\t{path}": return False
+            trusted = git("ls-tree", approved, "--", path)
+            if not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), trusted) or after.get(path) != trusted: return False
+            if path not in TOOL_STORAGE_PR_CONTROL_PATHS and before.get(path) != after.get(path): return False
+        frozen_before = {path: row for path, row in before.items() if path not in TOOL_STORAGE_CONTROLS and not tool_storage_handoff(path)}
+        frozen_after = {path: row for path, row in after.items() if path not in TOOL_STORAGE_CONTROLS and not tool_storage_handoff(path)}
+        if frozen_before != frozen_after: return False  # Includes product22 and signed artifact.
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return False
+        seen = set()
+        changed = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if path in seen or len(fields) != 5: return False
+            seen.add(path)
+            if path in TOOL_STORAGE_PR_CONTROL_PATHS:
+                if (fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                        or before.get(path) != f"100644 blob {fields[2]}\t{path}"
+                        or after.get(path) != f"100644 blob {fields[3]}\t{path}"): return False
+                changed.add(path)
+            elif (not tool_storage_handoff(path) or (fields[:2], fields[4]) not in
+                  (([":000000", "100644"], "A"), ([":100644", "100644"], "M"))): return False
+        return changed == TOOL_STORAGE_PR_CONTROL_PATHS
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+        return False
 
 
 def tool_storage_ui_results(log):
@@ -4208,6 +4400,138 @@ def tool_storage_diagnostic_inputs(source, head):
         return False
 
 
+def tool_storage_photos_retry_configured():
+    diagnostic = TOOL_STORAGE_PHOTOS_DIAGNOSTIC
+    keys = {"run_id", "job_id", "source_sha", "branch", "workflow_id", "path", "raw_log_sha256"}
+    return (type(TOOL_STORAGE_PHOTOS_RETRY_JOB) is int and TOOL_STORAGE_PHOTOS_RETRY_JOB > 0
+        and TOOL_STORAGE_PHOTOS_RETRY_JOB not in set(TOOL_STORAGE_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS
+        and isinstance(diagnostic, dict) and set(diagnostic) == keys
+        and all(type(diagnostic[key]) is int and diagnostic[key] > 0 for key in ("run_id", "job_id", "workflow_id"))
+        and diagnostic["run_id"] != TOOL_STORAGE_PR_NATIVE_RUN
+        and diagnostic["job_id"] != TOOL_STORAGE_PHOTOS_RETRY_JOB
+        and isinstance(diagnostic["source_sha"], str) and SHA.fullmatch(diagnostic["source_sha"]) is not None
+        and isinstance(diagnostic["branch"], str) and diagnostic["branch"].startswith("diagnostic/")
+        and isinstance(diagnostic["path"], str) and re.fullmatch(r"\.github/workflows/[a-z0-9-]+\.yml", diagnostic["path"]) is not None
+        and isinstance(diagnostic["raw_log_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", diagnostic["raw_log_sha256"]) is not None)
+
+
+def tool_storage_photos_retry_candidate(run):
+    return (tool_storage_photos_retry_configured() and isinstance(run, dict)
+        and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE
+        and type(run.get("run_attempt")) is int and run["run_attempt"] == 2
+        and run.get("event") == "push" and run.get("head_branch") == TOOL_STORAGE_BRANCH
+        and run.get("workflow_id") == 335014238 and run.get("path") == ".github/workflows/ios-build.yml"
+        and (run.get("status"), run.get("conclusion")) == ("completed", "success"))
+
+
+def tool_storage_photos_retry_history(run, api):
+    """One exact attempt2; retain every original job, including the failed one.
+
+    Generic latest-by-name cannot handle the two identical skipped placeholder
+    names. This exception uses their fixed IDs, without weakening other runs.
+    """
+    if not tool_storage_photos_retry_candidate(run):
+        raise ValueError("Fixed Photos attempt2 is not configured or completed")
+    repo = "soso-so-27/neko-widget"
+    prefix = f"/repos/{repo}/actions/runs/{TOOL_STORAGE_PR_NATIVE_RUN}"
+    original = api(prefix + "/attempts/1")
+    expected = {"id": TOOL_STORAGE_PR_NATIVE_RUN, "head_sha": TOOL_STORAGE_PR_SOURCE,
+        "head_branch": TOOL_STORAGE_BRANCH, "event": "push", "workflow_id": 335014238,
+        "path": ".github/workflows/ios-build.yml", "run_attempt": 1,
+        "status": "completed", "conclusion": "failure", "created_at": TOOL_STORAGE_PHOTOS_SOURCE_CREATED_AT,
+        "updated_at": TOOL_STORAGE_PHOTOS_SOURCE_FINISHED_AT}
+    if (type(original.get("run_attempt")) is not int or any(original.get(key) != value for key, value in expected.items())
+            or any(original.get(side, {}).get("full_name") != repo for side in ("repository", "head_repository"))
+            or run.get("created_at") != TOOL_STORAGE_PHOTOS_SOURCE_CREATED_AT):
+        raise ValueError("Original Photos failure run differs")
+    response = api(prefix + "/jobs?filter=all&per_page=100&page=1")
+    history = response.get("jobs")
+    if (type(response.get("total_count")) is not int or not isinstance(history, list)
+            or response["total_count"] != len(history) or not 8 <= len(history) <= 10
+            or any(not isinstance(job, dict) or type(job.get("id")) is not int or job["id"] <= 0
+                or job.get("run_id") != TOOL_STORAGE_PR_NATIVE_RUN or job.get("head_sha") != TOOL_STORAGE_PR_SOURCE
+                or type(job.get("run_attempt")) is not int or job["run_attempt"] not in (1, 2)
+                or job.get("status") != "completed" for job in history)
+            or len({job["id"] for job in history}) != len(history)):
+        raise ValueError("Photos attempt history is incomplete or unexpected")
+    old = {job["id"]: job for job in history if job["run_attempt"] == 1}
+    if set(old) != set(TOOL_STORAGE_PHOTOS_SOURCE_JOBS.values()) | TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS:
+        raise ValueError("Original native execution was replaced or omitted")
+    names = {"plan": PLAN_JOB, "build": BUILD, "photos": BOOTSTRAP_SMOKE,
+        "runtime": lane_job(TOOL_STORAGE_SCOPE, "runtime"), "app-ui": lane_job(TOOL_STORAGE_SCOPE, "app-ui")}
+    for role, identifier in TOOL_STORAGE_PHOTOS_SOURCE_JOBS.items():
+        job = old[identifier]
+        if job.get("name") != names[role] or job.get("conclusion") != ("failure" if role == "photos" else "success"):
+            raise ValueError("Original native outcome differs")
+        if role != "photos" and (not isinstance(job.get("steps"), list)
+                or any(not isinstance(step, dict) or step.get("status") != "completed"
+                    or step.get("conclusion") not in {"success", "skipped"} for step in job["steps"])):
+            raise ValueError("Another original native step failed")
+    failed = old[TOOL_STORAGE_PHOTOS_SOURCE_JOBS["photos"]]
+    steps = failed.get("steps")
+    if (not isinstance(steps, list) or any(not isinstance(step, dict) for step in steps)
+            or [(step.get("name"), step.get("number"), step.get("conclusion")) for step in steps if step.get("conclusion") != "success"]
+                != [("Run Simulator smoke test", 3, "failure")]
+            or any(step.get("status") != "completed" for step in steps)
+            or any(len(matches := [step for step in steps if step.get("name") == name]) != 1
+                or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", "success")
+                for name in ("Check out repository", "Upload Simulator smoke-test artifacts"))):
+        raise ValueError("Original Photos has another failure")
+    def placeholder(job):
+        return (job.get("name") == UNEXPANDED_SHARING_JOB and job.get("conclusion") == "skipped" and job.get("steps") == [])
+    if any(not placeholder(old[identifier]) for identifier in TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS):
+        raise ValueError("Original skipped downstream executed")
+    newer = [job for job in history if job["run_attempt"] == 2]
+    photos = [job for job in newer if job["id"] == TOOL_STORAGE_PHOTOS_RETRY_JOB]
+    downstream = [job for job in newer if job["id"] != TOOL_STORAGE_PHOTOS_RETRY_JOB]
+    if (len(photos) != 1 or photos[0].get("name") != BOOTSTRAP_SMOKE or photos[0].get("conclusion") != "success"
+            or not isinstance(photos[0].get("steps"), list)
+            or any(not isinstance(step, dict) or (step.get("status"), step.get("conclusion")) != ("completed", "success") for step in photos[0]["steps"])
+            or len(downstream) > 2 or any(not placeholder(job) for job in downstream)):
+        raise ValueError("Attempt2 must execute only the full Photos job")
+    # Keep original successes with their actual attempt1 metadata. Only empty
+    # downstream placeholders can be superseded; they are never success proof.
+    selected = [old[identifier] for role, identifier in TOOL_STORAGE_PHOTOS_SOURCE_JOBS.items() if role != "photos"]
+    selected += photos + downstream
+    selected += [old[identifier] for identifier in sorted(TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS)][:2 - len(downstream)]
+    return selected, {"kind": TOOL_STORAGE_PHOTOS_RETRY_KIND, "run_id": TOOL_STORAGE_PR_NATIVE_RUN,
+        "source_sha": TOOL_STORAGE_PR_SOURCE, "run_attempt": 2, "original_attempt": 1,
+        "failed_photos_job_id": failed["id"], "failed_photos_raw_log_sha256": TOOL_STORAGE_PHOTOS_FAILURE_SHA256,
+        "photos_job_id": photos[0]["id"], "photos_attempt": 2,
+        "retained_jobs": [{"role": role, "job_id": identifier, "run_attempt": 1}
+            for role, identifier in TOOL_STORAGE_PHOTOS_SOURCE_JOBS.items() if role != "photos"],
+        "history_job_ids": sorted(job["id"] for job in history)}
+
+
+def tool_storage_photos_retry_diagnostic(api, now):
+    """Pinned one-off observation justifies this route, never Photos release proof."""
+    if not tool_storage_photos_retry_configured(): raise ValueError("Photos diagnostic not observed")
+    expected = TOOL_STORAGE_PHOTOS_DIAGNOSTIC
+    prefix = "/repos/soso-so-27/neko-widget/actions"
+    run = api(f"{prefix}/runs/{expected['run_id']}")
+    if (run.get("id") != expected["run_id"] or run.get("head_sha") != expected["source_sha"]
+            or run.get("head_branch") != expected["branch"] or run.get("workflow_id") != expected["workflow_id"]
+            or run.get("path") != expected["path"] or run.get("event") != "workflow_dispatch"
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or any(run.get(side, {}).get("full_name") != "soso-so-27/neko-widget" for side in ("repository", "head_repository"))):
+        raise ValueError("Fixed Photos diagnostic identity differs")
+    updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24): raise ValueError("Photos diagnostic is stale")
+    jobs = executed_jobs(run, "soso-so-27/neko-widget", api)
+    if (len(jobs) != 1 or jobs[0].get("id") != expected["job_id"]
+            or jobs[0].get("run_id") != expected["run_id"] or jobs[0].get("head_sha") != expected["source_sha"]
+            or type(jobs[0].get("run_attempt")) is not int or jobs[0]["run_attempt"] != 1
+            or (jobs[0].get("status"), jobs[0].get("conclusion")) != ("completed", "success")):
+        raise ValueError("Photos diagnostic job differs")
+    raw = api(f"{prefix}/jobs/{expected['job_id']}/logs")
+    case = "NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess"
+    events = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)", raw)
+    if tool_log_digest(raw) != expected["raw_log_sha256"] or events != [(case, "started"), (case, "passed")]:
+        raise ValueError("Exact diagnostic must execute the unchanged permission case")
+    return {**expected, "diagnostic_only": True, "release_evidence": False}
+
+
 def tool_storage_graph(run, validation_head, api, now, jobs):
     """Main and release share the exact fresh native graph and all eight backend steps."""
     sha = run.get("head_sha")
@@ -4215,15 +4539,20 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
     if (not isinstance(sha, str) or not SHA.fullmatch(sha) or type(run.get("id")) is not int or run["id"] <= 0
             or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
             or run.get("event") != "push" or run.get("head_branch") != TOOL_STORAGE_BRANCH
-            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or type(run.get("run_attempt")) is not int or not (run["run_attempt"] == 1 or tool_storage_photos_retry_candidate(run))
             or (run.get("status"), run.get("conclusion")) != ("completed", "success")
             or run.get("repository", {}).get("full_name") != repo or run.get("head_repository", {}).get("full_name") != repo
             or not tool_storage_inputs(sha) or not tool_storage_readiness(validation_head)
-            or sha != validation_head and not equivalent_inputs(sha, validation_head)):
+            or sha != validation_head and not (equivalent_inputs(sha, validation_head)
+                or run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN and tool_storage_pr_control_equivalent_inputs(sha, validation_head))):
         raise ValueError("Fresh storage completion candidate identity/inputs/readiness differs")
     updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
     if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
         raise ValueError("Storage completion candidate is stale")
+    photos_retry = None
+    if run["run_attempt"] == 2:
+        selected, photos_retry = tool_storage_photos_retry_history(run, api)
+        if jobs != selected: raise ValueError("Photos attempt2 selected graph differs from full history")
     required = required_jobs_from_scope(TOOL_STORAGE_SCOPE)
     extras = [job for job in jobs if job.get("name") not in set(required) | {PLAN_JOB}]
     # The unchanged workflow has two unused matrix jobs. Only their empty,
@@ -4234,7 +4563,10 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
         raise ValueError("Storage completion native graph has an unexpected execution")
     if (not covers_jobs(jobs, required, sha, now=now)
             or any(type(job.get("id")) is not int or job["id"] <= 0 or job.get("run_id") != run["id"]
-                   or job.get("head_sha") != sha or job.get("run_attempt", 1) != 1 for job in jobs)
+                   or job.get("head_sha") != sha
+                   or job.get("run_attempt", 1) != (2 if photos_retry and
+                       (job["id"] == TOOL_STORAGE_PHOTOS_RETRY_JOB or job["name"] == UNEXPANDED_SHARING_JOB and job["id"] not in TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS) else 1)
+                   for job in jobs)
             or len({job["id"] for job in jobs}) != len(jobs)):
         raise ValueError("Fresh storage completion native execution is incomplete")
     # Exact labels and required executable steps; a full/Gallery subset or a
@@ -4262,12 +4594,31 @@ def tool_storage_graph(run, validation_head, api, now, jobs):
     if (len(plans) != 1 or type(plans[0].get("schema_version")) is not int
             or plans[0].get("schema_version") != 1 or plans[0].get("scope") != TOOL_STORAGE_SCOPE
             or plans[0].get("required_jobs") != list(required)
-            or plans[0].get("required_backend_runs") != tool_storage_requirements(sha)
+            or plans[0].get("required_backend_runs") != tool_storage_push_requirements(sha)
             or any(plans[0].get(key) is not None for key in ("evidence_run_id", "evidence_sha", "test_correction_evidence"))):
         raise ValueError("Storage completion source plan is not the fresh owning graph")
     ui = next(job for job in jobs if job["name"] == lane_job(TOOL_STORAGE_SCOPE, "app-ui"))
-    if not tool_storage_ui_results(api(f"/repos/{repo}/actions/jobs/{ui['id']}/logs")):
+    ui_log = api(f"/repos/{repo}/actions/jobs/{ui['id']}/logs")
+    if not tool_storage_ui_results(ui_log):
         raise ValueError("All nine storage UI cases must start and pass exactly once")
+    if photos_retry:
+        if (tool_log_digest(log) != TOOL_STORAGE_PHOTOS_SOURCE_PLAN_SHA256
+                or tool_log_digest(ui_log) != TOOL_STORAGE_PHOTOS_SOURCE_UI_SHA256
+                or tool_log_digest(api(f"/repos/{repo}/actions/jobs/{photos_retry['failed_photos_job_id']}/logs")) != TOOL_STORAGE_PHOTOS_FAILURE_SHA256
+                or not moderation_chained_photos_success(api(f"/repos/{repo}/actions/jobs/{TOOL_STORAGE_PHOTOS_RETRY_JOB}/logs"))):
+            raise ValueError("Fixed failure, retained logs or full fresh Photos completion differs")
+        photos_retry["diagnostic"] = tool_storage_photos_retry_diagnostic(api, now)
+    if sha == TOOL_STORAGE_PR_SOURCE:
+        if run["id"] != TOOL_STORAGE_PR_NATIVE_RUN:
+            raise ValueError("Only the original storage native run can use the fixed PR proof")
+        proof = tool_storage_pr_backend_proof(repo, api, now)
+        return {"backend_evidence": {"preservation-service.yml": proof}, "backend_substitution": proof,
+                **({"photos_retry": photos_retry} if photos_retry else {}),
+                "source_required_backend_runs": tool_storage_push_requirements(sha),
+                "native_evidence": {"run_id": run["id"], "sha": sha,
+                    "job_ids": [next(job["id"] for job in jobs if job["name"] == name) for name in required],
+                    **({"run_attempt": 2, "jobs": [{"job_id": job["id"], "run_attempt": job["run_attempt"]}
+                        for job in jobs if job["name"] in required]} if photos_retry else {})}}
     backends = tool_preservation_backend_evidence(sha, repo, api, now, branch=TOOL_STORAGE_BRANCH)
     proof = backends["preservation-service.yml"]
     backend_run = api(f"/repos/{repo}/actions/runs/{proof['run_id']}")
@@ -7304,6 +7655,18 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
         if not dt.timedelta(0) <= age <= dt.timedelta(hours=24):
             return reject("outside_24_hours")
         if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
+            if (repository == "soso-so-27/neko-widget" and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN
+                    and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE and run.get("head_branch") == TOOL_STORAGE_BRANCH
+                    and run.get("workflow_id") == current.get("workflow_id") == 335014238
+                    and run.get("path") == current.get("path") == ".github/workflows/ios-build.yml"
+                    and current.get("event") == "push" and current.get("head_branch") == "main"
+                    and type(run.get("run_attempt")) is int
+                    and (run["run_attempt"] == 1 or tool_storage_photos_retry_candidate(run))
+                    and type(current.get("run_attempt")) is int and current["run_attempt"] == 1
+                    and current.get("repository", {}).get("full_name") == repository
+                    and current.get("head_repository", {}).get("full_name") == repository
+                    and tool_storage_pr_control_equivalent_inputs(run["head_sha"], current["head_sha"])):
+                return True
             if (repository == "soso-so-27/neko-widget" and run.get("workflow_id") == 335014238
                     and run.get("path") == current.get("path") == ".github/workflows/ios-build.yml"
                     and run.get("head_branch") == TOOL_RELEASE_BRANCH and current.get("head_branch") == "main"
@@ -7386,6 +7749,9 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
     attempt = run.get("run_attempt", 1)
     if type(attempt) is not int or not 1 <= attempt <= 50:
         raise ValueError("Invalid workflow attempt")
+    if (repository == "soso-so-27/neko-widget" and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN
+            and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE and attempt == 2):
+        return tool_storage_photos_retry_history(run, api)[0]
     prefix = f"/repos/{repository}/actions/runs/{int(run['id'])}/jobs"
     if attempt == 1:
         result = api(prefix + "?filter=latest&per_page=100&page=1")
@@ -8275,7 +8641,10 @@ def main() -> None:
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
         **({"backend_wait": tool_backend_wait} if tool_backend_wait is not None else {}),
-        **({"required_backend_runs": tool_storage_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+        **({"required_backend_runs": tool_storage_requirements(evidence[1] if evidence else env["GITHUB_SHA"]),
+            **({"backend_substitution_kind": TOOL_STORAGE_PR_KIND,
+                "source_required_backend_runs": tool_storage_push_requirements(evidence[1])}
+               if evidence and evidence[1] == TOOL_STORAGE_PR_SOURCE else {})}
            if selected_scope == TOOL_STORAGE_SCOPE else {}),
         **({"required_backend_runs": ([correction["backend_evidence"]] if correction is not None else
                [tool_pr_backend_proof(env["GITHUB_REPOSITORY"], api, now)] if evidence else tool_preservation_requirements(env["GITHUB_SHA"]))}

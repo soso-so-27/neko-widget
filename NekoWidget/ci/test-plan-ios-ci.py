@@ -10649,5 +10649,292 @@ class ToolStorageCompletionGraphTests(unittest.TestCase):
                 with self.assertRaises(ValueError):self.prove()
 
 
+
+class ToolStorageFixedPRProofTests(unittest.TestCase):
+    def setUp(self):
+        self.p=planner;self.now=dt.datetime(2026,10,15,0,tzinfo=dt.timezone.utc);repo={"full_name":"soso-so-27/neko-widget","id":1335079243}
+        self.run={"id":planner.TOOL_STORAGE_PR_RUN,"head_sha":planner.TOOL_STORAGE_PR_SOURCE,"head_branch":planner.TOOL_STORAGE_BRANCH,
+            "event":"pull_request","workflow_id":363932714,"path":planner.PRESERVATION_WORKFLOW,"status":"completed","conclusion":"success",
+            "run_number":237,"run_attempt":1,"updated_at":self.now.isoformat(),"repository":repo,"head_repository":repo,
+            "head_commit":{"id":planner.TOOL_STORAGE_PR_SOURCE,"tree_id":planner.TOOL_STORAGE_PR_TREE},
+            "pull_requests":[{"id":planner.TOOL_STORAGE_PR_ID,"number":311,
+                "head":{"ref":planner.TOOL_STORAGE_BRANCH,"repo":{"id":1335079243}},"base":{"ref":"main","repo":{"id":1335079243}}}]}
+        self.job={"id":planner.TOOL_STORAGE_PR_JOB,"run_id":planner.TOOL_STORAGE_PR_RUN,"head_sha":planner.TOOL_STORAGE_PR_SOURCE,
+            "run_attempt":1,"name":planner.PRESERVATION_JOB,"status":"completed","conclusion":"success","completed_at":self.now.isoformat(),
+            "steps":[{"name":n,"status":"completed","conclusion":"success"} for n in planner.TOOL_STORAGE_BACKEND_STEPS]}
+        self.jobs=[self.job];self.push={"total_count":0,"workflow_runs":[]};self.after_push=None
+        self.index={"total_count":1,"workflow_runs":[self.run]};self.push_reads=0
+        self.raw=(f"+{planner.TOOL_STORAGE_PR_CHECKOUT}:refs/remotes/pull/311/merge\n"
+            f"HEAD is now at {planner.TOOL_STORAGE_PR_CHECKOUT[:7]} Merge {planner.TOOL_STORAGE_PR_SOURCE} into {planner.TOOL_STORAGE_PR_BASE}\n")
+        self.commits={planner.TOOL_STORAGE_PR_CHECKOUT:{"sha":planner.TOOL_STORAGE_PR_CHECKOUT,"tree":{"sha":planner.TOOL_STORAGE_PR_TREE},
+            "parents":[{"sha":planner.TOOL_STORAGE_PR_BASE},{"sha":planner.TOOL_STORAGE_PR_SOURCE}]},
+            planner.TOOL_STORAGE_PR_SOURCE:{"sha":planner.TOOL_STORAGE_PR_SOURCE,"tree":{"sha":planner.TOOL_STORAGE_PR_TREE},
+            "parents":[{"sha":"0d11066368acdfae9fdd2678ea53e35177be5eec"},{"sha":planner.TOOL_STORAGE_PR_BASE}]}}
+        binding=patch.object(planner,"TOOL_STORAGE_PR_LOG_SHA256",planner.tool_log_digest(self.raw));binding.start();self.addCleanup(binding.stop)
+    def api(self,path):
+        if path.endswith("/workflows/preservation-service.yml"):return {"id":363932714,"path":planner.PRESERVATION_WORKFLOW,"state":"active"}
+        if "/workflows/preservation-service.yml/runs?" in path:
+            if "event=push" in path:
+                self.push_reads+=1
+                return self.after_push if self.push_reads%2==0 and self.after_push is not None else self.push
+            return self.index
+        if path.endswith(f"/runs/{planner.TOOL_STORAGE_PR_RUN}"):return self.run
+        if "/jobs?" in path:return {"total_count":len(self.jobs),"jobs":self.jobs}
+        if path.endswith("/logs"):return self.raw
+        raise AssertionError(path)
+    def prove(self):
+        self.push_reads=0
+        with patch.object(planner,"tool_storage_pr_git_observation",side_effect=lambda path:self.commits[path.rsplit('/',1)[1]]):
+            return planner.tool_storage_pr_backend_proof("soso-so-27/neko-widget",self.api,self.now)
+    def test_exact_pr_proof_preserves_actual_event_and_absent_push(self):
+        proof=self.prove();self.assertEqual(proof["event"],"pull_request");self.assertFalse(proof["push_evidence"])
+        self.assertEqual(proof["checkout_sha"],planner.TOOL_STORAGE_PR_CHECKOUT);self.assertEqual(len(proof["required_steps"]),8)
+        self.assertEqual(self.push_reads,2)
+        self.run["pull_requests"]=[];self.assertEqual(self.prove()["pr_id"],planner.TOOL_STORAGE_PR_ID)
+    def test_foreign_pr_sha_identity_active_failed_attempt_and_stale_reject(self):
+        for field,value in (("id",1),("head_sha","a"*40),("head_branch","codex/other"),("event","push"),
+                ("status","in_progress"),("conclusion","failure"),("run_attempt",2),
+                ("updated_at",(self.now-dt.timedelta(hours=25)).isoformat())):
+            with patch.dict(self.run,{field:value}),self.assertRaises(ValueError):self.prove()
+        for field,value in (("number",312),("id",1)):
+            with patch.dict(self.run["pull_requests"][0],{field:value}),self.assertRaises(ValueError):self.prove()
+        with patch.dict(self.run["head_commit"],{"tree_id":"a"*40}),self.assertRaises(ValueError):self.prove()
+        with patch.dict(self.run["head_repository"],{"id":1}),self.assertRaises(ValueError):self.prove()
+        with self.assertRaises(ValueError):planner.tool_storage_pr_backend_proof("other/repo",self.api,self.now)
+    def test_any_push_even_active_failed_or_late_cannot_be_replaced(self):
+        for status,conclusion in (("in_progress",None),("completed","failure"),("completed","success")):
+            present={"total_count":1,"workflow_runs":[dict(self.run,event="push",status=status,conclusion=conclusion)]}
+            self.push=present
+            with self.assertRaises(ValueError):self.prove()
+            self.push={"total_count":0,"workflow_runs":[]};self.after_push=present
+            with self.assertRaises(ValueError):self.prove()
+            self.after_push=None
+        for bad in ({"workflow_runs":[]},{"total_count":False,"workflow_runs":[]},{"total_count":1,"workflow_runs":[]}):
+            self.push=bad
+            with self.assertRaises(ValueError):self.prove()
+    def test_all_eight_steps_exact_single_job_and_attempt_required(self):
+        for step in self.job["steps"]:
+            with patch.dict(step,{"conclusion":"skipped"}),self.assertRaises(ValueError):self.prove()
+        for field,value in (("id",1),("head_sha","a"*40),("run_id",1),("run_attempt",2),("status","in_progress")):
+            with patch.dict(self.job,{field:value}),self.assertRaises(ValueError):self.prove()
+        self.jobs.append(dict(self.job,id=999,name="Unexpected job"))
+        with self.assertRaises(ValueError):self.prove()
+        self.jobs.pop();self.job["steps"].append(dict(self.job["steps"][0]))
+        with self.assertRaises(ValueError):self.prove()
+    def test_checkout_parent_tree_raw_digest_and_transcript_required(self):
+        for commit in self.commits.values():
+            with patch.dict(commit["tree"],{"sha":"a"*40}),self.assertRaises(ValueError):self.prove()
+            with patch.dict(commit,{"parents":list(reversed(commit["parents"]))}),self.assertRaises(ValueError):self.prove()
+            with patch.dict(commit,{"sha":"a"*40}),self.assertRaises(ValueError):self.prove()
+        original=self.raw
+        for bad in ("",original.replace("pull/311","pull/312"),original.replace("HEAD is now at","different checkout")):
+            self.raw=bad
+            with self.assertRaises(ValueError):self.prove()
+        self.raw=original
+        with patch.object(planner,"TOOL_STORAGE_PR_LOG_SHA256","0"*64),self.assertRaises(ValueError):self.prove()
+        with self.assertRaises(ValueError):planner.tool_storage_pr_git_observation("repos/other/git/commits/"+planner.TOOL_STORAGE_PR_SOURCE)
+    def test_pr_index_and_detail_must_be_unique_and_consistent(self):
+        for bad in ({"total_count":0,"workflow_runs":[]},{"total_count":2,"workflow_runs":[self.run,self.run]},
+                {"total_count":1,"workflow_runs":[dict(self.run,status="in_progress")]}, {"workflow_runs":[self.run]}):
+            self.index=bad
+            with self.assertRaises(ValueError):self.prove()
+
+
+class ToolStoragePRControlInputTests(unittest.TestCase):
+    def setUp(self):
+        self.source=planner.TOOL_STORAGE_PR_SOURCE;self.head="a"*40;self.approved="b"*40
+        self.before={p:f"100644 blob {blob}\t{p}" for p,blob in planner.TOOL_STORAGE_PR_CONTROL_BEFORE.items()}
+        self.before |= {p:f"100644 blob {pair[1]}\t{p}" for p,pair in planner.TOOL_STORAGE_BLOBS.items()}
+        self.before[planner.TOOL_STORAGE_READINESS_PATH]=f"100644 blob {planner.TOOL_STORAGE_READINESS_PAIR[1]}\t{planner.TOOL_STORAGE_READINESS_PATH}"
+        self.before['NekoWidget/Shared/unchanged.swift']=f"100644 blob {'e'*40}\tNekoWidget/Shared/unchanged.swift"
+        self.after=dict(self.before)
+        for p in planner.TOOL_STORAGE_PR_CONTROL_PATHS:self.after[p]=f"100644 blob {'d'*40}\t{p}"
+        self.raw="".join(f":100644 100644 {self.before[p].split()[2]} {self.after[p].split()[2]} M\0{p}\0" for p in planner.TOOL_STORAGE_PR_CONTROL_PATHS)
+    def prove(self,override=None):
+        def git(*args):
+            if override and args in override:return override[args]
+            if args[0]=="rev-parse":return self.head if args[1]=="HEAD" else planner.TOOL_STORAGE_PR_TREE
+            if args[0]=="merge-base":return "" if "--is-ancestor" in args else self.approved
+            if args[0]=="show":return f'TOOL_STORAGE_PR_SOURCE = "{self.source}"'
+            if args[0]=="ls-tree":return self.after[args[-1]]
+            if args[0]=="diff":return self.raw
+            raise AssertionError(args)
+        with patch.object(planner,"tool_storage_inputs",return_value=True),patch.object(planner,"git",side_effect=git), \
+                patch.object(planner,"tool_storage_tree",side_effect=lambda ref:self.before if ref==self.source else self.after):
+            return planner.tool_storage_pr_control_equivalent_inputs(self.source,self.head)
+    def test_only_exact_two_approved_control_changes_are_equivalent(self):
+        self.assertTrue(self.prove())
+        for p in self.after:
+            if p in planner.TOOL_STORAGE_PR_CONTROL_PATHS:continue
+            original=self.after[p];self.after[p]=f"100644 blob {'c'*40}\t{p}"
+            self.assertFalse(self.prove());self.after[p]=original
+    def test_unapproved_mode_truncated_unknown_and_changed_artifact_reject(self):
+        for p in planner.TOOL_STORAGE_CONTROLS:
+            self.assertFalse(self.prove({("ls-tree",self.approved,"--",p):f"100644 blob {'c'*40}\t{p}"}))
+        self.assertFalse(self.prove({("show",f"{self.approved}:NekoWidget/ci/plan-ios-ci.py"):""}))
+        for bad in ("",self.raw+self.raw,self.raw.rsplit("\0",2)[0],self.raw.replace(":100644",":100755",1)):
+            with patch.object(self,"raw",bad):self.assertFalse(self.prove())
+        self.after["unknown.txt"]=f"100644 blob {'c'*40}\tunknown.txt";self.assertFalse(self.prove())
+    def test_approved_control_exception_is_only_the_fixed_native_source(self):
+        now=dt.datetime(2026,10,15,0,tzinfo=dt.timezone.utc);repo={"full_name":"soso-so-27/neko-widget"}
+        run={"id":planner.TOOL_STORAGE_PR_NATIVE_RUN,"head_sha":self.source,"head_branch":planner.TOOL_STORAGE_BRANCH,
+            "workflow_id":335014238,"path":".github/workflows/ios-build.yml","event":"push","run_attempt":1,
+            "status":"completed","conclusion":"success","updated_at":now.isoformat(),"repository":repo,"head_repository":repo}
+        current=dict(run,id=999,head_sha=self.head,head_branch="main")
+        with patch.object(planner,"equivalent_inputs",return_value=False),patch.object(planner,"tool_storage_pr_control_equivalent_inputs",return_value=True):
+            self.assertTrue(planner.reusable_run(run,current,repo['full_name'],now))
+            for field,value in (("id",1),("head_sha","c"*40),("head_branch","codex/other"),("run_attempt",2),("status","in_progress")):
+                with patch.dict(run,{field:value}):self.assertFalse(planner.reusable_run(run,current,repo['full_name'],now))
+
+
+class ToolStorageFixedPRGraphTests(unittest.TestCase):
+    def setUp(self):
+        self.f=ToolStorageCompletionGraphTests();self.f.setUp();self.f.sha=planner.TOOL_STORAGE_PR_SOURCE
+        self.f.run.update(id=planner.TOOL_STORAGE_PR_NATIVE_RUN,head_sha=self.f.sha)
+        for job in self.f.jobs:job.update(head_sha=self.f.sha,run_id=self.f.run['id'])
+        self.f.plan.update(head_sha=self.f.sha,required_backend_runs=planner.tool_storage_push_requirements(self.f.sha))
+    def test_original_push_declaration_stays_historical_and_native_success_is_separate(self):
+        f=self.f
+        proof={"kind":planner.TOOL_STORAGE_PR_KIND,"event":"pull_request","push_evidence":False}
+        with f.mocks(),patch.object(planner,"tool_storage_pr_backend_proof",return_value=proof) as backend:
+            got=f.prove();self.assertEqual(got['source_required_backend_runs'],planner.tool_storage_push_requirements(f.sha))
+            self.assertEqual(got['backend_substitution']['event'],'pull_request');self.assertFalse(got['backend_substitution']['push_evidence'])
+            self.assertEqual(planner.tool_storage_requirements(f.sha)[0]['event'],'pull_request')
+            with patch.dict(f.run,{'status':'in_progress'}),self.assertRaises(ValueError):f.prove()
+            f.plan['required_backend_runs']=planner.tool_storage_requirements(f.sha)
+            with self.assertRaises(ValueError):f.prove()
+
+
+class ToolStoragePhotosAttempt2Tests(unittest.TestCase):
+    def setUp(self):
+        self.f = ToolStorageCompletionGraphTests(); self.f.setUp()
+        f = self.f; f.sha = planner.TOOL_STORAGE_PR_SOURCE
+        f.run.update(id=planner.TOOL_STORAGE_PR_NATIVE_RUN, head_sha=f.sha, run_attempt=2,
+            created_at=planner.TOOL_STORAGE_PHOTOS_SOURCE_CREATED_AT)
+        roles = ("build", "photos", "runtime", "app-ui", "plan")
+        for job, role in zip(f.jobs[:5], roles):
+            job.update(id=planner.TOOL_STORAGE_PHOTOS_SOURCE_JOBS[role], head_sha=f.sha,
+                run_id=f.run["id"], completed_at="2026-10-14T23:50:56Z")
+        for job, identifier in zip(f.jobs[5:], sorted(planner.TOOL_STORAGE_PHOTOS_SOURCE_PLACEHOLDERS)):
+            job.update(id=identifier, head_sha=f.sha, run_id=f.run["id"])
+        self.history = copy.deepcopy(f.jobs)
+        failed = next(job for job in self.history if job["name"] == planner.BOOTSTRAP_SMOKE)
+        failed["conclusion"] = "failure"
+        for step, number in zip(failed["steps"], (2, 3, 4)): step["number"] = number
+        failed["steps"][1]["conclusion"] = "failure"
+        self.retry_id = 991
+        fresh = copy.deepcopy(next(job for job in f.jobs if job["name"] == planner.BOOTSTRAP_SMOKE))
+        fresh.update(id=self.retry_id, run_attempt=2, completed_at=f.now.isoformat())
+        self.history.append(fresh)
+        f.plan.update(head_sha=f.sha, required_backend_runs=planner.tool_storage_push_requirements(f.sha))
+        self.plan_log = "IOS_CI_PLAN_JSON=" + json.dumps(f.plan)
+        self.ui_log = "\n".join(f"Test Case '-[NekoWidgetUITests.{test.removeprefix('NekoWidgetUITests/').replace('/', ' ')}]' {status}"
+            for test in scope.native_tests(planner.TOOL_STORAGE_SCOPE) for status in ("started", "passed"))
+        self.failed_log = "retained exact permission query timeout\n"
+        self.photos_log = "\n".join(f"Test Case '-[NekoWidgetUITests.PhotoPermissionUITests {case}]' {status}"
+            for case in ("testGrantFullPhotoLibraryAccess", "testMainlineAcceptanceScreensWithAuthorizedLibrary") for status in ("started", "passed"))
+        self.photos_log += "\nSimulator smoke test passed at 2026-10-15T01:00:00Z\n"
+        self.diag_log = "\n".join(f"Test Case '-[NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess]' {status}"
+            for status in ("started", "passed"))
+        self.diag = {"run_id": 881, "job_id": 882, "source_sha": f.sha, "branch": "diagnostic/photos-example",
+            "workflow_id": 883, "path": ".github/workflows/ios-ui-diagnostic.yml",
+            "raw_log_sha256": planner.tool_log_digest(self.diag_log)}
+        self.diag_run = dict(f.run, id=881, head_branch=self.diag["branch"], event="workflow_dispatch",
+            workflow_id=883, path=self.diag["path"], run_attempt=1)
+        self.diag_job = {"id": 882, "run_id": 881, "head_sha": f.sha, "run_attempt": 1,
+            "status": "completed", "conclusion": "success"}
+        self.original = dict(f.run, run_attempt=1, conclusion="failure", updated_at=planner.TOOL_STORAGE_PHOTOS_SOURCE_FINISHED_AT)
+        for name, value in (("TOOL_STORAGE_PHOTOS_RETRY_JOB", self.retry_id), ("TOOL_STORAGE_PHOTOS_DIAGNOSTIC", self.diag),
+                ("TOOL_STORAGE_PHOTOS_FAILURE_SHA256", planner.tool_log_digest(self.failed_log)),
+                ("TOOL_STORAGE_PHOTOS_SOURCE_PLAN_SHA256", planner.tool_log_digest(self.plan_log)),
+                ("TOOL_STORAGE_PHOTOS_SOURCE_UI_SHA256", planner.tool_log_digest(self.ui_log))):
+            binding = patch.object(planner, name, value); binding.start(); self.addCleanup(binding.stop)
+    def api(self, path):
+        f = self.f
+        if path.endswith("/attempts/1"): return self.original
+        if path.endswith("/jobs?filter=all&per_page=100&page=1"): return {"total_count": len(self.history), "jobs": self.history}
+        if path.endswith("/runs/881"): return self.diag_run
+        if path.endswith("/runs/881/jobs?filter=latest&per_page=100&page=1"):
+            return {"total_count": 1, "jobs": [self.diag_job]}
+        logs = {planner.TOOL_STORAGE_PHOTOS_SOURCE_JOBS['plan']: self.plan_log,
+            planner.TOOL_STORAGE_PHOTOS_SOURCE_JOBS['app-ui']: self.ui_log,
+            planner.TOOL_STORAGE_PHOTOS_SOURCE_JOBS['photos']: self.failed_log,
+            self.retry_id: self.photos_log, 882: self.diag_log}
+        if path.endswith("/logs"): return logs[int(path.split('/')[-2])]
+        raise AssertionError(path)
+    def prove(self):
+        f = self.f
+        jobs = planner.executed_jobs(f.run, f.repo, self.api)
+        with f.mocks(), patch.object(planner, "tool_storage_pr_backend_proof", return_value={"event": "pull_request", "push_evidence": False}):
+            return planner.tool_storage_graph(f.run, f.main, self.api, f.now, jobs)
+    def test_exact_retry_retains_actual_attempts_and_original_failure(self):
+        got = self.prove(); proof = got['photos_retry']
+        self.assertEqual((proof['original_attempt'], proof['photos_attempt']), (1, 2))
+        self.assertEqual(proof['failed_photos_job_id'], planner.TOOL_STORAGE_PHOTOS_SOURCE_JOBS['photos'])
+        self.assertFalse(proof['diagnostic']['release_evidence'])
+        self.assertEqual({job['run_attempt'] for job in got['native_evidence']['jobs']}, {1, 2})
+        self.assertEqual(self.original['conclusion'], 'failure')
+        self.assertEqual(next(job for job in self.history if job['id'] == proof['failed_photos_job_id'])['conclusion'], 'failure')
+    def test_pending_pins_failed_current_or_other_run_never_qualifies(self):
+        for name in ('TOOL_STORAGE_PHOTOS_RETRY_JOB', 'TOOL_STORAGE_PHOTOS_DIAGNOSTIC'):
+            with patch.object(planner, name, None), self.assertRaises(ValueError): self.prove()
+        for field, value in (('id', 999), ('head_sha', 'b'*40), ('run_attempt', 1), ('run_attempt', 3), ('status', 'in_progress'), ('conclusion', 'failure')):
+            with patch.dict(self.f.run, {field: value}), self.assertRaises((ValueError, AssertionError)): self.prove()
+    def test_missing_duplicate_changed_original_or_unexpected_attempt_rejects(self):
+        for index in range(len(self.history)):
+            with patch.object(self, 'history', self.history[:index] + self.history[index+1:]), self.assertRaises(ValueError): self.prove()
+        for field, value in (('id', 1234), ('run_attempt', 2), ('status', 'in_progress'), ('conclusion', 'failure')):
+            with patch.dict(self.history[0], {field: value}), self.assertRaises(ValueError): self.prove()
+        with patch.object(self, 'history', self.history + [copy.deepcopy(self.history[0])]), self.assertRaises(ValueError): self.prove()
+        with patch.dict(self.original, {'conclusion': 'success'}), self.assertRaises(ValueError): self.prove()
+    def test_original_photos_step_remains_exact_completed_failure(self):
+        failed = next(job for job in self.history if job['id'] == planner.TOOL_STORAGE_PHOTOS_SOURCE_JOBS['photos'])
+        step = next(step for step in failed['steps'] if step['name'] == 'Run Simulator smoke test')
+        for conclusion in ('skipped', 'cancelled', None):
+            with patch.dict(step, {'conclusion':conclusion}), self.assertRaises(ValueError): self.prove()
+        with patch.dict(step, {'status':'in_progress'}), self.assertRaises(ValueError): self.prove()
+    def test_only_at_most_two_empty_skipped_downstream_can_be_new(self):
+        original = copy.deepcopy(self.history)
+        for count in (0, 1, 2):
+            self.history = copy.deepcopy(original) + [dict(self.f.jobs[-1], id=1200+i, run_attempt=2) for i in range(count)]
+            self.assertTrue(self.prove()['photos_retry'])
+        self.history.append(dict(self.f.jobs[-1], id=1300, run_attempt=2))
+        with self.assertRaises(ValueError): self.prove()
+        self.history = copy.deepcopy(original) + [dict(self.f.jobs[-1], id=1200, run_attempt=2)]
+        for field, value in (('name', 'unexpected'), ('conclusion', 'success'), ('steps', [{'name':'executed'}]), ('status', 'in_progress')):
+            with patch.dict(self.history[-1], {field:value}), self.assertRaises(ValueError): self.prove()
+    def test_fresh_photos_full_steps_and_terminal_completion_required(self):
+        for step in self.history[-1]['steps']:
+            with patch.dict(step, {'conclusion':'skipped'}), self.assertRaises(ValueError): self.prove()
+        for bad in (self.photos_log.replace('passed', 'skipped', 1), self.photos_log.split('Simulator smoke test passed')[0],
+                self.photos_log + '\n##[error]extra failure', self.photos_log + self.photos_log):
+            with patch.object(self, 'photos_log', bad), self.assertRaises(ValueError): self.prove()
+    def test_original_raw_plan_ui_and_failure_cannot_be_replaced(self):
+        for attr in ('plan_log', 'ui_log', 'failed_log'):
+            with patch.object(self, attr, getattr(self, attr)+'\nchanged'), self.assertRaises(ValueError): self.prove()
+        with patch.dict(self.history[0]['steps'][0], {'conclusion':'failure'}), self.assertRaises(ValueError): self.prove()
+    def test_diagnostic_is_fixed_permission_observation_not_release_substitute(self):
+        for bad in ('', self.diag_log.replace('passed', 'failed'), self.diag_log+self.diag_log):
+            with patch.object(self, 'diag_log', bad), self.assertRaises(ValueError): self.prove()
+        with patch.dict(self.diag, {'job_id':999}), self.assertRaises(ValueError): self.prove()
+        with patch.object(self, 'photos_log', self.diag_log), self.assertRaises(ValueError): self.prove()
+        for field, value in (('status', 'in_progress'), ('conclusion', 'failure'), ('head_sha', 'b'*40), ('run_attempt', 2),
+                ('updated_at', (self.f.now-dt.timedelta(hours=25)).isoformat())):
+            with patch.dict(self.diag_run, {field:value}), self.assertRaises(ValueError): self.prove()
+    def test_main_reuse_is_fixed_attempt2_only_and_generic_duplicate_guard_unchanged(self):
+        f = self.f; current = dict(f.run, id=999, head_sha=f.main, head_branch='main', run_attempt=1)
+        with patch.object(planner, 'equivalent_inputs', return_value=False), \
+                patch.object(planner, 'tool_storage_pr_control_equivalent_inputs', return_value=True):
+            self.assertTrue(planner.reusable_run(f.run, current, f.repo, f.now))
+            with patch.object(planner, 'TOOL_STORAGE_PHOTOS_DIAGNOSTIC', None):
+                self.assertFalse(planner.reusable_run(f.run, current, f.repo, f.now))
+            with patch.dict(f.run, {'run_attempt':3}):
+                self.assertFalse(planner.reusable_run(f.run, current, f.repo, f.now))
+        other = {'id':42, 'head_sha':'a'*40, 'run_attempt':2}
+        duplicate = [dict(self.f.jobs[-1], id=43+i, run_id=42, head_sha='a'*40) for i in range(2)]
+        with self.assertRaises(ValueError):
+            planner.executed_jobs(other, f.repo, lambda path: {'total_count':2, 'jobs':duplicate})
+
+
 if __name__ == "__main__":
     unittest.main()
