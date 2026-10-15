@@ -1,6 +1,6 @@
 import { ServiceError, sha256, type ArchiveDocument, type KeyCustody, type MembershipAuthority,
   type PhotoValidator, type Session } from './contracts';
-import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument, toolIndexRecordIDs } from './documents';
+import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument, toolIndexRecordIDs, parseToolIndex } from './documents';
 import { RecordRecoveryCopy, type CommittedRecordImage,
   type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
@@ -361,7 +361,7 @@ export class ArchiveStore {
     const limitBytes = trial ? Math.max(1, Math.min(this.d.quotaBytes, allocated + trial.remainingBytes)) : this.d.quotaBytes;
     const maximumRecords = trial ? Math.max(1, Math.min(this.d.maximumRecords,
       row.saved_records + row.pending_records + trial.remainingRecords)) : this.d.maximumRecords;
-    return { version: 1, accounting: 'encrypted-records-v1',
+    return { version: 1, accounting: 'encrypted-records-v1', toolSnapshots: { maximumIndexVersion: 2, strictPartDeletion: true },
       storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes,
         availableBytes: Math.max(0, limitBytes - allocated), overLimit: allocated > limitBytes },
       records: { saved: row.saved_records, pending: row.pending_records, maximumRecords,
@@ -374,13 +374,16 @@ export class ArchiveStore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new ServiceError('INVALID_PAGE_SIZE');
     const session = await this.d.auth.requireSession(token);
     const generation = await this.generation(session.ownerId);
-    const rows = await this.d.db.prepare(`SELECT * FROM pa_records WHERE owner_id=? AND deleted=0 AND record_id>?
-      ORDER BY record_id LIMIT ?`).bind(session.ownerId, after, limit + 1).all<Row>();
+    const rows = await this.d.db.prepare(`SELECT *, NOT EXISTS(SELECT 1 FROM pa_tool_part_delete_claims c
+      WHERE c.owner_id=pa_records.owner_id AND c.part_id=pa_records.record_id) AS tool_reusable
+      FROM pa_records WHERE owner_id=? AND deleted=0 AND record_id>?
+      ORDER BY record_id LIMIT ?`).bind(session.ownerId, after, limit + 1).all<Row & { tool_reusable: number }>();
     const items = [];
     for (const row of rows.results.slice(0, limit)) {
       await this.requireAcknowledged(session.ownerId, row.record_id, row.revision);
-      items.push({ recordId: row.record_id, revision: row.revision,
-        document: (await this.metadata(row)).document });
+      const document = (await this.metadata(row)).document;
+      items.push({ recordId: row.record_id, revision: row.revision, document,
+        ...(document.toolBackup?.kind === 'photo' ? { toolPhotoReusable: row.tool_reusable === 1 } : {}) });
     }
     await this.d.auth.requireSession(token);
     if (await this.generation(session.ownerId) !== generation) throw new ServiceError('ARCHIVE_CHANGED', 409);
@@ -463,16 +466,71 @@ export class ArchiveStore {
       && await sha256(Uint8Array.from(atob(document.toolBackup.payload), c => c.charCodeAt(0))) !== document.toolBackup.sha256) throw new ServiceError('INVALID_RECORD');
     if (document.toolBackup && request.expectedRevision !== null) throw new ServiceError('REVISION_CONFLICT', 409);
     let toolIndexGeneration: number | null = null;
+    let sharedToolReferences: string[] = [];
     if (document.toolBackup?.kind === 'index') {
       if (document.toolBackup.snapshotId !== id) throw new ServiceError('INVALID_RECORD');
       toolIndexGeneration = await this.generation(session.ownerId);
       const refs = toolIndexRecordIDs(document.toolBackup);
-      // Bound each query below D1's parameter limit; no per-photo download/KMS.
+      const index = parseToolIndex(document.toolBackup);
+      if (index.version === 2) sharedToolReferences = refs;
+      // Bound each existence query below D1's parameter limit. Authentication
+      // below opens metadata with KMS, but never downloads photo bodies.
       for (let at = 0; at < refs.length; at += 90) {
         const batch = refs.slice(at, at + 90);
         const result = await this.d.db.prepare(`SELECT record_id FROM pa_records WHERE owner_id=? AND deleted=0
-          AND revision=1 AND record_id IN (${batch.map(() => '?').join(',')})`).bind(session.ownerId, ...batch).all();
+          AND revision=1 AND record_id IN (${batch.map(() => '?').join(',')})
+          AND NOT EXISTS(SELECT 1 FROM pa_tool_part_delete_claims c WHERE c.owner_id=pa_records.owner_id AND c.part_id=pa_records.record_id)`)
+          .bind(session.ownerId, ...batch).all();
         if (result.results.length !== batch.length) throw new ServiceError('REVISION_CONFLICT', 409);
+      }
+      // Validate real immutable pieces, never a client-declared hash alone.
+      // The final inventory CAS covers mutations while KMS is awaited.
+      const pieces = index.files.flatMap(file => file.records.map((partID, offset) => ({ file, partID, offset })));
+      const chunksByPath = new Map<string, Uint8Array[]>();
+      let nextPiece = 0, failed = false;
+      const verifyPieces = async () => {
+        while (!failed) {
+          const task = pieces[nextPiece++];
+          if (!task) return;
+          const { file, partID, offset } = task;
+          try {
+          const stored = await this.row(session.ownerId, partID.toLowerCase());
+          if (!stored || stored.deleted || stored.revision !== 1) throw new ServiceError('REVISION_CONFLICT', 409);
+          const opened = await this.metadata(stored), piece = opened.document.toolBackup;
+          const source = (file.sourceSnapshotID ?? index.snapshotID).toLowerCase();
+          const photoFile = file.path.endsWith('.jpg');
+          if (!piece || piece.snapshotId !== source || piece.path !== file.path
+            || piece.kind !== (photoFile ? 'photo' : 'json') || piece.part !== offset
+            || piece.count !== file.records.length
+            || (photoFile && (opened.photoBytes !== file.bytes || opened.photoSHA256 !== file.sha256
+              || piece.sha256 !== file.sha256))) throw new ServiceError('INVALID_RECORD');
+          if (!photoFile) {
+            const chunks = chunksByPath.get(file.path) ?? [];
+            chunks[offset] = Uint8Array.from(atob(piece.payload), c => c.charCodeAt(0));
+            chunksByPath.set(file.path, chunks);
+          }
+          } catch (error) { failed = true; throw error; }
+        }
+      };
+      try {
+        // Bound in-flight KMS reads; a 200-piece snapshot must not serialize
+        // hundreds of network round trips into the native 60-second request.
+        // Retain only JSON chunks (at most 999 * 48 KiB), never photo bytes.
+        const checked = await Promise.allSettled(Array.from({ length: Math.min(8, pieces.length) }, verifyPieces));
+        const rejected = checked.find(result => result.status === 'rejected');
+        if (rejected?.status === 'rejected') throw rejected.reason;
+        for (const file of index.files.filter(file => !file.path.endsWith('.jpg'))) {
+          const chunks = chunksByPath.get(file.path);
+          if (!chunks || chunks.length !== file.records.length || chunks.some(chunk => !chunk)) throw new ServiceError('INVALID_RECORD');
+          if (chunks.reduce((n, chunk) => n + chunk.length, 0) !== file.bytes) throw new ServiceError('INVALID_RECORD');
+          const combined = new Uint8Array(file.bytes);
+          let offset = 0;
+          for (const chunk of chunks) { combined.set(chunk, offset); offset += chunk.length; }
+          try { if (await sha256(combined) !== file.sha256) throw new ServiceError('INVALID_RECORD'); }
+          finally { combined.fill(0); }
+        }
+      } finally {
+        for (const chunks of chunksByPath.values()) for (const chunk of chunks) chunk?.fill(0);
       }
     }
     const initialFingerprint = trial?.fingerprint ?? await sha256(JSON.stringify({ document, photoSHA256 }));
@@ -634,6 +692,9 @@ export class ArchiveStore {
           .bind(operation, session.ownerId, id, operation),
         ...(copied ? [this.recoveryReference(session.ownerId, id, 1, copied)] : []),
         ...(trial ? this.d.toolTrial!.committed(trial, operation) : []),
+        ...sharedToolReferences.map(partID => this.d.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
+          SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=? AND deleted=0)`)
+          .bind(session.ownerId, id, partID, session.ownerId, id, operation)),
       ]);
       if (result[0]?.results.length !== 1 || (copied && result[2]?.meta.changes !== 1)) {
         await this.d.auth.requireSession(token);
@@ -658,7 +719,7 @@ export class ArchiveStore {
   private async abandon(operation: string) {
     return abandonUpload(this.d, operation);
   }
-  async remove(token: string, id: string, expected: number) {
+  async remove(token: string, id: string, expected: number, requireUnreferenced = false) {
     recordId(id); revisionValue(expected);
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
@@ -674,6 +735,25 @@ export class ArchiveStore {
       return { recordId: id, revision: row.revision };
     }
     if (row.deleted || row.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
+    const tool = (await this.metadata(row)).document.toolBackup;
+    if (requireUnreferenced && (!tool || tool.kind === 'index')) throw new ServiceError('INVALID_RECORD');
+    if (tool && tool.kind !== 'index') {
+      // Claim before creating the external delete intent. New indexes cannot
+      // bind this piece during the S3/D1 gap, including after an uncertain retry.
+      await this.d.db.prepare(`INSERT OR IGNORE INTO pa_tool_part_delete_claims(owner_id,part_id)
+        SELECT ?,? WHERE ${activeSession}
+        AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_references WHERE owner_id=? AND part_id=?)
+        AND (?=0 OR NOT EXISTS(SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND deleted=0))`)
+        .bind(session.ownerId, id, ...this.sessionBindings(session), session.ownerId, id,
+          requireUnreferenced ? 1 : 0, session.ownerId, tool.snapshotId).run();
+      const locked = await this.d.db.prepare(`SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?`)
+        .bind(session.ownerId, id).first();
+      if (!locked) { await this.d.auth.requireSession(token); throw new ServiceError('TOOL_PART_REFERENCED', 409); }
+      // A prior legacy deletion claim is not permission for a strict caller to
+      // remove a piece while its original index is still alive.
+      if (requireUnreferenced && await this.d.db.prepare(`SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=? AND deleted=0`)
+        .bind(session.ownerId, tool.snapshotId).first()) throw new ServiceError('TOOL_PART_REFERENCED', 409);
+    }
     await this.ensureCurrentRecovery(row, session);
     const copied = this.d.recovery ? await this.d.recovery.copy({ ownerId: session.ownerId,
       recordId: id, revision: expected + 1, initialFingerprint: row.initial_fingerprint,

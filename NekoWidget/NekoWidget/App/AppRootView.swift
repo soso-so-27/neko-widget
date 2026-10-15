@@ -3,6 +3,16 @@ import Photos
 import SwiftUI
 import UIKit
 
+/// One foreground operation must not clear another operation's sleep request.
+@MainActor
+enum AppIdleTimer {
+    private static var requests: Set<String> = []
+    static func setPreventSleep(_ enabled: Bool, for owner: String) {
+        if enabled { requests.insert(owner) } else { requests.remove(owner) }
+        UIApplication.shared.isIdleTimerDisabled = !requests.isEmpty
+    }
+}
+
 private struct WidgetShowcasePhoto: Identifiable {
     let id = UUID()
     let photoIdentifier: String
@@ -67,7 +77,7 @@ struct AppRootView: View {
             }
         }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
-            UIApplication.shared.isIdleTimerDisabled = isScanning && scenePhase == .active
+            AppIdleTimer.setPreventSleep(isScanning && scenePhase == .active, for: "photo-scan")
         }
         .onChange(of: momentNotificationTapMailbox.pendingTap, initial: true) { _, tap in
             guard let tap else { return }
@@ -84,11 +94,11 @@ struct AppRootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
-                UIApplication.shared.isIdleTimerDisabled = viewModel.isScanning
+                AppIdleTimer.setPreventSleep(viewModel.isScanning, for: "photo-scan")
                 widgetInstallationChecker.refresh()
                 Task { await viewModel.syncOnActive() }
             case .inactive, .background:
-                UIApplication.shared.isIdleTimerDisabled = false
+                AppIdleTimer.setPreventSleep(false, for: "photo-scan")
                 // Vision batches are intentionally cancellable. Do not keep decoding photos
                 // after the user leaves the app; the next active transition resumes/syncs.
                 viewModel.suspendScan()
@@ -106,7 +116,7 @@ struct AppRootView: View {
             completeWidgetPlacementGuideIfNeeded()
         }
         .onDisappear {
-            UIApplication.shared.isIdleTimerDisabled = false
+            AppIdleTimer.setPreventSleep(false, for: "photo-scan")
         }
         .onChange(of: viewModel.errorMessage) { _, message in
             guard let message, !message.isEmpty else { return }

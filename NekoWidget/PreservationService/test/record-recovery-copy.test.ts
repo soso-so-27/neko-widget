@@ -49,8 +49,45 @@ async function fixture(failOn?: 'photo' | 'record') {
       return found;
     },
   } as S3RecoveryCopy;
-  return { records: new RecordRecoveryCopy(keys, s3), objects };
+  return { records: new RecordRecoveryCopy(keys, s3), objects, keys };
 }
+
+it('authenticates inner D1 metadata before deriving tool data and rejects relabelled owner/record/revision', async () => {
+  const f = await fixture();
+  const document = { formatVersion: 1, text: 'private metadata', capturedAt: null,
+    writtenAt: null, updatedAt: null, catNames: [], photoFile: 'photo.jpg' };
+  const metadata = await f.keys.seal(new TextEncoder().encode(JSON.stringify({ version: 1,
+    ownerId, recordId, revision: 1, document, photoSHA256: 'b'.repeat(64), photoBytes: 3 })),
+  { ownerId, purpose: 'record', recordId: `${recordId}/document` });
+  const original = { ...image(), metadata, quotaBytes: metadata.length + image().photoCiphertext!.length };
+  const before = metadata.slice();
+  expect(await f.records.readMetadata(original)).toEqual({ document, photoSHA256: 'b'.repeat(64), photoBytes: 3 });
+  expect(metadata).toEqual(before);
+  for (const changed of [
+    { ...original, revision: 2 },
+    { ...original, photoBytes: 4 },
+    { ...original, recordId: operationId, photoKey: `personal/${ownerId}/${operationId}/${operationId}` },
+    { ...original, ownerId: operationId, photoKey: `personal/${operationId}/${recordId}/${operationId}` },
+    { ...original, metadata: new Uint8Array([78, 75, 77, 49, 1]) },
+  ]) await expect(f.records.readMetadata(changed)).rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  expect(await f.records.readMetadata({ ...original, deleted: true, metadata: null,
+    photoKey: null, photoBytes: 0 })).toBeNull();
+});
+
+it('does not derive a tool reference from a forged inner payload checksum', async () => {
+  const f = await fixture();
+  const payload = btoa('{"private":"tool"}');
+  const document = { formatVersion: 3, text: '', capturedAt: null, writtenAt: null,
+    updatedAt: null, catNames: [], photoFile: null, toolBackup: {
+      snapshotId: operationId, kind: 'json', path: 'CareHandoff/plan.json', part: 0, count: 1,
+      payload, sha256: 'a'.repeat(64),
+    } };
+  const metadata = await f.keys.seal(new TextEncoder().encode(JSON.stringify({ version: 1,
+    ownerId, recordId, revision: 1, document, photoSHA256: null, photoBytes: 0 })),
+  { ownerId, purpose: 'record', recordId: `${recordId}/document` });
+  await expect(f.records.readMetadata({ ...image(), metadata, photoKey: null, photoBytes: 0 }))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+});
 
 it('copies an encrypted record and photo as owner-bound versioned objects and reads exact versions', async () => {
   const f = await fixture(); const original = image();

@@ -97,3 +97,135 @@ it('publishes an index only with every owner-local immutable piece present and t
   expect(await f.archive.put(f.session.token, snapshotId, complete)).toEqual({ recordId: snapshotId, revision: 1 });
 });
 
+async function snapshot(f: Awaited<ReturnType<typeof fixture>>, reuse?: { id: string; origin: string }) {
+  const id = crypto.randomUUID(), photoID = reuse?.id ?? crypto.randomUUID(), jsonID = crypto.randomUUID();
+  const path = `CareHandoff/${photoID}.jpg`, photoHash = await sha256(photo), json = '{}';
+  const put = async (recordID: string, tool: unknown, jpeg: Uint8Array | null = null) => f.archive.put(f.session.token, recordID,
+    f.request({ document: { ...document, formatVersion: 3, photoFile: jpeg ? 'photo.jpg' : null, toolBackup: tool }, photoBase64: encodePhoto(jpeg) }));
+  if (!reuse) await put(photoID, { snapshotId: id, kind: 'photo', path, part: 0, count: 1, sha256: photoHash, payload: '' }, photo);
+  await put(jsonID, { snapshotId: id, kind: 'json', path: 'CareHandoff/plan.json', part: 0, count: 1, sha256: await sha256(json), payload: btoa(json) });
+  const index = { version: reuse ? 2 : 1, snapshotID: id, createdAt: 1, files: [
+    { path: 'CareHandoff/plan.json', bytes: 2, sha256: await sha256(json), records: [jsonID] },
+    { path, bytes: photo.length, sha256: photoHash, records: [photoID], ...(reuse ? { sourceSnapshotID: reuse.origin } : {}) },
+  ] };
+  const publish = async (value = index) => {
+    const payload = btoa(JSON.stringify(value));
+    return put(id, { snapshotId: id, kind: 'index', path: 'index.json', part: 0, count: 1, sha256: await sha256(atob(payload)), payload });
+  };
+  return { id, photoID, jsonID, index, publish };
+}
+
+it('bounds concurrent metadata unwraps at the configured 200-record snapshot boundary', async () => {
+  const f = await fixture({ maximumRecords: 200, quotaBytes: 2_000_000 });
+  const snapshotId = crypto.randomUUID(), hash = await sha256(photo);
+  const files = [];
+  const manifestId = crypto.randomUUID(), manifestHash = await sha256('{}');
+  await f.archive.put(f.session.token, manifestId, f.request({ photoBase64: null,
+    document: { ...document, formatVersion: 3, photoFile: null, toolBackup: { snapshotId,
+      kind: 'json', path: 'CareHandoff/plan.json', part: 0, count: 1, sha256: manifestHash, payload: btoa('{}') } } }));
+  files.push({ path: 'CareHandoff/plan.json', bytes: 2, sha256: manifestHash, records: [manifestId] });
+  for (let n = 0; n < 198; n++) {
+    const id = crypto.randomUUID(), path = `CareHandoff/${id}.jpg`;
+    await f.archive.put(f.session.token, id, f.request({ document: { ...document, formatVersion: 3,
+      toolBackup: { snapshotId, kind: 'photo', path, part: 0, count: 1, sha256: hash, payload: '' } } }));
+    files.push({ path, bytes: photo.length, sha256: hash, records: [id] });
+  }
+  let active = 0, peak = 0, opened = 0;
+  const keys: KeyCustody = { ...f.options.keys, async open(value, context) {
+    if (context.purpose !== 'record' || !context.recordId?.endsWith('/document')) return f.options.keys.open(value, context);
+    active++; opened++; peak = Math.max(peak, active);
+    try {
+      // A serial implementation would spend 99.5 seconds here alone, beyond
+      // the app's 60-second request. This is synthetic latency, not AWS timing.
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return await f.options.keys.open(value, context);
+    } finally { active--; }
+  } };
+  const archive = new ArchiveStore({ ...f.options, keys });
+  const payload = btoa(JSON.stringify({ version: 2, snapshotID: snapshotId, createdAt: 1, files }));
+  const start = Date.now();
+  expect(await archive.put(f.session.token, snapshotId, f.request({ photoBase64: null,
+    document: { ...document, formatVersion: 3, photoFile: null,
+      toolBackup: { snapshotId, kind: 'index', path: 'index.json', part: 0, count: 1,
+        sha256: await sha256(atob(payload)), payload } } }))).toEqual({ recordId: snapshotId, revision: 1 });
+  expect(opened).toBe(199); expect(active).toBe(0);
+  expect(peak).toBeGreaterThan(1); expect(peak).toBeLessThanOrEqual(8);
+  expect(Date.now() - start).toBeLessThan(35_000);
+  expect(await binding.DB.prepare('SELECT count(*) AS n FROM pa_tool_snapshot_references WHERE owner_id=?')
+    .bind(f.session.ownerId).first()).toEqual({ n: 199 });
+}, 45_000);
+
+it('reuses one photo across snapshots and protects both legacy and shared dependencies during deletion', async () => {
+  const f = await fixture();
+  const a = await snapshot(f); await a.publish();
+  const b = await snapshot(f, { id: a.photoID, origin: a.id }); await b.publish();
+  const inventory = await binding.ARCHIVE.list({ prefix: `personal/${f.session.ownerId}/` });
+  expect(inventory.objects).toHaveLength(1); // No second ciphertext or photo upload.
+  await expect(f.archive.remove(f.session.token, a.photoID, 1)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+  await f.archive.remove(f.session.token, b.id, 1);
+  await expect(f.archive.remove(f.session.token, a.photoID, 1, true)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+  expect((await f.archive.read(f.session.token, a.photoID)).document.toolBackup?.sha256).toBe(await sha256(photo));
+  const c = await snapshot(f, { id: a.photoID, origin: a.id }); await c.publish();
+  await f.archive.remove(f.session.token, a.id, 1);
+  await expect(f.archive.remove(f.session.token, a.photoID, 1, true)).rejects.toMatchObject({ code: 'TOOL_PART_REFERENCED' });
+  // Reuse still works after the original index is gone: origin is the photo's tag.
+  const d = await snapshot(f, { id: a.photoID, origin: a.id }); await d.publish();
+  await f.archive.remove(f.session.token, c.id, 1); await f.archive.remove(f.session.token, d.id, 1);
+  await f.archive.remove(f.session.token, a.photoID, 1, true);
+  await expect(f.archive.read(f.session.token, a.photoID)).rejects.toMatchObject({ code: 'RECORD_NOT_FOUND' });
+});
+
+it('rejects incorrect shared photo identity, hash, size and other-owner references', async () => {
+  const f = await fixture(), other = await fixture();
+  const a = await snapshot(f); await a.publish();
+  const b = await snapshot(f, { id: a.photoID, origin: a.id });
+  for (const patch of [{ sourceSnapshotID: crypto.randomUUID() }, { sha256: '0'.repeat(64) }, { bytes: photo.length + 1 }]) {
+    const bad = { ...b.index, files: [b.index.files[0]!, { ...b.index.files[1]!, ...patch }] };
+    await expect(b.publish(bad)).rejects.toMatchObject({ code: 'INVALID_RECORD' });
+  }
+  const foreign = await snapshot(other, { id: a.photoID, origin: a.id });
+  await expect(foreign.publish()).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_tool_snapshot_references WHERE owner_id=?').bind(other.session.ownerId).first()).toBeNull();
+});
+
+it('claims deletion before external recovery work and prevents a new index after an uncertain delete', async () => {
+  const f = await fixture(), a = await snapshot(f); await a.publish();
+  await f.archive.remove(f.session.token, a.id, 1);
+  // This fixture deliberately models a pre-recovery legacy row so the next
+  // readback reaches the injected external copy failure.
+  await binding.DB.prepare(`INSERT INTO pa_record_legacy_baseline
+    SELECT owner_id,record_id,revision,initial_operation,initial_fingerprint,photo_key,photo_bytes,quota_bytes,deleted
+    FROM pa_records WHERE owner_id=? AND record_id=?`).bind(f.session.ownerId, a.photoID).run();
+  let sawClaim = false;
+  const recovery = { copy: async () => {
+    sawClaim = !!await binding.DB.prepare('SELECT 1 FROM pa_tool_part_delete_claims WHERE owner_id=? AND part_id=?')
+      .bind(f.session.ownerId, a.photoID).first();
+    throw new ServiceError('RECOVERY_PENDING', 503);
+  } } as unknown as RecordRecoveryCopy;
+  const deleting = new ArchiveStore({ ...f.options, recovery });
+  await expect(deleting.remove(f.session.token, a.photoID, 1, true)).rejects.toThrow();
+  expect(sawClaim).toBe(true);
+  const b = await snapshot(f, { id: a.photoID, origin: a.id });
+  await expect(b.publish()).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  expect((await f.archive.list(f.session.token, '', 50)).items.find(item => item.recordId === a.photoID))
+    .toMatchObject({ toolPhotoReusable: false });
+  await f.archive.remove(f.session.token, a.photoID, 1, true); // Explicit retry finishes the same deletion.
+});
+
+it('rejects a commit when a deletion claim appears after reference validation', async () => {
+  const f = await fixture(), a = await snapshot(f); await a.publish();
+  const b = await snapshot(f, { id: a.photoID, origin: a.id });
+  const original = f.options.keys.seal.bind(f.options.keys);
+  let raced = false;
+  f.options.keys.seal = async (bytes, context) => {
+    if (!raced && context.recordId === `${b.id}/document`) {
+      raced = true;
+      await binding.DB.prepare('INSERT INTO pa_tool_part_delete_claims(owner_id,part_id) VALUES(?,?)')
+        .bind(f.session.ownerId, a.photoID).run();
+    }
+    return original(bytes, context);
+  };
+  await expect(b.publish()).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+  expect(await binding.DB.prepare('SELECT 1 FROM pa_records WHERE owner_id=? AND record_id=?').bind(f.session.ownerId, b.id).first()).toBeNull();
+});
+

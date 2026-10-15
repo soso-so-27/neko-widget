@@ -1,4 +1,5 @@
-import { ServiceError, type KeyCustody } from './contracts';
+import { ServiceError, sha256, type ArchiveDocument, type KeyCustody } from './contracts';
+import { validateDocument } from './documents';
 import { type RecoveryObject, S3RecoveryCopy } from './s3-recovery-copy';
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -30,6 +31,14 @@ export interface CopiedRecordImage {
   record: RecoveryObject;
   photo: RecoveryObject | null;
 }
+
+export interface RecoveredRecordMetadata {
+  document: ArchiveDocument;
+  photoSHA256: string | null;
+  photoBytes: number;
+}
+type MetadataImage = Pick<StoredRecordImage,
+  'ownerId' | 'recordId' | 'revision' | 'metadata' | 'photoKey' | 'photoBytes' | 'deleted'>;
 
 interface RecordPayload {
   version: 1;
@@ -141,6 +150,49 @@ function validImage(image: StoredRecordImage): void {
  */
 export class RecordRecoveryCopy {
   constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy) {}
+
+  /** Recovery envelopes contain the original sealed D1 metadata, not its JSON.
+   * Authenticate that inner owner/record binding before deriving tool edges.
+   * No photo read, additional S3 request or ciphertext rewrite is performed. */
+  async readMetadata(image: MetadataImage): Promise<RecoveredRecordMetadata | null> {
+    if (!idPattern.test(image.ownerId) || !recordIdPattern.test(image.recordId)
+      || !Number.isSafeInteger(image.revision) || image.revision < 1
+      || typeof image.deleted !== 'boolean' || !Number.isSafeInteger(image.photoBytes)
+      || image.photoBytes < 0) throw unavailable();
+    if (image.deleted) {
+      if (image.metadata !== null || image.photoKey !== null || image.photoBytes !== 0) throw unavailable();
+      return null;
+    }
+    if (!(image.metadata instanceof Uint8Array) || !image.metadata.length
+      || image.metadata.length > maxMetadataBytes) throw unavailable();
+    if (image.photoKey !== null) {
+      const match = photoKeyPattern.exec(image.photoKey);
+      if (match?.[1] !== image.ownerId || match[2] !== image.recordId || image.photoBytes < 1) throw unavailable();
+    } else if (image.photoBytes !== 0) throw unavailable();
+    let opened: Uint8Array | undefined;
+    try {
+      opened = await this.keys.open(image.metadata.slice(),
+        { ownerId: image.ownerId, purpose: 'record', recordId: `${image.recordId}/document` });
+      const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(opened));
+      if (!value || Object.keys(value).sort().join(',') !==
+        'document,ownerId,photoBytes,photoSHA256,recordId,revision,version'
+        || value.version !== 1 || value.ownerId !== image.ownerId || value.recordId !== image.recordId
+        || value.revision !== image.revision || value.photoBytes !== image.photoBytes
+        || (value.photoSHA256 === null) !== (image.photoKey === null)
+        || (value.photoSHA256 !== null && (typeof value.photoSHA256 !== 'string' || !hex.test(value.photoSHA256)))) {
+        throw unavailable();
+      }
+      const document = validateDocument(value.document);
+      if ((document.photoFile === null) !== (image.photoKey === null)) throw unavailable();
+      const part = document.toolBackup;
+      if (part && (part.kind === 'photo' ? part.sha256 !== value.photoSHA256
+        : await sha256(Uint8Array.from(atob(part.payload), c => c.charCodeAt(0))) !== part.sha256)) {
+        throw unavailable();
+      }
+      return { document, photoSHA256: value.photoSHA256, photoBytes: value.photoBytes };
+    } catch { throw unavailable(); }
+    finally { opened?.fill(0); }
+  }
 
   async copy(image: StoredRecordImage, reusedPhoto?: RecoveryObject): Promise<CopiedRecordImage> {
     validImage(image);

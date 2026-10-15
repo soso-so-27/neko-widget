@@ -209,7 +209,9 @@ export async function route(request: Request, services: Services, context?: Pick
   if (id && request.method === 'DELETE') {
     const revision = request.headers.get('if-match');
     if (!revision || !/^\d+$/.test(revision)) throw new ServiceError('INVALID_REVISION');
-    return payloadWork.run(async () => response(await services.archive.remove(token, id, Number(revision))), request.signal);
+    const strict = request.headers.get('x-tool-delete-unreferenced');
+    if (strict !== null && strict !== '1') throw new ServiceError('INVALID_REQUEST');
+    return payloadWork.run(async () => response(await services.archive.remove(token, id, Number(revision), strict === '1')), request.signal);
   }
   throw new ServiceError('NOT_FOUND', 404);
 }

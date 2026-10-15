@@ -42,6 +42,8 @@ actor PreservationFixtureServer {
     private var renewalOutcome: ExportRenewalOutcome = .sameOwner
     private var renewedSession: ManagedPreservationSessionStore.Credential?
     private var inventoryGeneration = 1
+    private var toolDeletionFixture = false
+    func enableToolDeletionFixture() { toolDeletionFixture = true }
     private var authIssues = 0, authExchanges = 0
     func setRenewalOutcome(_ value: ExportRenewalOutcome) { renewalOutcome = value }
     func authCounts() -> (issues: Int, exchanges: Int) { (authIssues, authExchanges) }
@@ -208,6 +210,7 @@ actor PreservationFixtureServer {
             if scenario == .changedSessionDuringUsage { try replaceSession() }
             if scenario == .unavailableUsage { return try fail("ARCHIVE_ACCOUNTING_UNAVAILABLE", status: 503) }
             return try json(["version": 1, "accounting": "encrypted-records-v1",
+                "toolSnapshots": ["maximumIndexVersion": 2, "strictPartDeletion": true],
                 "storage": ["usedBytes": 1_048_576, "reservedBytes": 0,
                             "limitBytes": 5_000_000_000,
                             "availableBytes": scenario == .malformedUsage ? 5_000_000_000 : 4_998_951_424,
@@ -307,6 +310,9 @@ actor PreservationFixtureServer {
                 throw URLError(.networkConnectionLost)
             }
             return try fail("NEW_SAVE_REQUIRES_MEMBERSHIP", status: 403)
+        }
+        if toolDeletionFixture, request.httpMethod == "GET", url.path.hasPrefix("/v1/records/") {
+            return try fail("RECORD_NOT_FOUND", status: 404)
         }
         throw ManagedPreservationError.invalidResponse // never fall back to network
     }

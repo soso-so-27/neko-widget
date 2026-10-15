@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
-import { expect, it } from 'vitest';
-import { randomToken } from '../src/contracts';
+import { beforeEach, expect, it } from 'vitest';
+import { randomToken, sha256, type ArchiveDocument } from '../src/contracts';
 import { identityIndexKey, indexedOwnerIdentity } from '../src/identity-index';
 import { envelopeKeyCustody } from '../src/key-custody';
 import { OwnerArchiveRecovery } from '../src/owner-archive-recovery';
@@ -11,8 +11,21 @@ import { S3RecoveryCopy, type RecoveryObject } from '../src/s3-recovery-copy';
 import type { PurgeIntentEvent, S3PurgeIntentStore } from '../src/s3-purge-intent';
 import { syntheticKeyAuthority } from './key-fixture';
 import { OwnerRequestLimiter } from '../src/owner-request-limiter';
+import { ownerD1DeleteOrder } from '../src/owner-d1-residue';
 
 const ownerId = '00000000-0000-4000-8000-000000000001';
+
+beforeEach(async () => {
+  // Each offline restore requires its own empty test target. The Worker pool
+  // shares this file's D1/R2 bindings; previous staged targets are not retries.
+  const { DB: db, ARCHIVE: bucket } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
+  await db.prepare(`UPDATE pa_recovery_write_policy SET delete_intent_required=0,
+    owner_snapshot_required=0 WHERE singleton=1`).run();
+  for (const table of ownerD1DeleteOrder) await db.prepare(`DELETE FROM ${table}`).run();
+  const listed = await bucket.list({ prefix: `personal/${ownerId}/` });
+  for (const object of listed.objects) await bucket.delete(object.key);
+  expect(await db.prepare('SELECT count(*) AS n FROM pa_owners').first()).toEqual({ n: 0 });
+});
 
 it('stages a verified owner and photo in empty D1/R2 while keeping access disabled', async () => {
   const authority = await syntheticKeyAuthority();
@@ -55,12 +68,19 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
   const records = new RecordRecoveryCopy(keys, s3);
   const recordId = crypto.randomUUID();
   const photoKey = `personal/${ownerId}/${recordId}/${crypto.randomUUID()}`;
-  const metadata = new Uint8Array([78, 75, 77, 49, 1]);
+  const document = { formatVersion: 1, text: 'restored record', capturedAt: null,
+    writtenAt: null, updatedAt: null, catNames: [], photoFile: 'photo.jpg' };
+  const metadata = await keys.seal(new TextEncoder().encode(JSON.stringify({ version: 1,
+    ownerId, recordId, revision: 2, document, photoSHA256: 'a'.repeat(64), photoBytes: 3 })),
+  { ownerId, purpose: 'record', recordId: `${recordId}/document` });
+  const firstMetadata = await keys.seal(new TextEncoder().encode(JSON.stringify({ version: 1,
+    ownerId, recordId, revision: 1, document: { ...document, photoFile: null }, photoSHA256: null, photoBytes: 0 })),
+  { ownerId, purpose: 'record', recordId: `${recordId}/document` });
   const photoCiphertext = new Uint8Array([78, 75, 77, 49, 2, 3]);
   const initialOperation = crypto.randomUUID();
   const base = { ownerId, recordId, initialFingerprint: 'a'.repeat(64), initialOperation };
   const firstCopy = await records.copy({ ...base, revision: 1,
-    metadata, photoKey: null, photoBytes: 0, quotaBytes: metadata.length,
+    metadata: firstMetadata, photoKey: null, photoBytes: 0, quotaBytes: firstMetadata.length,
     deleted: false, photoCiphertext: null });
   await records.commit(ownerId, recordId, 1, firstCopy);
   const copied = await records.copy({ ...base, revision: 2,
@@ -150,3 +170,119 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
   await expect(restore.restore(ownerId, 1_002))
     .rejects.toMatchObject({ code: 'OWNER_QUARANTINE_RESTORE_UNAVAILABLE' });
 });
+
+async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 'path' | 'source' | 'hash' | 'bytes' | 'json-hash' | 'manifest' | 'photo-name') {
+  const authority = await syntheticKeyAuthority();
+  const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
+  const secret = randomToken(), stored = new Map<string, Uint8Array>(), references: RecoveryObject[] = [];
+  const s3 = {
+    async putVersioned(key: string, body: Uint8Array) {
+      const reference = { key, versionId: 'synthetic-v1', bytes: body.length, sha256: await sha256(body) };
+      stored.set(key, body.slice()); references.push(reference); return reference;
+    },
+    async getVerified(reference: RecoveryObject) {
+      const body = stored.get(reference.key);
+      if (!body || reference.versionId !== 'synthetic-v1' || body.length !== reference.bytes
+        || await sha256(body) !== reference.sha256) throw Error('bad fixture object');
+      return body.slice();
+    },
+    async listOwnerVersionsPage(requested: string) {
+      return { versions: references.filter(ref => ref.key.startsWith(`recovery/v1/${requested}/`))
+        .map(ref => ({ key: ref.key, versionId: ref.versionId, bytes: ref.bytes, deleteMarker: false })), nextCursor: null };
+    },
+    async referenceForListedVersion(item: { key: string; versionId: string }) {
+      const ref = references.find(ref => ref.key === item.key && ref.versionId === item.versionId);
+      if (!ref) throw Error('missing fixture version'); return ref;
+    },
+  } as S3RecoveryCopy;
+  const records = new RecordRecoveryCopy(keys, s3), owners = new OwnerRecoveryCopy(keys, s3, secret);
+  const original = crypto.randomUUID(), newer = crypto.randomUUID(), photoId = crypto.randomUUID();
+  const photoPath = `CareHandoff/${crypto.randomUUID()}.jpg`, photo = new Uint8Array([1, 2, 3]);
+  const photoHash = await sha256(photo), json = new TextEncoder().encode('{"cats":[]}'), jsonHash = await sha256(json);
+  const jsonIds = [crypto.randomUUID(), crypto.randomUUID()];
+  const ownerRecords: OwnerRecoveryImage['records'] = [];
+  async function publish(id: string, snapshotId: string, kind: 'json' | 'photo' | 'index', path: string, content: Uint8Array) {
+    const toolBackup = { snapshotId, kind, path, part: 0, count: 1, sha256: await sha256(content),
+      payload: kind === 'photo' ? '' : btoa(String.fromCharCode(...content)) };
+    const document: ArchiveDocument = { formatVersion: 3, text: '', capturedAt: null, writtenAt: null,
+      updatedAt: null, catNames: [], photoFile: kind === 'photo' ? 'photo.jpg' : null, toolBackup };
+    const photoCiphertext = kind === 'photo' ? await keys.seal(content,
+      { ownerId, purpose: 'record', recordId: `${id}/photo` }) : null;
+    const metadata = await keys.seal(new TextEncoder().encode(JSON.stringify({ version: 1, ownerId,
+      recordId: id, revision: 1, document, photoSHA256: kind === 'photo' ? toolBackup.sha256 : null,
+      photoBytes: kind === 'photo' ? content.length : 0 })),
+    { ownerId, purpose: 'record', recordId: `${id}/document` });
+    const base = { ownerId, recordId: id, revision: 1, initialFingerprint: 'a'.repeat(64),
+      initialOperation: crypto.randomUUID(), metadata,
+      photoKey: photoCiphertext ? `personal/${ownerId}/${id}/${crypto.randomUUID()}` : null,
+      photoBytes: kind === 'photo' ? content.length : 0, photoCiphertext,
+      quotaBytes: metadata.length + (photoCiphertext?.length ?? 0), deleted: false };
+    const copy = await records.copy(base), marker = await records.commit(ownerId, id, 1, copy);
+    ownerRecords.push({ recordId: id, revision: 1, deleted: false, marker });
+    return base;
+  }
+  await publish(photoId, original, 'photo', photoPath, photo);
+  for (const [at, snapshot] of [original, newer].entries()) {
+    await publish(jsonIds[at]!, snapshot, 'json', 'CareHandoff/plan.json', json);
+  }
+  const jsonFile = (id: string) => ({ path: 'CareHandoff/plan.json', bytes: json.length, sha256: jsonHash, records: [id] });
+  const photoFile = { path: photoPath, bytes: photo.length, sha256: photoHash, records: [photoId] };
+  const originalIndex = await publish(original, original, 'index', 'index.json', new TextEncoder().encode(JSON.stringify({
+    version: 1, snapshotID: original, createdAt: 1, files: [jsonFile(jsonIds[0]!), photoFile] }))) ;
+  const reused = { ...photoFile, records: [...photoFile.records], sourceSnapshotID: original };
+  if (change === 'missing') reused.records = [crypto.randomUUID()];
+  if (change === 'path') reused.path = `CareHandoff/${crypto.randomUUID()}.jpg`;
+  if (change === 'source') reused.sourceSnapshotID = crypto.randomUUID();
+  if (change === 'hash') reused.sha256 = 'b'.repeat(64);
+  if (change === 'bytes') reused.bytes++;
+  if (change === 'photo-name') reused.path = 'CareHandoff/not-a-uuid.jpg';
+  const newerJson = jsonFile(jsonIds[1]!);
+  if (change === 'json-hash') newerJson.sha256 = 'c'.repeat(64);
+  if (change === 'manifest') newerJson.path = 'CareHandoff/other.json';
+  await publish(newer, newer, 'index', 'index.json', new TextEncoder().encode(JSON.stringify({
+    version: 2, snapshotID: newer, createdAt: 2, files: [newerJson, reused] }))) ;
+  if (change === 'deleted-source') {
+    const tombstone = await records.copy({ ...originalIndex, revision: 2, deleted: true,
+      metadata: null, photoKey: null, photoBytes: 0, photoCiphertext: null, quotaBytes: 0 });
+    await records.prepareDelete(ownerId, original, 1, tombstone);
+    const marker = await records.commit(ownerId, original, 2, tombstone);
+    const prior = ownerRecords.find(record => record.recordId === original)!;
+    Object.assign(prior, { revision: 2, deleted: true, marker });
+  }
+  const issuer = 'https://appleid.apple.com', subject = 'shared-tool-restore';
+  const credential = await keys.seal(new TextEncoder().encode(JSON.stringify({ issuer, subject, refreshToken: randomToken() })),
+    { ownerId, purpose: 'identity' });
+  await owners.copy({ ownerId, generation: 1, epoch: 0, disabled: false, purgeFenceId: null, createdAt: 100,
+    identityKey: await indexedOwnerIdentity(await identityIndexKey(secret), issuer, subject),
+    credential: { ownerEpoch: 0, sealedCredentials: credential, updatedAt: 100 }, contact: null,
+    billing: null, retention: null, inventoryGeneration: 5,
+    records: ownerRecords.sort((a, b) => a.recordId.localeCompare(b.recordId)) });
+  const { DB: db, ARCHIVE: bucket } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
+  const purge = { async listOwnerVersionsPage() { return { versions: [], nextCursor: null }; } } as unknown as S3PurgeIntentStore;
+  return { restore: new OwnerQuarantineRestore(new OwnerArchiveRecovery(s3, owners, records), records,
+    db, bucket, purge, { async assertNotRequested() {} }), db, bucket, original, newer, photoId, jsonIds,
+    references, objectCount: references.length };
+}
+
+it.each([undefined, 'deleted-source'] as const)('rebuilds v2 photo edges without duplicating the photo or requiring its original index (%s)', async change => {
+  const f = await sharedToolRestoreFixture(change);
+  expect(await f.restore.restore(ownerId, 1_000)).toEqual({ status: 'staged-disabled', ownerId, records: 5, photos: 1 });
+  const edges = (await f.db.prepare(`SELECT snapshot_id,part_id FROM pa_tool_snapshot_references
+    WHERE owner_id=? ORDER BY part_id`).bind(ownerId).all<{ snapshot_id: string; part_id: string }>()).results;
+  expect(edges).toEqual([f.photoId, f.jsonIds[1]!].sort().map(id => ({ snapshot_id: f.newer, part_id: id })));
+  expect(await f.db.prepare('SELECT count(*) AS n FROM pa_tool_part_delete_claims').first()).toEqual({ n: 0 });
+  expect(await f.db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').bind(ownerId).first()).toEqual({ disabled: 1 });
+  expect(f.references).toHaveLength(f.objectCount);
+  if (change) expect(await f.db.prepare('SELECT deleted FROM pa_records WHERE owner_id=? AND record_id=?')
+    .bind(ownerId, f.original).first()).toEqual({ deleted: 1 });
+});
+
+it.each(['missing', 'path', 'source', 'hash', 'bytes', 'json-hash', 'manifest', 'photo-name'] as const)(
+  'refuses staged success for an incomplete or inconsistent shared tool graph (%s)', async change => {
+    const f = await sharedToolRestoreFixture(change);
+    await expect(f.restore.restore(ownerId, 1_000)).rejects.toMatchObject({ code:
+      ['manifest', 'photo-name'].includes(change) ? 'INVALID_RECORD' : 'OWNER_QUARANTINE_RESTORE_UNAVAILABLE' });
+    expect(await f.db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').bind(ownerId).first()).toEqual({ disabled: 1 });
+    expect(await f.db.prepare('SELECT count(*) AS n FROM pa_sessions').first()).toEqual({ n: 0 });
+    expect(f.references).toHaveLength(f.objectCount);
+  });
