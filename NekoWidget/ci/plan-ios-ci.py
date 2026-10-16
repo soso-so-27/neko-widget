@@ -6414,6 +6414,254 @@ def equivalent_inputs(candidate: str, head: str) -> bool:
         return False
 
 
+# One DEBUG fixture correction, distinct from the historical monolithic Solo graph.
+FIXTURE_NAV_SOURCE = "6fdf81b0e3818efe97a57b4438f4e27eca99f2a3"
+FIXTURE_NAV_PATCH = "0f60e82cf7fc8ba464e4903fc9be942d9bbfb657"
+FIXTURE_NAV_WIDGET_PREPARATION = "015311653322864cc89a595169793bdcec0900c9"
+FIXTURE_NAV_SOLO_PATCH = "289c249b4c79b38143688e4e0a157125b47b5f4d"
+FIXTURE_NAV_RUN = 38880448128
+FIXTURE_NAV_BRANCH = "codex/automatic-admission-20261016"
+FIXTURE_NAV_PATH = "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift"
+FIXTURE_NAV_PAIR = ("301575ec03ec697d875377ef3e387c52d320776a", "f260b94648b85080cac9477af1fb928f7846b66d")
+FIXTURE_NAV_WIDGET_PATH = "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift"
+FIXTURE_NAV_WIDGET_PAIR = ("3777a24721ab038157d765bcef8748925504a058", "1cf6fe6cb6488c4cfd7a2de41d0ff1c59c1da7c9")
+FIXTURE_NAV_BLOBS = {FIXTURE_NAV_PATH:FIXTURE_NAV_PAIR,FIXTURE_NAV_WIDGET_PATH:FIXTURE_NAV_WIDGET_PAIR}
+FIXTURE_NAV_CONTROLS = frozenset("NekoWidget/ci/" + name for name in (
+    "plan-ios-ci.py", "test-plan-ios-ci.py", "preflight-ci.py", "test-preflight-ci.py"))
+FIXTURE_NAV_CLOSURE = (1198, "1adfe77c15d703f8837e3934b625523e77bb58d049198eda94e7afc0a5da6fb8")
+FIXTURE_NAV_CASE = "SoloMemoriesUITests/testAlbumCoversAndFavoritesRemainReachableWithLargestText"
+FIXTURE_NAV_WIDGET_CASE = "WidgetPlacementScreenshotUITests/testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"
+FIXTURE_NAV_CASES = (FIXTURE_NAV_CASE,FIXTURE_NAV_WIDGET_CASE)
+FIXTURE_NAV_DIAGNOSTIC_BRANCHES = {FIXTURE_NAV_CASE:"diagnostic/automatic-admission-20261016",
+    FIXTURE_NAV_WIDGET_CASE:"diagnostic/automatic-admission-widget-20261016"}
+FIXTURE_NAV_KIND = "fixed-solo-and-widget-fixture-recovery-v1"
+FIXTURE_NAV_OWNING = (BUILD,) + tuple(lane_job(FULL_SCOPE,lane) for lane in (
+    "app-ui-solo-1","app-ui-solo-2","runtime","gallery-normal","gallery-variants"))
+FIXTURE_NAV_FAILURES = {FIXTURE_NAV_OWNING[1]:FIXTURE_NAV_CASE,FIXTURE_NAV_OWNING[-1]:FIXTURE_NAV_WIDGET_CASE}
+FIXTURE_NAV_SOURCE_JOBS = dict(zip((PLAN_JOB,) + FULL, (
+    116905636152, 116905994169, 116905994294, 116918379494,
+    116905994430, 116905994381, 116905994432, 116918379413, 116918379504)))
+FIXTURE_NAV_PLACEHOLDER = 116905996660
+FIXTURE_NAV_BUILD_OPTIONAL = frozenset({"Verify packaged icons and capture first launch", "Upload icon display evidence", "Upload build result bundle"})
+FIXTURE_NAV_PLAN_OPTIONAL = frozenset({"Validate public policy pages", "Prepare operator test runtime",
+    "Validate private billing operation boundaries", "Validate internal Sandbox release preparation"})
+
+
+def fixture_navigation_inputs(head, *, approved=True):
+    """Exact fixture pair; every other runtime/scenario input is immutable."""
+    try:
+        if not isinstance(head, str) or not SHA.fullmatch(head): return None
+        git("merge-base", "--is-ancestor", FIXTURE_NAV_PATCH, head)
+        if (git("show", "-s", "--format=%P", FIXTURE_NAV_PATCH) != FIXTURE_NAV_WIDGET_PREPARATION
+            or git("show", "-s", "--format=%P", FIXTURE_NAV_WIDGET_PREPARATION) != FIXTURE_NAV_SOLO_PATCH
+            or git("show", "-s", "--format=%P", FIXTURE_NAV_SOLO_PATCH) != FIXTURE_NAV_SOURCE): return None
+        anchor = git("merge-base", head, "origin/main")
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", FIXTURE_NAV_SOURCE, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return None
+        seen = set()
+        for i in range(0, len(raw), 2):
+            fields, path = raw[i].split(), raw[i+1]
+            if (path in seen or len(fields) != 5 or fields[1] != "100644"
+                or not all(SHA.fullmatch(v) for v in fields[2:4])): return None
+            seen.add(path)
+            if path in FIXTURE_NAV_BLOBS:
+                if fields != [":100644", "100644", *FIXTURE_NAV_BLOBS[path], "M"]: return None
+            elif path in FIXTURE_NAV_CONTROLS:
+                if fields[0] != ":100644" or fields[4] != "M": return None
+                if git("ls-tree", head, "--", path) != git("ls-tree", anchor, "--", path): return None
+            elif not (path.startswith("handoffs/") and path.endswith(".md") and fields[4] in {"A", "M"}
+                      and fields[0] == (":000000" if fields[4] == "A" else ":100644")): return None
+        if not FIXTURE_NAV_BLOBS.keys() <= seen: return None
+        changed_controls = seen & FIXTURE_NAV_CONTROLS
+        if changed_controls != FIXTURE_NAV_CONTROLS and (approved or changed_controls): return None
+        rows = [row for row in git("ls-tree", "-r", "-z", head).split("\0") if row
+                and (path := row.split("\t", 1)[1]) not in FIXTURE_NAV_CONTROLS | FIXTURE_NAV_BLOBS.keys()
+                and not (path.startswith("handoffs/") and path.endswith(".md"))]
+        if (len(rows), hashlib.sha256(("\0".join(rows)+"\0").encode()).hexdigest()) != FIXTURE_NAV_CLOSURE: return None
+        # Both files are pinned in full. Also make the reviewed runtime isolation
+        # explicit: only the private Solo fixture differs, never root dispatch.
+        outside = []
+        for revision in (FIXTURE_NAV_SOURCE,FIXTURE_NAV_PATCH):
+            text = git("show",f"{revision}:{FIXTURE_NAV_PATH}")
+            prefix, rest = text.split("@MainActor\nprivate struct SoloMemoriesFixtureView: View {",1)
+            _, suffix = rest.split("@MainActor\nprivate struct MonthlySaveFixtureView: View {",1)
+            outside.append(prefix+suffix)
+        if outside[0] != outside[1]: return None
+        return anchor
+    except (OSError, ValueError, IndexError, subprocess.CalledProcessError):
+        return None
+
+
+def fixture_navigation_steps(job, names, *, failure=None, optional=()):
+    """Require actual bounded steps, never a successful label hiding skips."""
+    try:
+        parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        start, end = parse(job["started_at"]), parse(job["completed_at"])
+        steps = job["steps"]
+        if (type(job.get("runner_id")) is not int or job["runner_id"] <= 0 or end < start
+            or not isinstance(steps, list) or len({s["name"] for s in steps}) != len(steps)): return False
+        for step in steps:
+            if step["status"] != "completed": return False
+            if step["name"] in optional and step["conclusion"] == "skipped": continue
+            expected = "failure" if step["name"] == failure else "success"
+            if (step["conclusion"] != expected
+                or not start <= parse(step["started_at"]) <= parse(step["completed_at"]) <= end): return False
+        return all(sum(s["name"] == name and s["conclusion"] == ("failure" if name == failure else "success")
+                       for s in steps) == 1 for name in names)
+    except (KeyError, TypeError, AttributeError, ValueError): return False
+
+
+def fixture_navigation_required_steps(name):
+    if name == BUILD:
+        workflow = git("show",f"{FIXTURE_NAV_SOURCE}:.github/workflows/ios-build.yml")
+        block = workflow.split("  build-without-signing:\n",1)[1].split("  simulator-smoke-test:\n",1)[0]
+        names = tuple(n for n in re.findall(r"^      - name: (.+)$",block,re.M) if n not in FIXTURE_NAV_BUILD_OPTIONAL)
+        if len(names) != 39 or len(set(names)) != 39: raise ValueError("Fixed Build39 declaration differs")
+        return names
+    if name == PLAN_JOB: return ("Check out repository","Test CI selection and evidence boundaries","Select checks")
+    if name == SMOKE: return ("Check out repository","Run Simulator smoke test","Upload Simulator smoke-test artifacts")
+    return ("Check out repository","Run sharing runtime matrix","Upload sharing runtime matrix artifacts")
+
+
+def fixture_navigation_plan(log, head):
+    records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in log.splitlines() if "IOS_CI_PLAN_JSON=" in line]
+    records = [r for r in records if r.get("head_sha") == head and r.get("repository") == "soso-so-27/neko-widget"]
+    if (len(records) != 1 or type(records[0].get("schema_version")) is not int or records[0]["schema_version"] != 1
+        or records[0].get("scope") != FULL_SCOPE or records[0].get("required_jobs") != list(FULL)): return None
+    return records[0]
+
+
+def fixture_navigation_current_jobs(run,jobs,now):
+    required=(PLAN_JOB,)+FIXTURE_NAV_OWNING
+    if (len({j.get('id') for j in jobs}) != len(jobs)
+        or not covers_jobs(jobs,required,run['head_sha'],now)): return False
+    for job in jobs:
+        name=job.get('name')
+        if (job.get('head_sha') != run['head_sha'] or job.get('run_id') != run['id'] or job.get('run_attempt') != 1): return False
+        if name in required:
+            if not fixture_navigation_steps(job,fixture_navigation_required_steps(name),
+                optional=FIXTURE_NAV_PLAN_OPTIONAL if name==PLAN_JOB else FIXTURE_NAV_BUILD_OPTIONAL if name==BUILD else ()): return False
+        elif not (name in set(FULL)|{UNEXPANDED_SHARING_JOB,'needs.plan.outputs.smoke_name','needs.plan.outputs.build_name'}
+                  and (job.get('status'),job.get('conclusion')) == ('completed','skipped') and job.get('steps') == []): return False
+    return True
+
+
+def fixture_navigation_focused(head, api, now):
+    """Two exact-K normal focused jobs, each executing its original case once."""
+    repo = "soso-so-27/neko-widget"
+    query = urllib.parse.urlencode({"head_sha":head,"event":"workflow_dispatch","per_page":100})
+    data = api(f"/repos/{repo}/actions/workflows/ios-ui-diagnostic.yml/runs?{query}")
+    runs = data.get("workflow_runs")
+    if (data.get("total_count") != 2 or not isinstance(runs,list) or len(runs) != 2
+        or len({r.get("id") for r in runs}) != 2): return None
+    evidence=[]
+    for selected_case in FIXTURE_NAV_CASES:
+        matches=[r for r in runs if r.get("display_title") == "UI diagnosis: "+selected_case]
+        if len(matches) != 1: return None
+        run=matches[0]
+        if (run.get("path") != ".github/workflows/ios-ui-diagnostic.yml" or run.get("workflow_id") != 362697969
+            or run.get("head_sha") != head or run.get("head_branch") != FIXTURE_NAV_DIAGNOSTIC_BRANCHES[selected_case]
+            or run.get("event") != "workflow_dispatch" or run.get("run_attempt") != 1
+            or (run.get("status"),run.get("conclusion")) != ("completed","success")
+            or any(run.get(k,{}).get("full_name") != repo for k in ("repository","head_repository"))): return None
+        data = api(f"/repos/{repo}/actions/runs/{run['id']}/attempts/1/jobs?per_page=100")
+        if data.get("total_count") != 1 or len(data.get("jobs",[])) != 1: return None
+        job = data["jobs"][0]
+        names = ("Validate diagnostic inputs before checkout", "Check out the exact diagnostic commit",
+                 "Run requested diagnostic tests with the existing fixture preparation", "Upload diagnostic evidence only")
+        if (job.get("run_id") != run["id"] or job.get("head_sha") != head or job.get("run_attempt") != 1
+            or job.get("name") != "Diagnostic only - up to three native UI tests (not release evidence)"
+            or not covers_jobs([job], (job["name"],), head, now) or not fixture_navigation_steps(job,names)): return None
+        log = api(f"/repos/{repo}/actions/jobs/{job['id']}/logs")
+        case = "NekoWidgetUITests."+selected_case.replace("/"," ")
+        if re.findall(r"Test Case '-\[([^]]+)\]' (started|passed|failed|skipped)",log) != [(case,"started"),(case,"passed")]: return None
+        evidence.append({"run_id":run["id"],"job_id":job["id"],"case":selected_case})
+    if len({item['job_id'] for item in evidence}) != 2: return None
+    return {"sha":head,"cases":evidence}
+
+
+def fixture_navigation_source(run, head, branch, repository, workflow_id, required, api, now, *, focused=True):
+    """All eight source jobs completed; only Photos and other UI are retained."""
+    if (repository != "soso-so-27/neko-widget" or branch != FIXTURE_NAV_BRANCH or workflow_id != 335014238
+        or required != FULL or fixture_navigation_inputs(head) is None): return None
+    try:
+        if (run.get("id") != FIXTURE_NAV_RUN or run.get("head_sha") != FIXTURE_NAV_SOURCE
+            or run.get("head_branch") != branch or run.get("path") != ".github/workflows/ios-build.yml"
+            or run.get("event") != "push" or run.get("workflow_id") != workflow_id or run.get("run_attempt") != 1
+            or (run.get("status"),run.get("conclusion")) != ("completed","failure")
+            or any(run.get(k,{}).get("full_name") != repository for k in ("repository","head_repository"))): return None
+        finished = dt.datetime.fromisoformat(run["updated_at"].replace("Z","+00:00"))
+        if not dt.timedelta(0) <= now-finished <= dt.timedelta(hours=24): return None
+        query = urllib.parse.urlencode({"branch":branch,"event":"push","per_page":100})
+        index = api(f"/repos/{repository}/actions/workflows/ios-build.yml/runs?{query}")
+        history = index.get("workflow_runs")
+        if (not isinstance(history,list) or type(index.get("total_count")) is not int or index["total_count"] != len(history)
+            or len(history) > 100 or len({r.get("id") for r in history}) != len(history)): return None
+        later = [r for r in history if r.get("created_at", "") > "2026-10-16T09:26:18Z"]
+        if len(later) > 1 or any(r.get("head_sha") != head or r.get("head_branch") != branch
+            or r.get("event") != "push" or r.get("workflow_id") != workflow_id or r.get('run_attempt') != 1
+            or r.get('path') != '.github/workflows/ios-build.yml'
+            or any(r.get(k,{}).get('full_name') != repository for k in ('repository','head_repository')) for r in later): return None
+        if later and later[0].get('status') == 'completed':
+            if (later[0].get('conclusion') != 'success'
+                or not fixture_navigation_current_jobs(later[0],executed_jobs(later[0],repository,api),now)): return None
+        jobs = executed_jobs(run,repository,api)
+        placeholder = [j for j in jobs if j.get("id") == FIXTURE_NAV_PLACEHOLDER]
+        if (len(placeholder) != 1 or placeholder[0].get("name") != UNEXPANDED_SHARING_JOB
+            or (placeholder[0].get("status"),placeholder[0].get("conclusion")) != ("completed","skipped")
+            or placeholder[0].get("steps") != [] or placeholder[0].get("runner_id") not in (None,0)): return None
+        actual = [j for j in jobs if j.get("id") != FIXTURE_NAV_PLACEHOLDER]
+        if (len(actual) != 9 or len({j.get("id") for j in jobs}) != len(jobs)
+            or {j.get("name"):j.get("id") for j in actual} != FIXTURE_NAV_SOURCE_JOBS
+            or any(j.get("head_sha") != FIXTURE_NAV_SOURCE or j.get("run_id") != run["id"] or j.get("run_attempt") != 1 for j in jobs)): return None
+        for job in actual:
+            name = job["name"]
+            failed = name in FIXTURE_NAV_FAILURES
+            if failed:
+                if (job.get("status"),job.get("conclusion")) != ("completed","failure"): return None
+            elif not covers_jobs([job],(name,),FIXTURE_NAV_SOURCE,now): return None
+            if not fixture_navigation_steps(job,fixture_navigation_required_steps(name),failure="Run sharing runtime matrix" if failed else None,
+                    optional=FIXTURE_NAV_PLAN_OPTIONAL if name == PLAN_JOB else FIXTURE_NAV_BUILD_OPTIONAL if name == BUILD else ()): return None
+        record = fixture_navigation_plan(api(f"/repos/{repository}/actions/jobs/{FIXTURE_NAV_SOURCE_JOBS[PLAN_JOB]}/logs"), FIXTURE_NAV_SOURCE)
+        if record is None or any(record.get(k) is not None for k in ("evidence_run_id","evidence_sha","test_correction_evidence")): return None
+        for name,case in FIXTURE_NAV_FAILURES.items():
+            bad = api(f"/repos/{repository}/actions/jobs/{FIXTURE_NAV_SOURCE_JOBS[name]}/logs")
+            failures = re.findall(r"Test Case '-\[NekoWidgetUITests\.([^]]+)\]' failed",bad)
+            if failures != [case.replace("/"," ")]: return None
+        photos = api(f"/repos/{repository}/actions/jobs/{FIXTURE_NAV_SOURCE_JOBS[SMOKE]}/logs")
+        events = re.findall(r"Test Case '-\[([^]]+)\]' (started|passed|failed|skipped)",photos)
+        names = {name for name,_ in events}
+        if (len(names) != 29 or len(events) != 58 or any("SoloMemoriesUITests" in n for n in names)
+            or [n for n,s in events if s == "skipped"] != ["NekoWidgetUITests.OfficialWindowUITests testSyntheticMovieShippingExportsSoundOnAndOff"]
+            or any([s for n,s in events if n == name] != ["started","skipped" if "testSyntheticMovieShippingExportsSoundOnAndOff" in name else "passed"] for name in names)
+            or "passed (32.229 seconds)" not in photos): return None
+        diagnostic = fixture_navigation_focused(head,api,now) if focused else None
+        if focused and diagnostic is None: return None
+        return {"kind":FIXTURE_NAV_KIND,"run_id":run["id"],"sha":FIXTURE_NAV_SOURCE,
+            "jobs":[{"name":name,"job_id":FIXTURE_NAV_SOURCE_JOBS[name]} for name in FULL if name not in FIXTURE_NAV_OWNING],
+            "owning_jobs_to_execute":list(FIXTURE_NAV_OWNING),"focused_diagnostic":diagnostic,
+            "fixture_blob_pairs":{p:list(pair) for p,pair in FIXTURE_NAV_BLOBS.items()},"unchanged_inputs":list(FIXTURE_NAV_CLOSURE),
+            "scenario_isolation":"Private Solo fixture and Widget capture helper only; root dispatch and retained Photos/other UI scenarios are fixed"}
+    except (OSError, AttributeError, KeyError, TypeError, ValueError, IndexError, subprocess.CalledProcessError): return None
+
+
+def covers_fixture_navigation(run, validation_head, required, api, now, jobs):
+    if (required != FULL or run.get("head_branch") != FIXTURE_NAV_BRANCH or run.get("run_attempt") != 1
+        or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
+        or run.get("event") != "push" or (run.get("status"),run.get("conclusion")) != ("completed","success")
+        or any(run.get(k,{}).get("full_name") != "soso-so-27/neko-widget" for k in ("repository","head_repository"))
+        or fixture_navigation_inputs(run.get("head_sha")) is None or fixture_navigation_inputs(validation_head) is None): return False
+    plans = [j for j in jobs if j.get("name") == PLAN_JOB]
+    if len(plans) != 1 or not fixture_navigation_current_jobs(run,jobs,now): return False
+    record = fixture_navigation_plan(api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plans[0]['id']}/logs"),run["head_sha"])
+    if record is None or any(record.get(k) is not None for k in ("evidence_run_id","evidence_sha")): return False
+    original = api(f"/repos/soso-so-27/neko-widget/actions/runs/{FIXTURE_NAV_RUN}")
+    proof = fixture_navigation_source(original,run["head_sha"],FIXTURE_NAV_BRANCH,"soso-so-27/neko-widget",335014238,FULL,api,now)
+    if proof is None or record.get("test_correction_evidence") != proof: return False
+    return True
+
+
 def test_correction_scope(required: tuple[str, ...]) -> str | None:
     if required == required_jobs_from_scope(INTERNAL_REPORT_SCOPE): return INTERNAL_REPORT_SCOPE
     if required == required_jobs_from_scope(OWNER_CLOUD_SCOPE): return OWNER_CLOUD_SCOPE
@@ -6435,6 +6683,7 @@ def correction_ui_job(selected_scope: str, source: str | None = None) -> str:
 
 
 def correction_owning_jobs(selected_scope: str, source: str) -> tuple[str, ...]:
+    if selected_scope == FULL_SCOPE and source == FIXTURE_NAV_SOURCE: return FIXTURE_NAV_OWNING
     if selected_scope == TOOL_PRESERVATION_SCOPE and source == TOOL_BUILD_SOURCE:
         return (BUILD,)
     if selected_scope == REPORT_REPLY_ENTRY_SCOPE and source in (REPORT_RUNTIME_BUILD_SOURCE,REPORT_RUNTIME_DUPLICATE_HEAD):
@@ -7882,6 +8131,8 @@ def test_correction_inputs(source: str, head: str, selected_scope=LOST_CAT_UX_SC
 def correction_source(run: dict, head: str, branch: str, repository: str, workflow_id: int,
                       required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
     """Verify each reusable job in a failed same-task run; never reuse its UI."""
+    if run.get("id") == FIXTURE_NAV_RUN:
+        return fixture_navigation_source(run,head,branch,repository,workflow_id,required,api,now)
     selected_scope = test_correction_scope(required)
     if selected_scope == OWNER_CLOUD_SCOPE:
         return owner_cloud_correction_source(run, head, branch, repository, workflow_id, required, api, now)
@@ -7985,6 +8236,19 @@ def correction_source(run: dict, head: str, branch: str, repository: str, workfl
 
 def find_test_correction_evidence(head: str, branch: str, repository: str,
                                   required: tuple[str, ...], api, now: dt.datetime) -> dict | None:
+    fixture_candidate = False
+    if branch == FIXTURE_NAV_BRANCH and required == FULL:
+        try:
+            git("merge-base","--is-ancestor",FIXTURE_NAV_PATCH,head)
+            fixture_candidate = True
+        except subprocess.CalledProcessError: pass
+    if fixture_candidate:
+        if fixture_navigation_inputs(head) is None:
+            raise CorrectionEvidenceUnavailable("Fixed fixture recovery inputs or main approval differ; no full retry authorized")
+        run = api(f"/repos/{repository}/actions/runs/{FIXTURE_NAV_RUN}")
+        proof = fixture_navigation_source(run,head,branch,repository,335014238,required,api,now)
+        if proof is None: raise CorrectionEvidenceUnavailable("Fixed fixture recovery requires a complete source and exact focused pass; no Mac jobs authorized")
+        return proof
     if required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):
         if branch == TOOL_RELEASE_BRANCH:
             return tool_release_readiness_source(head, repository, api, now)
@@ -8129,6 +8393,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if run.get("head_branch") == FIXTURE_NAV_BRANCH and required == FULL:
+        return covers_fixture_navigation(run,validation_head,required,api,now,jobs)
     if required == required_jobs_from_scope(TOOL_STORAGE_SCOPE) and run.get("head_sha") == TOOL_STORAGE_FRESH_PHOTOS_SOURCE:
         tool_storage_graph(run, validation_head, api, now, jobs)
         return True
@@ -9233,14 +9499,15 @@ def main() -> None:
         if correction is not None and correction.get("kind") in (REPORT_RUNTIME_KIND,REPORT_RUNTIME_ORDER_KIND) else None)
     correction_jobs = MODERATION_CHAIN_OWNING if chained_build_recovery is not None else correction_owning_jobs(selected_scope, correction["sha"]) if correction else ()
     smoke_correction = SMOKE in correction_jobs
+    fixture_correction = correction is not None and correction.get("kind") == FIXTURE_NAV_KIND
     values = {
         "build": str(evidence is None and (correction is None or BUILD in correction_jobs)).lower(),
         "build_name": ICON_BUILD if selected_scope == ICON_SCOPE else BUILD,
         "smoke": str(evidence is None and (chained_build_recovery is not None or correction is None or smoke_correction) and smoke_job(selected_scope) in required).lower(),
         "smoke_name": smoke_job(selected_scope),
-        "sharing": str(evidence is None and chained_build_recovery is None and correction is None and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
-        "app_ui": str(evidence is None and (BUILD not in correction_jobs or lane_job(selected_scope, "app-ui") in correction_jobs) and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
-        "app_ui_lanes": json.dumps(["app-ui-other", "app-ui-solo"] if smoke_correction else ["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
+        "sharing": str(evidence is None and chained_build_recovery is None and (fixture_correction or correction is None) and bool(set(required) & set(sharing_jobs(selected_scope)) - {lane_job(LOST_CAT_UX_SCOPE, "app-ui")})).lower(),
+        "app_ui": str(evidence is None and (fixture_correction or BUILD not in correction_jobs or lane_job(selected_scope, "app-ui") in correction_jobs) and required != (BUILD,) and bool(app_ui_lanes(selected_scope))).lower(),
+        "app_ui_lanes": json.dumps(["app-ui-solo-1","app-ui-solo-2"] if fixture_correction else ["app-ui-other", "app-ui-solo"] if smoke_correction else ["app-ui-solo"] if correction is not None and selected_scope == FULL_SCOPE
                                     else app_ui_lanes(selected_scope), separators=(",", ":")),
         "runtime_scope": selected_scope,
         "lanes": json.dumps(lanes(selected_scope), separators=(",", ":")),

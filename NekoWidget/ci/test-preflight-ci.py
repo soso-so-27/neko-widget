@@ -22,6 +22,109 @@ planner = preflight.planner
 scope = preflight.scope
 
 
+class FixtureNavigationAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        self.head = "a"*40
+        self.now = dt.datetime(2026,10,16,11,30,tzinfo=dt.timezone.utc)
+        self.result = {"head":self.head,"scope":scope.FULL_SCOPE,"required_jobs":list(planner.FULL),
+            "target_minutes":840,"ready":True,"cost":{"status":"reference","with_upload_minutes":[120,150]}}
+        common={"status":"completed","failed_tests":[],"unsupported_failed_tests":[],"run_attempt":1,
+            "created_at":"2026-10-16T09:26:18Z","event":"push","path":preflight.IOS_WORKFLOW,"head_branch":preflight.VISION_BRANCH}
+        self.old=common|{"id":preflight.VISION_FAILED_RUN,"head_sha":preflight.VISION_FAILED_SOURCE,
+            "run_attempt":2,"conclusion":"failure","created_at":preflight.VISION_FIRST_CI,
+            "unsupported_failed_tests":["NekoWidgetUITests."+preflight.VISION_CASE]}
+        self.source=common|{"id":planner.FIXTURE_NAV_RUN,"head_sha":planner.FIXTURE_NAV_SOURCE,
+            "conclusion":"failure","failed_tests":list(planner.FIXTURE_NAV_CASES)}
+        focused={"sha":self.head,"cases":[{"run_id":900,"job_id":901,"case":planner.FIXTURE_NAV_CASE},
+            {"run_id":902,"job_id":903,"case":planner.FIXTURE_NAV_WIDGET_CASE}]}
+        self.correction={"kind":planner.FIXTURE_NAV_KIND,"run_id":planner.FIXTURE_NAV_RUN,"sha":planner.FIXTURE_NAV_SOURCE,
+            "focused_diagnostic":focused,"jobs":[{"name":n,"job_id":planner.FIXTURE_NAV_SOURCE_JOBS[n]} for n in planner.FULL if n not in planner.FIXTURE_NAV_OWNING]}
+        self.diagnostic=common|{"id":900,"head_sha":self.head,"conclusion":"success","path":preflight.DIAGNOSTIC_WORKFLOW,
+            "event":"workflow_dispatch","head_branch":"diagnostic/automatic-admission-20261016","display_title":"UI diagnosis: "+planner.FIXTURE_NAV_CASE,
+            "diagnostic_evidence":{"head":self.head,"source_sha":self.head,"run_attempt":1,"job_id":901,
+                "started_at":"2026-10-16T11:00:00Z","results":{planner.FIXTURE_NAV_CASE:"passed"}}}
+        self.widget_diagnostic=self.diagnostic|{'id':902,'head_branch':planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES[planner.FIXTURE_NAV_WIDGET_CASE],'display_title':'UI diagnosis: '+planner.FIXTURE_NAV_WIDGET_CASE,
+            'diagnostic_evidence':self.diagnostic['diagnostic_evidence']|{'job_id':903,'results':{planner.FIXTURE_NAV_WIDGET_CASE:'passed'}}}
+        self.runs=[self.old,self.source,self.diagnostic,self.widget_diagnostic]
+        self.logs={identifier:f"old attempt{attempt}\n" for identifier,attempt,_ in preflight.VISION_FAILED_JOBS}
+        self.logs.update({planner.FIXTURE_NAV_SOURCE_JOBS[name]:name+" raw\n" for name,_ in preflight.FIXTURE_NAV_RAW_LOGS})
+
+    def api(self,path,raw=False):
+        identifier=int(path.split("/actions/jobs/")[1].split("/")[0])
+        if raw:return self.logs[identifier]
+        attempt=next(a for i,a,_ in preflight.VISION_FAILED_JOBS if i==identifier)
+        return {"id":identifier,"run_id":preflight.VISION_FAILED_RUN,"head_sha":preflight.VISION_FAILED_SOURCE,
+            "run_attempt":attempt,"name":planner.SMOKE,"status":"completed","conclusion":"failure"}
+
+    @contextlib.contextmanager
+    def mocks(self):
+        old=tuple((i,a,hashlib.sha256(self.logs[i].encode()).hexdigest()) for i,a,_ in preflight.VISION_FAILED_JOBS)
+        new=tuple((n,hashlib.sha256(self.logs[planner.FIXTURE_NAV_SOURCE_JOBS[n]].encode()).hexdigest()) for n,_ in preflight.FIXTURE_NAV_RAW_LOGS)
+        with patch.object(planner,"git",return_value=preflight.VISION_BRANCH),patch.object(planner,"fixture_navigation_inputs",return_value="b"*40), \
+             patch.object(planner,"fixture_navigation_source",return_value=self.correction),patch.object(preflight,"github",side_effect=self.api), \
+             patch.object(preflight,"VISION_FAILED_JOBS",old),patch.object(preflight,"FIXTURE_NAV_RAW_LOGS",new):yield
+
+    def proof(self):return preflight.known_fixture_navigation_diagnosis(self.result,self.runs,self.correction,self.now)
+
+    def test_same_k_focused_proof_keeps_both_failures_first_clock_and_eight_graph(self):
+        with self.mocks():
+            proof=self.proof();self.assertIsNotNone(proof)
+            result=preflight.fixture_navigation_cost(self.result,proof,True,{"upload_minutes":13})
+            got=preflight.apply_task_gate(result,self.runs,self.now,correction_evidence=self.correction,diagnosed_failure=proof)
+            self.assertTrue(got['ready']);self.assertEqual(got['required_jobs'],list(planner.FULL))
+            self.assertEqual(got['task']['failed_runs'],[preflight.VISION_FAILED_RUN,planner.FIXTURE_NAV_RUN])
+            self.assertEqual(got['task']['first_candidate_at'],preflight.VISION_FIRST_CANDIDATE)
+            self.assertEqual(got['task']['retained_photos_attempts'],[[116732306461,1],[116757527061,2]])
+            elapsed=(self.now-dt.datetime.fromisoformat(preflight.VISION_FIRST_CANDIDATE.replace('Z','+00:00'))).total_seconds()/60
+            self.assertEqual(got['task']['projected_total_minutes'],round(elapsed+113,1))
+            self.assertFalse(got['task']['first_baseline_measurement'])
+
+    def test_no_focused_wrong_k_skip_additional_failure_and_raw_tamper_are_not_waived(self):
+        with self.mocks():
+            self.assertIsNone(preflight.known_fixture_navigation_diagnosis(self.result,self.runs,None,self.now))
+            for key,value in [('head_sha','c'*40),('status','in_progress'),('conclusion','skipped')]:
+                old=self.diagnostic[key];self.diagnostic[key]=value;self.assertIsNone(self.proof());self.diagnostic[key]=old
+            self.source['failed_tests'].append('SoloMemoriesUITests/testOther');self.assertIsNone(self.proof());self.source['failed_tests'].pop()
+            self.runs.remove(self.diagnostic);self.assertIsNone(self.proof());self.runs.append(self.diagnostic)
+            self.logs[next(iter(self.logs))]+='tamper'
+            # Frozen constants are captured before this mutation in production.
+            with patch.object(preflight,'VISION_FAILED_JOBS',tuple((i,a,'0'*64) for i,a,_ in preflight.VISION_FAILED_JOBS)):
+                self.assertIsNone(self.proof())
+
+    def test_active_new_attempt_baseline_reset_and_old_target_remain_blocked(self):
+        with self.mocks():
+            proof=self.proof();result=preflight.fixture_navigation_cost(self.result,proof,True,{'upload_minutes':13})
+            for state,outcome in [('queued',None),('completed','failure'),('completed','success')]:
+                extra=self.source|{'id':999,'head_sha':self.head,'created_at':'2026-10-16T12:00:00Z','status':state,'conclusion':outcome}
+                got=preflight.apply_task_gate(result,self.runs+[extra],self.now,correction_evidence=self.correction,diagnosed_failure=proof)
+                self.assertFalse(got['ready']);self.assertIn('fixture_recovery_attempt_already_exists',got['task']['blockers'])
+            got=preflight.apply_task_gate(result|{'target_minutes':750},self.runs,self.now,measure_baseline=True,correction_evidence=self.correction,diagnosed_failure=proof)
+            self.assertFalse(got['ready']);self.assertIn('fixture_recovery_is_not_first_baseline',got['task']['blockers'])
+            self.assertIn('fixture_recovery_requires_total_replan',got['task']['blockers'])
+            late=preflight.apply_task_gate(result,self.runs,self.now+dt.timedelta(hours=1),correction_evidence=self.correction,diagnosed_failure=proof)
+            self.assertFalse(late['ready']);self.assertIn('cumulative_cost_requires_replanning',late['task']['blockers'])
+
+    def test_feedback_waits_for_all_old_jobs_and_does_not_require_a_future_diagnostic(self):
+        def git(*args):
+            return '' if args[0]=='status' else self.head if args[0]=='rev-parse' else 'diagnostic/automatic-admission-20261016'
+        with patch.object(planner,'git',side_effect=git),patch.object(planner,'fixture_navigation_inputs',return_value='b'*40), \
+             patch.object(scope,'diagnostic_tests',return_value=('NekoWidgetUITests/'+planner.FIXTURE_NAV_CASE,)), \
+             patch.object(preflight,'read_other_active_ios_runs',return_value=[]),patch.object(preflight,'read_task_runs',return_value=self.runs), \
+             patch.object(planner,'fixture_navigation_source',return_value=self.correction) as source:
+            self.source['status']='in_progress'
+            got=preflight.feedback_plan(*planner.FIXTURE_NAV_CASE.split('/'))
+            self.assertFalse(got['ready']);self.assertEqual(got['commands'],[]);source.assert_not_called()
+            self.source['status']='completed'
+            got=preflight.feedback_plan(*planner.FIXTURE_NAV_CASE.split('/'))
+            self.assertTrue(got['ready']);self.assertFalse(source.call_args.kwargs['focused'])
+            got=preflight.feedback_plan(*planner.FIXTURE_NAV_WIDGET_CASE.split('/'))
+            self.assertEqual(got['branch'],planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES[planner.FIXTURE_NAV_WIDGET_CASE])
+            self.assertIn(got['branch'],got['commands'][1])
+            source.return_value=None
+            with self.assertRaises(ValueError):preflight.feedback_plan(*planner.FIXTURE_NAV_CASE.split('/'))
+            with self.assertRaises(ValueError):preflight.feedback_plan('SoloMemoriesUITests','testOther')
+
+
 class VisionQueueRetryTests(unittest.TestCase):
     def setUp(self):
         self.head, self.anchor = "a"*40, "b"*40
