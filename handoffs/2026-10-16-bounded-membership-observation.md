@@ -4,6 +4,24 @@
 
 本人限定の自動保存受付は2026-10-16 08:44 JSTに切替済み。期限は翌17日08:44 JST、既存owner1件・新規登録0・追加PUT100試行/128MiB・新規記録100試行/128MiB。元のカウンター、試用、31件の既存記録は維持した。今回は一般提供の人数・容量設計ではない。
 
+## 現在の到達点（06:58 UTC）
+
+現258の「会員プランのプレビュー」は契約を操作できない。新しい「Appleの契約を確認」を含む9cの内部配布は、正式nativeのPhotos再発が未解決のため停止中。会員リンクは完了したが有効な会員期間とは別であり、実機に追加操作を求めない。
+
+採取方法を切り分けた短い診断44d/75e/d03では、元Grantはそれぞれ33.461/30.153/38.321秒で成功した。44dは起動中のsimctl lookupが10秒timeoutして採取0。75eは直接group探索と後段の正規lookup一致を確認したが、`-mayDie`付きsampleはapp44.400秒・runner44.181秒の後も空のCall graphだった。d03は同flagを外しrunnerの9thread・最大670sampleを取得した。app側は元testの終了要求の約0.653秒後にtask port取得エラーが出ており、実際の終了時刻と採取不能の単独原因は未確定。成功したcaseの記録を、元の停止原因の証拠にしない。
+
+次の診断60bbe98/run38860787661を06:21:57 UTCに一度だけ開始した。元full-v1の準備27件を一度実行し、その後元Grantを最大3回、buildを繰り返さず確認する。新しい同PID logで2/6公開後に異なる2枚のprimary画像を読み込み、scan/image/visionの完全行が4秒以上増えない場合だけapp・runnerを各1本採る。4秒の無記録は採取契機であり停止の証明ではない。正常な同PID終了要求の後は元testの終端を有限待機し、早期消滅・PID交代・無終端は失敗にする。
+
+native/fresh/group/monitorのどれかの失敗、または最初の採取試行で後続Grantとsnapshot復元を止める。正常・未採取の試行間だけ、所有Simulatorの元の空snapshot bytes/不存在を戻す。TCC/PhotoKit/その他data/logを戻さない。実採取がない3回成功は未再現という結果で、正式native合格の代用にはしない。変更境界20確認と実失敗/成功logを使うpure predicate7確認、独立レビューが成功。samplerはd03・snapshot復元は7ccと同じAST。35〜45分目安・job上限50分、初回候補からこの起動まで約6時間50分を保持する。製品・元test・元harnessは未変更で、原因・修正効果・配布は未完了。
+
+保存済みの正式失敗bundleも別の読取り専用処理2610b7b/run38863106374で調べ、06:47:22 UTCにjob50秒で完了した。元artifact12019760421から対象xcresultの1054files/73,746,079bytesだけをCRC付きで抽出し、Xcode26.3のhelp・content-availability・diagnostics exportが実成功。元bundle/logarchiveは追加uploadせず、選択した診断artifactは113,098bytes。新しいアプリbuild・Simulator・Grantは0。初回候補からこの処理の終了まで7時間15分34秒であり、50秒を全作業時間とはしない。
+
+exportには診断310filesがあったが、対象appのhang stackは見つからなかった。元runnerは01:35:14.834にspindumpを要求したものの、remote interface非対応のerror -999でdataなしと明記していた。最初のAX queryは約35msで一致なしを返し、2回目は01:34:44.812から30.017秒待ってtimeoutした。待機中もrunnerは別PIDの通知を処理し、appの接続断/SIGTERM通知は失敗後。app stdoutは43.897で途切れるため、対応queryがappへ到達しなかったとは断定しない。Vision/PhotoKit/logger/AXの原因は依然未確定で、採取不成立を理由に製品挙動や正式判定を緩めない。
+
+run38860787661は06:58:15 UTCにjob36分9秒で成功終了した。元の準備27件（26成功・既定movie skip1）と元Grant3回のstarted/passed各3回を照合し、33.131/25.423/23.868秒で成功。各回の新sessionで0→新規6枚・再利用0・TCC許可を確認し、観測groupと正規の後段lookupも全3回一致した。正常な同PID終了要求後の不在も実観測した。2/6の無進捗窓は現れず、採取0・試行間snapshot復元2で終了した。元正式runのPhotos失敗と配布不適格は維持する。初回候補から7時間26分27秒であり、成功した36分だけを全時間としない。追加の正式再実行・製品修正・main反映・TestFlight・gateway配備・短周期窓設定はいずれも行っていない。
+
+次の判断には、実際に停止しているappの処理を特定できる証拠、またはこの失敗を説明できる直接観測が必要。同じ候補の正式CIや3回診断を繰り返して合格を待つ方法は採らない。別programのVision単独draftは未実行で、PhotoKit・logger・AXを含む当該失敗を説明する証拠ではない。現在iPhoneで行う操作はなく、258のプレビューから更新・本体設定変更・再インストールを案内しない。
+
 ## このサーバー候補
 
 private gatewayに任意の本人用再確認窓を設ける。有効な窓の内側かつSandboxの非grant結果だけ15分で再確認し、未設定・不正・別の本人・期間外は従来の24時間キャッシュへ戻る。設定はversion、本人billing account、開始、終了の4項目で、最大24時間。実配備の窓は最大2時間、既に承認された受付期限以下に固定する。既存の予算・同時実行lease・失敗backoff・購入受付・公開口・grant判定は変えない。
