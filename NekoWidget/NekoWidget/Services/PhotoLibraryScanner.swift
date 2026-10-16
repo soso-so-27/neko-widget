@@ -1,5 +1,6 @@
 @preconcurrency import Photos
 @preconcurrency import Vision
+import Foundation
 import ImageIO
 import UIKit
 
@@ -9,6 +10,18 @@ enum ScanEvent: Sendable {
 }
 
 actor PhotoLibraryScanner {
+    // Vision's synchronous perform calls run on ordinary Foundation workers.
+    // Share the limit across generations; cancellation cannot free an active
+    // opaque request's slot before that request returns.
+#if targetEnvironment(simulator)
+    private static let analysisConcurrency = 2
+#else
+    private static let analysisConcurrency = 4
+#endif
+    private static let visionWork = BlockingVisionWorkQueue(
+        maximumConcurrentJobs: analysisConcurrency
+    )
+
     private enum AnalysisMode: Sendable {
         case full
         case groupedAlbumOnly
@@ -479,14 +492,7 @@ actor PhotoLibraryScanner {
         startingRecoveryDiagnostics: ScanRecoveryDiagnostics,
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws -> ScanRecoveryDiagnostics {
-#if targetEnvironment(simulator)
-        // Hosted Simulators don't expose an iPhone GPU/Neural Engine. Keep
-        // CPU-only Vision work narrowly parallel so the UI and XCTest stay
-        // responsive while bounded PhotoKit requests can still make progress.
-        let concurrency = 2
-#else
-        let concurrency = 4
-#endif
+        let concurrency = Self.analysisConcurrency
         var batchStart = range.lowerBound
         var lastPublishedIndex = range.lowerBound
         var newlyAnalyzedCount = 0
@@ -775,7 +781,7 @@ actor PhotoLibraryScanner {
             .analysisFingerprint == settings.analysisFingerprint
     }
 
-    private struct CatRecognitionResult {
+    private struct CatRecognitionResult: Sendable {
         var boundingBoxes: [CGRect]
         var union: CGRect
         var areaRatio: Double
@@ -1014,7 +1020,7 @@ actor PhotoLibraryScanner {
         var orientation = CGImagePropertyOrientation(image.imageOrientation)
         var recognition: CatRecognitionResult
         do {
-            recognition = try recognizeCats(
+            recognition = try await recognizeCats(
                 cgImage: cgImage,
                 orientation: orientation,
                 confidenceThreshold: settings.confidenceThreshold
@@ -1070,7 +1076,7 @@ actor PhotoLibraryScanner {
                         let highOrientation = CGImagePropertyOrientation(
                             highResolutionImage.imageOrientation
                         )
-                        let highRecognition = try recognizeCats(
+                        let highRecognition = try await recognizeCats(
                             cgImage: highResolutionCGImage,
                             orientation: highOrientation,
                             confidenceThreshold: settings.confidenceThreshold
@@ -1131,7 +1137,7 @@ actor PhotoLibraryScanner {
 
         do {
             try Task.checkCancellation()
-            let traits = try boundingBoxAlbumTraits(
+            let traits = try await boundingBoxAlbumTraits(
                 cgImage: cgImage,
                 orientation: orientation,
                 catBoundingBoxes: recognition.boundingBoxes,
@@ -1199,35 +1205,38 @@ actor PhotoLibraryScanner {
         cgImage: CGImage,
         orientation: CGImagePropertyOrientation,
         confidenceThreshold: Float
-    ) throws -> CatRecognitionResult {
-        let request = VNRecognizeAnimalsRequest()
-#if targetEnvironment(simulator)
-        request.usesCPUOnly = true
-#endif
-        let handler = VNImageRequestHandler(
-            cgImage: cgImage,
-            orientation: orientation,
-            options: [:]
-        )
-        try handler.perform([request])
-        let cats: [(CGRect, Float)] = (request.results ?? []).compactMap { observation in
-            guard let label = observation.labels
-                .filter({ $0.identifier.caseInsensitiveCompare("cat") == .orderedSame })
-                .max(by: { $0.confidence < $1.confidence }),
-                  label.confidence >= confidenceThreshold else {
-                return nil
+    ) async throws -> CatRecognitionResult {
+        return try await visionWork.perform {
+            let request = VNRecognizeAnimalsRequest()
+    #if targetEnvironment(simulator)
+            request.usesCPUOnly = true
+    #endif
+            let handler = VNImageRequestHandler(
+                cgImage: cgImage,
+                orientation: orientation,
+                options: [:]
+            )
+            try handler.perform([request])
+            let cats: [(CGRect, Float)] = (request.results ?? []).compactMap { observation in
+                guard let label = observation.labels
+                    .filter({ $0.identifier.caseInsensitiveCompare("cat") == .orderedSame })
+                    .max(by: { $0.confidence < $1.confidence }),
+                      label.confidence >= confidenceThreshold else {
+                    return nil
+                }
+                return (observation.boundingBox, label.confidence)
             }
-            return (observation.boundingBox, label.confidence)
+            let boxes = cats.map(\.0)
+            return CatRecognitionResult(
+                boundingBoxes: boxes,
+                union: boxes.reduce(CGRect.null) { $0.union($1) },
+                areaRatio: min(1, boxes.reduce(0) {
+                    $0 + Double($1.width * $1.height)
+                }),
+                confidence: cats.map(\.1).max() ?? 0
+            )
+
         }
-        let boxes = cats.map(\.0)
-        return CatRecognitionResult(
-            boundingBoxes: boxes,
-            union: boxes.reduce(CGRect.null) { $0.union($1) },
-            areaRatio: min(1, boxes.reduce(0) {
-                $0 + Double($1.width * $1.height)
-            }),
-            confidence: cats.map(\.1).max() ?? 0
-        )
     }
 
     private static func visionFailureResult(
@@ -1302,34 +1311,37 @@ actor PhotoLibraryScanner {
         orientation: CGImagePropertyOrientation,
         catBoundingBoxes: [CGRect],
         isOuting: Bool?
-    ) throws -> CatAlbumTraits {
-        let faceRequest = VNDetectFaceRectanglesRequest()
-#if targetEnvironment(simulator)
-        faceRequest.usesCPUOnly = true
-#endif
-        let handler = VNImageRequestHandler(
-            cgImage: cgImage,
-            orientation: orientation,
-            options: [:]
-        )
-        try handler.perform([faceRequest])
+    ) async throws -> CatAlbumTraits {
+        return try await visionWork.perform {
+            let faceRequest = VNDetectFaceRectanglesRequest()
+    #if targetEnvironment(simulator)
+            faceRequest.usesCPUOnly = true
+    #endif
+            let handler = VNImageRequestHandler(
+                cgImage: cgImage,
+                orientation: orientation,
+                options: [:]
+            )
+            try handler.perform([faceRequest])
 
-        let normalizedCatBoxes = catBoundingBoxes.map(NormalizedRect.init)
-        let containsPerson = containsProminentHumanFace(
-            faceRequest.results ?? [],
-            excluding: catBoundingBoxes
-        )
-        let largestCatAreaRatio = catBoundingBoxes.lazy.map {
-            Double($0.width * $0.height)
-        }.max() ?? 0
-        return CatAlbumTraits(
-            postures: CatBoundingBoxAspectBucket.postures(
-                for: normalizedCatBoxes
-            ),
-            containsPerson: containsPerson,
-            isOuting: isOuting,
-            largestCatAreaRatio: largestCatAreaRatio
-        )
+            let normalizedCatBoxes = catBoundingBoxes.map(NormalizedRect.init)
+            let containsPerson = containsProminentHumanFace(
+                faceRequest.results ?? [],
+                excluding: catBoundingBoxes
+            )
+            let largestCatAreaRatio = catBoundingBoxes.lazy.map {
+                Double($0.width * $0.height)
+            }.max() ?? 0
+            return CatAlbumTraits(
+                postures: CatBoundingBoxAspectBucket.postures(
+                    for: normalizedCatBoxes
+                ),
+                containsPerson: containsPerson,
+                isOuting: isOuting,
+                largestCatAreaRatio: largestCatAreaRatio
+            )
+
+        }
     }
 
     private static func containsProminentHumanFace(
@@ -1573,3 +1585,166 @@ private extension CGImagePropertyOrientation {
         }
     }
 }
+
+// BEGIN BLOCKING_VISION_WORK_QUEUE
+/// One instance must be shared across scan generations. A synchronous job
+/// starts at the queued -> running transition under Request.lock. If cancel
+/// wins that transition, the job is never called. Once start wins, cancellation
+/// waits for the opaque job to return; it cannot release a queue slot early.
+private final class BlockingVisionWorkQueue: @unchecked Sendable {
+    private let operations: OperationQueue
+    let maximumConcurrentJobs: Int
+
+    init(maximumConcurrentJobs: Int) {
+        precondition(maximumConcurrentJobs == 2 || maximumConcurrentJobs == 4)
+        self.maximumConcurrentJobs = maximumConcurrentJobs
+        let queue = OperationQueue()
+        queue.name = "jp.nekowidget.vision-blocking.\(maximumConcurrentJobs)"
+        queue.maxConcurrentOperationCount = maximumConcurrentJobs
+        queue.qualityOfService = .userInitiated
+        operations = queue
+    }
+
+    func perform<Value: Sendable>(
+        _ job: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let request = BlockingVisionRequest(job: job)
+        return try await withTaskCancellationHandler {
+            // Also covers an already-cancelled task before registration.
+            if Task.isCancelled { request.cancel() }
+            return try await withCheckedThrowingContinuation { continuation in
+                if request.register(continuation) {
+                    // Cancel may win between registration and enqueue. The
+                    // operation then becomes a no-op; no job closure is kept.
+                    operations.addOperation(BlockingVisionOperation(request: request))
+                }
+            }
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+    // Read-only observations for the queue lifecycle checks.
+    var unfinishedOperationCount: Int { operations.operationCount }
+    var isExecutingOnOwnedQueue: Bool { OperationQueue.current === operations }
+}
+
+private final class BlockingVisionRequest<Value: Sendable>: @unchecked Sendable {
+    typealias Job = @Sendable () throws -> Value
+    private enum Phase: Equatable { case unregistered, queued, running, terminal }
+    private let lock = NSLock()
+    private var phase: Phase = .unregistered
+    private var cancellationRequested = false
+    private var job: Job?
+    private var continuation: CheckedContinuation<Value, Error>?
+
+    init(job: @escaping Job) { self.job = job }
+
+    /// Exactly one registration. No external work or continuation is called
+    /// under lock. A pre-registration cancellation is remembered, not lost.
+    func register(_ continuation: CheckedContinuation<Value, Error>) -> Bool {
+        var cancelled = false
+        var releasedJob: Job?
+        lock.lock()
+        precondition(phase == .unregistered)
+        if cancellationRequested {
+            phase = .terminal
+            releasedJob = job
+            job = nil
+            cancelled = true
+        } else {
+            self.continuation = continuation
+            phase = .queued
+        }
+        lock.unlock()
+        // Capture destruction may itself run arbitrary deinit code.
+        withExtendedLifetime(releasedJob) {}
+        releasedJob = nil
+        if cancelled { continuation.resume(throwing: CancellationError()) }
+        return !cancelled
+    }
+
+    func cancel() {
+        var resume: CheckedContinuation<Value, Error>?
+        var releasedJob: Job?
+        lock.lock()
+        switch phase {
+        case .unregistered:
+            cancellationRequested = true
+            releasedJob = job
+            job = nil
+        case .queued:
+            cancellationRequested = true
+            phase = .terminal
+            releasedJob = job
+            job = nil
+            resume = continuation
+            continuation = nil
+        case .running:
+            // Keep continuation and the operation's slot until job returns.
+            cancellationRequested = true
+        case .terminal:
+            // Completion/cancellation already committed; never resume twice.
+            break
+        }
+        lock.unlock()
+        withExtendedLifetime(releasedJob) {}
+        releasedJob = nil
+        resume?.resume(throwing: CancellationError())
+    }
+
+    func execute() {
+        let work: Job
+        lock.lock()
+        guard phase == .queued else {
+            lock.unlock()
+            return
+        }
+        precondition(job != nil && continuation != nil)
+        phase = .running
+        work = job!
+        job = nil
+        lock.unlock()
+
+        // Ordinary OperationQueue execution, never inside a Swift Task body
+        // or under the request lock. No synchronous wait for Swift Tasks.
+        let result = Result<Value, Error> { try work() }
+        finish(result)
+    }
+
+    private func finish(_ result: Result<Value, Error>) {
+        let resume: CheckedContinuation<Value, Error>
+        let cancelled: Bool
+        lock.lock()
+        precondition(phase == .running && continuation != nil)
+        phase = .terminal
+        resume = continuation!
+        continuation = nil
+        cancelled = cancellationRequested
+        lock.unlock()
+
+        // Cancel wins only if requested before this terminal commit. Running
+        // work has now returned, so old-generation join can safely finish.
+        if cancelled {
+            resume.resume(throwing: CancellationError())
+        } else {
+            resume.resume(with: result)
+        }
+    }
+}
+
+private final class BlockingVisionOperation<Value: Sendable>: Operation, @unchecked Sendable {
+    private let request: BlockingVisionRequest<Value>
+    init(request: BlockingVisionRequest<Value>) { self.request = request }
+
+    override func main() { request.execute() }
+
+    override func cancel() {
+        // Defensive Foundation-cancellation support: a cancelled Operation may
+        // never run main(). Resolve queued requests before calling super.
+        // Running requests still resolve only after their opaque job returns.
+        request.cancel()
+        super.cancel()
+    }
+}
+// END BLOCKING_VISION_WORK_QUEUE
