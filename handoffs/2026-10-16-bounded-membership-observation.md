@@ -42,10 +42,16 @@ native owning run38825512712の初回はBuildほか6実job成功、写真解析�
 
 probe fd603ce/run38849542755では、最初にread-onlyのsimctl listを90秒まで待ち、create60秒・boot60秒・bootstatus120秒・launch60秒へ変更した。sample/metrics/source/owned cleanup関数は前回と同一ASTで、独立差分レビュー済み。3〜7分目安、job上限10分とし、実測3分1秒で04:17 UTCに成功。ready mainloopのPID/nonce・前後非T stateを確認した最小UIKit appは、指定1秒のsampleの返却まで29.024秒かかり、74544bytesの正しいPID/call graphが得られた。同じappの後続parallel sampleは7.151秒、sleepは3.118秒だった。8秒deadline不足は直接確認できたが、採取とsymbol処理の各所要時間は未計測であり、並列性やPhotos停止の製品原因を確定しない。boot43.527秒・install16.217秒、所有Simulatorのterminate/shutdownも実成功。正式nativeや本アプリの検査成功ではない。
 
-次の候補7cc2d8f/run38850526006は元のfull-v1準備、元Grant、元harnessを固定し、case25秒のready app/runner各1本だけを採る。appはcase開始後の同PID JSONLとexact executable/非T/Zを確認し、指定3秒sample・返却deadline90秒・最大2本に限定する。起動前baselineと35/45秒の追加採取は行わず、遅い処理を重複起動しない。native statusを先に保存してobserverを最大120秒joinし、正しいPID/call graph・実wall・実thread sample数を区別する。snapshotだけの復元境界とfresh0→6/TCC判定は前の独立レビュー済み関数と同一AST。全準備を含む前回32〜36分を基に35〜45分、workflow上限50分へ再計画し、診断を正式合格へ代用しない。04:26 UTCに一度だけ起動した。初回候補から約4時間55分を保持し、結果は未確定。
+次の候補7cc2d8f/run38850526006は元のfull-v1準備、元Grant、元harnessを固定し、case25秒のready app/runner各1本だけを採る。appはcase開始後の同PID JSONLとexact executable/非T/Zを確認し、指定3秒sample・返却deadline90秒・最大2本に限定する。起動前baselineと35/45秒の追加採取は行わず、遅い処理を重複起動しない。native statusを先に保存してobserverを最大120秒joinし、正しいPID/call graph・実wall・実thread sample数を区別する。snapshotだけの復元境界とfresh0→6/TCC判定は前の独立レビュー済み関数と同一AST。全準備を含む前回32〜36分を基に35〜45分、workflow上限50分へ再計画し、診断を正式合格へ代用しない。04:25:15 UTCに一度だけ起動した。初回候補から約4時間53分を保持し、結果は未確定。
 
 内部配布後の実機確認は、まず「設定 → 保存・復元 → Appleの契約を確認」を開き、何が表示されたかを確認する。このボタンを含む新buildはまだ配布していないため、現258で探す案内はしない。Apple画面内の名称や契約の表示可否は実機未確認のため、再契約の具体的な操作を先に断定しない。元の写真・メモ・アプリは削除しない。
+
+run38850526006は04:55:22 UTCに終了（job29分55秒）。元の準備27件は26成功・意図されたmovie skip1、元Grantは31.328秒で実成功しfresh0→6/TCC条件も満たした。ただしapp sampleは4.468秒でexit255・出力0bytes、runnerは63.993秒でexit0でもCall graphが空だった。25.21秒の観測から採取を始めた後、元testは30.04秒でAUTを終了し、runner sampleのreport時刻もcase終了直後と重なっている。両方とも有効なstackではなく、1回で打切り、snapshot resetと後続2回は0。初回候補から5時間23分34秒を保持し、正式nativeは未適格、通常の再試行・配布・今回のgatewayコード配備・短周期窓設定は0のまま。
+
+次の採取時刻は新しい同PID logの実6枚fetchを契機にする案を先にofflineで確認した。完全行だけ読むprototypeの6検証は成功し、wrong PID・古い/複数session・最初のfetchが6枚以外・不正完全行を拒否する。成功ログは開始19.142秒でfetchしAUT終了まで10.898秒、再発失敗ログは開始16.537秒でfetchしcase終了まで34.848秒ある。最初のfetchは両方gen1なのでgen2限定の証拠にはしない。次はisolatedの1build/元Grant1回だけで、実fetch直後のapp/runner各1秒sampleを確認する候補を作る。snapshot reset・後続trial・元full準備は実行しない。期待12〜20分はisolated実測11分38秒を基にし、job上限25分。live生存/採取成立、元の停止原因、修正効果はまだ未確認である。
 
 ## 費用と範囲
 
 新しい有料契約・AWS Paid移行は0。既存の共通枠とAWS FREEの有効なcredit内では新規現金支払0を見込むが、請求のhard capではない。本人限定試験の月見込1212円・停止判定2200円は共通固定費と保守も含む運用判定であり、通常1人の原価ではない。一般提供の採算や予算承認へ転用しない。新しい定期タスク、既存定期タスクの再実行、一般公開、課金開始は行わない。
+
+GitHubのpublic標準Mac実行分は無料対象だが、artifact保存には共有枠とGB時間課金がある。現権限では利用量・請求APIを読めず、追加現金0は断定しない。全量超過の仮定では1GiBを7日残すと約0.0565米ドル、1ドル160円換算で約9円（税別）。今回38850526006の79,252,525bytesだけなら同じ仮定で約0.67円であり、実請求ではない。これは開発用記録の保存費で、上のクラウド月見込や利用者1人の原価とは別に扱う。[GitHub公式料金](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
