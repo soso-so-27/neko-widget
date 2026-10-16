@@ -1510,7 +1510,7 @@ def candidate_plan(base, target_minutes, include_upload, history, decision=None,
               if selected == planner.MODERATION_AI_SCOPE else
               "Exact immediate billing authority batch; existing Sharing typecheck, D1 tests and bundle required; no native or release evidence"
               if selected == planner.BILLING_AUTHORITY_SCOPE else
-              "Private Sandbox billing entrypoint and frozen deployed family adapter; unchanged verifier tree retained, no native or release evidence"
+              "Private Sandbox billing entrypoint, finite existing-owner observation window, and frozen deployed family adapter; exact caller and Preservation jobs required, unchanged verifier and native inputs retained, no native or release evidence"
               if selected == planner.BILLING_SCOPE else
               "Development helpers only; app/build/safety/release inputs unchanged"
               if selected == planner.DEVELOPMENT_SCOPE else

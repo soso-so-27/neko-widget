@@ -1820,8 +1820,8 @@ BILLING_REACTIVATION_BLOBS = {
         "b684036f631218cff38e909fe07a354f26243a16"
     ]
 }
-BILLING_REACTIVATION_CONTROLS = frozenset({"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"})
-BILLING_REACTIVATION_CLOSURE_SHA256 = "760ceba1a117615c292cb0dd36d058696a411f536704c5af9910dd8feb031bb7"
+BILLING_REACTIVATION_CONTROLS = frozenset({"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"})
+BILLING_REACTIVATION_CLOSURE_SHA256 = "d6eb4cb31d2ee39a89656a260edece57e69174ed0eafcb6eba2142fd667e707c"
 
 
 def billing_reactivation_backend_only(paths, base, head):
@@ -1829,7 +1829,7 @@ def billing_reactivation_backend_only(paths, base, head):
     if (source_paths(paths) != products or len(paths) != len(set(paths))
             or products != {"NekoWidget/SharingService/src/billing-gateway.ts",
                             "NekoWidget/SharingService/test/billing-gateway.node-tests.mjs"}
-            or BILLING_REACTIVATION_CONTROLS != {"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"}
+            or BILLING_REACTIVATION_CONTROLS != {"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"}
             or not re.fullmatch(r"[0-9a-f]{64}", BILLING_REACTIVATION_CLOSURE_SHA256)
             or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
                        and pair[0] != pair[1] for pair in BILLING_REACTIVATION_BLOBS.values())):
