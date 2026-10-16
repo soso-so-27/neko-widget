@@ -250,6 +250,9 @@ test('retention observer preserves generations, leases, backoff and closed purch
       gracePeriodExpiresDateMs: null, renewalDateMs: renewalExpiresAt ?? now-5000, signedDateMs: now, environment: 'Sandbox' } }] });
   let calls = 0;
   const fetcher = async () => { calls++; return status(); };
+  const windowStart = now;
+  const reactivationWindow = { version: 1, billingAccountId: account, startsAtMs: windowStart, expiresAtMs: windowStart + 30*60*1000 };
+  env.PRESERVATION_SANDBOX_REACTIVATION_WINDOW_JSON = JSON.stringify(reactivationWindow);
   const request = () => new Request('https://private/internal/retention/refresh', { method: 'POST', body: JSON.stringify({ billingAccountId: account }) });
   const call = (overrides = {}, req = request()) => RetentionBillingObserver.prototype.fetch.call({ env: { ...env, ...overrides } }, req);
   try {
@@ -269,6 +272,26 @@ test('retention observer preserves generations, leases, backoff and closed purch
     await refreshRetentionBilling(env, account, fetcher);
     assert.equal(calls, 1, 'negative Sandbox observations retain the short cache before its boundary');
     now++;
+    for (const invalid of [undefined, '', '{', 'null', '[]', 'x'.repeat(513),
+      JSON.stringify({ ...reactivationWindow, version: 2 }),
+      JSON.stringify({ ...reactivationWindow, billingAccountId: randomUUID() }),
+      JSON.stringify({ ...reactivationWindow, startsAtMs: undefined }),
+      JSON.stringify({ ...reactivationWindow, startsAtMs: now + 1 }),
+      JSON.stringify({ ...reactivationWindow, startsAtMs: windowStart + 0.5 }),
+      JSON.stringify({ ...reactivationWindow, expiresAtMs: String(reactivationWindow.expiresAtMs) }),
+      JSON.stringify({ ...reactivationWindow, expiresAtMs: windowStart + 24*60*60*1000 + 1 }),
+      JSON.stringify({ ...reactivationWindow, expiresAtMs: windowStart }),
+      JSON.stringify({ ...reactivationWindow, expiresAtMs: now }),
+      JSON.stringify({ ...reactivationWindow, unknown: true })]) {
+      await refreshRetentionBilling({ ...env, PRESERVATION_SANDBOX_REACTIVATION_WINDOW_JSON: invalid }, account, fetcher);
+      assert.equal(calls, 1, 'missing, malformed, wrong-owner, future or expired windows retain the daily cache');
+    }
+    await refreshRetentionBilling(env, account, fetcher);
+    assert.equal(calls, 2, 'the configured owner window refreshes a negative observation at fifteen minutes');
+    now += 15*60*1000;
+    await refreshRetentionBilling(env, account, fetcher);
+    assert.equal(calls, 2, 'at the exact window end a negative observation returns to the daily cache without an external request');
+    env.PRESERVATION_SANDBOX_REACTIVATION_WINDOW_JSON = JSON.stringify({ ...reactivationWindow, expiresAtMs: windowStart + 24*60*60*1000 });
     await refreshRetentionBilling(env, account, async () => {
       calls++;
       transactionId = '210000000012346';
@@ -278,26 +301,26 @@ test('retention observer preserves generations, leases, backoff and closed purch
       renewed.items[0].renewal.autoRenewStatus = 1;
       return renewed;
     });
-    assert.equal(calls, 2, 'an expired Sandbox subscription can be observed active at the fifteen-minute boundary');
+    assert.equal(calls, 3, 'an expired Sandbox subscription can be observed active during its configured owner window');
     assert.equal(sqlite.prepare('SELECT materialized_status FROM billing_effective_entitlement_current').get().materialized_status, 'active');
-    assert.equal(sqlite.prepare('SELECT request_generation FROM billing_reconciliation_jobs').get().request_generation, 8, 'active renewal retains its periodic job');
+    assert.equal(sqlite.prepare('SELECT request_generation FROM billing_reconciliation_jobs').get().request_generation, 9, 'active renewal retains its periodic job');
     now += 15*60*1000;
     await refreshRetentionBilling(env, account, fetcher);
-    assert.equal(calls, 2, 'active authority keeps its existing daily cache');
+    assert.equal(calls, 3, 'active authority keeps its existing daily cache');
     now += 24*60*60*1000;
     let release, entered; const started = new Promise(resolve => { entered = resolve; });
     const inFlight = refreshRetentionBilling(env, account, async () => { calls++; entered(); await new Promise(resolve => { release = resolve; }); return status(); });
     await started;
     await assert.rejects(refreshRetentionBilling(env, account, fetcher), /temporarily unavailable/);
-    assert.equal(calls, 3, 'concurrent invocation cannot acquire the same lease');
+    assert.equal(calls, 4, 'concurrent invocation cannot acquire the same lease');
     release(); await inFlight;
-    assert.equal(sqlite.prepare('SELECT request_generation FROM billing_effective_entitlement_current').get().request_generation, 8, 'refresh preserves the retained periodic job generation');
+    assert.equal(sqlite.prepare('SELECT request_generation FROM billing_effective_entitlement_current').get().request_generation, 9, 'refresh preserves the retained periodic job generation');
     now += 24*60*60*1000;
     await assert.rejects(refreshRetentionBilling(env, account, async () => { calls++; throw new Error('outage'); }), /temporarily unavailable/);
     const failed = sqlite.prepare('SELECT * FROM billing_reconciliation_jobs').get();
     assert.equal(failed.attempts, 1); assert.equal(failed.lease_token, null);
     await assert.rejects(refreshRetentionBilling(env, account, fetcher), /temporarily unavailable/);
-    assert.equal(calls, 4, 'not-due backoff performs no external request');
+    assert.equal(calls, 5, 'not-due backoff performs no external request');
     assert.deepEqual(sqlite.prepare('SELECT * FROM billing_reconciliation_jobs').get(), failed, 'observation never resets backoff or generation');
     assert.equal((await call()).status, 503, 'stale data remains unknown after an unsuccessful refresh');
     sqlite.prepare('UPDATE billing_reconciliation_jobs SET not_before=0').run();
@@ -322,6 +345,6 @@ test('retention observer preserves generations, leases, backoff and closed purch
     assert.equal(sqlite.prepare('SELECT lease_token FROM billing_reconciliation_jobs').get().lease_token, null);
     for (let i = 0; i < 8; i++) sqlite.prepare('INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id) VALUES(?,?,?,?)').run(String(220000000012345+i),account,'Sandbox','20999999');
     await assert.rejects(refreshRetentionBilling(env, account, fetcher), /temporarily unavailable/);
-    assert.equal(calls, 4, 'ninth lineage is refused before contacting Apple');
+    assert.equal(calls, 5, 'ninth lineage is refused before contacting Apple');
   } finally { Date.now = originalNow; sqlite.close(); }
 });
