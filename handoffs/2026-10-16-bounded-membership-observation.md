@@ -1,0 +1,75 @@
+# 本人の会員接続と有限の再確認窓
+
+月額980円を維持。本人が内部258で会員接続を実行し、保存ownerと既存の登録済みbilling accountの一致をサーバーで確認した。管理者によるリンク追加・再契約・試用の追加や延長は行っていない。現在のApple確認結果はexpiredのため、新しい変更の送信はまだ待機する。
+
+本人限定の自動保存受付は2026-10-16 08:44 JSTに切替済み。期限は翌17日08:44 JST、既存owner1件・新規登録0・追加PUT100試行/128MiB・新規記録100試行/128MiB。元のカウンター、試用、31件の既存記録は維持した。今回は一般提供の人数・容量設計ではない。
+
+## 現在の到達点（06:58 UTC）
+
+現258の「会員プランのプレビュー」は契約を操作できない。新しい「Appleの契約を確認」を含む9cの内部配布は、正式nativeのPhotos再発が未解決のため停止中。会員リンクは完了したが有効な会員期間とは別であり、実機に追加操作を求めない。
+
+採取方法を切り分けた短い診断44d/75e/d03では、元Grantはそれぞれ33.461/30.153/38.321秒で成功した。44dは起動中のsimctl lookupが10秒timeoutして採取0。75eは直接group探索と後段の正規lookup一致を確認したが、`-mayDie`付きsampleはapp44.400秒・runner44.181秒の後も空のCall graphだった。d03は同flagを外しrunnerの9thread・最大670sampleを取得した。app側は元testの終了要求の約0.653秒後にtask port取得エラーが出ており、実際の終了時刻と採取不能の単独原因は未確定。成功したcaseの記録を、元の停止原因の証拠にしない。
+
+次の診断60bbe98/run38860787661を06:21:57 UTCに一度だけ開始した。元full-v1の準備27件を一度実行し、その後元Grantを最大3回、buildを繰り返さず確認する。新しい同PID logで2/6公開後に異なる2枚のprimary画像を読み込み、scan/image/visionの完全行が4秒以上増えない場合だけapp・runnerを各1本採る。4秒の無記録は採取契機であり停止の証明ではない。正常な同PID終了要求の後は元testの終端を有限待機し、早期消滅・PID交代・無終端は失敗にする。
+
+native/fresh/group/monitorのどれかの失敗、または最初の採取試行で後続Grantとsnapshot復元を止める。正常・未採取の試行間だけ、所有Simulatorの元の空snapshot bytes/不存在を戻す。TCC/PhotoKit/その他data/logを戻さない。実採取がない3回成功は未再現という結果で、正式native合格の代用にはしない。変更境界20確認と実失敗/成功logを使うpure predicate7確認、独立レビューが成功。samplerはd03・snapshot復元は7ccと同じAST。35〜45分目安・job上限50分、初回候補からこの起動まで約6時間50分を保持する。製品・元test・元harnessは未変更で、原因・修正効果・配布は未完了。
+
+保存済みの正式失敗bundleも別の読取り専用処理2610b7b/run38863106374で調べ、06:47:22 UTCにjob50秒で完了した。元artifact12019760421から対象xcresultの1054files/73,746,079bytesだけをCRC付きで抽出し、Xcode26.3のhelp・content-availability・diagnostics exportが実成功。元bundle/logarchiveは追加uploadせず、選択した診断artifactは113,098bytes。新しいアプリbuild・Simulator・Grantは0。初回候補からこの処理の終了まで7時間15分34秒であり、50秒を全作業時間とはしない。
+
+exportには診断310filesがあったが、対象appのhang stackは見つからなかった。元runnerは01:35:14.834にspindumpを要求したものの、remote interface非対応のerror -999でdataなしと明記していた。最初のAX queryは約35msで一致なしを返し、2回目は01:34:44.812から30.017秒待ってtimeoutした。待機中もrunnerは別PIDの通知を処理し、appの接続断/SIGTERM通知は失敗後。app stdoutは43.897で途切れるため、対応queryがappへ到達しなかったとは断定しない。Vision/PhotoKit/logger/AXの原因は依然未確定で、採取不成立を理由に製品挙動や正式判定を緩めない。
+
+run38860787661は06:58:15 UTCにjob36分9秒で成功終了した。元の準備27件（26成功・既定movie skip1）と元Grant3回のstarted/passed各3回を照合し、33.131/25.423/23.868秒で成功。各回の新sessionで0→新規6枚・再利用0・TCC許可を確認し、観測groupと正規の後段lookupも全3回一致した。正常な同PID終了要求後の不在も実観測した。2/6の無進捗窓は現れず、採取0・試行間snapshot復元2で終了した。元正式runのPhotos失敗と配布不適格は維持する。初回候補から7時間26分27秒であり、成功した36分だけを全時間としない。追加の正式再実行・製品修正・main反映・TestFlight・gateway配備・短周期窓設定はいずれも行っていない。
+
+次の判断には、実際に停止しているappの処理を特定できる証拠、またはこの失敗を説明できる直接観測が必要。同じ候補の正式CIや3回診断を繰り返して合格を待つ方法は採らない。別programのVision単独draftは未実行で、PhotoKit・logger・AXを含む当該失敗を説明する証拠ではない。現在iPhoneで行う操作はなく、258のプレビューから更新・本体設定変更・再インストールを案内しない。
+
+## このサーバー候補
+
+private gatewayに任意の本人用再確認窓を設ける。有効な窓の内側かつSandboxの非grant結果だけ15分で再確認し、未設定・不正・別の本人・期間外は従来の24時間キャッシュへ戻る。設定はversion、本人billing account、開始、終了の4項目で、最大24時間。実配備の窓は最大2時間、既に承認された受付期限以下に固定する。既存の予算・同時実行lease・失敗backoff・購入受付・公開口・grant判定は変えない。
+
+最初の無期限15分候補は配備していない。verifierは起動ごとに120秒を共有月10時間枠から予約し、早期終了でも返金しない。無期限の15分化では数日で他の確認を妨げるおそれがあるため撤回した。予約残量には既存の読み取り専用入口がなく未確認。実CPU利用量から残量を推定せず、窓内の確認成功を保証しない。
+
+製品候補のtypecheckと実SQLite/authorityを使う2テストは成功（34.71秒）。本人限定窓、終了ちょうどでの外部呼出停止、不正設定、正規の期限切れ→更新、同時実行、backoff、timeoutを確認。独立境界レビュー済み。配備には正確な最終SHAのprivate callerとPreservation owning検査、main反映、別途レビューされた有限窓設定が必要。
+
+配備はコードだけを先に反映し、再確認窓は未設定のままにする。本人が実機で同じ契約の更新を報告した後に、別の固定plan/独立レビューで最大2時間かつ既存受付期限以内の窓を一度だけ設定する。CIや利用者の待機中は短周期のApple照会を始めない。窓の終了後はコード内の時刻条件で従来の24時間キャッシュへ戻り、新しい定期タスクや手動cron呼出は使わない。
+
+## アプリと実機
+
+アプリ候補9c7149f7は保存・復元設定へ「Appleの契約を確認」を追加する。本人のiPhoneには「デベロッパ」がなかったため、本体の設定・アカウントを変更せずAppleの管理画面へ進める入口とした。9cの検査・新しい内部配布はこのサーバー候補と分け、変更していないnative入力の成功証拠を保持する。Apple管理画面の実機表示と同じ契約のSandbox更新は未確認。
+
+Simulatorの実描画で「保存・復元」内の青い「Appleの契約を確認」を確認し、XCTestの存在/hittable検査も成功した。AppleはTestFlightの管理操作にはアプリ内の管理画面を使う方式を案内している。TestFlightはSandboxで、テスト購入に料金は発生しない（[Apple公式の検査環境](https://developer.apple.com/documentation/storekit/testing-at-all-stages-of-development-with-xcode-and-the-sandbox)）。本番Apple Accountからのサインアウトや購入履歴の消去は行わない。
+
+native owning run38825512712の初回はBuildほか6実job成功、写真解析の停止と最大文字での年一覧遷移が各1件失敗。初回候補は2026-10-15T23:31:48.229Z、最初のCIは23:45:56Z、初回終了は翌01:07:22Z。新しいボタンを検査したcaseは成功しているが、失敗原因を新機能や環境だけへ断定しない。生log・動画・画面・元step時刻を保持し、01:09 UTCに同一sourceの通常failed-jobsを一度だけ開始した。依存を含む5実jobを確認し、再発なら原因診断へ切り替える。成功済み3native jobとplanを新しい実行時刻へ読み替えず、配布には既存の正規full-v1判定をすべて満たす必要がある。
+
+その一度の確認でもPhotosが再発した（job116757527061、27分35秒、case51.385秒でAX query timeout）。許可は成功し、今回は検査用6枚のうち2枚まで解析して速報2/6を実画面に公開した後、次2枚のprimary画像取得以降の記録がない。動画の独立frameは35.432秒までであり、終端51秒までの描画や原因を断定しない。追加の通常再試行は0、9cは配布未適格のまま。診断83811fb4/run38837197133は、9c直下で診断workflowとhelper2個だけを追加し、元harnessの全文hashとfull-v1の準備順を保持する。準備成功後の元Grant直前から、case25/35/45秒にapp・XCTest runnerを各3秒sampleする。上限40分はqueueを含む完了保証ではなく、今回の実smoke27.6/30.2分を参照する。診断結果はnative・release成功の代用にしない。
+
+年一覧を含むSolo1の再実行job116757527356は01:56:54Zに成功（47分28秒）。元の27methodがstarted/passed各1回で、追加・欠落・skip・failureなしを生logで照合した。Apple管理入口の存在/hittable caseも成功。初回の年一覧失敗は保持し、原因を直したとは扱わない。run全体はPhotos失敗があるため未適格。
+
+その後のnative runは02:45:23Zに7native成功・Photos1失敗で終了した。初回候補から約3時間14分、初CIから約2時間59分であり、成功jobの元step時刻を保持する。新たな正式再試行は0。診断38837197133は02:22:14Zに終了し、準備27件（元から意図されたmovie診断skip1件を含む）の後、元Grantは27.602秒で成功。新規6枚・再利用0・generation2の解析は2.4316秒で完了し、停止は再現しなかった。25秒sampleは終了と競合し、有効なapp/test stackファイルを得ていないため、exit0だけを取得成功にしない。
+
+次の診断20dea655/run38841929598は9c直下のworkflow/helper2ファイルだけで、製品・元UI test・元harnessを変更しない。一度のfull-v1準備後に元Grantを最大3回、最初のnative失敗・証拠不足・sample不成立で中止する。準備後の0件snapshotのbytesまたは不存在を保存し、AUT消滅後にその1ファイルだけを試行間で戻す。PhotoKit/TCC/AppGroup全体は戻さない。試行ごとの新しいAUT sessionのみを元permission validatorへ渡し、loaded0・existingRecords0・fetch6・成功時の新規6/再利用0を照合する。自己PID sampleをbuild前に確認し、実AUT/test両方の短いbaseline stackが取れなければ次の試行へ進まない。25/35/45秒に同時sampleを残す。前の診断32分23秒を参照し35〜45分を見込むが、後続試行のOS warm cacheとsampleによる時刻変化は残る。3回通っても原因解消や正式CI成功の代用にはしない。
+
+38841929598は03:19:55Zに失敗終了（job35分41秒）。自己PIDのsampleは成功したが、full準備のPersonalRediscovery大文字ケースで共有sheetを閉じた後のAX predicateが失敗し、元Grantは0回だった。最後の独立video frame58.153秒では期待したfixture-1の写真とmarkerが見える。失敗時の59.2〜65.6秒のAXは未取得であり、写真切替やhelper不具合を確定しない。別の失敗をPhotos再現や正式合格に読み替えない。
+
+診断8ed2f059/run38846430608では、同じ9cの製品・元Grant・元harnessを固定したまま、一時scriptから無関係の準備だけを外してPhotos単独を最大3回調べる。元のerase成功を同じUDIDで記録し、booted18.6・listapps成功/target不在・data container不在を確認して初期snapshot不存在の根拠とする。初回の元testがrunner build/installを所有し、後続は同じDerivedDataのtest-without-building。初回後に元AppGroup IDからpathを厳密確認し、成功・AUT消滅・fresh6枚・app/test両方のstack取得を満たした時だけsnapshot不存在に戻す。開始待ち20分とcase開始後8分を別時計にし、最初のnative/証拠/sample不成立で終了する。元準備のある条件を再現した証拠ではない。別baseの旧isolated run38669865915の11分43秒を参照し15〜25分、workflow上限30分とし、正式CIの再試行や合格の代用にはしない。
+
+38846430608は03:49:09Zに終了（job11分38秒）。最初の元Grantは32.228秒で成功し、fresh sessionの0→新規6枚・再利用0・許可成功を確認した。しかし4.576秒のbaselineで対象appはTs/RSS32KBの起動前状態、実appのJSONL開始はその約3.8秒後だった。appとrunnerの1秒sampleはいずれも8秒timeoutし、25秒時の全体psも5秒timeoutした。採取不成立で1回で打ち切り、snapshot復元や後続2回は実行していない。単独Photosの製品失敗とは扱わない。
+
+次の安価なprobe f9291ff/run38848653566は本アプリをbuildせず、ready mainloopのPID/起動nonceを検証する最小UIKit appと所有sleepのserial/parallel sampleを比べる。04:03:50Z開始、04:07:04Z終了（job3分7秒）。compile12.680秒・新規18.6 Simulator boot71.584秒は成功したが、installが30秒、terminate/shutdownも各15秒でtimeoutした。sampleは0件で、採取方法の成立は未確認。実機や製品の原因へ読み替えない。実Macのsample-helpには-noSymbolsがない。
+
+継続probe b1342f9/run38849223618は同じ9c直下の診断2ファイルだけで、boot前の所有sleep sampleと読取り専用hostメモリ/ps、boot後の同じhost観測を追加した。別の新規Simulatorへのinstallを単発90秒待ち、前回の不明installを再試行しない。製品build・権限変更・secret取得なし。前probeの3分7秒を基に3〜6分、job上限8分へ計画を改めたが、04:11:07Zにjob40秒で終了。host sleep sampleは1.441秒/7863bytesでPID/call graph/前後stateを満たし、psは数msで成功した。初回simctl createを15秒で打ち切ったため、Simulatorのsampleは0件。初回準備への待機設定が短すぎたことを、製品不具合やhost全体の停止へ読み替えない。
+
+probe fd603ce/run38849542755では、最初にread-onlyのsimctl listを90秒まで待ち、create60秒・boot60秒・bootstatus120秒・launch60秒へ変更した。sample/metrics/source/owned cleanup関数は前回と同一ASTで、独立差分レビュー済み。3〜7分目安、job上限10分とし、実測3分1秒で04:17 UTCに成功。ready mainloopのPID/nonce・前後非T stateを確認した最小UIKit appは、指定1秒のsampleの返却まで29.024秒かかり、74544bytesの正しいPID/call graphが得られた。同じappの後続parallel sampleは7.151秒、sleepは3.118秒だった。8秒deadline不足は直接確認できたが、採取とsymbol処理の各所要時間は未計測であり、並列性やPhotos停止の製品原因を確定しない。boot43.527秒・install16.217秒、所有Simulatorのterminate/shutdownも実成功。正式nativeや本アプリの検査成功ではない。
+
+次の候補7cc2d8f/run38850526006は元のfull-v1準備、元Grant、元harnessを固定し、case25秒のready app/runner各1本だけを採る。appはcase開始後の同PID JSONLとexact executable/非T/Zを確認し、指定3秒sample・返却deadline90秒・最大2本に限定する。起動前baselineと35/45秒の追加採取は行わず、遅い処理を重複起動しない。native statusを先に保存してobserverを最大120秒joinし、正しいPID/call graph・実wall・実thread sample数を区別する。snapshotだけの復元境界とfresh0→6/TCC判定は前の独立レビュー済み関数と同一AST。全準備を含む前回32〜36分を基に35〜45分、workflow上限50分へ再計画し、診断を正式合格へ代用しない。04:25:15 UTCに一度だけ起動した。初回候補から約4時間53分を保持し、結果は未確定。
+
+内部配布後の実機確認は、まず「設定 → 保存・復元 → Appleの契約を確認」を開き、何が表示されたかを確認する。このボタンを含む新buildはまだ配布していないため、現258で探す案内はしない。Apple画面内の名称や契約の表示可否は実機未確認のため、再契約の具体的な操作を先に断定しない。元の写真・メモ・アプリは削除しない。
+
+run38850526006は04:55:22 UTCに終了（job29分55秒）。元の準備27件は26成功・意図されたmovie skip1、元Grantは31.328秒で実成功しfresh0→6/TCC条件も満たした。ただしapp sampleは4.468秒でexit255・出力0bytes、runnerは63.993秒でexit0でもCall graphが空だった。25.21秒の観測から採取を始めた後、元testは30.04秒でAUTを終了し、runner sampleのreport時刻もcase終了直後と重なっている。両方とも有効なstackではなく、1回で打切り、snapshot resetと後続2回は0。初回候補から5時間23分34秒を保持し、正式nativeは未適格、通常の再試行・配布・今回のgatewayコード配備・短周期窓設定は0のまま。
+
+次の採取時刻は新しい同PID logの実6枚fetchを契機にする案を先にofflineで確認した。完全行だけ読むprototypeの6検証は成功し、wrong PID・古い/複数session・最初のfetchが6枚以外・不正完全行を拒否する。成功ログは開始19.142秒でfetchしAUT終了まで10.898秒、再発失敗ログは開始16.537秒でfetchしcase終了まで34.848秒ある。最初のfetchは両方gen1なのでgen2限定の証拠にはしない。次はisolatedの1build/元Grant1回だけで、実fetch直後のapp/runner各1秒sampleを確認する候補を作る。snapshot reset・後続trial・元full準備は実行しない。期待12〜20分はisolated実測11分38秒を基にし、job上限25分。live生存/採取成立、元の停止原因、修正効果はまだ未確認である。
+
+## 費用と範囲
+
+新しい有料契約・AWS Paid移行は0。既存の共通枠とAWS FREEの有効なcredit内では新規現金支払0を見込むが、請求のhard capではない。本人限定試験の月見込1212円・停止判定2200円は共通固定費と保守も含む運用判定であり、通常1人の原価ではない。一般提供の採算や予算承認へ転用しない。新しい定期タスク、既存定期タスクの再実行、一般公開、課金開始は行わない。
+
+GitHubのpublic標準Mac実行分は無料対象だが、artifact保存には共有枠とGB時間課金がある。現権限では利用量・請求APIを読めず、追加現金0は断定しない。全量超過の仮定では1GiBを7日残すと約0.0565米ドル、1ドル160円換算で約9円（税別）。今回38850526006の79,252,525bytesだけなら同じ仮定で約0.67円であり、実請求ではない。これは開発用記録の保存費で、上のクラウド月見込や利用者1人の原価とは別に扱う。[GitHub公式料金](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
