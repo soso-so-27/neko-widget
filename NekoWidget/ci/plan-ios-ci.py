@@ -1848,7 +1848,8 @@ def billing_reactivation_backend_only(paths, base, head):
     for ref in (base, head):
         rows = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
         frozen = [row for row in rows if row.split("\t", 1)[1] not in products | BILLING_REACTIVATION_CONTROLS
-                  and not is_handoff(row.split("\t", 1)[1])]
+                  and not (row.split("\t", 1)[1].startswith("handoffs/")
+                           and row.split("\t", 1)[1].endswith(".md"))]
         if hashlib.sha256(("\0".join(frozen) + "\0").encode()).hexdigest() != BILLING_REACTIVATION_CLOSURE_SHA256:
             return False
     return True

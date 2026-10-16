@@ -29,7 +29,8 @@ class BoundedBillingReactivationTests(unittest.TestCase):
     def setUp(self):
         self.products = dict(planner.BILLING_REACTIVATION_BLOBS)
         self.paths = list(self.products)
-        self.rows = '100644 blob ' + 'c'*40 + '\tNekoWidget/NekoWidget/App/Unchanged.swift\0'
+        self.rows = ('100644 blob ' + 'c'*40 + '\tNekoWidget/NekoWidget/App/Unchanged.swift\0'
+                     + '100644 blob ' + 'd'*40 + '\tNekoWidget/ci/release-candidates/existing.md\0')
         self.closure = hashlib.sha256(self.rows.encode()).hexdigest()
         self.registration = 'BILLING_REACTIVATION_VERSION = "bounded-existing-owner-window-v1"'
         self.bad = None
