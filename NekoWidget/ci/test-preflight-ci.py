@@ -5,6 +5,7 @@ import importlib.util
 import copy
 import contextlib
 import io
+import hashlib
 import json
 import datetime as dt
 import os
@@ -19,6 +20,205 @@ preflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preflight)
 planner = preflight.planner
 scope = preflight.scope
+
+
+class VisionQueueRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.head, self.anchor = "a"*40, "b"*40
+        self.now = dt.datetime(2026,10,16,9,10,tzinfo=dt.timezone.utc)
+        self.plan = {"head":self.head,"scope":scope.FULL_SCOPE,"ready":True,"target_minutes":750,
+            "required_jobs":list(planner.FULL),"cost":{"status":"observed","with_upload_minutes":[76,110]}}
+        common = {"repository":{"full_name":preflight.REPOSITORY},"head_repository":{"full_name":preflight.REPOSITORY},
+            "status":"completed","failed_tests":[],"unsupported_failed_tests":[]}
+        self.original = {**common,"id":preflight.VISION_FAILED_RUN,"head_sha":preflight.VISION_FAILED_SOURCE,
+            "head_branch":preflight.VISION_BRANCH,"path":preflight.IOS_WORKFLOW,"event":"push","run_attempt":2,
+            "conclusion":"failure","created_at":preflight.VISION_FIRST_CI,"updated_at":"2026-10-16T02:45:23Z",
+            "unsupported_failed_tests":["NekoWidgetUITests."+preflight.VISION_CASE]}
+        self.diagnostic = {**common,"id":preflight.VISION_DIAGNOSTIC_RUN,"head_sha":preflight.VISION_DIAGNOSTIC,
+            "head_branch":preflight.VISION_DIAGNOSTIC_BRANCH,"path":preflight.DIAGNOSTIC_WORKFLOW,"event":"workflow_dispatch",
+            "run_attempt":1,"conclusion":"success","created_at":"2026-10-16T08:44:53Z","updated_at":"2026-10-16T08:56:52Z"}
+        self.runs = [self.original,self.diagnostic]
+        self.tree = "100644 blob "+"d"*40+"\tNekoWidget/NekoWidget/Services/PhotoLibraryScanner.swift\0"
+        self.delta = "".join(":100644 100644 "+"e"*40+" "+"f"*40+" M\0"+path+"\0" for path in preflight.VISION_CONTROLS)
+        self.approved = True
+        self.ancestor = True
+        self.diagnostic_delta = (
+            ":100644 100644 862c2d00497dd20349440edd1010c5633971684e 5dd284a96892d02e13b3a43465edd03cd7e58084 M\0.github/workflows/ios-ui-diagnostic.yml\0"
+            ":000000 100644 "+"0"*40+" 572ec9d8daefaa0a424ebced2d29775ff00576ad A\0NekoWidget/ci/diagnose-vision-native-candidate.py\0")
+        case = "NekoWidgetUITests."+preflight.VISION_CASE.replace("/"," ")
+        self.pass_log = f"Test Case '-[{case}]' started.\nTest Case '-[{case}]' passed (30.564 seconds).\n"
+        self.failure_logs = {identifier:f"attempt{attempt}\nTest Case '-[{case}]' failed.\n" for identifier,attempt,_ in preflight.VISION_FAILED_JOBS}
+        self.job = {"id":preflight.VISION_DIAGNOSTIC_JOB,"run_id":preflight.VISION_DIAGNOSTIC_RUN,
+            "head_sha":preflight.VISION_DIAGNOSTIC,"run_attempt":1,"name":"Diagnostic only - actual app Vision queue and Photos",
+            "runner_id":123,"status":"completed","conclusion":"success","started_at":"2026-10-16T08:45:01Z","completed_at":"2026-10-16T08:56:52Z",
+            "steps":[{"name":name,"status":"completed","conclusion":"success","started_at":"2026-10-16T08:45:06Z","completed_at":"2026-10-16T08:56:41Z"}
+                for name in ["Check out exact diagnostic","Observe actual app without changing UI assertions","Upload original checkpoint and diagnostics"]]}
+        self.old_jobs = {identifier:{"id":identifier,"run_id":preflight.VISION_FAILED_RUN,"head_sha":preflight.VISION_FAILED_SOURCE,
+            "run_attempt":attempt,"name":planner.SMOKE,"status":"completed","conclusion":"failure",
+            "started_at":"2026-10-16T01:00:00Z","completed_at":"2026-10-16T02:00:00Z"} for identifier,attempt,_ in preflight.VISION_FAILED_JOBS}
+        self.latest = {"total_count":9,"jobs":[{"id":index+1,"run_id":preflight.VISION_FAILED_RUN,"head_sha":preflight.VISION_FAILED_SOURCE,
+            "name":name,"status":"completed","conclusion":"failure" if name==planner.SMOKE else "success"} for index,name in enumerate([planner.PLAN_JOB,*planner.FULL])]}
+        self.latest["total_count"] += 1
+        self.latest["jobs"].append({"id":116757566231,"run_id":preflight.VISION_FAILED_RUN,
+            "head_sha":preflight.VISION_FAILED_SOURCE,"run_attempt":2,"name":planner.UNEXPANDED_SHARING_JOB,
+            "status":"completed","conclusion":"skipped","steps":[],"runner_id":None})
+
+    def git(self,*args):
+        if args == ("branch","--show-current"): return preflight.VISION_BRANCH
+        if args[:2] == ("merge-base","--is-ancestor"):
+            if not self.ancestor: raise subprocess.CalledProcessError(1,args)
+            return ""
+        if args[0] == "merge-base": return self.anchor
+        if args[:3] == ("show","-s","--format=%P"): return preflight.VISION_PRODUCT
+        if args[0] == "diff": return self.diagnostic_delta if args[-1]==preflight.VISION_DIAGNOSTIC else self.delta
+        if args[:2] == ("ls-tree","-r"): return self.tree
+        if args[0] == "ls-tree":
+            blob = "e"*40 if args[1]==preflight.VISION_PRODUCT or args[1]==self.anchor and not self.approved and args[-1]==preflight.VISION_CONTROLS[1] else "f"*40
+            return "100644 blob "+blob+"\t"+args[-1]
+        raise AssertionError(args)
+
+    def api(self,path,raw=False):
+        if "/attempts/1/jobs?" in path: return {"total_count":1,"jobs":[self.job]}
+        if "/jobs?filter=latest" in path: return self.latest
+        identifier = int(path.split("/actions/jobs/")[1].split("/")[0])
+        if identifier == preflight.VISION_DIAGNOSTIC_JOB: return self.pass_log
+        return self.failure_logs[identifier] if raw else self.old_jobs[identifier]
+
+    @contextlib.contextmanager
+    def mocks(self):
+        failed = tuple((identifier,attempt,hashlib.sha256(self.failure_logs[identifier].encode()).hexdigest()) for identifier,attempt,_ in preflight.VISION_FAILED_JOBS)
+        with patch.object(planner,"git",side_effect=self.git),patch.object(preflight,"github",side_effect=self.api), \
+             patch.object(preflight,"VISION_CLOSURE",(1,hashlib.sha256(self.tree.encode()).hexdigest())), \
+             patch.object(preflight,"VISION_FAILED_JOBS",failed), \
+             patch.object(preflight,"VISION_DIAGNOSTIC_LOG",hashlib.sha256(self.pass_log.encode()).hexdigest()):
+            yield
+
+    def proof(self):
+        return preflight.known_vision_queue_photos_diagnosis(self.plan,self.runs,self.now)
+
+    def test_fixed_proof_admits_all_eight_but_keeps_failures_clock_and_no_release_reuse(self):
+        with self.mocks():
+            proof = self.proof();self.assertIsNotNone(proof)
+            result=preflight.vision_queue_full_cost(copy.deepcopy(self.plan),proof)
+            got=preflight.apply_task_gate(result,self.runs,self.now,diagnosed_failure=proof)
+            self.assertTrue(got["ready"]);self.assertEqual(got["required_jobs"],list(planner.FULL))
+            self.assertEqual(got["task"]["failed_runs"],[preflight.VISION_FAILED_RUN])
+            self.assertEqual(got["task"]["diagnostic_runs"],[preflight.VISION_DIAGNOSTIC_RUN])
+            self.assertFalse(got["task"]["first_baseline_measurement"])
+            self.assertFalse(proof["reuses_successful_jobs"]);self.assertFalse(proof["release_evidence"])
+            expected=(self.now-dt.datetime.fromisoformat(preflight.VISION_FIRST_CANDIDATE.replace('Z','+00:00'))).total_seconds()/60
+            self.assertEqual(got["task"]["projected_total_minutes"],round(expected+150,1))
+            self.assertEqual(got["task"]["retained_photos_attempts"],[[116732306461,1],[116757527061,2]])
+
+    def test_control_pair_main_anchor_and_whole_input_closure(self):
+        original=self.delta
+        with self.mocks():
+            self.assertEqual(preflight.vision_queue_control_anchor(self.head),self.anchor)
+            for extra in [":100644 100644 "+"e"*40+" "+"f"*40+" M\0handoffs/2026-10-16-existing.md\0",
+                          ":000000 100644 "+"0"*40+" "+"f"*40+" A\0handoffs/new.md\0"]:
+                self.delta=original+extra;self.assertIsNotNone(preflight.vision_queue_control_anchor(self.head))
+            for changed in [original.replace(":100644 100644",":100644 120000",1),original.replace(" M\0"," D\0",1),
+                            original.split('\0',2)[0]+'\0'+preflight.VISION_CONTROLS[0]+'\0',
+                            original+":100644 100644 "+"e"*40+" "+"f"*40+" M\0handoffs/not-markdown.py\0",
+                            original+":100644 100644 "+"e"*40+" "+"f"*40+" M\0NekoWidget/ci/release-candidates/old.md\0"]:
+                self.delta=changed;self.assertIsNone(preflight.vision_queue_control_anchor(self.head))
+            self.delta=original;self.approved=False;self.assertIsNone(preflight.vision_queue_control_anchor(self.head))
+            self.approved=True;self.ancestor=False;self.assertIsNone(preflight.vision_queue_control_anchor(self.head))
+        self.ancestor=True
+        # Change the actual immutable tree without updating its frozen hash.
+        with self.mocks():
+            self.tree=self.tree.replace('d'*40,'c'*40)
+            self.assertIsNone(preflight.vision_queue_control_anchor(self.head))
+
+    def test_wrong_source_run_identity_scope_and_freshness_are_rejected(self):
+        with self.mocks():
+            for key,value in [("head_sha","c"*40),("event","push"),("run_attempt",2),("status","in_progress"),
+                              ("conclusion","skipped"),("head_branch","diagnostic/other"),("repository",{}),("head_repository",{})]:
+                old=self.diagnostic[key];self.diagnostic[key]=value;self.assertIsNone(self.proof(),key);self.diagnostic[key]=old
+            for key,value in [("head_sha","c"*40),("run_attempt",1),("unsupported_failed_tests",["Other/testBad"]),
+                              ("failed_tests",["SoloMemoriesUITests/testBad"])]:
+                old=self.original[key];self.original[key]=value;self.assertIsNone(self.proof(),key);self.original[key]=old
+            self.assertIsNone(preflight.known_vision_queue_photos_diagnosis(self.plan,self.runs,self.now+dt.timedelta(days=1)))
+            self.assertIsNone(preflight.known_vision_queue_photos_diagnosis(self.plan|{"scope":"other"},self.runs,self.now))
+            self.assertIsNone(preflight.known_vision_queue_photos_diagnosis(self.plan|{"required_jobs":list(planner.FULL[:-1])},self.runs,self.now))
+            self.diagnostic_delta=self.diagnostic_delta.replace('572ec9','672ec9');self.assertIsNone(self.proof())
+
+    def test_required_actual_steps_runner_timestamps_and_attempts(self):
+        original=copy.deepcopy(self.job)
+        with self.mocks():
+            for key,value in [("runner_id",0),("run_attempt",2),("id",123),("head_sha","c"*40),
+                              ("completed_at","2026-10-17T00:00:00Z"),("steps",[]),("conclusion","skipped")]:
+                self.job=original|{key:value};self.assertIsNone(self.proof(),key)
+            self.job=copy.deepcopy(original)
+            for outcome in ["skipped","failure","cancelled"]:
+                self.job["steps"][1]["conclusion"]=outcome;self.assertIsNone(self.proof())
+            self.job=copy.deepcopy(original);self.job["steps"].append(self.job["steps"][0]);self.assertIsNone(self.proof())
+            self.job=copy.deepcopy(original)
+            self.old_jobs[116732306461]["run_attempt"]=2;self.assertIsNone(self.proof())
+
+    def test_latest_original_has_only_the_fixed_photos_failure(self):
+        with self.mocks():
+            self.latest["jobs"][0]["conclusion"]="failure";self.assertIsNone(self.proof())
+            self.latest["jobs"][0]["conclusion"]="success"
+            self.latest["jobs"][-2]["name"]=planner.SMOKE;self.assertIsNone(self.proof())
+            self.latest["jobs"][-2]["name"]=planner.FULL[-1]
+            for key,value in [("steps",[{}]),("runner_id",123),("conclusion","success"),("id",123)]:
+                old=self.latest["jobs"][-1][key];self.latest["jobs"][-1][key]=value
+                self.assertIsNone(self.proof(),key);self.latest["jobs"][-1][key]=old
+
+    def test_empty_fake_extra_skipped_or_duplicate_xctest_is_not_success(self):
+        good=self.pass_log
+        case="NekoWidgetUITests."+preflight.VISION_CASE.replace('/',' ')
+        for log in ["",good+good,good+"Test Case '-[Other testFake]' passed.\n",good.replace("passed","skipped"),good.replace(case,"Other testFake")]:
+            self.pass_log=log
+            with self.mocks(): self.assertIsNone(self.proof())
+        self.pass_log=good
+        with self.mocks(),patch.object(preflight,"VISION_DIAGNOSTIC_LOG","0"*64):self.assertIsNone(self.proof())
+
+    def test_an_active_new_failed_or_second_owning_attempt_cannot_reuse_the_admission(self):
+        with self.mocks():
+            proof=self.proof();self.assertIsNotNone(proof)
+            for state,outcome in [("queued",None),("completed","failure"),("completed","cancelled"),("completed","success")]:
+                new=self.original|{"id":999,"head_sha":"c"*40,"created_at":"2026-10-16T09:00:00Z","status":state,"conclusion":outcome}
+                self.runs.append(new);self.assertIsNone(self.proof())
+                result=preflight.vision_queue_full_cost(copy.deepcopy(self.plan),proof)
+                got=preflight.apply_task_gate(result,self.runs,self.now,diagnosed_failure=proof)
+                self.assertFalse(got["ready"]);self.assertIn("vision_full_attempt_already_exists",got["task"]["blockers"])
+                if state=="queued":self.assertIn("ci_already_running",got["task"]["blockers"])
+                self.runs.pop()
+
+    def test_budget_is_cumulative_not_a_new_baseline_or_cost_waiver(self):
+        with self.mocks():
+            proof=self.proof()
+            result=preflight.vision_queue_full_cost(copy.deepcopy(self.plan),proof)
+            got=preflight.apply_task_gate(result|{"target_minutes":650},self.runs,self.now,diagnosed_failure=proof)
+            self.assertFalse(got["ready"]);self.assertIn("cumulative_cost_requires_replanning",got["task"]["blockers"])
+            got=preflight.apply_task_gate(result,self.runs,self.now,diagnosed_failure=proof,measure_baseline=True)
+            self.assertFalse(got["ready"]);self.assertFalse(got["task"]["first_baseline_measurement"])
+            for cost in [{"status":"unmeasured","with_upload_minutes":[None,None]},
+                         {"status":"observed","with_upload_minutes":[1,float('nan')]},
+                         {"status":"observed","with_upload_minutes":[-1,1]}]:
+                with self.assertRaises(ValueError):preflight.vision_queue_full_cost(self.plan|{"cost":cost},proof)
+            higher=preflight.vision_queue_full_cost(self.plan|{"cost":{"status":"reference","with_upload_minutes":[140,200]}},proof)
+            self.assertEqual(higher["cost"]["with_upload_minutes"],[140,200])
+            for key,value in [("release_evidence",True),("candidate_sha","c"*40),("owning_jobs_to_execute",[planner.BUILD])]:
+                bad=proof|{key:value}
+                got=preflight.apply_task_gate(copy.deepcopy(self.plan),self.runs,self.now,diagnosed_failure=bad)
+                self.assertFalse(got["ready"]);self.assertIn("failed_test_needs_a_supported_focused_diagnostic_route",got["task"]["blockers"])
+
+    def test_explicit_retained_history_is_not_hidden_by_the_diagnostic_branch_name(self):
+        def api(path,raw=False):
+            if path.endswith('/runs/'+str(preflight.VISION_FAILED_RUN)):return copy.deepcopy(self.original)
+            if path.endswith('/runs/'+str(preflight.VISION_DIAGNOSTIC_RUN)):return copy.deepcopy(self.diagnostic)
+            if '/actions/runs?' in path:return {"total_count":0,"workflow_runs":[]}
+            if path.endswith('/jobs?per_page=100'):return {"total_count":1,"jobs":[{"id":116757527061,"name":planner.SMOKE,"conclusion":"failure"}]}
+            if path.endswith('/logs'):return self.failure_logs[116757527061]
+            raise AssertionError(path)
+        with patch.object(planner,"git",side_effect=self.git),patch.object(preflight,"github",side_effect=api), \
+             patch.object(preflight,"diagnostic_source_matches",return_value=False):
+            runs=preflight.read_task_runs(self.head)
+        self.assertEqual({r['id'] for r in runs},{preflight.VISION_FAILED_RUN,preflight.VISION_DIAGNOSTIC_RUN})
+        self.assertEqual(runs[0]['unsupported_failed_tests'],['NekoWidgetUITests.'+preflight.VISION_CASE])
 
 
 class OwnerCloudCorrectionBudgetTests(unittest.TestCase):
