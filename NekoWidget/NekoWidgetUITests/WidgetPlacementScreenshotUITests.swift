@@ -585,18 +585,30 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             NSPredicate(format: "value BEGINSWITH %@", "Widget,")
         )
         let deadline = Date().addingTimeInterval(timeout)
+        let started = Date()
         var visibleSince: Date?
         repeat {
-            let screenshot = XCUIScreen.main.screenshot()
+            print("NEKO_WIDGET_CAPTURE geometry-start elapsed=\(Date().timeIntervalSince(started))")
             let screenFrame = springboard.frame
-            if let photo = photos.allElementsBoundByIndex.first(where: {
-                $0.exists && screenFrame.contains($0.frame)
-                    && abs($0.frame.midX - screenFrame.midX) < 20
-            }),
-               fixturePhotoIsVisible(
-                   in: screenshot, photoFrame: photo.frame, screenFrame: screenFrame,
-                   expectWhiteFixture: expectWhiteFixture
-               ) {
+            let photoFrame = photos.allElementsBoundByIndex.lazy.compactMap { photo -> CGRect? in
+                guard photo.exists else { return nil }
+                let frame = photo.frame
+                return screenFrame.contains(frame)
+                    && abs(frame.midX - screenFrame.midX) < 20 ? frame : nil
+            }.first
+            print("NEKO_WIDGET_CAPTURE geometry-end elapsed=\(Date().timeIntervalSince(started))")
+            // Each frame read crosses the automation process boundary. Use one
+            // observed rectangle for both eligibility and the screenshot crop.
+            // Take the image after geometry so that it describes that preview.
+            let screenshot = XCUIScreen.main.screenshot()
+            let matches = photoFrame.map {
+                fixturePhotoIsVisible(
+                    in: screenshot, photoFrame: $0, screenFrame: screenFrame,
+                    expectWhiteFixture: expectWhiteFixture
+                )
+            } ?? false
+            print("NEKO_WIDGET_CAPTURE image-end elapsed=\(Date().timeIntervalSince(started)) matches=\(matches)")
+            if matches {
                 if let visibleSince {
                     if Date().timeIntervalSince(visibleSince) >= 0.5 { return screenshot }
                 } else {
