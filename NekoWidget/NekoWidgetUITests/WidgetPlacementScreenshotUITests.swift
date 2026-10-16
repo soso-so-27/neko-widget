@@ -590,12 +590,16 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         repeat {
             print("NEKO_WIDGET_CAPTURE geometry-start elapsed=\(Date().timeIntervalSince(started))")
             let screenFrame = springboard.frame
-            let photoFrame = photos.allElementsBoundByIndex.lazy.compactMap { photo -> CGRect? in
-                guard photo.exists else { return nil }
+            var photoFrame: CGRect?
+            for photo in photos.allElementsBoundByIndex {
+                guard photo.exists else { continue }
                 let frame = photo.frame
-                return screenFrame.contains(frame)
-                    && abs(frame.midX - screenFrame.midX) < 20 ? frame : nil
-            }.first
+                if screenFrame.contains(frame)
+                    && abs(frame.midX - screenFrame.midX) < 20 {
+                    photoFrame = frame
+                    break
+                }
+            }
             print("NEKO_WIDGET_CAPTURE geometry-end elapsed=\(Date().timeIntervalSince(started))")
             // Each frame read crosses the automation process boundary. Use one
             // observed rectangle for both eligibility and the screenshot crop.
