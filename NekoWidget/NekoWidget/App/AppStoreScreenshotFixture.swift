@@ -872,15 +872,7 @@ private struct SoloMemoriesFixtureView: View {
                     PhotoMemoryNoteDetailView(recordID: identifier, photos: fixturePhotos,
                         store: persistence.memoryNotes, archiveStore: persistence.archive)
                 case .photo, .seasonalMovie, .memoryNotes, .memoryNotePhoto:
-                    VStack(spacing: 20) {
-                        Text("アルバムの詳細")
-                            .accessibilityIdentifier("solo-memories-detail-destination")
-                            .accessibilityValue(detailRouteKey(route))
-                        Button("アルバムに戻る") {
-                            popFixtureDetail(isAlbums: isAlbums)
-                        }
-                        .accessibilityIdentifier("solo-memories-detail-return")
-                    }
+                    FixtureDetailView(routeKey: detailRouteKey(route))
                 }
             }
             .navigationDestination(for: AlbumRoute.self) { route in
@@ -889,24 +881,27 @@ private struct SoloMemoriesFixtureView: View {
                 } else if case let .catPhoto(identifier, albumID, photoID) = route {
                     catPhotoDestination(identifier, albumID: albumID, photoID: photoID)
                 } else {
-                    VStack(spacing: 20) {
-                        Text("アルバムの詳細")
-                            .accessibilityIdentifier("solo-memories-detail-destination")
-                            .accessibilityValue(albumRouteKey(route))
-                        Button("アルバムに戻る") {
-                            popFixtureDetail(isAlbums: isAlbums)
-                        }
-                        .accessibilityIdentifier("solo-memories-detail-return")
-                    }
+                    FixtureDetailView(routeKey: albumRouteKey(route))
                 }
             }
         }
     }
 
-    private func popFixtureDetail(isAlbums: Bool) {
-        if isAlbums {
-            if !detailPath.isEmpty { detailPath.removeLast() }
-        } else if !photosPath.isEmpty { photosPath.removeLast() }
+    private struct FixtureDetailView: View {
+        @Environment(\.dismiss) private var dismiss
+        let routeKey: String
+
+        var body: some View {
+            VStack(spacing: 20) {
+                Text("アルバムの詳細")
+                    .accessibilityIdentifier("solo-memories-detail-destination")
+                    .accessibilityValue(routeKey)
+                Button("アルバムに戻る") {
+                    dismiss()
+                }
+                .accessibilityIdentifier("solo-memories-detail-return")
+            }
+        }
     }
 
     private var fixtureEvidence: some View {
