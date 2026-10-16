@@ -9765,6 +9765,215 @@ class PlanTests(unittest.TestCase):
                 self.assertIsNone(planner.changed_paths({}, dict(env, GITHUB_EVENT_NAME="workflow_dispatch")))
 
 
+class FixtureNavigationRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.head,self.anchor = "a"*40,"b"*40
+        self.now = dt.datetime(2026,10,16,12,tzinfo=dt.timezone.utc)
+        self.workflow = (Path(__file__).resolve().parents[2]/".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+        self.delta = ":100644 100644 "+" ".join(planner.FIXTURE_NAV_PAIR)+" M\0"+planner.FIXTURE_NAV_PATH+"\0"
+        self.delta += ":100644 100644 "+" ".join(planner.FIXTURE_NAV_WIDGET_PAIR)+" M\0"+planner.FIXTURE_NAV_WIDGET_PATH+"\0"
+        self.delta += "".join(":100644 100644 "+"e"*40+" "+"f"*40+" M\0"+p+"\0" for p in sorted(planner.FIXTURE_NAV_CONTROLS))
+        self.tree = "100644 blob "+"d"*40+"\tNekoWidget/unchanged.swift\0"
+        self.approved,self.outside_same = True,True
+        self.run = {"id":planner.FIXTURE_NAV_RUN,"head_sha":planner.FIXTURE_NAV_SOURCE,"head_branch":planner.FIXTURE_NAV_BRANCH,
+            "workflow_id":335014238,"path":".github/workflows/ios-build.yml","event":"push","run_attempt":1,
+            "repository":{"full_name":"soso-so-27/neko-widget"},"head_repository":{"full_name":"soso-so-27/neko-widget"},
+            "status":"completed","conclusion":"failure","created_at":"2026-10-16T09:26:18Z","updated_at":"2026-10-16T11:00:00Z"}
+        self.jobs = []
+        with patch.object(planner,"git",side_effect=self.git):
+            for name,identifier in planner.FIXTURE_NAV_SOURCE_JOBS.items():
+                bad = name in planner.FIXTURE_NAV_FAILURES
+                self.jobs.append(self.job(name,identifier,planner.FIXTURE_NAV_SOURCE,self.run["id"],
+                    planner.fixture_navigation_required_steps(name),"failure" if bad else "success"))
+        self.jobs.append({"id":planner.FIXTURE_NAV_PLACEHOLDER,"name":planner.UNEXPANDED_SHARING_JOB,
+            "head_sha":planner.FIXTURE_NAV_SOURCE,"run_id":self.run["id"],"run_attempt":1,
+            "status":"completed","conclusion":"skipped","steps":[],"runner_id":None})
+        self.source_plan = {"schema_version":1,"repository":"soso-so-27/neko-widget","head_sha":planner.FIXTURE_NAV_SOURCE,
+            "scope":planner.FULL_SCOPE,"required_jobs":list(planner.FULL),"evidence_run_id":None,"evidence_sha":None,"test_correction_evidence":None}
+        case = "NekoWidgetUITests."+planner.FIXTURE_NAV_CASE.replace("/"," ")
+        self.bad_log = f"Test Case '-[{case}]' started.\nTest Case '-[{case}]' failed.\n"
+        self.photos = ""
+        for case in ["NekoWidgetUITests.PhotoPermissionUITests testGrantFullPhotoLibraryAccess",
+                     "NekoWidgetUITests.OfficialWindowUITests testSyntheticMovieShippingExportsSoundOnAndOff"] + [f"NekoWidgetUITests.OfficialWindowUITests testOther{i}" for i in range(27)]:
+            self.photos += f"Test Case '-[{case}]' started.\nTest Case '-[{case}]' {'skipped' if 'SyntheticMovie' in case else 'passed'} (32.229 seconds).\n"
+        self.diagnostic = self.run|{"id":900,"head_sha":self.head,"head_branch":"diagnostic/automatic-admission-20261016",
+            "workflow_id":362697969,"path":".github/workflows/ios-ui-diagnostic.yml","event":"workflow_dispatch",
+            "conclusion":"success","display_title":"UI diagnosis: "+planner.FIXTURE_NAV_CASE}
+        self.diag_job = self.job("Diagnostic only - up to three native UI tests (not release evidence)",901,self.head,900,
+            ("Validate diagnostic inputs before checkout","Check out the exact diagnostic commit",
+             "Run requested diagnostic tests with the existing fixture preparation","Upload diagnostic evidence only"))
+        self.diag_log = self.bad_log.replace("failed","passed")
+        self.widget_bad_log=self.bad_log.replace(planner.FIXTURE_NAV_CASE.replace('/',' '),planner.FIXTURE_NAV_WIDGET_CASE.replace('/',' '))
+        self.widget_diagnostic=self.diagnostic|{'id':902,'display_title':'UI diagnosis: '+planner.FIXTURE_NAV_WIDGET_CASE,'head_branch':planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES[planner.FIXTURE_NAV_WIDGET_CASE]}
+        self.widget_diag_job=self.diag_job|{'id':903,'run_id':902}
+        self.widget_diag_log=self.widget_bad_log.replace('failed','passed')
+        self.diagnostics=[self.diagnostic,self.widget_diagnostic]
+        self.index = [self.run]
+
+    def job(self,name,identifier,sha,run,names,outcome="success"):
+        return {"name":name,"id":identifier,"head_sha":sha,"run_id":run,"run_attempt":1,"runner_id":123,
+            "status":"completed","conclusion":outcome,"started_at":"2026-10-16T10:00:00Z","completed_at":"2026-10-16T10:30:00Z",
+            "steps":[{"name":n,"status":"completed","conclusion":"failure" if outcome=="failure" and n=="Run sharing runtime matrix" else "success",
+                "started_at":"2026-10-16T10:01:00Z","completed_at":"2026-10-16T10:02:00Z"} for n in names]}
+
+    def git(self,*args):
+        if args[:2] == ("merge-base","--is-ancestor"): return ""
+        if args[0] == "merge-base": return self.anchor
+        if args[:3] == ("show","-s","--format=%P"): return {planner.FIXTURE_NAV_PATCH:planner.FIXTURE_NAV_WIDGET_PREPARATION,planner.FIXTURE_NAV_WIDGET_PREPARATION:planner.FIXTURE_NAV_SOLO_PATCH,planner.FIXTURE_NAV_SOLO_PATCH:planner.FIXTURE_NAV_SOURCE}[args[-1]]
+        if args[0] == "diff": return self.delta
+        if args[:2] == ("ls-tree","-r"): return self.tree
+        if args[0] == "ls-tree":
+            blob = "e"*40 if args[1]==self.anchor and not self.approved else "f"*40
+            return "100644 blob "+blob+"\t"+args[-1]
+        if args[0] == "show":
+            if args[1].endswith(".github/workflows/ios-build.yml"): return self.workflow
+            prefix = "same" if self.outside_same or args[1].startswith(planner.FIXTURE_NAV_SOURCE) else "changed"
+            return prefix+"@MainActor\nprivate struct SoloMemoriesFixtureView: View {body}\n@MainActor\nprivate struct MonthlySaveFixtureView: View {same}"
+        raise AssertionError(args)
+
+    def api(self,path):
+        if "workflows/ios-build.yml/runs?" in path: return {"total_count":len(self.index),"workflow_runs":self.index}
+        if "workflows/ios-ui-diagnostic.yml/runs?" in path: return {"total_count":len(self.diagnostics),"workflow_runs":self.diagnostics}
+        if f"/runs/{self.run['id']}/jobs?" in path: return {"total_count":len(self.jobs),"jobs":self.jobs}
+        if '/runs/1000/jobs?' in path: return {'total_count':len(self.candidate_jobs),'jobs':self.candidate_jobs}
+        if "/runs/902/attempts/1/jobs?" in path: return {"total_count":1,"jobs":[self.widget_diag_job]}
+        if "/runs/900/attempts/1/jobs?" in path: return {"total_count":1,"jobs":[self.diag_job]}
+        if path.endswith(f"/runs/{self.run['id']}"): return self.run
+        identifier = int(path.split("/actions/jobs/")[1].split("/")[0])
+        if identifier == planner.FIXTURE_NAV_SOURCE_JOBS[planner.PLAN_JOB]: return "IOS_CI_PLAN_JSON="+json.dumps(self.source_plan)
+        if identifier == planner.FIXTURE_NAV_SOURCE_JOBS[planner.SMOKE]: return self.photos
+        if identifier == planner.FIXTURE_NAV_SOURCE_JOBS[planner.FIXTURE_NAV_OWNING[1]]: return self.bad_log
+        if identifier == planner.FIXTURE_NAV_SOURCE_JOBS[planner.FIXTURE_NAV_OWNING[-1]]: return self.widget_bad_log
+        if identifier == 903: return self.widget_diag_log
+        if identifier == 901: return self.diag_log
+        if identifier == 1001: return "IOS_CI_PLAN_JSON="+json.dumps(self.candidate_plan)
+        raise AssertionError(path)
+
+    @contextlib.contextmanager
+    def mocks(self):
+        with patch.object(planner,"git",side_effect=self.git),patch.object(planner,"FIXTURE_NAV_CLOSURE",(1,hashlib.sha256(self.tree.encode()).hexdigest())):
+            yield
+
+    def proof(self,focused=True):
+        return planner.fixture_navigation_source(self.run,self.head,planner.FIXTURE_NAV_BRANCH,"soso-so-27/neko-widget",335014238,planner.FULL,self.api,self.now,focused=focused)
+
+    def test_exact_fixture_controls_closure_and_runtime_dispatch(self):
+        with self.mocks():
+            self.assertEqual(planner.fixture_navigation_inputs(self.head),self.anchor)
+            old = self.delta
+            for extra in [":000000 100644 "+"0"*40+" "+"f"*40+" A\0handoffs/new.md\0"]:
+                self.delta=old+extra;self.assertIsNotNone(planner.fixture_navigation_inputs(self.head))
+            for changed in [old.replace(" M\0"," D\0",1),old.replace(":100644 100644",":100644 120000",1),
+                            old+":100644 100644 "+"e"*40+" "+"f"*40+" M\0NekoWidget/ci/release-candidates/2026-10-16-existing.md\0",
+                            old.replace(planner.FIXTURE_NAV_PAIR[1],"c"*40)]:
+                self.delta=changed;self.assertIsNone(planner.fixture_navigation_inputs(self.head))
+            self.delta=old;self.approved=False;self.assertIsNone(planner.fixture_navigation_inputs(self.head))
+            self.approved=True;self.outside_same=False;self.assertIsNone(planner.fixture_navigation_inputs(self.head))
+
+    def test_six_fresh_jobs_two_actual_reused_and_historical_graph_unchanged(self):
+        with self.mocks():
+            proof=self.proof();self.assertIsNotNone(proof)
+            self.assertEqual(proof["owning_jobs_to_execute"],list(planner.FIXTURE_NAV_OWNING))
+            self.assertEqual(len(proof["jobs"]),2)
+            self.assertEqual({j['name'] for j in proof['jobs']},{planner.SMOKE,planner.lane_job(planner.FULL_SCOPE,'app-ui-other')})
+            self.assertFalse(set(planner.FIXTURE_NAV_OWNING)&{j['name'] for j in proof['jobs']})
+            self.assertIsNone(planner.test_correction_scope(planner.FULL))
+            self.assertEqual(planner.correction_source(self.run,self.head,planner.FIXTURE_NAV_BRANCH,"soso-so-27/neko-widget",335014238,planner.FULL,self.api,self.now),proof)
+
+    def test_any_other_failure_active_or_required_skip_is_rejected(self):
+        with self.mocks():
+            original=copy.deepcopy(self.jobs)
+            for i,job in enumerate(original[:-1]):
+                if job['name'] in planner.FIXTURE_NAV_FAILURES: continue
+                for field,value in [('status','in_progress'),('conclusion','skipped'),('runner_id',0),('steps',[])]:
+                    self.jobs=copy.deepcopy(original);self.jobs[i][field]=value;self.assertIsNone(self.proof(),(job['name'],field))
+                self.jobs=copy.deepcopy(original);self.jobs[i]['steps'][0]['conclusion']='skipped';self.assertIsNone(self.proof())
+            self.jobs=original+[copy.deepcopy(original[0])];self.assertIsNone(self.proof())
+            self.jobs=original;self.run['status']='queued';self.assertIsNone(self.proof())
+
+    def test_only_two_registered_failures_are_accepted_and_any_third_failure_blocks(self):
+        with self.mocks():
+            gallery=next(j for j in self.jobs if j['name']==planner.lane_job(planner.FULL_SCOPE,'gallery-normal'))
+            gallery['conclusion']='failure';gallery['steps'][1]['conclusion']='failure'
+            self.assertIsNone(self.proof())
+            self.assertNotIn(gallery['name'],planner.FIXTURE_NAV_FAILURES)
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                planner.find_test_correction_evidence(self.head,planner.FIXTURE_NAV_BRANCH,'soso-so-27/neko-widget',planner.FULL,self.api,self.now)
+
+    def test_exact_failure_photos_inventory_and_source_plan(self):
+        with self.mocks():
+            good=self.bad_log;self.bad_log+=good;self.assertIsNone(self.proof());self.bad_log=good
+            photos=self.photos
+            for changed in [photos.replace('32.229','32.230'),photos.replace('passed','skipped'),photos+'extra Test Case \'-[Other testBad]\' passed.\n']:
+                self.photos=changed;self.assertIsNone(self.proof())
+            self.photos=photos;self.source_plan['test_correction_evidence']={};self.assertIsNone(self.proof())
+
+    def test_focused_pass_is_required_but_not_needed_for_feedback_source(self):
+        with self.mocks():
+            for log in ['',self.diag_log+self.diag_log,self.diag_log.replace('passed','skipped'),self.diag_log.replace('LargestText','Other')]:
+                self.diag_log=log;self.assertIsNone(self.proof());self.assertIsNotNone(self.proof(focused=False))
+            self.diag_job['steps'][0]['conclusion']='skipped';self.assertIsNone(self.proof())
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                planner.find_test_correction_evidence(self.head,planner.FIXTURE_NAV_BRANCH,'soso-so-27/neko-widget',planner.FULL,self.api,self.now)
+
+    def test_second_candidate_and_old_or_wrong_focused_source_are_rejected(self):
+        with self.mocks():
+            self.index.append(self.run|{'id':999,'head_sha':'c'*40,'created_at':'2026-10-16T11:01:00Z'})
+            self.assertIsNone(self.proof());self.index=[self.run]
+            self.diagnostic['head_sha']='c'*40;self.assertIsNone(self.proof())
+            self.diagnostic['head_sha']=self.head
+            self.assertIsNone(planner.fixture_navigation_focused(self.head,self.api,self.now+dt.timedelta(days=1)))
+
+    def test_both_focused_cases_require_distinct_fixed_refs_same_k_and_actual_pass(self):
+        with self.mocks():
+            good=self.proof();self.assertEqual([item['case'] for item in good['focused_diagnostic']['cases']],list(planner.FIXTURE_NAV_CASES))
+            for key,value in [('head_branch',planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES[planner.FIXTURE_NAV_CASE]),
+                              ('head_sha','c'*40),('display_title','UI diagnosis: '+planner.FIXTURE_NAV_CASE),
+                              ('conclusion','skipped'),('run_attempt',2)]:
+                old=self.widget_diagnostic[key];self.widget_diagnostic[key]=value;self.assertIsNone(self.proof(),key);self.widget_diagnostic[key]=old
+            old=self.widget_diag_log
+            for bad in ['',old+old,old.replace('passed','skipped')]:
+                self.widget_diag_log=bad;self.assertIsNone(self.proof())
+            self.widget_diag_log=old;self.diagnostics.append(self.diagnostic|{'id':904});self.assertIsNone(self.proof())
+            self.diagnostics.pop();self.diagnostics.pop();self.assertIsNone(self.proof())
+
+    def test_main_shared_graph_demands_all_six_actual_jobs_and_rejects_reused_execution(self):
+        with self.mocks():
+            proof=self.proof();self.assertIsNotNone(proof)
+            candidate=self.run|{'id':1000,'head_sha':self.head,'conclusion':'success'}
+            self.candidate_plan=self.source_plan|{'head_sha':self.head,'test_correction_evidence':proof}
+            jobs=[self.job(name,1001+i,self.head,1000,planner.fixture_navigation_required_steps(name)) for i,name in enumerate((planner.PLAN_JOB,)+planner.FIXTURE_NAV_OWNING)]
+            self.assertTrue(planner.covers_corrected_full_graph(candidate,self.head,planner.FULL,self.api,self.now,jobs))
+            for i in range(1,7):
+                bad=copy.deepcopy(jobs);bad[i]['steps'][0]['conclusion']='skipped'
+                self.assertFalse(planner.covers_corrected_full_graph(candidate,self.head,planner.FULL,self.api,self.now,bad))
+            bad=jobs+[self.job(planner.SMOKE,1999,self.head,1000,planner.fixture_navigation_required_steps(planner.SMOKE))]
+            self.assertFalse(planner.covers_corrected_full_graph(candidate,self.head,planner.FULL,self.api,self.now,bad))
+
+    def test_planner_emits_exact_build_and_two_solo_jobs_without_workflow_change(self):
+        with self.mocks(),tempfile.TemporaryDirectory() as directory:
+            proof=self.proof();root=Path(directory);(root/'event.json').write_text('{}')
+            env={'GITHUB_EVENT_PATH':str(root/'event.json'),'GITHUB_OUTPUT':str(root/'output'),
+                'GITHUB_STEP_SUMMARY':str(root/'summary'),'GITHUB_EVENT_NAME':'push',
+                'GITHUB_REF':'refs/heads/'+planner.FIXTURE_NAV_BRANCH,'GITHUB_SHA':self.head,
+                'GITHUB_REPOSITORY':'soso-so-27/neko-widget','GITHUB_SERVER_URL':'https://github.com'}
+            with patch.dict(os.environ,env),patch.object(planner,'changed_paths',return_value=[]), \
+                 patch.object(planner,'runtime_scope',return_value=planner.FULL_SCOPE),patch.object(planner,'required_jobs',return_value=planner.FULL), \
+                 patch.object(planner,'find_evidence',return_value=None),patch.object(planner,'find_test_correction_evidence',return_value=proof), \
+                 contextlib.redirect_stdout(io.StringIO()):planner.main()
+            values=dict(line.split('=',1) for line in (root/'output').read_text().splitlines())
+            self.assertEqual((values['build'],values['app_ui'],values['smoke'],values['sharing']),('true','true','false','true'))
+            self.assertEqual(json.loads(values['app_ui_lanes']),['app-ui-solo-1','app-ui-solo-2'])
+
+    def test_release_source_caller_requires_all_six_actual_steps_after_completion(self):
+        with self.mocks():
+            candidate=self.run|{'id':1000,'head_sha':self.head,'conclusion':'success','created_at':'2026-10-16T11:00:00Z'}
+            self.candidate_jobs=[self.job(n,1001+i,self.head,1000,planner.fixture_navigation_required_steps(n)) for i,n in enumerate((planner.PLAN_JOB,)+planner.FIXTURE_NAV_OWNING)]
+            self.index.append(candidate);self.assertIsNotNone(self.proof())
+            self.candidate_jobs[-1]['steps'][1]['conclusion']='skipped';self.assertIsNone(self.proof())
+            self.candidate_jobs[-1]['steps'][1]['conclusion']='success';candidate['run_attempt']=2;self.assertIsNone(self.proof())
+
+
 class TestCorrectionReuseTests(unittest.TestCase):
     def test_split_full_graph_cannot_reuse_historical_pinned_correction(self):
         required = planner.required_jobs_from_scope(scope.FULL_SCOPE)

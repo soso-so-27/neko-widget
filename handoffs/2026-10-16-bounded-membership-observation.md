@@ -4,7 +4,21 @@
 
 本人限定の自動保存受付は2026-10-16 08:44 JSTに切替済み。期限は翌17日08:44 JST、既存owner1件・新規登録0・追加PUT100試行/128MiB・新規記録100試行/128MiB。元のカウンター、試用、31件の既存記録は維持した。今回は一般提供の人数・容量設計ではない。
 
-## 現在の到達点（06:58 UTC）
+## 現在の到達点（10:46 UTC）
+
+6fdf81b0の正式run38880448128では、同期Visionを共有・上限付きOperationQueueへ移す修正を含むBuildとPhotosが成功した。Photosは元の準備を含む29開始・28成功・意図されたmovie skip1、失敗0。元Grantは32.229秒で成功し、診断だけを配布資格へ流用していない。両OS runtime、Solo2、otherも成功し、残りの元jobは継続中。旧9cのPhotos失敗2回と直接原因未確定の事実は履歴に残す。
+
+Solo1の最大文字ケースは、最初のムービー詳細を閉じ、戻るを押した後もムービー画面に残って失敗した。AXと動画の実画面、座標(38,84)がBackButton内にあることを照合した。録画は49.620→111.193秒の間にframeがなく、連続freezeとは断定しない。60秒animation警告は旧成功retryにもあり、警告だけを原因や待ち時間不足にしない。fixtureは親の共有NavigationPath.removeLast、本番は子Viewのdismissを使う差がある。
+
+289c249bの候補はDEBUGのSoloMemories placeholderだけを子Viewのdismissへ揃える。表示・識別子・元UI test/assert・10秒条件・本番コード・データは維持し、ローカルのfixture12件と写真読取17件は成功した。実効果は未確認。
+
+同じ正式runのGalleryVariantsでもwhite fixtureのsmall表示確認が失敗した。失敗時の実PNGには白canvas・scrim・文字・heartがあり、AXもWidget SmallとPage1/3を示す。15秒の画像確認内で同じframeを複数回プロセス間読取りし、ログの48.48→72.16秒で次の観測がない。これが当時のCG画像判定を失敗させた直接原因かは未確定。0f60e82cはtest helperのframeを一度だけ値にし、そのgeometry後の画像を判定する。15秒・画素閾値・0.5秒離した2観測・元caseを維持し、経過ログを追加する。Windowsのfixture12件は成功、Mac効果は未確認。
+
+元run全8job完了後、承認control取込後のexact候補Kで元LargestTextとwhite Galleryを各1case診断し、同じKを通常候補にする。shared graphはfull8を維持する。共通helper変更で両Galleryをfreshにし、既存workflowの依存によりruntimeもfreshになるため、新Build＋両Solo＋runtime＋両Galleryの6jobを実行する。Photosとotherの2jobだけをexact2ファイルのblob pair・全tracked閉包・scenario不変・各実成功を再照合した場合に保持する。失敗2件を無視した3fresh案は不採用。release CLI/workflowは変更しない。追加失敗・未完了・未知差分は停止する。
+
+初回候補は2026-10-15 23:31:48.229 UTC。750分見込みは新失敗により超過見込みで、累計840分へ再計画した。残る元runの待機、15〜25分の焦点確認、変更範囲の正式確認、uploadの実績参考を含む残り2〜3時間の見込みであり、達成保証や新scopeの実測ではない。980円・既存契約と枠を維持し、新有料契約・AWS Paid・定期作成/再実行・一般受付・grant/期限/counter resetは0。gateway候補は未配備・短周期窓は未設定で、現在の6fdf用writerをfixture後のsourceへ流用しない。
+
+以下は修正前の診断履歴。
 
 現258の「会員プランのプレビュー」は契約を操作できない。新しい「Appleの契約を確認」を含む9cの内部配布は、正式nativeのPhotos再発が未解決のため停止中。会員リンクは完了したが有効な会員期間とは別であり、実機に追加操作を求めない。
 
