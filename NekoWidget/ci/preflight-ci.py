@@ -451,7 +451,8 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         raise ValueError("Preflight requires a dedicated task branch")
     runs = {}
     refs = task_refs(branch)
-    if branch == VISION_BRANCH:
+    if branch in {VISION_BRANCH,*planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES.values()}:
+        refs.update({VISION_BRANCH,*planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES.values()})
         # This diagnostic's different branch name cannot hide task history.
         for identifier in (VISION_FAILED_RUN, VISION_DIAGNOSTIC_RUN):
             retained = github(f"repos/{REPOSITORY}/actions/runs/{identifier}")
@@ -502,6 +503,7 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
                 raise ValueError("Incomplete failed-job history")
             for job in jobs["jobs"]:
                 if ("[app-ui" in job["name"] or job["name"] == planner.SMOKE or
+                        run["id"] == planner.FIXTURE_NAV_RUN and job.get("id") == planner.FIXTURE_NAV_SOURCE_JOBS[planner.FIXTURE_NAV_OWNING[-1]] or
                         run["id"] == planner.MODERATION_CHAIN_RUN and job["name"] == planner.BOOTSTRAP_SMOKE) and job["conclusion"] in {"failure", "timed_out"}:
                     log = github(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", raw=True)
                     cases = sorted(set(re.findall(
@@ -556,6 +558,17 @@ def feedback_plan(test_class, methods):
     tests = scope.diagnostic_tests(test_class, methods, source)
     runs = read_task_runs(head)
     active = [run["id"] for run in runs if run["status"] != "completed"]
+    fixture = (branch in {VISION_BRANCH,*planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES.values()}
+               and planner.fixture_navigation_inputs(head,approved=False) is not None)
+    if fixture:
+        if test_class+"/"+methods not in planner.FIXTURE_NAV_CASES:
+            raise ValueError("Fixed fixture feedback selects one original LargestText or white Gallery case")
+        diagnostic_branch = planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES[test_class+"/"+methods]
+        if not active:
+            source = next((run for run in runs if run["id"] == planner.FIXTURE_NAV_RUN),{})
+            proof = planner.fixture_navigation_source(source,head,planner.FIXTURE_NAV_BRANCH,REPOSITORY,335014238,
+                planner.FULL,lambda path:github(path.removeprefix("/"),raw=path.endswith("/logs")),dt.datetime.now(dt.timezone.utc),focused=False)
+            if proof is None: raise ValueError("Original full graph must be complete with only the two fixed Solo/white Gallery failures before focused feedback")
     commands = [] if active else [
         ["git", "push", "origin", f"{head}:refs/heads/{diagnostic_branch}"],
         ["gh", "workflow", "run", "ios-ui-diagnostic.yml", "--ref", diagnostic_branch,
@@ -691,6 +704,89 @@ def read_diagnostic_evidence(run, head):
         results = diagnostic_case_results(declared, log)
     return {"head": head, "source_sha": run["head_sha"], "run_attempt": attempt, "job_id": job["id"],
             "started_at": job["started_at"], "results": results}
+
+
+FIXTURE_NAV_RAW_LOGS = ((planner.SMOKE,"85f852e0428abffe768776446a22f4bb5a51004cb948766d01dbe7e55d0259dd"),
+    (planner.FIXTURE_NAV_OWNING[1],"d710c4c875d632bd69e1b9e7e6851205367dfbe6610e7e5bf310fd63b0380120"),
+    (planner.FIXTURE_NAV_OWNING[-1],"dd3d73f6648f20906982bd2d6ab9266bf5c23c26316839a05f46af77b440cf3b"))
+
+
+def known_fixture_navigation_diagnosis(result, runs, correction, now=None):
+    """Retain both failures; normal full Photos, not a diagnostic, resolved the older one."""
+    focused = correction.get("focused_diagnostic") if isinstance(correction,dict) else None
+    if (result.get("scope") != scope.FULL_SCOPE or tuple(result.get("required_jobs",())) != planner.FULL
+        or planner.git("branch","--show-current") != VISION_BRANCH
+        or not isinstance(correction,dict) or correction.get("kind") != planner.FIXTURE_NAV_KIND
+        or not isinstance(focused,dict) or focused.get("sha") != result.get("head")
+        or planner.fixture_navigation_inputs(result.get("head")) is None): return None
+    try:
+        old = [run for run in runs if run["id"] == VISION_FAILED_RUN]
+        source = [run for run in runs if run["id"] == planner.FIXTURE_NAV_RUN]
+        if len(old) != 1 or len(source) != 1: return None
+        old, source = old[0], source[0]
+        focused = correction["focused_diagnostic"]
+        if [item.get('case') for item in focused.get('cases',[])] != list(planner.FIXTURE_NAV_CASES): return None
+        for item in focused['cases']:
+            diagnostics = [run for run in runs if run["id"] == item["run_id"]]
+            if len(diagnostics) != 1: return None
+            diagnostic = diagnostics[0]
+            if (diagnostic.get("head_sha") != result["head"] or diagnostic.get("path") != DIAGNOSTIC_WORKFLOW
+                or diagnostic.get("head_branch") != planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES[item['case']]
+                or diagnostic.get("event") != "workflow_dispatch" or diagnostic.get("run_attempt") != 1
+                or (diagnostic.get("status"),diagnostic.get("conclusion")) != ("completed","success")
+                or diagnostic.get("diagnostic_evidence",{}).get("results") != {item['case']:"passed"}): return None
+        if (old.get("head_sha") != VISION_FAILED_SOURCE or old.get("head_branch") != VISION_BRANCH
+            or old.get("path") != IOS_WORKFLOW or old.get("event") != "push" or old.get("run_attempt") != 2
+            or (old.get("status"),old.get("conclusion")) != ("completed","failure")
+            or old.get("failed_tests") or old.get("unsupported_failed_tests") != ["NekoWidgetUITests."+VISION_CASE]
+            or sorted(source.get("failed_tests",[])) != sorted(planner.FIXTURE_NAV_CASES) or source.get("unsupported_failed_tests")): return None
+        api = lambda path:github(path.removeprefix("/"),raw=path.endswith("/logs"))
+        verified = planner.fixture_navigation_source(source,result["head"],VISION_BRANCH,REPOSITORY,335014238,
+            planner.FULL,api,now or dt.datetime.now(dt.timezone.utc))
+        if verified != correction: return None
+        for identifier,attempt,digest in VISION_FAILED_JOBS:
+            job = github(f"repos/{REPOSITORY}/actions/jobs/{identifier}")
+            log = github(f"repos/{REPOSITORY}/actions/jobs/{identifier}/logs",raw=True)
+            if (job.get("id") != identifier or job.get("run_id") != VISION_FAILED_RUN
+                or job.get("head_sha") != VISION_FAILED_SOURCE or job.get("run_attempt") != attempt
+                or job.get("name") != planner.SMOKE or (job.get("status"),job.get("conclusion")) != ("completed","failure")
+                or hashlib.sha256(log.encode()).hexdigest() != digest): return None
+        for name,digest in FIXTURE_NAV_RAW_LOGS:
+            log = github(f"repos/{REPOSITORY}/actions/jobs/{planner.FIXTURE_NAV_SOURCE_JOBS[name]}/logs",raw=True)
+            if hashlib.sha256(log.encode()).hexdigest() != digest: return None
+        return {"kind":planner.FIXTURE_NAV_KIND,"candidate_sha":result["head"],"run_id":planner.FIXTURE_NAV_RUN,
+            "test":planner.FIXTURE_NAV_CASE,"retained_photos_run":VISION_FAILED_RUN,
+            "retained_photos_attempts":[[i,a] for i,a,_ in VISION_FAILED_JOBS],
+            "photos_success_run":planner.FIXTURE_NAV_RUN,"photos_success_job":planner.FIXTURE_NAV_SOURCE_JOBS[planner.SMOKE],
+            "focused_diagnostic":correction["focused_diagnostic"],"release_evidence":False}
+    except (OSError,KeyError,AttributeError,TypeError,ValueError,subprocess.CalledProcessError): return None
+
+
+def fixture_navigation_diagnosis_matches(result, proof):
+    focused = proof.get("focused_diagnostic") if isinstance(proof,dict) else None
+    return (isinstance(proof,dict) and proof.get("kind") == planner.FIXTURE_NAV_KIND
+        and result.get("scope") == scope.FULL_SCOPE and tuple(result.get("required_jobs",())) == planner.FULL
+        and all(proof.get(k) == v for k,v in {"candidate_sha":result.get("head"),"run_id":planner.FIXTURE_NAV_RUN,
+            "test":planner.FIXTURE_NAV_CASE,"retained_photos_run":VISION_FAILED_RUN,"release_evidence":False,
+            "retained_photos_attempts":[[i,a] for i,a,_ in VISION_FAILED_JOBS],"photos_success_run":planner.FIXTURE_NAV_RUN,
+            "photos_success_job":planner.FIXTURE_NAV_SOURCE_JOBS[planner.SMOKE]}.items())
+        and isinstance(focused,dict) and focused.get("sha") == result.get("head")
+        and isinstance(focused.get('cases'),list) and [item.get('case') for item in focused['cases']] == list(planner.FIXTURE_NAV_CASES)
+        and all(type(item.get(k)) is int and item[k] > 0 for item in focused['cases'] for k in ('run_id','job_id'))
+        and all(len({item[k] for item in focused['cases']}) == 2 for k in ('run_id','job_id')))
+
+
+def fixture_navigation_cost(result, proof, include_upload, history):
+    if not fixture_navigation_diagnosis_matches(result,proof): return result
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0: raise ValueError("Invalid upload duration")
+    result = {**result,"full_cost_before_fixture_recovery":result["cost"],"cost":{
+        "status":"reference","ci_minutes":[75,100],"with_upload_minutes":[75+upload,100+upload],
+        "owning_jobs":list(planner.FIXTURE_NAV_OWNING),"samples":[],"scope_unmeasured":True,
+        "includes_future_rework":False,"note":"Fresh Build, both Solo shards, runtime and both serial Gallery jobs. 75-100 minutes is a planning reference, not a measured corrected graph. Queue, control, two focused diagnoses and all prior elapsed time remain counted."}}
+    result["cost_review_required"] = result["target_minutes"] < 840
+    result["ready"] = not result["cost_review_required"]
+    return result
 
 
 def known_deletion_test_diagnosis(result, runs):
@@ -896,7 +992,11 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     elapsed = max(0, (now - min(parse(run["created_at"]) for run in runs)).total_seconds() / 60) if runs else 0
     ci_elapsed = elapsed
     vision_diagnosis = vision_queue_diagnosis_matches(result, diagnosed_failure)
-    if vision_diagnosis:
+    fixture_diagnosis = (fixture_navigation_diagnosis_matches(result,diagnosed_failure)
+        and isinstance(correction_evidence,dict) and correction_evidence.get("kind") == planner.FIXTURE_NAV_KIND
+        and correction_evidence.get("run_id") == planner.FIXTURE_NAV_RUN and correction_evidence.get("sha") == planner.FIXTURE_NAV_SOURCE
+        and diagnosed_failure.get("focused_diagnostic") == correction_evidence.get("focused_diagnostic"))
+    if vision_diagnosis or fixture_diagnosis:
         elapsed = max(elapsed, 546, (now-parse(VISION_FIRST_CANDIDATE)).total_seconds()/60)
         ci_elapsed = max(ci_elapsed, (now-parse(VISION_FIRST_CI)).total_seconds()/60)
     runtime_continuation = (isinstance(correction_evidence,dict)
@@ -934,6 +1034,13 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         blockers.append("fresh_signed_readiness_required")
     if active:
         blockers.append("ci_already_running")
+    if fixture_diagnosis:
+        if measure_baseline: blockers.append("fixture_recovery_is_not_first_baseline")
+        if result["target_minutes"] < 840: blockers.append("fixture_recovery_requires_total_replan")
+        if any(run.get("path") == IOS_WORKFLOW and run.get("event") == "push"
+               and run.get("head_branch") == VISION_BRANCH and run["id"] not in {VISION_FAILED_RUN,planner.FIXTURE_NAV_RUN}
+               and parse(run["created_at"]) > parse("2026-10-16T09:26:18Z") for run in runs):
+            blockers.append("fixture_recovery_attempt_already_exists")
     if vision_diagnosis:
         diagnostic = [run for run in runs if run["id"] == VISION_DIAGNOSTIC_RUN]
         if len(diagnostic) != 1:
@@ -1136,7 +1243,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         fixed_owner_failures.update({planner.INTERNAL_REPORT_CORRECTION_RUN, planner.INTERNAL_REPORT_METADATA_FAILURE_RUN})
         if any(run['id'] not in fixed_owner_failures and run['path'] != DIAGNOSTIC_WORKFLOW for run in failed):
             blockers.append('internal_report_has_unresolved_candidate_failure')
-    correction_cases = (planner.PRESERVATION_EXPORT_CORRECTION_CASES if export_correction else
+    correction_cases = (set(planner.FIXTURE_NAV_CASES) if fixture_diagnosis else planner.PRESERVATION_EXPORT_CORRECTION_CASES if export_correction else
                         planner.PHOTO_SMOKE_CORRECTION_CASES if photo_smoke_correction else
                         {planner.ALBUM_CORRECTION_CASE} if result.get("scope") == scope.FULL_SCOPE else
                         {"SoloMemoriesUITests/testManagedPreservationLostCopyResultShowsConfirmationAndStoredState",
@@ -1172,6 +1279,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         missing = sorted(set(missing) | (set(planner.TOOL_STORAGE_DIAGNOSTIC_TESTS) - passed_tests))
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])
                           if run.get("id") not in fixed_owner_failures
+                           if not (fixture_diagnosis and run["id"] == VISION_FAILED_RUN and test == "NekoWidgetUITests."+VISION_CASE)
                            if not (vision_diagnosis and run["id"] == VISION_FAILED_RUN
                                    and test == "NekoWidgetUITests."+VISION_CASE)
                           if not repeated_photos(run, test)
@@ -1238,7 +1346,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       **({"first_candidate_at":VISION_FIRST_CANDIDATE, "first_ci_at":VISION_FIRST_CI,
                           "minutes_since_first_candidate":round(elapsed,1),
                           "retained_photos_attempts":diagnosed_failure["retained_photos_attempts"]}
-                         if vision_diagnosis else {}),
+                          if vision_diagnosis or fixture_diagnosis else {}),
                       **({"first_candidate_at": planner.TOOL_STORAGE_FIRST_CANDIDATE_AT,
                           "minutes_since_first_candidate": round(max(0, (now - parse(planner.TOOL_STORAGE_FIRST_CANDIDATE_AT)).total_seconds() / 60), 1),
                           "retained_compile_failure": planner.TOOL_STORAGE_COMPILE_FAILURE}
@@ -1931,9 +2039,11 @@ def main(argv=None):
             result = internal_report_correction_cost(result, correction, args.include_upload, history)
             result = moderation_ui_recovery_cost(result, production, args.include_upload, history)
             result = moderation_chained_cost(result, chained, args.include_upload, history)
-            diagnosed = (known_deletion_test_diagnosis(result, runs)
+            diagnosed = (known_fixture_navigation_diagnosis(result,runs,correction)
+                         or known_deletion_test_diagnosis(result, runs)
                          or known_vision_queue_photos_diagnosis(result, runs))
             result = vision_queue_full_cost(result, diagnosed)
+            result = fixture_navigation_cost(result,diagnosed,args.include_upload,history)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      metadata_repair=metadata_repair,
