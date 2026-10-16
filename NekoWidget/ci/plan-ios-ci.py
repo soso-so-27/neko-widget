@@ -1808,7 +1808,55 @@ def billing_paths_only(paths):
     return backend_paths_only(paths, BILLING_PATHS, BILLING_WORKFLOW, BILLING_COMPANION_PATHS)
 
 
+# One finite existing-owner observer fix; backend evidence only.
+BILLING_REACTIVATION_VERSION = "bounded-existing-owner-window-v1"
+BILLING_REACTIVATION_BLOBS = {
+    "NekoWidget/SharingService/src/billing-gateway.ts": [
+        "d0bad39421574fdcd6cf0c2f1f8c2eb86e4451e9",
+        "c3d9a5381c06eadaca9fbc00fcd2eb3099524881"
+    ],
+    "NekoWidget/SharingService/test/billing-gateway.node-tests.mjs": [
+        "726080c32a0ef316704847367b1479133fda42b9",
+        "b684036f631218cff38e909fe07a354f26243a16"
+    ]
+}
+BILLING_REACTIVATION_CONTROLS = frozenset({"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"})
+BILLING_REACTIVATION_CLOSURE_SHA256 = "760ceba1a117615c292cb0dd36d058696a411f536704c5af9910dd8feb031bb7"
+
+
+def billing_reactivation_backend_only(paths, base, head):
+    products = frozenset(BILLING_REACTIVATION_BLOBS)
+    if (source_paths(paths) != products or len(paths) != len(set(paths))
+            or products != {"NekoWidget/SharingService/src/billing-gateway.ts",
+                            "NekoWidget/SharingService/test/billing-gateway.node-tests.mjs"}
+            or BILLING_REACTIVATION_CONTROLS != {"NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py"}
+            or not re.fullmatch(r"[0-9a-f]{64}", BILLING_REACTIVATION_CLOSURE_SHA256)
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) and blob != "0" * 40 for blob in pair)
+                       and pair[0] != pair[1] for pair in BILLING_REACTIVATION_BLOBS.values())):
+        return False
+    approved = git("merge-base", "refs/remotes/origin/main", head)
+    registration = 'BILLING_REACTIVATION_VERSION = "bounded-existing-owner-window-v1"'
+    if git("show", f"{approved}:NekoWidget/ci/plan-ios-ci.py").splitlines().count(registration) != 1:
+        return False
+    for path in BILLING_REACTIVATION_CONTROLS:
+        trusted = git("ls-tree", approved, "--", path)
+        if not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), trusted): return False
+        if any(git("ls-tree", ref, "--", path) != trusted for ref in (base, head)): return False
+    if not reviewed_hub_only(paths, base, head, product_blobs=BILLING_REACTIVATION_BLOBS,
+            companion_paths=frozenset(), companion_digests={}, companion_name="unused"):
+        return False
+    for ref in (base, head):
+        rows = [row for row in git("ls-tree", "-r", "-z", ref).split("\0") if row]
+        frozen = [row for row in rows if row.split("\t", 1)[1] not in products | BILLING_REACTIVATION_CONTROLS
+                  and not is_handoff(row.split("\t", 1)[1])]
+        if hashlib.sha256(("\0".join(frozen) + "\0").encode()).hexdigest() != BILLING_REACTIVATION_CLOSURE_SHA256:
+            return False
+    return True
+
+
 def billing_backend_only(paths, base, head):
+    if source_paths(paths) == frozenset(BILLING_REACTIVATION_BLOBS):
+        return billing_reactivation_backend_only(paths, base, head)
     if any(git("rev-parse", f"{head}:NekoWidget/{tree}") != digest
            for tree, digest in BILLING_REVIEWED_TREES.items()):
         return False

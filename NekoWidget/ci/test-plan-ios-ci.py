@@ -25,6 +25,75 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+class BoundedBillingReactivationTests(unittest.TestCase):
+    def setUp(self):
+        self.products = dict(planner.BILLING_REACTIVATION_BLOBS)
+        self.paths = list(self.products)
+        self.rows = '100644 blob ' + 'c'*40 + '\tNekoWidget/NekoWidget/App/Unchanged.swift\0'
+        self.closure = hashlib.sha256(self.rows.encode()).hexdigest()
+        self.registration = 'BILLING_REACTIVATION_VERSION = "bounded-existing-owner-window-v1"'
+        self.bad = None
+
+    def git(self, *args):
+        if args[0] == 'merge-base': return 'approved'
+        if args[0] == 'show': return '' if self.bad == 'unapproved' else self.registration
+        if args[:3] == ('ls-tree', '-r', '-z'):
+            return self.rows + ('100644 blob ' + 'd'*40 + '\tunknown.txt\0' if self.bad == 'closure' else '')
+        if args[0] == 'ls-tree':
+            blob = ('b' if self.bad == 'control' and args[1] == 'head' else 'a') * 40
+            return f'100644 blob {blob}\t{args[-1]}'
+        if args[0] == 'diff':
+            records = []
+            for path, pair in self.products.items():
+                fields = [':100644', '100644', *pair, 'M']
+                if self.bad == 'mode': fields[1] = '100755'
+                if self.bad == 'blob': fields[3] = 'e'*40
+                if self.bad == 'delete': fields[1] = '000000'; fields[4] = 'D'
+                records.extend([' '.join(fields), path])
+            if 'handoffs/bounded-test.md' in self.paths:
+                records.extend([':000000 100644 ' + '0'*40 + ' ' + 'f'*40 + ' A', 'handoffs/bounded-test.md'])
+            return '\0'.join(records) + '\0'
+        raise AssertionError(args)
+
+    def qualifies(self, paths=None):
+        with patch.object(planner, 'git', side_effect=self.git), \
+                patch.object(planner, 'BILLING_REACTIVATION_CLOSURE_SHA256', self.closure):
+            return planner.billing_backend_only(self.paths if paths is None else paths, 'base', 'head')
+
+    def test_exact_two_products_require_fresh_backend_jobs(self):
+        self.assertTrue(self.qualifies())
+        self.assertEqual(planner.required_jobs(self.paths, planner.BILLING_SCOPE),
+                         (planner.BILLING_CALLER_JOB, planner.PRESERVATION_JOB))
+        self.paths.append('handoffs/bounded-test.md')
+        self.assertTrue(self.qualifies())
+
+    def test_unapproved_controls_modes_unknown_inputs_and_product_tampering_fail(self):
+        for bad in ('unapproved', 'control', 'mode', 'blob', 'delete', 'closure'):
+            with self.subTest(bad=bad):
+                self.bad = bad
+                self.assertFalse(self.qualifies())
+        self.bad = None
+        for extra in ('NekoWidget/NekoWidget/App/Changed.swift', '.github/workflows/sharing-service.yml',
+                      'NekoWidget/SharingService/package-lock.json', 'NekoWidget/ci/plan-ios-ci.py'):
+            with self.subTest(extra=extra):
+                with patch.object(planner, 'git', side_effect=self.git):
+                    self.assertFalse(planner.billing_reactivation_backend_only(self.paths + [extra], 'base', 'head'))
+        self.assertFalse(self.qualifies(self.paths + [self.paths[0]]))
+        with patch.object(planner, 'git', side_effect=self.git):
+            self.assertFalse(planner.billing_reactivation_backend_only(self.paths[:1], 'base', 'head'))
+
+    def test_invalid_registration_and_closure_are_rejected(self):
+        with patch.object(planner, 'BILLING_REACTIVATION_CONTROLS', frozenset()):
+            self.assertFalse(self.qualifies())
+        with patch.object(planner, 'git', side_effect=self.git), \
+                patch.object(planner, 'BILLING_REACTIVATION_CLOSURE_SHA256', 'invalid'):
+            self.assertFalse(planner.billing_reactivation_backend_only(self.paths, 'base', 'head'))
+        for pair in (['0'*40, 'b'*40], ['a'*40, 'a'*40], ['invalid', 'b'*40]):
+            changed = dict(self.products); changed[self.paths[0]] = pair
+            with patch.object(planner, 'BILLING_REACTIVATION_BLOBS', changed):
+                self.assertFalse(self.qualifies())
+
+
 class OwnerCloudCorrectionTests(unittest.TestCase):
     def setUp(self):
         self.now=dt.datetime(2026,10,11,8,tzinfo=dt.timezone.utc)
