@@ -3,6 +3,7 @@
 
 import argparse
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import math
@@ -52,6 +53,190 @@ RECOVERY_REMOTES = frozenset({f"https://github.com/{REPOSITORY}.git", f"https://
                               f"git@github.com:{REPOSITORY}.git"})
 RECOVERY_MAIN_PATHS = frozenset({"NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py",
     "handoffs/development-release-workflow.md", "handoffs/2026-10-08-stalled-ci-recovery.md"})
+
+# A single full retry admission, never reusable native/release qualification.
+VISION_PRODUCT = "c60921fce31225e4c601fd16be1f359fad0967a7"
+VISION_DIAGNOSTIC = "9098ee0992878e17f391fd64cab4ce131827f798"
+VISION_BRANCH = "codex/automatic-admission-20261016"
+VISION_DIAGNOSTIC_BRANCH = "diagnostic/automatic-membership-vision-native-20261016"
+VISION_DIAGNOSTIC_RUN = 38875746477
+VISION_DIAGNOSTIC_JOB = 116890270717
+VISION_FAILED_RUN = 38825512712
+VISION_FAILED_SOURCE = "9c7149f712e53c77f946095b6c8d6bdd8834fc57"
+VISION_CASE = "PhotoPermissionUITests/testGrantFullPhotoLibraryAccess"
+VISION_FIRST_CANDIDATE = "2026-10-15T23:31:48.229Z"
+VISION_FIRST_CI = "2026-10-15T23:45:56Z"
+VISION_CONTROLS = ("NekoWidget/ci/preflight-ci.py", "NekoWidget/ci/test-preflight-ci.py")
+VISION_CLOSURE = (1202, "143c552df83f0c6489f245b4741d456d74059432ba73529443e96ec593243601")
+VISION_DIAGNOSTIC_LOG = "364562f92214c201c20f052f597ea4dde98ebab891837ec2c9330fa52119361a"
+VISION_FAILED_JOBS = (
+    (116732306461, 1, "2b837569e90a4793b86e85a5c2e08b4d98bc00dfb745bc718c06b0546552e80d"),
+    (116757527061, 2, "75a3134ce7131b9d9d9318fa165d4f63bbcf8b670e2ee2b2c087ba6306bf2b88"),
+)
+VISION_KIND = "vision-queue-fixed-photos-full-admission-v1"
+
+
+def vision_queue_control_anchor(head):
+    """Freeze all product inputs; derive approved control pair without a self-hash."""
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return None
+    try:
+        planner.git("merge-base", "--is-ancestor", VISION_PRODUCT, head)
+        raw = planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", VISION_PRODUCT, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return None
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index+1]
+            if (path in seen or len(fields) != 5 or fields[1] != "100644"
+                or (fields[0], fields[4]) not in {(":100644", "M"), (":000000", "A")}
+                or not all(re.fullmatch(r"[0-9a-f]{40}", blob) for blob in fields[2:4])
+                or fields[3] == "0"*40): return None
+            if path in VISION_CONTROLS:
+                if fields[4] != "M": return None
+            elif not (path.startswith("handoffs/") and path.endswith(".md")):
+                return None
+            seen.add(path)
+        if not set(VISION_CONTROLS) <= seen: return None
+        rows = []
+        for row in planner.git("ls-tree", "-r", "-z", "--full-tree", head).split("\0"):
+            if not row: continue
+            name = row.split("\t", 1)[1]
+            if name in VISION_CONTROLS or name.startswith("handoffs/") and name.endswith(".md"): continue
+            rows.append(row)
+        if (len(rows), hashlib.sha256(("\0".join(rows)+"\0").encode()).hexdigest()) != VISION_CLOSURE:
+            return None
+        anchor = planner.git("merge-base", head, "origin/main")
+        if not re.fullmatch(r"[0-9a-f]{40}", anchor): return None
+        # merge-base is already ancestor of both. Require the whole pair, not
+        # a newly changed local helper merely claiming an approved source.
+        for path in VISION_CONTROLS:
+            tree = planner.git("ls-tree", head, "--", path)
+            if (not re.fullmatch(r"100644 blob [0-9a-f]{40}\t"+re.escape(path), tree)
+                or tree != planner.git("ls-tree", anchor, "--", path)
+                or tree == planner.git("ls-tree", VISION_PRODUCT, "--", path)):
+                return None
+        return anchor
+    except (OSError, ValueError, IndexError, subprocess.CalledProcessError):
+        return None
+
+
+def known_vision_queue_photos_diagnosis(result, runs, now=None):
+    """One fixed actual Mac diagnosis permits spending on a fresh full graph."""
+    if (result.get("scope") != scope.FULL_SCOPE
+        or tuple(result.get("required_jobs", ())) != planner.FULL
+        or planner.git("branch", "--show-current") != VISION_BRANCH): return None
+    anchor = vision_queue_control_anchor(result.get("head"))
+    if anchor is None: return None
+    now = now or dt.datetime.now(dt.timezone.utc)
+    parse = lambda text: dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    try:
+        original = [run for run in runs if run["id"] == VISION_FAILED_RUN]
+        diagnostic = [run for run in runs if run["id"] == VISION_DIAGNOSTIC_RUN]
+        if len(original) != 1 or len(diagnostic) != 1: return None
+        original, diagnostic = original[0], diagnostic[0]
+        for run, identifier, sha, branch, workflow, event, attempt, outcome in (
+            (original, VISION_FAILED_RUN, VISION_FAILED_SOURCE, VISION_BRANCH, IOS_WORKFLOW, "push", 2, "failure"),
+            (diagnostic, VISION_DIAGNOSTIC_RUN, VISION_DIAGNOSTIC, VISION_DIAGNOSTIC_BRANCH, DIAGNOSTIC_WORKFLOW, "workflow_dispatch", 1, "success")):
+            if (type(run.get("id")) is not int or run["id"] != identifier or run.get("head_sha") != sha
+                or run.get("head_branch") != branch or run.get("path") != workflow or run.get("event") != event
+                or type(run.get("run_attempt")) is not int or run["run_attempt"] != attempt
+                or (run.get("status"), run.get("conclusion")) != ("completed", outcome)
+                or run.get("repository", {}).get("full_name") != REPOSITORY
+                or run.get("head_repository", {}).get("full_name") != REPOSITORY): return None
+        if (original.get("failed_tests") or original.get("unsupported_failed_tests") != ["NekoWidgetUITests."+VISION_CASE]
+            or not 0 <= (now-parse(diagnostic["updated_at"])).total_seconds() < 86400): return None
+        # A changed SHA on the same task cannot obtain another first retry.
+        if any(run["id"] != VISION_FAILED_RUN and run.get("path") == IOS_WORKFLOW
+               and run.get("event") == "push" and run.get("head_branch") == VISION_BRANCH
+               and parse(run["created_at"]) >= parse(diagnostic["created_at"]) for run in runs): return None
+        if planner.git("show", "-s", "--format=%P", VISION_DIAGNOSTIC) != VISION_PRODUCT: return None
+        expected = [
+            ":100644 100644 862c2d00497dd20349440edd1010c5633971684e 5dd284a96892d02e13b3a43465edd03cd7e58084 M", ".github/workflows/ios-ui-diagnostic.yml",
+            ":000000 100644 "+"0"*40+" 572ec9d8daefaa0a424ebced2d29775ff00576ad A", "NekoWidget/ci/diagnose-vision-native-candidate.py", ""]
+        if planner.git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", VISION_PRODUCT, VISION_DIAGNOSTIC).split("\0") != expected: return None
+        latest = github(f"repos/{REPOSITORY}/actions/runs/{VISION_FAILED_RUN}/jobs?filter=latest&per_page=100")
+        names = [planner.PLAN_JOB, *planner.FULL]
+        jobs = latest.get("jobs", [])
+        placeholders = [job for job in jobs if job.get("id") == 116757566231]
+        if (len(placeholders) != 1 or placeholders[0].get("name") != planner.UNEXPANDED_SHARING_JOB
+            or placeholders[0].get("run_id") != VISION_FAILED_RUN or placeholders[0].get("head_sha") != VISION_FAILED_SOURCE
+            or placeholders[0].get("run_attempt") != 2
+            or (placeholders[0].get("status"),placeholders[0].get("conclusion")) != ("completed","skipped")
+            or placeholders[0].get("steps") != [] or placeholders[0].get("runner_id") is not None): return None
+        jobs = [job for job in jobs if job.get("id") != 116757566231]
+        if (latest.get("total_count") != len(names)+1 or len(jobs) != len(names)
+            or sorted(job["name"] for job in jobs) != sorted(names)
+            or len({job["id"] for job in jobs}) != len(names)
+            or any(job.get("run_id") != VISION_FAILED_RUN or job.get("head_sha") != VISION_FAILED_SOURCE
+                   or job.get("status") != "completed"
+                   or job.get("conclusion") != ("failure" if job["name"] == planner.SMOKE else "success") for job in jobs)):
+            return None
+        for identifier, attempt, sha256 in VISION_FAILED_JOBS:
+            job = github(f"repos/{REPOSITORY}/actions/jobs/{identifier}")
+            if (job.get("id") != identifier or job.get("run_id") != VISION_FAILED_RUN
+                or job.get("run_attempt") != attempt or job.get("head_sha") != VISION_FAILED_SOURCE
+                or job.get("name") != planner.SMOKE or (job.get("status"), job.get("conclusion")) != ("completed", "failure")
+                or not parse(job["started_at"]) < parse(job["completed_at"]) <= parse(diagnostic["created_at"])): return None
+            log = github(f"repos/{REPOSITORY}/actions/jobs/{identifier}/logs", raw=True)
+            if hashlib.sha256(log.encode()).hexdigest() != sha256: return None
+        payload = github(f"repos/{REPOSITORY}/actions/runs/{VISION_DIAGNOSTIC_RUN}/attempts/1/jobs?per_page=100")
+        if payload.get("total_count") != 1 or len(payload.get("jobs", [])) != 1: return None
+        job = payload["jobs"][0]
+        if (job.get("id") != VISION_DIAGNOSTIC_JOB or job.get("run_id") != VISION_DIAGNOSTIC_RUN
+            or job.get("run_attempt") != 1 or job.get("head_sha") != VISION_DIAGNOSTIC
+            or job.get("name") != "Diagnostic only - actual app Vision queue and Photos"
+            or (job.get("status"), job.get("conclusion")) != ("completed", "success")
+            or type(job.get("runner_id")) is not int or job["runner_id"] <= 0
+            or not parse(diagnostic["created_at"]) <= parse(job["started_at"]) < parse(job["completed_at"]) <= parse(diagnostic["updated_at"])): return None
+        steps = job.get("steps", [])
+        required = {"Check out exact diagnostic", "Observe actual app without changing UI assertions", "Upload original checkpoint and diagnostics"}
+        if (len({step["name"] for step in steps}) != len(steps) or not required <= {step["name"] for step in steps}
+            or any((step.get("status"), step.get("conclusion")) != ("completed", "success")
+                   or not parse(job["started_at"]) <= parse(step["started_at"]) <= parse(step["completed_at"]) <= parse(job["completed_at"]) for step in steps)): return None
+        log = github(f"repos/{REPOSITORY}/actions/jobs/{VISION_DIAGNOSTIC_JOB}/logs", raw=True)
+        case = "NekoWidgetUITests."+VISION_CASE.replace("/", " ")
+        if (hashlib.sha256(log.encode()).hexdigest() != VISION_DIAGNOSTIC_LOG
+            or re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)", log) != [(case,"started"),(case,"passed")]): return None
+        return {"kind":VISION_KIND, "candidate_sha":result["head"], "run_id":VISION_FAILED_RUN,
+            "source_sha":VISION_FAILED_SOURCE, "test":VISION_CASE, "approved_control_anchor":anchor,
+            "diagnostic_run":VISION_DIAGNOSTIC_RUN, "diagnostic_job":VISION_DIAGNOSTIC_JOB,
+            "diagnostic_source":VISION_DIAGNOSTIC, "diagnostic_log_sha256":VISION_DIAGNOSTIC_LOG,
+            "retained_photos_attempts":[[identifier,attempt] for identifier,attempt,_ in VISION_FAILED_JOBS],
+            "owning_jobs_to_execute":list(planner.FULL), "reuses_successful_jobs":False, "release_evidence":False}
+    except (OSError, KeyError, TypeError, ValueError, subprocess.CalledProcessError):
+        return None
+
+
+def vision_queue_diagnosis_matches(result, proof):
+    return (isinstance(proof,dict) and proof.get("kind") == VISION_KIND
+        and isinstance(proof.get("approved_control_anchor"), str)
+        and re.fullmatch(r"[0-9a-f]{40}", proof["approved_control_anchor"]) is not None
+        and proof.get("retained_photos_attempts") == [[identifier,attempt] for identifier,attempt,_ in VISION_FAILED_JOBS]
+        and proof.get("reuses_successful_jobs") is False and proof.get("release_evidence") is False
+        and result.get("scope") == scope.FULL_SCOPE and tuple(result.get("required_jobs", ())) == planner.FULL
+        and all(proof.get(key) == value for key,value in {
+            "candidate_sha":result.get("head"), "run_id":VISION_FAILED_RUN, "source_sha":VISION_FAILED_SOURCE,
+            "test":VISION_CASE, "diagnostic_run":VISION_DIAGNOSTIC_RUN, "diagnostic_job":VISION_DIAGNOSTIC_JOB,
+            "diagnostic_source":VISION_DIAGNOSTIC, "diagnostic_log_sha256":VISION_DIAGNOSTIC_LOG,
+            "owning_jobs_to_execute":list(planner.FULL), "reuses_successful_jobs":False, "release_evidence":False}.items()))
+
+
+def vision_queue_full_cost(result, proof):
+    if not vision_queue_diagnosis_matches(result,proof): return result
+    previous = result["cost"]
+    bounds = previous.get("with_upload_minutes", [])
+    if (previous.get("status") not in {"observed","reference"} or not isinstance(bounds,(list,tuple)) or len(bounds) != 2
+        or any(type(value) not in (int,float) or not math.isfinite(value) or value < 0 for value in bounds)
+        or bounds[0] > bounds[1]): raise ValueError("Full retry requires a finite existing timing reference")
+    bounds = [max(120,bounds[0]),max(150,bounds[1])]
+    result = {**result, "full_cost_before_vision_diagnosis":previous,
+        "cost":{"status":"reference", "with_upload_minutes":bounds, "ci_minutes":None,
+            "samples":[], "includes_future_rework":False, "planning_includes_upload":True,
+            "note":"120-150 minutes is a conservative future full CI plus upload plan, not an observed new-candidate duration. Preserve higher existing timing bounds, all prior failures and original elapsed time."}}
+    result["cost_review_required"] = bounds[1] > result["target_minutes"]
+    result["ready"] = not result["cost_review_required"]
+    return result
 
 
 def verify_recovery_merge(source, head):
@@ -266,6 +451,13 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         raise ValueError("Preflight requires a dedicated task branch")
     runs = {}
     refs = task_refs(branch)
+    if branch == VISION_BRANCH:
+        # This diagnostic's different branch name cannot hide task history.
+        for identifier in (VISION_FAILED_RUN, VISION_DIAGNOSTIC_RUN):
+            retained = github(f"repos/{REPOSITORY}/actions/runs/{identifier}")
+            if retained.get("id") != identifier or retained.get("repository", {}).get("full_name") != REPOSITORY:
+                raise ValueError("Retained Vision task history differs")
+            runs[identifier] = retained
     if branch == planner.TOOL_RELEASE_BRANCH:
         refs.update(task_refs(planner.TOOL_BUILD_BRANCH))
     if branch in (planner.REPORT_RUNTIME_BRANCH,planner.REPORT_RUNTIME_ORDER_BRANCH):
@@ -703,6 +895,10 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
     elapsed = max(0, (now - min(parse(run["created_at"]) for run in runs)).total_seconds() / 60) if runs else 0
     ci_elapsed = elapsed
+    vision_diagnosis = vision_queue_diagnosis_matches(result, diagnosed_failure)
+    if vision_diagnosis:
+        elapsed = max(elapsed, 546, (now-parse(VISION_FIRST_CANDIDATE)).total_seconds()/60)
+        ci_elapsed = max(ci_elapsed, (now-parse(VISION_FIRST_CI)).total_seconds()/60)
     runtime_continuation = (isinstance(correction_evidence,dict)
                             and correction_evidence.get("kind") in (planner.REPORT_RUNTIME_KIND,planner.REPORT_RUNTIME_ORDER_KIND))
     runtime_order=runtime_continuation and correction_evidence['kind']==planner.REPORT_RUNTIME_ORDER_KIND
@@ -738,6 +934,21 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         blockers.append("fresh_signed_readiness_required")
     if active:
         blockers.append("ci_already_running")
+    if vision_diagnosis:
+        diagnostic = [run for run in runs if run["id"] == VISION_DIAGNOSTIC_RUN]
+        if len(diagnostic) != 1:
+            raise ValueError("Fixed Vision diagnosis must remain in task history")
+        after = parse(diagnostic[0]["created_at"])
+        if any(run["id"] != VISION_FAILED_RUN and run.get("path") == IOS_WORKFLOW
+               and run.get("event") == "push" and run.get("head_branch") == VISION_BRANCH
+               and parse(run["created_at"]) >= after for run in runs):
+            blockers.append("vision_full_attempt_already_exists")
+        if any(run["id"] not in {VISION_FAILED_RUN,VISION_DIAGNOSTIC_RUN}
+               and parse(run["created_at"]) >= after and run["status"] == "completed"
+               and run.get("conclusion") in {"failure","timed_out","cancelled","startup_failure"} for run in runs):
+            blockers.append("vision_diagnosis_has_new_failure")
+        if measure_baseline:
+            blockers.append("vision_diagnosis_is_not_first_baseline")
     chained = result.get("chained_build_recovery")
     if chained is not None:
         source = next((run for run in runs if run["id"] == planner.MODERATION_CHAIN_RUN), {})
@@ -961,6 +1172,8 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         missing = sorted(set(missing) | (set(planner.TOOL_STORAGE_DIAGNOSTIC_TESTS) - passed_tests))
     unsupported = sorted({test for run in failed for test in run.get("unsupported_failed_tests", [])
                           if run.get("id") not in fixed_owner_failures
+                           if not (vision_diagnosis and run["id"] == VISION_FAILED_RUN
+                                   and test == "NekoWidgetUITests."+VISION_CASE)
                           if not repeated_photos(run, test)
                           and not (photo_smoke_correction and run["id"] == planner.PHOTO_SMOKE_CORRECTION_RUN
                                   and test.removeprefix("NekoWidgetUITests.") in correction_cases)})
@@ -1014,6 +1227,7 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
         blockers.append("cumulative_cost_requires_replanning")
     result["task"] = {"runs": len(runs), "failed_runs": [run["id"] for run in failed],
                       "active_runs": active, "diagnostic_runs": sorted({run["id"] for run in diagnostics} |
+                          ({VISION_DIAGNOSTIC_RUN} if vision_diagnosis else set()) |
                           ({planner.INTERNAL_REPORT_RECOVERY_DIAGNOSTIC_RUN} if metadata_repair is not None else set())),
                       "diagnostic_cases": latest,
                       "missing_diagnostic_tests": missing,
@@ -1021,6 +1235,10 @@ def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_e
                       **({"internal_report_metadata_repair": metadata_repair} if metadata_repair is not None else {}),
                       **({"failed_jobs_to_repeat": chained["source_failed_jobs"]} if chained else {}),
                       "known_test_failure_diagnosis": diagnosed_failure,
+                      **({"first_candidate_at":VISION_FIRST_CANDIDATE, "first_ci_at":VISION_FIRST_CI,
+                          "minutes_since_first_candidate":round(elapsed,1),
+                          "retained_photos_attempts":diagnosed_failure["retained_photos_attempts"]}
+                         if vision_diagnosis else {}),
                       **({"first_candidate_at": planner.TOOL_STORAGE_FIRST_CANDIDATE_AT,
                           "minutes_since_first_candidate": round(max(0, (now - parse(planner.TOOL_STORAGE_FIRST_CANDIDATE_AT)).total_seconds() / 60), 1),
                           "retained_compile_failure": planner.TOOL_STORAGE_COMPILE_FAILURE}
@@ -1713,10 +1931,13 @@ def main(argv=None):
             result = internal_report_correction_cost(result, correction, args.include_upload, history)
             result = moderation_ui_recovery_cost(result, production, args.include_upload, history)
             result = moderation_chained_cost(result, chained, args.include_upload, history)
+            diagnosed = (known_deletion_test_diagnosis(result, runs)
+                         or known_vision_queue_photos_diagnosis(result, runs))
+            result = vision_queue_full_cost(result, diagnosed)
             result = apply_task_gate(result, runs, measure_baseline=args.measure_baseline,
                                      correction_evidence=correction,
                                      metadata_repair=metadata_repair,
-                                     diagnosed_failure=known_deletion_test_diagnosis(result, runs), recovery=recovery,
+                                     diagnosed_failure=diagnosed, recovery=recovery,
                                      diagnostic_backend_recovery=moderation_resolution_diagnostic_backend_recovery(result, runs)
                                      if args.measure_baseline else None)
             result["other_active_ios_runs"] = read_other_active_ios_runs(planner.git("branch", "--show-current"))
