@@ -1,5 +1,6 @@
 ## 2026-10-18 検査成功の保持・期限切れの配布確認を更新中
 
+- 2026-10-18: PR341で現在署名と成功native保持制御をmainへ反映（control CI56秒・ローカル15suite241.2秒）。J1 `f33a9a92` / iOS `39053280533` は63秒で成功。Sharing owning push `39053280523` は共通selectorがiOS runと誤認してplanのみ失敗したため、クラウド反映・TestFlightは未実施のまま停止。制御4本だけを訂正し、元失敗を保持してJ2と同一treeのmain backend実成功を待つ。980円・期限切れ受付・会員/通知設定は不変。
 - 最終候補 `45bf221b` の通常iOS `38895003592` は10月16日21:35 JSTに成功。新しく実行したBuild・Solo1/2・runtime・Gallery2の6jobが成功し、Photos/otherは入力不変を証明した元6fdfの成功へ帰属する。全体58分01秒。元の失敗・skipは成功に読み替えない。
 - 作業の再開までに配布用readinessと再利用判定の期限が経過した。成功したアプリ候補を凍結して保持し、現在のクラウド状態と二署名readinessを確認する継続経路を準備中。新しい配布承認・main統合・クラウド候補反映・TestFlight uploadは未完了。
 - 10月18日02:03 JSTの9SELECTとmetadata再確認は書込0。保存31件、既存owner/key/本人リンク、gateway/archive version、設定・secret・cron・counterが一致。保存テスト受付は10月17日08:44 JSTで期限切れ、Sandbox会員情報もexpired。新しいgrant・受付延長・短周期窓の設定は0。980円維持、追加有料契約0。

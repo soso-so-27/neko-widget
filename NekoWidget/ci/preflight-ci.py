@@ -1008,6 +1008,15 @@ def retained_continuation_cost(result, proof, include_upload, history):
         "owning_jobs": [planner.PLAN_JOB], "scope_unmeasured": True,
         "includes_future_rework": False,
         "note": "Prior actual plan durations only. The new retention plan is unmeasured. Original successful native jobs keep their original SHAs and timestamps; current signed readiness, archive, signing and upload remain required."}
+    if proof.get("backend_selector_recovery") is not None:
+        # Automatic PR and main backend checks still execute; do not omit their
+        # time merely because the successful native graph is retained.
+        reference = 63 / 60 + 2 * 294 / 60
+        result["cost"].update(ci_minutes=[reference, reference],
+            with_upload_minutes=[round(reference + upload, 3)] * 2,
+            reference_runs=[39053280533, 38880447892],
+            automatic_backend_executions=["pull_request", "main push"],
+            note="Planning reference: actual continuation plan 63 seconds plus two automatic backend runs using the prior 294-second observation, then upload. New routing recovery duration and queue time remain unmeasured; native successes are retained, and fresh main backend execution is mandatory before cloud deployment.")
     result["cost_review_required"] = False
     result["ready"] = True  # The cumulative/history gate below must still pass.
     return result
@@ -1030,6 +1039,13 @@ def retained_continuation_task_gate(result, runs, now, measure_baseline):
         planner.FIXTURE_NAV_RUN: (planner.FIXTURE_NAV_SOURCE, 1, "failure"),
         38895003592: ("45bf221b509570e1acec50bb81421917ccb010aa", 1, "success"),
     }
+    routing = proof.get("backend_selector_recovery")
+    expected_routing = {"failed_run_id": 39053280523,
+        "failed_sha": "f33a9a9278f9469ad523736283f60bc0f7c25181",
+        "failed_job_id": 117456039436, "successful_plan_run_id": 39053280533,
+        "classification": "backend-selector-routing", "product_failure": False}
+    if routing is not None and routing != expected_routing:
+        raise ValueError("Unknown backend selector repair proof")
     for identifier, (source, attempt, outcome) in fixed.items():
         matches = [run for run in runs if run["id"] == identifier]
         if (len(matches) != 1 or matches[0].get("head_sha") != source
@@ -1038,16 +1054,28 @@ def retained_continuation_task_gate(result, runs, now, measure_baseline):
                 or matches[0].get("event") != "push" or matches[0].get("path") != IOS_WORKFLOW
                 or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", outcome)):
             raise ValueError("Original failed attempts or successful source disappeared from history")
+    if routing is not None:
+        for identifier, path, outcome in ((39053280523, planner.BILLING_WORKFLOW, "failure"),
+                                          (39053280533, IOS_WORKFLOW, "success")):
+            matches = [run for run in runs if run["id"] == identifier]
+            if (len(matches) != 1 or matches[0].get("head_sha") != routing["failed_sha"]
+                    or matches[0].get("head_branch") != "codex/automatic-admission-release-20261018"
+                    or matches[0].get("run_attempt") != 1 or matches[0].get("event") != "push"
+                    or matches[0].get("path") != path
+                    or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", outcome)):
+                raise ValueError("Fixed routing failure or original successful continuation plan disappeared")
     active = [run["id"] for run in runs if run.get("status") != "completed"]
     failed = [run["id"] for run in runs if run.get("status") == "completed"
               and run.get("conclusion") in {"failure", "timed_out", "cancelled", "startup_failure"}]
     blockers = []
     if active:
         blockers.append("ci_already_running")
-    if set(failed) != {VISION_FAILED_RUN, planner.FIXTURE_NAV_RUN}:
+    expected_failures = {VISION_FAILED_RUN, planner.FIXTURE_NAV_RUN} | ({39053280523} if routing else set())
+    if set(failed) != expected_failures:
         blockers.append("continuation_has_unknown_failure")
     if any(run.get("head_branch") == "codex/automatic-admission-release-20261018"
-           and run.get("event") == "push" and run.get("path") == IOS_WORKFLOW for run in runs):
+           and run.get("event") == "push" and run.get("path") == IOS_WORKFLOW
+           and not (routing and run.get("id") == 39053280533) for run in runs):
         blockers.append("continuation_candidate_already_exists")
     if measure_baseline:
         blockers.append("successful_native_graph_is_not_a_first_baseline")
@@ -1070,6 +1098,10 @@ def retained_continuation_task_gate(result, runs, now, measure_baseline):
             str(planner.FIXTURE_NAV_RUN): {"actual_success_run": 38895003592,
                 "actual_success_sha": "45bf221b509570e1acec50bb81421917ccb010aa"}},
         "retained_photos_attempts": [[116732306461, 1], [116757527061, 2]]}
+    if routing:
+        result["task"]["backend_selector_repair"] = {**routing,
+            "status": "selection repair pending fresh main backend execution; original failure retained",
+            "required_after_merge": "Actual main Sharing four jobs and Preservation job, all required steps"}
     result["ready"] = result["ready"] and not blockers
     result["next_action"] = ("Revalidate the retained graph in the normal plan, then create a fresh archive and upload"
                               if result["ready"] else "Resolve the specific history or elapsed-time blocker; no automatic CI retry")
