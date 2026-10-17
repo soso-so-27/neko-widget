@@ -1,10 +1,15 @@
-## 2026-10-18 検査成功の保持・期限切れの配布確認を更新中
+## 2026-10-18 クラウド反映・TestFlight 259アップロード完了
 
-- 2026-10-18: PR341で現在署名と成功native保持制御をmainへ反映（control CI56秒・ローカル15suite241.2秒）。J1 `f33a9a92` / iOS `39053280533` は63秒で成功。Sharing owning push `39053280523` は共通selectorがiOS runと誤認してplanのみ失敗したため、クラウド反映・TestFlightは未実施のまま停止。制御4本だけを訂正し、元失敗を保持してJ2と同一treeのmain backend実成功を待つ。980円・期限切れ受付・会員/通知設定は不変。
-- 最終候補 `45bf221b` の通常iOS `38895003592` は10月16日21:35 JSTに成功。新しく実行したBuild・Solo1/2・runtime・Gallery2の6jobが成功し、Photos/otherは入力不変を証明した元6fdfの成功へ帰属する。全体58分01秒。元の失敗・skipは成功に読み替えない。
-- 作業の再開までに配布用readinessと再利用判定の期限が経過した。成功したアプリ候補を凍結して保持し、現在のクラウド状態と二署名readinessを確認する継続経路を準備中。新しい配布承認・main統合・クラウド候補反映・TestFlight uploadは未完了。
-- 10月18日02:03 JSTの9SELECTとmetadata再確認は書込0。保存31件、既存owner/key/本人リンク、gateway/archive version、設定・secret・cron・counterが一致。保存テスト受付は10月17日08:44 JSTで期限切れ、Sandbox会員情報もexpired。新しいgrant・受付延長・短周期窓の設定は0。980円維持、追加有料契約0。
-- 初候補10月16日08:31 JSTからの全経過を保持し、以前の840分計画は未達。継続経路の実装・独立レビューと新規archive/uploadは残る。既存検査の再実行だけで期限を更新する方法は採らない。
+- 価格は月額980円のまま。新しい有料契約、AWS Paid移行、一般公開・実課金、新しいgrant、受付延長、counter reset、Codex定期の作成・更新・再実行は0。
+- 検査済み製品K `45bf221b` / iOS `38895003592` の実成功を保持した。新Build・Solo1/2・runtime・両Galleryの6job（58分01秒）と、入力不変を証明した元6fdfのPhotos/otherの2jobを元SHA・日時へ帰属する。失敗・skipは成功へ置き換えない。
+- 期限切れの配布readinessは現在のowner・custody・コード29入力を確認して二署名を更新した。PR341/343の制御を先行main反映し、通常の24時間条件を全体へ広げず、固定成功graphと現在の配布承認を分けて確認した。
+- J1 `f33a9a92` のiOS plan `39053280533` は成功、Sharing push `39053280523` は共通selectorがiOSのrun身元を要求したためplanだけ失敗。実step/logと未実行jobを保持したまま4制御ファイルだけを修正。J2 `b00ac5fd` / iOS `39054124390` は70秒で成功し、PR342でmain `edd36307`へ統合した。製品・依存・workflow・署名対象コードはKから不変。
+- mainとJ2の全tree一致、Sharing `39054559862` の4job＋Preservation `39054559982` の1job・25必須step実成功を確認した。main iOS `39054559952` も成功。PRの成功をmain pushの代用にしていない。
+- 10月18日02:45 JST、private billing gatewayへ検査済みコードを反映。version `49bcadba-cc86-49f0-a301-f71bee6dc9d1`、bundle SHA256 `b42c4f136303502efdfcdf42c12602230b1890625fb5f8f409341c34e145de9d`。反映後の実byte、設定・binding・secret参照・runtime・cron・公開範囲の一致を確認した。短周期の再確認窓は未設定。
+- TestFlight 259 / run `39054853226` / job `117460632500` は10月18日02:53 JSTに成功。正規配布CLI・現在署名・既存testflight環境承認、archive/export、Appleの `VERIFY SUCCEEDED` と `UPLOAD SUCCEEDED` の実ログを確認した。配布sourceはJ2、workflow sourceはmain。全体12分37秒。Apple側の処理完了・内部グループ反映・実機での259表示は未確認であり、upload成功と区別する。
+- 残条件: テスト保存受付は10月17日08:44 JSTで期限切れ、Sandbox契約もexpired。会員リンク完了は有効期間の付与ではなく、今回の反映で自動保存が再開した扱いにしない。新しい導線「設定 → 保存・復元 → Appleの契約を確認」の実機表示、同じ契約の有効状態、必要な受付条件と予算確認、自動保存の実往復が残る。削除・再インストール・購入を実機確認の前提にしない。
+- 10月18日02:03 JSTの9SELECTは書込0、保存31件・同じowner/key/会員リンク・旧counter/試用を確認済み。確認コンテナの設定上限10時間を月間残量とは扱わない。受付延長や短周期窓を有効にする前に、現在の費用・残予算・対象期間を再確認する。
+- 初候補は10月15日23:31:48.229 UTC（16日08:31 JST）。840分計画は未達のまま保持。ホスト中断を含む全経過と、旧Photos失敗2attempt・fixture失敗・J1 selector失敗を残し、後続branchで時計をリセットしない。259完了まで初回から42時間22分11秒（ホスト中断含む）、今回の再開から57分08秒。
 
 ## 2026-10-16 本人の会員接続・自動保存の有限受付
 
