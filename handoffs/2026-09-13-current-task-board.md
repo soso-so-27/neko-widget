@@ -1,3 +1,11 @@
+## 2026-10-18 本人の保存受付を再開・Sandbox再登録を実機確認
+
+- [今回の設定・費用・観測](2026-10-18-existing-owner-automatic-test-reopen.md)。980円維持。259のApple管理sheetを本人の実画像で確認し、期限切れSandbox契約を本人が再登録した。デベロッパ設定、利用資格reset、再インストールは使っていない。
+- 保存受付を03:09 JSTに一回のD1 CASで再開。期限は19日03:09 JST、既存本人1・新規登録0・追加100PUT/128MiB。counter/day/month/旧trial/31記録を保持。General設定は既存のままでarchive再配備0。
+- AWSは同account FREE・残119.29 USD/160日・当月差引0、CFは既存共通枠内で従量0を現画面確認。現期間の費用モデルforecast1,210円・停止2,200円、追加現金0円の条件付き見込み。価格・有料契約・Paid移行は変更なし。確認コンテナの予約残量は不明のまま、両最大10hを既存使用量に加えた費用評価とfail-closedを維持。
+- 本人だけの再確認窓を03:09〜05:09 JSTの2時間に設定。gateway `24672ff8`、実コードhashは配布済みb42c4f13のまま。settings PATCHの管理annotation消失で元の事後assertは失敗したが、再PATCHせずfresh GET/実byte/全binding/runtime/cron/公開範囲を独立監査し、管理metadata差分ありとして完了記録。会員権利や購入受付を管理者で変更していない。
+- 03:16台、既存15分cronの実成功と、同じ本人/既存lineageの新しいApple取引・active/grantsPlus1を確認。retentionもactiveとなり、期限切れ扱いは解除。サーバーは実機自動保存を試せる状態。端末の初回同意・実自動保存/復元は別確認。アプリ/検査入力不変、成功済みnative・TestFlight259を保持し再配布0。Codex定期の作成/更新/再実行0。
+
 ## 2026-10-18 クラウド反映・TestFlight 259アップロード完了
 
 - 価格は月額980円のまま。新しい有料契約、AWS Paid移行、一般公開・実課金、新しいgrant、受付延長、counter reset、Codex定期の作成・更新・再実行は0。
