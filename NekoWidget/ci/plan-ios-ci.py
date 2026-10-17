@@ -3152,6 +3152,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and tool_storage_control_paths_only(paths):
         return (PLAN_JOB,)
+    if runtime_scope == ORCHESTRATION_SCOPE and retained_continuation_control_paths_only(paths):
+        return (PLAN_JOB,)
     if runtime_scope == ORCHESTRATION_SCOPE and source_paths(paths) and source_paths(paths) <= ORCHESTRATION_PATHS:
         return (PLAN_JOB,)
     if runtime_scope == JPEG_SCOPE and jpeg_paths_only(paths):
@@ -6092,6 +6094,17 @@ def owner_cloud_native_evidence(jobs, sha, now):
 
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if env.get("GITHUB_REF") == "refs/heads/" + RETAINED_CONTINUATION_BRANCH:
+        if retained_continuation_inputs(env["GITHUB_SHA"]): return FULL_SCOPE
+        raise ValueError("Fixed retained continuation inputs or approved controls differ; no native work authorized")
+    if env.get("GITHUB_REF") == "refs/heads/" + RETAINED_CONTINUATION_CONTROL_BRANCH:
+        base = comparison_base(event, env)
+        if base and retained_continuation_control_only(paths, base, env["GITHUB_SHA"]): return ORCHESTRATION_SCOPE
+        raise ValueError("Fixed continuation control introduction or current readiness differs; no native work authorized")
+    if retained_continuation_control_paths_only(paths):
+        base = comparison_base(event, env)
+        return (ORCHESTRATION_SCOPE if base and retained_continuation_control_only(paths, base, env["GITHUB_SHA"])
+                else FULL_SCOPE)
     release_branch = env.get("GITHUB_REF") == "refs/heads/" + TOOL_RELEASE_BRANCH
     if release_branch or sources == set(TOOL_RELEASE_BLOBS):
         if paths and len(paths) == len(set(paths)) and tool_release_readiness_inputs(env["GITHUB_SHA"], current=True):
@@ -6660,6 +6673,212 @@ def covers_fixture_navigation(run, validation_head, required, api, now, jobs):
     proof = fixture_navigation_source(original,run["head_sha"],FIXTURE_NAV_BRANCH,"soso-so-27/neko-widget",335014238,FULL,api,now)
     if proof is None or record.get("test_correction_evidence") != proof: return False
     return True
+
+
+# This is a historical qualification of one immutable successful app, not a
+# longer freshness window. Live release authority and the new plan stay fresh.
+RETAINED_CONTINUATION_KIND = "fixed-retained-native-release-continuation-v1"
+RETAINED_CONTINUATION_SOURCE = "45bf221b509570e1acec50bb81421917ccb010aa"
+RETAINED_CONTINUATION_RUN = 38895003592
+RETAINED_CONTINUATION_AT = "2026-10-16T12:35:32Z"
+RETAINED_CONTINUATION_BRANCH = "codex/automatic-admission-release-20261018"
+RETAINED_CONTINUATION_CONTROL_BRANCH = "codex/retained-release-evidence-20261018"
+RETAINED_CONTINUATION_CONTROL_BASE = "28d02d54ecf3d4f2cafb25c7461c74ac2ad42f15"
+RETAINED_CONTINUATION_READINESS = "NekoWidget/ci/moderation-v2-readiness.json"
+RETAINED_CONTINUATION_READY_BEFORE = "04ad74b036f56dae9a6907c8869c4351585d3d3b"
+RETAINED_CONTINUATION_CONTROL_READY_BEFORE = "a0c3437be266b323e6924827b7940ae248cc023a"
+# Genuine two-authority renewal; the verifier still uses its real current clock.
+RETAINED_CONTINUATION_READY_AFTER = "a9d39ebbfad1bd7bfdc0fa2f373971145c33cedf"
+RETAINED_CONTINUATION_JOBS = dict(zip((PLAN_JOB,) + FIXTURE_NAV_OWNING, (
+    116953255187, 116953641249, 116953641424, 116953641330,
+    116960941658, 116953641985, 116953642000)))
+RETAINED_CONTINUATION_PLACEHOLDERS = {
+    "needs.plan.outputs.smoke_name": 116953643605,
+    UNEXPANDED_SHARING_JOB: 116953643662,
+}
+
+
+def retained_continuation_delta(base, head, readiness_before):
+    """All tracked differences, including mode/type/path, have a closed owner."""
+    if not (isinstance(head, str) and SHA.fullmatch(head)
+            and SHA.fullmatch(RETAINED_CONTINUATION_READY_AFTER)
+            and RETAINED_CONTINUATION_READY_AFTER != readiness_before): return False
+    raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+    if raw[-1:] == [""]: raw.pop()
+    if len(raw) % 2: return False
+    seen = set()
+    for index in range(0, len(raw), 2):
+        fields, path = raw[index].split(), raw[index + 1]
+        if (path in seen or len(fields) != 5 or fields[1] != "100644"
+                or not all(SHA.fullmatch(blob) for blob in fields[2:4])): return False
+        seen.add(path)
+        if path in FIXTURE_NAV_CONTROLS:
+            if fields[:2] != [":100644", "100644"] or fields[4] != "M": return False
+        elif path == RETAINED_CONTINUATION_READINESS:
+            if fields != [":100644", "100644", readiness_before, RETAINED_CONTINUATION_READY_AFTER, "M"]: return False
+        elif not (tool_storage_handoff(path) and fields[4] in {"A", "M"}
+                and fields[0] == (":000000" if fields[4] == "A" else ":100644")): return False
+        if any(git("ls-tree", ref, "--", path) != expected for ref, expected in (
+                (base, "" if fields[4] == "A" else f"100644 blob {fields[2]}\t{path}"),
+                (head, f"100644 blob {fields[3]}\t{path}"))): return False
+    return FIXTURE_NAV_CONTROLS | {RETAINED_CONTINUATION_READINESS} <= seen
+
+
+def retained_continuation_inputs(head, *, approved=True):
+    """The old app tree plus four approved controls and one exact renewal."""
+    try:
+        if not retained_continuation_delta(RETAINED_CONTINUATION_SOURCE, head, RETAINED_CONTINUATION_READY_BEFORE): return False
+        git("merge-base", "--is-ancestor", RETAINED_CONTINUATION_SOURCE, head)
+        if not approved: return True  # Inspection only; evidence never uses this mode.
+        anchor = git("merge-base", head, "origin/main")
+        control = git("log", "-1", "--format=%H", anchor, "--", *sorted(FIXTURE_NAV_CONTROLS))
+        if not SHA.fullmatch(control): return False
+        git("merge-base", "--is-ancestor", RETAINED_CONTINUATION_CONTROL_BASE, control)
+        git("merge-base", "--is-ancestor", control, "origin/main")
+        git("merge-base", "--is-ancestor", control, head)
+        if not retained_continuation_delta(RETAINED_CONTINUATION_CONTROL_BASE, control,
+                                          RETAINED_CONTINUATION_CONTROL_READY_BEFORE): return False
+        return all(git("ls-tree", head, "--", path) == git("ls-tree", control, "--", path)
+                   for path in FIXTURE_NAV_CONTROLS | {RETAINED_CONTINUATION_READINESS})
+    except (OSError, subprocess.CalledProcessError, AttributeError, TypeError, ValueError): return False
+
+
+def retained_continuation_readiness(head):
+    """Use the verifier's real clock, exact authorities and unchanged code list."""
+    try:
+        if (git("rev-parse", "HEAD") != head
+                or git("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none")
+                or not SHA.fullmatch(RETAINED_CONTINUATION_READY_AFTER)
+                or git("ls-tree", head, "--", RETAINED_CONTINUATION_READINESS)
+                    != f"100644 blob {RETAINED_CONTINUATION_READY_AFTER}\t{RETAINED_CONTINUATION_READINESS}"): return False
+        policy = json.loads(git("show", head + ":NekoWidget/ci/moderation-client-rollout-policy.json"))
+        evidence = json.loads(git("show", head + ":" + RETAINED_CONTINUATION_READINESS))
+        verified = subprocess.run(["node", "NekoWidget/ci/verify-moderation-readiness.mjs"],
+            input=json.dumps({"policy": policy, "evidence": evidence}), capture_output=True,
+            text=True, encoding="utf-8", timeout=20)
+        result = json.loads(verified.stdout)
+        return (verified.returncode == 0 and result.get("verified") is True
+                and result.get("purpose") == "testflight-owner-report-ui-continuation")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, AttributeError, TypeError, ValueError): return False
+
+
+def retained_continuation_control_paths_only(paths):
+    return (isinstance(paths, (list, tuple)) and bool(paths) and all(isinstance(p, str) for p in paths)
+            and len(paths) == len(set(paths))
+            and {p for p in paths if not tool_storage_handoff(p)}
+                == FIXTURE_NAV_CONTROLS | {RETAINED_CONTINUATION_READINESS})
+
+
+def retained_continuation_control_only(paths, base, head):
+    """Plan-only control introduction; its entire non-control tree stays at main."""
+    try:
+        return (retained_continuation_control_paths_only(paths)
+            and git("rev-parse", base + "^{tree}") == git("rev-parse", RETAINED_CONTINUATION_CONTROL_BASE + "^{tree}")
+            and retained_continuation_delta(RETAINED_CONTINUATION_CONTROL_BASE, head, RETAINED_CONTINUATION_CONTROL_READY_BEFORE)
+            and set(filter(None, git("diff", "--name-only", "--no-renames", "-z", base, head).split("\0"))) == set(paths)
+            and retained_continuation_readiness(head))
+    except (OSError, subprocess.CalledProcessError, AttributeError, TypeError, ValueError): return False
+
+
+def retained_continuation_run_identity(run, sha, branch):
+    return (isinstance(run, dict) and type(run.get("id")) is int and run["id"] > 0
+        and run.get("head_sha") == sha and run.get("head_branch") == branch
+        and run.get("event") == "push" and run.get("workflow_id") == 335014238
+        and run.get("path") == ".github/workflows/ios-build.yml"
+        and type(run.get("run_attempt")) is int and run["run_attempt"] == 1
+        and all(run.get(side, {}).get("full_name") == "soso-so-27/neko-widget" for side in ("repository", "head_repository")))
+
+
+def retained_continuation_source_identity(run):
+    return (retained_continuation_run_identity(run, RETAINED_CONTINUATION_SOURCE, FIXTURE_NAV_BRANCH)
+        and run["id"] == RETAINED_CONTINUATION_RUN and run.get("updated_at") == RETAINED_CONTINUATION_AT
+        and (run.get("status"), run.get("conclusion")) == ("completed", "success"))
+
+
+def retained_continuation_record(head):
+    return {"kind": RETAINED_CONTINUATION_KIND, "candidate_sha": head,
+        "source_sha": RETAINED_CONTINUATION_SOURCE, "source_run_id": RETAINED_CONTINUATION_RUN,
+        "source_run_attempt": 1, "historical_qualified_at": RETAINED_CONTINUATION_AT,
+        "qualification": "historical immutable native graph; current signed readiness and fresh continuation plan required",
+        "current_readiness_verified": True, "required_jobs": list(FULL)}
+
+
+def retained_continuation_plan(run, api, now):
+    """A successful label alone cannot qualify the new candidate or main plan."""
+    if not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24): return False
+    jobs = executed_jobs(run, "soso-so-27/neko-widget", api)
+    plans = [j for j in jobs if j.get("name") == PLAN_JOB]
+    if (len(plans) != 1 or len({j.get("id") for j in jobs}) != len(jobs)
+            or not covers_jobs(jobs, (PLAN_JOB,), run["head_sha"], now)): return False
+    for job in jobs:
+        if (job.get("head_sha") != run["head_sha"] or job.get("run_id") != run["id"]
+                or type(job.get("run_attempt")) is not int or job["run_attempt"] != 1): return False
+        if job.get("name") == PLAN_JOB:
+            if not fixture_navigation_steps(job, fixture_navigation_required_steps(PLAN_JOB), optional=FIXTURE_NAV_PLAN_OPTIONAL): return False
+        elif not (job.get("name") in set(FULL) | {UNEXPANDED_SHARING_JOB, "needs.plan.outputs.smoke_name", "needs.plan.outputs.build_name"}
+                and (job.get("status"), job.get("conclusion")) == ("completed", "skipped")
+                and job.get("steps") == [] and job.get("runner_id") in (None, 0)): return False
+    record = fixture_navigation_plan(api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plans[0]['id']}/logs"), run["head_sha"])
+    return (record is not None and record.get("evidence_run_id") == RETAINED_CONTINUATION_RUN
+        and record.get("evidence_sha") == RETAINED_CONTINUATION_SOURCE and record.get("test_correction_evidence") is None
+        and record.get("retained_continuation") == retained_continuation_record(run["head_sha"]))
+
+
+def retained_continuation_evidence(head, api, now, *, current_run=None, require_plan=False):
+    """Re-read genuine source facts now; evaluate their historical qualification at completion."""
+    if not retained_continuation_inputs(head): return None
+    if not retained_continuation_readiness(head):
+        raise CorrectionEvidenceUnavailable("Current signed readiness is expired, dirty or invalid; retained native evidence cannot renew it")
+    repo = "soso-so-27/neko-widget"
+    historical = dt.datetime.fromisoformat(RETAINED_CONTINUATION_AT.replace("Z", "+00:00"))
+    if now < historical: raise CorrectionEvidenceUnavailable("Continuation clock precedes the genuine source completion")
+    source = api(f"/repos/{repo}/actions/runs/{RETAINED_CONTINUATION_RUN}")
+    if not retained_continuation_source_identity(source): raise CorrectionEvidenceUnavailable("Fixed successful source identity or attempt differs")
+    data = api(f"/repos/{repo}/actions/runs/{RETAINED_CONTINUATION_RUN}/attempts/1/jobs?per_page=100")
+    jobs = data.get("jobs")
+    expected = RETAINED_CONTINUATION_JOBS | RETAINED_CONTINUATION_PLACEHOLDERS
+    if (not isinstance(jobs, list) or data.get("total_count") != len(expected) or len(jobs) != len(expected)
+            or {j.get("name"): j.get("id") for j in jobs} != expected
+            or not covers_fixture_navigation(source, RETAINED_CONTINUATION_SOURCE, FULL, api, historical, jobs)):
+        raise CorrectionEvidenceUnavailable("Original historical native graph is unavailable or differs")
+    query = urllib.parse.urlencode({"branch": RETAINED_CONTINUATION_BRANCH, "event": "push", "per_page": 100})
+    index = api(f"/repos/{repo}/actions/workflows/ios-build.yml/runs?{query}")
+    runs = index.get("workflow_runs")
+    if (not isinstance(runs, list) or type(index.get("total_count")) is not int
+            or index["total_count"] != len(runs) or len(runs) > 1):
+        raise CorrectionEvidenceUnavailable("Continuation candidate history is incomplete or contains another run")
+    if not runs and require_plan: raise CorrectionEvidenceUnavailable("A fresh successful continuation plan is required")
+    if current_run is not None and current_run.get("head_branch") == RETAINED_CONTINUATION_BRANCH and not runs:
+        raise CorrectionEvidenceUnavailable("Owning continuation push is absent from its branch history")
+    for run in runs:
+        if (not retained_continuation_run_identity(run, run.get("head_sha"), RETAINED_CONTINUATION_BRANCH)
+                or not retained_continuation_inputs(run.get("head_sha"))):
+            raise CorrectionEvidenceUnavailable("Continuation candidate run identity or inputs differ")
+        git("merge-base", "--is-ancestor", run["head_sha"], head)
+        if current_run is not None and run["id"] == current_run.get("id") and not require_plan:
+            if (not retained_continuation_run_identity(current_run, head, RETAINED_CONTINUATION_BRANCH)
+                    or run.get("head_sha") != head
+                    or run.get("status") not in {"queued", "in_progress"} or run.get("conclusion") is not None):
+                raise CorrectionEvidenceUnavailable("Only the current owning plan may be active")
+        elif ((run.get("status"), run.get("conclusion")) != ("completed", "success")
+                or not retained_continuation_plan(run, api, now)):
+            raise CorrectionEvidenceUnavailable("Continuation plan is failed, active, stale or lacks actual successful steps")
+    return retained_continuation_record(head)
+
+
+def covers_retained_continuation(run, validation_head, required, api, now, jobs):
+    if (required != FULL or not retained_continuation_source_identity(run)
+            or {j.get("name"): j.get("id") for j in jobs} != RETAINED_CONTINUATION_JOBS | RETAINED_CONTINUATION_PLACEHOLDERS): return False
+    if retained_continuation_evidence(validation_head, api, now, require_plan=True) is None: return False
+    query = urllib.parse.urlencode({"head_sha": validation_head, "event": "push", "per_page": 100})
+    index = api(f"/repos/soso-so-27/neko-widget/actions/workflows/ios-build.yml/runs?{query}")
+    runs = index.get("workflow_runs")
+    if not isinstance(runs, list) or index.get("total_count") != 1 or len(runs) != 1: return False
+    current = runs[0]
+    return (current.get("head_branch") in {"main", RETAINED_CONTINUATION_BRANCH}
+        and retained_continuation_run_identity(current, validation_head, current["head_branch"])
+        and (current.get("status"), current.get("conclusion")) == ("completed", "success")
+        and retained_continuation_plan(current, api, now))
 
 
 def test_correction_scope(required: tuple[str, ...]) -> str | None:
@@ -8393,6 +8612,8 @@ def covers_corrected_full_graph(run: dict, validation_head: str, required: tuple
     has physically executed the full graph. Changed owning jobs must execute
     successfully at the corrected candidate SHA.
     """
+    if run.get("id") == RETAINED_CONTINUATION_RUN and validation_head != RETAINED_CONTINUATION_SOURCE:
+        return covers_retained_continuation(run, validation_head, required, api, now, jobs)
     if run.get("head_branch") == FIXTURE_NAV_BRANCH and required == FULL:
         return covers_fixture_navigation(run,validation_head,required,api,now,jobs)
     if required == required_jobs_from_scope(TOOL_STORAGE_SCOPE) and run.get("head_sha") == TOOL_STORAGE_FRESH_PHOTOS_SOURCE:
@@ -8503,6 +8724,11 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
             run_id = run.get("id") if isinstance(run, dict) else None
             evidence_log("candidate_rejected", run_id=run_id if type(run_id) is int else None, reason=reason)
         return False
+    if run.get("id") == RETAINED_CONTINUATION_RUN and current.get("head_sha") != RETAINED_CONTINUATION_SOURCE:
+        return (repository == "soso-so-27/neko-widget" and retained_continuation_source_identity(run)
+            and current.get("id") != run["id"] and current.get("head_branch") in {"main", RETAINED_CONTINUATION_BRANCH}
+            and retained_continuation_run_identity(current, current.get("head_sha"), current["head_branch"])
+            and retained_continuation_inputs(current.get("head_sha")))
     if repository == "soso-so-27/neko-widget" and tool_storage_formal_source_candidate(run):
         return (type(current.get("run_attempt")) is int and current["run_attempt"] == 1
             and current.get("id") != run["id"] and current.get("event") == "push" and current.get("head_branch") == "main"
@@ -9083,6 +9309,20 @@ def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt
 
 
 def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -> tuple[int, str] | None:
+    continuation_branch = env.get("GITHUB_REF") == "refs/heads/" + RETAINED_CONTINUATION_BRANCH
+    if (env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REPOSITORY"] == "soso-so-27/neko-widget"
+            and required == FULL and (continuation_branch
+                or env["GITHUB_REF"] == "refs/heads/main" and retained_continuation_inputs(env["GITHUB_SHA"]))):
+        current = api(f"/repos/{env['GITHUB_REPOSITORY']}/actions/runs/{int(env['GITHUB_RUN_ID'])}")
+        if (not retained_continuation_run_identity(current, env["GITHUB_SHA"], env["GITHUB_REF"].removeprefix("refs/heads/"))
+                or git("rev-parse", "HEAD") != env["GITHUB_SHA"]):
+            raise CorrectionEvidenceUnavailable("Continuation owning push and checkout differ")
+        proof = retained_continuation_evidence(env["GITHUB_SHA"], api, now, current_run=current,
+                                              require_plan=not continuation_branch)
+        if proof is None: raise CorrectionEvidenceUnavailable("Fixed retained continuation cannot qualify these inputs")
+        evidence_log("historical_evidence_selected", run_id=RETAINED_CONTINUATION_RUN, sha=RETAINED_CONTINUATION_SOURCE,
+                     historical_qualified_at=RETAINED_CONTINUATION_AT)
+        return RETAINED_CONTINUATION_RUN, RETAINED_CONTINUATION_SOURCE
     if env["GITHUB_EVENT_NAME"] != "push" or env["GITHUB_REF"] != "refs/heads/main":
         evidence_log("not_applicable", reason="not_main_push")
         return None
@@ -9516,6 +9756,9 @@ def main() -> None:
     }
     if runtime_checks is not None:
         values.update(build="false",smoke="false",sharing="false",app_ui="false",app_ui_lanes="[]",lanes="[]",matrix_lanes="[]")
+    retained = evidence == (RETAINED_CONTINUATION_RUN, RETAINED_CONTINUATION_SOURCE)
+    if retained:
+        values.update(build="false",smoke="false",sharing="false",app_ui="false",app_ui_lanes="[]",lanes="[]",matrix_lanes="[]")
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={value}\n")
@@ -9524,6 +9767,7 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
+        **({"retained_continuation": retained_continuation_record(env["GITHUB_SHA"])} if retained else {}),
         **({"backend_wait": tool_backend_wait} if tool_backend_wait is not None else {}),
         **({"required_backend_runs": tool_storage_requirements(evidence[1] if evidence else env["GITHUB_SHA"]),
             **({"backend_substitution_kind": TOOL_STORAGE_PR_KIND,

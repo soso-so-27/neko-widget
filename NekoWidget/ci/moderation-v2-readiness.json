@@ -2,8 +2,8 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-report-ui-continuation",
-    "issuedAtMs": 1792080640498,
-    "expiresAtMs": 1792097788721,
+    "issuedAtMs": 1792256871902,
+    "expiresAtMs": 1792339056812,
     "policyRevision": 2,
     "keyID": "moderation-v2",
     "publicKeySHA256": "8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d",
@@ -86,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "rR-9O41V-G3kwHhLn7WaaqRW1uKX0swHg89NDXh_XZgz7rYPzqLoBflN4sWfILRWHuBvfroe8ekHzZWnpjemAg"
+      "signatureBase64url": "8heNhTD8HjPEeCFIaH6Sis9ib_nWlBODBySsEudVTQsfpr3xsKneoly-Xp4i2LnubRtX1rRf0xiM1_q7gl9BDg"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "DjPJI894xXD3gidjEZ6QMXndAV90llqzV2RGA5do_s6XXV0bkhcgGW7fUNLoBftHhXB7QumhkyK4PBreWSmOCQ"
+      "signatureBase64url": "VZpCfPqNRK12Bl97B0FUiFhhnPECCoo6NhSk4uTaFhS5DI8YE_KVN8U41Bpi61Zr2e-FjNdDN-HnByf2YmyJDw"
     }
   ]
 }

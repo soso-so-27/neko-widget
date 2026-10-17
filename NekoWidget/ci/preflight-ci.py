@@ -451,7 +451,7 @@ def read_task_runs(head=None, recovery=None, metadata_repair=False):
         raise ValueError("Preflight requires a dedicated task branch")
     runs = {}
     refs = task_refs(branch)
-    if branch in {VISION_BRANCH,*planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES.values()}:
+    if branch in {VISION_BRANCH, "codex/automatic-admission-release-20261018", *planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES.values()}:
         refs.update({VISION_BRANCH,*planner.FIXTURE_NAV_DIAGNOSTIC_BRANCHES.values()})
         # This diagnostic's different branch name cannot hide task history.
         for identifier in (VISION_FAILED_RUN, VISION_DIAGNOSTIC_RUN):
@@ -985,9 +985,102 @@ def moderation_resolution_diagnostic_backend_recovery(result, runs, now=None):
             "checked_at": now.isoformat(), "native_evidence": False, "release_evidence": False}
 
 
+def retained_continuation_cost(result, proof, include_upload, history):
+    """A current plan revalidates old actual successes; it does not rerun Mac jobs."""
+    if proof is None:
+        return result
+    if (result.get("scope") != scope.FULL_SCOPE or proof.get("kind") != "fixed-retained-native-release-continuation-v1"
+            or proof.get("candidate_sha") != result.get("head")
+            or proof.get("source_sha") != "45bf221b509570e1acec50bb81421917ccb010aa"
+            or proof.get("source_run_id") != 38895003592
+            or proof.get("historical_qualified_at") != "2026-10-16T12:35:32Z"
+            or proof.get("current_readiness_verified") is not True
+            or proof.get("required_jobs") != list(planner.FULL)):
+        raise ValueError("Continuation proof does not identify the complete immutable source graph")
+    upload = float(history["upload_minutes"]) if include_upload else 0
+    if not math.isfinite(upload) or upload < 0:
+        raise ValueError("Invalid upload timing reference")
+    result["full_cost_before_continuation"] = result["cost"]
+    result["retained_candidate_continuation"] = proof
+    result["cost"] = {"status": "reference", "ci_minutes": [59 / 60, 62 / 60],
+        "with_upload_minutes": [round(59 / 60 + upload, 3), round(62 / 60 + upload, 3)],
+        "reference_runs": [38890646695, 38895003592], "samples": [],
+        "owning_jobs": [planner.PLAN_JOB], "scope_unmeasured": True,
+        "includes_future_rework": False,
+        "note": "Prior actual plan durations only. The new retention plan is unmeasured. Original successful native jobs keep their original SHAs and timestamps; current signed readiness, archive, signing and upload remain required."}
+    result["cost_review_required"] = False
+    result["ready"] = True  # The cumulative/history gate below must still pass.
+    return result
+
+
+def retained_continuation_task_gate(result, runs, now, measure_baseline):
+    """Retain every old failure and the original clock without admitting unknown work."""
+    parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    proof = result["retained_candidate_continuation"]
+    if (proof.get("kind") != "fixed-retained-native-release-continuation-v1"
+            or proof.get("candidate_sha") != result.get("head")
+            or proof.get("source_run_id") != 38895003592
+            or proof.get("current_readiness_verified") is not True
+            or proof.get("required_jobs") != list(planner.FULL)):
+        raise ValueError("Unbound continuation task proof")
+    if len({run["id"] for run in runs}) != len(runs):
+        raise ValueError("Duplicate retained task run")
+    fixed = {
+        VISION_FAILED_RUN: (VISION_FAILED_SOURCE, 2, "failure"),
+        planner.FIXTURE_NAV_RUN: (planner.FIXTURE_NAV_SOURCE, 1, "failure"),
+        38895003592: ("45bf221b509570e1acec50bb81421917ccb010aa", 1, "success"),
+    }
+    for identifier, (source, attempt, outcome) in fixed.items():
+        matches = [run for run in runs if run["id"] == identifier]
+        if (len(matches) != 1 or matches[0].get("head_sha") != source
+                or matches[0].get("run_attempt") != attempt
+                or matches[0].get("head_branch") != VISION_BRANCH
+                or matches[0].get("event") != "push" or matches[0].get("path") != IOS_WORKFLOW
+                or (matches[0].get("status"), matches[0].get("conclusion")) != ("completed", outcome)):
+            raise ValueError("Original failed attempts or successful source disappeared from history")
+    active = [run["id"] for run in runs if run.get("status") != "completed"]
+    failed = [run["id"] for run in runs if run.get("status") == "completed"
+              and run.get("conclusion") in {"failure", "timed_out", "cancelled", "startup_failure"}]
+    blockers = []
+    if active:
+        blockers.append("ci_already_running")
+    if set(failed) != {VISION_FAILED_RUN, planner.FIXTURE_NAV_RUN}:
+        blockers.append("continuation_has_unknown_failure")
+    if any(run.get("head_branch") == "codex/automatic-admission-release-20261018"
+           and run.get("event") == "push" and run.get("path") == IOS_WORKFLOW for run in runs):
+        blockers.append("continuation_candidate_already_exists")
+    if measure_baseline:
+        blockers.append("successful_native_graph_is_not_a_first_baseline")
+    first = parse(VISION_FIRST_CANDIDATE)
+    elapsed = max(0, (now - first).total_seconds() / 60)
+    if runs:
+        elapsed = max(elapsed, (now - min(parse(run["created_at"]) for run in runs)).total_seconds() / 60)
+    projected = round(elapsed + result["cost"]["with_upload_minutes"][1], 1)
+    if projected > result["target_minutes"]:
+        blockers.append("cumulative_cost_requires_replanning")
+    result["task"] = {"runs": len(runs), "failed_runs": failed, "active_runs": active,
+        "first_candidate_at": VISION_FIRST_CANDIDATE, "first_ci_at": VISION_FIRST_CI,
+        "minutes_since_first_candidate": round(elapsed, 1),
+        "minutes_since_first_ci": round(max(0, (now - parse(VISION_FIRST_CI)).total_seconds() / 60), 1),
+        "projected_total_minutes": projected, "blockers": blockers, "first_baseline_measurement": False,
+        "retained_candidate_continuation": proof,
+        "resolved_failure_attribution": {
+            str(VISION_FAILED_RUN): {"actual_success_run": planner.FIXTURE_NAV_RUN,
+                "actual_success_job": planner.FIXTURE_NAV_SOURCE_JOBS[planner.SMOKE]},
+            str(planner.FIXTURE_NAV_RUN): {"actual_success_run": 38895003592,
+                "actual_success_sha": "45bf221b509570e1acec50bb81421917ccb010aa"}},
+        "retained_photos_attempts": [[116732306461, 1], [116757527061, 2]]}
+    result["ready"] = result["ready"] and not blockers
+    result["next_action"] = ("Revalidate the retained graph in the normal plan, then create a fresh archive and upload"
+                              if result["ready"] else "Resolve the specific history or elapsed-time blocker; no automatic CI retry")
+    return result
+
+
 def apply_task_gate(result, runs, now=None, measure_baseline=False, correction_evidence=None, diagnosed_failure=None, recovery=None, diagnostic_backend_recovery=None, metadata_repair=None):
     """Release checks stay mandatory; this decides whether to spend again."""
     now = now or dt.datetime.now(dt.timezone.utc)
+    if result.get("retained_candidate_continuation") is not None:
+        return retained_continuation_task_gate(result, runs, now, measure_baseline)
     parse = lambda value: dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
     elapsed = max(0, (now - min(parse(run["created_at"]) for run in runs)).total_seconds() / 60) if runs else 0
     ci_elapsed = elapsed
@@ -1991,6 +2084,12 @@ def main(argv=None):
                 and planner.internal_report_metadata_repair_inputs(result["head"]) is not None)
             runs = (read_task_runs(result["head"], metadata_repair=True) if is_metadata_repair else
                     read_task_runs(result["head"], recovery=recovery) if recovery else read_task_runs(result["head"]))
+            retained = (planner.retained_continuation_evidence(result["head"],
+                lambda path: github(path.removeprefix("/"), raw=path.endswith("/logs")), dt.datetime.now(dt.timezone.utc))
+                if branch == "codex/automatic-admission-release-20261018" else None)
+            if branch == "codex/automatic-admission-release-20261018" and retained is None:
+                raise ValueError("Successful source graph and current signed readiness must be revalidated before a continuation push")
+            result = retained_continuation_cost(result, retained, args.include_upload, history)
             correction = None
             if result["scope"] == planner.TOOL_PRESERVATION_SCOPE:
                 if branch not in (planner.TOOL_BUILD_BRANCH, planner.TOOL_RELEASE_BRANCH): raise ValueError("Tool recovery requires its fixed candidate branch")
