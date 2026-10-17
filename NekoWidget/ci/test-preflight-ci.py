@@ -3833,6 +3833,57 @@ class RetainedContinuationPlanningTests(unittest.TestCase):
         result = copy.deepcopy(self.result)
         self.assertIs(preflight.retained_continuation_cost(result, None, True, {}), result)
 
+    def routing_prepared(self):
+        result = self.prepared()
+        routing = {"failed_run_id": 39053280523, "failed_sha": "f33a9a9278f9469ad523736283f60bc0f7c25181",
+            "failed_job_id": 117456039436, "successful_plan_run_id": 39053280533,
+            "classification": "backend-selector-routing", "product_failure": False}
+        result["retained_candidate_continuation"]["backend_selector_recovery"] = routing
+        common = dict(self.runs[-1], head_sha=routing["failed_sha"],
+                      head_branch="codex/automatic-admission-release-20261018")
+        runs = self.runs + [dict(common, id=39053280533),
+            dict(common, id=39053280523, path=planner.BILLING_WORKFLOW, conclusion="failure")]
+        return result, runs
+
+    def test_fixed_selector_failure_is_retained_pending_actual_main_backend_checks(self):
+        result, runs = self.routing_prepared()
+        gated = preflight.apply_task_gate(result, runs, self.now)
+        self.assertTrue(gated["ready"])
+        self.assertEqual(set(gated["task"]["failed_runs"]), {38825512712, 38880448128, 39053280523})
+        self.assertIn("pending fresh main backend", gated["task"]["backend_selector_repair"]["status"])
+        self.assertEqual(gated["task"]["first_candidate_at"], preflight.VISION_FIRST_CANDIDATE)
+
+    def test_selector_recovery_accounts_for_automatic_backend_execution_time(self):
+        result, _ = self.routing_prepared()
+        calculated = preflight.retained_continuation_cost(copy.deepcopy(self.result),
+            result["retained_candidate_continuation"], True, {"upload_minutes": 12.183})
+        self.assertAlmostEqual(calculated["cost"]["ci_minutes"][0], 10.85)
+        self.assertEqual(calculated["cost"]["with_upload_minutes"], [23.033, 23.033])
+        self.assertTrue(calculated["cost"]["scope_unmeasured"])
+        self.assertEqual(calculated["cost"]["automatic_backend_executions"], ["pull_request", "main push"])
+
+    def test_selector_repair_rejects_missing_mutated_or_unproven_fixed_failure(self):
+        result, runs = self.routing_prepared()
+        for index in (3, 4):
+            with self.assertRaises(ValueError):
+                preflight.apply_task_gate(copy.deepcopy(result), runs[:index] + runs[index + 1:], self.now)
+            for key, value in {"head_sha": "b" * 40, "run_attempt": 2, "conclusion": "skipped",
+                               "event": "pull_request", "path": "unknown.yml"}.items():
+                bad = copy.deepcopy(runs); bad[index][key] = value
+                with self.assertRaises(ValueError):
+                    preflight.apply_task_gate(copy.deepcopy(result), bad, self.now)
+        for key, value in {"failed_job_id": 1, "classification": "product", "product_failure": True}.items():
+            bad = copy.deepcopy(result); bad["retained_candidate_continuation"]["backend_selector_recovery"][key] = value
+            with self.assertRaises(ValueError):
+                preflight.apply_task_gate(bad, runs, self.now)
+        self.assertFalse(preflight.apply_task_gate(self.prepared(), runs, self.now)["ready"])
+
+    def test_selector_repair_cannot_hide_new_failure_active_or_another_candidate(self):
+        for outcome, status in (("failure", "completed"), ("cancelled", "completed"), (None, "in_progress"), ("success", "completed")):
+            result, runs = self.routing_prepared()
+            extra = dict(runs[-2], id=999, conclusion=outcome, status=status)
+            self.assertFalse(preflight.apply_task_gate(result, runs + [extra], self.now)["ready"])
+
 
 if __name__ == "__main__":
     unittest.main()
