@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -222,6 +224,30 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
             re.search(r"(?m)^\s*xcrun\s+simctl\s+privacy\s+grant\b", harness),
             "The smoke test must not bypass the real system permission prompt.",
         )
+
+
+class BlockingVisionWorkQueueTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("swiftc"), "Swift compiler unavailable; queue runtime not verified here")
+    def test_actual_queue_bounds_cancellation_and_result_delivery(self) -> None:
+        scanner = (CI_DIRECTORY.parent / "NekoWidget/Services/PhotoLibraryScanner.swift").read_text(encoding="utf-8")
+        start_marker = "// BEGIN BLOCKING_VISION_WORK_QUEUE\n"
+        end_marker = "// END BLOCKING_VISION_WORK_QUEUE\n"
+        self.assertEqual(scanner.count(start_marker), 1)
+        self.assertEqual(scanner.count(end_marker), 1)
+        queue = scanner.split(start_marker, 1)[1].split(end_marker, 1)[0]
+        tests = (CI_DIRECTORY / "fixtures/vision-work-queue-runtime.swift").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "QueueLifecycle.swift"
+            binary = Path(directory) / "QueueLifecycle"
+            source.write_text("import Foundation\n" + queue + "\n" + tests, encoding="utf-8")
+            compiled = subprocess.run(
+                [shutil.which("swiftc"), "-swift-version", "5", "-parse-as-library", str(source), "-o", str(binary)],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+            executed = subprocess.run([str(binary)], capture_output=True, text=True, timeout=45)
+            self.assertEqual(executed.returncode, 0, executed.stdout + executed.stderr)
+            self.assertEqual(executed.stdout.count("PASS "), 6, executed.stdout)
 
 
 if __name__ == "__main__":

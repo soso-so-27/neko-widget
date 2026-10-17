@@ -99,7 +99,12 @@ export class BillingGateway extends WorkerEntrypoint<Env> {
  * storage, or expose a public route. The caller supplies an already signed
  * owner-to-billing link; Apple verification and durable leases remain shared.
  */
-export class RetentionBillingObserver extends WorkerEntrypoint<Env & { PRESERVATION_RETENTION_REFRESH_ENABLED?: string }> {
+type RetentionBillingEnv = Env & {
+  PRESERVATION_RETENTION_REFRESH_ENABLED?: string;
+  PRESERVATION_SANDBOX_REACTIVATION_WINDOW_JSON?: string;
+};
+
+export class RetentionBillingObserver extends WorkerEntrypoint<RetentionBillingEnv> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method !== 'POST' || url.pathname !== '/internal/retention/refresh' || url.search) {
@@ -147,14 +152,30 @@ export class RetentionBillingObserver extends WorkerEntrypoint<Env & { PRESERVAT
  * rotate through oldest stale lineages; all must be fresh before returning.
  * Existing leases/backoff are never reset, including on a disconnected caller.
  */
-export async function refreshRetentionBilling(env: Env, billingAccountId: string,
+function sandboxReactivationWindowOpen(env: RetentionBillingEnv, billingAccountId: string, now: number): boolean {
+  const raw = env.PRESERVATION_SANDBOX_REACTIVATION_WINDOW_JSON;
+  if (typeof raw !== 'string' || raw.length > 512) return false;
+  try {
+    const value = JSON.parse(raw);
+    return value !== null && !Array.isArray(value)
+      && Object.keys(value).sort().join(',') === 'billingAccountId,expiresAtMs,startsAtMs,version'
+      && value.version === 1 && value.billingAccountId === billingAccountId
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value.billingAccountId)
+      && Number.isSafeInteger(value.startsAtMs) && value.startsAtMs > 0
+      && Number.isSafeInteger(value.expiresAtMs) && value.expiresAtMs > value.startsAtMs
+      && value.expiresAtMs - value.startsAtMs <= 24 * 60 * 60 * 1000
+      && value.startsAtMs <= now && now < value.expiresAtMs;
+  } catch { return false; }
+}
+
+export async function refreshRetentionBilling(env: RetentionBillingEnv, billingAccountId: string,
   fetchStatus: AppleSubscriptionStatusFetcher = fetchAppleSubscriptionStatusViaService): Promise<void> {
       const read = () => env.DB.prepare(`SELECT l.original_transaction_id,l.environment,l.subscription_group_id,
-        c.source_fetched_at_ms,c.authority_stale_at_ms FROM billing_transaction_lineages l
+        c.source_fetched_at_ms,c.authority_stale_at_ms,c.materialized_grants_plus FROM billing_transaction_lineages l
         LEFT JOIN billing_effective_entitlement_current c ON c.original_transaction_id=l.original_transaction_id
           AND c.billing_account_id=l.billing_account_id AND c.environment=l.environment AND c.subscription_group_id=l.subscription_group_id
         WHERE l.billing_account_id=? ORDER BY c.source_fetched_at_ms,l.original_transaction_id LIMIT 9`).bind(billingAccountId)
-        .all<{original_transaction_id:string;environment:string;subscription_group_id:string;source_fetched_at_ms:number|null;authority_stale_at_ms:number|null}>();
+        .all<{original_transaction_id:string;environment:string;subscription_group_id:string;source_fetched_at_ms:number|null;authority_stale_at_ms:number|null;materialized_grants_plus:number|null}>();
       const valid = (rows: Awaited<ReturnType<typeof read>>) => rows.results.length > 0 && rows.results.length <= 8
         && rows.results.every(row => row.environment === env.BILLING_STORE_ENVIRONMENT
           && row.subscription_group_id === env.BILLING_SUBSCRIPTION_GROUP_ID);
@@ -165,7 +186,13 @@ export async function refreshRetentionBilling(env: Env, billingAccountId: string
       const now = Date.now(), seconds = Math.floor(now / 1000);
       const fresh = (row: (typeof rows.results)[number], now: number) =>
         row.source_fetched_at_ms !== null && row.source_fetched_at_ms <= now
-            && now - row.source_fetched_at_ms < 24 * 60 * 60 * 1000 && row.authority_stale_at_ms !== null
+            // Only a finite, explicitly configured existing-owner test window
+            // may shorten a negative Sandbox cache. Missing/invalid/expired
+            // settings retain the daily cache and shared verifier budget.
+            && now - row.source_fetched_at_ms < (env.BILLING_STORE_ENVIRONMENT === 'Sandbox'
+              && row.materialized_grants_plus === 0 && sandboxReactivationWindowOpen(env, billingAccountId, now)
+                ? 15 * 60 * 1000 : 24 * 60 * 60 * 1000)
+            && row.authority_stale_at_ms !== null
             && row.authority_stale_at_ms > now;
       const row = rows.results.find(row => !fresh(row, now));
       if (row) {

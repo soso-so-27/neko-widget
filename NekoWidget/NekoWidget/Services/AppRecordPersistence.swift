@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import StoreKit
 import AuthenticationServices
 import ImageIO
 import UIKit
@@ -851,6 +852,7 @@ struct AppRecordSettingsView: View {
     @State private var confirmsLocal = false
     @State private var confirmsRemote = false
     @State private var confirmsMembership = false
+    @State private var showsSubscriptionManagement = false
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
          persistence: AppRecordPersistence = .shared) {
         _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client))
@@ -915,6 +917,11 @@ struct AppRecordSettingsView: View {
                     if let message = authentication.membershipMessage { Text(message).font(.footnote) }
                     Button("会員情報を確認") { authentication.checkMembership() }
                         .disabled(authentication.isBusy || authentication.membershipLoading)
+                    if authentication.membership?.linked == true {
+                        Button("Appleの契約を確認") { showsSubscriptionManagement = true }
+                            .disabled(authentication.isBusy)
+                            .accessibilityIdentifier("app-record-membership-manage")
+                    }
                 } header: { Text("会員情報") }
             }
             Section {
@@ -924,6 +931,10 @@ struct AppRecordSettingsView: View {
             }
         }
         .navigationTitle("保存・復元")
+        .manageSubscriptionsSheet(isPresented: $showsSubscriptionManagement)
+        .onChange(of: showsSubscriptionManagement) { _, presented in
+            if !presented { authentication.checkMembership() }
+        }
         .task { authentication.start() }
         .onDisappear { authentication.stop() }
         .onChange(of: authentication.membership?.canSave) { _, canSave in

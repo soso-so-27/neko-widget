@@ -4,7 +4,7 @@
 
 本人限定の自動保存受付は2026-10-16 08:44 JSTに切替済み。期限は翌17日08:44 JST、既存owner1件・新規登録0・追加PUT100試行/128MiB・新規記録100試行/128MiB。元のカウンター、試用、31件の既存記録は維持した。今回は一般提供の人数・容量設計ではない。
 
-## 現在の到達点（10:46 UTC）
+## 現在の到達点（11:00 UTC）
 
 6fdf81b0の正式run38880448128では、同期Visionを共有・上限付きOperationQueueへ移す修正を含むBuildとPhotosが成功した。Photosは元の準備を含む29開始・28成功・意図されたmovie skip1、失敗0。元Grantは32.229秒で成功し、診断だけを配布資格へ流用していない。両OS runtime、Solo2、otherも成功し、残りの元jobは継続中。旧9cのPhotos失敗2回と直接原因未確定の事実は履歴に残す。
 
@@ -17,6 +17,16 @@ Solo1の最大文字ケースは、最初のムービー詳細を閉じ、戻る
 元run全8job完了後、承認control取込後のexact候補Kで元LargestTextとwhite Galleryを各1case診断し、同じKを通常候補にする。shared graphはfull8を維持する。共通helper変更で両Galleryをfreshにし、既存workflowの依存によりruntimeもfreshになるため、新Build＋両Solo＋runtime＋両Galleryの6jobを実行する。Photosとotherの2jobだけをexact2ファイルのblob pair・全tracked閉包・scenario不変・各実成功を再照合した場合に保持する。失敗2件を無視した3fresh案は不採用。release CLI/workflowは変更しない。追加失敗・未完了・未知差分は停止する。
 
 初回候補は2026-10-15 23:31:48.229 UTC。750分見込みは新失敗により超過見込みで、累計840分へ再計画した。残る元runの待機、15〜25分の焦点確認、変更範囲の正式確認、uploadの実績参考を含む残り2〜3時間の見込みであり、達成保証や新scopeの実測ではない。980円・既存契約と枠を維持し、新有料契約・AWS Paid・定期作成/再実行・一般受付・grant/期限/counter resetは0。gateway候補は未配備・短周期窓は未設定で、現在の6fdf用writerをfixture後のsourceへ流用しない。
+
+PR340の123f376b controlは、ローカル必須15検査247.3秒と通常CI38890646695のplan必須3step実成功・native0を確認し、本線28d02d54へ反映した。候補にはその本線を取り込む。診断の同ref並行取消を避ける固定2branchに同じ最終Kを使い、両方の実成功前には通常候補を開始しない。
+
+## 09:00 UTC時点の記録（履歴）
+
+候補c60921fcで、Visionの同期画像判定をSwiftの協調実行task内から、共有かつ上限付きのFoundation OperationQueueへ移した。待機中の取消は一度だけ完了して画像を解放し、実行中の取消は判定の完了までjoinする。世代をまたいでも同じ上限を使う。判定の閾値・入出力・元UI test・45秒条件・権限・TCC validatorは維持した。
+
+診断9098ee09/run38875746477は08:45:01〜08:56:52 UTCの11分51秒で成功。実製品のqueue部分を抽出したMac単体10件はskip0、元のGrant1件は30.564秒で成功した。fresh0→6枚、新規解析6・再利用0、実TCC checkpointも確認した。診断は無関係の準備を省いた条件であり、元のAX停止原因や通常full8の成功を証明しない。元run38825512712の失敗と初回候補23:31:48.229 UTCからの累計を保持する。次は今回の固定診断を認識する限定preflight controlを先に本線承認し、製品候補の通常full8＋同SHAのSharing/Preservationを実行する。CI＋uploadの今後の計画参考は120〜150分、既に費やした時間とは分ける。
+
+08:53 UTCのクラウド再読取では保存31件・同じ既存owner/key/会員リンク・期限切れSandbox会員情報を確認し、設定/secret/cron/公開範囲/利用枠/counterは切替済みreceiptと一致した。追加のDB書込は0。確認コンテナの月間残予算は読取専用入口がないため未確認であり、設定上限10時間を実残として扱わない。gatewayの有限窓対応コードはまだ未配備で、短周期窓は本人の実更新報告前には設定しない。
 
 以下は修正前の診断履歴。
 
