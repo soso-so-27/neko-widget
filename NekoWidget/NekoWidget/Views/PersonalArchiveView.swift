@@ -327,6 +327,7 @@ struct PersonalArchiveRecordView: View {
     @State private var localNoteWeight: PhotoMemoWeightValue?
     @State private var resolving = false
     @State private var preservingWithService = false
+    @State private var showsCopyStatus = false
 
     private var servicePreservationEnabled: Bool {
 #if DEBUG
@@ -347,6 +348,9 @@ struct PersonalArchiveRecordView: View {
                     MemoArchivePhoto(data: data, allowsExpansion: true)
                 }
             } status: {
+                Text("iCloudの保管コピー")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("personal-archive-copy-location")
                 if record.isDeletionPending || record.state != .stored {
                 Text(record.isDeletionPending ? "削除待ち・完了するまで、このiPhoneに内容を残しています" : record.state.archiveLabel)
                     .font(.caption).foregroundStyle(.secondary)
@@ -391,7 +395,16 @@ struct PersonalArchiveRecordView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    if servicePreservationEnabled {
+                    Button { showsCopyStatus = true } label: {
+                        Label("このメモの保存状況", systemImage: "checkmark.icloud")
+                    }
+                    .accessibilityIdentifier("personal-archive-copy-status-open")
+                    Divider()
+#if DEBUG
+                    // Keep the old selected-copy fixture isolated from the
+                    // release route. It does not validate automatic-save UI.
+                    if servicePreservationEnabled,
+                       CommandLine.arguments.contains("--memory-service-preservation-entry-fixture") {
                         Button { preservingWithService = true } label: {
                             Label("保存状況", systemImage: "checkmark.icloud")
                         }
@@ -399,6 +412,7 @@ struct PersonalArchiveRecordView: View {
                         .accessibilityIdentifier("memory-note-managed-preserve")
                         Divider()
                     }
+#endif
                     Button(record.jpegData == nil ? "メモのみを書き出す" : "写真とメモを書き出す",
                            systemImage: "square.and.arrow.up") { exportRecord() }
                         .disabled(record.isDeletionPending || record.state == .conflict ||
@@ -427,7 +441,7 @@ struct PersonalArchiveRecordView: View {
         .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
             .receive(on: DispatchQueue.main)) { _ in
                 exporter.invalidate()
-                account = nil; editing = false; preservingWithService = false; dismiss()
+                account = nil; editing = false; preservingWithService = false; showsCopyStatus = false; dismiss()
             }
         .sheet(item: $exporter.payload) { value in
             RecordExportActivity(payload: value) { exporter.finishSharing(value, failed: $0) }
@@ -438,15 +452,19 @@ struct PersonalArchiveRecordView: View {
             if phase == .active { exporter.retryCleanup() }
         }
         .onDisappear { exporter.cancelPreparation() }
-        .sheet(isPresented: $preservingWithService) {
+        .sheet(isPresented: $showsCopyStatus) {
+            if let account {
+                PersonalArchiveCopyStatusView(recordID: record.id, store: store,
+                    noteStore: noteStore, expectedAccount: account)
+            }
+        }
 #if DEBUG
+        .sheet(isPresented: $preservingWithService) {
             if CommandLine.arguments.contains("--memory-service-preservation-entry-fixture"), let account {
                 ManagedPreservationPhotoView(archiveRecordID: record.id, archiveStore: store, expectedAccount: account)
-            } else { NavigationStack { AppRecordSettingsView() } }
-#else
-            NavigationStack { AppRecordSettingsView() }
-#endif
+            }
         }
+#endif
         .sheet(isPresented: $editing, onDismiss: { Task { await reloadAfterEdit() } }) {
             if let account {
                 PhotoMemoryNoteEditor(archiveRecord: record, archiveStore: store,
@@ -557,6 +575,112 @@ struct PersonalArchiveRecordView: View {
         } catch {
             if let latest = try? await store.records().first(where: { $0.id == record.id }) { record = latest }
             errorMessage = personalArchiveMessage(for: error)
+        }
+    }
+}
+
+/// The selected iCloud copy has its own status. Opening this view never
+/// retries an outbox, uploads, enrolls a memo, or enables automatic saving.
+private struct PersonalArchiveCopyStatusView: View {
+    let recordID: UUID
+    let store: PersonalArchiveStore
+    let noteStore: PhotoMemoryNoteStore
+    let expectedAccount: String
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var record: PersonalArchiveRecord?
+    @State private var pendingMemo = false
+    @State private var memoConflict = false
+    @State private var loading = true
+    @State private var error: String?
+    @State private var generation = UUID()
+
+    private var status: String {
+        guard let record else { return "このコピーは見つかりません" }
+        if record.state == .conflict || memoConflict { return "変更の確認が必要です" }
+        if record.isDeletionPending {
+            return record.state == .stored ? "iCloudから削除済み" : "iCloudからの削除待ち"
+        }
+        if pendingMemo || record.state == .pending { return "iCloudへの反映待ち" }
+        if record.state == .partial { return "写真の読み込みが未完了です" }
+        if record.issue != nil { return "保存状態を確認できません" }
+        return "iCloudに保存済み"
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("このコピーの保存先はiCloudです。ここでは、この写真メモの反映状況を表示します。")
+                    if loading {
+                        ProgressView("状態を確認しています…")
+                    } else if let error {
+                        Text(error).foregroundStyle(.secondary)
+                    } else {
+                        Text(status).accessibilityIdentifier("personal-archive-copy-status-value")
+                        if let issue = record?.issue {
+                            Text(personalArchiveMessage(for: issue)).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("このiPhoneで確認できた、このコピーの状態です。")
+                }
+            }
+            .accessibilityIdentifier("personal-archive-copy-status")
+            .navigationTitle("このメモの保存状況")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                        .accessibilityIdentifier("personal-archive-copy-status-close")
+                }
+            }
+        }
+        .task { await load() }
+        .onChange(of: scenePhase) { _, phase in
+            invalidate()
+            if phase == .active { Task { await load() } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
+            .receive(on: DispatchQueue.main)) { _ in
+                invalidate(); dismiss()
+            }
+        .onReceive(NotificationCenter.default.publisher(for: .appRecordsCommitted)
+            .receive(on: DispatchQueue.main)) { _ in
+                invalidate()
+                if scenePhase == .active { Task { await load() } }
+            }
+        .onDisappear { invalidate() }
+    }
+
+    private func invalidate() {
+        generation = UUID(); record = nil; pendingMemo = false; memoConflict = false
+        loading = true; error = nil
+    }
+
+    @MainActor private func load() async {
+        invalidate()
+        let token = generation
+        do {
+            let account = try await store.verifiedAccount(expectedAccount: expectedAccount)
+            let bindings = try await noteStore.archiveBindings()
+            let binding = bindings.first { $0.recordID == recordID && $0.accountKey == account.key }
+            // Read only this copy, including a pending deletion. A list read
+            // would unnecessarily load every archived photo.
+            let current = try await store.memoRecord(id: recordID, expectedAccount: expectedAccount)
+            guard try await store.verifiedAccount(expectedAccount: expectedAccount) == account else {
+                throw PersonalArchiveError.accountChanged
+            }
+            guard generation == token, !Task.isCancelled, scenePhase == .active else { return }
+            record = current
+            pendingMemo = binding?.pending != nil || binding?.inFlight != nil
+            memoConflict = binding?.pending?.conflictLocalRevision != nil
+                || binding?.inFlight?.conflictLocalRevision != nil
+                || (!pendingMemo && binding != nil && binding?.archiveRevision != current?.revision)
+            loading = false
+        } catch {
+            guard generation == token, !Task.isCancelled, scenePhase == .active else { return }
+            record = nil; self.error = personalArchiveMessage(for: error); loading = false
         }
     }
 }

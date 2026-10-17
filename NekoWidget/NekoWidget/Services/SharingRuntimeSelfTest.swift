@@ -22,6 +22,146 @@ final class PreservationExportClock: @unchecked Sendable {
     func now() -> Date { lock.lock(); defer { lock.unlock() }; return Date().addingTimeInterval(offset) }
 }
 
+/// Synthetic device-only origins and real P256 verification; no Apple/network traffic.
+private actor PreservationDeviceOSFixture {
+    var state = ManagedPreservationClient.AppleCredentialState.authorized
+    var fails = false
+    var hold = false
+    private var waiting: CheckedContinuation<Void, Never>?
+    func configure(_ state: ManagedPreservationClient.AppleCredentialState = .authorized,
+                   fails: Bool = false, hold: Bool = false) { self.state = state; self.fails = fails; self.hold = hold }
+    func entered() -> Bool { waiting != nil }
+    func release() { hold = false; waiting?.resume(); waiting = nil }
+    func read(_ user: String) async throws -> ManagedPreservationClient.AppleCredentialState {
+        guard user == "synthetic-apple-user" else { throw ManagedPreservationError.invalidResponse }
+        if hold { await withCheckedContinuation { waiting = $0 } }
+        if fails { throw ManagedPreservationError.unavailable }
+        return state
+    }
+}
+
+private actor PreservationDeviceSessionFixtureServer {
+    enum Outcome: Equatable, Sendable { case success, lostResponse, unavailable, unauthorized, wrongOwner, heldRenewal, heldRead }
+    let owner: String; let grant: String; let key: Data; let now: @Sendable () -> Date
+    private var challenges: [String: (nonce: String, path: String)] = [:]
+    private var held: CheckedContinuation<Void, Never>?
+    private var outcome: Outcome = .success
+    private(set) var renewals = 0
+    private(set) var revocations = 0
+    init(owner: String, grant: String, key: Data, now: @escaping @Sendable () -> Date) {
+        self.owner = owner; self.grant = grant; self.key = key; self.now = now
+    }
+    func configure(_ value: Outcome) { outcome = value }
+    func entered() -> Bool { held != nil }
+    func release() { held?.resume(); held = nil; outcome = .success }
+    private func opaqueToken() throws -> String {
+        var data = Data(count: 32)
+        let status = data.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        guard status == errSecSuccess else { throw ManagedPreservationError.secureStorage }
+        return PreservationDeviceProof.encoded(data)
+    }
+    private func bytes(_ text: Substring) throws -> Data {
+        var value = String(text).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
+        guard let decoded = Data(base64Encoded: value) else { throw ManagedPreservationError.invalidResponse }
+        return decoded
+    }
+    private func verify(_ proof: String, challenge: String, url: URL) throws {
+        let parts = proof.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3, let expected = challenges.removeValue(forKey: challenge), expected.path == url.path,
+              let header = try JSONSerialization.jsonObject(with: bytes(parts[0])) as? [String: Any],
+              header["alg"] as? String == "ES256", header["typ"] as? String == "dpop+jwt",
+              let jwk = header["jwk"] as? [String: String],
+              let claims = try JSONSerialization.jsonObject(with: bytes(parts[1])) as? [String: Any],
+              claims["v"] as? Int == 1, claims["jti"] as? String == challenge,
+              claims["sub"] as? String == grant, claims["nonce"] as? String == expected.nonce,
+              claims["htm"] as? String == "POST", claims["htu"] as? String == url.absoluteString,
+              let issued = claims["iat"] as? Int, let expires = claims["exp"] as? Int,
+              issued <= Int(now().timeIntervalSince1970) + 30, expires > Int(now().timeIntervalSince1970),
+              0 < expires-issued, expires-issued <= 120 else { throw ManagedPreservationError.invalidResponse }
+        let publicKey = try PreservationDeviceProof.publicKey(key)
+        guard jwk == ["kty": publicKey.kty, "crv": publicKey.crv, "x": publicKey.x, "y": publicKey.y],
+              try P256.Signing.PrivateKey(rawRepresentation: key).publicKey.isValidSignature(
+                P256.Signing.ECDSASignature(rawRepresentation: bytes(parts[2])),
+                for: Data((String(parts[0]) + "." + String(parts[1])).utf8)) else { throw ManagedPreservationError.invalidResponse }
+    }
+    func respond(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        guard let url = request.url, url.host?.hasSuffix(".device-session-fixture.invalid") == true else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        func response(_ object: [String: Any], status: Int = 200) throws -> (Data, URLResponse) {
+            (status == 204 ? Data() : try JSONSerialization.data(withJSONObject: object),
+             HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"])!)
+        }
+        if request.httpMethod == "GET", url.path == "/v1/membership" {
+            if outcome == .heldRead { await withCheckedContinuation { held = $0 } }
+            return try response(["error": ["code": "unauthorized"]], status: 401)
+        }
+        guard request.httpMethod == "POST", let data = request.httpBody,
+              let body = try JSONSerialization.jsonObject(with: data) as? [String: String], body["grantId"] == grant else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        if url.path == "/v1/auth/session-challenges" {
+            guard let purpose = body["purpose"], ["renew", "revoke"].contains(purpose) else { throw ManagedPreservationError.invalidResponse }
+            let id = try opaqueToken(), nonce = try opaqueToken()
+            challenges[id] = (nonce, purpose == "renew" ? "/v1/auth/session-renewals" : "/v1/auth/session-revocations")
+            return try response(["challengeId": id, "nonce": nonce,
+                "expiresAt": ManagedPreservationWire.string(now().addingTimeInterval(120))])
+        }
+        guard let id = body["challengeId"], let proof = body["deviceProof"] else { throw ManagedPreservationError.invalidResponse }
+        try verify(proof, challenge: id, url: url)
+        if url.path == "/v1/auth/session-revocations" { revocations += 1; return try response([:], status: 204) }
+        guard url.path == "/v1/auth/session-renewals" else { throw ManagedPreservationError.invalidResponse }
+        renewals += 1
+        let selected = outcome
+        if selected == .heldRenewal { await withCheckedContinuation { held = $0 } }
+        if selected == .lostResponse { throw URLError(.networkConnectionLost) }
+        if selected == .unavailable { return try response(["error": ["code": "auth_unavailable"]], status: 503) }
+        if selected == .unauthorized { return try response(["error": ["code": "unauthorized"]], status: 401) }
+        try await Task.sleep(for: .milliseconds(20))
+        return try response(["token": String(repeating: "r", count: 42) + String(renewals % 10),
+            "ownerId": selected == .wrongOwner ? UUID().uuidString.lowercased() : owner,
+            "expiresAt": ManagedPreservationWire.string(now().addingTimeInterval(900)),
+            "deviceGrant": ["grantId": grant, "idleExpiresAt": ManagedPreservationWire.string(now().addingTimeInterval(30 * 86400))]])
+    }
+}
+
+private struct PreservationDeviceSessionFixture {
+    let configuration: ManagedPreservationConfiguration
+    let clock: PreservationExportClock
+    let os: PreservationDeviceOSFixture
+    let server: PreservationDeviceSessionFixtureServer
+    let store: ManagedPreservationSessionStore
+    let initial: ManagedPreservationSessionStore.Credential
+    static func make() throws -> Self {
+        let origin = URL(string: "https://" + UUID().uuidString.lowercased() + ".device-session-fixture.invalid")!
+        let clock = PreservationExportClock(), os = PreservationDeviceOSFixture()
+        let key = P256.Signing.PrivateKey().rawRepresentation
+        let owner = UUID().uuidString.lowercased(), grant = UUID().uuidString.lowercased()
+        let prepared = ManagedPreservationSessionStore.Credential(token: String(repeating: "a", count: 43),
+            ownerId: owner, expiresAt: clock.now().addingTimeInterval(900),
+            deviceGrant: .init(grantId: grant, idleExpiresAt: clock.now().addingTimeInterval(30 * 86400), appleUserID: "synthetic-apple-user"),
+            devicePrivateKey: key)
+        let store = ManagedPreservationSessionStore(origin: origin.absoluteString)
+        guard try store.save(prepared, replacing: nil), let initial = try store.load() else { throw ManagedPreservationError.secureStorage }
+        return Self(configuration: .init(isEnabled: true, origin: origin, membershipAudience: "preservation.device-fixture"),
+            clock: clock, os: os, server: PreservationDeviceSessionFixtureServer(owner: owner, grant: grant, key: key, now: { clock.now() }),
+            store: store, initial: initial)
+    }
+    func client() -> ManagedPreservationClient {
+        ManagedPreservationClient(configuration: configuration,
+            requestOverride: { request, _ in try await server.respond(request) },
+            sessionNow: { clock.now() }, credentialState: { user in try await os.read(user) })
+    }
+    func cleanup() {
+        if let current = try? store.load() { _ = try? store.clear(ifMatching: current) }
+        if let receipt = try? store.deletionReceipt(), receipt.state == .unconfirmed { try? store.clearRejectedDeletion(receipt) }
+    }
+}
+
 enum PreservationFixtureScenario: Sendable {
     case success, firstFailure, lostResult, wrongOwner, wrongAudience, wrongPath, tamperedBody, expired, changedKey, changedSession, missingKey, wrongInstallation
     case changedKeyAfterLink, changedSessionAfterLink, changedKeyDuringStatus, changedSessionDuringStatus, saveRejected
@@ -112,8 +252,8 @@ actor PreservationFixtureServer {
         }
         if authRequest && url.path == "/v1/auth/challenges" {
             authIssues += 1
-            return try json(["challengeId": "export-test-challenge", "challengeProof": "export-test-proof",
-                "nonce": "export-test-nonce", "expiresAt": ManagedPreservationWire.string(Date().addingTimeInterval(300))])
+            return try json(["challengeId": String(repeating: "c", count: 43), "challengeProof": "export-test-proof",
+                "nonce": String(repeating: "n", count: 43), "expiresAt": ManagedPreservationWire.string(Date().addingTimeInterval(300))])
         }
         if authRequest && url.path == "/v1/auth/sessions" {
             authExchanges += 1
@@ -121,7 +261,8 @@ actor PreservationFixtureServer {
                 token: renewalOutcome == .unchangedToken ? session.token
                     : BillingProtocolCodec.base64URLEncode(Data((0..<32).map { _ in UInt8.random(in: 0...255) })),
                 ownerId: renewalOutcome == .otherOwner ? UUID().uuidString.lowercased() : session.ownerId,
-                expiresAt: Date().addingTimeInterval(900))
+                expiresAt: Date().addingTimeInterval(900), deviceGrant: .init(grantId: UUID().uuidString.lowercased(),
+                    idleExpiresAt: Date().addingTimeInterval(30 * 86400), appleUserID: "synthetic-apple-user"))
             renewedSession = replacement
             if renewalOutcome == .changedGeneration { inventoryGeneration += 1 }
             return try reply(ManagedPreservationWire.encoder().encode(replacement))
@@ -343,7 +484,8 @@ struct PreservationNativeFixture: Sendable {
         let server = PreservationFixtureServer(session: session, billing: billing, keys: keys, store: store, scenario: scenario)
         let client = ManagedPreservationClient(configuration: configuration,
             billingIdentity: .init(credential: { keys.load() }, installation: { scenario == .wrongInstallation ? UUID() : installation }),
-            requestOverride: { request, maximum in try await server.request(request, maximum: maximum) }, exportNow: exportNow)
+            requestOverride: { request, maximum in try await server.request(request, maximum: maximum) }, exportNow: exportNow,
+            credentialState: { _ in .authorized })
         return Self(configuration: configuration, client: client, server: server, store: store, session: session)
     }
     func cleanup() throws {
@@ -10517,7 +10659,7 @@ actor SharingRuntimeSelfTestRunner {
                     guard await fixture.server.exportCounts().pages == 1 else { throw ManagedPreservationError.invalidResponse }
                     let challenge = try await fixture.client.prepareExportSignIn(replacing: previous)
                     try await fixture.client.finishSignIn(state: challenge.state, identityToken: Data("synthetic".utf8),
-                                                         authorizationCode: Data("synthetic".utf8))
+                                                         authorizationCode: Data("synthetic".utf8), appleUserID: "synthetic-apple-user")
                     clock.advance(0)
                     return try await fixture.client.captureSessionCheckpoint()
                 }, progress: { count, _ in if count == 50 { clock.advance(500) } })
@@ -10614,8 +10756,8 @@ actor SharingRuntimeSelfTestRunner {
                 let body: [String: Any]
                 let status: Int
                 if url.path == "/v1/auth/challenges" {
-                    body = ["challengeId": "synthetic-challenge", "challengeProof": "synthetic-proof",
-                            "nonce": "synthetic-nonce", "expiresAt": try ManagedPreservationWire.string(Date().addingTimeInterval(300))]
+                    body = ["challengeId": String(repeating: "c", count: 43), "challengeProof": "synthetic-proof",
+                            "nonce": String(repeating: "n", count: 43), "expiresAt": try ManagedPreservationWire.string(Date().addingTimeInterval(300))]
                     status = 200
                 } else if url.path == "/v1/auth/sessions" {
                     exchanges += 1
@@ -10637,7 +10779,7 @@ actor SharingRuntimeSelfTestRunner {
         _ = try await client.prepareSignIn()
         do {
             try await client.finishSignIn(state: "wrong-state", identityToken: Data("synthetic-token".utf8),
-                                          authorizationCode: Data("synthetic-code".utf8))
+                                          authorizationCode: Data("synthetic-code".utf8), appleUserID: "synthetic-apple-user")
             throw ManagedPreservationError.invalidResponse
         } catch ManagedPreservationError.authenticationStepFailed(.state) { }
         guard await requests.exchanges == 0, try await !client.hasSession() else {
@@ -10646,7 +10788,7 @@ actor SharingRuntimeSelfTestRunner {
         let challenge = try await client.prepareSignIn()
         do {
             try await client.finishSignIn(state: challenge.state, identityToken: Data("synthetic-token".utf8),
-                                          authorizationCode: Data("synthetic-code".utf8))
+                                          authorizationCode: Data("synthetic-code".utf8), appleUserID: "synthetic-apple-user")
             throw ManagedPreservationError.invalidResponse
         } catch ManagedPreservationError.pilotRegistrationPending { }
         guard await requests.exchanges == 1, try await !client.hasSession() else {
@@ -10670,6 +10812,141 @@ actor SharingRuntimeSelfTestRunner {
             throw ManagedPreservationError.invalidResponse
         }
         coordinator.stop()
+    }
+
+    @MainActor
+    private static func testManagedPreservationDeviceSessionRenewal() async throws {
+        func wait(_ condition: () async -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(3)
+            while !(await condition()) {
+                guard ContinuousClock.now < deadline else { throw ManagedPreservationError.interrupted }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        func replacement(_ f: PreservationDeviceSessionFixture) -> ManagedPreservationSessionStore.Credential {
+            .init(token: String(repeating: "z", count: 43), ownerId: UUID().uuidString.lowercased(),
+                  expiresAt: Date(timeIntervalSince1970: f.clock.now().timeIntervalSince1970.rounded(.down) + 900))
+        }
+        let first = try PreservationDeviceSessionFixture.make()
+        defer { first.cleanup() }
+        let client = first.client()
+        guard try await client.hasSession() else { throw ManagedPreservationError.invalidResponse }
+        first.clock.advance(901) // Actual source lifetime is 15 minutes, not a one-hour fixture.
+        guard try await !client.hasSession(), try first.store.load() == first.initial else {
+            throw ManagedPreservationError.secureStorage
+        }
+        var binding = AppRecordPersistence.Binding(version: 1, origin: first.store.origin,
+            owner: first.initial.ownerId, consent: AppRecordPersistence.consentVersion, enabled: true)
+        binding.fingerprint = "unchanged"
+        for _ in 0..<8 where AppRecordPersistence.needsAuthenticatedWork(binding, fingerprint: "unchanged", requested: false) {
+            _ = try await client.prepareSession(expectedOwner: first.initial.ownerId)
+        }
+        guard await first.server.renewals == 0,
+              AppRecordPersistence.needsAuthenticatedWork(binding, fingerprint: "changed", requested: false),
+              AppRecordPersistence.needsAuthenticatedWork(binding, fingerprint: "unchanged", requested: true) else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let other = first.client()
+        async let a = client.prepareSession(expectedOwner: first.initial.ownerId)
+        async let b = other.prepareSession(expectedOwner: first.initial.ownerId)
+        let (ca, cb) = try await (a, b)
+        guard ca.ownerID == first.initial.ownerId, cb.ownerID == first.initial.ownerId,
+              await first.server.renewals == 1, let renewed = try first.store.load(),
+              renewed.token != first.initial.token, renewed.devicePrivateKey == first.initial.devicePrivateKey,
+              renewed.deviceGrant?.appleUserID == first.initial.deviceGrant?.appleUserID else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let restarted = first.client()
+        _ = try await restarted.prepareSession(expectedOwner: first.initial.ownerId)
+        guard await first.server.renewals == 1 else { throw ManagedPreservationError.invalidResponse }
+
+        for outcome in [PreservationDeviceSessionFixtureServer.Outcome.lostResponse, .unavailable, .wrongOwner] {
+            let f = try PreservationDeviceSessionFixture.make(); defer { f.cleanup() }
+            f.clock.advance(901); await f.server.configure(outcome)
+            var rejected = false
+            do { _ = try await f.client().prepareSession(expectedOwner: f.initial.ownerId) } catch { rejected = true }
+            guard rejected, await f.server.renewals == 1, try f.store.load() == f.initial else {
+                throw ManagedPreservationError.secureStorage
+            }
+            await f.server.configure(.success)
+            _ = try await f.client().prepareSession(expectedOwner: f.initial.ownerId)
+            guard await f.server.renewals == 2 else { throw ManagedPreservationError.invalidResponse }
+        }
+        let osFailure = try PreservationDeviceSessionFixture.make(); defer { osFailure.cleanup() }
+        osFailure.clock.advance(901); await osFailure.os.configure(fails: true)
+        var stopped = false
+        do { _ = try await osFailure.client().prepareSession() } catch { stopped = true }
+        guard stopped, try osFailure.store.load() == osFailure.initial, await osFailure.server.renewals == 0 else {
+            throw ManagedPreservationError.secureStorage
+        }
+        for state in [ManagedPreservationClient.AppleCredentialState.revoked, .notFound, .transferred] {
+            let f = try PreservationDeviceSessionFixture.make(); defer { f.cleanup() }
+            await f.os.configure(state)
+            var rejected = false
+            do { _ = try await f.client().prepareSession() } catch { rejected = true }
+            guard rejected, try f.store.load() == nil, await f.server.renewals == 0 else {
+                throw ManagedPreservationError.secureStorage
+            }
+        }
+        let revoked = try PreservationDeviceSessionFixture.make(); defer { revoked.cleanup() }
+        revoked.clock.advance(901); await revoked.server.configure(.unauthorized)
+        var rejected = false
+        do { _ = try await revoked.client().prepareSession() } catch { rejected = true }
+        guard rejected, try revoked.store.load() == nil, await revoked.server.renewals == 1 else {
+            throw ManagedPreservationError.secureStorage
+        }
+        // A renewal already in flight cannot publish after logout, a newer
+        // login, deletion receipt, or caller cancellation.
+        for race in 0..<4 {
+            let f = try PreservationDeviceSessionFixture.make(); defer { f.cleanup() }
+            let c = f.client(); f.clock.advance(901); await f.server.configure(.heldRenewal)
+            let work = Task { try await c.prepareSession(expectedOwner: f.initial.ownerId) }
+            try await wait { await f.server.entered() }
+            let newer = replacement(f)
+            if race == 0 { try await c.signOut() }
+            if race == 1 { guard try f.store.save(newer, replacing: f.initial) else { throw ManagedPreservationError.secureStorage } }
+            if race == 2 {
+                try f.store.saveDeletionReceipt(.init(ownerId: f.initial.ownerId,
+                    token: String(repeating: "d", count: 43), state: .unconfirmed), replacing: nil)
+            }
+            if race == 3 { work.cancel() }
+            await f.server.release()
+            var failed = false
+            do { _ = try await work.value } catch { failed = true }
+            guard failed else { throw ManagedPreservationError.invalidResponse }
+            if race == 0 { guard try f.store.load() == nil, await f.server.revocations == 1 else { throw ManagedPreservationError.secureStorage } }
+            if race == 1 { guard try f.store.load() == newer else { throw ManagedPreservationError.secureStorage } }
+            if race >= 2 { guard try f.store.load() == f.initial else { throw ManagedPreservationError.secureStorage } }
+        }
+        // An ordinary access 401 preserves its renewal key; a late old 401
+        // cannot expire or clear a newly published login.
+        for replace in [false, true] {
+            let f = try PreservationDeviceSessionFixture.make(); defer { f.cleanup() }
+            let c = f.client(); await f.server.configure(.heldRead)
+            let read = Task { try await c.membership() }
+            try await wait { await f.server.entered() }
+            let newer = replacement(f)
+            if replace { guard try f.store.save(newer, replacing: f.initial) else { throw ManagedPreservationError.secureStorage } }
+            await f.server.release()
+            do { _ = try await read.value } catch { }
+            guard let current = try f.store.load() else { throw ManagedPreservationError.secureStorage }
+            if replace { guard current == newer else { throw ManagedPreservationError.secureStorage } }
+            else { guard current.devicePrivateKey == f.initial.devicePrivateKey, current.expiresAt < f.clock.now() else { throw ManagedPreservationError.secureStorage } }
+        }
+        // A subjectless OS notification must not delete a newer authorized
+        // credential while an older subject's state callback was suspended.
+        let notification = try PreservationDeviceSessionFixture.make(); defer { notification.cleanup() }
+        let notifiedClient = notification.client()
+        await notification.os.configure(.revoked, hold: true)
+        let notice = Task { try await notifiedClient.appleAuthorizationDidChange() }
+        try await wait { await notification.os.entered() }
+        let newer = replacement(notification)
+        guard try notification.store.save(newer, replacing: notification.initial) else { throw ManagedPreservationError.secureStorage }
+        await notification.os.release()
+        do { _ = try await notice.value } catch { }
+        guard try notification.store.load() == newer, await notification.server.revocations == 0 else {
+            throw ManagedPreservationError.secureStorage
+        }
     }
 
     @MainActor
@@ -10751,6 +11028,7 @@ actor SharingRuntimeSelfTestRunner {
         try await testManagedPreservationDeletionReceiptBoundary()
         try await testManagedPreservationArchiveCopySource()
         try await testManagedPreservationSignInFeedback()
+        try await testManagedPreservationDeviceSessionRenewal()
         guard !ManagedPreservationConfiguration.current.isEnabled,
               BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),
               !BillingProtocolV1.isSupportedSignedRequest(method: "GET", pathname: "/v1/preservation/membership-link"),

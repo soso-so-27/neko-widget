@@ -357,7 +357,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
 
     func start() {
         guard isEnabled else { return }
-        run { ticket in
+        run(authenticatedOperation: false) { ticket in
             self.clearAccountPresentation()
             self.accountDeletionState = try await self.client.savedDeletionState()
             if self.accountDeletionState != nil {
@@ -373,7 +373,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 return
             }
             try await self.client.reloadSessionFromSecureStorage()
-            let authenticated = try await self.client.hasSession()
+            let authenticated = try await self.client.prepareSessionIfAvailable()
             try self.check(ticket)
             self.isSignedIn = authenticated
             if authenticated { try await self.loadFirstPage(ticket) }
@@ -386,7 +386,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     func prepareSignIn() {
-        run { ticket in
+        run(authenticatedOperation: false) { ticket in
             try await self.client.reloadSessionFromSecureStorage()
             let challenge = try await self.client.prepareSignIn()
             try self.check(ticket)
@@ -397,7 +397,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func completeSignIn(_ result: Result<ASAuthorization, Error>) {
         guard preparedSignIn != nil, !isBusy else { return }
         preparedSignIn = nil
-        run { ticket in
+        run(authenticatedOperation: false) { ticket in
             switch result {
             case .success(let authorization):
                 guard let apple = authorization.credential as? ASAuthorizationAppleIDCredential,
@@ -405,7 +405,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
                     await self.client.cancelSignIn()
                     throw ManagedPreservationError.authenticationStepFailed(.credential)
                 }
-                try await self.client.finishSignIn(state: apple.state, identityToken: token, authorizationCode: code)
+                try await self.client.finishSignIn(state: apple.state, identityToken: token, authorizationCode: code,
+                                                   appleUserID: apple.user)
                 try self.check(ticket)
                 self.isSignedIn = true
                 self.consentToNewSave = false
@@ -439,6 +440,17 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
+    func appleAuthorizationDidChange() {
+        let ticket = viewEpoch
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                guard try await self.client.appleAuthorizationDidChange(), self.viewEpoch == ticket else { return }
+                self.cancelCurrentWork(); self.clearAccountPresentation()
+            } catch { /* Unknown status or a newer login is preserved. */ }
+        }
+    }
+
     func deleteServiceAccount() {
         guard !isBusy, !hasUnsecuredMemo else { return }
         run { ticket in
@@ -455,7 +467,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     func checkAccountDeletion() {
-        run { ticket in
+        run(authenticatedOperation: false) { ticket in
             let state = try await self.client.checkAccountDeletion()
             try self.check(ticket)
             self.clearAccountPresentation()
@@ -464,7 +476,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     func dismissCompletedDeletion() {
-        run { ticket in
+        run(authenticatedOperation: false) { ticket in
             try await self.client.dismissCompletedDeletion()
             try self.check(ticket)
             self.accountDeletionState = nil
@@ -867,7 +879,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     /// A visible button is the only entry into a replacement Apple challenge.
     func prepareExportSignIn() {
         guard let renewal = exportRenewal, !isBusy else { return }
-        run { ticket in
+        run(authenticatedOperation: false) { ticket in
             do {
                 guard ticket == renewal.ticket, self.exportRenewal?.id == renewal.id else { throw CancellationError() }
                 let challenge = try await self.client.prepareExportSignIn(replacing: renewal.checkpoint)
@@ -884,7 +896,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func completeExportSignIn(_ result: Result<ASAuthorization, Error>) {
         guard let renewal = exportRenewal, preparedExportSignIn != nil, !isBusy else { return }
         preparedExportSignIn = nil
-        run { ticket in
+        run(authenticatedOperation: false) { ticket in
             do {
                 guard ticket == renewal.ticket, self.exportRenewal?.id == renewal.id else { throw CancellationError() }
                 switch result {
@@ -893,7 +905,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
                           let token = apple.identityToken, let code = apple.authorizationCode else {
                         throw ManagedPreservationError.authenticationStepFailed(.credential)
                     }
-                    try await self.client.finishSignIn(state: apple.state, identityToken: token, authorizationCode: code)
+                    try await self.client.finishSignIn(state: apple.state, identityToken: token, authorizationCode: code,
+                                                       appleUserID: apple.user)
                 case .failure:
                     await self.client.cancelSignIn()
                     throw CancellationError()
@@ -1034,6 +1047,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
             }
             do {
+                _ = try await self.client.prepareSession(expectedOwner: owner)
+                try self.check(ticket)
                 let result = try await self.client.membership()
                 try self.check(ticket)
                 guard try await self.client.sessionOwnerID() == owner,
@@ -1070,6 +1085,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
             }
             do {
+                _ = try await self.client.prepareSession(expectedOwner: owner)
+                try self.check(ticket)
                 let result = try await self.client.usage()
                 try self.check(ticket)
                 let currentOwner = try await self.client.sessionOwnerID()
@@ -1187,14 +1204,20 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
-    private func run(_ operation: @escaping @MainActor (UUID) async throws -> Void) {
+    private func run(authenticatedOperation: Bool = true, _ operation: @escaping @MainActor (UUID) async throws -> Void) {
         guard isEnabled, !isBusy else { return }
         let ticket = viewEpoch
         isBusy = true; errorMessage = nil; statusMessage = nil
         task = Task { [weak self] in
             guard let self else { return }
             defer { if self.viewEpoch == ticket { self.isBusy = false; self.task = nil } }
-            do { try await operation(ticket) }
+            do {
+                if authenticatedOperation, self.isSignedIn {
+                    _ = try await self.client.prepareSession(expectedOwner: self.authenticatedOwnerID)
+                    try self.check(ticket)
+                }
+                try await operation(ticket)
+            }
             catch {
                 guard self.viewEpoch == ticket else { return }
                 let known = error as? ManagedPreservationError

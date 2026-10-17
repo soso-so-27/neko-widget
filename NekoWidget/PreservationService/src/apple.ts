@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { SignJWT, createRemoteJWKSet, customFetch, importPKCS8, jwtVerify } from 'jose';
 import { type Challenge, type IdentityVerifier, type VerifiedIdentity, ServiceError, contactEmailValid } from './contracts';
 import { readBoundedBody } from './bounded-body';
+import { verifyDeviceProof } from './device-proof';
 
 export const APPLE_ISSUER = 'https://appleid.apple.com';
 export const APPLE_KEYS_URL = `${APPLE_ISSUER}/auth/keys`;
@@ -79,6 +80,7 @@ export class AppleIdentityVerifier implements IdentityVerifier {
   private readonly now: () => number;
   private readonly fetchImpl: (url: string, init: RequestInit) => Promise<Response>;
   private readonly keys: ReturnType<typeof createRemoteJWKSet>;
+  private readonly refreshKeys: ReturnType<typeof createRemoteJWKSet>;
 
   constructor(private readonly options: AppleOptions) {
     this.enabled = options.enabled === true;
@@ -96,6 +98,24 @@ export class AppleIdentityVerifier implements IdentityVerifier {
         if (response.status !== 200) return fail('APPLE_IDENTITY_UNCONFIRMED');
         return new Response(await boundedBody(response), { status: 200,
           headers: { 'content-type': 'application/json' } });
+      },
+    });
+    // Keep legacy native diagnostics stable; refresh must distinguish key-server
+    // availability from a verified identity rejection so the device keeps its key.
+    this.refreshKeys = createRemoteJWKSet(new URL(APPLE_KEYS_URL), {
+      timeoutDuration: 5000, cooldownDuration: 30_000, cacheMaxAge: 600_000,
+      [customFetch]: async (url, init) => {
+        if (url !== APPLE_KEYS_URL) return fail('APPLE_CONFIGURATION_ERROR');
+        let response: Response;
+        try { response = await this.fetchImpl(url, { ...init, redirect: 'manual', cache: 'no-store' }); }
+        catch { return fail('APPLE_UNAVAILABLE'); }
+        if (response.status >= 500 || response.status === 429) return fail('APPLE_UNAVAILABLE');
+        if (response.status !== 200) return fail('APPLE_RESPONSE_INVALID');
+        const text = await boundedBody(response);
+        let value: unknown;
+        try { value = JSON.parse(text); } catch { return fail('APPLE_RESPONSE_INVALID'); }
+        if (!value || typeof value !== 'object' || !('keys' in value) || !Array.isArray(value.keys)) return fail('APPLE_RESPONSE_INVALID');
+        return new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
       },
     });
   }
@@ -160,6 +180,7 @@ export class AppleIdentityVerifier implements IdentityVerifier {
 
   async verifyNativeAuthorization(input: {
     challengeId: string; challengeProof: string; identityToken: string; authorizationCode: string;
+    deviceProof?: string; origin?: string;
   }): Promise<VerifiedIdentity> {
     if (!this.enabled) return fail('APPLE_SIGNIN_DISABLED');
     const { challengeId, challengeProof, identityToken, authorizationCode } = input;
@@ -173,6 +194,10 @@ export class AppleIdentityVerifier implements IdentityVerifier {
         || !Number.isSafeInteger(challenge.expiresAt) || challenge.createdAt > started || challenge.createdAt < 0
         || challenge.expiresAt <= started || challenge.expiresAt <= challenge.createdAt
         || challenge.expiresAt - challenge.createdAt > MAX_FLOW_MS) return fail('APPLE_AUTHORIZATION_REJECTED');
+    if (challenge.deviceBinding) {
+      await verifyDeviceProof(input.deviceProof, challenge.deviceBinding, { challengeId, subject: challengeId,
+        nonce: challenge.nonce, path: '/v1/auth/sessions', origin: input.origin ?? '', now: started });
+    } else if (input.deviceProof !== undefined) return fail('APPLE_AUTHORIZATION_REJECTED');
     const initial = await this.verifyToken(identityToken, challenge.nonce, authorizationCode, 'native');
     const exchanged = await this.exchangeCode(authorizationCode);
     const confirmed = await this.verifyToken(exchanged.id_token, challenge.nonce, authorizationCode, 'exchanged');
@@ -181,6 +206,59 @@ export class AppleIdentityVerifier implements IdentityVerifier {
     // Server-internal result only; DurableAuth must seal the refresh credential before issuing a session.
     const matchingEmail = confirmed.email !== null && (initial.email === null || initial.email === confirmed.email);
     return { issuer: APPLE_ISSUER, subject: confirmed.subject, refreshToken: exchanged.refresh_token,
+      ...(challenge.deviceBinding ? { deviceBinding: challenge.deviceBinding } : {}),
       ...(matchingEmail ? { verifiedEmail: confirmed.email! } : {}) };
+  }
+
+  /** The refresh response is a separate OAuth contract: unlike a code exchange,
+   * it need not rotate refresh_token or repeat a native nonce/c_hash. */
+  async verifyRefreshIdentity(identity: VerifiedIdentity): Promise<VerifiedIdentity> {
+    if (!this.enabled) return fail('APPLE_SIGNIN_DISABLED');
+    if (identity.issuer !== APPLE_ISSUER || !bounded(identity.subject, 255)
+      || !bounded(identity.refreshToken, MAX_TOKEN)) return fail('APPLE_IDENTITY_UNCONFIRMED');
+    let secret: string;
+    try { secret = await this.options.getClientSecret(); } catch { return fail('APPLE_CONFIGURATION_ERROR'); }
+    if (!bounded(secret, MAX_TOKEN)) return fail('APPLE_CONFIGURATION_ERROR');
+    let response: Response;
+    let body: unknown;
+    try {
+      response = await this.fetchImpl(APPLE_TOKEN_URL, { method: 'POST', redirect: 'manual', cache: 'no-store',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+        body: new URLSearchParams({ client_id: this.options.clientId, client_secret: secret,
+          grant_type: 'refresh_token', refresh_token: identity.refreshToken }).toString(),
+        signal: AbortSignal.timeout(5000) });
+      if (response.status >= 500 || response.status === 429) return fail('APPLE_UNAVAILABLE');
+      body = JSON.parse(await boundedBody(response));
+    } catch (error) {
+      if (error instanceof ServiceError && ['APPLE_UNAVAILABLE', 'APPLE_RESPONSE_INVALID'].includes(error.code)) throw error;
+      return fail('APPLE_UNAVAILABLE');
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('APPLE_RESPONSE_INVALID');
+    const value = body as Record<string, unknown>;
+    if (response.status === 400 && value.error === 'invalid_grant') return fail('APPLE_AUTHORIZATION_REJECTED');
+    if (response.status === 400 && value.error === 'invalid_client') return fail('APPLE_CONFIGURATION_ERROR');
+    if (response.status !== 200 || value.error || value.token_type !== 'Bearer'
+      || !bounded(value.id_token, MAX_TOKEN) || !bounded(value.access_token, MAX_TOKEN)
+      || (value.refresh_token !== undefined && !bounded(value.refresh_token, MAX_TOKEN))
+      || !Number.isSafeInteger(value.expires_in) || (value.expires_in as number) <= 0) return fail('APPLE_RESPONSE_INVALID');
+    try {
+      const { payload } = await jwtVerify(value.id_token, this.refreshKeys, { algorithms: ['RS256'],
+        issuer: APPLE_ISSUER, audience: this.options.clientId, subject: identity.subject,
+        requiredClaims: ['iss', 'aud', 'sub', 'iat', 'exp'], currentDate: new Date(timeValue(this.now)),
+        maxTokenAge: MAX_FLOW_MS / 1000, clockTolerance: 0 });
+      if (payload.aud !== this.options.clientId || payload.sub !== identity.subject
+        || !Number.isSafeInteger(payload.iat) || !Number.isSafeInteger(payload.exp)
+        || payload.exp! <= payload.iat! || payload.exp! * 1000 <= timeValue(this.now)) return fail('APPLE_IDENTITY_UNCONFIRMED');
+    } catch (error) {
+      if (error instanceof ServiceError && error.status >= 500) throw error;
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+      if (code === 'ERR_JWKS_TIMEOUT') return fail('APPLE_UNAVAILABLE');
+      if (['ERR_JWKS_INVALID', 'ERR_JWK_INVALID', 'ERR_JWKS_MULTIPLE_MATCHING_KEYS', 'ERR_JWKS_NO_MATCHING_KEY'].includes(String(code))) {
+        return fail('APPLE_RESPONSE_INVALID');
+      }
+      return fail('APPLE_IDENTITY_UNCONFIRMED');
+    }
+    return { issuer: APPLE_ISSUER, subject: identity.subject,
+      refreshToken: value.refresh_token === undefined ? identity.refreshToken : value.refresh_token as string };
   }
 }

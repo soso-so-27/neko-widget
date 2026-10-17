@@ -187,7 +187,8 @@ export class OwnerRecoveryCopy {
   }
 
   /** One SQL statement reads a consistent owner row across all source tables.
-   * Temporary sessions are deliberately not part of a restore image. A
+   * Temporary sessions, device grants/challenges and Apple-validation leases
+   * are deliberately not part of a restore image. A
    * restored owner must sign in again, and old notice evidence is not treated
    * as deletion authority without the independent delivery ledger.
    */

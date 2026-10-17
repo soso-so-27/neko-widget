@@ -91,7 +91,7 @@ struct ManagedPreservationView: View {
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
             .receive(on: DispatchQueue.main)) { _ in
             exporter.invalidate()
-            coordinator.signOut()
+            coordinator.appleAuthorizationDidChange()
         }
     }
 

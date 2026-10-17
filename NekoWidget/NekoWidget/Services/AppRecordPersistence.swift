@@ -509,8 +509,7 @@ final class AppRecordPersistence: ObservableObject {
     func enable() async {
         guard !busy, let origin = configuration.origin?.absoluteString else { return }
         do {
-            try await client.reloadSessionFromSecureStorage()
-            let checkpoint = try await client.captureSessionCheckpoint()
+            let checkpoint = try await client.prepareSession(expectedOwner: try binding()?.owner)
             try AppRecordDataset.requireScope(owner: checkpoint.ownerID, origin: origin)
             try AppRecordDataset.claim(owner: checkpoint.ownerID, origin: origin)
             if let previous = try binding() {
@@ -537,8 +536,7 @@ final class AppRecordPersistence: ObservableObject {
         busy = true
         do {
             guard var value = try binding(), value.enabled else { throw ManagedPreservationError.consentRequired }
-            try await client.reloadSessionFromSecureStorage()
-            let checkpoint = try await client.captureSessionCheckpoint()
+            let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
             try await require(value, checkpoint)
             let headID = AppRecordHead.id(origin: value.origin, owner: value.owner)
             guard let remote = try await remoteHead(headID) else { throw ManagedPreservationError.conflict }
@@ -596,9 +594,7 @@ final class AppRecordPersistence: ObservableObject {
         var phase = "保存設定を確認"
         do {
             guard var value = try binding(), value.enabled else { title = "自動保存は未設定です"; return }
-            try await client.reloadSessionFromSecureStorage()
-            let checkpoint = try await client.captureSessionCheckpoint()
-            try await require(value, checkpoint)
+            try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
             let currentFingerprint = try AppRecordDataset.fingerprint()
             if waitingForEditor, currentFingerprint == value.fingerprint {
                 // A long editing session must not poll the server every eight
@@ -606,11 +602,15 @@ final class AppRecordPersistence: ObservableObject {
                 try AppRecordEditingLease.requireIdle()
                 waitingForEditor = false
             }
-            releaseUploadedPayload(value.snapshotID, owner: value.owner)
-            let headID = AppRecordHead.id(origin: value.origin, owner: value.owner)
             // No network polling for an unchanged dataset. Foreground entry and
             // commits request one check; conflict detection also occurs at CAS.
-            guard requested || currentFingerprint != value.fingerprint || value.pending != nil || !(value.retiring ?? []).isEmpty else { return }
+            guard Self.needsAuthenticatedWork(value, fingerprint: currentFingerprint, requested: requested) else { return }
+            // Only actual work/foreground checks may renew access. An unchanged
+            // eight-second timer must not extend device idle expiry or call Apple.
+            let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
+            try await require(value, checkpoint)
+            releaseUploadedPayload(value.snapshotID, owner: value.owner)
+            let headID = AppRecordHead.id(origin: value.origin, owner: value.owner)
             requested = false
             let remote = try await remoteHead(headID)
             try await require(value, checkpoint)
@@ -758,6 +758,9 @@ final class AppRecordPersistence: ObservableObject {
           catch is CancellationError { title = "未送信の変更があります" }
           catch { report(error) }
     }
+    static func needsAuthenticatedWork(_ value: Binding, fingerprint: String, requested: Bool) -> Bool {
+        requested || fingerprint != value.fingerprint || value.pending != nil || !(value.retiring ?? []).isEmpty
+    }
     private func report(_ error: Error) {
         if error is AppRecordEditingError {
             title = "入力中の内容を優先しています"
@@ -776,6 +779,15 @@ final class AppRecordPersistence: ObservableObject {
             title = "未送信の変更があります"
             detail = (error as? LocalizedError)?.errorDescription ?? "保存を完了できませんでした。端末の記録は残っています。"
         }
+    }
+
+    func appleCredentialRevoked() async {
+        // Preserve owner-bound consent, pending bytes and all normal records.
+        do { guard try await client.appleAuthorizationDidChange() else { return } }
+        catch { return /* Unknown status or a newer login must remain intact. */ }
+        requested = true; nextAttempt = .distantPast
+        title = "未送信の変更があります"
+        detail = ManagedPreservationError.authenticationRequired.errorDescription
     }
 #if DEBUG
     func verifyEditingPublicationFences() async throws {
@@ -963,6 +975,10 @@ struct AppRecordProductionRoot: View {
             .onAppear { persistence.setActive(scenePhase == .active) }
             .onChange(of: scenePhase) { _, value in persistence.setActive(value == .active) }
             .onDisappear { persistence.setActive(false) }
+            .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
+                .receive(on: DispatchQueue.main)) { _ in
+                    Task { await persistence.appleCredentialRevoked() }
+                }
     }
 }
 

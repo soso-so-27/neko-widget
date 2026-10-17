@@ -1,16 +1,18 @@
 import {
-  type AuthDependencies, type Challenge, type Session, type VerifiedIdentity,
+  type AuthDependencies, type Challenge, type Session, type VerifiedIdentity, type SessionCredential,
   ServiceError, contactEmailValid, randomToken, sha256,
 } from './contracts';
 import type { ExpiryReviewCandidate, NoticeReviewCandidate } from './retention-ledger';
 import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from './identity-index';
+import { deviceBinding } from './device-proof';
+import { DeviceSessions, deviceSessionCleanupStatements } from './device-sessions';
 
 const CHALLENGE_MS = 5 * 60_000;
 const SESSION_MS = 15 * 60_000;
 const opaquePattern = /^[A-Za-z0-9_-]{43}$/u;
 const encoder = new TextEncoder();
 interface OwnerRow { owner_id: string; epoch: number; disabled: number; }
-interface ChallengeRow { nonce: string; created_at: number; expires_at: number; }
+interface ChallengeRow { nonce: string; created_at: number; expires_at: number; device_binding: string | null; }
 interface SessionRow { owner_id: string; session_hash: string; expires_at: number; }
 interface ContactRow { sealed_email: unknown; source: 'apple'; updated_at: number; }
 const unavailable = (): ServiceError => new ServiceError('auth_unavailable', 503);
@@ -19,9 +21,11 @@ const safeError = (error: unknown): ServiceError => error instanceof ServiceErro
 
 export class DurableAuth {
   private readonly indexKey: Promise<CryptoKey>;
+  readonly devices: DeviceSessions;
 
   constructor(private readonly dependencies: AuthDependencies) {
     this.indexKey = identityIndexKey(dependencies.identityIndexSecret);
+    this.devices = new DeviceSessions(dependencies);
   }
 
   private async noticeEmailTag(ownerId: string, email: string): Promise<string> {
@@ -37,16 +41,18 @@ export class DurableAuth {
     return value;
   }
 
-  async issueChallenge(): Promise<{ challengeId: string; challengeProof: string; nonce: string; expiresAt: string }> {
+  async issueChallenge(publicKey?: unknown, origin?: string): Promise<{ challengeId: string; challengeProof: string; nonce: string; expiresAt: string }> {
     try {
       const now = this.now();
       const challengeId = randomToken();
       const challengeProof = randomToken();
       const nonce = randomToken();
+      const binding = publicKey === undefined ? null : await deviceBinding(publicKey, origin ?? '');
       await this.dependencies.db.prepare(
-        `INSERT INTO pa_auth_challenges(challenge_id, proof_hash, nonce, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).bind(challengeId, await sha256(challengeProof), nonce, now, now + CHALLENGE_MS).run();
+        `INSERT INTO pa_auth_challenges(challenge_id, proof_hash, nonce, created_at, expires_at, device_binding)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(challengeId, await sha256(challengeProof), nonce, now, now + CHALLENGE_MS,
+        binding ? JSON.stringify(binding) : null).run();
       return { challengeId, challengeProof, nonce, expiresAt: new Date(now + CHALLENGE_MS).toISOString() };
     } catch (error) { throw safeError(error); }
   }
@@ -57,14 +63,15 @@ export class DurableAuth {
       const row = await this.dependencies.db.prepare(
         `DELETE FROM pa_auth_challenges
           WHERE challenge_id = ? AND proof_hash = ? AND expires_at > ?
-          RETURNING nonce, created_at, expires_at`,
+          RETURNING nonce, created_at, expires_at, device_binding`,
       ).bind(input.challengeId, await sha256(input.challengeProof), this.now()).first<ChallengeRow>();
       if (!row) throw denied();
-      return { nonce: row.nonce, createdAt: row.created_at, expiresAt: row.expires_at };
+      return { nonce: row.nonce, createdAt: row.created_at, expiresAt: row.expires_at,
+        ...(row.device_binding ? { deviceBinding: JSON.parse(row.device_binding) } : {}) };
     } catch (error) { throw safeError(error); }
   }
 
-  async establish(identity: VerifiedIdentity): Promise<{ token: string; ownerId: string; expiresAt: string }> {
+  async establish(identity: VerifiedIdentity): Promise<SessionCredential> {
     try {
       if (typeof identity.issuer !== 'string' || !identity.issuer.trim() || identity.issuer.length > 2048
           || typeof identity.subject !== 'string' || !identity.subject.trim() || identity.subject.length > 1024
@@ -118,13 +125,16 @@ export class DurableAuth {
       const token = randomToken();
       const sessionHash = await sha256(token);
       const now = this.now();
+      const device = await this.devices.initialGrant(identity, owner.owner_id, owner.epoch, now, sealed);
+      await this.dependencies.ownerDeletion?.assertNotRequested(owner.owner_id);
       // A revocation during KMS work must win. Both writes are fenced in the same D1 transaction.
       const statements = [
         db.prepare(
           `INSERT INTO pa_identity_credentials(owner_id, owner_epoch, sealed_credentials, updated_at)
            SELECT owner_id, epoch, ?, ? FROM pa_owners WHERE owner_id = ? AND epoch = ? AND disabled = 0
            ON CONFLICT(owner_id) DO UPDATE SET owner_epoch = excluded.owner_epoch,
-             sealed_credentials = excluded.sealed_credentials, updated_at = excluded.updated_at`,
+             sealed_credentials = excluded.sealed_credentials,
+             updated_at = MAX(pa_identity_credentials.updated_at+1,excluded.updated_at)`,
         ).bind(sealed.slice().buffer, now, owner.owner_id, owner.epoch),
         ...(sealedContact ? [db.prepare(
           `INSERT INTO pa_notice_contacts(owner_id,sealed_email,source,verified_at,updated_at,email_tag)
@@ -135,20 +145,26 @@ export class DurableAuth {
              email_tag=excluded.email_tag
            WHERE pa_notice_contacts.email_tag IS NOT excluded.email_tag`,
         ).bind(sealedContact.slice().buffer, now, now, contactTag, owner.owner_id, owner.epoch)] : []),
+        ...device.statements,
         db.prepare(
-          `INSERT INTO pa_sessions(session_hash, owner_id, owner_epoch, created_at, expires_at)
-           SELECT ?, owner_id, epoch, ?, ? FROM pa_owners
+          `INSERT INTO pa_sessions(session_hash, owner_id, owner_epoch, created_at, expires_at, device_grant_id)
+           SELECT ?, owner_id, epoch, ?, ?, ? FROM pa_owners
             WHERE owner_id = ? AND epoch = ? AND disabled = 0
               AND EXISTS (SELECT 1 FROM pa_identity_credentials AS credential
                            WHERE credential.owner_id = pa_owners.owner_id
-                             AND credential.owner_epoch = pa_owners.epoch)`,
-        ).bind(sessionHash, now, now + SESSION_MS, owner.owner_id, owner.epoch),
+                             AND credential.owner_epoch = pa_owners.epoch)
+              AND (? IS NULL OR EXISTS(SELECT 1 FROM pa_device_session_grants g
+                WHERE g.grant_id=? AND g.owner_id=pa_owners.owner_id AND g.owner_epoch=pa_owners.epoch
+                  AND g.revoked_at IS NULL))`,
+        ).bind(sessionHash, now, now + SESSION_MS, device.grant?.grantId ?? null, owner.owner_id, owner.epoch,
+          device.grant?.grantId ?? null, device.grant?.grantId ?? null),
       ];
       const results = await db.batch(statements);
       if (results.at(-1)?.meta.changes !== 1) throw denied();
       if (this.dependencies.requireOwnerRecovery && !this.dependencies.ownerRecovery) throw unavailable();
       await this.dependencies.ownerRecovery?.copyCurrent(db, owner.owner_id, now);
-      return { token, ownerId: owner.owner_id, expiresAt: new Date(now + SESSION_MS).toISOString() };
+      return { token, ownerId: owner.owner_id, expiresAt: new Date(now + SESSION_MS).toISOString(),
+        ...(device.grant ? { deviceGrant: device.grant } : {}) };
     } catch (error) { throw safeError(error); }
   }
 
@@ -160,13 +176,16 @@ export class DurableAuth {
          JOIN pa_owners AS owner ON owner.owner_id = session.owner_id
           WHERE session.session_hash = ? AND session.expires_at > ?
             AND owner.disabled = 0 AND owner.epoch = session.owner_epoch
+            AND (session.device_grant_id IS NULL OR EXISTS(SELECT 1 FROM pa_device_session_grants g
+              WHERE g.grant_id=session.device_grant_id AND g.owner_id=owner.owner_id
+                AND g.owner_epoch=owner.epoch AND g.revoked_at IS NULL AND g.idle_expires_at>?))
             AND ((SELECT owner_snapshot_required FROM pa_recovery_write_policy
               WHERE singleton=1)=0 OR EXISTS(
                 SELECT 1 FROM pa_owner_recovery_generations g
                 JOIN pa_owner_recovery_versions v ON v.owner_id=g.owner_id
                   AND v.generation=g.generation
                 WHERE g.owner_id=owner.owner_id))`,
-      ).bind(await sha256(token), this.now()).first<SessionRow>();
+      ).bind(await sha256(token), this.now(), this.now()).first<SessionRow>();
       if (!row) throw denied();
       await this.dependencies.ownerDeletion?.assertNotRequested(row.owner_id);
       return { ownerId: row.owner_id, sessionHash: row.session_hash, expiresAt: row.expires_at };
@@ -302,8 +321,13 @@ export class DurableAuth {
   async revokeSession(token: string): Promise<void> {
     try {
       if (typeof token !== 'string' || !opaquePattern.test(token)) throw denied();
-      await this.dependencies.db.prepare('DELETE FROM pa_sessions WHERE session_hash = ?')
-        .bind(await sha256(token)).run();
+      const hash = await sha256(token);
+      await this.dependencies.db.batch([
+        this.dependencies.db.prepare(`UPDATE pa_device_session_grants SET revoked_at=? WHERE grant_id IN
+          (SELECT device_grant_id FROM pa_sessions WHERE session_hash=?) AND revoked_at IS NULL`)
+          .bind(this.now(), hash),
+        this.dependencies.db.prepare('DELETE FROM pa_sessions WHERE session_hash = ?').bind(hash),
+      ]);
     } catch (error) { throw safeError(error); }
   }
 
@@ -323,7 +347,7 @@ export class DurableAuth {
     } catch (error) { throw safeError(error); }
   }
 
-  // Caller schedules maintenance. At most 2 * limit rows per call; no archive/owner deletion.
+  // Caller schedules maintenance. At most 5 * limit rows per call; no archive/owner deletion.
   async cleanup(limit = 100): Promise<number> {
     try {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new ServiceError('invalid_cleanup_limit');
@@ -336,6 +360,7 @@ export class DurableAuth {
         db.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
           (SELECT session_hash FROM pa_sessions WHERE expires_at <= ? ORDER BY expires_at, session_hash LIMIT ?)`)
           .bind(now, limit),
+        ...deviceSessionCleanupStatements(db, now, limit),
       ]);
       return results.reduce((sum, result) => sum + result.meta.changes, 0);
     } catch (error) { throw safeError(error); }

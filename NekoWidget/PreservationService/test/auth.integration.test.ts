@@ -344,7 +344,8 @@ describe('durable private preservation authentication', () => {
       .bind(prior.ownerId).first<{ sealed_credentials: number[] }>();
     const decoded = await f.keys.open(new Uint8Array(credential!.sealed_credentials), { ownerId: prior.ownerId, purpose: 'identity' });
     expect(JSON.parse(decoder.decode(decoded)).refreshToken).toBe(f.identity.refreshToken);
-    expect((await db.prepare('SELECT COUNT(*) AS count FROM pa_sessions WHERE owner_id = ?').bind(prior.ownerId).first<{ count: number }>())?.count).toBe(1);
+    // Revocation removes access/grant authority; identity credentials stay intact.
+    expect((await db.prepare('SELECT COUNT(*) AS count FROM pa_sessions WHERE owner_id = ?').bind(prior.ownerId).first<{ count: number }>())?.count).toBe(0);
   });
 
   it('bounds expiry cleanup and preserves owners', async () => {
@@ -355,7 +356,7 @@ describe('durable private preservation authentication', () => {
     const current = await f.auth.issueChallenge();
     const removed = await f.auth.cleanup(2);
     expect(removed).toBeGreaterThan(0);
-    expect(removed).toBeLessThanOrEqual(4);
+    expect(removed).toBeLessThanOrEqual(10); // five bounded ephemeral-auth tables
     expect((await f.auth.takeChallenge(current)).nonce).toBe(current.nonce);
     expect(await db.prepare('SELECT owner_id FROM pa_owners WHERE owner_id = ?').bind(session.ownerId).first()).not.toBeNull();
     await expect(f.auth.cleanup(501)).rejects.toMatchObject({ code: 'invalid_cleanup_limit' });

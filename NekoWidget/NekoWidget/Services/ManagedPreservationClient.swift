@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import ImageIO
+import AuthenticationServices
 
 struct ManagedPreservationConfiguration: Sendable {
     let origin: URL?
@@ -414,7 +415,82 @@ struct ManagedPreservationLinkChallenge: Codable, Sendable {
     }
 }
 
+/// One device proof, scoped to the server's exact one-use challenge and route.
+enum PreservationDeviceProof {
+    struct PublicKey: Codable, Equatable, Sendable {
+        let kty: String; let crv: String; let x: String; let y: String
+    }
+    static func encoded(_ bytes: Data) -> String {
+        bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+    static func publicKey(_ key: Data) throws -> PublicKey {
+        let bytes = try P256.Signing.PrivateKey(rawRepresentation: key).publicKey.x963Representation
+        guard bytes.count == 65, bytes.first == 4 else { throw ManagedPreservationError.secureStorage }
+        return PublicKey(kty: "EC", crv: "P-256", x: encoded(Data(bytes[1..<33])), y: encoded(Data(bytes[33..<65])))
+    }
+    static func make(key: Data, challengeID: String, subject: String, nonce: String,
+                     origin: String, path: String, expiresAt: Date, now: Date) throws -> String {
+        struct Header: Encodable { let alg = "ES256"; let typ = "dpop+jwt"; let jwk: PublicKey }
+        struct Claims: Encodable {
+            let v = 1; let jti: String; let sub: String; let nonce: String
+            let htm = "POST"; let htu: String; let iat: Int64; let exp: Int64
+        }
+        guard now.timeIntervalSince1970.isFinite, expiresAt.timeIntervalSince1970.isFinite,
+              now.timeIntervalSince1970 >= 0, now.timeIntervalSince1970 <= 8_640_000_000_000,
+              expiresAt.timeIntervalSince1970 >= 0, expiresAt.timeIntervalSince1970 <= 8_640_000_000_000,
+              challengeID.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil,
+              nonce.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let issued = Int64(now.timeIntervalSince1970.rounded(.down))
+        let end = min(issued + 120, Int64(expiresAt.timeIntervalSince1970.rounded(.down)))
+        guard end > issued else { throw ManagedPreservationError.authenticationRequired }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let header = try encoded(encoder.encode(Header(jwk: publicKey(key))))
+        let claims = try encoded(encoder.encode(Claims(jti: challengeID, sub: subject, nonce: nonce,
+            htu: origin + path, iat: issued, exp: end)))
+        let input = header + "." + claims
+        let signature = try P256.Signing.PrivateKey(rawRepresentation: key).signature(for: Data(input.utf8))
+        return input + "." + encoded(signature.rawRepresentation)
+    }
+}
+
+/// Separate client instances share one refresh only for the exact old item.
+private actor PreservationDeviceRenewals {
+    static let shared = PreservationDeviceRenewals()
+    private struct Entry: Sendable {
+        let id: UUID
+        let previous: ManagedPreservationSessionStore.Credential
+        let task: Task<ManagedPreservationSessionStore.Credential, Error>
+    }
+    private var entries: [String: Entry] = [:]
+    func run(origin: String, previous: ManagedPreservationSessionStore.Credential,
+             operation: @escaping @Sendable () async throws -> ManagedPreservationSessionStore.Credential) async throws -> ManagedPreservationSessionStore.Credential {
+        let entry: Entry
+        if let current = entries[origin] {
+            guard current.previous == previous else { throw ManagedPreservationError.staleSession }
+            entry = current
+        } else {
+            entry = Entry(id: UUID(), previous: previous, task: Task { try await operation() })
+            entries[origin] = entry
+        }
+        defer { if entries[origin]?.id == entry.id { entries[origin] = nil } }
+        return try await withTaskCancellationHandler {
+            let value = try await entry.task.value
+            try Task.checkCancellation()
+            return value
+        } onCancel: { entry.task.cancel() }
+    }
+    func cancel(origin: String, previous: ManagedPreservationSessionStore.Credential?) {
+        guard let previous, let entry = entries[origin], entry.previous == previous else { return }
+        entry.task.cancel(); entries[origin] = nil
+    }
+}
+
 actor ManagedPreservationClient {
+    enum AppleCredentialState: Equatable, Sendable { case authorized, revoked, notFound, transferred }
+    typealias CredentialStateReader = @Sendable (String) async throws -> AppleCredentialState
     typealias RequestTransport = @Sendable (URLRequest, Int) async throws -> (Data, URLResponse)
     /// An opaque identity for one uninterrupted authenticated operation. The
     /// epoch changes even when the same owner signs out and back in.
@@ -429,13 +505,15 @@ actor ManagedPreservationClient {
     private let transport = ManagedPreservationTransport()
     private let requestOverride: RequestTransport?
     private let exportNow: @Sendable () -> Date
+    private let sessionNow: @Sendable () -> Date
+    private let credentialState: CredentialStateReader
     private let billingIdentity: ManagedPreservationBillingIdentity
     private let store: ManagedPreservationSessionStore
     private var credential: ManagedPreservationSessionStore.Credential?
     private var loaded = false
     private var epoch: UInt64 = 0
     private var challenge: (wire: ChallengeResponse, state: String, epoch: UInt64,
-                            replacing: ManagedPreservationSessionStore.Credential?)?
+                            replacing: ManagedPreservationSessionStore.Credential?, deviceKey: Data)?
 
     private struct ChallengeResponse: Decodable {
         let challengeId: String; let challengeProof: String; let nonce: String; let expiresAt: Date
@@ -443,7 +521,9 @@ actor ManagedPreservationClient {
     private struct Exchange: Encodable {
         let challengeId: String; let challengeProof: String
         let identityToken: String; let authorizationCode: String
+        let deviceProof: String
     }
+    private struct DeviceChallenge: Decodable { let challengeId: String; let nonce: String; let expiresAt: Date }
     private struct Put: Encodable {
         let expectedRevision: Int?; let consentVersion: String
         let document: ManagedPreservationDocument; let photoBase64: String?
@@ -468,25 +548,156 @@ actor ManagedPreservationClient {
 
     init(configuration: ManagedPreservationConfiguration = .current,
          billingIdentity: ManagedPreservationBillingIdentity = .init(), requestOverride: RequestTransport? = nil,
-         exportNow: @escaping @Sendable () -> Date = { Date() }) {
+         exportNow: @escaping @Sendable () -> Date = { Date() },
+         sessionNow: @escaping @Sendable () -> Date = { Date() },
+         credentialState: CredentialStateReader? = nil) {
         self.configuration = configuration
         self.exportNow = exportNow
+        self.sessionNow = sessionNow
+        self.credentialState = credentialState ?? { user in try await ManagedPreservationClient.nativeCredentialState(user) }
         self.billingIdentity = billingIdentity; self.requestOverride = requestOverride
         self.store = ManagedPreservationSessionStore(origin: configuration.origin?.absoluteString ?? "disabled")
     }
 
     deinit { transport.invalidate() }
 
+    private static func nativeCredentialState(_ user: String) async throws -> AppleCredentialState {
+        try await withCheckedThrowingContinuation { continuation in
+            ASAuthorizationAppleIDProvider().getCredentialState(forUserID: user) { state, error in
+                if error != nil { continuation.resume(throwing: ManagedPreservationError.unavailable); return }
+                switch state {
+                case .authorized: continuation.resume(returning: .authorized)
+                case .revoked: continuation.resume(returning: .revoked)
+                case .notFound: continuation.resume(returning: .notFound)
+                case .transferred: continuation.resume(returning: .transferred)
+                @unknown default: continuation.resume(throwing: ManagedPreservationError.unavailable)
+                }
+            }
+        }
+    }
+
     func hasSession() throws -> Bool {
         guard configuration.isEnabled else { return false }
         let persisted = try store.load()
         if !loaded { credential = persisted; loaded = true }
         else if persisted != credential { throw ManagedPreservationError.staleSession }
-        if let value = credential, value.expiresAt <= Date() {
+        if let value = credential, value.expiresAt <= sessionNow() {
+            // Access expiry must not discard this device's independent proof key.
+            if value.isRenewable { return false }
             credential = nil; epoch &+= 1
             guard try store.clear(ifMatching: value) else { throw ManagedPreservationError.staleSession }
         }
         return credential != nil
+    }
+
+    /// Explicit operation boundary. Existing in-flight checkpoints never refresh.
+    func prepareSession(expectedOwner: String? = nil) async throws -> SessionCheckpoint {
+        try Task.checkCancellation()
+        guard challenge == nil else { throw ManagedPreservationError.staleSession }
+        let persisted = try store.load()
+        if !loaded || persisted != credential {
+            credential = persisted; loaded = true; epoch &+= 1
+        }
+        guard let captured = credential, try store.deletionReceipt() == nil else {
+            throw ManagedPreservationError.authenticationRequired
+        }
+        guard expectedOwner == nil || expectedOwner == captured.ownerId else { throw ManagedPreservationError.staleSession }
+        let capturedEpoch = epoch
+        if captured.isRenewable {
+            let updated: ManagedPreservationSessionStore.Credential
+            if captured.expiresAt.timeIntervalSince(sessionNow()) > 60 {
+                updated = try await prepareDeviceSession(captured, expectedEpoch: capturedEpoch)
+            } else {
+                updated = try await PreservationDeviceRenewals.shared.run(origin: store.origin, previous: captured) {
+                    try await self.prepareDeviceSession(captured, expectedEpoch: capturedEpoch)
+                }
+            }
+            try Task.checkCancellation(); try ensureEpoch(capturedEpoch)
+            guard credential == captured, try store.load() == updated,
+                  updated.ownerId == captured.ownerId, try store.deletionReceipt() == nil else {
+                throw ManagedPreservationError.staleSession
+            }
+            if updated != captured { credential = updated; epoch &+= 1 }
+        }
+        return try captureSessionCheckpoint()
+    }
+
+    func prepareSessionIfAvailable() async throws -> Bool {
+        guard try store.load() != nil, try store.deletionReceipt() == nil else { return false }
+        do { _ = try await prepareSession(); return true }
+        catch ManagedPreservationError.authenticationRequired { return false }
+    }
+
+    private func requireDeviceItem(_ captured: ManagedPreservationSessionStore.Credential, epoch expectedEpoch: UInt64) throws {
+        try Task.checkCancellation()
+        try ensureEpoch(expectedEpoch)
+        guard try store.load() == captured, try store.deletionReceipt() == nil else { throw ManagedPreservationError.staleSession }
+    }
+
+    private func prepareDeviceSession(_ captured: ManagedPreservationSessionStore.Credential, expectedEpoch: UInt64) async throws -> ManagedPreservationSessionStore.Credential {
+        try requireDeviceItem(captured, epoch: expectedEpoch)
+        guard let grant = captured.deviceGrant, let key = captured.devicePrivateKey,
+              let user = grant.appleUserID, grant.idleExpiresAt > sessionNow() else {
+            throw ManagedPreservationError.authenticationRequired
+        }
+        let state = try await credentialState(user)
+        try requireDeviceItem(captured, epoch: expectedEpoch)
+        guard state == .authorized else {
+            if try store.clear(ifMatching: captured) { try? await revokeDeviceGrant(captured) }
+            throw ManagedPreservationError.authenticationRequired
+        }
+        if captured.expiresAt.timeIntervalSince(sessionNow()) > 60 { return captured }
+        do {
+            let proof = try await deviceProof(captured, purpose: "renew", path: "/v1/auth/session-renewals")
+            try requireDeviceItem(captured, epoch: expectedEpoch)
+            let body = try ManagedPreservationWire.encoder().encode(proof)
+            let data = try await request("POST", path: "/v1/auth/session-renewals", body: body)
+            try requireDeviceItem(captured, epoch: expectedEpoch)
+            var value: ManagedPreservationSessionStore.Credential = try decode(data)
+            guard value.ownerId == captured.ownerId, value.devicePrivateKey == nil,
+                  let renewed = value.deviceGrant, renewed.grantId == grant.grantId,
+                  renewed.appleUserID == nil || renewed.appleUserID == user,
+                  renewed.idleExpiresAt >= grant.idleExpiresAt,
+                  renewed.idleExpiresAt > sessionNow(),
+                  renewed.idleExpiresAt.timeIntervalSince(sessionNow()) <= 31 * 86400,
+                  value.expiresAt > sessionNow(),
+                  value.expiresAt.timeIntervalSince(sessionNow()) <= 16 * 60 else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            value.deviceGrant = .init(grantId: renewed.grantId, idleExpiresAt: renewed.idleExpiresAt, appleUserID: user)
+            value.devicePrivateKey = key
+            _ = try value.validated()
+            try requireDeviceItem(captured, epoch: expectedEpoch)
+            guard try store.save(value, replacing: captured) else { throw ManagedPreservationError.staleSession }
+            return value
+        } catch ManagedPreservationError.authenticationRequired {
+            // Only this captured grant is invalid. A later login cannot be cleared.
+            _ = try store.clear(ifMatching: captured)
+            throw ManagedPreservationError.authenticationRequired
+        }
+    }
+
+    private struct DeviceExchange: Encodable { let grantId: String; let challengeId: String; let deviceProof: String }
+    private func revokeDeviceGrant(_ captured: ManagedPreservationSessionStore.Credential) async throws {
+        let proof = try await deviceProof(captured, purpose: "revoke", path: "/v1/auth/session-revocations")
+        _ = try await request("POST", path: "/v1/auth/session-revocations",
+            body: ManagedPreservationWire.encoder().encode(proof), expectedStatus: 204)
+    }
+    private func deviceProof(_ captured: ManagedPreservationSessionStore.Credential, purpose: String,
+                             path: String) async throws -> DeviceExchange {
+        guard let grant = captured.deviceGrant, let key = captured.devicePrivateKey,
+              let origin = configuration.origin?.absoluteString else { throw ManagedPreservationError.authenticationRequired }
+        let body = try JSONEncoder().encode(["grantId": grant.grantId, "purpose": purpose])
+        let data = try await request("POST", path: "/v1/auth/session-challenges", body: body)
+        try Task.checkCancellation()
+        let issued: DeviceChallenge = try decode(data)
+        guard issued.expiresAt > sessionNow(), issued.expiresAt.timeIntervalSince(sessionNow()) <= 330 else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        return DeviceExchange(grantId: grant.grantId, challengeId: issued.challengeId,
+            deviceProof: try PreservationDeviceProof.make(key: key, challengeID: issued.challengeId,
+                subject: grant.grantId, nonce: issued.nonce, origin: origin, path: path,
+                expiresAt: issued.expiresAt, now: sessionNow()))
     }
 
     func sessionOwnerID() throws -> String? {
@@ -503,9 +714,9 @@ actor ManagedPreservationClient {
     typealias LocalSessionFence = @Sendable (_ publication: () throws -> Void) throws -> Void
     func localSessionFence(_ checkpoint: SessionCheckpoint) throws -> LocalSessionFence {
         try requireSessionCheckpoint(checkpoint)
-        let store = self.store, credential = checkpoint.credential
+        let store = self.store, credential = checkpoint.credential, now = sessionNow
         return { publication in
-            try store.withCurrentCredential(credential, perform: publication)
+            try store.withCurrentCredential(credential, now: now(), perform: publication)
         }
     }
 
@@ -584,7 +795,7 @@ actor ManagedPreservationClient {
     func requireSessionCheckpoint(_ checkpoint: SessionCheckpoint) throws {
         try ensureEpoch(checkpoint.epoch)
         guard try hasSession(), credential == checkpoint.credential,
-              checkpoint.credential.expiresAt > Date(),
+              checkpoint.credential.expiresAt > sessionNow(),
               try store.load() == checkpoint.credential else {
             throw ManagedPreservationError.staleSession
         }
@@ -704,17 +915,26 @@ actor ManagedPreservationClient {
         let replacing = try store.load()
         credential = nil; loaded = true
         epoch &+= 1; let capturedEpoch = epoch; challenge = nil
-        let data = try await request("POST", path: "/v1/auth/challenges", body: Data("{}".utf8))
+        await PreservationDeviceRenewals.shared.cancel(origin: store.origin, previous: replacing)
+        try Task.checkCancellation()
+        guard try store.load() == replacing, try store.deletionReceipt() == nil else {
+            throw ManagedPreservationError.staleSession
+        }
+        try ensureEpoch(capturedEpoch)
+        let deviceKey = P256.Signing.PrivateKey().rawRepresentation
+        struct InitialChallenge: Encodable { let devicePublicKey: PreservationDeviceProof.PublicKey }
+        let body = try JSONEncoder().encode(InitialChallenge(devicePublicKey: PreservationDeviceProof.publicKey(deviceKey)))
+        let data = try await request("POST", path: "/v1/auth/challenges", body: body)
         try ensureEpoch(capturedEpoch)
         let value: ChallengeResponse = try decode(data)
         guard !value.challengeId.isEmpty, value.challengeId.utf8.count <= 256,
               !value.challengeProof.isEmpty, value.challengeProof.utf8.count <= 1024,
               !value.nonce.isEmpty, value.nonce.utf8.count <= 1024,
-              value.expiresAt > Date(), value.expiresAt.timeIntervalSinceNow <= 600 else {
+              value.expiresAt > sessionNow(), value.expiresAt.timeIntervalSince(sessionNow()) <= 330 else {
             throw ManagedPreservationError.invalidResponse
         }
         let state = UUID().uuidString
-        challenge = (value, state, capturedEpoch, replacing)
+        challenge = (value, state, capturedEpoch, replacing, deviceKey)
         return ManagedPreservationChallenge(nonce: value.nonce, state: state, expiresAt: value.expiresAt)
     }
 
@@ -723,30 +943,43 @@ actor ManagedPreservationClient {
         epoch &+= 1
     }
 
-    func finishSignIn(state: String?, identityToken: Data, authorizationCode: Data) async throws {
+    func finishSignIn(state: String?, identityToken: Data, authorizationCode: Data, appleUserID: String) async throws {
         guard let pending = challenge else { throw ManagedPreservationError.authenticationStepFailed(.challenge) }
         challenge = nil // one attempt, including failed/cancelled exchanges
         try ensureEpoch(pending.epoch)
         guard state == pending.state else { throw ManagedPreservationError.authenticationStepFailed(.state) }
-        guard pending.wire.expiresAt > Date() else {
+        guard pending.wire.expiresAt > sessionNow() else {
             throw ManagedPreservationError.authenticationStepFailed(.challengeExpired)
         }
         guard identityToken.count <= 32_768, authorizationCode.count <= 8192,
               let token = String(data: identityToken, encoding: .utf8), !token.isEmpty,
-              let code = String(data: authorizationCode, encoding: .utf8), !code.isEmpty else {
+              let code = String(data: authorizationCode, encoding: .utf8), !code.isEmpty,
+              !appleUserID.isEmpty, appleUserID.utf8.count <= 1024,
+              let origin = configuration.origin?.absoluteString else {
             throw ManagedPreservationError.authenticationStepFailed(.payload)
         }
         let payload = Exchange(challengeId: pending.wire.challengeId, challengeProof: pending.wire.challengeProof,
-                               identityToken: token, authorizationCode: code)
+                               identityToken: token, authorizationCode: code,
+                               deviceProof: try PreservationDeviceProof.make(key: pending.deviceKey,
+                                challengeID: pending.wire.challengeId, subject: pending.wire.challengeId,
+                                nonce: pending.wire.nonce, origin: origin, path: "/v1/auth/sessions",
+                                expiresAt: pending.wire.expiresAt, now: sessionNow()))
         let data = try await request("POST", path: "/v1/auth/sessions",
                                      body: ManagedPreservationWire.encoder().encode(payload))
         try ensureEpoch(pending.epoch)
-        let value: ManagedPreservationSessionStore.Credential = try decode(data)
+        var value: ManagedPreservationSessionStore.Credential = try decode(data)
+        guard let grant = value.deviceGrant, grant.appleUserID == appleUserID,
+              value.devicePrivateKey == nil, grant.idleExpiresAt > sessionNow(),
+              grant.idleExpiresAt.timeIntervalSince(sessionNow()) <= 31 * 86400 else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        value.devicePrivateKey = pending.deviceKey
         _ = try value.validated()
-        guard value.expiresAt > Date() else {
+        guard value.expiresAt > sessionNow(), value.expiresAt.timeIntervalSince(sessionNow()) <= 16 * 60 else {
             throw ManagedPreservationError.authenticationStepFailed(.sessionExpired)
         }
-        guard try store.save(value, replacing: pending.replacing) else {
+        try Task.checkCancellation()
+        guard try store.deletionReceipt() == nil, try store.save(value, replacing: pending.replacing) else {
             throw ManagedPreservationError.staleSession
         }
         credential = value; loaded = true; epoch &+= 1
@@ -765,9 +998,33 @@ actor ManagedPreservationClient {
         if loaded { previous = credential } else { previous = try store.load() }
         credential = nil; challenge = nil; loaded = true; epoch &+= 1
         guard try store.clear(ifMatching: previous) else { throw ManagedPreservationError.staleSession }
+        await PreservationDeviceRenewals.shared.cancel(origin: store.origin, previous: previous)
         if let previous {
-            _ = try await request("DELETE", path: "/v1/auth/session", token: previous.token, expectedStatus: 204)
+            if previous.isRenewable {
+                try await revokeDeviceGrant(previous)
+            } else {
+                _ = try await request("DELETE", path: "/v1/auth/session", token: previous.token, expectedStatus: 204)
+            }
         }
+    }
+
+    @discardableResult
+    func appleAuthorizationDidChange() async throws -> Bool {
+        guard let captured = try store.load(), let user = captured.deviceGrant?.appleUserID else { return false }
+        let state = try await credentialState(user)
+        try Task.checkCancellation()
+        guard try store.load() == captured else { throw ManagedPreservationError.staleSession }
+        if state == .authorized { return false }
+        // No await separates the exact current-item adoption from local logout.
+        credential = captured; loaded = true; challenge = nil; epoch &+= 1
+        do { try await signOut() }
+        catch {
+            // Definite OS revocation already cleared the exact local item.
+            // Remote failure must not leave stale UI labelled signed in.
+            if try store.load() == nil { return true }
+            throw error
+        }
+        return try store.load() == nil
     }
 
     func list(after: String? = nil, forExport: Bool = false) async throws -> ManagedPreservationPage {
@@ -945,14 +1202,22 @@ actor ManagedPreservationClient {
                                          responseFile: responseFile, expectedMIMEType: expectedMIMEType, strictToolDeletion: strictToolDeletion)
             try ensureEpoch(capturedEpoch)
             guard credential?.ownerId == captured.ownerId, credential?.token == captured.token,
-                  captured.expiresAt > Date(), try store.load() == captured else {
+                  captured.expiresAt > sessionNow(), try store.load() == captured else {
                 throw ManagedPreservationError.staleSession
             }
             return data
         } catch ManagedPreservationError.authenticationRequired {
             if epoch == capturedEpoch {
-                credential = nil; epoch &+= 1
-                _ = try store.clear(ifMatching: captured)
+                if captured.isRenewable {
+                    // Access failure alone cannot invalidate the device proof key.
+                    let expired = ManagedPreservationSessionStore.Credential(token: captured.token,
+                        ownerId: captured.ownerId, expiresAt: Date(timeIntervalSince1970: 0),
+                        deviceGrant: captured.deviceGrant, devicePrivateKey: captured.devicePrivateKey)
+                    if try store.save(expired, replacing: captured) { credential = expired; epoch &+= 1 }
+                } else {
+                    credential = nil; epoch &+= 1
+                    _ = try store.clear(ifMatching: captured)
+                }
             }
             throw ManagedPreservationError.authenticationRequired
         }

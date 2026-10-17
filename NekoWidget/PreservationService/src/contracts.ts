@@ -19,13 +19,18 @@ export interface ToolBackupPart {
   sha256: string;
   payload: string;
 }
-export interface VerifiedIdentity { issuer: string; subject: string; refreshToken: string; verifiedEmail?: string; }
+export interface DevicePublicKey { kty: 'EC'; crv: 'P-256'; x: string; y: string; }
+export interface DeviceBinding { publicKey: DevicePublicKey; thumbprint: string; origin: string; }
+export interface DeviceGrant { grantId: string; idleExpiresAt: string; appleUserID?: string; }
+export interface SessionCredential { token: string; ownerId: string; expiresAt: string; deviceGrant?: DeviceGrant; }
+export interface VerifiedIdentity { issuer: string; subject: string; refreshToken: string; verifiedEmail?: string; deviceBinding?: DeviceBinding; }
 export const contactEmailValid = (email: unknown): email is string => typeof email === 'string'
   && email.length >= 3 && email.length <= 254
   && /^[^\s\x00-\x1f\x7f@]+@[^\s\x00-\x1f\x7f@]+\.[^\s\x00-\x1f\x7f@]+$/u.test(email);
-export interface Challenge { nonce: string; createdAt: number; expiresAt: number; }
+export interface Challenge { nonce: string; createdAt: number; expiresAt: number; deviceBinding?: DeviceBinding; }
 export interface IdentityVerifier {
-  verifyNativeAuthorization(input: { challengeId: string; challengeProof: string; identityToken: string; authorizationCode: string }): Promise<VerifiedIdentity>;
+  verifyNativeAuthorization(input: { challengeId: string; challengeProof: string; identityToken: string; authorizationCode: string; deviceProof?: string; origin?: string }): Promise<VerifiedIdentity>;
+  verifyRefreshIdentity?(identity: VerifiedIdentity): Promise<VerifiedIdentity>;
 }
 export interface KeyCustody {
   seal(plaintext: Uint8Array, context: { ownerId: string; purpose: 'identity' | 'record' | 'contact' | 'recovery'; recordId?: string }): Promise<Uint8Array>;
