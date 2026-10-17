@@ -188,6 +188,14 @@ export class OwnerQuarantineRestore {
     await this.requireEmptyTarget(ownerId);
     await this.requireNoPurgeIntent(ownerId);
     const initial = [
+      // Offline restore never inherits an in-progress pre-restore Apple flow.
+      // Owner-bound grants cannot exist in the empty FK-checked target; the
+      // owner epoch/disabled trigger also invalidates them on later transitions.
+      this.db.prepare('DELETE FROM pa_auth_challenges'),
+      this.db.prepare('DELETE FROM pa_device_session_challenges'),
+      this.db.prepare('DELETE FROM pa_sessions'),
+      this.db.prepare('DELETE FROM pa_device_session_grants'),
+      this.db.prepare('DELETE FROM pa_device_identity_checks'),
       this.db.prepare(`INSERT INTO pa_owners(owner_id,identity_key,epoch,disabled,created_at,
         purge_fence_id) VALUES(?,?,?,1,?,NULL)`)
         .bind(ownerId, owner.identityKey, owner.epoch, owner.createdAt),

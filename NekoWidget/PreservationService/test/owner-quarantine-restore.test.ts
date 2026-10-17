@@ -139,6 +139,8 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
     .rejects.toMatchObject({ code: 'OWNER_QUARANTINE_RESTORE_UNAVAILABLE' });
   expect(await binding.ARCHIVE.head(photoKey)).toBeNull();
   purgeEvents.length = 0;
+  await binding.DB.prepare(`INSERT INTO pa_auth_challenges(challenge_id,proof_hash,nonce,created_at,expires_at)
+    VALUES(?,?,?,1,300001)`).bind(randomToken(), 'a'.repeat(64), randomToken()).run();
   expect(await restore.restore(ownerId, 1_001)).toEqual({ status: 'staged-disabled',
     ownerId, records: 1, photos: 1 });
   expect(await binding.DB.prepare(`SELECT disabled,epoch,http_request_minute,http_request_count,
@@ -160,8 +162,9 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
     .toEqual(photoCiphertext);
   expect(await binding.DB.prepare('SELECT count(*) AS count FROM pa_sessions').first())
     .toMatchObject({ count: 0 });
-  // Offline staging restores data, never trial/repair authority or spendable debt.
-  for (const table of ['pa_tool_owner_trials','pa_tool_trial_records','pa_tool_trial_resume_repairs']) {
+  // Offline staging restores data, never device/session/trial authority.
+  for (const table of ['pa_tool_owner_trials','pa_tool_trial_records','pa_tool_trial_resume_repairs',
+    'pa_auth_challenges','pa_device_session_grants','pa_device_session_challenges','pa_device_identity_checks']) {
     expect(await binding.DB.prepare(`SELECT count(*) AS count FROM ${table}`).first()).toMatchObject({count:0});
   }
   await expect(binding.DB.prepare(`INSERT INTO pa_tool_owner_trials(owner_id,owner_epoch,enabled,starts_at,ends_at,

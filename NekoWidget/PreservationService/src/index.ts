@@ -1,5 +1,6 @@
 import { ServiceError, sha256, type IdentityVerifier } from './contracts';
 import { DurableAuth } from './auth';
+import { deviceSessionCleanupStatements } from './device-sessions';
 import { ArchiveStore, cleanupArchive } from './storage';
 import { AppleIdentityVerifier, AppleSignInFailure, createAppleClientSecret } from './apple';
 import { boundKeyWrapper, boundBillingAuthority, boundPhotoValidator } from './providers';
@@ -90,17 +91,34 @@ export async function route(request: Request, services: Services, context?: Pick
   const path = url.pathname;
   if (!['/v1/records', '/v1/export-page', '/v1/tool-cleanup'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
   if (request.method === 'POST' && path === '/v1/auth/challenges') {
-    if (Object.keys(await body(request, 1024)).length) throw new ServiceError('INVALID_REQUEST');
-    return response(await services.auth.issueChallenge());
+    const input = await body(request, 1024);
+    if (Object.keys(input).some(key => key !== 'devicePublicKey')) throw new ServiceError('INVALID_REQUEST');
+    return response(await services.auth.issueChallenge(input.devicePublicKey, url.origin));
   }
   if (request.method === 'POST' && path === '/v1/auth/sessions') {
     const input = await body(request, 64 * 1024);
-    if (Object.keys(input).some((key) => !['challengeId', 'challengeProof', 'identityToken', 'authorizationCode'].includes(key))) {
+    if (Object.keys(input).some((key) => !['challengeId', 'challengeProof', 'identityToken', 'authorizationCode', 'deviceProof'].includes(key))) {
       throw new ServiceError('INVALID_REQUEST');
     }
     const verified = await services.verifier.verifyNativeAuthorization({ challengeId: string(input.challengeId),
-      challengeProof: string(input.challengeProof), identityToken: string(input.identityToken), authorizationCode: string(input.authorizationCode) });
+      challengeProof: string(input.challengeProof), identityToken: string(input.identityToken), authorizationCode: string(input.authorizationCode),
+      origin: url.origin, ...(input.deviceProof === undefined ? {} : { deviceProof: string(input.deviceProof) }) });
     return response(await services.auth.establish(verified));
+  }
+  if (request.method === 'POST' && path === '/v1/auth/session-challenges') {
+    const input = await body(request, 1024);
+    if (Object.keys(input).sort().join(',') !== 'grantId,purpose'
+      || (input.purpose !== 'renew' && input.purpose !== 'revoke')) throw new ServiceError('INVALID_REQUEST');
+    return response(await services.auth.devices.issueChallenge(string(input.grantId), input.purpose, url.origin));
+  }
+  if (request.method === 'POST' && ['/v1/auth/session-renewals', '/v1/auth/session-revocations'].includes(path)) {
+    const input = await body(request, 12 * 1024);
+    if (Object.keys(input).sort().join(',') !== 'challengeId,deviceProof,grantId') throw new ServiceError('INVALID_REQUEST');
+    const proof = { grantId: string(input.grantId), challengeId: string(input.challengeId),
+      deviceProof: string(input.deviceProof), origin: url.origin };
+    if (path === '/v1/auth/session-renewals') return response(await services.auth.devices.renew(proof, services.verifier));
+    await services.auth.devices.revoke(proof);
+    return new Response(null, { status: 204, headers });
   }
   const token = bearer(request);
   const deletionOwner = /^\/v1\/account-deletion\/([0-9a-f-]+)$/.exec(path)?.[1];
@@ -513,6 +531,7 @@ export default {
             (SELECT challenge_id FROM pa_auth_challenges WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
           env.DB.prepare(`DELETE FROM pa_sessions WHERE session_hash IN
             (SELECT session_hash FROM pa_sessions WHERE expires_at<=? LIMIT 100)`).bind(Date.now()),
+          ...deviceSessionCleanupStatements(env.DB, Date.now(), 100),
         ]);
       } catch { maintenanceFailures++; }
     }

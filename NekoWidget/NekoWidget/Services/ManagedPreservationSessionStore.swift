@@ -2,8 +2,8 @@ import Foundation
 import Security
 import CryptoKit
 
-/// Only the opaque preservation session is persisted. Apple credentials and
-/// challenge proofs are transient; this item neither syncs nor restores to a new device.
+/// Preservation access and its independent device proof key stay together in
+/// one device-only item. Apple tokens and challenge proofs are never persisted.
 struct ManagedPreservationSessionStore: Sendable {
     private static let lock = NSLock()
 
@@ -11,6 +11,16 @@ struct ManagedPreservationSessionStore: Sendable {
         let token: String
         let ownerId: String
         let expiresAt: Date
+        var deviceGrant: DeviceGrant? = nil
+        var devicePrivateKey: Data? = nil
+
+        struct DeviceGrant: Codable, Equatable, Sendable {
+            let grantId: String
+            let idleExpiresAt: Date
+            let appleUserID: String?
+        }
+
+        var isRenewable: Bool { deviceGrant != nil && devicePrivateKey != nil }
 
         func validated() throws -> Self {
             guard (16...4096).contains(token.utf8.count),
@@ -19,6 +29,16 @@ struct ManagedPreservationSessionStore: Sendable {
                   expiresAt.timeIntervalSince1970.isFinite else {
                 throw ManagedPreservationError.invalidResponse
             }
+            if let deviceGrant {
+                guard deviceGrant.grantId.range(of: #"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"#, options: .regularExpression) != nil,
+                      deviceGrant.idleExpiresAt.timeIntervalSince1970.isFinite,
+                      let user = deviceGrant.appleUserID, !user.isEmpty, user.utf8.count <= 1024,
+                      !user.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+                      let devicePrivateKey, devicePrivateKey.count == 32,
+                      (try? P256.Signing.PrivateKey(rawRepresentation: devicePrivateKey)) != nil else {
+                    throw ManagedPreservationError.invalidResponse
+                }
+            } else if devicePrivateKey != nil { throw ManagedPreservationError.invalidResponse }
             return self
         }
     }
@@ -121,9 +141,9 @@ struct ManagedPreservationSessionStore: Sendable {
 
     /// Bind a local publication to the exact credential while sign-in,
     /// sign-out and deletion-receipt changes share this same process lock.
-    func withCurrentCredential(_ expected: Credential, perform: () throws -> Void) throws {
+    func withCurrentCredential(_ expected: Credential, now: Date = Date(), perform: () throws -> Void) throws {
         Self.lock.lock(); defer { Self.lock.unlock() }
-        guard try readCredential() == expected, expected.expiresAt > Date(),
+        guard try readCredential() == expected, expected.expiresAt > now,
               try readDeletionReceipt() == nil else { throw ManagedPreservationError.staleSession }
         try perform()
     }

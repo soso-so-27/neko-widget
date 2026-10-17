@@ -7,6 +7,7 @@ const unavailable = () => new ServiceError('OWNER_D1_RESIDUE_UNAVAILABLE', 503);
  * coverage test fails when a new table is added without a purge disposition.
  */
 export const ownerContentTables = [
+  'pa_device_session_grants', 'pa_device_session_challenges', 'pa_device_identity_checks',
   'pa_identity_credentials', 'pa_inventory', 'pa_membership_challenges',
   'pa_membership_links', 'pa_notice_claims', 'pa_notice_contacts',
   'pa_notice_submissions', 'pa_owner_recovery_generations',
@@ -35,12 +36,14 @@ export const ownerCursorTables = [
  * changes are still required before any row may be removed.
  */
 export const ownerD1DeleteOrder = [
+  'pa_device_session_challenges',
   'pa_tool_record_sources',
   'pa_tool_snapshot_abandonments',
   'pa_tool_snapshot_references', 'pa_tool_part_delete_claims',
   'pa_tool_trial_resume_repairs', 'pa_tool_trial_records', 'pa_tool_owner_trials',
   'pa_membership_challenges',
   'pa_notice_claims', 'pa_notice_submissions', 'pa_sessions',
+  'pa_device_session_grants', 'pa_device_identity_checks',
   'pa_record_commit_markers', 'pa_record_delete_intents',
   'pa_record_legacy_baseline', 'pa_recovery_repair_failures',
   'pa_record_recovery_versions', 'pa_records', 'pa_uploads',
