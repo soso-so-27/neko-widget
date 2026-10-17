@@ -5345,6 +5345,54 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testICloudCopySaveStatusUsesSelectedRecordWithoutAutomaticSaveControls() {
+        let app = XCUIApplication()
+        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "ICloudCopyStatusUITest.\(UUID().uuidString)"
+        // Inject only isolated records. Exercise the shipping destination,
+        // without the legacy selected-copy preservation route override.
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-cloud",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let notes = app.buttons["photos-section-notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 15), app.debugDescription)
+        if !notes.isSelected { notes.tap() }
+        let archiveRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch
+        XCTAssertTrue(archiveRow.waitForExistence(timeout: 10))
+        archiveRow.tap()
+        let memo = app.staticTexts["memory-note-body"]
+        XCTAssertTrue(memo.waitForExistence(timeout: 5))
+        let originalMemo = "はじめてのおふろ。タオルにくるまって、やっとひと安心。"
+        XCTAssertEqual(memo.label, originalMemo)
+        app.buttons["personal-archive-record-menu"].tap()
+        let statusEntry = app.buttons["personal-archive-copy-status-open"]
+        XCTAssertTrue(statusEntry.waitForExistence(timeout: 5))
+        XCTAssertEqual(statusEntry.label, "このメモの保存状況")
+        statusEntry.tap()
+        XCTAssertTrue(app.navigationBars["このメモの保存状況"].waitForExistence(timeout: 5))
+        let status = app.descendants(matching: .any).matching(identifier: "personal-archive-copy-status").firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["iCloudに保存済み"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.navigationBars["保存・復元"].exists)
+        XCTAssertFalse(app.navigationBars["サービスに保管"].exists)
+        XCTAssertFalse(app.switches["app-record-consent"].exists)
+        for identifier in ["app-record-enable", "app-record-signin", "app-record-membership-manage", "preservation-copy-save"] {
+            XCTAssertFalse(app.buttons[identifier].exists, "A copy's read-only status must not expose \(identifier).")
+        }
+        for title in ["会員情報を確認", "Appleの契約を確認", "購入を復元", "この端末の自動保存を停止"] {
+            XCTAssertFalse(app.buttons[title].exists, "A copy's status must not expose unrelated action: \(title).")
+        }
+        attach(app, name: "icloud-copy-readonly-save-status")
+        let close = app.navigationBars["このメモの保存状況"].buttons["閉じる"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        XCTAssertTrue(app.navigationBars["メモ"].waitForExistence(timeout: 5))
+        XCTAssertTrue(memo.waitForExistence(timeout: 5))
+        XCTAssertEqual(memo.label, originalMemo, "Checking a saved copy must leave its memo unchanged.")
+        XCTAssertFalse(app.buttons["app-record-enable"].exists)
+        XCTAssertFalse(app.buttons["この端末の自動保存を停止"].exists)
+    }
+
+    @MainActor
     func testMemoryLibraryEntryReadsEditsAndOpensTheOriginalPhoto() {
         let app = XCUIApplication()
         let preferenceSuite = "PhotoLibrarySelectionUITest.\(UUID().uuidString)"
