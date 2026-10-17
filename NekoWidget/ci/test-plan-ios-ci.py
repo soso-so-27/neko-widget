@@ -9974,6 +9974,317 @@ class FixtureNavigationRecoveryTests(unittest.TestCase):
             self.candidate_jobs[-1]['steps'][1]['conclusion']='success';candidate['run_attempt']=2;self.assertIsNone(self.proof())
 
 
+class RetainedContinuationTests(unittest.TestCase):
+    def setUp(self):
+        self.old = FixtureNavigationRecoveryTests()
+        self.old.setUp()
+        self.old.head = planner.RETAINED_CONTINUATION_SOURCE
+        for item in (self.old.diagnostic, self.old.widget_diagnostic, self.old.diag_job, self.old.widget_diag_job):
+            item['head_sha'] = self.old.head
+        self.head, self.repo = 'a'*40, 'soso-so-27/neko-widget'
+        self.now = dt.datetime(2026, 10, 18, 1, tzinfo=dt.timezone.utc)
+        self.source = self.old.run | {'id':planner.RETAINED_CONTINUATION_RUN, 'head_sha':self.old.head,
+            'conclusion':'success', 'created_at':'2026-10-16T11:37:31Z', 'updated_at':planner.RETAINED_CONTINUATION_AT}
+        with self.old.mocks():
+            self.source_jobs = [self.old.job(name, identifier, self.old.head, self.source['id'],
+                planner.fixture_navigation_required_steps(name)) for name, identifier in planner.RETAINED_CONTINUATION_JOBS.items()]
+            self.source_jobs += [{'id':identifier, 'name':name, 'head_sha':self.old.head,
+                'run_id':self.source['id'], 'run_attempt':1, 'status':'completed', 'conclusion':'skipped',
+                'runner_id':None, 'steps':[]} for name, identifier in planner.RETAINED_CONTINUATION_PLACEHOLDERS.items()]
+            proof = self.old.proof()
+        self.assertIsNotNone(proof)
+        self.source_plan = self.old.source_plan | {'head_sha':self.old.head, 'test_correction_evidence':proof}
+        self.old.index.append(self.source)
+        self.candidate = self.source | {'id':1200, 'head_sha':self.head, 'head_branch':planner.RETAINED_CONTINUATION_BRANCH,
+            'created_at':'2026-10-18T00:00:00Z', 'updated_at':'2026-10-18T00:05:00Z'}
+        self.candidate_jobs = [self.old.job(planner.PLAN_JOB, 1201, self.head, 1200,
+                                          planner.fixture_navigation_required_steps(planner.PLAN_JOB))]
+        for job in self.candidate_jobs:
+            job['started_at'], job['completed_at'] = '2026-10-18T00:00:00Z', '2026-10-18T00:05:00Z'
+            for step in job['steps']:
+                step['started_at'], step['completed_at'] = '2026-10-18T00:01:00Z', '2026-10-18T00:02:00Z'
+        self.candidate_plan = self.old.source_plan | {'head_sha':self.head, 'evidence_run_id':self.source['id'],
+            'evidence_sha':self.old.head, 'retained_continuation':planner.retained_continuation_record(self.head)}
+        self.runs = []
+
+    def api(self, path):
+        if 'workflows/ios-build.yml/runs?' in path:
+            if 'branch=codex%2Fautomatic-admission-release-20261018' in path or 'head_sha='+self.head in path:
+                return {'total_count':len(self.runs), 'workflow_runs':self.runs}
+        if path.endswith('/runs/'+str(self.source['id'])): return self.source
+        if f"/runs/{planner.RETAINED_CONTINUATION_RUN}/" in path:
+            return {'total_count':len(self.source_jobs), 'jobs':self.source_jobs}
+        if path.endswith('/runs/1200'): return self.candidate
+        if '/runs/1200/jobs?' in path: return {'total_count':len(self.candidate_jobs), 'jobs':self.candidate_jobs}
+        if path.endswith(f"/jobs/{planner.RETAINED_CONTINUATION_JOBS[planner.PLAN_JOB]}/logs"):
+            return 'IOS_CI_PLAN_JSON='+json.dumps(self.source_plan)
+        if path.endswith('/jobs/1201/logs'): return 'IOS_CI_PLAN_JSON='+json.dumps(self.candidate_plan)
+        return self.old.api(path)
+
+    @contextlib.contextmanager
+    def mocks(self):
+        with self.old.mocks(), patch.object(planner, 'retained_continuation_inputs', return_value=True), \
+                patch.object(planner, 'retained_continuation_readiness', return_value=True):
+            yield
+
+    def proof(self, **kwargs):
+        return planner.retained_continuation_evidence(self.head, self.api, self.now, **kwargs)
+
+    def test_historical_graph_is_attributed_to_original_sha_and_real_completion(self):
+        with self.mocks():
+            self.assertFalse(planner.covers_fixture_navigation(self.source, self.old.head, planner.FULL,
+                self.api, self.now, self.source_jobs))
+            proof = self.proof()
+            self.assertEqual(proof['source_sha'], planner.RETAINED_CONTINUATION_SOURCE)
+            self.assertEqual(proof['source_run_id'], planner.RETAINED_CONTINUATION_RUN)
+            self.assertEqual(proof['historical_qualified_at'], planner.RETAINED_CONTINUATION_AT)
+            self.assertEqual(proof['candidate_sha'], self.head)
+            self.assertTrue(proof['current_readiness_verified'])
+            self.assertEqual(proof['required_jobs'], list(planner.FULL))
+
+    def test_current_readiness_failure_is_not_fixed_by_historical_clock(self):
+        with self.mocks(), patch.object(planner, 'retained_continuation_readiness', return_value=False):
+            with self.assertRaisesRegex(planner.CorrectionEvidenceUnavailable, 'Current signed readiness'):
+                self.proof()
+
+    def test_fixed_source_sha_branch_attempt_outcome_time_and_job_ids_are_required(self):
+        with self.mocks():
+            for key, value in [('head_sha','f'*40), ('head_branch','codex/other'), ('run_attempt',2),
+                    ('conclusion','failure'), ('status','in_progress'), ('updated_at',self.now.isoformat())]:
+                original = self.source[key]; self.source[key] = value
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable, msg=key): self.proof()
+                self.source[key] = original
+            self.source_jobs[0]['id'] += 1
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+
+    def test_original_owned_and_retained_steps_and_case_logs_still_must_be_real(self):
+        with self.mocks():
+            for jobs in (self.source_jobs, self.old.jobs):
+                actual = next(job for job in jobs if job['conclusion']=='success')
+                saved = copy.deepcopy(actual['steps'])
+                for bad in [[], saved+saved[:1], [saved[0]|{'conclusion':'skipped'}]+saved[1:],
+                            [saved[0]|{'conclusion':'failure'}]+saved[1:]]:
+                    actual['steps'] = bad
+                    with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+                actual['steps'] = saved
+            self.old.photos = self.old.photos.replace('passed', 'failed')
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+
+    def test_source_history_new_failure_or_active_run_is_not_hidden(self):
+        with self.mocks():
+            self.old.index.append(self.source | {'id':9999, 'status':'in_progress', 'conclusion':None})
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+
+    def test_new_candidate_unknown_failure_active_rerun_and_duplicate_block(self):
+        with self.mocks():
+            self.runs = [self.candidate]
+            self.assertIsNotNone(self.proof())
+            for key, value in [('head_branch','codex/unknown'), ('run_attempt',2), ('conclusion','failure'),
+                    ('status','in_progress'), ('updated_at','2026-10-16T12:35:32Z')]:
+                saved = self.candidate[key]; self.candidate[key] = value
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable, msg=key): self.proof()
+                self.candidate[key] = saved
+            self.runs.append(self.candidate | {'id':1202})
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+
+    def test_release_demands_current_candidate_plan_three_steps_and_exact_attribution(self):
+        with self.mocks():
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof(require_plan=True)
+            self.runs = [self.candidate]
+            self.assertTrue(planner.covers_corrected_full_graph(self.source, self.head, planner.FULL,
+                self.api, self.now, self.source_jobs))
+            saved = copy.deepcopy(self.candidate_jobs[0]['steps'])
+            for bad in [[], saved[1:], saved+saved[:1], [saved[0]|{'conclusion':'skipped'}]+saved[1:],
+                    [saved[0]|{'status':'in_progress'}]+saved[1:], [saved[0]|{'conclusion':'failure'}]+saved[1:]]:
+                self.candidate_jobs[0]['steps'] = bad
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof(require_plan=True)
+            self.candidate_jobs[0]['steps'] = saved
+            self.candidate_plan['evidence_sha'] = self.head
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof(require_plan=True)
+
+    def test_only_current_owning_active_plan_is_allowed_during_selection(self):
+        with self.mocks():
+            self.candidate.update(status='in_progress', conclusion=None)
+            self.runs = [self.candidate]
+            self.assertIsNotNone(self.proof(current_run=self.candidate))
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                self.proof(current_run=self.candidate, require_plan=True)
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable):
+                self.proof(current_run=self.candidate | {'id':999})
+
+    def test_unchanged_release_cli_uses_shared_graph_and_preserves_original_tested_sha(self):
+        spec = importlib.util.spec_from_file_location('retained_release_cli',Path(__file__).with_name('release-testflight.py'))
+        release = importlib.util.module_from_spec(spec); spec.loader.exec_module(release)
+        fixture = self
+        class GitHub:
+            def get(self, path):
+                if path=='actions/workflows/ios-build.yml':
+                    return {'id':335014238,'path':'.github/workflows/ios-build.yml','state':'active'}
+                if re.fullmatch(r'actions/jobs/\d+',path):
+                    identifier = int(path.rsplit('/',1)[1])
+                    return next(j for j in fixture.source_jobs+fixture.old.jobs+fixture.candidate_jobs+
+                        [fixture.old.diag_job,fixture.old.widget_diag_job] if j['id']==identifier)
+                return fixture.api('/repos/'+fixture.repo+'/'+path)
+            def log(self, run_id, job_id):
+                # Match gh run view's display prefixes; semantic event identity
+                # remains exact, without claiming raw-byte digest equivalence.
+                text = fixture.api(f'/repos/{fixture.repo}/actions/jobs/{job_id}/logs')
+                return '\n'.join('job\tstep\t'+line for line in text.splitlines())
+        with self.mocks(), patch.object(release,'planner',planner), \
+                patch.object(planner,'moderation_chained_inputs',return_value=False):
+            self.runs = [self.candidate]
+            proof = release.check_ci(GitHub(),self.head,self.candidate['id'],self.now)
+            self.assertEqual(proof['tested_sha'],planner.RETAINED_CONTINUATION_SOURCE)
+            self.assertEqual(proof['tested_run'],planner.RETAINED_CONTINUATION_RUN)
+            self.assertEqual(proof['main_ci_run'],self.candidate['id'])
+            self.candidate_jobs[0]['steps'][1]['conclusion'] = 'skipped'
+            with self.assertRaises(release.Blocked): release.check_ci(GitHub(),self.head,self.candidate['id'],self.now)
+
+    def test_main_reuse_requires_fresh_candidate_and_release_main_plan_steps(self):
+        main_sha = 'b'*40
+        main_run = self.candidate | {'id':1300,'head_sha':main_sha,'head_branch':'main'}
+        main_jobs = [self.candidate_jobs[0] | {'id':1301,'run_id':1300,'head_sha':main_sha}]
+        main_plan = self.candidate_plan | {'head_sha':main_sha,'retained_continuation':planner.retained_continuation_record(main_sha)}
+        def api(path):
+            if 'head_sha='+main_sha in path: return {'total_count':1,'workflow_runs':[main_run]}
+            if path.endswith('/runs/1300'): return main_run
+            if '/runs/1300/jobs?' in path: return {'total_count':1,'jobs':main_jobs}
+            if path.endswith('/jobs/1301/logs'): return 'IOS_CI_PLAN_JSON='+json.dumps(main_plan)
+            return self.api(path)
+        with self.mocks():
+            self.runs = [self.candidate]
+            self.assertTrue(planner.reusable_run(self.source,main_run,self.repo,self.now))
+            self.assertTrue(planner.covers_corrected_full_graph(self.source,main_sha,planner.FULL,api,self.now,self.source_jobs))
+            main_jobs[0] = copy.deepcopy(main_jobs[0]); main_jobs[0]['steps'][0]['conclusion'] = 'skipped'
+            self.assertFalse(planner.covers_corrected_full_graph(self.source,main_sha,planner.FULL,api,self.now,self.source_jobs))
+            self.assertFalse(planner.reusable_run(self.source | {'id':9999},main_run,self.repo,self.now))
+
+    def test_candidate_plan_selects_original_source_and_all_native_flags_are_false(self):
+        with self.mocks(), tempfile.TemporaryDirectory() as directory:
+            self.candidate.update(status='in_progress', conclusion=None)
+            self.runs = [self.candidate]
+            root = Path(directory); (root/'event.json').write_text('{}')
+            env = {'GITHUB_EVENT_PATH':str(root/'event.json'), 'GITHUB_OUTPUT':str(root/'output'),
+                'GITHUB_STEP_SUMMARY':str(root/'summary'), 'GITHUB_EVENT_NAME':'push',
+                'GITHUB_REF':'refs/heads/'+planner.RETAINED_CONTINUATION_BRANCH, 'GITHUB_SHA':self.head,
+                'GITHUB_REPOSITORY':self.repo, 'GITHUB_SERVER_URL':'https://github.com', 'GITHUB_RUN_ID':'1200'}
+            original_git = planner.git
+            def local_git(*args): return self.head if args==('rev-parse','HEAD') else original_git(*args)
+            with patch.object(planner,'git',side_effect=local_git):
+                self.assertEqual(planner.find_evidence(env, planner.FULL, self.api, self.now),
+                                 (planner.RETAINED_CONTINUATION_RUN, planner.RETAINED_CONTINUATION_SOURCE))
+            output = io.StringIO()
+            with patch.dict(os.environ,env), patch.object(planner,'changed_paths',return_value=[]), \
+                    patch.object(planner,'runtime_scope',return_value=planner.FULL_SCOPE), \
+                    patch.object(planner,'required_jobs',return_value=planner.FULL), \
+                    patch.object(planner,'find_evidence',return_value=(planner.RETAINED_CONTINUATION_RUN,planner.RETAINED_CONTINUATION_SOURCE)), \
+                    contextlib.redirect_stdout(output): planner.main()
+            values = dict(line.split('=',1) for line in (root/'output').read_text().splitlines())
+            for key in ('build','smoke','sharing','app_ui'): self.assertEqual(values[key],'false')
+            for key in ('app_ui_lanes','lanes','matrix_lanes'): self.assertEqual(values[key],'[]')
+            record = planner.fixture_navigation_plan(output.getvalue(),self.head)
+            self.assertEqual(record['retained_continuation'],planner.retained_continuation_record(self.head))
+
+
+class RetainedContinuationInputTests(unittest.TestCase):
+    def setUp(self):
+        self.head, self.control, self.anchor = 'a'*40, 'b'*40, 'c'*40
+        self.ready, self.before, self.after = 'd'*40, 'e'*40, 'f'*40
+        self.approved, self.dirty = True, False
+        self.extra = ''
+        self.tree_overrides = {}
+
+    def delta(self, base):
+        before = (planner.RETAINED_CONTINUATION_READY_BEFORE if base==planner.RETAINED_CONTINUATION_SOURCE
+                  else planner.RETAINED_CONTINUATION_CONTROL_READY_BEFORE)
+        return ''.join(f':100644 100644 {self.before} {self.after} M\0{path}\0'
+            for path in sorted(planner.FIXTURE_NAV_CONTROLS)) + \
+            f':100644 100644 {before} {self.ready} M\0{planner.RETAINED_CONTINUATION_READINESS}\0' + self.extra
+
+    def git(self, *args):
+        if args[:2]==('merge-base','--is-ancestor'):
+            if not self.approved and args[2]==self.control: raise subprocess.CalledProcessError(1, 'git')
+            return ''
+        if args[0]=='merge-base': return self.anchor
+        if args[0]=='log': return self.control
+        if args[0]=='diff':
+            return ('\0'.join(sorted(planner.FIXTURE_NAV_CONTROLS | {planner.RETAINED_CONTINUATION_READINESS}))+'\0'
+                if '--name-only' in args else self.delta(args[-2]))
+        if args[0]=='ls-tree':
+            ref, path = args[1], args[-1]
+            if (ref,path) in self.tree_overrides: return self.tree_overrides[ref,path]
+            base = ref in (planner.RETAINED_CONTINUATION_SOURCE,planner.RETAINED_CONTINUATION_CONTROL_BASE)
+            if path==planner.RETAINED_CONTINUATION_READINESS:
+                blob = (planner.RETAINED_CONTINUATION_READY_BEFORE if ref==planner.RETAINED_CONTINUATION_SOURCE else
+                        planner.RETAINED_CONTINUATION_CONTROL_READY_BEFORE) if base else self.ready
+            else: blob = self.before if base else self.after
+            return f'100644 blob {blob}\t{path}'
+        if args[:2]==('rev-parse','HEAD'): return self.head
+        if args[0]=='rev-parse': return '1'*40
+        if args[0]=='status': return ' M tracked-file' if self.dirty else ''
+        if args[0]=='show': return '{}'
+        raise AssertionError(args)
+
+    @contextlib.contextmanager
+    def mocks(self):
+        with patch.object(planner,'git',side_effect=self.git), \
+                patch.object(planner,'RETAINED_CONTINUATION_READY_AFTER',self.ready): yield
+
+    def test_exact_candidate_and_control_introduction_have_separate_readiness_pairs(self):
+        paths = sorted(planner.FIXTURE_NAV_CONTROLS | {planner.RETAINED_CONTINUATION_READINESS})
+        with self.mocks(), patch.object(planner,'retained_continuation_readiness',return_value=True):
+            self.assertTrue(planner.retained_continuation_inputs(self.head))
+            self.assertTrue(planner.retained_continuation_control_only(paths,planner.RETAINED_CONTINUATION_CONTROL_BASE,self.head))
+            self.assertEqual(planner.required_jobs(paths,planner.ORCHESTRATION_SCOPE),(planner.PLAN_JOB,))
+            self.approved = False
+            self.assertFalse(planner.retained_continuation_inputs(self.head))
+            self.assertTrue(planner.retained_continuation_inputs(self.head,approved=False))
+
+    def test_product_workflow_unknown_mode_deleted_or_unapproved_control_cannot_be_hidden(self):
+        with self.mocks():
+            for path in ['NekoWidget/NekoWidget/Views/PhotoView.swift','.github/workflows/ios-build.yml','unknown.txt']:
+                self.extra = f':100644 100644 {self.before} {self.after} M\0{path}\0'
+                self.assertFalse(planner.retained_continuation_inputs(self.head),path)
+            self.extra = ''
+            path = next(iter(planner.FIXTURE_NAV_CONTROLS))
+            for row in ['',f'120000 blob {self.after}\t{path}',f'100644 blob {self.before}\t{path}']:
+                self.tree_overrides[self.control,path] = row
+                self.assertFalse(planner.retained_continuation_inputs(self.head))
+            self.tree_overrides = {}
+            self.extra = f':100644 000000 {self.before} '+('0'*40)+' D\0handoffs/previous.md\0'
+            self.assertFalse(planner.retained_continuation_inputs(self.head))
+
+    def test_pending_readiness_duplicate_partial_or_mixed_control_paths_fail_closed(self):
+        paths = sorted(planner.FIXTURE_NAV_CONTROLS | {planner.RETAINED_CONTINUATION_READINESS})
+        with self.mocks(), patch.object(planner,'RETAINED_CONTINUATION_READY_AFTER','PENDING'):
+            self.assertFalse(planner.retained_continuation_inputs(self.head))
+        for bad in [paths[:-1],paths+paths[:1],paths+['NekoWidget/new.swift']]:
+            self.assertFalse(planner.retained_continuation_control_paths_only(bad))
+
+    def test_fixed_control_branch_never_starts_native_work_after_bad_signature_or_closure(self):
+        paths = sorted(planner.FIXTURE_NAV_CONTROLS | {planner.RETAINED_CONTINUATION_READINESS})
+        env = {'GITHUB_REF':'refs/heads/'+planner.RETAINED_CONTINUATION_CONTROL_BRANCH,'GITHUB_SHA':self.head}
+        with self.mocks(), patch.object(planner,'comparison_base',return_value=planner.RETAINED_CONTINUATION_CONTROL_BASE), \
+                patch.object(planner,'retained_continuation_readiness',return_value=True) as readiness:
+            self.assertEqual(planner.runtime_scope(paths,{},env),planner.ORCHESTRATION_SCOPE)
+            readiness.return_value = False
+            with self.assertRaisesRegex(ValueError,'no native work authorized'): planner.runtime_scope(paths,{},env)
+            readiness.return_value = True
+            with self.assertRaisesRegex(ValueError,'no native work authorized'): planner.runtime_scope(paths+['unknown'],{},env)
+
+    def test_signed_readiness_uses_actual_verifier_clock_and_rejects_failures_dirty_or_wrong_purpose(self):
+        result = subprocess.CompletedProcess([],0,json.dumps({'verified':True,'purpose':'testflight-owner-report-ui-continuation'}),'')
+        with self.mocks(), patch.object(planner.subprocess,'run',return_value=result) as verify:
+            self.assertTrue(planner.retained_continuation_readiness(self.head))
+            self.assertEqual(verify.call_args.args[0],['node','NekoWidget/ci/verify-moderation-readiness.mjs'])
+            self.assertEqual(set(json.loads(verify.call_args.kwargs['input'])),{'policy','evidence'})
+            self.assertNotIn('env',verify.call_args.kwargs)
+            self.dirty = True; self.assertFalse(planner.retained_continuation_readiness(self.head)); self.dirty = False
+            for code, payload in [(1,{'verified':True}), (0,{'verified':False}), (0,{'verified':True,'purpose':'wrong'})]:
+                verify.return_value = subprocess.CompletedProcess([],code,json.dumps(payload),'')
+                self.assertFalse(planner.retained_continuation_readiness(self.head))
+
+
 class TestCorrectionReuseTests(unittest.TestCase):
     def test_split_full_graph_cannot_reuse_historical_pinned_correction(self):
         required = planner.required_jobs_from_scope(scope.FULL_SCOPE)

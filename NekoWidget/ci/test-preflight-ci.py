@@ -3743,5 +3743,96 @@ class ToolStorageCompletionBudgetTests(unittest.TestCase):
                 proof.assert_called_once_with(planner.TOOL_STORAGE_SOURCE,"a"*40)
 
 
+class RetainedContinuationPlanningTests(unittest.TestCase):
+    def setUp(self):
+        self.now = dt.datetime(2026, 10, 17, 17, 10, tzinfo=dt.timezone.utc)
+        self.head = "a" * 40
+        self.proof = {"kind": "fixed-retained-native-release-continuation-v1", "candidate_sha": self.head,
+            "source_sha": "45bf221b509570e1acec50bb81421917ccb010aa", "source_run_id": 38895003592,
+            "historical_qualified_at": "2026-10-16T12:35:32Z", "current_readiness_verified": True,
+            "required_jobs": list(planner.FULL)}
+        self.result = {"head": self.head, "scope": scope.FULL_SCOPE, "required_jobs": list(planner.FULL),
+            "target_minutes": 2700, "ready": False, "cost": {"status": "observed", "with_upload_minutes": [80, 112]}}
+        common = {"status": "completed", "event": "push", "path": preflight.IOS_WORKFLOW,
+            "head_branch": preflight.VISION_BRANCH, "created_at": "2026-10-16T09:26:18Z"}
+        self.runs = [
+            dict(common, id=preflight.VISION_FAILED_RUN, head_sha=preflight.VISION_FAILED_SOURCE,
+                 run_attempt=2, conclusion="failure", created_at=preflight.VISION_FIRST_CI),
+            dict(common, id=planner.FIXTURE_NAV_RUN, head_sha=planner.FIXTURE_NAV_SOURCE,
+                 run_attempt=1, conclusion="failure"),
+            dict(common, id=38895003592, head_sha=self.proof["source_sha"], run_attempt=1, conclusion="success"),
+        ]
+
+    def prepared(self, include_upload=True):
+        return preflight.retained_continuation_cost(copy.deepcopy(self.result), copy.deepcopy(self.proof),
+            include_upload, {"upload_minutes": 12.183})
+
+    def test_retains_original_failures_source_times_and_actual_attribution(self):
+        result = preflight.apply_task_gate(self.prepared(), self.runs, self.now)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["task"]["failed_runs"], [38825512712, 38880448128])
+        self.assertEqual(result["task"]["first_candidate_at"], preflight.VISION_FIRST_CANDIDATE)
+        self.assertGreater(result["task"]["minutes_since_first_candidate"], 2400)
+        self.assertEqual(result["task"]["resolved_failure_attribution"]["38825512712"]["actual_success_job"], 116905994294)
+        self.assertEqual(result["cost"]["owning_jobs"], [planner.PLAN_JOB])
+        self.assertTrue(result["cost"]["scope_unmeasured"])
+        self.assertEqual(result["required_jobs"], list(planner.FULL))
+        self.assertEqual(result["retained_candidate_continuation"]["historical_qualified_at"], "2026-10-16T12:35:32Z")
+
+    def test_invalid_source_or_current_authorization_is_not_cost_approval(self):
+        changes = {"kind": "unknown", "candidate_sha": "b" * 40, "source_sha": "b" * 40, "source_run_id": 999,
+            "historical_qualified_at": self.now.isoformat(), "current_readiness_verified": False, "required_jobs": []}
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                proof = dict(self.proof, **{field: value})
+                with self.assertRaises(ValueError):
+                    preflight.retained_continuation_cost(copy.deepcopy(self.result), proof, True, {"upload_minutes": 12})
+        for value in (-1, float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                preflight.retained_continuation_cost(copy.deepcopy(self.result), self.proof, True, {"upload_minutes": value})
+
+    def test_missing_mutated_duplicate_original_history_rejected(self):
+        for index in range(3):
+            with self.subTest(index=index):
+                with self.assertRaises(ValueError):
+                    preflight.apply_task_gate(self.prepared(), self.runs[:index] + self.runs[index + 1:], self.now)
+                for field, value in {"head_sha": "f" * 40, "run_attempt": 3, "conclusion": "skipped",
+                                     "head_branch": "main", "event": "pull_request"}.items():
+                    changed = copy.deepcopy(self.runs)
+                    changed[index][field] = value
+                    with self.assertRaises(ValueError):
+                        preflight.apply_task_gate(self.prepared(), changed, self.now)
+        with self.assertRaises(ValueError):
+            preflight.apply_task_gate(self.prepared(), self.runs + self.runs[:1], self.now)
+
+    def test_unknown_failure_active_or_duplicate_candidate_blocks(self):
+        for outcome in ("failure", "timed_out", "cancelled", "startup_failure"):
+            unknown = dict(self.runs[-1], id=999, conclusion=outcome)
+            result = preflight.apply_task_gate(self.prepared(), self.runs + [unknown], self.now)
+            self.assertFalse(result["ready"])
+            self.assertIn("continuation_has_unknown_failure", result["task"]["blockers"])
+        for status in ("queued", "in_progress", "waiting"):
+            active = dict(self.runs[-1], id=999, status=status, conclusion=None)
+            self.assertFalse(preflight.apply_task_gate(self.prepared(), self.runs + [active], self.now)["ready"])
+        existing = dict(self.runs[-1], id=999, head_branch="codex/automatic-admission-release-20261018")
+        result = preflight.apply_task_gate(self.prepared(), self.runs + [existing], self.now)
+        self.assertIn("continuation_candidate_already_exists", result["task"]["blockers"])
+
+    def test_original_clock_cannot_be_reset_or_reclassified_as_baseline(self):
+        result = self.prepared()
+        result["target_minutes"] = 840
+        result = preflight.apply_task_gate(result, self.runs, self.now)
+        self.assertFalse(result["ready"])
+        self.assertIn("cumulative_cost_requires_replanning", result["task"]["blockers"])
+        result = preflight.apply_task_gate(self.prepared(), self.runs, self.now, measure_baseline=True)
+        self.assertFalse(result["ready"])
+        self.assertFalse(result["task"]["first_baseline_measurement"])
+
+    def test_no_upload_uses_only_plan_reference_and_unrelated_scope_unchanged(self):
+        self.assertEqual(self.prepared(False)["cost"]["with_upload_minutes"], [0.983, 1.033])
+        result = copy.deepcopy(self.result)
+        self.assertIs(preflight.retained_continuation_cost(result, None, True, {}), result)
+
+
 if __name__ == "__main__":
     unittest.main()
