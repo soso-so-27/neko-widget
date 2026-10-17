@@ -15,6 +15,9 @@
 - native側は端末鍵の実署名、15分超過、同時更新1回、再起動、通信失敗、失効、ログアウト/新ログインとの競合を既存runtimeケースへ追加した。ローカルstatic検査23件成功。実Swift実行は統合候補のfocused診断で先行し、その後selector指定の通常検査を行う。
 - 認証追加分の局所D1実測は通常更新read23/write13、日次Apple再確認read33/write13。月60回更新（うち日次30回）の仮定で、HTTP120・D1read1680/write780・KMS復号30・R2読取420。既存単価での既知部分の線形配賦は約0.17円/人月（計画換算158.345円/USD、税別）。CPU・DB容量・初回登録・token回転時の復旧コピーは別であり、これをアプリ全体の費用や請求額とは呼ばない。現アカウントの含有枠/丸めもある。実配備前に残枠と有限試験窓を再照合する。
 
+- 統合候補 `35b1418` の診断 `39061556299` はコンパイル成功後、runtime42件中41成功・membership境界1失敗で停止しUI未到達。job10分09秒、run625秒を保持する。追加fixtureがBilling用16byte nonce（22文字）を再利用し、実serverの32byte nonce（43文字）を必要とするproduction proofが拒否していた。fixtureだけSecRandomCopyBytes32byteへ修正し、製品の認証条件を緩めない。32byte→43文字、実serverとの一致、runtime validator6件をローカルで確認。nativeは修正後再確認が必要。
+- クラウドの読取で現在の全68記録・既存設定を保存。0041のschema-only互換と設定保持のローカルbundle生成、writerの読取事前確認が成功。cloud書込0。初回の取得API指定405、歴史的migration記帳順の検証誤り、WindowsのNode preloadパスは準備スクリプト側の問題として保持し修正した。完成bundleのPreservation service treeは固定し、native fixtureだけの後続修正では同treeの証拠を保持する。
+
 以下は認証問題が判明する前のUI候補の証拠・計画であり、上の追加確認が現状となる。
 
 ## 原因と変更候補

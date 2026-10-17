@@ -54,6 +54,14 @@ private actor PreservationDeviceSessionFixtureServer {
     func configure(_ value: Outcome) { outcome = value }
     func entered() -> Bool { held != nil }
     func release() { held?.resume(); held = nil; outcome = .success }
+    private func opaqueToken() throws -> String {
+        var data = Data(count: 32)
+        let status = data.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        guard status == errSecSuccess else { throw ManagedPreservationError.secureStorage }
+        return PreservationDeviceProof.encoded(data)
+    }
     private func bytes(_ text: Substring) throws -> Data {
         var value = String(text).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         value += String(repeating: "=", count: (4 - value.count % 4) % 4)
@@ -98,7 +106,7 @@ private actor PreservationDeviceSessionFixtureServer {
         }
         if url.path == "/v1/auth/session-challenges" {
             guard let purpose = body["purpose"], ["renew", "revoke"].contains(purpose) else { throw ManagedPreservationError.invalidResponse }
-            let id = BillingProtocolCodec.randomNonce(), nonce = BillingProtocolCodec.randomNonce()
+            let id = try opaqueToken(), nonce = try opaqueToken()
             challenges[id] = (nonce, purpose == "renew" ? "/v1/auth/session-renewals" : "/v1/auth/session-revocations")
             return try response(["challengeId": id, "nonce": nonce,
                 "expiresAt": ManagedPreservationWire.string(now().addingTimeInterval(120))])
