@@ -6101,6 +6101,13 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
         base = comparison_base(event, env)
         if base and retained_continuation_control_only(paths, base, env["GITHUB_SHA"]): return ORCHESTRATION_SCOPE
         raise ValueError("Fixed continuation control introduction or current readiness differs; no native work authorized")
+    if env.get("GITHUB_REF") == "refs/heads/" + RETAINED_SELECTOR_CONTROL_BRANCH:
+        base = comparison_base(event, env)
+        if (base and paths and len(paths) == len(set(paths)) and sources == FIXTURE_NAV_CONTROLS
+                and git("rev-parse", base + "^{tree}") == git("rev-parse", RETAINED_SELECTOR_CONTROL_BASE + "^{tree}")
+                and retained_continuation_delta(RETAINED_CONTINUATION_CONTROL_BASE, env["GITHUB_SHA"], RETAINED_CONTINUATION_CONTROL_READY_BEFORE)
+                and retained_continuation_readiness(env["GITHUB_SHA"])): return ORCHESTRATION_SCOPE
+        raise ValueError("Fixed backend routing controls or current readiness differ; no native work authorized")
     if retained_continuation_control_paths_only(paths):
         base = comparison_base(event, env)
         return (ORCHESTRATION_SCOPE if base and retained_continuation_control_only(paths, base, env["GITHUB_SHA"])
@@ -6683,6 +6690,22 @@ RETAINED_CONTINUATION_RUN = 38895003592
 RETAINED_CONTINUATION_AT = "2026-10-16T12:35:32Z"
 RETAINED_CONTINUATION_BRANCH = "codex/automatic-admission-release-20261018"
 RETAINED_CONTINUATION_CONTROL_BRANCH = "codex/retained-release-evidence-20261018"
+RETAINED_SELECTOR_CONTROL_BRANCH = "codex/retained-backend-routing-20261018"
+RETAINED_SELECTOR_CONTROL_BASE = "7700964e38686f953a85a11021629d4fa1c00fbf"
+RETAINED_SELECTOR_FIRST_SHA = "f33a9a9278f9469ad523736283f60bc0f7c25181"
+RETAINED_SELECTOR_FIRST_RUN = 39053280533
+RETAINED_SELECTOR_FIRST_AT = "2026-10-17T17:20:59Z"
+RETAINED_SELECTOR_FIRST_JOBS = frozenset({117456039533, 117456269380, 117456269515,
+    117456269586, 117456269718, 117456269762, 117456270197})
+RETAINED_SELECTOR_FAILED_RUN = 39053280523
+RETAINED_SELECTOR_FAILED_JOB = 117456039436
+RETAINED_SELECTOR_FAILED_AT = "2026-10-17T17:20:07Z"
+RETAINED_SELECTOR_SKIPPED = {
+    "Typecheck, test, and bundle Worker": 117456078279,
+    "Validate private billing caller": 117456078484,
+    "Typecheck, test, and build Apple transaction verifier": 117456078842,
+    "Windows moderation key, drill, and report policy fixtures": 117456078866,
+}
 RETAINED_CONTINUATION_CONTROL_BASE = "28d02d54ecf3d4f2cafb25c7461c74ac2ad42f15"
 RETAINED_CONTINUATION_READINESS = "NekoWidget/ci/moderation-v2-readiness.json"
 RETAINED_CONTINUATION_READY_BEFORE = "04ad74b036f56dae9a6907c8869c4351585d3d3b"
@@ -6803,6 +6826,74 @@ def retained_continuation_record(head):
         "current_readiness_verified": True, "required_jobs": list(FULL)}
 
 
+def retained_selector_repair_inputs(head):
+    """Only the four newly approved controls may repair the fixed first continuation."""
+    try:
+        if head == RETAINED_SELECTOR_FIRST_SHA or not retained_continuation_inputs(head): return False
+        git("merge-base", "--is-ancestor", RETAINED_SELECTOR_FIRST_SHA, head)
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", RETAINED_SELECTOR_FIRST_SHA, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if path in seen or len(fields) != 5 or fields[1] != "100644": return False
+            seen.add(path)
+            if path in FIXTURE_NAV_CONTROLS:
+                if fields[:2] != [":100644", "100644"] or fields[4] != "M": return False
+            elif not (tool_storage_handoff(path) and fields[4] in {"A", "M"}
+                    and fields[0] == (":000000" if fields[4] == "A" else ":100644")): return False
+        return FIXTURE_NAV_CONTROLS <= seen
+    except (OSError, subprocess.CalledProcessError, AttributeError, TypeError, ValueError): return False
+
+
+def retained_continuation_backend_failure(api, now):
+    """Preserve one real backend selector failure; skipped workers remain skipped."""
+    prefix = "/repos/soso-so-27/neko-widget/actions"
+    run = api(f"{prefix}/runs/{RETAINED_SELECTOR_FAILED_RUN}")
+    if (run.get("id") != RETAINED_SELECTOR_FAILED_RUN or run.get("head_sha") != RETAINED_SELECTOR_FIRST_SHA
+            or run.get("head_branch") != RETAINED_CONTINUATION_BRANCH or run.get("event") != "push"
+            or run.get("workflow_id") != 336272571 or run.get("path") != ".github/workflows/sharing-service.yml"
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or run.get("updated_at") != RETAINED_SELECTOR_FAILED_AT
+            or (run.get("status"), run.get("conclusion")) != ("completed", "failure")
+            or any(run.get(side, {}).get("full_name") != "soso-so-27/neko-widget" for side in ("repository", "head_repository"))
+            or now < dt.datetime.fromisoformat(RETAINED_SELECTOR_FAILED_AT.replace("Z", "+00:00"))):
+        raise CorrectionEvidenceUnavailable("Fixed backend selector failure identity differs")
+    data = api(f"{prefix}/runs/{RETAINED_SELECTOR_FAILED_RUN}/attempts/1/jobs?per_page=100")
+    jobs = data.get("jobs")
+    expected = RETAINED_SELECTOR_SKIPPED | {"Select backend checks": RETAINED_SELECTOR_FAILED_JOB}
+    if (not isinstance(jobs, list) or data.get("total_count") != len(expected) or len(jobs) != len(expected)
+            or {j.get("name"): j.get("id") for j in jobs} != expected):
+        raise CorrectionEvidenceUnavailable("Fixed failed backend job inventory differs")
+    names = ("Set up job", "Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+        "Run python NekoWidget/ci/plan-ios-ci.py", "Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "Complete job")
+    for job in jobs:
+        if (job.get("head_sha") != RETAINED_SELECTOR_FIRST_SHA or job.get("run_id") != RETAINED_SELECTOR_FAILED_RUN
+                or type(job.get("run_attempt")) is not int or job["run_attempt"] != 1):
+            raise CorrectionEvidenceUnavailable("Fixed failed backend job identity differs")
+        if job["id"] == RETAINED_SELECTOR_FAILED_JOB:
+            if ((job.get("status"), job.get("conclusion")) != ("completed", "failure")
+                    or len(job.get("steps", [])) != len(names)
+                    or not fixture_navigation_steps(job, names, failure=names[2])):
+                raise CorrectionEvidenceUnavailable("Only the observed selector step may have failed")
+        elif not ((job.get("status"), job.get("conclusion")) == ("completed", "skipped")
+                and job.get("steps") == [] and job.get("runner_id") in (None, 0)):
+            raise CorrectionEvidenceUnavailable("A skipped backend job executed or has an unknown outcome")
+    log = api(f"{prefix}/jobs/{RETAINED_SELECTOR_FAILED_JOB}/logs")
+    records = [json.loads(line.split("IOS_CI_EVIDENCE_JSON=", 1)[1]) for line in log.splitlines() if "IOS_CI_EVIDENCE_JSON=" in line]
+    path = f"{prefix}/runs/{RETAINED_SELECTOR_FAILED_RUN}"
+    if (len(records) != 3 or records[0] != {"stage": "api_start", "path": path}
+            or records[1].get("stage") != "api_complete" or records[1].get("path") != path or records[1].get("status") != 200
+            or records[2] != {"stage": "lookup_blocked", "reason": "evidence_lookup_failed", "error": "CorrectionEvidenceUnavailable"}
+            or log.count("Evidence lookup failed; no Mac checks were authorized. Inspect IOS_CI_EVIDENCE_JSON.") != 1
+            or "IOS_CI_PLAN_JSON=" in log):
+        raise CorrectionEvidenceUnavailable("Observed backend routing failure transcript differs")
+    return {"failed_run_id": RETAINED_SELECTOR_FAILED_RUN, "failed_sha": RETAINED_SELECTOR_FIRST_SHA,
+        "failed_job_id": RETAINED_SELECTOR_FAILED_JOB, "successful_plan_run_id": RETAINED_SELECTOR_FIRST_RUN,
+        "classification": "backend-selector-routing", "product_failure": False}
+
+
 def retained_continuation_plan(run, api, now):
     """A successful label alone cannot qualify the new candidate or main plan."""
     if not dt.timedelta(0) <= now - dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) <= dt.timedelta(hours=24): return False
@@ -6827,6 +6918,8 @@ def retained_continuation_plan(run, api, now):
 def retained_continuation_evidence(head, api, now, *, current_run=None, require_plan=False):
     """Re-read genuine source facts now; evaluate their historical qualification at completion."""
     if not retained_continuation_inputs(head): return None
+    if not retained_selector_repair_inputs(head):
+        raise CorrectionEvidenceUnavailable("The fixed failed backend selector needs all four newly approved controls")
     if not retained_continuation_readiness(head):
         raise CorrectionEvidenceUnavailable("Current signed readiness is expired, dirty or invalid; retained native evidence cannot renew it")
     repo = "soso-so-27/neko-widget"
@@ -6845,14 +6938,26 @@ def retained_continuation_evidence(head, api, now, *, current_run=None, require_
     index = api(f"/repos/{repo}/actions/workflows/ios-build.yml/runs?{query}")
     runs = index.get("workflow_runs")
     if (not isinstance(runs, list) or type(index.get("total_count")) is not int
-            or index["total_count"] != len(runs) or len(runs) > 1):
+            or index["total_count"] != len(runs) or len(runs) not in {1, 2}
+            or len({run.get("id") for run in runs}) != len(runs)):
         raise CorrectionEvidenceUnavailable("Continuation candidate history is incomplete or contains another run")
-    if not runs and require_plan: raise CorrectionEvidenceUnavailable("A fresh successful continuation plan is required")
-    if current_run is not None and current_run.get("head_branch") == RETAINED_CONTINUATION_BRANCH and not runs:
+    first = [run for run in runs if run.get("id") == RETAINED_SELECTOR_FIRST_RUN]
+    if (len(first) != 1 or not retained_continuation_run_identity(first[0], RETAINED_SELECTOR_FIRST_SHA, RETAINED_CONTINUATION_BRANCH)
+            or first[0].get("updated_at") != RETAINED_SELECTOR_FIRST_AT
+            or (first[0].get("status"), first[0].get("conclusion")) != ("completed", "success")):
+        raise CorrectionEvidenceUnavailable("Fixed first continuation plan identity differs")
+    first_jobs = executed_jobs(first[0], repo, api)
+    if (len(first_jobs) != len(RETAINED_SELECTOR_FIRST_JOBS) or {job.get("id") for job in first_jobs} != RETAINED_SELECTOR_FIRST_JOBS
+            or not retained_continuation_plan(first[0], api, dt.datetime.fromisoformat(RETAINED_SELECTOR_FIRST_AT.replace("Z", "+00:00")))):
+        raise CorrectionEvidenceUnavailable("Fixed first continuation plan did not execute its actual steps")
+    recovery = retained_continuation_backend_failure(api, now)
+    successors = [run for run in runs if run.get("id") != RETAINED_SELECTOR_FIRST_RUN]
+    if not successors and require_plan: raise CorrectionEvidenceUnavailable("A fresh successful continuation plan is required")
+    if current_run is not None and current_run.get("head_branch") == RETAINED_CONTINUATION_BRANCH and not successors:
         raise CorrectionEvidenceUnavailable("Owning continuation push is absent from its branch history")
-    for run in runs:
+    for run in successors:
         if (not retained_continuation_run_identity(run, run.get("head_sha"), RETAINED_CONTINUATION_BRANCH)
-                or not retained_continuation_inputs(run.get("head_sha"))):
+                or not retained_selector_repair_inputs(run.get("head_sha"))):
             raise CorrectionEvidenceUnavailable("Continuation candidate run identity or inputs differ")
         git("merge-base", "--is-ancestor", run["head_sha"], head)
         if current_run is not None and run["id"] == current_run.get("id") and not require_plan:
@@ -6863,7 +6968,7 @@ def retained_continuation_evidence(head, api, now, *, current_run=None, require_
         elif ((run.get("status"), run.get("conclusion")) != ("completed", "success")
                 or not retained_continuation_plan(run, api, now)):
             raise CorrectionEvidenceUnavailable("Continuation plan is failed, active, stale or lacks actual successful steps")
-    return retained_continuation_record(head)
+    return retained_continuation_record(head) | {"backend_selector_recovery": recovery}
 
 
 def covers_retained_continuation(run, validation_head, required, api, now, jobs):
@@ -9448,6 +9553,17 @@ def main() -> None:
         paths = None
     selected_scope = runtime_scope(paths, event, env)
     required = required_jobs(paths, selected_scope)
+    if (selected_scope == FULL_SCOPE and env.get("GITHUB_WORKFLOW") == "Sharing service check"
+            and env.get("GITHUB_EVENT_NAME") == "push"
+            and env.get("GITHUB_REF") in {"refs/heads/main", "refs/heads/" + RETAINED_CONTINUATION_BRANCH}
+            and env.get("GITHUB_REPOSITORY") == "soso-so-27/neko-widget"
+            and retained_selector_repair_inputs(env["GITHUB_SHA"])):
+        if not preservation_sharing_plan(env): raise ValueError("Fixed continuation Sharing plan identity differs")
+        with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write("runtime_scope=" + FULL_SCOPE + "\n")
+        print("PRESERVATION_BACKEND_PLAN_JSON=" + json.dumps({"repository": env["GITHUB_REPOSITORY"],
+            "head_sha": env["GITHUB_SHA"], "scope": FULL_SCOPE, "native_evidence": False}))
+        return
 
     if selected_scope == REPORT_REPLY_ENTRY_SCOPE and report_runtime_inputs(env["GITHUB_SHA"]) and preservation_sharing_plan(env):
         with Path(env["GITHUB_OUTPUT"]).open("a",encoding="utf-8") as output:

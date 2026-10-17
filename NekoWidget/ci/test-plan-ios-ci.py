@@ -10006,11 +10006,43 @@ class RetainedContinuationTests(unittest.TestCase):
         self.candidate_plan = self.old.source_plan | {'head_sha':self.head, 'evidence_run_id':self.source['id'],
             'evidence_sha':self.old.head, 'retained_continuation':planner.retained_continuation_record(self.head)}
         self.runs = []
+        self.first = self.candidate | {'id':planner.RETAINED_SELECTOR_FIRST_RUN,'head_sha':planner.RETAINED_SELECTOR_FIRST_SHA,
+            'updated_at':planner.RETAINED_SELECTOR_FIRST_AT,'created_at':'2026-10-17T17:19:56Z'}
+        self.first_jobs = [copy.deepcopy(self.candidate_jobs[0]) | {'id':117456039533,'run_id':self.first['id'],'head_sha':self.first['head_sha'],
+            'started_at':'2026-10-17T17:19:59Z','completed_at':'2026-10-17T17:20:58Z'}]
+        for step in self.first_jobs[0]['steps']:
+            step.update(started_at='2026-10-17T17:20:01Z',completed_at='2026-10-17T17:20:02Z')
+        self.first_jobs += [{'id':identifier,'name':planner.UNEXPANDED_SHARING_JOB,'run_id':self.first['id'],
+            'head_sha':self.first['head_sha'],'run_attempt':1,'runner_id':None,'status':'completed','conclusion':'skipped','steps':[]}
+            for identifier in sorted(planner.RETAINED_SELECTOR_FIRST_JOBS-{117456039533})]
+        self.first_plan = self.candidate_plan | {'head_sha':self.first['head_sha'],
+            'retained_continuation':planner.retained_continuation_record(self.first['head_sha'])}
+        self.failed = self.first | {'id':planner.RETAINED_SELECTOR_FAILED_RUN,'workflow_id':336272571,
+            'path':'.github/workflows/sharing-service.yml','conclusion':'failure','updated_at':planner.RETAINED_SELECTOR_FAILED_AT}
+        self.failed_jobs = [self.old.job('Select backend checks',planner.RETAINED_SELECTOR_FAILED_JOB,
+            self.first['head_sha'],self.failed['id'],('Set up job','Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
+                'Run python NekoWidget/ci/plan-ios-ci.py','Post Run actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09','Complete job'),'failure')]
+        self.failed_jobs[0]['steps'][2]['conclusion'] = 'failure'
+        self.failed_jobs += [{'id':identifier,'name':name,'run_id':self.failed['id'],'head_sha':self.first['head_sha'],
+            'run_attempt':1,'runner_id':None,'status':'completed','conclusion':'skipped','steps':[]}
+            for name,identifier in planner.RETAINED_SELECTOR_SKIPPED.items()]
+        path = f'/repos/{self.repo}/actions/runs/{self.failed["id"]}'
+        self.failed_log = '\n'.join('IOS_CI_EVIDENCE_JSON='+json.dumps(record) for record in [
+            {'stage':'api_start','path':path},{'stage':'api_complete','path':path,'status':200,'elapsed_seconds':0.279},
+            {'stage':'lookup_blocked','reason':'evidence_lookup_failed','error':'CorrectionEvidenceUnavailable'}])
+        self.failed_log += '\nEvidence lookup failed; no Mac checks were authorized. Inspect IOS_CI_EVIDENCE_JSON.\n'
 
     def api(self, path):
         if 'workflows/ios-build.yml/runs?' in path:
-            if 'branch=codex%2Fautomatic-admission-release-20261018' in path or 'head_sha='+self.head in path:
+            if 'branch=codex%2Fautomatic-admission-release-20261018' in path:
+                return {'total_count':1+len(self.runs),'workflow_runs':[self.first]+self.runs}
+            if 'head_sha='+self.head in path:
                 return {'total_count':len(self.runs), 'workflow_runs':self.runs}
+        if path.endswith(f'/runs/{self.failed["id"]}'): return self.failed
+        if f'/runs/{self.failed["id"]}/' in path: return {'total_count':len(self.failed_jobs),'jobs':self.failed_jobs}
+        if f'/runs/{self.first["id"]}/' in path: return {'total_count':len(self.first_jobs),'jobs':self.first_jobs}
+        if path.endswith('/jobs/117456039533/logs'): return 'IOS_CI_PLAN_JSON='+json.dumps(self.first_plan)
+        if path.endswith(f'/jobs/{planner.RETAINED_SELECTOR_FAILED_JOB}/logs'): return self.failed_log
         if path.endswith('/runs/'+str(self.source['id'])): return self.source
         if f"/runs/{planner.RETAINED_CONTINUATION_RUN}/" in path:
             return {'total_count':len(self.source_jobs), 'jobs':self.source_jobs}
@@ -10024,6 +10056,7 @@ class RetainedContinuationTests(unittest.TestCase):
     @contextlib.contextmanager
     def mocks(self):
         with self.old.mocks(), patch.object(planner, 'retained_continuation_inputs', return_value=True), \
+                patch.object(planner, 'retained_selector_repair_inputs', return_value=True), \
                 patch.object(planner, 'retained_continuation_readiness', return_value=True):
             yield
 
@@ -10122,7 +10155,7 @@ class RetainedContinuationTests(unittest.TestCase):
                     return {'id':335014238,'path':'.github/workflows/ios-build.yml','state':'active'}
                 if re.fullmatch(r'actions/jobs/\d+',path):
                     identifier = int(path.rsplit('/',1)[1])
-                    return next(j for j in fixture.source_jobs+fixture.old.jobs+fixture.candidate_jobs+
+                    return next(j for j in fixture.source_jobs+fixture.old.jobs+fixture.candidate_jobs+fixture.first_jobs+fixture.failed_jobs+
                         [fixture.old.diag_job,fixture.old.widget_diag_job] if j['id']==identifier)
                 return fixture.api('/repos/'+fixture.repo+'/'+path)
             def log(self, run_id, job_id):
@@ -10185,6 +10218,76 @@ class RetainedContinuationTests(unittest.TestCase):
             record = planner.fixture_navigation_plan(output.getvalue(),self.head)
             self.assertEqual(record['retained_continuation'],planner.retained_continuation_record(self.head))
 
+    def test_backend_selector_failure_is_preserved_separately_from_successful_native_and_plan(self):
+        with self.mocks():
+            proof = self.proof()
+            self.assertEqual(proof['backend_selector_recovery'],{'failed_run_id':39053280523,
+                'failed_sha':planner.RETAINED_SELECTOR_FIRST_SHA,'failed_job_id':117456039436,
+                'successful_plan_run_id':39053280533,'classification':'backend-selector-routing','product_failure':False})
+            self.assertNotIn('backend_selector_recovery',planner.retained_continuation_record(self.first['head_sha']))
+            self.assertEqual(self.failed['conclusion'],'failure')
+            self.assertTrue(all(job['conclusion']=='skipped' for job in self.failed_jobs[1:]))
+
+    def test_known_backend_failure_requires_exact_identity_failed_step_and_log(self):
+        with self.mocks():
+            for field,value in [('head_sha','e'*40),('head_branch','codex/other'),('run_attempt',2),
+                    ('workflow_id',335014238),('status','in_progress'),('conclusion','success')]:
+                previous = self.failed[field]; self.failed[field] = value
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable, msg=field): self.proof()
+                self.failed[field] = previous
+            original = copy.deepcopy(self.failed_jobs)
+            for bad in [[],original[0]['steps']+original[0]['steps'][:1],
+                    [step | {'conclusion':'success'} for step in original[0]['steps']]]:
+                self.failed_jobs[0]['steps'] = bad
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+            self.failed_jobs = original
+            self.failed_jobs[1]['conclusion'] = 'success'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+            self.failed_jobs[1]['conclusion'] = 'skipped'
+            log = self.failed_log
+            for bad in ['',log+log,log.replace('CorrectionEvidenceUnavailable','ValueError'),log.replace(str(self.failed['id']),'999')]:
+                self.failed_log = bad
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+
+    def test_first_successful_plan_is_not_dropped_or_relabelled_during_repair(self):
+        with self.mocks():
+            for field,value in [('id',999),('head_sha','e'*40),('conclusion','failure'),('run_attempt',2),
+                    ('updated_at','2026-10-18T00:00:00Z')]:
+                previous = self.first[field]; self.first[field] = value
+                with self.assertRaises(planner.CorrectionEvidenceUnavailable, msg=field): self.proof()
+                self.first[field] = previous
+            self.first_jobs[0]['steps'][1]['conclusion'] = 'skipped'
+            with self.assertRaises(planner.CorrectionEvidenceUnavailable): self.proof()
+
+    def test_actual_sharing_push_routes_backend_without_entering_native_reuse(self):
+        with self.mocks(), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root/'event.json').write_text('{}')
+            for branch in (planner.RETAINED_CONTINUATION_BRANCH,'main'):
+                env = {'GITHUB_EVENT_PATH':str(root/'event.json'),'GITHUB_OUTPUT':str(root/'output'),
+                    'GITHUB_WORKFLOW':'Sharing service check','GITHUB_EVENT_NAME':'push',
+                    'GITHUB_REF':'refs/heads/'+branch,'GITHUB_SHA':self.head,'GITHUB_REPOSITORY':self.repo,'GITHUB_RUN_ID':'1400'}
+                current = self.candidate | {'id':1400,'head_branch':branch,'workflow_id':336272571,
+                    'path':'.github/workflows/sharing-service.yml','status':'in_progress','conclusion':None}
+                def api(environment,path):
+                    if path.endswith('/workflows/sharing-service.yml'):
+                        return {'id':336272571,'path':'.github/workflows/sharing-service.yml','state':'active'}
+                    if path.endswith('/runs/1400'): return current
+                    raise AssertionError(path)
+                output = io.StringIO()
+                with patch.dict(os.environ,env), patch.object(planner,'changed_paths',return_value=[]), \
+                        patch.object(planner,'runtime_scope',return_value=planner.FULL_SCOPE), \
+                        patch.object(planner,'required_jobs',return_value=planner.FULL), \
+                        patch.object(planner,'github_api',side_effect=api), \
+                        patch.object(planner,'find_evidence',side_effect=AssertionError('backend cannot enter native reuse')), \
+                        contextlib.redirect_stdout(output):
+                    planner.main()
+                    self.assertIn('runtime_scope=full-v1',(root/'output').read_text())
+                    record = json.loads(output.getvalue().split('PRESERVATION_BACKEND_PLAN_JSON=',1)[1])
+                    self.assertFalse(record['native_evidence'])
+                    self.assertNotIn('IOS_CI_PLAN_JSON=',output.getvalue())
+                    current['workflow_id'] = 335014238
+                    with self.assertRaisesRegex(ValueError,'identity mismatch'): planner.main()
+
 
 class RetainedContinuationInputTests(unittest.TestCase):
     def setUp(self):
@@ -10197,8 +10300,10 @@ class RetainedContinuationInputTests(unittest.TestCase):
     def delta(self, base):
         before = (planner.RETAINED_CONTINUATION_READY_BEFORE if base==planner.RETAINED_CONTINUATION_SOURCE
                   else planner.RETAINED_CONTINUATION_CONTROL_READY_BEFORE)
-        return ''.join(f':100644 100644 {self.before} {self.after} M\0{path}\0'
-            for path in sorted(planner.FIXTURE_NAV_CONTROLS)) + \
+        controls = ''.join(f':100644 100644 {self.before} {self.after} M\0{path}\0'
+            for path in sorted(planner.FIXTURE_NAV_CONTROLS))
+        if base==planner.RETAINED_SELECTOR_FIRST_SHA: return controls+self.extra
+        return controls + \
             f':100644 100644 {before} {self.ready} M\0{planner.RETAINED_CONTINUATION_READINESS}\0' + self.extra
 
     def git(self, *args):
@@ -10265,6 +10370,27 @@ class RetainedContinuationInputTests(unittest.TestCase):
         paths = sorted(planner.FIXTURE_NAV_CONTROLS | {planner.RETAINED_CONTINUATION_READINESS})
         env = {'GITHUB_REF':'refs/heads/'+planner.RETAINED_CONTINUATION_CONTROL_BRANCH,'GITHUB_SHA':self.head}
         with self.mocks(), patch.object(planner,'comparison_base',return_value=planner.RETAINED_CONTINUATION_CONTROL_BASE), \
+                patch.object(planner,'retained_continuation_readiness',return_value=True) as readiness:
+            self.assertEqual(planner.runtime_scope(paths,{},env),planner.ORCHESTRATION_SCOPE)
+            readiness.return_value = False
+            with self.assertRaisesRegex(ValueError,'no native work authorized'): planner.runtime_scope(paths,{},env)
+            readiness.return_value = True
+            with self.assertRaisesRegex(ValueError,'no native work authorized'): planner.runtime_scope(paths+['unknown'],{},env)
+
+    def test_repair_needs_all_four_new_approved_controls_and_no_new_product_or_readiness(self):
+        with self.mocks():
+            self.assertTrue(planner.retained_selector_repair_inputs(self.head))
+            self.assertFalse(planner.retained_selector_repair_inputs(planner.RETAINED_SELECTOR_FIRST_SHA))
+            for path in [planner.RETAINED_CONTINUATION_READINESS,'.github/workflows/sharing-service.yml','NekoWidget/new.swift']:
+                self.extra = f':100644 100644 {self.before} {self.after} M\0{path}\0'
+                self.assertFalse(planner.retained_selector_repair_inputs(self.head),path)
+            self.extra = ''; self.approved = False
+            self.assertFalse(planner.retained_selector_repair_inputs(self.head))
+
+    def test_backend_repair_control_branch_is_plan_only_with_exact_original_base_and_current_signature(self):
+        paths = sorted(planner.FIXTURE_NAV_CONTROLS)
+        env = {'GITHUB_REF':'refs/heads/'+planner.RETAINED_SELECTOR_CONTROL_BRANCH,'GITHUB_SHA':self.head}
+        with self.mocks(), patch.object(planner,'comparison_base',return_value=planner.RETAINED_SELECTOR_CONTROL_BASE), \
                 patch.object(planner,'retained_continuation_readiness',return_value=True) as readiness:
             self.assertEqual(planner.runtime_scope(paths,{},env),planner.ORCHESTRATION_SCOPE)
             readiness.return_value = False
