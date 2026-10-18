@@ -6337,6 +6337,193 @@ def partitioned_capacity_inputs(paths, base, head):
         return False
 
 
+PARTITIONED_NATIVE_RETRY_SOURCE = "4d63f37284a8528476fab40407802310eeacf3c6"
+PARTITIONED_NATIVE_RETRY_RUN = 39129913547
+PARTITIONED_NATIVE_RETRY_BRANCH = "codex/partitioned-app-records-20261018"
+PARTITIONED_NATIVE_RETRY_CONTROL_BASE = "33feca1161951fdb244cb30e16c46e46dd15c1a8"
+PARTITIONED_NATIVE_RETRY_CONTROL_BEFORE = {
+    "NekoWidget/ci/plan-ios-ci.py": "3fea4de6f90749138de6a20a9441561a55e537f6",
+    "NekoWidget/ci/test-plan-ios-ci.py": "4ce4e805a080e423407a14de6a0f1b91380105b9",
+}
+PARTITIONED_NATIVE_RETRY_JOBS = {
+    "plan": 117682784799, "build": 117682950388, "photos": 117682950347,
+    "runtime": 117688909413, "app-ui-solo-1": 117682950387,
+    "app-ui-solo-2": 117682950389, "app-ui-other": 117682950384,
+}
+PARTITIONED_NATIVE_RETRY_PLACEHOLDERS = frozenset({117682951463, 117688910774})
+PARTITIONED_NATIVE_RETRY_CREATED = "2026-10-18T13:03:53Z"
+PARTITIONED_NATIVE_RETRY_FAILURE = "SoloMemoriesUITests/testAlbumCoversAndFavoritesRemainReachableWithLargestText"
+PARTITIONED_NATIVE_RETRY_FAILURE_HASH = "12e783bca1efa13860486ced29c5c1ea4e384f7fe333e9495cd24804452ada39"
+PARTITIONED_NATIVE_RETRY_STEP_HASHES = {
+    "plan": "ce957806b09fdeac96710bb2db57dc6f2d4a51484d08174c470c6fc99cf42587",
+    "build": "77de69a294fe2298a768d217f92a7a738c21ec972d2f12384577efc9c15f5798",
+}
+
+
+def partitioned_native_retry_control_inputs(paths, base, head):
+    try:
+        if (not paths or len(paths) != len(set(paths))
+                or source_paths(paths) != PARTITIONED_CAPACITY_CONTROLS
+                or not SHA.fullmatch(base) or not SHA.fullmatch(head)
+                or git("rev-parse", base + "^{tree}") != git("rev-parse", PARTITIONED_NATIVE_RETRY_CONTROL_BASE + "^{tree}")):
+            return False
+        git("merge-base", "--is-ancestor", "refs/remotes/origin/main", head)
+        return development_tools_only(paths, base, head, PARTITIONED_CAPACITY_CONTROLS)
+    except (OSError, subprocess.CalledProcessError, TypeError, ValueError):
+        return False
+
+
+def partitioned_native_retry_equivalent_inputs(source, head):
+    """The original product plus only these two already-main Python controls."""
+    try:
+        if source != PARTITIONED_NATIVE_RETRY_SOURCE or not SHA.fullmatch(head): return False
+        git("merge-base", "--is-ancestor", source, head)
+        approval = git("merge-base", "refs/remotes/origin/main", head)
+        controls = PARTITIONED_CAPACITY_CONTROLS
+        def tree(ref):
+            result = {}
+            for row in git("ls-tree", "-r", "-z", ref).split("\0"):
+                if not row: continue
+                header, path = row.split("\t", 1)
+                if path in result: raise ValueError("Duplicate retry tree path")
+                if (path in controls or tool_storage_handoff(path)) and not re.fullmatch(r"100644 blob [0-9a-f]{40}", header):
+                    raise ValueError("Retry controls and prose must be ordinary files")
+                result[path] = row
+            return result
+        before, after = tree(source), tree(head)
+        for path, blob in PARTITIONED_NATIVE_RETRY_CONTROL_BEFORE.items():
+            approved = git("ls-tree", approval, "--", path)
+            if (before.get(path) != f"100644 blob {blob}\t{path}"
+                    or not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), approved)
+                    or after.get(path) != approved): return False
+        if {p: v for p, v in before.items() if p not in controls and not tool_storage_handoff(p)} != {
+                p: v for p, v in after.items() if p not in controls and not tool_storage_handoff(p)}: return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", source, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return False
+        seen = set()
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if len(fields) != 5 or path in seen: return False
+            seen.add(path)
+            if path in controls:
+                if fields[:2] != [":100644", "100644"] or fields[4] != "M": return False
+            elif (not tool_storage_handoff(path) or (fields[:2], fields[4]) not in
+                    (([":000000", "100644"], "A"), ([":100644", "100644"], "M"))): return False
+        return controls <= seen
+    except (OSError, subprocess.CalledProcessError, TypeError, ValueError):
+        return False
+
+
+def partitioned_native_retry_identity(run, attempt, conclusion):
+    expected = {"id": PARTITIONED_NATIVE_RETRY_RUN, "head_sha": PARTITIONED_NATIVE_RETRY_SOURCE,
+        "head_branch": PARTITIONED_NATIVE_RETRY_BRANCH, "workflow_id": 335014238,
+        "path": ".github/workflows/ios-build.yml", "event": "push", "run_attempt": attempt,
+        "created_at": PARTITIONED_NATIVE_RETRY_CREATED, "status": "completed", "conclusion": conclusion}
+    return (isinstance(run, dict) and type(run.get("run_attempt")) is int
+        and all(run.get(k) == v for k, v in expected.items())
+        and all(run.get(side, {}).get("full_name") == "soso-so-27/neko-widget"
+                for side in ("repository", "head_repository")))
+
+
+def partitioned_native_retry_fresh(value, now):
+    try:
+        finished = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if finished.utcoffset() is not None and dt.timedelta(0) <= now - finished <= dt.timedelta(hours=24): return
+    except (AttributeError, TypeError, ValueError): pass
+    raise ValueError("Fixed native retry timestamp is missing, stale or future-dated")
+
+
+def partitioned_native_retry_steps(job, role, failed=False):
+    steps = job.get("steps")
+    if not isinstance(steps, list) or any(not isinstance(s, dict) for s in steps): return False
+    rows = [[s.get(k) for k in ("number", "name", "status", "conclusion")] for s in steps]
+    if any(type(row[0]) is not int for row in rows): return False
+    if role in PARTITIONED_NATIVE_RETRY_STEP_HASHES:
+        return hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest() == PARTITIONED_NATIVE_RETRY_STEP_HASHES[role]
+    command, artifact = (("Run Simulator smoke test", "Upload Simulator smoke-test artifacts") if role == "photos"
+        else ("Run sharing runtime matrix", "Upload sharing runtime matrix artifacts"))
+    names = ("Set up job", "Check out repository", command, artifact, "Post Check out repository", "Complete job")
+    return rows == [[number, name, "completed", "failure" if failed and number == 3 else "success"]
+                    for number, name in zip((1, 2, 3, 4, 8, 9), names)]
+
+
+def partitioned_native_retry_history(run, api, now=None):
+    """One full solo-1 retry; the exact two empty skips are never successes.
+
+    The unchanged signed CLI adapter supplies JSON only. Raw original failure
+    and new case coverage are additionally mandatory in retry_evidence, used by
+    the external cloud/release qualifier through its raw-log adapter.
+    """
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if not partitioned_native_retry_identity(run, 2, "success"): raise ValueError("Fixed native attempt2 differs")
+    partitioned_native_retry_fresh(run.get("updated_at"), now)
+    prefix = f"/repos/soso-so-27/neko-widget/actions/runs/{PARTITIONED_NATIVE_RETRY_RUN}"
+    original = api(prefix + "/attempts/1")
+    if not partitioned_native_retry_identity(original, 1, "failure"): raise ValueError("Original native failure differs")
+    partitioned_native_retry_fresh(original.get("updated_at"), now)
+    response = api(prefix + "/jobs?filter=all&per_page=100&page=1")
+    history = response.get("jobs")
+    if (type(response.get("total_count")) is not int or response["total_count"] != 10
+            or not isinstance(history, list) or len(history) != 10
+            or any(not isinstance(j, dict) or type(j.get("id")) is not int or j["id"] <= 0
+                or j.get("run_id") != PARTITIONED_NATIVE_RETRY_RUN or j.get("head_sha") != PARTITIONED_NATIVE_RETRY_SOURCE
+                or type(j.get("run_attempt")) is not int or j["run_attempt"] not in (1, 2)
+                or j.get("status") != "completed" for j in history)
+            or len({j["id"] for j in history}) != 10): raise ValueError("Fixed native attempt history is incomplete or ambiguous")
+    old = {j["id"]: j for j in history if j["run_attempt"] == 1}
+    if set(old) != set(PARTITIONED_NATIVE_RETRY_JOBS.values()) | PARTITIONED_NATIVE_RETRY_PLACEHOLDERS:
+        raise ValueError("Original native jobs were changed or omitted")
+    names = {"plan": PLAN_JOB, "build": BUILD, "photos": SMOKE,
+        **{lane: lane_job(APP_DATA_SCOPE, lane) for lane in ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other")}}
+    for role, identifier in PARTITIONED_NATIVE_RETRY_JOBS.items():
+        job = old[identifier]; failed = role == "app-ui-solo-1"
+        if (job.get("name") != names[role] or job.get("conclusion") != ("failure" if failed else "success")
+                or not partitioned_native_retry_steps(job, role, failed)): raise ValueError("Original native outcome or steps differ")
+        partitioned_native_retry_fresh(job.get("completed_at"), now)
+    if any(old[i].get("name") != UNEXPANDED_SHARING_JOB or old[i].get("conclusion") != "skipped"
+            or old[i].get("steps") != [] for i in PARTITIONED_NATIVE_RETRY_PLACEHOLDERS):
+        raise ValueError("Original placeholders executed or changed")
+    newer = [j for j in history if j["run_attempt"] == 2]
+    if (len(newer) != 1 or newer[0].get("name") != names["app-ui-solo-1"]
+            or newer[0].get("conclusion") != "success" or not partitioned_native_retry_steps(newer[0], "app-ui-solo-1")):
+        raise ValueError("Only the complete solo-1 job may execute in attempt2")
+    partitioned_native_retry_fresh(newer[0].get("completed_at"), now)
+    if response != api(prefix + "/jobs?filter=all&per_page=100&page=1") or original != api(prefix + "/attempts/1"):
+        raise ValueError("Native attempt history changed during verification")
+    retained = [old[i] for role, i in PARTITIONED_NATIVE_RETRY_JOBS.items() if role != "app-ui-solo-1"]
+    return retained + newer, {"kind": "partitioned-fixed-solo1-attempt2-v1", "run_id": run["id"],
+        "source_sha": PARTITIONED_NATIVE_RETRY_SOURCE, "original_attempt": 1, "run_attempt": 2,
+        "failed_job_id": PARTITIONED_NATIVE_RETRY_JOBS["app-ui-solo-1"], "retry_job_id": newer[0]["id"],
+        "retained_jobs": [{"id": j["id"], "name": j["name"], "run_attempt": 1} for j in retained],
+        "original_empty_skipped_ids": sorted(PARTITIONED_NATIVE_RETRY_PLACEHOLDERS)}
+
+
+def partitioned_native_retry_evidence(run, api, now):
+    selected, proof = partitioned_native_retry_history(run, api, now)
+    prefix = "/repos/soso-so-27/neko-widget/actions/jobs/"
+    failed = api(prefix + str(proof["failed_job_id"]) + "/logs")
+    if tool_log_digest(failed) != PARTITIONED_NATIVE_RETRY_FAILURE_HASH: raise ValueError("Original solo-1 raw failure changed")
+    def events(log):
+        if not isinstance(log, str): raise ValueError("UI raw log unavailable")
+        return [(owner.removeprefix("NekoWidgetUITests.") + "/" + method, result)
+            for owner, method, result in re.findall(r"Test Case '-\[([\w.]+) (test\w+)\]' (started|passed|failed|skipped)", log)]
+    original = events(failed); expected = {case for case, _ in original}
+    if (len(expected) != 28 or len(original) != 56 or PARTITIONED_NATIVE_RETRY_FAILURE not in expected
+            or any([outcome for case, outcome in original if case == name] !=
+                ["started", "failed" if name == PARTITIONED_NATIVE_RETRY_FAILURE else "passed"] for name in expected)
+            or not re.search(r"Executed 28 tests, with 1 failure \(0 unexpected\)", failed)):
+        raise ValueError("Original solo-1 failure is not the exact 28-case observation")
+    success = api(prefix + str(proof["retry_job_id"]) + "/logs"); current = events(success)
+    if (len(current) != 56 or {case for case, _ in current} != expected
+            or any([outcome for case, outcome in current if case == name] != ["started", "passed"] for name in expected)
+            or not re.search(r"Executed 28 tests, with 0 failures", success)
+            or "** TEST FAILED **" in success or "##[error]" in success): raise ValueError("Retry must pass every original solo-1 case once")
+    if partitioned_native_retry_history(run, api, now)[0] != selected: raise ValueError("Native jobs changed during raw-log verification")
+    return {**proof, "original_failure_raw_log_sha256": tool_log_digest(failed),
+        "retry_raw_log_sha256": tool_log_digest(success), "passed_cases": sorted(expected)}
+
+
 def partitioned_capacity_control_inputs(paths, base, head):
     # This one introduction shares paths with a historical frozen controller.
     # Its product base is exact; only the two Python controls and prose may differ.
@@ -6357,7 +6544,8 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
     if sources == PARTITIONED_CAPACITY_CONTROLS:
         base = comparison_base(event, env)
-        if base and partitioned_capacity_control_inputs(paths, base, env["GITHUB_SHA"]):
+        if base and (partitioned_native_retry_control_inputs(paths, base, env["GITHUB_SHA"])
+                or partitioned_capacity_control_inputs(paths, base, env["GITHUB_SHA"])):
             return ORCHESTRATION_SCOPE
     if partitioned_capacity_paths_only(paths):
         base = comparison_base(event, env)
@@ -9130,6 +9318,13 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
         if not dt.timedelta(0) <= age <= dt.timedelta(hours=24):
             return reject("outside_24_hours")
         if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
+            if (repository == "soso-so-27/neko-widget" and partitioned_native_retry_identity(run, 2, "success")
+                    and current.get("head_branch") == "main" and current.get("event") == "push"
+                    and type(current.get("run_attempt")) is int and current["run_attempt"] == 1
+                    and current.get("path") == ".github/workflows/ios-build.yml"
+                    and all(current.get(side, {}).get("full_name") == repository for side in ("repository", "head_repository"))
+                    and partitioned_native_retry_equivalent_inputs(run["head_sha"], current["head_sha"])):
+                return True
             if (repository == "soso-so-27/neko-widget" and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN
                     and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE and run.get("head_branch") == TOOL_STORAGE_BRANCH
                     and run.get("workflow_id") == current.get("workflow_id") == 335014238
@@ -9226,6 +9421,8 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
     attempt = run.get("run_attempt", 1)
     if type(attempt) is not int or not 1 <= attempt <= 50:
         raise ValueError("Invalid workflow attempt")
+    if (repository == "soso-so-27/neko-widget" and run.get("id") == PARTITIONED_NATIVE_RETRY_RUN and attempt != 1):
+        return partitioned_native_retry_history(run, api)[0]
     if (repository == "soso-so-27/neko-widget" and run.get("id") == TOOL_STORAGE_PR_NATIVE_RUN
             and run.get("head_sha") == TOOL_STORAGE_PR_SOURCE and attempt == 2):
         return tool_storage_photos_retry_history(run, api)[0]
@@ -9751,6 +9948,8 @@ def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -
                 evidence_log("candidate_unavailable", reason="incomplete_job_evidence", run_id=run_id, error=type(error).__name__)
                 blocked = True
                 continue
+            if covered and run_id == PARTITIONED_NATIVE_RETRY_RUN and run.get("run_attempt") == 2:
+                partitioned_native_retry_evidence(run, api, now)
             if covered and required == required_jobs_from_scope(TOOL_STORAGE_SCOPE):
                 tool_storage_graph(run, env["GITHUB_SHA"], api, now, jobs)
             if covered and not corrected and required == required_jobs_from_scope(TOOL_PRESERVATION_SCOPE):

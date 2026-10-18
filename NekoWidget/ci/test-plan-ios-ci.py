@@ -12522,5 +12522,198 @@ class PartitionedCapacitySelectionTests(unittest.TestCase):
             self.assertFalse(planner.partitioned_capacity_paths_only(["NekoWidget/example.swift"]))
 
 
+class PartitionedNativeRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.now = dt.datetime.now(dt.timezone.utc)
+        self.run = {"id": planner.PARTITIONED_NATIVE_RETRY_RUN, "head_sha": planner.PARTITIONED_NATIVE_RETRY_SOURCE,
+            "head_branch": planner.PARTITIONED_NATIVE_RETRY_BRANCH, "workflow_id": 335014238,
+            "path": ".github/workflows/ios-build.yml", "event": "push", "run_attempt": 2,
+            "created_at": planner.PARTITIONED_NATIVE_RETRY_CREATED, "updated_at": self.now.isoformat(),
+            "status": "completed", "conclusion": "success", "repository": {"full_name": "soso-so-27/neko-widget"},
+            "head_repository": {"full_name": "soso-so-27/neko-widget"}}
+        self.original = dict(self.run, run_attempt=1, conclusion="failure")
+        names = {"plan": planner.PLAN_JOB, "build": planner.BUILD, "photos": planner.SMOKE,
+            **{lane: planner.lane_job(scope.APP_DATA_SCOPE, lane) for lane in ("runtime", "app-ui-solo-1", "app-ui-solo-2", "app-ui-other")}}
+        self.history = []
+        hashes = {}
+        for role, identifier in planner.PARTITIONED_NATIVE_RETRY_JOBS.items():
+            failed = role == "app-ui-solo-1"
+            command, artifact = (("Run Simulator smoke test", "Upload Simulator smoke-test artifacts") if role == "photos"
+                else ("Run sharing runtime matrix", "Upload sharing runtime matrix artifacts"))
+            step_names = ("Set up job", "Check out repository", command, artifact, "Post Check out repository", "Complete job")
+            steps = [{"number": n, "name": name, "status": "completed", "conclusion": "failure" if failed and n == 3 else "success"}
+                     for n, name in zip((1, 2, 3, 4, 8, 9), step_names)]
+            if role in ("plan", "build"):
+                hashes[role] = hashlib.sha256(json.dumps([[s[k] for k in ("number", "name", "status", "conclusion")]
+                    for s in steps], separators=(",", ":")).encode()).hexdigest()
+            self.history.append({"id": identifier, "run_id": self.run["id"], "head_sha": self.run["head_sha"],
+                "run_attempt": 1, "name": names[role], "status": "completed", "conclusion": "failure" if failed else "success",
+                "completed_at": self.now.isoformat(), "steps": steps})
+        for identifier in planner.PARTITIONED_NATIVE_RETRY_PLACEHOLDERS:
+            self.history.append({"id": identifier, "run_id": self.run["id"], "head_sha": self.run["head_sha"],
+                "run_attempt": 1, "name": planner.UNEXPANDED_SHARING_JOB, "status": "completed", "conclusion": "skipped", "steps": []})
+        new = copy.deepcopy(self.history[3]); new.update(id=999991, name=names["app-ui-solo-1"], run_attempt=2)
+        self.history.append(new)
+        self.cases = [planner.PARTITIONED_NATIVE_RETRY_FAILURE,
+            "SoloMemoriesUITests/testPartitionedColdRestoreAndReceiptRetirement"] + [f"SoloMemoriesUITests/testSynthetic{i}" for i in range(26)]
+        def log(failed):
+            result = []
+            for name in self.cases:
+                owner, method = name.split("/")
+                result.extend([f"Test Case '-[NekoWidgetUITests.{owner} {method}]' started.",
+                    f"Test Case '-[NekoWidgetUITests.{owner} {method}]' {'failed' if failed and name == planner.PARTITIONED_NATIVE_RETRY_FAILURE else 'passed'}."])
+            return "\n".join(result) + f"\nExecuted 28 tests, with {1 if failed else 0} {'failure' if failed else 'failures'} (0 unexpected)"
+        self.failed_log, self.success_log = log(True), log(False)
+        for key, value in (("PARTITIONED_NATIVE_RETRY_STEP_HASHES", hashes),
+                           ("PARTITIONED_NATIVE_RETRY_FAILURE_HASH", planner.tool_log_digest(self.failed_log))):
+            binding = patch.object(planner, key, value); binding.start(); self.addCleanup(binding.stop)
+
+    def api(self, path):
+        if path.endswith("/attempts/1"): return copy.deepcopy(self.original)
+        if path.endswith("/jobs?filter=all&per_page=100&page=1"):
+            return {"total_count": len(self.history), "jobs": copy.deepcopy(self.history)}
+        if path.endswith(f"/jobs/{planner.PARTITIONED_NATIVE_RETRY_JOBS['app-ui-solo-1']}/logs"): return self.failed_log
+        if path.endswith("/jobs/999991/logs"): return self.success_log
+        raise AssertionError(path)
+
+    def prove(self): return planner.partitioned_native_retry_evidence(self.run, self.api, self.now)
+
+    def test_exact_retry_preserves_old_attempts_and_does_not_convert_empty_skips_to_success(self):
+        proof = self.prove(); selected = planner.executed_jobs(self.run, "soso-so-27/neko-widget", self.api)
+        self.assertEqual(len(selected), 7); self.assertEqual(len(proof["retained_jobs"]), 6)
+        self.assertEqual(proof["retry_job_id"], 999991); self.assertEqual(len(proof["passed_cases"]), 28)
+        self.assertTrue(planner.covers_jobs(selected, planner.required_jobs_from_scope(scope.APP_DATA_SCOPE), self.run["head_sha"], self.now))
+        self.assertEqual(self.original["conclusion"], "failure")
+        self.assertEqual([j["run_attempt"] for j in selected], [1] * 6 + [2])
+        self.assertTrue(all(j["conclusion"] == "success" for j in selected))
+
+    def test_exact_run_attempt_owner_and_original_failure_identity_required(self):
+        for key, value in (("id", 999), ("head_sha", "f"*40), ("head_branch", "main"), ("workflow_id", 42),
+                ("event", "pull_request"), ("run_attempt", 1), ("run_attempt", 3), ("run_attempt", True),
+                ("status", "in_progress"), ("conclusion", "failure"), ("created_at", self.now.isoformat()),
+                ("head_repository", {"full_name": "other/repo"})):
+            with self.subTest(key=key, value=value), patch.dict(self.run, {key:value}), self.assertRaises(ValueError): self.prove()
+        with patch.dict(self.original, {"conclusion":"success"}), self.assertRaises(ValueError): self.prove()
+        with patch.dict(self.run, {"run_attempt":3}), self.assertRaises(ValueError):
+            planner.executed_jobs(self.run, "soso-so-27/neko-widget", self.api)
+
+    def test_each_original_job_required_and_unknown_duplicate_or_new_extra_rejected(self):
+        for index in range(len(self.history)):
+            changed = self.history[:index] + self.history[index+1:]
+            with self.subTest(missing=index), patch.object(self, "history", changed), self.assertRaises(ValueError): self.prove()
+        for extra in (self.history[0], self.history[-1], dict(self.history[-1], id=888881),
+                dict(self.history[-2], id=888882, run_attempt=2)):
+            with patch.object(self, "history", self.history+[extra]), self.assertRaises(ValueError): self.prove()
+        for field, value in (("id",888883), ("head_sha","f"*40), ("run_id",42), ("run_attempt",2), ("status","in_progress")):
+            with patch.dict(self.history[0], {field:value}), self.assertRaises(ValueError): self.prove()
+
+    def test_all_success_steps_and_old_failure_step_are_mandatory(self):
+        for job in self.history[:7] + self.history[-1:]:
+            with patch.dict(job, {"conclusion":"skipped"}), self.assertRaises(ValueError): self.prove()
+            for step in job["steps"]:
+                with patch.dict(step, {"conclusion":"skipped"}), self.assertRaises(ValueError): self.prove()
+            with patch.dict(job, {"steps":job["steps"][:-1]}), self.assertRaises(ValueError): self.prove()
+        for job in self.history[7:9]:
+            for field, value in (("name","other"), ("conclusion","success"), ("steps",[{}])):
+                with patch.dict(job, {field:value}), self.assertRaises(ValueError): self.prove()
+
+    def test_run_and_each_completed_job_remain_within_real_24_hours(self):
+        for row, field in [(self.run,"updated_at"), (self.original,"updated_at")] + [(j,"completed_at") for j in self.history[:7]+self.history[-1:]]:
+            for value in (None, "invalid", self.now.replace(tzinfo=None).isoformat(),
+                    (self.now-dt.timedelta(hours=25)).isoformat(), (self.now+dt.timedelta(seconds=1)).isoformat()):
+                with self.subTest(id=row["id"], field=field, value=value), patch.dict(row, {field:value}), self.assertRaises(ValueError): self.prove()
+
+    def test_original_raw_failure_and_exact_28_case_retry_results_cannot_be_substituted(self):
+        with patch.object(self,"failed_log",self.failed_log+"\nchanged"), self.assertRaises(ValueError): self.prove()
+        for mutation in (self.success_log.replace("passed", "skipped", 1), self.success_log.replace("started", "passed", 1),
+                self.success_log + self.success_log, self.success_log.replace("testSynthetic0", "testUnknown"),
+                self.success_log.replace("28 tests", "27 tests"), self.success_log+"\n##[error]failed"):
+            with patch.object(self,"success_log",mutation), self.assertRaises(ValueError): self.prove()
+        for mutation in (self.failed_log.replace("failed", "passed"), self.failed_log.replace("testSynthetic0", "testSynthetic1"),
+                self.failed_log.replace("1 failure", "2 failures")):
+            with patch.object(self,"failed_log",mutation), patch.object(planner,"PARTITIONED_NATIVE_RETRY_FAILURE_HASH",planner.tool_log_digest(mutation)), self.assertRaises(ValueError): self.prove()
+
+    def test_changing_history_and_generic_duplicate_guard_still_fail_closed(self):
+        calls = 0
+        def api(path):
+            nonlocal calls
+            result=self.api(path)
+            if "/jobs?filter=all" in path:
+                calls+=1
+                if calls==2: result["jobs"][-1]["conclusion"]="failure"
+            return result
+        with self.assertRaises(ValueError): planner.partitioned_native_retry_evidence(self.run, api, self.now)
+        other=dict(self.run,id=42)
+        duplicate=[dict(j,id=i,run_id=42) for i,j in enumerate(self.history[7:9],1)]
+        with self.assertRaises(ValueError): planner.executed_jobs(other,"soso-so-27/neko-widget",lambda path:{"total_count":2,"jobs":duplicate})
+
+    def test_official_cli_json_adapter_accepts_only_verified_seven_executions(self):
+        spec=importlib.util.spec_from_file_location("partitioned_retry_official",Path(__file__).with_name("release-testflight.py"))
+        official=importlib.util.module_from_spec(spec);spec.loader.exec_module(official)
+        fixture=self
+        class GH:
+            def get(self,path):
+                if path=="actions/workflows/ios-build.yml":return {"id":335014238,"path":".github/workflows/ios-build.yml","state":"active"}
+                if path==f"actions/runs/{fixture.run['id']}":return fixture.run
+                if "filter=latest" in path:
+                    jobs=[j for j in fixture.history if j["id"]!=planner.PARTITIONED_NATIVE_RETRY_JOBS["app-ui-solo-1"]]
+                    return {"total_count":len(jobs),"jobs":jobs}
+                if path.endswith("/logs"):raise AssertionError("Signed CLI JSON adapter must not fetch raw logs")
+                return fixture.api("/repos/soso-so-27/neko-widget/"+path)
+            def log(self,*args):
+                return "IOS_CI_PLAN_JSON="+json.dumps({"schema_version":1,"repository":"soso-so-27/neko-widget",
+                    "head_sha":fixture.run["head_sha"],"scope":scope.APP_DATA_SCOPE,
+                    "required_jobs":list(planner.required_jobs_from_scope(scope.APP_DATA_SCOPE)),"evidence_run_id":None,"evidence_sha":None})
+        with patch.object(official,"planner",planner):
+            proof=official.check_ci(GH(),self.run["head_sha"],self.run["id"],self.now)
+        self.assertEqual(proof["tested_sha"],self.run["head_sha"]);self.assertEqual(len(proof["required_jobs"]),6)
+
+    def test_main_reuse_keeps_exact_fixed_attempt_and_control_equivalence(self):
+        current=dict(self.run,id=999,head_sha="f"*40,head_branch="main",run_attempt=1)
+        with patch.object(planner,"equivalent_inputs",return_value=False), patch.object(planner,"partitioned_native_retry_equivalent_inputs",return_value=True):
+            self.assertTrue(planner.reusable_run(self.run,current,"soso-so-27/neko-widget",self.now))
+            for key,value in (("run_attempt",3),("head_branch","codex/other"),("event","workflow_dispatch")):
+                with patch.dict(self.run,{key:value}):self.assertFalse(planner.reusable_run(self.run,current,"soso-so-27/neko-widget",self.now))
+            with patch.object(planner,"partitioned_native_retry_equivalent_inputs",return_value=False):
+                self.assertFalse(planner.reusable_run(self.run,current,"soso-so-27/neko-widget",self.now))
+
+
+class PartitionedNativeRetryControlTests(unittest.TestCase):
+    def test_real_git_control_admission_and_product_closure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            def git(*args):return subprocess.check_output(["git",*args],cwd=root,text=True,encoding="utf-8",stderr=subprocess.PIPE).rstrip("\n")
+            def write(path,value):
+                p=root/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(value,encoding="utf-8")
+            def commit(message):git("add",".");git("commit","-qm",message);return git("rev-parse","HEAD")
+            git("init","-q","-b","main");git("config","user.email","test@example.invalid");git("config","user.name","Fixture")
+            controls=sorted(planner.PARTITIONED_CAPACITY_CONTROLS);product="NekoWidget/Shared/Product.swift";note="handoffs/retry.md"
+            for path in (*controls,product,note):write(path,"before\n")
+            base=commit("initial");before={p:git("rev-parse",base+":"+p) for p in controls}
+            git("switch","-qc","product");write(product,"frozen product\n");source=commit("product")
+            git("switch","-q","main")
+            for path in controls:write(path,"approved retry control\n")
+            approved=commit("control");git("update-ref","refs/remotes/origin/main",base)
+            with patch.object(planner,"git",side_effect=git), patch.object(planner,"PARTITIONED_NATIVE_RETRY_CONTROL_BASE",base), \
+                    patch.object(planner,"PARTITIONED_NATIVE_RETRY_SOURCE",source),patch.object(planner,"PARTITIONED_NATIVE_RETRY_CONTROL_BEFORE",before):
+                self.assertTrue(planner.partitioned_native_retry_control_inputs(controls,base,approved))
+                event={"pull_request":{"base":{"sha":base}}};env={"GITHUB_SHA":approved,"GITHUB_EVENT_NAME":"pull_request"}
+                self.assertEqual(planner.runtime_scope(controls,event,env),planner.ORCHESTRATION_SCOPE)
+                for bad in (controls[:1],controls+[product],controls+[controls[0]]):
+                    self.assertFalse(planner.partitioned_native_retry_control_inputs(bad,base,approved))
+                self.assertFalse(planner.partitioned_native_retry_control_inputs(controls,source,approved))
+                git("merge","--no-edit","product");head=git("rev-parse","HEAD")
+                self.assertFalse(planner.partitioned_native_retry_equivalent_inputs(source,head))
+                git("update-ref","refs/remotes/origin/main",approved)
+                self.assertTrue(planner.partitioned_native_retry_equivalent_inputs(source,head))
+                write(note,"ordinary prose\n");prose=commit("prose")
+                self.assertTrue(planner.partitioned_native_retry_equivalent_inputs(source,prose))
+                for index,path in enumerate((product,".github/workflows/ios-build.yml","NekoWidget/ci/ios_ci_scope.py")):
+                    git("switch","-qc",f"bad-{index}",head);write(path,"unexpected\n");bad=commit("unknown")
+                    self.assertFalse(planner.partitioned_native_retry_equivalent_inputs(source,bad))
+                git("switch","-qc","bad-mode",head);git("update-index","--chmod=+x",controls[0]);git("commit","-qm","mode")
+                self.assertFalse(planner.partitioned_native_retry_equivalent_inputs(source,git("rev-parse","HEAD")))
+
+
 if __name__ == "__main__":
     unittest.main()
