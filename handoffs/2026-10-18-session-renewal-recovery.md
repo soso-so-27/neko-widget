@@ -25,3 +25,10 @@
 - 17:03:27のD1 SELECTで最新head revision3の必要34部品が全てlive、旧31記録のrevision/サイズ不変、upload予約なしを確認。本文・写真・tokenを読み出していない。
 - 初回候補16:46:32から反映まで16分30秒、反映後保全読取まで16分56秒。元の再現失敗、control fixture失敗、preflight環境停止、レビュー、CI、待機を含む。45分計画内。新規契約0、価格980円、app入力不変/TestFlight再配布0。失敗batchの追加処理はD1読取・署名照合に加え、既存の外部削除journalのR2読取2件も含む。正常更新・Apple/KMS頻度は不変で、従量処理が完全にゼロとは主張しない。
 - 次は利用者へ、通常写真メモを編集・保存後に再確認を押さず保存済みになるかを依頼した。17:00の読取では最新access期限16:49を過ぎ、device grantは有効なので、次の編集で自動更新を確認できる。実機結果は未回答として保持する。長期容量と別端末v3復元は[残確認](2026-10-18-save-restore-remaining-checks.md)を参照。
+
+## 実機の自動更新・変更到着を確認
+
+- 利用者が上記の「再確認を押さず通常メモを編集」依頼に「保存済みになった」と回答。17:05のmetadata読取で、17:04:40.159に既存grantから新しい短期sessionが発行され、直前の署名challengeが消費されたことを確認。grant新規登録数3件と最新作成16:34:07、identity credential/check時刻は不変なので、新しいApple明示ログインによる更新ではない。前accessは16:49:07に期限切れ、明示ログインから約30分32秒後の自動更新である。
+- 17:05:41のpublication読取でhead revisionが3→4となり、今回のメモ変更が到着。必要34部品すべてlive、旧31記録のrevision/サイズ不変、予約なし。17:06:23には旧index/JSONの自動整理も完了し、未参照live部品0、全record/owner acknowledgement確認、repair失敗0。owner generation156、使用量43,756,122bytes、予約0。受付期限と上限は不変で、変更に伴う通常counter増加だけを観測した。
+- 期限後の既存接続自動更新→通常メモ送信→端末保存済み→不要部品の整理は実機とサーバーの両方で確認済み。初回候補16:46:32から最後の保全観測17:06:23まで19分51秒。新v3の別端末実復元・長期容量設計は未完了のまま。
+- 証拠: `device-session-state-20261018T080508Z.json`、`session-renewal-device-publication.log`、`session-renewal-device-cleanup.log`（private/summary JSONは各読取時刻）。本文の復号・手動定期・app API実行は0。
