@@ -6228,7 +6228,7 @@ def owner_cloud_native_evidence(jobs, sha, now):
 # owning backend. Widget/render/cache/project inputs are byte-for-byte fixed.
 # Keep the existing APP_DATA graph (Build, Photos, runtime and all app UI); do
 # not broaden APP_DATA_PATHS or treat an unknown backend edit as a private UI edit.
-PARTITIONED_CAPACITY_SOURCE = '68640b3dc596b6a15d490213f5742447daca4ea2'  # Filled only after the product candidate is frozen.
+PARTITIONED_CAPACITY_SOURCE = 'd3dd40524ec1e2785b7b789415e1ce9f88284bc2'  # Filled only after the product candidate is frozen.
 PARTITIONED_CAPACITY_BASE = "629f6badedf1ae4e87b1ea059c87a694f8c5fd76"
 PARTITIONED_CAPACITY_PATHS = frozenset({
     'NekoWidget/NekoWidget/Services/AppRecordPersistence.swift',
