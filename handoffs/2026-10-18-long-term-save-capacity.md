@@ -27,3 +27,51 @@
 4. server/native exportの1000件上限、災害復旧で全S3世代を列挙する境界、全owner配列/tree CPUを調整する。tombstoneや旧revisionの単純削除は削除済みデータ復活の危険があり行わない。
 5. 年数・写真メモ件数/ツール変更を明示した1人当たり原価を再計測する。既存月2の14.42円は保存関連の既知小計で、長期・全アプリの確定原価に読み替えない。無料共通枠/予備費を1人ずつ加減しない。
 6. 別端末の通常画面へのv3実復元は未確認のまま保持する。既存1台での手動コピー復元を代用しない。
+
+## 先行修正の反映結果
+
+- 制御PR362をmainへ先行反映。固定scope `preservation-owner-capture-capacity-v1` は製品2blobと通常handoff以外を拒否し、同SHAのbackend全必須stepを要求する。ローカルdevelopment-flowの15suiteは276.2秒で成功。製品最終候補 `d5e903e5c62e33198318a41b4ad5777b1c7ecf9f` は元 `8304ef1` と製品treeが同一。
+- push plan `39112581807`、backend `39112581811` とも成功。後者は型検査・Node32件・Vitest617件/71files・旧notice移行・両private bundleの全必須step成功、128秒。PR363をmerge commit `09b8cd072a13486e37f46f315449b124c287eada` で統合した。native入力は不変で、262の成功証拠を保持し再配布0。
+- 17:50に一度だけversion upload成功。activation前の読取で401となり停止した。旧版が稼働したまま、activation request/resultとも未作成であることを確認した。新tokenで旧baseline不変を確認し、review済み4executionファイルhash・CI・main・versionを固定したresume helperでactivationだけ一度実行。再uploadは0。
+- **17:54:03 JSTに既存archive Workerへ反映完了**。version `1e504e73-8c00-4bb4-a837-1e5b14462b3c`、実bundle SHA256 `fed580953e21bc46c42c5352323353f197afb15e59fdae20ed33b74eb8171f43`。bindings/secret継承・settings・cron・公開範囲不変をfresh GET/実byteで確認。独立レビューの再開helper hash固定指摘を修正した。初回17:23:37から30分26秒（test fixture失敗・認証中断・再開レビュー込み）、先行60分計画内。
+- 17:55/18:00のD1読取でinventory世代88・43,756,122bytes・予約0・owner世代157/全ACK・修復エラー0・未参照live部品0・受付/全counter不変。18:01の公開参照読取でhead revision4/必要34部品すべてlive、旧31記録のrevision・bytes不変を確認。本文復号/アプリAPI呼出/手動cron/定期作成0。反映直後の観測だけで大量実クラウド負荷を確認済みにはしない。
+- 月980円、既存200物理record/1GiBの内部枠、受付期限10月19日03:09 JSTを維持。追加契約0。将来の容量枠引上げや全アプリ原価の承認にこの結果を流用しない。
+- 18:04の読取で、反映後の既存18:00定期が18:01:03 JSTにエラーなしで終了したことを確認。head/部品/世代/全ACK/受付counterは不変。新規作成・手動再実行ではなく自然実行の観測であり、大量履歴の実クラウド試験とは区別する。
+
+## 負荷の直接計測
+
+既存local D1を用いた合成capture（画像本文なし、S3/KMSなし）の観測。100,000行を「写真100,000枚が保存可能」と解釈しない。
+
+| 履歴行数 | D1照会数 | 読取行数 | 書込行数 | 時間 |
+| --- | ---: | ---: | ---: | ---: |
+| 100 | 3 | 408 | 0 | 35ms |
+| 12,000 | 49 | 48,100 | 0 | 452ms |
+| 100,000 | 393 | 400,788 | 0 | 2,266ms |
+
+Workers test poolが成功時のconsole出力を抑制したため、計測専用の別probeは`EXPECTED_CAPTURE_COST_PROBE_OUTPUT`を意図的にthrowして観測値を保存した。これは通常製品検査617件へ含めず、製品失敗/成功に読み替えない。全treeのCPU/メモリ、全S3世代、復元、アプリ料金はこの表では測れていない。D1の[$0.001/100万read行](https://developers.cloudflare.com/d1/platform/pricing/)は共通込み枠超過時の単価であり、利用者ごとに無料枠を付けない。
+
+## 次の保存形式の直接試作と設計境界
+
+`partition-shape-probe.mjs` は合成メモをUUIDのprefixで必要に応じて再分割し、各子のmetadataを**現行の製品v3 parser**に通した設計試作。新catalog・新native store・JPEG本文・実復元の実装/検査ではない。1日10枚を利用者の実使用量と断定せず、10年間の容量設計シナリオとして36,500枚を使った。
+
+| 合成メモ | 本文長 | 全件JSON | 子page数 | 最大子JSON | 1編集で変わった子JSON |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 3,650 | 21文字 | 1,529,373bytes | 16 | 106,030bytes | 103,058bytes |
+| 36,500 | 21文字 | 15,293,523bytes | 256 | 73,767bytes | 58,644bytes |
+| 36,500 | 500文字 | 67,744,023bytes | 256 | 326,679bytes | 258,387bytes |
+
+- 36,500件は現行のnative JSON8MiB制限を超える。単にwireのindexを分割しても、復元後に一つのstate.jsonへ戻せば次回保存が停止する。端末内PhotoMemoryNoteStoreの保存/読込/編集・fingerprintも分割する必要がある。
+- 各子の上限は256メモ/512KiBという**試作上の条件**。1編集で子1pageだけ変わり、写真descriptorは不変。別途index、祖先2page、head、整理、owner復旧の操作が必要であり、1編集の総料金・総通信を58,644bytesとはしない。
+- 固定prefixだけを容量保証にしない。同じ長いprefixへ300件を集中させた試作は30桁まで降りて2leafへ分割し、全300件を保持。再分割・rootの多段pageも必要。実保存先を使った再起動/再読込は未確認。
+- 独立レビューで、VeterinaryVisitStoreの100 visits×20 entriesと他toolの添付増加も制約になると判明。単に「一つのtool=一つの子」に分ける案では長期対応にならない。論理項目単位で各storeを扱う。
+- `app-records-v2`という別head ID/kindの案は採用しない。262は`app-records-v1`をsaltに固定IDを作るため別IDだと端末が分岐し、kind変更は旧一覧の非表示filterから漏れる。同じ論理headを維持し、index versionで移行し、移行済みheadへの旧writerをserver側で拒否する。未送信の旧端末が新headを上書きしない確認が必要。
+- 参照保護をhead→catalog→子index→partsへ通し、公開CASと参照追加を同じtransactionに含める。子間のUUID重複、誤prefix、欠落、owner/schema/hash違い、循環、削除競合を拒否する。復元は全部を私有領域で検証してから一度だけlive化する。途中の子だけ公開しない。readerを先に用意し、未対応の262へ新形式を先行公開しない。
+- 現immutable-record-treeはすでにradixであり、変更されたleaf/祖先のS3書込みだけを更新する。`create`の全件logical計算、owner captureの全件D1 read、100,000履歴、全S3世代列挙、export1000はなお残る。tombstone・復旧世代を単純に削除して軽くしない。
+- 次のnative候補は上記ストア/形式/復元/互換境界の実装と直接runtime試作が先。成功した617件や262 nativeを無関係にやり直さず、変更経路の境界検査と新配布が必要。先行backendの60分計画や128秒CIをnative作業の所要時間に読み替えない。候補が具体化した時点で必要CIと初候補時刻・所要見積もりを別記する。
+
+## 費用の扱い
+
+- 10月18日18時台に東京S3/KMS/転送の公式price APIを再読取し、既存のS3 Standard $0.025/GB-month、PUT $0.0047/1,000、GET $0.0037/10,000、KMS $0.03/10,000を確認。R2は[公式価格](https://developers.cloudflare.com/r2/pricing/)のStandard $0.015/GB-month。共通固定費/込み枠は利用者の人数で配分し、予備費や架空の3人区切りを入れない。
+- 今回はcapacityの値・保存対象・価格・有料プランを変更していない。次形式の全provider呼出、保持する世代数、旧新同居、復元まで測れていないので、長期の1人当たり総額はまだ確定しない。旧月2の14.42円や写真bytesだけの保管料を総額として案内しない。容量枠や有料契約を変える前に、実測条件と増分を利用者へ説明する。
+
+証拠は `C:/dev/neko-evidence/automatic-test-20261018/` の `owner-capture-backend-ci.log`、`owner-capture-capacity-cloud-final/execution/completion.json`、`resume-owner-capture-activation.py`、`capture-cost-observation.json`、`partition-shape-probe.json`、`long-term-unit-prices-20261018.json`、時刻付きmetadata読取summary。draft cloud packageは未実行で保持し、task historyを削除/圧縮していない。
