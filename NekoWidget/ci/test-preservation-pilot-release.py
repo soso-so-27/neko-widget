@@ -156,13 +156,33 @@ class PreservationReleaseTests(unittest.TestCase):
     def test_workflow_passes_same_approval_to_prepare_archive_and_export(self):
         source = Path(__file__).resolve().parents[2].joinpath(".github/workflows/testflight.yml").read_text(encoding="utf-8")
         self.assertIn("      billing_sandbox:", source)
-        for value in ("BILLING_REQUESTED: ${{ inputs.billing_sandbox }}",
-                      "BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}",
-                      "BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}",
-                      '--billing-requested "${BILLING_REQUESTED:-false}"',
-                      '--billing-approval "${BILLING_APPROVAL:-}"',
-                      '--billing-scope "${BILLING_SCOPE:-}"'):
-            self.assertEqual(source.count(value), 3)
+        # Internal-report commands also receive the billing request so they can
+        # reject incompatible modes. Count the actual preservation command in
+        # each required stage, not unrelated occurrences in the whole workflow.
+        steps = source.split("\n      - name: ")[1:]
+        for name in ("Prepare internal preservation release settings",
+                     "Validate sharing privacy and export gates", "Generate export options"):
+            matches = [step for step in steps if step.splitlines()[0] == name]
+            self.assertEqual(len(matches), 1, name)
+            step = matches[0]
+            for value in ("BILLING_REQUESTED: ${{ inputs.billing_sandbox }}",
+                          "BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}",
+                          "BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}"):
+                self.assertEqual(step.count(value), 1, (name, value))
+            lines = step.splitlines()
+            starts = [i for i, line in enumerate(lines)
+                      if 'python3 "$PROJECT_DIRECTORY/ci/preservation-pilot-release.py"' in line]
+            self.assertEqual(len(starts), 1, name)
+            command = []
+            for line in lines[starts[0]:]:
+                command.append(line)
+                if not line.rstrip().endswith("\\"):
+                    break
+            invocation = "\n".join(command)
+            for value in ('--billing-requested "${BILLING_REQUESTED:-false}"',
+                          '--billing-approval "${BILLING_APPROVAL:-}"',
+                          '--billing-scope "${BILLING_SCOPE:-}"'):
+                self.assertEqual(invocation.count(value), 1, (name, value))
         self.assertIn('--app-source-info-plist "$PROJECT_DIRECTORY/NekoWidget/Info.plist"', source)
         self.assertIn('--widget-source-info-plist "$PROJECT_DIRECTORY/NekoWidgetWidget/Info.plist"', source)
         self.assertIn('--widget-info-plist "$widget_path/Info.plist"', source)
