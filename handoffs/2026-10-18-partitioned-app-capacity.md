@@ -1,5 +1,28 @@
 # 長期保存のアプリ組込み
 
+## 2026-10-19 長期容量のクラウド反映・配布結果
+
+- 月額980円を維持。追加契約・料金プラン変更・一般公開・新規owner受付・定期タスクの作成/再実行は0。保存対象は写真メモ、ツール入力と添付写真、猫情報。写真ライブラリ全体、写真原本、動画のバックアップではない。
+- 19日06:54頃JST、AWS CLI接続は失効していたが、同account164892691568の既存ログイン済みブラウザでcreditsを明示再読込し、推定119.24USD/確定119.81USD、当月0.57USD、FREE planを確認した。推定値は約24時間更新の遅延があり、瞬時の全原価とはしない。CLI再ログインや料金変更は不要だった。根拠は外部`aws-browser-cost-observation.json`。
+- クラウドは既存73recordを保全し、0042〜0046、削除reader→archive writerの順で反映。live code hash、ACK、独立usage集計が一致。owner 50GiB/200,000 live records、global100GiBの3設定を変更した。証拠: `C:/dev/neko-evidence/automatic-test-20261018/partitioned-cloud-20261018T211114Z/execution/completion.json`。旧「未配備/1GiB/200record」の記載は以下の過去時点の記録として保持する。
+- アプリは大容量JSON/転送確認の分割、v4再帰index、変更のない写真・部品の再利用、冷状態からの復元再開を組込み。全tree/写真/hash/manifest検証後だけ新datasetを有効化し、元データと未保存メモを保護する。旧v3から移行できるが、新v4 headを旧262で復元できるとはしない。
+- 元候補4d63f372の通常native39129913547は初回5成功/solo1失敗を保持し、同SHAのsolo1だけ1回再実行。28caseと全6必須job成功。backendはPR367の39129917449の実checkout/tree、8stepを照合した。PRの結果をpushと呼ばず、skipped/mirror jobも実検査として数えない。main ba3704aへ統合済み。
+- 配布時刻までにreadinessが失効したため、既存2authorityで現時計の署名を更新した。payloadはissued/expiresのみ更新、29codePathsと古い合成drillの帰属は不変。PR374の2controlを先にmain3db0f81へ統合し、候補b4d43d32522dcbdd8d04020ff23f2ad6c7be737cはその上にreadiness1ファイルだけを変更。full tracked treeと原native/backend/current signatureを再照合し、成功検査を再実行しない。
+- 新control39168237349はLinuxのindex-only chmod後のcheckoutでfixture1件失敗。mode検査を最後へ移動し同じassertを維持、3focused成功、39168388988で全development checks成功。以前にも同種fixture failureがあり、以後のmode probeは独立repoまたは最後に置き、後続checkoutを前提にしない。失敗raw/初候補時刻を保持。新release候補39168620417のplan3必須stepも成功。
+- TestFlight263は19日07:01:36 JSTにAppleへアップロード成功。run39169522658/attempt1/job117799489487、requested source b4d43d32522dcbdd8d04020ff23f2ad6c7be737c、workflow main90ecdf1。署名/プライバシー/IPA検査と実altoolのVERIFY/UPLOAD SUCCEEDEDを生ログで照合した。実job11分32秒、最初のdispatch1回のみ。raw SHA256 `a651e189cdf3ac23bbbfc02e360dff18d36d78b47a25ca3da05e8c0b8f305908`、外部`testflight263-upload-completion.json`。Apple側の処理完了、利用者端末の表示、新v4の実機復元はこの成功へ含めない。
+- 最初の候補2026-10-18T09:18:58Zから計時し、試作・失敗・再検査と15:26→21:10UTCの観測間隔を含める。この間隔を全てactive作業と断定しない。旧readinessで263 dry-run成功後のdispatchは0。新継続の45〜60分計画は21:21UTCからの残作業見積もりであり、初候補から計時をリセットしない。配布job完了までの累計12時間42分45秒。21:21UTCからの継続工程は約41分で、45〜60分の残作業計画内。総経過を継続工程の時間へ置換しない。
+
+残件と境界:
+
+- 実機の新v4保存/復元、実iPhoneの大容量メモリ・描画性能は未確認。シミュレータではcold中断再開、実60秒429、破損nodeだけ再取得、写真/メモ一致を確認した。元データ削除・再インストールを確認手順にしない。
+- 保存テスト受付は2026-10-19 03:09JSTで失効し延長なし。実機確認できる時間に合わせ、本人1人/新規0・残56 PUT/88,591,059B、53 mutation/86,993,619Bを補充せず、日時2列だけ2時間へ更新する提案とCAS草案を作成。現live schemaを使うSQLite境界12件成功、実API書込0。本番transport接続、時刻に合わせたfresh prepare/独立review/適用は未実施。Sandbox会員資格は別判定。外部`intake-window/proposal.json`へ現AWS/CF費用観測・遅延・残runtime読取不可も記録した。共有runtimeは既存fail-closed枠内の可用性未確認であり、残額の補充や追加費用の承認ではない。
+- 無制限や全ての写真サイズで10年保証ではない。50GiBで36,500枚を保存するには、他データを除いても平均約1.47MB/枚未満が必要。既存50写真objectの実測平均約0.872MBは旧コピーも含む観測値で、将来の平均保証ではない。100,000file/8,192node等の保護上限も残る。
+- 全履歴の稀なcursor喪失から100,001件を200件/回で再構築する試験は成功したが、15分周期では最低125時間15分を要する。通常保存の待ち時間ではない。S3版本数とrecord treeの大容量試験は別実行で、実写真全経路の災害復旧実証ではない。
+- 長期の1人あたり総原価は未確定。写真二重保存の感度試算や128-photo合成cold経路の係数を、warm/36,500-photo全体の実測総原価にしない。CPU、DB/index、履歴、復旧/書出し/再試行、共通固定費の分担等は引き続き必要。無料枠を1人ごとに重複適用しない。
+
+
+## 以下は候補検証中の履歴
+
 - 21時台の追加修正: 新端末の一覧読込は子nodeごとの429待機・途中receiptがなかった。既存owner30request/分のまま、大量の一覧で初めから再読込する恐れを修正。owner/root ID/root SHAと親edgeに拘束した専用metadata cacheを1root分だけ保持し、破損はそのnodeだけ再取得。全tree/写真/manifest検証前に復元を公開しない。元データやpending/uploaded/restored receiptは消さない。
 - 新差分は独立レビュー済み、Swift実行はこれから。既存実iOS fixtureへ、warm child GET=0、中断前の3node再利用、実60秒429待機、壊れたreceipt1件だけ再取得、写真・全メモ一致の復元を追加。既存modelへ3,839childと128KiB wire境界を追加。診断計画はrepo外`partitioned-cold-resume-plan.json`。初回候補09:18:58Zからの累計を維持し、診断約19分＋配布経路約77〜110分を見込む。前の91a144候補資格は無効化し、新入力で再固定する。
 - 原価probeの整理: `v4-fullpath-cost-20261018T111249Z`は各scenarioで17node全部を読むcold経路。warmアプリは認証済みuploaded/restored receiptを残しており、全nodeを毎回読む原価ではない。memoのpreflightはhead1+node17、KMS18/D1読291/R2 GET78。これを全て除く値もwarm原価ではなく、実際のhead/root/usage分を再加算する必要がある。S3処理回数はこの分類で変わらない。既存raw測定を上書きしない。
