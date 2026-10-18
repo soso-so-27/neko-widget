@@ -3375,7 +3375,7 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == MODERATION_RESOLUTION_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
-    if runtime_scope == APP_DATA_SCOPE and partitioned_capacity_paths_only(paths):
+    if runtime_scope == APP_DATA_SCOPE and (partitioned_capacity_paths_only(paths) or partitioned_readiness_paths_only(paths)):
         return required_jobs_from_scope(runtime_scope)
     sources = source_paths(paths)
     if not sources or not sources <= MAPPED_PATHS or not accepts_paths(runtime_scope, paths):
@@ -6556,6 +6556,168 @@ def partitioned_native_retry_evidence(run, api, now):
         "retry_raw_log_sha256": tool_log_digest(success), "passed_cases": sorted(expected)}
 
 
+PARTITIONED_READINESS_KIND = "partitioned-fixed-readiness-continuation-v1"
+PARTITIONED_READINESS_BASE = "ba3704a02261ae7f86d160c33e3adc06a68fe115"
+PARTITIONED_READINESS_BRANCH = "codex/partitioned-readiness-release-20261019"
+PARTITIONED_READINESS_CONTROL_BRANCH = "codex/partitioned-readiness-control-20261019"
+PARTITIONED_READINESS_PATH = "NekoWidget/ci/moderation-v2-readiness.json"
+PARTITIONED_READINESS_BEFORE = "a9d39ebbfad1bd7bfdc0fa2f373971145c33cedf"
+PARTITIONED_READINESS_AFTER = "a7cef29735f54e974a044a2fa8cf7e1b28282f8e"
+
+
+def partitioned_readiness_paths_only(paths):
+    return isinstance(paths, (list, tuple)) and list(paths) == [PARTITIONED_READINESS_PATH]
+
+
+def partitioned_readiness_delta(base, head, expected):
+    """Exact modified ordinary files; no additions, prose, renames or modes."""
+    raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+    if raw[-1:] == [""]: raw.pop()
+    if len(raw) != 2 * len(expected): return False
+    seen = set()
+    for i in range(0, len(raw), 2):
+        fields, path = raw[i].split(), raw[i + 1]
+        if (path not in expected or path in seen or len(fields) != 5
+                or fields[:2] != [":100644", "100644"] or fields[4] != "M"
+                or not all(SHA.fullmatch(b) for b in fields[2:4])): return False
+        seen.add(path)
+        if path == PARTITIONED_READINESS_PATH and fields[2:4] != [PARTITIONED_READINESS_BEFORE, PARTITIONED_READINESS_AFTER]: return False
+        if any(git("ls-tree", ref, "--", path) != f"100644 blob {blob}\t{path}"
+               for ref, blob in ((base, fields[2]), (head, fields[3]))): return False
+    return seen == set(expected)
+
+
+def partitioned_readiness_control_inputs(paths, base, head):
+    try:
+        return (isinstance(paths, (list, tuple)) and len(paths) == 2
+            and set(paths) == PARTITIONED_CAPACITY_CONTROLS
+            and git("rev-parse", base + "^{tree}") == git("rev-parse", PARTITIONED_READINESS_BASE + "^{tree}")
+            and git("merge-base", base, head) == base
+            and partitioned_readiness_delta(base, head, PARTITIONED_CAPACITY_CONTROLS))
+    except (OSError, subprocess.CalledProcessError, AttributeError, TypeError, ValueError): return False
+
+
+def partitioned_readiness_inputs(head):
+    """Frozen 4d product, two independently main-approved controls, one renewal."""
+    try:
+        if (not isinstance(head, str) or not SHA.fullmatch(head)
+                or not SHA.fullmatch(PARTITIONED_READINESS_AFTER)
+                or PARTITIONED_READINESS_AFTER == PARTITIONED_READINESS_BEFORE): return False
+        git("merge-base", "--is-ancestor", PARTITIONED_READINESS_BASE, head)
+        git("merge-base", "--is-ancestor", PARTITIONED_NATIVE_RETRY_SOURCE, PARTITIONED_READINESS_BASE)
+        if not partitioned_readiness_delta(PARTITIONED_NATIVE_RETRY_SOURCE, head,
+                PARTITIONED_CAPACITY_CONTROLS | {PARTITIONED_READINESS_PATH}): return False
+        anchor = git("merge-base", "refs/remotes/origin/main", head)
+        approval = git("log", "-1", "--format=%H", anchor, "--", *sorted(PARTITIONED_CAPACITY_CONTROLS))
+        if not SHA.fullmatch(approval): return False
+        git("merge-base", "--is-ancestor", PARTITIONED_READINESS_BASE, approval)
+        git("merge-base", "--is-ancestor", approval, head)
+        if not partitioned_readiness_delta(PARTITIONED_READINESS_BASE, approval, PARTITIONED_CAPACITY_CONTROLS): return False
+        return (all(git("ls-tree", head, "--", p) == git("ls-tree", approval, "--", p)
+                    for p in PARTITIONED_CAPACITY_CONTROLS)
+            and partitioned_readiness_delta(approval, head, {PARTITIONED_READINESS_PATH}))
+    except (OSError, subprocess.CalledProcessError, AttributeError, TypeError, ValueError): return False
+
+
+def partitioned_readiness_current(head):
+    """Current two-authority verification; no historical clock substitution."""
+    try:
+        if (git("rev-parse", "HEAD") != head
+                or git("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none")
+                or git("ls-tree", head, "--", PARTITIONED_READINESS_PATH)
+                    != f"100644 blob {PARTITIONED_READINESS_AFTER}\t{PARTITIONED_READINESS_PATH}"): return False
+        policy = json.loads(git("show", head + ":NekoWidget/ci/moderation-client-rollout-policy.json"))
+        evidence = json.loads(git("show", head + ":" + PARTITIONED_READINESS_PATH))
+        checked = subprocess.run(["node", "NekoWidget/ci/verify-moderation-readiness.mjs"],
+            input=json.dumps({"policy": policy, "evidence": evidence}), capture_output=True,
+            text=True, encoding="utf-8", timeout=20)
+        result = json.loads(checked.stdout)
+        return (checked.returncode == 0 and result.get("verified") is True
+            and result.get("purpose") == "testflight-owner-report-ui-continuation")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, AttributeError, TypeError, ValueError): return False
+
+
+def partitioned_readiness_run_identity(run, head, branch):
+    return (isinstance(run, dict) and type(run.get("id")) is int and run["id"] > 0
+        and isinstance(head, str) and SHA.fullmatch(head) is not None
+        and run.get("head_sha") == head and run.get("head_branch") == branch
+        and branch in (PARTITIONED_READINESS_BRANCH, "main") and run.get("event") == "push"
+        and run.get("workflow_id") == 335014238 and run.get("path") == ".github/workflows/ios-build.yml"
+        and type(run.get("run_attempt")) is int and run["run_attempt"] == 1
+        and all(run.get(side, {}).get("full_name") == "soso-so-27/neko-widget" for side in ("repository", "head_repository")))
+
+
+def partitioned_readiness_record(head):
+    return {"kind": PARTITIONED_READINESS_KIND, "candidate_sha": head,
+        "source_sha": PARTITIONED_NATIVE_RETRY_SOURCE, "source_run_id": PARTITIONED_NATIVE_RETRY_RUN,
+        "source_run_attempt": 2, "readiness_blob": PARTITIONED_READINESS_AFTER,
+        "required_jobs": list(required_jobs_from_scope(APP_DATA_SCOPE)), "current_readiness_verified": True}
+
+
+def partitioned_readiness_plan(run, api, now):
+    """The continuation has a real fresh plan; skipped native jobs prove nothing."""
+    if (not partitioned_readiness_run_identity(run, run.get("head_sha"), run.get("head_branch"))
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")): return False
+    partitioned_native_retry_fresh(run.get("updated_at"), now)
+    jobs = executed_jobs(run, "soso-so-27/neko-widget", api)
+    plans = [j for j in jobs if j.get("name") == PLAN_JOB]
+    if (len(plans) != 1 or any(type(j.get("id")) is not int or j["id"] <= 0 for j in jobs)
+            or len({j.get("id") for j in jobs}) != len(jobs)
+            or not covers_jobs(jobs, (PLAN_JOB,), run["head_sha"], now)): return False
+    for job in jobs:
+        if (job.get("head_sha") != run["head_sha"] or job.get("run_id") != run["id"]
+                or type(job.get("run_attempt")) is not int or job["run_attempt"] != 1): return False
+        if job.get("name") == PLAN_JOB:
+            if not fixture_navigation_steps(job, fixture_navigation_required_steps(PLAN_JOB), optional=FIXTURE_NAV_PLAN_OPTIONAL): return False
+        elif not (job.get("name") in set(required_jobs_from_scope(APP_DATA_SCOPE)) | {
+                    UNEXPANDED_SHARING_JOB, "needs.plan.outputs.smoke_name", "needs.plan.outputs.build_name"}
+                and (job.get("status"), job.get("conclusion")) == ("completed", "skipped")
+                and job.get("steps") == [] and job.get("runner_id") in (None, 0)): return False
+    raw = api(f"/repos/soso-so-27/neko-widget/actions/jobs/{plans[0]['id']}/logs")
+    records = [json.loads(line.split("IOS_CI_PLAN_JSON=", 1)[1]) for line in raw.splitlines() if "IOS_CI_PLAN_JSON=" in line]
+    return (len(records) == 1 and type(records[0].get("schema_version")) is int
+        and type(records[0].get("evidence_run_id")) is int and all(records[0].get(k) == v for k, v in {
+        "schema_version": 1, "repository": "soso-so-27/neko-widget", "head_sha": run["head_sha"],
+        "scope": APP_DATA_SCOPE, "required_jobs": list(required_jobs_from_scope(APP_DATA_SCOPE)),
+        "evidence_run_id": PARTITIONED_NATIVE_RETRY_RUN, "evidence_sha": PARTITIONED_NATIVE_RETRY_SOURCE,
+        "test_correction_evidence": None, "partitioned_readiness_continuation": partitioned_readiness_record(run["head_sha"])}.items()))
+
+
+def partitioned_readiness_evidence(head, api, now, current):
+    """One fixed branch execution; unknown, active or failed successors stop reuse."""
+    if (not partitioned_readiness_inputs(head) or not partitioned_readiness_current(head)
+            or not partitioned_readiness_run_identity(current, head, current.get("head_branch"))
+            or (current.get("status"), current.get("conclusion")) not in
+                (("queued", None), ("in_progress", None), ("completed", "success"))):
+        raise ValueError("Fixed readiness continuation inputs or current identity differ")
+    prefix = "/repos/soso-so-27/neko-widget/actions"
+    query = urllib.parse.urlencode({"branch": PARTITIONED_READINESS_BRANCH, "event": "push", "per_page": 100})
+    endpoint = f"{prefix}/workflows/ios-build.yml/runs?{query}"
+    index = api(endpoint)
+    runs = index.get("workflow_runs")
+    if type(index.get("total_count")) is not int or index["total_count"] != 1 or not isinstance(runs, list) or len(runs) != 1:
+        raise ValueError("Continuation execution index is absent, duplicate or incomplete")
+    candidate = runs[0]
+    if not partitioned_readiness_run_identity(candidate, candidate.get("head_sha"), PARTITIONED_READINESS_BRANCH):
+        raise ValueError("Continuation execution identity changed")
+    if current["head_branch"] == PARTITIONED_READINESS_BRANCH:
+        if (candidate.get("id") != current["id"] or candidate.get("head_sha") != head
+                or (candidate.get("status"), candidate.get("conclusion")) not in
+                    (("queued", None), ("in_progress", None), ("completed", "success"))):
+            raise ValueError("Continuation current run is not the sole acceptable execution")
+    elif (not partitioned_readiness_inputs(candidate["head_sha"])
+            or git("rev-parse", candidate["head_sha"] + "^{tree}") != git("rev-parse", head + "^{tree}")
+            or not partitioned_readiness_plan(candidate, api, now)):
+        raise ValueError("Continuation candidate plan has not succeeded with the exact main tree")
+    source = api(f"{prefix}/runs/{PARTITIONED_NATIVE_RETRY_RUN}")
+    proof = partitioned_native_retry_evidence(source, api, now)
+    if not covers_jobs(executed_jobs(source, "soso-so-27/neko-widget", api),
+            required_jobs_from_scope(APP_DATA_SCOPE), PARTITIONED_NATIVE_RETRY_SOURCE, now):
+        raise ValueError("All six original native jobs remain required within 24 hours")
+    if index != api(endpoint): raise ValueError("Continuation execution index changed during verification")
+    return partitioned_readiness_record(head) | {"native_retry": proof}
+
+
 def partitioned_capacity_control_inputs(paths, base, head):
     # This one introduction shares paths with a historical frozen controller.
     # Its product base is exact; only the two Python controls and prose may differ.
@@ -6577,8 +6739,14 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     if sources == PARTITIONED_CAPACITY_CONTROLS:
         base = comparison_base(event, env)
         if base and (partitioned_native_retry_control_inputs(paths, base, env["GITHUB_SHA"])
-                or partitioned_capacity_control_inputs(paths, base, env["GITHUB_SHA"])):
+                or partitioned_capacity_control_inputs(paths, base, env["GITHUB_SHA"])
+                or partitioned_readiness_control_inputs(paths, base, env["GITHUB_SHA"])):
             return ORCHESTRATION_SCOPE
+    if (env.get("GITHUB_REF") == "refs/heads/" + PARTITIONED_READINESS_BRANCH
+            or partitioned_readiness_paths_only(paths)):
+        if (partitioned_readiness_paths_only(paths) and partitioned_readiness_inputs(env["GITHUB_SHA"])
+                and partitioned_readiness_current(env["GITHUB_SHA"])): return APP_DATA_SCOPE
+        raise ValueError("Fixed partitioned readiness continuation differs; no native work authorized")
     if partitioned_capacity_paths_only(paths):
         base = comparison_base(event, env)
         return (APP_DATA_SCOPE if base and partitioned_capacity_inputs(paths, base, env["GITHUB_SHA"])
@@ -9349,6 +9517,10 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime, *,
             return reject("not_successful")
         if not dt.timedelta(0) <= age <= dt.timedelta(hours=24):
             return reject("outside_24_hours")
+        if (repository == "soso-so-27/neko-widget" and partitioned_native_retry_identity(run, 2, "success")
+                and partitioned_readiness_run_identity(current, current["head_sha"], current.get("head_branch"))
+                and partitioned_readiness_inputs(current["head_sha"])):
+            return partitioned_readiness_current(current["head_sha"])
         if run["head_sha"] != current["head_sha"] and not equivalent_inputs(run["head_sha"], current["head_sha"]):
             if (repository == "soso-so-27/neko-widget" and partitioned_native_retry_identity(run, 2, "success")
                     and current.get("head_branch") == "main" and current.get("event") == "push"
@@ -9915,6 +10087,17 @@ def preservation_export_backend_evidence(sha: str, repository: str, api, now: dt
 
 
 def find_evidence(env: dict, required: tuple[str, ...], api, now: dt.datetime) -> tuple[int, str] | None:
+    if (env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REPOSITORY") == "soso-so-27/neko-widget"
+            and required == required_jobs_from_scope(APP_DATA_SCOPE)
+            and (env.get("GITHUB_REF") == "refs/heads/" + PARTITIONED_READINESS_BRANCH
+                or env.get("GITHUB_REF") == "refs/heads/main" and partitioned_readiness_inputs(env["GITHUB_SHA"]))):
+        current = api(f"/repos/soso-so-27/neko-widget/actions/runs/{int(env['GITHUB_RUN_ID'])}")
+        if (current.get("id") != int(env["GITHUB_RUN_ID"])
+                or current.get("head_branch") != env["GITHUB_REF"].removeprefix("refs/heads/")
+                or git("rev-parse", "HEAD") != env["GITHUB_SHA"]):
+            raise ValueError("Continuation owning push and checkout differ")
+        partitioned_readiness_evidence(env["GITHUB_SHA"], api, now, current)
+        return PARTITIONED_NATIVE_RETRY_RUN, PARTITIONED_NATIVE_RETRY_SOURCE
     continuation_branch = env.get("GITHUB_REF") == "refs/heads/" + RETAINED_CONTINUATION_BRANCH
     if (env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REPOSITORY"] == "soso-so-27/neko-widget"
             and required == FULL and (continuation_branch
@@ -10385,7 +10568,9 @@ def main() -> None:
     if runtime_checks is not None:
         values.update(build="false",smoke="false",sharing="false",app_ui="false",app_ui_lanes="[]",lanes="[]",matrix_lanes="[]")
     retained = evidence == (RETAINED_CONTINUATION_RUN, RETAINED_CONTINUATION_SOURCE)
-    if retained:
+    partitioned_continuation = (evidence == (PARTITIONED_NATIVE_RETRY_RUN, PARTITIONED_NATIVE_RETRY_SOURCE)
+        and partitioned_readiness_inputs(env["GITHUB_SHA"]))
+    if retained or partitioned_continuation:
         values.update(build="false",smoke="false",sharing="false",app_ui="false",app_ui_lanes="[]",lanes="[]",matrix_lanes="[]")
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():
@@ -10396,6 +10581,7 @@ def main() -> None:
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
         **({"retained_continuation": retained_continuation_record(env["GITHUB_SHA"])} if retained else {}),
+        **({"partitioned_readiness_continuation": partitioned_readiness_record(env["GITHUB_SHA"])} if partitioned_continuation else {}),
         **({"backend_wait": tool_backend_wait} if tool_backend_wait is not None else {}),
         **({"required_backend_runs": tool_storage_requirements(evidence[1] if evidence else env["GITHUB_SHA"]),
             **({"backend_substitution_kind": TOOL_STORAGE_PR_KIND,
@@ -10431,6 +10617,12 @@ def main() -> None:
         summary += (f"Reusing the actual composite native graph from run {INTERNAL_REPORT_METADATA_RUN} at `{INTERNAL_REPORT_METADATA_SOURCE}` "
                     "and its five backend successes after exact metadata repair closure. Original Build/UI failures, diagnostic and failed build 250 remain retained. "
                     "Only the plan executes here; archive, signing, full readiness and Apple upload require a new release run.\n")
+    elif partitioned_continuation:
+        summary += (f"Retaining six native successes on `{PARTITIONED_NATIVE_RETRY_SOURCE}` / run {PARTITIONED_NATIVE_RETRY_RUN}, "
+                    "with the original solo-1 failure, exact attempt-2 cases and API mirrors preserved. "
+                    "Only the pinned two-authority readiness artifact and already-main selector controls differ. "
+                    "The ordinary 24-hour evidence limit is unchanged; this fresh plan is not a new native or backend execution. "
+                    "New archive, signing and upload remain required.\n")
     elif evidence is not None:
         run_id, tested_sha = evidence
         url = f"{env['GITHUB_SERVER_URL']}/{env['GITHUB_REPOSITORY']}/actions/runs/{run_id}"
