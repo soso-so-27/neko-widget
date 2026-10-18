@@ -16,7 +16,10 @@ enum AppRecordJSON {
         x = (x ^ (x >> 27)) &* 0x94d049bb133111eb
         return x ^ (x >> 31)
     }
-    static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    static func hash(_ data: Data) -> String {
+        let hex = Array("0123456789abcdef".utf8)
+        return String(decoding: SHA256.hash(data: data).flatMap { [hex[Int($0 >> 4)], hex[Int($0 & 15)]] }, as: UTF8.self)
+    }
     static func name(_ digest: String) -> String {
         let s = Array(digest.prefix(32))
         return String(s[0..<8]) + "-" + String(s[8..<12]) + "-" + String(s[12..<16]) + "-" + String(s[16..<20]) + "-" + String(s[20..<32]) + ".json"

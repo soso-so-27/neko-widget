@@ -101,12 +101,13 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
         "VeterinaryVisits": "state.json", "ShowcasePhotos": "selected.json",
         "LostCatDrafts": "drafts.json", "CatPreparedness": "records.json",
         "PhotoMemoryNotes": "state.json", "CatIdentity": "state.json"]
-    static func hash(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
+    static func hash(_ bytes: Data) -> String { AppRecordJSON.hash(bytes) }
     static func validatePath(_ path: String, fragments: Bool = false) throws {
         let pieces = path.split(separator: "/", omittingEmptySubsequences: false)
         guard pieces.count == 2, let manifest = manifests[String(pieces[0])] else { throw ToolBackupError.invalid }
         let file = String(pieces[1])
-        guard file == manifest || ((file.hasSuffix(".jpg") || fragments && file.hasSuffix(".json")) && UUID(uuidString: String(file.dropLast(4))) != nil)
+        let extensionLength = file.hasSuffix(".json") ? 5 : 4
+        guard file == manifest || ((file.hasSuffix(".jpg") || fragments && file.hasSuffix(".json")) && UUID(uuidString: String(file.dropLast(extensionLength))) != nil)
         else { throw ToolBackupError.invalid }
     }
     func validate() throws {
@@ -466,19 +467,30 @@ enum ToolBackupFiles {
         completed = true
         return result
     }
-    static func drafts(_ saved: Saved) throws -> [(UUID, ToolBackupPart)] {
-        try saved.index.validate()
-        var result: [(UUID, ToolBackupPart)] = []
-        for file in saved.index.files {
-            if let source = file.sourceSnapshotID, source != saved.id { continue }
+    struct Draft {
+        let id: UUID
+        let file: ToolBackupIndex.File?
+        let offset: Int
+        let node: ToolBackupPart?
+        func load(_ saved: Saved) throws -> ToolBackupPart {
+            if let node { return node }
+            guard let file else { throw ToolBackupError.invalid }
             let data = try read(directory(saved.id).appendingPathComponent(file.path), maximum: 20 * 1024 * 1024)
             guard data.count == file.bytes, ToolBackupIndex.hash(data) == file.sha256 else { throw ToolBackupError.invalid }
+            let photo = file.path.hasSuffix(".jpg")
+            let bytes = photo ? data : data.subdata(in: offset * ToolBackupIndex.chunkSize..<min(data.count, (offset + 1) * ToolBackupIndex.chunkSize))
+            return .init(snapshotId: saved.id.uuidString.lowercased(), kind: photo ? "photo" : "json",
+                path: file.path, part: offset, count: file.records.count, sha256: ToolBackupIndex.hash(bytes),
+                payload: photo ? "" : bytes.base64EncodedString())
+        }
+    }
+    static func drafts(_ saved: Saved) throws -> [Draft] {
+        try saved.index.validate()
+        var result: [Draft] = []
+        for file in saved.index.files {
+            if let source = file.sourceSnapshotID, source != saved.id { continue }
             for (part, id) in file.records.enumerated() {
-                let photo = file.path.hasSuffix(".jpg")
-                let bytes = photo ? data : data.subdata(in: part * ToolBackupIndex.chunkSize..<min(data.count, (part + 1) * ToolBackupIndex.chunkSize))
-                result.append((id, .init(snapshotId: saved.id.uuidString.lowercased(), kind: photo ? "photo" : "json",
-                    path: file.path, part: part, count: file.records.count, sha256: ToolBackupIndex.hash(bytes),
-                    payload: photo ? "" : bytes.base64EncodedString())))
+                result.append(.init(id: id, file: file, offset: part, node: nil))
             }
         }
         let indexData = try read(directory(saved.id).appendingPathComponent("index-wire.json"), maximum: ToolBackupIndex.maximumIndexBytes)
@@ -488,14 +500,42 @@ enum ToolBackupFiles {
             let reused = Set(saved.index.reusedNodes ?? [])
             result += nodes.compactMap { part in
                 guard let id = UUID(uuidString: part.snapshotId), !reused.contains(id) else { return nil }
-                return (id, part)
+                return Draft(id: id, file: nil, offset: 0, node: part)
             }
             return result
         }
         guard try JSONDecoder().decode(ToolBackupIndex.self, from: indexData) == saved.index else { throw ToolBackupError.invalid }
-        result.append((saved.id, .init(snapshotId: saved.id.uuidString.lowercased(), kind: "index", path: "index.json",
+        result.append(.init(id: saved.id, file: nil, offset: 0, node: .init(snapshotId: saved.id.uuidString.lowercased(), kind: "index", path: "index.json",
             part: 0, count: 1, sha256: ToolBackupIndex.hash(indexData), payload: indexData.base64EncodedString())))
         return result
+    }
+    static func sent(_ saved: Saved) throws -> Set<UUID> {
+        let folder = directory(saved.id), legacy = folder.appendingPathComponent("sent.json")
+        var result = Set<UUID>()
+        if FileManager.default.fileExists(atPath: legacy.path) {
+            result = try JSONDecoder().decode(Set<UUID>.self, from: read(legacy, maximum: ToolBackupIndex.maximumReceiptBytes))
+        }
+        guard saved.index.version == 4 else { return result }
+        let buckets = folder.appendingPathComponent("sent-v4", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: buckets.path) else { return result }
+        for url in try FileManager.default.contentsOfDirectory(at: buckets, includingPropertiesForKeys: nil) {
+            let prefix = url.deletingPathExtension().lastPathComponent
+            guard url.pathExtension == "json", prefix.range(of: "^[0-9a-f]{2}$", options: .regularExpression) != nil else { throw ToolBackupError.invalid }
+            let values = try JSONDecoder().decode(Set<UUID>.self, from: read(url, maximum: 8 * 1024 * 1024))
+            guard values.allSatisfy({ $0.uuidString.lowercased().hasPrefix(prefix) }) else { throw ToolBackupError.invalid }
+            result.formUnion(values)
+        }
+        return result
+    }
+    static func acknowledge(_ id: UUID, sent: Set<UUID>, saved: Saved) throws {
+        let folder = directory(saved.id)
+        if saved.index.version == 4 {
+            // Bounded buckets avoid rewriting every prior acknowledgement for
+            // each photo in a large first upload. The immutable snapshot binds IDs.
+            let prefix = String(id.uuidString.lowercased().prefix(2))
+            let bucket = sent.filter { $0.uuidString.lowercased().hasPrefix(prefix) }
+            try write(JSONEncoder().encode(bucket), to: folder.appendingPathComponent("sent-v4/" + prefix + ".json"))
+        } else { try write(JSONEncoder().encode(sent), to: folder.appendingPathComponent("sent.json")) }
     }
 }
 
@@ -593,13 +633,9 @@ enum ToolBackupTransfer {
         let attemptURL = folder.appendingPathComponent("attempt.json")
         guard FileManager.default.fileExists(atPath: attemptURL.path) else { return }
         let id = try JSONDecoder().decode(UUID.self, from: ToolBackupFiles.read(attemptURL, maximum: 128))
-        let receiptURL = folder.appendingPathComponent("sent.json")
-        var sent = Set<UUID>()
-        if FileManager.default.fileExists(atPath: receiptURL.path) {
-            sent = try JSONDecoder().decode(Set<UUID>.self, from: ToolBackupFiles.read(receiptURL, maximum: ToolBackupIndex.maximumReceiptBytes))
-        }
+        var sent = try ToolBackupFiles.sent(saved)
         if sent.contains(id) { return }
-        guard let expected = try ToolBackupFiles.drafts(saved).first(where: { $0.0 == id })?.1 else { throw ToolBackupError.invalid }
+        guard let expected = try ToolBackupFiles.drafts(saved).first(where: { $0.id == id })?.load(saved) else { throw ToolBackupError.invalid }
         do {
             let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
             guard snapshot.record.revision == 1, snapshot.document.toolBackup == expected else { throw ToolBackupError.invalid }
@@ -610,7 +646,7 @@ enum ToolBackupTransfer {
         }
         try await client.requireSessionCheckpoint(checkpoint)
         sent.insert(id)
-        try ToolBackupFiles.write(JSONEncoder().encode(sent), to: receiptURL)
+        try ToolBackupFiles.acknowledge(id, sent: sent, saved: saved)
     }
 
     /// Remove this index first, then only pieces that no other copy needs.
@@ -735,13 +771,9 @@ enum ToolBackupTransfer {
         let checkpoint = try await client.captureSessionCheckpoint()
         guard try await client.sessionOwnerID() == saved.owner else { throw ManagedPreservationError.staleSession }
         let pieces = try ToolBackupFiles.drafts(saved)
-        let receiptURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("sent.json")
         let attemptURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("attempt.json")
-        var sent = Set<UUID>()
-        if FileManager.default.fileExists(atPath: receiptURL.path) {
-            sent = try JSONDecoder().decode(Set<UUID>.self, from: ToolBackupFiles.read(receiptURL, maximum: ToolBackupIndex.maximumReceiptBytes))
-            guard sent.isSubset(of: Set(pieces.map { $0.0 })) else { throw ToolBackupError.invalid }
-        }
+        var sent = try ToolBackupFiles.sent(saved)
+        guard sent.isSubset(of: Set(pieces.map(\.id))) else { throw ToolBackupError.invalid }
         let usage = try await client.usage()
         if saved.index.version >= 2 {
             guard let support = usage.toolSnapshots, support.maximumIndexVersion >= saved.index.version, support.strictPartDeletion else {
@@ -753,14 +785,14 @@ enum ToolBackupTransfer {
             // Spare record slots do not imply spare input/retry allowance.
             if FileManager.default.fileExists(atPath: attemptURL.path) {
                 let id = try JSONDecoder().decode(UUID.self, from: ToolBackupFiles.read(attemptURL, maximum: 128))
-                guard let piece = pieces.first(where: { $0.0 == id })?.1 else { throw ToolBackupError.invalid }
+                guard let piece = try pieces.first(where: { $0.id == id })?.load(saved) else { throw ToolBackupError.invalid }
                 try await client.requireSessionCheckpoint(checkpoint)
                 if !sent.contains(id) { do {
                     let existing = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
                     guard existing.record.revision == 1, existing.document.toolBackup == piece else { throw ToolBackupError.invalid }
                     sent.insert(id)
                     try await client.requireSessionCheckpoint(checkpoint)
-                    try ToolBackupFiles.write(JSONEncoder().encode(sent), to: receiptURL)
+                    try ToolBackupFiles.acknowledge(id, sent: sent, saved: saved)
                 } catch ManagedPreservationError.notFound { } }
             }
             try await client.requireSessionCheckpoint(checkpoint)
@@ -773,27 +805,28 @@ enum ToolBackupTransfer {
         for (offset, item) in pieces.enumerated() {
             try Task.checkCancellation()
             try await client.requireSessionCheckpoint(checkpoint)
-            if sent.contains(item.0) {
+            if sent.contains(item.id) {
                 // Successful acknowledgements are durable and bound to this
                 // immutable local snapshot/owner. The server checks the complete
                 // referenced inventory again before accepting its final index.
                 await progress(offset + 1, pieces.count)
                 continue
             }
-            let jpeg = item.1.kind == "photo" ? try ToolBackupFiles.read(
-                ToolBackupFiles.directory(saved.id).appendingPathComponent(item.1.path), maximum: 20 * 1024 * 1024) : nil
-            let document = ManagedPreservationDocument(formatVersion: 3, text: item.1.kind == "index" ? "ツールの保存" : "ツールの保存データ",
+            let part = try item.load(saved)
+            let jpeg = part.kind == "photo" ? try ToolBackupFiles.read(
+                ToolBackupFiles.directory(saved.id).appendingPathComponent(part.path), maximum: 20 * 1024 * 1024) : nil
+            let document = ManagedPreservationDocument(formatVersion: 3, text: part.kind == "index" ? "ツールの保存" : "ツールの保存データ",
                 capturedAt: nil, writtenAt: saved.index.createdAt, updatedAt: saved.index.createdAt,
-                catNames: [], photoFile: jpeg == nil ? nil : "photo.jpg", toolBackup: item.1)
+                catNames: [], photoFile: jpeg == nil ? nil : "photo.jpg", toolBackup: part)
             // Stable IDs make even an uncertain PUT idempotent. No overwrite path.
-            try ToolBackupFiles.write(JSONEncoder().encode(item.0), to: attemptURL)
+            try ToolBackupFiles.write(JSONEncoder().encode(item.id), to: attemptURL)
             let revision = try await waitingForRateLimit(client: client, checkpoint: checkpoint) {
-                try await client.put(.init(recordID: item.0, document: document, jpegData: jpeg), consent: true, checkpoint: checkpoint)
+                try await client.put(.init(recordID: item.id, document: document, jpegData: jpeg), consent: true, checkpoint: checkpoint)
             }
             guard revision == 1 else { throw ToolBackupError.invalid }
-            sent.insert(item.0)
+            sent.insert(item.id)
             try await client.requireSessionCheckpoint(checkpoint)
-            try ToolBackupFiles.write(JSONEncoder().encode(sent), to: receiptURL)
+            try ToolBackupFiles.acknowledge(item.id, sent: sent, saved: saved)
             await progress(offset + 1, pieces.count)
         }
         try await client.requireSessionCheckpoint(checkpoint)

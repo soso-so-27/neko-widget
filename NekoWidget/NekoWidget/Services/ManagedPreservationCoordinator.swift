@@ -698,7 +698,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             let folder = ToolBackupFiles.directory(pending.id)
             // Remove only this prepared upload, preserving any restored edits.
-            for name in Array(ToolBackupIndex.manifests.keys) + ["index-wire.json", "sent.json", "attempt.json", "uploaded.json", "pending.json"] {
+            for name in Array(ToolBackupIndex.manifests.keys) + ["index-wire.json", "sent.json", "sent-v4", "attempt.json", "uploaded.json", "pending.json"] {
                 let url = folder.appendingPathComponent(name)
                 if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
             }

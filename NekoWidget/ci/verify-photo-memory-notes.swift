@@ -38,7 +38,31 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesRecordsAndContext(at: root.appendingPathComponent("records/state.json"))
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
+        try await verifiesMissingPartitionNeverReplacesRecords(at: root.appendingPathComponent("partition-failure/state.json"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
+    }
+
+    private static func verifiesMissingPartitionNeverReplacesRecords(at url: URL) async throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var notes: [String: PhotoMemoryNote] = [:]
+        for i in 0..<400 { notes["synthetic-photo-\(i)"] = capacityNote(i, text: String(repeating: "猫", count: 100)) }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        try AppRecordJSON.write(encoder.encode(PhotoMemoryNoteSnapshot(schemaVersion: 4, notes: notes)), to: url)
+        let pointer = try Data(contentsOf: url), manifest = try AppRecordJSON.manifest(pointer)!
+        let missing = url.deletingLastPathComponent().appendingPathComponent(manifest.chunks[0].file)
+        let originalChunk = try Data(contentsOf: missing)
+        try FileManager.default.removeItem(at: missing)
+        let store = PhotoMemoryNoteStore(fileURL: url)
+        do {
+            _ = try await store.save(text: "別のメモ", for: "new-photo", expectedRevision: nil)
+            throw Failure.failed("missing partition became an empty writable store")
+        } catch let error as Failure { throw error }
+        catch { }
+        try require(try Data(contentsOf: url) == pointer, "failed write replaced a damaged store")
+        try originalChunk.write(to: missing, options: .atomic)
+        let recovered = try await PhotoMemoryNoteStore(fileURL: url).records()
+        try require(recovered.count == notes.count && recovered.allSatisfy { notes[$0.photoIdentifier] == $0.note },
+                    "partition repair lost original records")
     }
 
     // Exercise the shipping store before choosing a partitioning strategy.

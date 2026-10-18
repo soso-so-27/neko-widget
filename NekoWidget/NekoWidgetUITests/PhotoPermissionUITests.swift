@@ -1686,6 +1686,17 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testAutomaticPartitionedRecordsMigrationAndRestore() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-capacity-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["容量対応・旧形式の移行・写真とメモの復元を確認しました"].waitForExistence(timeout: 90), app.debugDescription)
+        capture("automatic-partitioned-records-migration-and-restore")
+        app.terminate()
+    }
+    @MainActor
     private func verifyAutomaticSaveKeepsAcknowledgementAndResumesCleanup() {
         continueAfterFailure = false
         let app = XCUIApplication()
