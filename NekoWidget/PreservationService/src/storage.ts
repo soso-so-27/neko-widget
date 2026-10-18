@@ -213,7 +213,7 @@ export class ArchiveStore {
   /** Bounded internal maintenance. Launch still requires an owner-wide audit
    * with zero missing or pending revisions, not merely one successful page.
    */
-  async repairRecoveryBatch(limit = 20) {
+  async repairRecoveryBatch(limit = 20, options: { includeLegacy?: boolean } = {}) {
     if (!this.d.recovery) throw new ServiceError('RECOVERY_COPY_UNAVAILABLE', 503);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ServiceError('INVALID_PAGE_SIZE');
     const cursor = await this.d.db.prepare(`SELECT last_owner_id,last_record_id
@@ -223,7 +223,7 @@ export class ArchiveStore {
     const pending = `
       (EXISTS(SELECT 1 FROM pa_record_recovery_versions v
         WHERE v.owner_id=r.owner_id AND v.record_id=r.record_id AND v.revision=r.revision)
-        OR ${exactLegacy})
+        OR ${options.includeLegacy === false ? '0' : exactLegacy})
       AND NOT EXISTS(SELECT 1 FROM pa_record_commit_markers m
         WHERE m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision)`;
     const after = await this.d.db.prepare(`SELECT r.* FROM pa_records r
@@ -778,17 +778,19 @@ export class ArchiveStore {
     const session = await this.d.auth.requireSession(token);
     this.requireRecovery();
     await this.requireWritePolicy();
-    if (this.d.requireOwnerRecovery) {
-      await this.d.ownerRecovery!.copyCurrent(this.d.db, session.ownerId, this.d.now());
-    }
     const row = await this.row(session.ownerId, id);
     if (!row) throw new ServiceError('RECORD_NOT_FOUND', 404);
     if (row.deleted && row.revision === expected + 1) {
+      // Finish this exact committed deletion before the owner snapshot, whose
+      // coverage deliberately refuses a missing record commit marker.
       await this.ensureCurrentRecovery(row, session);
       await this.acknowledgeOwnerInventory(session.ownerId);
       return { recordId: id, revision: row.revision };
     }
     if (row.deleted || row.revision !== expected) throw new ServiceError('REVISION_CONFLICT', 409);
+    if (this.d.requireOwnerRecovery) {
+      await this.d.ownerRecovery!.copyCurrent(this.d.db, session.ownerId, this.d.now());
+    }
     const currentDocument = (await this.metadata(row)).document;
     if (parseAppRecordHead(currentDocument)) throw new ServiceError('TOOL_PART_REFERENCED', 409);
     const tool = currentDocument.toolBackup;

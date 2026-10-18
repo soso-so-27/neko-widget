@@ -6,7 +6,7 @@ import { ArchiveStore, cleanupArchive } from '../src/storage';
 import { encodePhoto } from '../src/documents';
 import { randomToken, ServiceError, type ArchiveDocument, type KeyCustody } from '../src/contracts';
 import { RecordRecoveryCopy } from '../src/record-recovery-copy';
-import type { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
+import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { type RecoveryObject, S3RecoveryCopy } from '../src/s3-recovery-copy';
 import worker, { route, type Services, type Env } from '../src/index';
 import { PilotControl } from '../src/pilot-control';
@@ -125,7 +125,7 @@ function syntheticRecovery(keys: KeyCustody) {
       return value.slice();
     },
   } as S3RecoveryCopy;
-  return { recovery: new RecordRecoveryCopy(keys, s3), objects, references,
+  return { recovery: new RecordRecoveryCopy(keys, s3), s3, objects, references,
     rejectWrites(value: boolean) { rejectWrites = value; },
     rejectKind(value: typeof rejectKind) { rejectKind = value; },
     failManifestAfter(value: number | null) { manifestWritesBeforeFailure = value; } };
@@ -405,6 +405,38 @@ it('does not create a new record recovery version for a fenced owner during main
   expect(await archive.repairRecoveryBatch(2)).toEqual({ processed: 1, failed: 0 });
 });
 
+it('repairs pending commit markers without restarting legacy backfill', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  const legacy = crypto.randomUUID(), pending = crypto.randomUUID();
+  await f.archive.put(f.session.token, legacy, f.request());
+  await binding.DB.prepare(`INSERT INTO pa_record_legacy_baseline(owner_id,record_id,revision,
+    initial_operation,initial_fingerprint,photo_key,photo_bytes,quota_bytes,deleted)
+    SELECT owner_id,record_id,revision,initial_operation,initial_fingerprint,
+      photo_key,photo_bytes,quota_bytes,deleted FROM pa_records WHERE owner_id=? AND record_id=?`)
+    .bind(f.session.ownerId, legacy).run();
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery });
+  await archive.put(f.session.token, pending, f.request());
+  remote.failManifestAfter(1);
+  await expect(archive.remove(f.session.token, pending, 1))
+    .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+  remote.failManifestAfter(null);
+  const recordCopies = remote.references.filter(ref => /\/(record|photo)\//u.test(ref.key));
+  expect(await archive.repairRecoveryBatch(20, { includeLegacy: false }))
+    .toEqual({ processed: 1, failed: 0 });
+  expect(remote.references.filter(ref => /\/(record|photo)\//u.test(ref.key))).toEqual(recordCopies);
+  expect(await binding.DB.prepare(`SELECT revision FROM pa_record_commit_markers
+    WHERE owner_id=? AND record_id=? ORDER BY revision`).bind(f.session.ownerId, pending).all())
+    .toMatchObject({ results: [{ revision: 1 }, { revision: 2 }] });
+  expect(await binding.DB.prepare(`SELECT 1 FROM pa_record_recovery_versions
+    WHERE owner_id=? AND record_id=?`).bind(f.session.ownerId, legacy).first()).toBeNull();
+  expect((await archive.read(f.session.token, legacy)).document).toEqual(document);
+  expect(await archive.repairRecoveryBatch(20, { includeLegacy: false }))
+    .toEqual({ processed: 0, failed: 0 });
+  // Resolve the explicitly registered synthetic legacy fixture for later
+  // whole-file rollout-policy tests; this is not the pending-only path.
+  expect(await archive.repairRecoveryBatch()).toEqual({ processed: 1, failed: 0 });
+});
+
 it('does not acknowledge a D1 commit until the independent S3 marker exists; retries finish it', async () => {
   const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
   await enableRecoveryWritePolicy();
@@ -455,6 +487,46 @@ it('keeps a deleted photo quarantined if its post-D1 S3 commit marker fails', as
   expect(await remote.recovery.selectRecoveredRecord(f.session.ownerId, id,
     remote.references.filter(ref => ref.key.includes('/manifest/'))))
     .toMatchObject({ status: 'ready', image: { revision: 2, deleted: true } });
+});
+
+it('resumes a committed deletion before capturing the owner inventory that requires its marker', async () => {
+  const f = await fixture(); const remote = syntheticRecovery(f.options.keys);
+  const ownerRecovery = new OwnerRecoveryCopy(f.options.keys, remote.s3, f.authOptions.identityIndexSecret);
+  const archive = new ArchiveStore({ ...f.options, recovery: remote.recovery,
+    ownerRecovery, requireOwnerRecovery: true });
+  // Global rollout policy is covered separately; this fixture uses the real
+  // owner/record recovery implementations without changing other test owners.
+  const usageReader = new ArchiveStore({ ...f.options, recovery: remote.recovery, requireRecovery: true });
+  const id = crypto.randomUUID(), kept = crypto.randomUUID();
+  try {
+    await archive.put(f.session.token, id, f.request());
+    await archive.put(f.session.token, kept, f.request());
+    remote.failManifestAfter(1);
+    await expect(archive.remove(f.session.token, id, 1))
+      .rejects.toMatchObject({ code: 'RECOVERY_RECORD_UNAVAILABLE' });
+    expect(await binding.DB.prepare(`SELECT revision,deleted FROM pa_records WHERE record_id=?`)
+      .bind(id).first()).toEqual({ revision: 2, deleted: 1 });
+    await expect(usageReader.usage(f.session.token)).rejects.toMatchObject({ code: 'RECOVERY_PENDING' });
+    remote.failManifestAfter(null);
+    await expect(ownerRecovery.copyCurrent(binding.DB, f.session.ownerId, f.options.now()))
+      .rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+    const beforeRetry = remote.references.length;
+    await expect(archive.remove(f.session.token, id, 2)).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+    const stranger = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+    await expect(archive.remove(stranger.token, id, 1)).rejects.toMatchObject({ code: 'RECORD_NOT_FOUND' });
+    await expect(archive.remove(f.session.token, kept, 1)).rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
+    expect(remote.references).toHaveLength(beforeRetry);
+    expect(await binding.DB.prepare(`SELECT revision,deleted FROM pa_records WHERE record_id=?`)
+      .bind(kept).first()).toEqual({ revision: 1, deleted: 0 });
+    expect(await binding.DB.prepare(`SELECT 1 FROM pa_record_delete_intents WHERE record_id=?`).bind(kept).first()).toBeNull();
+    expect(await binding.DB.prepare(`SELECT 1 FROM pa_tool_part_delete_claims WHERE part_id=?`).bind(kept).first()).toBeNull();
+    expect(await archive.remove(f.session.token, id, 1)).toEqual({ recordId: id, revision: 2 });
+    expect((await usageReader.usage(f.session.token)).records.saved).toBe(1);
+    expect((await archive.read(f.session.token, kept)).document).toEqual(document);
+    await expect(archive.read(f.session.token, id)).rejects.toMatchObject({ code: 'RECORD_NOT_FOUND' });
+  } finally {
+    await binding.DB.prepare(`UPDATE pa_recovery_write_policy SET owner_snapshot_required=0 WHERE singleton=1`).run();
+  }
 });
 
 it('real D1/R2 round trip survives new auth/store instances and expires membership without losing access', async () => {
