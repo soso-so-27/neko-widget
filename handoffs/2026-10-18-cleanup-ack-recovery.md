@@ -9,10 +9,25 @@
 - 初回候補は2026-10-18 15:57:41 JST（最初の合成fixture開始。失敗を含め計時）。backend既存CIは5分timeout、local検査は数十秒〜数分。選択制御の独立反映とcloud状態照合、次の自然な定期最大15分を含め60分の計画。新scopeのCI実測とは扱わず、変更後の候補を固定してから実行する。元のnative成功の再実行でこの判断を調査しない。
 - 費用は新契約なし。今回の未完了tombstoneは写真なし。一般にlive photoのmarker修復では既存暗号化写真の検証GETが発生するため、写真I/Oなし・費用不変とは主張しない。既存20件上限・payloadWork・S3 write leaseを保持する。
 
-証拠: `C:/dev/neko-evidence/automatic-test-20261018/cleanup-*`。現時点ではcloud未反映・自然定期による復旧未確認。
+証拠: `C:/dev/neko-evidence/automatic-test-20261018/cleanup-*`。
 
 ## 候補固定前の検証記録
 
 - 制御4ファイルの全15 suiteが226.2秒で成功。制御push `39106748398` の必要3 step成功後、PR354をmain `6f555c3`へ統合した。製品はこの承認済み制御を取り込む。
 - 全npm検査を開始した後、主担当が検査中に制御branchへ切り替えたため、その実行は直ちに中断した。`cleanup-ack-service-tests.log` はcancelledとして保持し、全検査成功には数えない。以後、検査中のbranch切替・入力変更をしない。最終製品候補の変更範囲を再検査し、通常pushの全backend検査を必須とする。
 - 現在の製品4入力は `3ee7d5c` の独立レビュー済み内容と同一。署名・native・依存・migrationは不変。
+
+## クラウド反映
+
+- 最終候補 `456ba835a1093fb6b27bf140029d8644b187a976` の変更範囲52 testが11.26秒で成功。通常pushのiOS plan `39106901784` は必要3 step、Preservation `39106901764` は全8 stepが成功。後者はNode 32件＋Vitest 70 file/600件、typecheck、合成migration、private bundle2本を含む。backend jobは16:14:11〜16:15:43 JSTの92秒。PR355をmain `4f6d38af`へmerge commitで統合し、同一製品treeのmain plan `39107073894` とbackend `39107073864` も成功。
+- 実行前preflightは未計測の初回baselineとしてready。成功後に再度呼んだpreflightは、新しいCIを追加する場合の所要時間baselineが未登録なので `cumulative_cost_requires_replanning`。追加CIは起動せず、実成功した同SHAの必要stepとmain祖先を凍結writerで直接照合して反映した。これはpreflightを検査成功や配備資格に読み替えたものではない。
+- archive Worker `neko-preservation-staging-disabled` のみ、16:19:45 JSTにversion `d751abbc-be13-433e-bdd2-083537284dd1`へ反映完了。実配信module SHA256 `5d0e4885e762455ce0b6ec1fac3926821be68de32bb9dc78ea32e96600432dac` がレビュー済みmultipartと一致。独立reviewのwriter hash・plan hash、本人/record/権限を含む既存bindings・secret参照・runtime・cron・公開範囲の不変を確認。新version作成POSTと100%反映POST各1回、再送0。
+- 新規契約・有料移行・migration・新定期・手動定期・アプリAPI呼出は0。
+- 初回候補15:57:41からcloud反映まで22分04秒。失敗fixtureと中断したlocal全検査、制御準備、CI、待機を含む。自然な次の定期と実機結果の時刻は後続に追記する。
+
+## 自然な定期による復旧を確認
+
+- 既存16:30の定期が16:30:48に開始。欠けていた旧index削除revision2のmarkerを16:30:57に補完し、owner generation148のsnapshot acknowledgementも16:31:03に完了。16:31:39に定期全体が正常終了し、`last_run_error_code=null`。16:32のD1 SELECTで確認した。record/owner repair failureはともに0件。
+- 原因となったrecord/owner acknowledgementの停止は解消。受付/期限/試行数/bytes/更新回数/使用量・最新headの必要34部品は変わっていない。元の未参照JSON部品1件（2,057bytes）は端末の整理再開待ちであり、こちらから削除していない。
+- 利用者へ「設定 → 保存・復元」を開いて1〜2分待ち、再確認ボタンを押さず案内が消えるかを依頼。実機の案内消失と端末の整理完了はまだ未確認。月980円を維持し、アプリ更新・削除・再インストール・メモ再保存は不要。
+- 初回候補15:57:41から自然定期の正常終了16:31:39まで33分58秒。60分計画内。これはクラウド復旧までの実測で、実機の表示確認を完了扱いにしない。
