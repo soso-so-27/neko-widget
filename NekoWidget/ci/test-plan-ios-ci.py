@@ -12548,11 +12548,22 @@ class PartitionedNativeRetryTests(unittest.TestCase):
                     for s in steps], separators=(",", ":")).encode()).hexdigest()
             self.history.append({"id": identifier, "run_id": self.run["id"], "head_sha": self.run["head_sha"],
                 "run_attempt": 1, "name": names[role], "status": "completed", "conclusion": "failure" if failed else "success",
-                "completed_at": self.now.isoformat(), "steps": steps})
+                "started_at": (self.now-dt.timedelta(minutes=30)).isoformat(), "completed_at": self.now.isoformat(),
+                "runner_id": identifier, "runner_name": "Synthetic runner", "runner_group_id": 0,
+                "runner_group_name": "", "labels": ["macos-26"], "steps": steps})
         for identifier in planner.PARTITIONED_NATIVE_RETRY_PLACEHOLDERS:
             self.history.append({"id": identifier, "run_id": self.run["id"], "head_sha": self.run["head_sha"],
                 "run_attempt": 1, "name": planner.UNEXPANDED_SHARING_JOB, "status": "completed", "conclusion": "skipped", "steps": []})
-        new = copy.deepcopy(self.history[3]); new.update(id=999991, name=names["app-ui-solo-1"], run_attempt=2)
+        new = copy.deepcopy(self.history[3]); new.update(id=planner.PARTITIONED_NATIVE_RETRY_JOB, name=names["app-ui-solo-1"], run_attempt=2)
+        originals={job["id"]:job for job in self.history}
+        for identifier,(old_id,node_id,created) in planner.PARTITIONED_NATIVE_RETRY_MIRRORS.items():
+            mirror=copy.deepcopy(originals[old_id]);mirror.update(id=identifier,node_id=node_id,run_attempt=2,created_at=created,
+                url=f"https://api.github.com/repos/soso-so-27/neko-widget/actions/jobs/{identifier}",
+                check_run_url=f"https://api.github.com/repos/soso-so-27/neko-widget/check-runs/{identifier}",
+                html_url=f"https://github.com/soso-so-27/neko-widget/actions/runs/{self.run['id']}/job/{identifier}")
+            if old_id in planner.PARTITIONED_NATIVE_RETRY_PLACEHOLDERS:mirror["started_at"]="2026-10-18T14:19:01Z"
+            else:mirror["runner_group_id"]=None
+            self.history.append(mirror)
         self.history.append(new)
         self.cases = [planner.PARTITIONED_NATIVE_RETRY_FAILURE,
             "SoloMemoriesUITests/testPartitionedColdRestoreAndReceiptRetirement"] + [f"SoloMemoriesUITests/testSynthetic{i}" for i in range(26)]
@@ -12573,7 +12584,7 @@ class PartitionedNativeRetryTests(unittest.TestCase):
         if path.endswith("/jobs?filter=all&per_page=100&page=1"):
             return {"total_count": len(self.history), "jobs": copy.deepcopy(self.history)}
         if path.endswith(f"/jobs/{planner.PARTITIONED_NATIVE_RETRY_JOBS['app-ui-solo-1']}/logs"): return self.failed_log
-        if path.endswith("/jobs/999991/logs"): return self.success_log
+        if path.endswith(f"/jobs/{planner.PARTITIONED_NATIVE_RETRY_JOB}/logs"): return self.success_log
         raise AssertionError(path)
 
     def prove(self): return planner.partitioned_native_retry_evidence(self.run, self.api, self.now)
@@ -12581,7 +12592,9 @@ class PartitionedNativeRetryTests(unittest.TestCase):
     def test_exact_retry_preserves_old_attempts_and_does_not_convert_empty_skips_to_success(self):
         proof = self.prove(); selected = planner.executed_jobs(self.run, "soso-so-27/neko-widget", self.api)
         self.assertEqual(len(selected), 7); self.assertEqual(len(proof["retained_jobs"]), 6)
-        self.assertEqual(proof["retry_job_id"], 999991); self.assertEqual(len(proof["passed_cases"]), 28)
+        self.assertEqual(proof["retry_job_id"], planner.PARTITIONED_NATIVE_RETRY_JOB); self.assertEqual(len(proof["passed_cases"]), 28)
+        self.assertEqual(len(proof["api_mirrors_not_executions"]),8)
+        self.assertFalse({j["id"] for j in selected} & set(planner.PARTITIONED_NATIVE_RETRY_MIRRORS))
         self.assertTrue(planner.covers_jobs(selected, planner.required_jobs_from_scope(scope.APP_DATA_SCOPE), self.run["head_sha"], self.now))
         self.assertEqual(self.original["conclusion"], "failure")
         self.assertEqual([j["run_attempt"] for j in selected], [1] * 6 + [2])
@@ -12647,6 +12660,23 @@ class PartitionedNativeRetryTests(unittest.TestCase):
         duplicate=[dict(j,id=i,run_id=42) for i,j in enumerate(self.history[7:9],1)]
         with self.assertRaises(ValueError): planner.executed_jobs(other,"soso-so-27/neko-widget",lambda path:{"total_count":2,"jobs":duplicate})
 
+    def test_observed_mirror_deltas_are_exact_and_never_allow_execution_changes(self):
+        for job in self.history[9:17]:
+            for field,value in (("id",999999), ("node_id","unknown"), ("created_at",self.now.isoformat()),
+                    ("url","https://example.invalid"), ("html_url","https://example.invalid"),
+                    ("check_run_url","https://example.invalid"), ("started_at",self.now.isoformat()),
+                    ("completed_at","2026-10-18T14:19:01Z"), ("runner_id",42), ("runner_name","other"),
+                    ("runner_group_id",0), ("runner_group_name","other"), ("labels",["other"]),
+                    ("steps",[{}]), ("unexpected","extra")):
+                with self.subTest(mirror=job["id"],field=field),patch.dict(job,{field:value}),self.assertRaises(ValueError):self.prove()
+        # A full new success named as a retained job is not an API mirror.
+        with patch.dict(self.history[9],dict(self.history[-1],id=self.history[9]["id"])),self.assertRaises(ValueError):self.prove()
+        with patch.dict(self.history[-1],{"id":999999}),self.assertRaises(ValueError):self.prove()
+        with patch.dict(self.history[0],{"runner_group_id":None}),self.assertRaises(ValueError):self.prove()
+
+    def test_old_ten_job_assumption_is_no_longer_accepted(self):
+        with patch.object(self,"history",self.history[:9]+self.history[-1:]),self.assertRaises(ValueError):self.prove()
+
     def test_official_cli_json_adapter_accepts_only_verified_seven_executions(self):
         spec=importlib.util.spec_from_file_location("partitioned_retry_official",Path(__file__).with_name("release-testflight.py"))
         official=importlib.util.module_from_spec(spec);spec.loader.exec_module(official)
@@ -12656,7 +12686,7 @@ class PartitionedNativeRetryTests(unittest.TestCase):
                 if path=="actions/workflows/ios-build.yml":return {"id":335014238,"path":".github/workflows/ios-build.yml","state":"active"}
                 if path==f"actions/runs/{fixture.run['id']}":return fixture.run
                 if "filter=latest" in path:
-                    jobs=[j for j in fixture.history if j["id"]!=planner.PARTITIONED_NATIVE_RETRY_JOBS["app-ui-solo-1"]]
+                    jobs=[j for j in fixture.history if j["run_attempt"]==2]
                     return {"total_count":len(jobs),"jobs":jobs}
                 if path.endswith("/logs"):raise AssertionError("Signed CLI JSON adapter must not fetch raw logs")
                 return fixture.api("/repos/soso-so-27/neko-widget/"+path)
