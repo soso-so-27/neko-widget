@@ -14,6 +14,8 @@ on:
       - 'NekoWidget/ci/verify-veterinary-visits.swift'
       - 'NekoWidget/ci/verify-personal-archive.swift'
       - 'NekoWidget/ci/verify-photo-memory-note-export.swift'
+      - 'NekoWidget/NekoWidget/Services/ToolPreservation.swift'
+      - 'NekoWidget/ci/verify-partitioned-records.swift'
 
 permissions:
   contents: read
@@ -42,6 +44,11 @@ jobs:
           {
             xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift ci/verify-photo-memory-notes.swift -o "$RUNNER_TEMP/verify-notes"
             "$RUNNER_TEMP/verify-notes"
+            xcrun swiftc -O -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift ci/verify-photo-memory-notes.swift -o "$RUNNER_TEMP/verify-notes-capacity"
+            "$RUNNER_TEMP/verify-notes-capacity" --capacity-probe
+            python3 -c 'from pathlib import Path; import os; source=Path("NekoWidget/Services/ToolPreservation.swift").read_text(); Path(os.environ["RUNNER_TEMP"], "tool-index-codec.swift").write_text(source.split("enum ToolBackupFiles {", 1)[0])'
+            xcrun swiftc -O -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift "$RUNNER_TEMP/tool-index-codec.swift" ci/verify-partitioned-records.swift -o "$RUNNER_TEMP/verify-partitioned-records"
+            "$RUNNER_TEMP/verify-partitioned-records" PreservationService/test/fixtures/tool-v4-golden.json
             xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-visits"
             "$RUNNER_TEMP/verify-visits"
             xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" NekoWidget/Services/PersonalArchiveStore.swift NekoWidget/Services/PersonalArchiveCloudClient.swift NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoCoordinator.swift ci/verify-personal-archive.swift -o "$RUNNER_TEMP/verify-archive"
