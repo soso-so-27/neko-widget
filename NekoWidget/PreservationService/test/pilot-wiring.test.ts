@@ -6,6 +6,8 @@ import { RetentionLedger } from '../src/retention-ledger';
 import { vi } from 'vitest';
 import { NoticeDispatch } from '../src/notice-dispatch';
 import { NoticeSubmissions } from '../src/notice-submissions';
+import { ArchiveStore } from '../src/storage';
+import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 
 const binding = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 beforeAll(async () => { await binding.ARCHIVE.put('__owner_deletion/v1/format.json', '{"version":1}'); });
@@ -22,6 +24,27 @@ function generalEnv(): Env {
     RECOVERY_S3_ACCESS_KEY_ID:'AKIA'+'A'.repeat(16),RECOVERY_S3_SECRET_ACCESS_KEY:'a'.repeat(40),
     OWNER_QUOTA_BYTES:'1073741824',MAXIMUM_RECORDS:'200',GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES:'3221225472'};
 }
+
+it.each(['NO', 'YES'])('repairs record markers before owner snapshots with legacy backfill %s', async flag => {
+  const calls: string[] = [];
+  const db = new Proxy(binding.DB, { get(target, property) {
+    if (property === 'prepare') return (sql: string) => sql.includes('SELECT owner_snapshot_required')
+      ? { first: async () => ({ owner_snapshot_required: 1 }) } : target.prepare(sql);
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const records = vi.spyOn(ArchiveStore.prototype, 'repairRecoveryBatch').mockImplementation(async (limit, options) => {
+    expect(limit).toBe(20); expect(options).toEqual({ includeLegacy: flag === 'YES' });
+    calls.push('records'); return { processed: 1, failed: 0 };
+  });
+  const owners = vi.spyOn(OwnerRecoveryCopy.prototype, 'repairBatch').mockImplementation(async () => {
+    if (calls[0] !== 'records') throw new Error('record marker still missing');
+    calls.push('owners'); return { processed: 1, failed: 0 };
+  });
+  try {
+    await worker.scheduled({} as ScheduledEvent, { ...generalEnv(), DB: db, RECOVERY_BACKFILL_ENABLED: flag });
+    expect(calls).toEqual(['records', 'owners']);
+  } finally { records.mockRestore(); owners.mockRestore(); }
+});
 
 it('requires an explicit non-pilot general mode and does not create an unrestricted owner', async()=>{
   const settings=generalEnv();

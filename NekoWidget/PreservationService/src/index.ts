@@ -495,10 +495,11 @@ export default {
       try {
         const services = configuredServices(env);
         if (!services.ownerRecovery) throw new ServiceError('OWNER_RECOVERY_UNAVAILABLE', 503);
-        if (env.RECOVERY_BACKFILL_ENABLED === 'YES') {
-          const records = await payloadWork.run(() => services.archive.repairRecoveryBatch());
-          maintenanceFailures += records.failed;
-        }
+        // Post-CAS record markers are a prerequisite of the owner snapshot.
+        // Keep their bounded retries active after legacy backfill is disabled.
+        const records = await payloadWork.run(() => services.archive.repairRecoveryBatch(20,
+          { includeLegacy: env.RECOVERY_BACKFILL_ENABLED === 'YES' }));
+        maintenanceFailures += records.failed;
         const owners = await services.ownerRecovery.repairBatch(env.DB, Date.now());
         maintenanceFailures += owners.failed;
       } catch { maintenanceFailures++; }
