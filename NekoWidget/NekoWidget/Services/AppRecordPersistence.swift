@@ -1338,13 +1338,16 @@ private final class AppRecordFixture {
     }
     static var preparationPhase = "開始"
     func verifyCleanupFailureAndAutomaticResume() async throws {
+        Self.preparationPhase = "初回保存"
         await persistence.enable()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        Self.preparationPhase = "保存完了の境界"
         try await persistence.verifyAcceptedSaveFences()
         let repository = CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
         let url = AppRecordDataset.directory("CareHandoff").appendingPathComponent("plan.json")
         var plan = try JSONDecoder().decode(CareHandoffPlan.self, from: Data(contentsOf: url))
         await server.cancelDeletionOnce()
+        Self.preparationPhase = "保存完了後の中断"
         plan.contact += " 整理中断後も保存完了"
         try repository.commit(plan, newPhotos: [:])
         await persistence.retry()
@@ -1353,6 +1356,7 @@ private final class AppRecordFixture {
               !(try ToolBackupFiles.pendingDeletions(owner: owner)).isEmpty else { throw ToolBackupError.storage }
         // Foreground resume drives the production loop; no recheck button.
         persistence.setActive(true)
+        Self.preparationPhase = "整理の自動再開"
         for _ in 0..<100 {
             if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
             try await Task.sleep(for: .milliseconds(100))
@@ -1361,12 +1365,14 @@ private final class AppRecordFixture {
         guard persistence.title == "保存済み", persistence.detail == nil,
               try ToolBackupFiles.pendingDeletions(owner: owner).isEmpty else { throw ToolBackupError.storage }
         await server.cancelHeadOnce()
+        Self.preparationPhase = "保存完了前の中断"
         plan.contact += " 送信中断"
         try repository.commit(plan, newPhotos: [:])
         await persistence.retry()
         guard persistence.title == "未送信の変更があります",
               persistence.detail?.contains("自動で再開") == true else { throw ToolBackupError.storage }
         persistence.setActive(true)
+        Self.preparationPhase = "送信の自動再開"
         for _ in 0..<100 {
             if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
             try await Task.sleep(for: .milliseconds(100))
@@ -1374,6 +1380,7 @@ private final class AppRecordFixture {
         persistence.setActive(false)
         guard persistence.title == "保存済み", persistence.detail == nil else { throw ToolBackupError.storage }
         plan.contact += " 整理と同時に編集"
+        Self.preparationPhase = "整理中の新しい編集"
         let editedBytes = try JSONEncoder().encode(plan)
         await server.commitDuringCleanup {
             try AppRecordDataset.writeBackedUp(editedBytes, to: url)
@@ -1533,7 +1540,7 @@ struct AppRecordPersistenceFixtureView: View {
                     let probe = try await AppRecordFixture.make()
                     try await probe.verifyCleanupFailureAndAutomaticResume()
                     result = "保存完了・中断の区別と自動再開を確認しました"
-                } catch { result = "整理の再開検査に失敗: \(error)" }
+                } catch { result = "整理の再開検査に失敗: \(AppRecordFixture.preparationPhase)" }
                 return
             }
             if CommandLine.arguments.contains("--app-records-journal-probe") {
