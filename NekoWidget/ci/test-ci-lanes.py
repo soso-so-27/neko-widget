@@ -156,6 +156,72 @@ class LaneTests(unittest.TestCase):
             with self.subTest(context=index):
                 self.assertFalse(accepts(value))
 
+    def test_journal_identity_requires_exact_batch_and_preserves_release_checks(self):
+        selected = scope.JOURNAL_IDENTITY_SCOPE
+        self.assertEqual(len(scope.JOURNAL_IDENTITY_PATHS), 3)
+        self.assertEqual(len(set(scope.JOURNAL_IDENTITY_TESTS)), 2)
+        methods = "\n".join("    func " + test.rsplit("/", 1)[1] + "() {}"
+                            for test in scope.JOURNAL_IDENTITY_TESTS)
+        tests = "final class SoloMemoriesUITests: XCTestCase {\n" + methods + "\n}"
+        changes = {path: ("before", tests if path == scope.MEMORY_TEST_PATH else "after")
+                   for path in scope.JOURNAL_IDENTITY_PATHS}
+        digests = {path: list(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        base, head = "a" * 40, "b" * 40
+
+        def raw_scope(override=None, extra=False):
+            records = []
+            for path in sorted(changes):
+                modes, status = (":100644 100644", "M")
+                if override and override[0] == path:
+                    modes, status = override[1:]
+                records.append(f"{modes} {'c' * 40} {'d' * 40} {status}\0{path}\0")
+            if extra:
+                records.append(f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0")
+            def git(*args):
+                if args[0] == "diff": return "".join(records)
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return changes[path][0 if revision == base else 1]
+                return head
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(sorted(changes), {}, {"GITHUB_SHA": head})
+
+        with patch.object(scope, "JOURNAL_IDENTITY_DIGESTS", digests):
+            self.assertEqual(scope.select_scope(changes), selected)
+            self.assertEqual(raw_scope(), selected)
+            self.assertEqual(raw_scope(extra=True), scope.FULL_SCOPE)
+            for path in changes:
+                self.assertNotEqual(scope.select_scope({p: v for p, v in changes.items() if p != path}), selected)
+                for index in (0, 1):
+                    altered = dict(changes); pair = list(altered[path]); pair[index] += "unreviewed"
+                    altered[path] = tuple(pair)
+                    self.assertNotEqual(scope.select_scope(altered), selected)
+                for modes, status in ((":100644 000000", "D"), (":100644 100755", "M"),
+                                      (":100644 120000", "T"), (":000000 100644", "A"),
+                                      (":100644 100644", "R100"), (":100644 100644", "C100")):
+                    self.assertEqual(raw_scope((path, modes, status)), scope.FULL_SCOPE)
+            for path in ("NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift",
+                         "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                         "NekoWidget/Shared/Storage/AtomicJSON.swift",
+                         "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                         ".github/workflows/ios-build.yml", "NekoWidget/ci/ios_ci_scope.py"):
+                self.assertEqual(scope.select_scope(changes | {path: ("old", "new")}), scope.FULL_SCOPE)
+            for method in scope.JOURNAL_IDENTITY_TESTS:
+                absent = dict(changes)
+                absent[scope.MEMORY_TEST_PATH] = ("before", tests.replace(
+                    "    func " + method.rsplit("/", 1)[1], "    // func " + method.rsplit("/", 1)[1]))
+                with patch.object(scope, "JOURNAL_IDENTITY_DIGESTS", {
+                        path: list(map(scope.source_digest, pair)) for path, pair in absent.items()}):
+                    self.assertNotEqual(scope.select_scope(absent), selected)
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.JOURNAL_IDENTITY_TESTS)
+        self.assertEqual(planner.required_jobs_from_scope(selected),
+                         (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected))
+        self.assertTrue(scope.accepts_paths(selected, list(changes) + ["handoffs/record.md"]))
+        self.assertFalse(scope.accepts_paths(selected, list(changes) + [next(iter(changes))]))
+        for gallery in scope.LANES[2:]:
+            with self.assertRaises(ValueError): scope.lane_tests(selected, gallery)
+
     def test_tool_candidate_refresh_is_frozen_to_ten_sources_and_three_owning_cases(self):
         selected = scope.TOOL_CANDIDATE_REFRESH_SCOPE
         self.assertEqual(len(scope.TOOL_CANDIDATE_REFRESH_PATHS), 10)
