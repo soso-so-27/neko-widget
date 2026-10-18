@@ -1686,6 +1686,17 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    func testAutomaticSaveDeletionJournalSurvivesDirectoryEnumeration() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-journal-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["途中の整理記録を読み直しました"].waitForExistence(timeout: 10), app.debugDescription)
+        capture("automatic-save-deletion-journal-roundtrip")
+    }
+
+    @MainActor
     func testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion() {
         continueAfterFailure = false
         let app = XCUIApplication()

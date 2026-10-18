@@ -1214,6 +1214,28 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static var preparationPhase = "開始"
+    static func verifyDeletionJournalRoundTrip() throws {
+        let bytes = Data("{}".utf8)
+        let owner = "deletion-journal-fixture-owner"
+        let index = ToolBackupIndex(version: 3, snapshotID: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_792_262_900.1234567),
+            files: [.init(path: "CareHandoff/plan.json", bytes: bytes.count,
+                          sha256: ToolBackupIndex.hash(bytes), records: [UUID()])])
+        let saved = ToolBackupFiles.Saved(owner: owner, index: index)
+        let journal = try ToolBackupFiles.deletionJournal(index, owner: owner)
+        try ToolBackupFiles.write(JSONEncoder().encode(saved), to: journal)
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let listed = try FileManager.default.contentsOfDirectory(at: ToolBackupFiles.root,
+            includingPropertiesForKeys: nil).first { $0.lastPathComponent == journal.lastPathComponent }
+        let decoded = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
+            from: ToolBackupFiles.read(journal, maximum: 512 * 1024))
+        let recomputed = try ToolBackupFiles.deletionJournal(decoded.index, owner: decoded.owner)
+        preparationPhase = "urlEqual=\(listed == journal) pathEqual=\(listed?.standardizedFileURL.path == journal.standardizedFileURL.path) indexEqual=\(decoded.index == index) hashEqual=\(recomputed.lastPathComponent == journal.lastPathComponent)"
+        print("APP_RECORD_JOURNAL_PROBE \(preparationPhase)")
+        guard try ToolBackupFiles.pendingDeletions(owner: owner).contains(where: { $0.id == index.snapshotID }) else {
+            throw ToolBackupError.invalid
+        }
+    }
     static func make() async throws -> AppRecordFixture {
         let cacheURL = AppRecordDataset.support.appendingPathComponent("cache-read-probe.json")
         let small = Data("{}".utf8), large = Data("{\"pending\":\"longer replacement\"}".utf8)
@@ -1325,6 +1347,13 @@ struct AppRecordPersistenceFixtureView: View {
         }
         .disabled(switching)
         .task {
+            if CommandLine.arguments.contains("--app-records-journal-probe") {
+                do {
+                    try AppRecordFixture.verifyDeletionJournalRoundTrip()
+                    result = "途中の整理記録を読み直しました"
+                } catch { result = "途中の整理記録を読み直せませんでした: \(AppRecordFixture.preparationPhase)" }
+                return
+            }
             do { fixture = try await AppRecordFixture.make(); fixture?.persistence.setActive(true) }
             catch { result = "検査準備失敗: \(AppRecordFixture.preparationPhase)" }
             while !Task.isCancelled {
