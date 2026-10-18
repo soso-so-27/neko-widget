@@ -1427,6 +1427,37 @@ private final class AppRecordFixture {
         // Restore the exact synthetic bytes; no malformed journal is ignored.
         try ToolBackupFiles.write(JSONEncoder().encode(saved), to: journal)
         guard try ToolBackupFiles.pendingDeletions(owner: owner).count == 1 else { throw ToolBackupError.storage }
+        try verifyDeletionJournalIdentityInputs(index: index, owner: owner)
+    }
+    static var journalIdentityProbe = ""
+    private static func verifyDeletionJournalIdentityInputs(index: ToolBackupIndex, owner: String) throws {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        var mismatches = 0
+        // Exercise Date's actual Foundation encode/decode path, including adjacent
+        // representable values rather than only the previous fixed timestamp.
+        let epoch = Date(timeIntervalSince1970: 1_792_262_900).timeIntervalSinceReferenceDate
+        for offset in 0..<4096 {
+            let date = Date(timeIntervalSinceReferenceDate: Double(bitPattern: epoch.bitPattern + UInt64(offset)))
+            let sample = ToolBackupIndex(version: 3, snapshotID: index.snapshotID, createdAt: date, files: index.files)
+            let original = try encoder.encode(sample)
+            let decoded = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
+                from: JSONEncoder().encode(ToolBackupFiles.Saved(owner: owner, index: sample)))
+            if try encoder.encode(decoded.index) != original { mismatches += 1 }
+        }
+        var observations: [String] = ["dateMismatch=\(mismatches)/4096"]
+        let roots = [FileManager.default.temporaryDirectory,
+                     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]]
+        for (number, parent) in roots.enumerated() {
+            let directory = parent.appendingPathComponent("journal probe 猫-" + UUID().uuidString, isDirectory: true)
+            try ToolBackupFiles.protect(directory)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let expected = directory.appendingPathComponent("deleting-synthetic.json")
+            try ToolBackupFiles.write(Data("{}".utf8), to: expected)
+            let listed = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            guard listed.count == 1, let actual = listed.first else { throw ToolBackupError.storage }
+            observations.append("root\(number):url=\(actual == expected),path=\(actual.standardizedFileURL.path == expected.standardizedFileURL.path),resolved=\(actual.resolvingSymlinksInPath().path == expected.resolvingSymlinksInPath().path)")
+        }
+        journalIdentityProbe = observations.joined(separator: " ")
     }
     static func make() async throws -> AppRecordFixture {
         let cacheURL = AppRecordDataset.support.appendingPathComponent("cache-read-probe.json")
@@ -1535,7 +1566,14 @@ struct AppRecordPersistenceFixtureView: View {
     var body: some View {
         Group {
             if let fixture { AppRecordFixtureContent(fixture: fixture, result: result, counts: counts, switchDevice: { Task { await secondDevice() } }) }
-            else { Text(result.isEmpty ? "自動保存の検査を準備中…" : result) }
+            else {
+                VStack {
+                    Text(result.isEmpty ? "自動保存の検査を準備中…" : result)
+                    if !AppRecordFixture.journalIdentityProbe.isEmpty {
+                        Text(AppRecordFixture.journalIdentityProbe).accessibilityIdentifier("journal-identity-probe")
+                    }
+                }
+            }
         }
         .disabled(switching)
         .task {
