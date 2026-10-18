@@ -52,7 +52,7 @@ enum PhotoMemoryNoteVerifier {
             let text = String(repeating: "猫", count: length)
             var notes: [String: PhotoMemoryNote] = [:]
             for i in 0..<count {
-                notes["synthetic-photo-\(i)"] = PhotoMemoryNote(text: text, updatedAt: Date(timeIntervalSince1970: 1_800_000_000), revision: UUID().uuidString)
+                notes["synthetic-photo-\(i)"] = capacityNote(i, text: text)
             }
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
             let initial = try encoder.encode(Fixture(notes: notes))
@@ -65,26 +65,38 @@ enum PhotoMemoryNoteVerifier {
         }
     }
 
+    private static func capacityNote(_ index: Int, text: String) -> PhotoMemoryNote {
+        let suffix = String(format: "%012x", index)
+        return PhotoMemoryNote(id: UUID(uuidString: "10000000-0000-0000-0000-" + suffix)!, text: text,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000), revision: "20000000-0000-0000-0000-" + suffix)
+    }
+
     private static func capacityRead(at url: URL, length: Int) async throws {
             let count = 36_500
             let text = String(repeating: "猫", count: length)
             let bytes = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize!
-            let started = Date()
+            let started = DispatchTime.now().uptimeNanoseconds
             let store = PhotoMemoryNoteStore(fileURL: url)
             let loaded = try await store.note(for: "synthetic-photo-18250")
             guard let selected = loaded else { throw Failure.failed("long-term note missing") }
             try require(selected.text == text, "long-term read changed a note")
-            _ = try await store.save(text: "犬" + String(text.dropFirst()), for: "synthetic-photo-18250", expectedRevision: selected.revision)
+            let readEnd = DispatchTime.now().uptimeNanoseconds
+            let changed = try await store.save(text: "犬" + String(text.dropFirst()), for: "synthetic-photo-18250", expectedRevision: selected.revision)
+            let saveEnd = DispatchTime.now().uptimeNanoseconds
             let reopened = PhotoMemoryNoteStore(fileURL: url)
             let records = try await reopened.records()
+            let reopenEnd = DispatchTime.now().uptimeNanoseconds
             try require(records.count == count, "long-term edit/reopen lost records")
-            try require(records.filter { $0.note.text != text }.count == 1, "long-term edit changed another record")
+            for record in records {
+                guard let i = Int(record.photoIdentifier.replacingOccurrences(of: "synthetic-photo-", with: "")), (0..<count).contains(i) else { throw Failure.failed("unexpected record key") }
+                try require(record.note == (i == 18250 ? changed : capacityNote(i, text: text)), "long-term edit changed another record or lost the saved value")
+            }
             var peak: Int64 = -1
 #if canImport(Darwin)
             var usage = rusage()
             if getrusage(RUSAGE_SELF, &usage) == 0 { peak = Int64(usage.ru_maxrss) }
 #endif
-            print("CAPACITY_PROBE notes=\(count) characters=\(length) bytes=\(bytes) read_edit_reopen_seconds=\(Date().timeIntervalSince(started)) process_peak_rss_bytes=\(peak)")
+            print("CAPACITY_PROBE notes=\(count) characters=\(length) bytes=\(bytes) read_ms=\((readEnd-started)/1_000_000) edit_ms=\((saveEnd-readEnd)/1_000_000) reopen_ms=\((reopenEnd-saveEnd)/1_000_000) process_peak_rss_bytes=\(peak)")
     }
 
     private static func verifiesLibraryScopeAndOrdering() throws {
