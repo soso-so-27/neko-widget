@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-10-02",
+  "as_of": "2026-10-18",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 12.183,
   "upload_run": 36834987212,
@@ -80,6 +80,15 @@
     {
       "run_id": 36212918572,
       "minutes": 8.283
+    },
+    {
+      "run_id": 39103926998,
+      "minutes": 11.883,
+      "runner_minutes": 11.317,
+      "build_number": 262,
+      "source_sha": "a8f4b95fccdd48b1958411abb381ab66af0d0e08",
+      "apple_upload_succeeded_at": "2026-10-18T06:36:14.6634970Z",
+      "note": "First candidate 2026-10-18T05:10:16.7978355Z to Apple upload: 5157.866 seconds, including both diagnostics, controls, normal CI and waits. Apple processing and actual-device J4 resolution remain unverified."
     }
   ],
   "observations": [
@@ -839,6 +848,15 @@
       "outcome": "success",
       "runner_minutes": 78.0,
       "note": "Same SHA, no product/test changes; reran only failed owning app-ui job, preserving proven unchanged sibling successes. UI1 passed with 0 failures; all required jobs succeeded. Duration starts at initial CI and includes failure, investigation gap and retry; underlying XCTest cause remains unresolved."
+    },
+    {
+      "scope": "reviewed-journal-identity-v1",
+      "candidate_minutes": 25.567,
+      "run_id": 39102326231,
+      "attempt": 1,
+      "outcome": "success",
+      "runner_minutes": 79.533,
+      "note": "Fresh Build/privacy/migration, Photos bootstrap, both-OS runtime and both deletion-resume/private-copy UI cases passed on a8f4b95. No failed-job reruns. Diagnostic/prototype time remains separate; first candidate 2026-10-18T05:10:16.7978355Z."
     }
   ],
   "rework_observations": [
@@ -901,6 +919,26 @@
       "source_sha": "5a351d72ae535a3a2c62eafd4e31904ce0fd4541",
       "executed_tests": 1,
       "note": "Initial native edit03:28Z; initial normal CI08:18:43Z. Task elapsed/native preparation exceeds CI duration. Previous diagnostic14m23 is not normal release evidence. Same-SHA single job retry succeeded; do not reset first-candidate clock or omit failed runner use."
+    },
+    {
+      "task": "deletion-journal-identity-20261018",
+      "run_id": 39099710415,
+      "attempt": 1,
+      "outcome": "success",
+      "total_seconds": 1170,
+      "source_sha": "115a4abd4bfb7ae1e3fed3ad9b3e811c8e17d9aa",
+      "executed_tests": 1,
+      "note": "Focused diagnosis, not normal release evidence. First probe did not reproduce device J4; second proved a synthetic same-file URL representation regression. Keep first-candidate clock and actual-device uncertainty."
+    },
+    {
+      "task": "deletion-journal-identity-20261018",
+      "run_id": 39101089286,
+      "attempt": 1,
+      "outcome": "success",
+      "total_seconds": 1187,
+      "source_sha": "c9bbd87fff815acbc351936a7614cc07f11df8a2",
+      "executed_tests": 2,
+      "note": "Focused diagnosis, not normal release evidence. First probe did not reproduce device J4; second proved a synthetic same-file URL representation regression. Keep first-candidate clock and actual-device uncertainty."
     }
   ]
 }

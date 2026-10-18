@@ -27,3 +27,14 @@
 
 - ローカルlane27件と開発15suiteが成功（169.2秒）。独立した制御PR351の通常push39101595726も必要plan stepを実成功し、main `9402a963` へmerge commitで先行反映した。既存release CLI/workflowは変更していない。
 - 製品branchはこのmainだけをmergeした。3製品ファイルは診断c9bbd87と同じ内容。診断の成功を保持しつつ、通常pushのBuild・Photos・両OS runtime・UI2caseを新候補で実行する。次の内部配布番号は262（直近配布は261）、preservation-pilot/internal-reports、billing OFFを維持する。
+
+## 通常検査・main反映
+
+- 固定候補 `a8f4b95fccdd48b1958411abb381ab66af0d0e08` の通常push `39102326231` は、必要な4native jobすべて初回成功。全体25分34秒、jobの実step範囲合計79.533分（請求分数ではない）。無関係な2placeholderはskipのまま成功件数に含めない。
+- UIの実ログで両caseのstarted/passed各1回、失敗0、146.416秒を確認。`sameFileDifferentURL=true legacyJournalMatch=false dateMismatch=0/4096` も配布候補で確認した。両OS runtime・Photos bootstrap・Buildのprivacy/migration条件を通過。診断だけを通常CIの代わりにしていない。
+- PR352をmerge commit `ede3e273f62a7969261679f6bc79607181b53c0b` でmainへ反映し、候補の祖先関係を確認。main run `39103868751` も成功した。配布CLIのdry-runは同じ候補SHA、成功CI、262の未使用、内部pilot/reports設定を確認した。
+- TestFlight **262** / `39103926998` を一度dispatchし、**15:36:14.663 JSTにApple upload成功**。job `117605669381` のsource checkout a8f4b95、署名/App Group/privacy確認、archive/export、実ログ `VERIFY SUCCEEDED` / `UPLOAD SUCCEEDED` と後片付けの成功を確認。workflowは上記main、app sourceはa8f4b95。全体11分53秒、step範囲合計11.317分。既存testflight環境の今回runだけを承認し、環境規則や公開範囲は変更していない。
+- 今回の測定を `ci-timing-baseline.json` に追加し、旧観測は保持する。初回候補05:10:16.7978355 UTCから計時し、最初の通常URLでは再現しなかった診断と制御作業を省略しない。
+- 初回候補からApple uploadまで **1時間25分58秒**（診断2本・試作・制御・検査・待機込み）。150分計画枠内。新構成の通常CI25分34秒を、その全作業時間と混同しない。
+- 残る実機確認: Apple処理後に262へ更新し、「設定 → 保存・復元」を開いたまま再確認ボタンを押さず待ち、J4が消えるかを確認する。その後、通常写真のメモを1件編集して自動で保存済みになるかを見る。利用者の実journalの原因・J4解消、Apple処理完了/262の端末表示はまだ未確認。元記録削除・再インストール・再保存は不要。
+- 配布後の記録変更はhandoffと時間観測JSONのみ。新しい観測を含む開発15suiteは171.9秒で成功し、製品のnative/配布検査を再実行していない。
