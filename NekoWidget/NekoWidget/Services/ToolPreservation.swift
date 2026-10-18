@@ -595,6 +595,9 @@ enum ToolBackupTransfer {
         guard let support = usage.toolSnapshots, support.maximumIndexVersion >= 2, support.strictPartDeletion else {
             throw ManagedPreservationError.servicePaused
         }
+        // This legacy manual-copy optimization must not enumerate a large
+        // automatic archive or prevent a new private copy from being saved.
+        if usage.records.saved > 1000 { try await client.requireSessionCheckpoint(checkpoint); return [] }
         var records: [UUID: ManagedPreservationRecord] = [:]
         var cursor: String? = nil
         var generation: Int? = nil
@@ -605,7 +608,8 @@ enum ToolBackupTransfer {
             if let generation { guard generation == page.generation else { throw ManagedPreservationError.conflict } }
             else { generation = page.generation }
             for record in page.items {
-                guard records.updateValue(record, forKey: record.id) == nil, records.count <= 1000 else { throw ToolBackupError.capacity }
+                guard records.updateValue(record, forKey: record.id) == nil else { throw ToolBackupError.invalid }
+                if records.count > 1000 { try await client.requireSessionCheckpoint(checkpoint); return [] }
             }
             cursor = page.nextCursor
             if let cursor { guard seen.insert(cursor).inserted else { throw ToolBackupError.invalid } }
@@ -613,6 +617,8 @@ enum ToolBackupTransfer {
         var result: [ToolBackupIndex.File] = []
         for record in records.values where record.document.toolBackup?.kind == "index" {
             guard let part = record.document.toolBackup, let bytes = Data(base64Encoded: part.payload) else { throw ToolBackupError.invalid }
+            struct Header: Decodable { let version: Int }
+            if try JSONDecoder().decode(Header.self, from: bytes).version >= 3 { continue }
             let index = try JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
             try index.validate()
             guard index.snapshotID == record.id else { throw ToolBackupError.invalid }
