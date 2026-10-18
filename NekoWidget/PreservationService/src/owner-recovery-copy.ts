@@ -58,9 +58,17 @@ interface OwnerRow {
   checked_at: number | null; expired_at: number | null; due_at: number | null;
   paused_at: number | null; notice_not_before_at: number | null;
   final_notice_delivered_at: number | null; final_notice_receipt: string | null;
-  inventory_generation: number; records_json: string;
+  inventory_generation: number; record_count: number;
 }
 interface RefRow { object_key: string; version_id: string; sha256: string; bytes: number }
+interface InventoryPageRow {
+  generation: number; inventory_generation: number;
+  record_id: string | null; revision: number; deleted: number;
+  marker_object_key: string | null; marker_version_id: string;
+  marker_sha256: string; marker_bytes: number;
+}
+const inventoryPageSize = 256;
+const maximumInventoryRecords = 100_000;
 
 function blob(value: unknown, maximum: number): Uint8Array {
   const bytes = value instanceof ArrayBuffer ? new Uint8Array(value)
@@ -186,7 +194,10 @@ export class OwnerRecoveryCopy {
     } finally { contact.fill(0); }
   }
 
-  /** One SQL statement reads a consistent owner row across all source tables.
+  /** Read owner metadata atomically, then its inventory in bounded pages.
+   * Both monotonic generations fence every page and the completed image:
+   * records advance inventory before their commit markers advance owner state.
+   * Never aggregate a long-lived inventory into a single D1 value (2 MB).
    * Temporary sessions, device grants/challenges and Apple-validation leases
    * are deliberately not part of a restore image. A
    * restored owner must sign in again, and old notice evidence is not treated
@@ -205,17 +216,7 @@ export class OwnerRecoveryCopy {
         r.final_notice_delivered_at,r.final_notice_receipt,
         coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=o.owner_id),0)
           AS inventory_generation,
-        (SELECT json_group_array(json_object('recordId',items.record_id,
-          'revision',items.revision,'deleted',items.deleted,
-          'marker',CASE WHEN items.marker_object_key IS NULL THEN NULL ELSE json_object(
-            'key',items.marker_object_key,'versionId',items.marker_version_id,
-            'sha256',items.marker_sha256,'bytes',items.marker_bytes) END))
-          FROM (SELECT pr.record_id,pr.revision,pr.deleted,cm.marker_object_key,
-            cm.marker_version_id,cm.marker_sha256,cm.marker_bytes
-            FROM pa_records pr LEFT JOIN pa_record_commit_markers cm
-              ON cm.owner_id=pr.owner_id AND cm.record_id=pr.record_id
-                AND cm.revision=pr.revision
-            WHERE pr.owner_id=o.owner_id ORDER BY pr.record_id) items) AS records_json
+        (SELECT count(*) FROM pa_records pr WHERE pr.owner_id=o.owner_id) AS record_count
         FROM pa_owners o JOIN pa_owner_recovery_generations g ON g.owner_id=o.owner_id
         JOIN pa_identity_credentials c ON c.owner_id=o.owner_id
         LEFT JOIN pa_notice_contacts n ON n.owner_id=o.owner_id
@@ -223,15 +224,46 @@ export class OwnerRecoveryCopy {
         LEFT JOIN pa_retention r ON r.owner_id=o.owner_id
         WHERE o.owner_id=?`).bind(ownerId).first<OwnerRow>();
       if (!row || (row.disabled !== 0 && row.disabled !== 1)
-        || (row.sealed_email !== null && row.contact_source !== 'apple')) throw unavailable();
-      const parsed: unknown = JSON.parse(row.records_json);
-      if (!Array.isArray(parsed)) throw unavailable();
-      const records = parsed.map((item: unknown) => {
-        if (!exact(item, 'deleted,marker,recordId,revision')
-          || (item.deleted !== 0 && item.deleted !== 1)) throw unavailable();
-        return { recordId: item.recordId, revision: item.revision,
-          deleted: item.deleted === 1, marker: item.marker };
-      }).sort((a, b) => String(a.recordId).localeCompare(String(b.recordId))) as OwnerRecoveryImage['records'];
+        || (row.sealed_email !== null && row.contact_source !== 'apple')
+        || !safeInteger(row.record_count) || row.record_count > maximumInventoryRecords) throw unavailable();
+      const records: OwnerRecoveryImage['records'] = [];
+      let after = '';
+      for (;;) {
+        // LEFT JOIN returns a fenced sentinel even for an empty inventory or
+        // the final empty page. Missing owner state is never mistaken for EOF.
+        const page = await db.prepare(`SELECT g.generation,coalesce(i.generation,0) AS inventory_generation,
+          items.record_id,items.revision,items.deleted,items.marker_object_key,
+          items.marker_version_id,items.marker_sha256,items.marker_bytes
+          FROM pa_owner_recovery_generations g LEFT JOIN pa_inventory i ON i.owner_id=g.owner_id
+          LEFT JOIN (SELECT pr.record_id,pr.revision,pr.deleted,cm.marker_object_key,
+            cm.marker_version_id,cm.marker_sha256,cm.marker_bytes
+            FROM pa_records pr LEFT JOIN pa_record_commit_markers cm
+              ON cm.owner_id=pr.owner_id AND cm.record_id=pr.record_id AND cm.revision=pr.revision
+            WHERE pr.owner_id=? AND pr.record_id>? ORDER BY pr.record_id LIMIT ?) items ON 1=1
+          WHERE g.owner_id=? ORDER BY items.record_id`)
+          .bind(ownerId, after, inventoryPageSize, ownerId).all<InventoryPageRow>();
+        if (!page.success || !page.results.length || page.results.length > inventoryPageSize) throw unavailable();
+        for (const item of page.results) {
+          if (item.generation !== row.generation || item.inventory_generation !== row.inventory_generation) throw unavailable();
+          if (item.record_id === null) {
+            if (page.results.length !== 1) throw unavailable();
+            continue;
+          }
+          if (typeof item.record_id !== 'string' || item.record_id <= after
+            || (item.deleted !== 0 && item.deleted !== 1) || !item.marker_object_key) throw unavailable();
+          after = item.record_id;
+          records.push({ recordId: item.record_id, revision: item.revision, deleted: item.deleted === 1,
+            marker: { key: item.marker_object_key, versionId: item.marker_version_id,
+              sha256: item.marker_sha256, bytes: item.marker_bytes } });
+          if (records.length > row.record_count) throw unavailable();
+        }
+        if (page.results[0]!.record_id === null || page.results.length < inventoryPageSize) break;
+      }
+      if (records.length !== row.record_count) throw unavailable();
+      const fence = await db.prepare(`SELECT g.generation,coalesce(i.generation,0) AS inventory_generation
+        FROM pa_owner_recovery_generations g LEFT JOIN pa_inventory i ON i.owner_id=g.owner_id
+        WHERE g.owner_id=?`).bind(ownerId).first<{generation: number; inventory_generation: number}>();
+      if (!fence || fence.generation !== row.generation || fence.inventory_generation !== row.inventory_generation) throw unavailable();
       const image: OwnerRecoveryImage = { ownerId, generation: row.generation,
         identityKey: row.identity_key, epoch: row.epoch, disabled: row.disabled === 1,
         purgeFenceId: row.purge_fence_id, createdAt: row.created_at,
@@ -275,7 +307,9 @@ export class OwnerRecoveryCopy {
         const row = await db.prepare(`SELECT v.object_key,v.version_id,v.sha256,v.bytes
           FROM pa_owner_recovery_versions v JOIN pa_owner_recovery_generations g
             ON g.owner_id=v.owner_id AND g.generation=v.generation
-          WHERE v.owner_id=? AND v.generation=?`).bind(ownerId, image.generation).first<RefRow>();
+          WHERE v.owner_id=? AND v.generation=?
+            AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=v.owner_id),0)=?`)
+          .bind(ownerId, image.generation, image.inventoryGeneration).first<RefRow>();
         return row ? { key: row.object_key, versionId: row.version_id,
           sha256: row.sha256, bytes: row.bytes } : null;
       };
@@ -290,14 +324,18 @@ export class OwnerRecoveryCopy {
           version_id,sha256,bytes,confirmed_at)
           SELECT ?,g.generation,?,?,?,?,? FROM pa_owner_recovery_generations g
           WHERE g.owner_id=? AND g.generation=?
+            AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=g.owner_id),0)=?
           ON CONFLICT(owner_id,generation) DO NOTHING`)
           .bind(ownerId, written.key, written.versionId, written.sha256, written.bytes,
-            now, ownerId, image.generation).run();
+            now, ownerId, image.generation, image.inventoryGeneration).run();
         reference = await current();
       }
       if (!reference) throw unavailable();
       const restored = await this.read(ownerId, reference, image);
       if (logicalImage(restored) !== logicalImage(image)) throw unavailable();
+      // This final read is the acknowledgement's linearization point. A record
+      // may have changed while S3 was verified but still have no commit marker.
+      if (!await current()) throw unavailable();
       return reference;
     } catch { throw unavailable(); }
   }
