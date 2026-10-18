@@ -1014,7 +1014,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     /// them with the same owner checkpoint and inventory generation fence.
     private func visiblePage(after: String? = nil) async throws -> ManagedPreservationPage {
         let checkpoint = try await client.captureSessionCheckpoint()
-        var page = try await client.list(after: after, forExport: true)
+        var page = try await client.list(after: after, forExport: true, visibleOnly: true)
         let generation = page.generation
         while true {
             try await client.requireSessionCheckpoint(checkpoint)
@@ -1029,7 +1029,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 return ManagedPreservationPage(items: visible, nextCursor: page.nextCursor, generation: generation)
             }
             let cursor = page.nextCursor!
-            let next = try await client.list(after: cursor, forExport: true)
+            let next = try await client.list(after: cursor, forExport: true, visibleOnly: true)
             guard next.generation == generation,
                   next.items.allSatisfy({ $0.id.uuidString.lowercased() > cursor.lowercased() }),
                   next.nextCursor.map({ $0.lowercased() > cursor.lowercased() }) ?? true else { throw ManagedPreservationError.conflict }

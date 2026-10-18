@@ -6,6 +6,7 @@ import { loadOwnerPurgeReplay } from './purge-intent-replay';
 import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
   type DiscoveredRecordCommit } from './record-recovery-copy';
 import type { S3PurgeIntentStore } from './s3-purge-intent';
+import { OfflineOwnerRecovery, type OfflineRecoverySafety } from './offline-owner-recovery';
 
 const unavailable = () => new ServiceError('OWNER_QUARANTINE_RESTORE_UNAVAILABLE', 503);
 type RestoredToolPart = Omit<ToolBackupPart, 'payload'> & { bytes: number; uploadSnapshotID: string | null };
@@ -32,7 +33,7 @@ export class OwnerQuarantineRestore {
     if (await loadOwnerPurgeReplay(this.purgeIntents, ownerId) !== 'clear') throw unavailable();
   }
 
-  private async requireEmptyTarget(ownerId: string): Promise<void> {
+  async requireEmptyTarget(ownerId: string, allowJournal=false): Promise<void> {
     const row = await this.db.prepare(`SELECT
       (SELECT count(*) FROM pa_owners) AS owners,
       (SELECT count(*) FROM pa_records) AS records,
@@ -47,25 +48,28 @@ export class OwnerQuarantineRestore {
       (SELECT count(*) FROM pa_owner_record_counters) AS record_counters,
       (SELECT count(*) FROM pa_owner_record_changes) AS record_changes,
       (SELECT count(*) FROM pa_owner_recovery_tree_cursors) AS tree_cursors,
+      (SELECT count(*) FROM pa_owner_recovery_builds) AS tree_builds,
+      (SELECT count(*) FROM pa_offline_recovery_jobs) AS offline_jobs,
       (SELECT delete_intent_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS record_policy,
       (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS owner_policy`).first<{ owners: number; records: number; fences: number;
         owner_copies: number; record_copies: number; tool_references: number;
         tool_delete_claims: number; trial_grants: number; trial_slots: number;
-        trial_repairs: number; record_counters: number; record_changes: number; tree_cursors: number;
-        record_policy: number; owner_policy: number }>();
+        trial_repairs: number; record_counters: number; record_changes: number; tree_cursors: number; tree_builds: number;
+        offline_jobs:number; record_policy: number; owner_policy: number }>();
     if (!row || row.owners !== 0 || row.records !== 0 || row.fences !== 0
       || row.owner_copies !== 0 || row.record_copies !== 0
       || row.tool_references !== 0 || row.tool_delete_claims !== 0
       || row.trial_grants !== 0 || row.trial_slots !== 0 || row.trial_repairs !== 0
-      || row.record_counters !== 0 || row.record_changes !== 0 || row.tree_cursors !== 0
+      || row.record_counters !== 0 || row.record_changes !== 0 || row.tree_cursors !== 0 || row.tree_builds !== 0
+      || (!allowJournal && row.offline_jobs!==0)
       || row.record_policy !== 0 || row.owner_policy !== 0) throw unavailable();
     const listed = await this.bucket.list({ prefix: `personal/${ownerId}/`, limit: 1 });
     if (listed.objects.length !== 0 || listed.truncated) throw unavailable();
   }
 
-  private async restoredMetadata(ownerId: string, recordId: string) {
+  async restoredMetadata(ownerId: string, recordId: string) {
     const row = await this.db.prepare(`SELECT revision,metadata,photo_key,photo_bytes,deleted
       FROM pa_records WHERE owner_id=? AND record_id=?`).bind(ownerId, recordId)
       .first<{ revision: number; metadata: unknown; photo_key: string | null;
@@ -85,10 +89,10 @@ export class OwnerQuarantineRestore {
    * metadata in this empty, offline target. V1 dependencies remain bound to the
    * original index; v2 edges must be complete before any staged success. */
   private async rebuildToolReferences(ownerId: string, parts: Map<string, RestoredToolPart>,
-    heads: { id: string; revision: number; head: AppRecordHead }[]): Promise<void> {
+    heads: { id: string; revision: number; head: AppRecordHead }[], only?:Set<string>): Promise<void> {
     let expectedReferences = 0;
     for (const [snapshotId, descriptor] of parts) {
-      if (descriptor.kind !== 'index') continue;
+      if (descriptor.kind !== 'index' || (only && !only.has(snapshotId))) continue;
       const metadata = await this.restoredMetadata(ownerId, snapshotId);
       const tag = metadata.document.toolBackup;
       if (!tag || tag.kind !== 'index' || tag.snapshotId !== snapshotId) throw unavailable();
@@ -107,7 +111,7 @@ export class OwnerQuarantineRestore {
           const actual = summarizeToolNode(node);
           if (actual.fileCount !== child.fileCount || actual.nodeCount !== child.nodeCount
             || actual.toolMask !== child.toolMask || actual.manifestMask !== child.manifestMask) throw unavailable();
-          edges.push(this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
+          edges.push(this.db.prepare(`INSERT OR IGNORE INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
             VALUES(?,?,?)`).bind(ownerId,snapshotId,id));
           expectedReferences++;
         }
@@ -140,7 +144,7 @@ export class OwnerQuarantineRestore {
             chunks.push(Uint8Array.from(atob(chunk.payload), c => c.charCodeAt(0)));
           }
           if (index.version >= 2) {
-            edges.push(this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
+            edges.push(this.db.prepare(`INSERT OR IGNORE INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
               VALUES(?,?,?)`).bind(ownerId, snapshotId, id));
             expectedReferences++;
             if (!Number.isSafeInteger(expectedReferences)) throw unavailable();
@@ -165,10 +169,11 @@ export class OwnerQuarantineRestore {
       const index = metadata.document.toolBackup;
       if (!index || index.kind !== 'index' || index.snapshotId !== target || index.sha256 !== head.indexHash
         || !isCompleteToolRoot(parseToolNode(index))) throw unavailable();
-      await this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id,source_revision)
+      await this.db.prepare(`INSERT OR IGNORE INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id,source_revision)
         VALUES(?,?,?,?)`).bind(ownerId, id, target, revision).run();
       expectedReferences++;
     }
+    if(only)return;
     const closure = await this.db.prepare(`SELECT
       (SELECT count(*) FROM pa_tool_snapshot_references WHERE owner_id=?) AS refs,
       (SELECT count(*) FROM pa_tool_part_delete_claims WHERE owner_id=?) AS claims`)
@@ -176,11 +181,35 @@ export class OwnerQuarantineRestore {
     if (!closure || closure.refs !== expectedReferences || closure.claims !== 0) throw unavailable();
   }
 
-  private async restorePhoto(key: string, ciphertext: Uint8Array): Promise<void> {
+  /** One offline node (at most 256 v4 references); rows stay disabled while
+   * edges are resumed. Authenticate every dependency before accepting its count. */
+  async rebuildToolSubset(ownerId:string,indexId:string|null,head?:{id:string;revision:number;head:AppRecordHead}):Promise<void> {
+    const parts=new Map<string,RestoredToolPart>();let expected=0;
+    if(indexId){
+      const tag=(await this.restoredMetadata(ownerId,indexId)).document.toolBackup;
+      if(!tag || tag.kind!=='index')throw unavailable();
+      const node=parseToolNode(tag),ids=(node.version===4?node.children:undefined)?.map(x=>x.snapshotID.toLowerCase()) ?? node.files!.flatMap(x=>x.records.map(id=>id.toLowerCase()));
+      expected=node.version>=2?ids.length:0;
+      for(const id of [indexId,...ids]){
+        const value=(await this.restoredMetadata(ownerId,id)),part=value.document.toolBackup;
+        if(!part)throw unavailable();
+        const {payload,...descriptor}=part;
+        parts.set(id,{...descriptor,bytes:part.kind==='photo'?value.photoBytes:atob(payload).length,uploadSnapshotID:null});
+      }
+    }
+    await this.rebuildToolReferences(ownerId,parts,head?[head]:[],new Set(indexId?[indexId]:[]));
+    const id=indexId??head?.id;if(!id)throw unavailable();
+    const row=await this.db.prepare(`SELECT count(*) AS n,coalesce(min(source_revision),?) AS lo,coalesce(max(source_revision),?) AS hi
+      FROM pa_tool_snapshot_references WHERE owner_id=? AND snapshot_id=?`).bind(head?.revision??1,head?.revision??1,ownerId,id)
+      .first<{n:number;lo:number;hi:number}>();
+    if(!row || row.n!==(head?1:expected) || row.lo!==(head?.revision??1) || row.hi!==(head?.revision??1))throw unavailable();
+  }
+
+  async restorePhoto(key: string, ciphertext: Uint8Array, resume=false): Promise<void> {
     const stored = await this.bucket.put(key, ciphertext.slice().buffer,
       { onlyIf: new Headers({ 'If-None-Match': '*' }),
         httpMetadata: { contentType: 'application/octet-stream' } });
-    if (!stored) throw unavailable();
+    if (!stored && !resume) throw unavailable();
     const readBack = await this.bucket.get(key);
     if (!readBack || readBack.size !== ciphertext.length) throw unavailable();
     const actual = new Uint8Array(await readBack.arrayBuffer());
@@ -193,6 +222,15 @@ export class OwnerQuarantineRestore {
     if (new Uint8Array(actualHash).some((byte, index) => byte !== expectedDigest[index])) {
       throw unavailable();
     }
+  }
+
+  /** One resumable offline quantum. Callers must attest a fenced source and
+   * isolated target on every call; this never enables public account access. */
+  async resume(ownerId:string,now:number,safety:OfflineRecoverySafety){
+    return new OfflineOwnerRecovery({db:this.db,...this.archive.offlineInputs(),records:this.records,safety,
+      noPurge:owner=>this.requireNoPurgeIntent(owner),empty:(owner,journal)=>this.requireEmptyTarget(owner,journal),
+      photo:(key,body,resume)=>this.restorePhoto(key,body,resume),
+      tool:(owner,index,head)=>this.rebuildToolSubset(owner,index,head)}).step(ownerId,now);
   }
 
   async restore(ownerId: string, now: number): Promise<

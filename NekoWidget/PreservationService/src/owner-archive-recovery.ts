@@ -27,6 +27,9 @@ export class OwnerArchiveRecovery {
     private readonly owners: OwnerRecoveryCopy,
     private readonly records: RecordRecoveryCopy) {}
 
+  /** Internal offline runner dependencies; no HTTP route exposes this API. */
+  offlineInputs(){return {s3:this.s3,owners:this.owners};}
+
   async assembleQuarantineCandidate(ownerId: string, now: number): Promise<OwnerArchiveCandidate> {
     if (!ownerPattern.test(ownerId) || !Number.isSafeInteger(now) || now < 1) throw unavailable();
     const ownerCopies: RecoveryObject[] = [];

@@ -83,7 +83,7 @@ function intercept(action:(sql:string,method:string,result:unknown)=>Promise<voi
   }});
 }
 
-it('updates one of 36500 records without expanding history, preserving tombstones and the old tree',async()=>{
+it('updates one of 36500 records without expanding history, preserving tombstones and the old tree',async(context)=>{
   const f=await fixture(36_500), beforeObjects=new Map(f.objects);
   const original=f.copy.capture.bind(f.copy);
   const baseline=await original(db,f.owner);
@@ -99,8 +99,8 @@ it('updates one of 36500 records without expanding history, preserving tombstone
   expect(deltaRows).toBe(1);
   expect(f.io.reads).toBeLessThan(20);expect(f.io.writes).toBeLessThan(10);
   expect(f.io.readBytes).toBeLessThan(200_000);expect(f.io.writeBytes).toBeLessThan(100_000);
-  console.info(JSON.stringify({ownerDeltaProbe:{records:36_500,changed:1,deltaRows,
-    incremental:{...f.io},baseline:f.baselineIO}}));
+  await context.annotate(JSON.stringify({ownerDeltaProbe:{records:36_500,changed:1,deltaRows,
+    incremental:{...f.io},baseline:f.baselineIO}}),'measurement');
   for(const [key,bytes] of beforeObjects)expect(f.objects.get(key)).toBe(bytes);
   const expected=await original(db,f.owner);
   // These calls verify the full logical inventory hash and actual S3 roots;
@@ -125,8 +125,8 @@ it('pages a 401-record delta and coalesces repeated writes while owner generatio
   expect(await db.prepare('SELECT count(*) AS n FROM pa_owner_record_changes WHERE owner_id=?').bind(f.owner).first('n')).toBe(401);
 },30_000);
 
-it('crosses 100000 lifetime IDs only through a verified delta cursor, retaining full-hydration guards',async()=>{
-  const f=await fixture(100_000);
+it('crosses 100000 lifetime IDs only through a verified delta cursor, retaining full-hydration guards',async(context)=>{
+  const fixtureStarted=performance.now(),f=await fixture(100_000),fixtureMs=performance.now()-fixtureStarted;
   const record=crypto.randomUUID();
   await db.prepare(`INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,metadata,deleted)
     VALUES(?,?,1,'synthetic','synthetic',X'01',0)`).bind(f.owner,record).run();
@@ -153,8 +153,58 @@ it('crosses 100000 lifetime IDs only through a verified delta cursor, retaining 
   await expect(f.copy.capture(db,f.owner)).rejects.toMatchObject({code:'OWNER_RECOVERY_UNAVAILABLE'});
   await expect(f.copy.read(f.owner,next)).rejects.toMatchObject({code:'OWNER_RECOVERY_UNAVAILABLE'});
   await db.prepare('DELETE FROM pa_owner_recovery_tree_cursors WHERE owner_id=?').bind(f.owner).run();
+  f.reset();const firstStarted=performance.now();
   await expect(f.copy.copyCurrent(db,f.owner,now)).rejects.toMatchObject({code:'OWNER_RECOVERY_UNAVAILABLE'});
-},120_000);
+  expect(await db.prepare('SELECT processed FROM pa_owner_recovery_builds WHERE owner_id=?').bind(f.owner).first('processed')).toBe(200);
+  let pages=1,peakReads=f.io.reads,peakWrites=f.io.writes,peakBytes=f.io.readBytes+f.io.writeBytes,
+    peakReadBytes=f.io.readBytes,peakWriteBytes=f.io.writeBytes,peakMs=performance.now()-firstStarted;
+  for(;;){
+    f.reset();const started=performance.now(),result=await f.copy.rebuildCurrent(db,f.owner,now);pages++;
+    expect(result.rows).toBeLessThanOrEqual(200);
+    peakReads=Math.max(peakReads,f.io.reads);peakWrites=Math.max(peakWrites,f.io.writes);
+    peakBytes=Math.max(peakBytes,f.io.readBytes+f.io.writeBytes);
+    peakReadBytes=Math.max(peakReadBytes,f.io.readBytes);peakWriteBytes=Math.max(peakWriteBytes,f.io.writeBytes);peakMs=Math.max(peakMs,performance.now()-started);
+    if(result.status==='complete'){expect(result.reference).toEqual(next);break;}
+    expect(pages).toBeLessThan(502);
+  }
+  expect(pages).toBe(501);expect(peakWrites).toBe(0);
+  expect(await db.prepare('SELECT 1 FROM pa_owner_recovery_builds WHERE owner_id=?').bind(f.owner).first()).toBeNull();
+  await context.annotate(JSON.stringify({ownerRebuildProbe:{records:100_001,fixtureMs,pages,peakReads,peakWrites,peakBytes,peakReadBytes,peakWriteBytes,peakMs,maximumRows:200}}),'measurement');
+  expect(await f.copy.copyCurrent(db,f.owner,now)).toEqual(next);
+},180_000);
+
+it('restarts a stale rebuild checkpoint and refuses missing markers without acknowledging a partial tree',async()=>{
+  const f=await fixture(401);
+  await db.prepare('DELETE FROM pa_owner_recovery_tree_cursors WHERE owner_id=?').bind(f.owner).run();
+  expect(await f.copy.rebuildCurrent(db,f.owner,now)).toMatchObject({status:'pending',processed:200,total:401});
+  await change(f.owner,f.ids[400]!,true);
+  expect(await f.copy.rebuildCurrent(db,f.owner,now)).toMatchObject({status:'pending',processed:200,total:401});
+  await db.prepare('UPDATE pa_records SET revision=revision+1 WHERE owner_id=? AND record_id=?')
+    .bind(f.owner,f.ids[0]!).run();
+  await expect(f.copy.rebuildCurrent(db,f.owner,now)).rejects.toThrow();
+  expect(await db.prepare('SELECT 1 FROM pa_owner_recovery_tree_cursors WHERE owner_id=?').bind(f.owner).first()).toBeNull();
+  await markers(f.owner);
+  expect(await f.copy.rebuildCurrent(db,f.owner,now)).toMatchObject({status:'pending',processed:200});
+  expect(await f.copy.rebuildCurrent(db,f.owner,now)).toMatchObject({status:'pending',processed:400});
+  expect(await f.copy.rebuildCurrent(db,f.owner,now)).toMatchObject({status:'complete',processed:401});
+});
+
+it('retains rebuild progress across recurring retention header refreshes and binds the final current generation',async()=>{
+  const f=await fixture(601);
+  await db.prepare('DELETE FROM pa_owner_recovery_tree_cursors WHERE owner_id=?').bind(f.owner).run();
+  await db.prepare(`INSERT INTO pa_retention(owner_id,revision,episode,verified_status,checked_at)
+    VALUES(?,1,1,'active',?)`).bind(f.owner,now).run();
+  for(let page=1;page<=3;page++){
+    expect(await f.copy.rebuildCurrent(db,f.owner,now)).toMatchObject({status:'pending',processed:page*200,total:601});
+    await db.prepare('UPDATE pa_retention SET revision=revision+1,checked_at=checked_at+3600000 WHERE owner_id=?').bind(f.owner).run();
+  }
+  const result=await f.copy.rebuildCurrent(db,f.owner,now);
+  expect(result).toMatchObject({status:'complete',processed:601,total:601});
+  if(result.status!=='complete')throw Error('not complete');
+  expect(await f.copy.read(f.owner,result.reference)).toEqual(await f.copy.capture(db,f.owner));
+  expect(await db.prepare('SELECT generation FROM pa_owner_recovery_tree_cursors WHERE owner_id=?').bind(f.owner).first('generation'))
+    .toBe(await db.prepare('SELECT generation FROM pa_owner_recovery_generations WHERE owner_id=?').bind(f.owner).first('generation'));
+});
 
 it('refuses an unmarked revision, then includes it after marker repair without dropping other records',async()=>{
   const f=await fixture(2);

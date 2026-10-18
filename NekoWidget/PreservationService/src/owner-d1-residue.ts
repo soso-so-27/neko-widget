@@ -13,6 +13,9 @@ export const ownerContentTables = [
   'pa_notice_submissions', 'pa_owner_recovery_generations',
   'pa_owner_recovery_repair_failures', 'pa_owner_recovery_versions',
   'pa_owner_record_counters', 'pa_owner_record_changes', 'pa_owner_recovery_tree_cursors',
+  'pa_owner_recovery_builds',
+  'pa_offline_recovery_jobs', 'pa_offline_recovery_objects', 'pa_offline_recovery_owners',
+  'pa_offline_recovery_expected', 'pa_offline_recovery_revisions', 'pa_offline_recovery_heads',
   'pa_owners', 'pa_record_commit_markers', 'pa_record_delete_intents',
   'pa_record_legacy_baseline', 'pa_record_recovery_versions', 'pa_records',
   'pa_recovery_repair_failures', 'pa_recovery_write_leases', 'pa_retention',
@@ -37,6 +40,8 @@ export const ownerCursorTables = [
  * changes are still required before any row may be removed.
  */
 export const ownerD1DeleteOrder = [
+  'pa_offline_recovery_heads', 'pa_offline_recovery_revisions', 'pa_offline_recovery_expected',
+  'pa_offline_recovery_owners', 'pa_offline_recovery_objects', 'pa_offline_recovery_jobs',
   'pa_device_session_challenges',
   'pa_tool_record_sources',
   'pa_tool_snapshot_abandonments',
@@ -49,6 +54,7 @@ export const ownerD1DeleteOrder = [
   'pa_record_legacy_baseline', 'pa_recovery_repair_failures',
   'pa_record_recovery_versions', 'pa_records', 'pa_uploads',
   'pa_owner_record_changes', 'pa_owner_record_counters', 'pa_owner_recovery_tree_cursors',
+  'pa_owner_recovery_builds',
   'pa_owner_recovery_repair_failures', 'pa_owner_recovery_versions',
   'pa_owner_recovery_generations', 'pa_recovery_write_leases',
   'pa_notice_contacts', 'pa_retention', 'pa_membership_links',

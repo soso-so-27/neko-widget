@@ -20,6 +20,7 @@ interface UsageRow {
   inventory_owner: string | null; used_bytes: number; reserved_bytes: number;
   saved_records: number; record_identifiers: number; pending_records: number;
   record_bytes: number; upload_bytes: number; unacknowledged_records: number;
+  accounting_valid: number;
 }
 interface Dependencies {
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
@@ -103,11 +104,13 @@ export class ArchiveStore {
     }
   }
   private recoveryReference(ownerId: string, id: string, revision: number, copy: CopiedRecordImage) {
+    // D1 meta.changes includes accounting-trigger writes. RETURNING identifies
+    // the single recovery row attached by the immediately preceding record CAS.
     return this.d.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,revision,
       record_object_key,record_version_id,record_sha256,record_bytes,
       photo_object_key,photo_version_id,photo_sha256,photo_bytes,committed_at)
       SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM pa_records
-        WHERE owner_id=? AND record_id=? AND revision=?)`)
+        WHERE owner_id=? AND record_id=? AND revision=?) RETURNING revision`)
       .bind(ownerId, id, revision, copy.record.key, copy.record.versionId,
         copy.record.sha256, copy.record.bytes, copy.photo?.key ?? null,
         copy.photo?.versionId ?? null, copy.photo?.sha256 ?? null, copy.photo?.bytes ?? null,
@@ -325,18 +328,14 @@ export class ArchiveStore {
     // reservation total. No photo download, decryption or membership lookup.
     const row = await this.d.db.prepare(`SELECT i.owner_id AS inventory_owner,
       coalesce(i.used_bytes,0) AS used_bytes, coalesce(i.reserved_bytes,0) AS reserved_bytes,
-      (SELECT count(*) FROM pa_records r WHERE r.owner_id=o.owner_id AND r.deleted=0) AS saved_records,
-      (SELECT count(*) FROM pa_records r WHERE r.owner_id=o.owner_id) AS record_identifiers,
+      d.live_count AS saved_records,
+      d.record_count AS record_identifiers,
       (SELECT count(*) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS pending_records,
-      (SELECT coalesce(sum(quota_bytes),0) FROM pa_records r WHERE r.owner_id=o.owner_id) AS record_bytes,
+      d.record_bytes AS record_bytes,
       (SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads u WHERE u.owner_id=o.owner_id) AS upload_bytes
-      ,(SELECT count(*) FROM pa_records r WHERE r.owner_id=o.owner_id
-        AND NOT EXISTS(SELECT 1 FROM pa_record_commit_markers m
-          WHERE m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision)
-        AND (EXISTS(SELECT 1 FROM pa_record_recovery_versions v
-          WHERE v.owner_id=r.owner_id AND v.record_id=r.record_id AND v.revision=r.revision)
-          OR NOT ${exactLegacy})) AS unacknowledged_records
+      ,d.pending_ack AS unacknowledged_records,d.accounting_valid
       FROM pa_owners o LEFT JOIN pa_inventory i ON i.owner_id=o.owner_id
+      LEFT JOIN pa_owner_record_counters d ON d.owner_id=o.owner_id
       WHERE o.owner_id=? AND ${activeSession}`)
       .bind(session.ownerId, ...this.sessionBindings(session)).first<UsageRow>();
     const current = await this.d.auth.requireSession(token);
@@ -347,10 +346,11 @@ export class ArchiveStore {
       throw new ServiceError('RECOVERY_PENDING', 503);
     }
     const counters = [row.used_bytes, row.reserved_bytes, row.saved_records, row.record_identifiers,
-      row.pending_records, row.record_bytes, row.upload_bytes];
-    if (counters.some(value => !Number.isSafeInteger(value) || value < 0)
+      row.pending_records, row.record_bytes, row.upload_bytes, row.unacknowledged_records];
+    if (row.accounting_valid !== 1 || counters.some(value => !Number.isSafeInteger(value) || value < 0)
       || !Number.isSafeInteger(row.used_bytes + row.reserved_bytes)
       || !Number.isSafeInteger(row.record_identifiers + row.pending_records)
+      || row.saved_records > row.record_identifiers || row.unacknowledged_records > row.record_identifiers
       || row.used_bytes !== row.record_bytes || row.reserved_bytes !== row.upload_bytes
       || (!row.inventory_owner && counters.some(value => value !== 0))) {
       // Missing/corrupt accounting is not an empty archive. Never repair it by
@@ -370,7 +370,7 @@ export class ArchiveStore {
         // exhaust the number of records a customer may currently keep.
         creationLimitReached: row.saved_records + row.pending_records >= maximumRecords } };
   }
-  async list(token: string, after = '', limit = 20) {
+  async list(token: string, after = '', limit = 20, visibleOnly = false) {
     if (after) recordId(after);
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new ServiceError('INVALID_PAGE_SIZE');
     const session = await this.d.auth.requireSession(token);
@@ -378,6 +378,9 @@ export class ArchiveStore {
     const rows = await this.d.db.prepare(`SELECT *, NOT EXISTS(SELECT 1 FROM pa_tool_part_delete_claims c
       WHERE c.owner_id=pa_records.owner_id AND c.part_id=pa_records.record_id) AS tool_reusable
       FROM pa_records WHERE owner_id=? AND deleted=0 AND record_id>?
+      ${visibleOnly ? `AND NOT EXISTS(SELECT 1 FROM pa_tool_record_sources s
+        WHERE s.owner_id=pa_records.owner_id AND s.record_id=pa_records.record_id
+        AND (s.kind<>'index' OR s.upload_snapshot_id IS NOT NULL))` : ''}
       ORDER BY record_id LIMIT ?`).bind(session.ownerId, after, limit + 1).all<Row & { tool_reusable: number }>();
     const items = [];
     for (const row of rows.results.slice(0, limit)) {
@@ -692,7 +695,7 @@ export class ArchiveStore {
                 session.ownerId, id, expected + 1, bytes(metadata)),
           ] : []),
         ]);
-        if (results[0]?.results.length !== 1 || (copied && results[1]?.meta.changes !== 1)) {
+        if (results[0]?.results.length !== 1 || (copied && results[1]?.results.length !== 1)) {
           await this.d.auth.requireSession(token);
           throw new ServiceError('REVISION_CONFLICT', 409);
         }
@@ -730,9 +733,12 @@ export class ArchiveStore {
       : pilotAccess ? this.d.pilotStorageAccess!.fence(session.ownerId) : { sql: '1', bindings: [] };
     const reserved = await this.d.db.prepare(`INSERT INTO pa_uploads(operation_id,owner_id,record_id,object_key,reserved_bytes,expires_at)
       SELECT ?,?,?,?,?,? FROM pa_inventory WHERE owner_id=? AND used_bytes+reserved_bytes+?<=?
-      AND (? IS NULL OR ((SELECT coalesce(sum(quota_bytes),0) FROM pa_records)
-        +(SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads))<=?-?)
-      AND ((SELECT count(*) FROM pa_records WHERE owner_id=? AND deleted=0)
+      AND used_bytes=(SELECT record_bytes FROM pa_owner_record_counters WHERE owner_id=pa_inventory.owner_id AND accounting_valid=1)
+      AND (? IS NULL OR ((SELECT coalesce(sum(record_bytes),0) FROM pa_owner_record_counters)
+        +(SELECT coalesce(sum(reserved_bytes),0) FROM pa_uploads))<=?-?
+        AND (SELECT coalesce(sum(record_bytes),0) FROM pa_owner_record_counters)=(SELECT coalesce(sum(used_bytes),0) FROM pa_inventory)
+        AND NOT EXISTS(SELECT 1 FROM pa_owners o LEFT JOIN pa_owner_record_counters d ON d.owner_id=o.owner_id WHERE d.owner_id IS NULL OR d.accounting_valid<>1))
+      AND ((SELECT live_count FROM pa_owner_record_counters WHERE owner_id=?)
         +(SELECT count(*) FROM pa_uploads WHERE owner_id=?))< ? AND ${activeSession} AND ${reservationFence.sql}
       RETURNING operation_id`).bind(operation, session.ownerId, id, key, size, this.d.now() + 600_000,
       session.ownerId, size, this.d.quotaBytes,
@@ -799,7 +805,7 @@ export class ArchiveStore {
           SELECT owner_id,record_id,?,?,? FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=? AND deleted=0`)
           .bind(document.toolBackup.snapshotId, document.toolBackup.kind, uploadSnapshotID, session.ownerId, id, operation)] : []),
       ]);
-      if (result[0]?.results.length !== 1 || (copied && result[2]?.meta.changes !== 1)) {
+      if (result[0]?.results.length !== 1 || (copied && result[2]?.results.length !== 1)) {
         await this.d.auth.requireSession(token);
         throw new ServiceError('REVISION_CONFLICT', 409);
       }
@@ -901,7 +907,7 @@ export class ArchiveStore {
     ]);
     const updateIndex = intent ? 2 : 1;
     if (result[updateIndex]?.results.length !== 1
-      || (copied && result[updateIndex + 1]?.meta.changes !== 1)) {
+      || (copied && result[updateIndex + 1]?.results.length !== 1)) {
       await this.d.auth.requireSession(token); throw new ServiceError('REVISION_CONFLICT', 409);
     }
     await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);

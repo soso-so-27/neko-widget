@@ -221,6 +221,28 @@ export class OwnerRecoveryCopy {
     } finally { contact.fill(0); }
   }
 
+  /** Offline recovery consumes one header and bounded tree quantum. These
+   * helpers do not select, activate, or acknowledge an owner. */
+  async inspectRecoveryHeader(ownerId:string,reference:RecoveryObject):Promise<{
+    header:OwnerRecoveryImage;tree:TreeRef|null;legacyRecords:OwnerRecoveryImage['records']|null}> {
+    const wire=await this.readWire(ownerId,reference);
+    if(wire.version===2){
+      const image=await this.read(ownerId,reference);await this.verifyInnerIdentity(image);
+      return {header:{...image,records:[]},tree:null,legacyRecords:image.records};
+    }
+    const header=decodedHeader(wire);await this.verifyInnerIdentity(header);
+    await new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3).verifyRoot(wire.recordsTree);
+    return {header,tree:wire.recordsTree,legacyRecords:null};
+  }
+  recoveryDifference(ownerId:string,before:TreeRef|null,after:TreeRef,pending?:import('./immutable-record-tree').TreeDiffFrame[]){
+    return new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3).differencePage(before,after,pending);
+  }
+  validateRecoveryEntries(header:OwnerRecoveryImage,records:OwnerRecoveryImage['records']){valid({...header,records});}
+  recoveryLogicalHash(ownerId:string,records:OwnerRecoveryImage['records']){
+    return new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3)
+      .logicalHash(records.map(value=>({key:value.recordId.replaceAll('-',''),value})));
+  }
+
   /** Read owner metadata atomically, then its inventory in bounded pages.
    * Both monotonic generations fence every page and the completed image:
    * records advance inventory before their commit markers advance owner state.
@@ -405,6 +427,11 @@ export class OwnerRecoveryCopy {
         WHERE c.owner_id=?`)
         .bind(ownerId).first<CursorRow>();
       if (!prior) {
+        if(state.count>maximumInventoryRecords) {
+          const rebuilt=await this.rebuildCurrent(db,ownerId,now);
+          if(rebuilt.status!=='complete')throw unavailable();
+          return rebuilt.reference;
+        }
         const reference = await this.copyCurrentFull(db,ownerId,now);
         // A race after the full copy's final fence can prevent cursor seeding;
         // the full copy itself already had a valid acknowledgement point.
@@ -484,46 +511,139 @@ export class OwnerRecoveryCopy {
       }
       // The final sequence is retained even when intermediate changes coalesce.
       if (after!==state.sequence || root.count!==state.count) throw unavailable();
-      const expected: PagedImage = {...wireHeader(image),version:3,recordsTree:root};
-      const current = async (): Promise<RecoveryObject|null> => {
-        const row = await db.prepare(`SELECT v.object_key,v.version_id,v.sha256,v.bytes
-          FROM pa_owner_recovery_versions v JOIN pa_owner_recovery_generations g
-            ON g.owner_id=v.owner_id AND g.generation=v.generation
-          JOIN pa_owner_record_counters d ON d.owner_id=v.owner_id
-          WHERE v.owner_id=? AND v.generation=? AND d.sequence=? AND d.record_count=?
-            AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=v.owner_id),0)=?`)
-          .bind(ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration).first<RefRow>();
-        return row ? {key:row.object_key,versionId:row.version_id,sha256:row.sha256,bytes:row.bytes} : null;
-      };
-      let reference=await current();
-      if (!reference) {
-        const json=new TextEncoder().encode(JSON.stringify(expected));
-        const plaintext=this.options.compressWrites ? await compressOwnerSnapshot(json) : json;
-        const sealed=await this.keys.seal(plaintext,{ownerId,purpose:'recovery'});
-        const written=await this.s3.putVersioned(`recovery/v1/${ownerId}/owner/${crypto.randomUUID()}`,sealed);
-        await db.prepare(`INSERT INTO pa_owner_recovery_versions(owner_id,generation,object_key,version_id,sha256,bytes,confirmed_at)
-          SELECT ?,g.generation,?,?,?,?,? FROM pa_owner_recovery_generations g
-          JOIN pa_owner_record_counters d ON d.owner_id=g.owner_id
-          WHERE g.owner_id=? AND g.generation=? AND d.sequence=? AND d.record_count=?
-            AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=g.owner_id),0)=?
-          ON CONFLICT(owner_id,generation) DO NOTHING`)
-          .bind(ownerId,written.key,written.versionId,written.sha256,written.bytes,now,
-            ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration).run();
-        reference=await current();
-      }
-      if (!reference) throw unavailable();
-      const restored=await this.readWire(ownerId,reference);
-      // A verified old cursor remains usable if a newer version was inserted
-      // but its readback/cursor publication was interrupted. Reconcile legacy
-      // v2 writers only through the separately bounded full-inventory path.
-      if (restored.version===2) return this.copyCurrentFull(db,ownerId,now);
-      if (restored.recordsTree.count!==root.count || restored.recordsTree.hash!==root.hash
-        || canonicalJSON(wireHeader(decodedHeader(restored)))!==canonicalJSON(wireHeader(image))) throw unavailable();
-      await tree.verifyRoot(restored.recordsTree);
-      // This atomic cursor statement is also the final acknowledgement fence.
-      if (!await this.rememberTree(db,state,reference)) throw unavailable();
-      return reference;
+      return await this.publishTree(db,state,root,now);
     } catch { throw unavailable(); }
+  }
+
+  private async publishTree(db:D1Database,state:DeltaState,root:TreeRef,now:number):Promise<RecoveryObject> {
+    const image=state.image,ownerId=image.ownerId;
+    const tree=new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
+    const expected: PagedImage = {...wireHeader(image),version:3,recordsTree:root};
+    const current = async (): Promise<RecoveryObject|null> => {
+      const row = await db.prepare(`SELECT v.object_key,v.version_id,v.sha256,v.bytes
+        FROM pa_owner_recovery_versions v JOIN pa_owner_recovery_generations g
+        ON g.owner_id=v.owner_id AND g.generation=v.generation
+        JOIN pa_owner_record_counters d ON d.owner_id=v.owner_id
+        WHERE v.owner_id=? AND v.generation=? AND d.sequence=? AND d.record_count=?
+        AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=v.owner_id),0)=?`)
+        .bind(ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration).first<RefRow>();
+      return row ? {key:row.object_key,versionId:row.version_id,sha256:row.sha256,bytes:row.bytes} : null;
+    };
+    let reference=await current();
+    if (!reference) {
+      const json=new TextEncoder().encode(JSON.stringify(expected));
+      const plaintext=this.options.compressWrites ? await compressOwnerSnapshot(json) : json;
+      const sealed=await this.keys.seal(plaintext,{ownerId,purpose:'recovery'});
+      const written=await this.s3.putVersioned(`recovery/v1/${ownerId}/owner/${crypto.randomUUID()}`,sealed);
+      await db.prepare(`INSERT INTO pa_owner_recovery_versions(owner_id,generation,object_key,version_id,sha256,bytes,confirmed_at)
+        SELECT ?,g.generation,?,?,?,?,? FROM pa_owner_recovery_generations g
+        JOIN pa_owner_record_counters d ON d.owner_id=g.owner_id
+        WHERE g.owner_id=? AND g.generation=? AND d.sequence=? AND d.record_count=?
+        AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=g.owner_id),0)=?
+        ON CONFLICT(owner_id,generation) DO NOTHING`)
+        .bind(ownerId,written.key,written.versionId,written.sha256,written.bytes,now,
+        ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration).run();
+      reference=await current();
+    }
+    if (!reference) throw unavailable();
+    const restored=await this.readWire(ownerId,reference);
+    // A verified old cursor remains usable if a newer version was inserted
+    // but its readback/cursor publication was interrupted. Reconcile legacy
+    // v2 writers only through the separately bounded full-inventory path.
+    if (restored.version===2) return this.copyCurrentFull(db,ownerId,now);
+    if (restored.recordsTree.count!==root.count || restored.recordsTree.hash!==root.hash
+      || canonicalJSON(wireHeader(decodedHeader(restored)))!==canonicalJSON(wireHeader(image))) throw unavailable();
+    await tree.verifyRoot(restored.recordsTree);
+    // This atomic cursor statement is also the final acknowledgement fence.
+    if (!await this.rememberTree(db,state,reference)) throw unavailable();
+    return reference;
+  }
+
+  /** One resumable recovery quantum, never an unbounded Worker operation.
+   * A checkpoint contains only an authenticated immutable tree and keyset
+   * position. It is not an ACK; every page and publication rechecks all fences. */
+  async rebuildCurrent(db:D1Database,ownerId:string,now:number):Promise<
+    {status:'pending';processed:number;total:number;rows:number} |
+    {status:'complete';reference:RecoveryObject;processed:number;total:number;rows:number}> {
+    if(!safeInteger(now,1) || !this.options.pagedWrites)throw unavailable();
+    const state=await this.deltaState(db,ownerId),image=state.image;
+    await this.verifyInnerIdentity(image);
+    type Build={generation:number;inventory_generation:number;record_sequence:number;record_count:number;
+      after_id:string;processed:number;tree_json:string};
+    const same=(b:Build)=>b.generation===image.generation && b.inventory_generation===image.inventoryGeneration
+      && b.record_sequence===state.sequence && b.record_count===state.count;
+    let build=await db.prepare('SELECT * FROM pa_owner_recovery_builds WHERE owner_id=?').bind(ownerId).first<Build>();
+    // Retention/credential refreshes may advance only the owner header while a
+    // large inventory is rebuilding. Preserve authenticated record progress;
+    // publication still binds the latest complete header and all current fences.
+    if(build && build.generation!==image.generation && build.inventory_generation===image.inventoryGeneration
+      && build.record_sequence===state.sequence && build.record_count===state.count){
+      const rebound=await db.prepare(`UPDATE pa_owner_recovery_builds SET generation=? WHERE owner_id=? AND generation=?
+        AND inventory_generation=? AND record_sequence=? AND record_count=? AND after_id=? AND processed=?
+        AND EXISTS(SELECT 1 FROM pa_owner_record_counters d JOIN pa_owner_recovery_generations g ON g.owner_id=d.owner_id
+          JOIN pa_owners o ON o.owner_id=d.owner_id WHERE d.owner_id=? AND d.sequence=? AND d.record_count=? AND g.generation=?
+          AND o.purge_fence_id IS NULL AND coalesce((SELECT generation FROM pa_inventory WHERE owner_id=d.owner_id),0)=?)`)
+       .bind(image.generation,ownerId,build.generation,image.inventoryGeneration,state.sequence,state.count,build.after_id,build.processed,
+         ownerId,state.sequence,state.count,image.generation,image.inventoryGeneration).run();
+      if(rebound.meta.changes!==1)throw unavailable();
+      build={...build,generation:image.generation};
+    }
+    const tree=new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
+    if(!build || !same(build)) {
+      const latest=await db.prepare(`SELECT object_key,version_id,sha256,bytes FROM pa_owner_recovery_versions
+        WHERE owner_id=? ORDER BY generation DESC LIMIT 1`).bind(ownerId).first<RefRow>();
+      const previous=latest?await this.readWire(ownerId,{key:latest.object_key,versionId:latest.version_id,sha256:latest.sha256,bytes:latest.bytes}):null;
+      const root=previous?.version===3?previous.recordsTree:await tree.create([]);
+      await tree.verifyRoot(root);
+      const result=await db.prepare(`INSERT INTO pa_owner_recovery_builds(owner_id,generation,inventory_generation,
+        record_sequence,record_count,tree_json) SELECT ?,?,?,?,?,? WHERE EXISTS(
+          SELECT 1 FROM pa_owner_record_counters d JOIN pa_owner_recovery_generations g ON g.owner_id=d.owner_id
+          WHERE d.owner_id=? AND d.sequence=? AND d.record_count=? AND g.generation=?
+          AND coalesce((SELECT generation FROM pa_inventory WHERE owner_id=d.owner_id),0)=?)
+        ON CONFLICT(owner_id) DO UPDATE SET generation=excluded.generation,inventory_generation=excluded.inventory_generation,
+          record_sequence=excluded.record_sequence,record_count=excluded.record_count,tree_json=excluded.tree_json,after_id='',processed=0
+        WHERE pa_owner_recovery_builds.generation<>excluded.generation
+          OR pa_owner_recovery_builds.inventory_generation<>excluded.inventory_generation
+          OR pa_owner_recovery_builds.record_sequence<>excluded.record_sequence
+          OR pa_owner_recovery_builds.record_count<>excluded.record_count`)
+        .bind(ownerId,image.generation,image.inventoryGeneration,state.sequence,state.count,JSON.stringify(root),
+          ownerId,state.sequence,state.count,image.generation,image.inventoryGeneration).run();
+      if(!result.success)throw unavailable();
+      build=await db.prepare('SELECT * FROM pa_owner_recovery_builds WHERE owner_id=?').bind(ownerId).first<Build>();
+    }
+    if(!build || !same(build) || !safeInteger(build.processed) || build.processed>state.count
+      || (build.after_id!=='' && !recordPattern.test(build.after_id)))throw unavailable();
+    let root=JSON.parse(build.tree_json) as TreeRef;
+    const rows=(await db.prepare(`SELECT r.record_id,r.revision,r.deleted,m.marker_object_key,m.marker_version_id,m.marker_sha256,m.marker_bytes
+      FROM pa_records r LEFT JOIN pa_record_commit_markers m ON m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision
+      WHERE r.owner_id=? AND r.record_id>? ORDER BY r.record_id LIMIT 200`).bind(ownerId,build.after_id).all<InventoryPageRow>()).results;
+    const records=rows.map(row=>({recordId:row.record_id!,revision:row.revision,deleted:row.deleted===1,
+      marker:{key:row.marker_object_key!,versionId:row.marker_version_id,sha256:row.marker_sha256,bytes:row.marker_bytes}}));
+    if(rows.some(row=>row.deleted!==0 && row.deleted!==1))throw unavailable();
+    valid({...image,records});
+    root=await tree.update(root,records.map(record=>({key:record.recordId.replaceAll('-',''),value:record})),(old,next)=>{
+      if(!old)return;
+      const before=old.value as OwnerRecoveryImage['records'][number],after=next.value as OwnerRecoveryImage['records'][number];
+      if(before.recordId!==after.recordId || before.revision>after.revision || (before.deleted && !after.deleted)
+        || (before.revision===after.revision && canonicalJSON(before)!==canonicalJSON(after)))throw unavailable();
+    });
+    await tree.verifyRoot(root);
+    const processed=build.processed+records.length,after=records.at(-1)?.recordId ?? build.after_id;
+    if(processed>state.count)throw unavailable();
+    const advanced=await db.prepare(`UPDATE pa_owner_recovery_builds SET after_id=?,processed=?,tree_json=?
+      WHERE owner_id=? AND generation=? AND inventory_generation=? AND record_sequence=? AND record_count=? AND after_id=? AND processed=?
+        AND EXISTS(SELECT 1 FROM pa_owner_record_counters d JOIN pa_owner_recovery_generations g ON g.owner_id=d.owner_id
+          WHERE d.owner_id=? AND d.sequence=? AND d.record_count=? AND g.generation=?
+          AND coalesce((SELECT generation FROM pa_inventory WHERE owner_id=d.owner_id),0)=?)`)
+      .bind(after,processed,JSON.stringify(root),ownerId,image.generation,image.inventoryGeneration,state.sequence,state.count,
+        build.after_id,build.processed,ownerId,state.sequence,state.count,image.generation,image.inventoryGeneration).run();
+    if(advanced.meta.changes!==1)throw unavailable();
+    if(records.length===200 && processed<state.count)return {status:'pending',processed,total:state.count,rows:records.length};
+    if(processed!==state.count || root.count!==state.count)throw unavailable();
+    const reference=await this.publishTree(db,state,root,now);
+    await db.prepare(`DELETE FROM pa_owner_recovery_builds WHERE owner_id=? AND generation=? AND inventory_generation=?
+      AND record_sequence=? AND record_count=?`).bind(ownerId,image.generation,image.inventoryGeneration,state.sequence,state.count).run();
+    return {status:'complete',reference,processed,total:state.count,rows:records.length};
   }
 
   /** Capture, independently verify S3, then bind the exact object version to
@@ -588,8 +708,9 @@ export class OwnerRecoveryCopy {
       if (!cursor || (cursor.last_owner_id !== '' && !ownerPattern.test(cursor.last_owner_id))) {
         throw unavailable();
       }
-      const pending = `o.purge_fence_id IS NULL AND NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v
-        WHERE v.owner_id=g.owner_id AND v.generation=g.generation)`;
+      const pending = `o.purge_fence_id IS NULL AND (NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v
+        WHERE v.owner_id=g.owner_id AND v.generation=g.generation)
+        ${this.options.pagedWrites ? 'OR NOT EXISTS(SELECT 1 FROM pa_owner_recovery_tree_cursors c WHERE c.owner_id=g.owner_id)' : ''})`;
       const after = await db.prepare(`SELECT g.owner_id FROM pa_owner_recovery_generations g
         JOIN pa_owners o ON o.owner_id=g.owner_id
         WHERE ${pending} AND g.owner_id>? ORDER BY g.owner_id LIMIT ?`)

@@ -67,3 +67,29 @@ treeのref/update総数は100万、全配列へmaterializeするcreate/entries/h
 - 独立再レビューで旧cursor再試行、root未送信abandon、set単位claimの3指摘は修正確認。cursor欠損/全災害hydrateの100k制限とusage全件SQLは残る。
 - iOS診断39117493330は18分26秒で2成功1失敗。未保存メモ保護と中断整理の検査は成功。新規復元テストは `enable()` の正常復元時のtitleが「復元しました」であるのに「保存済み」を期待して停止した。fixtureの期待値だけを訂正し、失敗時には実title/detailを表示する。内容一致の後続assertはこのrunでは未実行なので再診断が必要。
 - CI inventory専用PR365/a7cccc0は既存配置を維持して新テストだけsoloへ登録。ローカル251.6秒・owning plan39118959720成功、main629f6baへmerge。diagnostic workflowの一時拡張は製品差分から外す。通常CIの必須範囲は削らない。
+
+## 20時台 JST の追加確認と配布前計画
+
+- iOS診断39119155074/174483eは17分53秒で成功。実テスト`testAutomaticPartitionedRecordsMigrationAndRestore`は41.402秒、started/passed各1回、failure0。旧v3の写真を残したまま400メモ/130写真を追加してv4へ移行、欠落したローカル写真を既存認証済みコピーから保持、1メモ編集で写真PUT増加0、新fixture端末で全メモID/本文と全写真byte一致、旧dataset不変を確認。証拠は`C:/dev/neko-evidence/automatic-test-20261018/native-partitioned-174483e-success.log`。実iPhone・実クラウド・配布の成功へ読み替えない。
+- 0044 usage counterは277,400履歴で単一SQL・record scan0、製品呼出10〜14ms。fixture生成込み39.47秒。0045 cursor欠損は100,001件を200件ずつ501checkpointで再構築成功（初期tree生成込み89.29秒）。独立レビューでretentionによるheader世代更新が再構築を0へ戻し続ける条件を発見し、修正中。0046のD1-independent全履歴復旧は小分けのoffline専用journalを実装中。いずれも最終凍結後の全backend成功はまだない。
+- 保存コピー一覧は、非表示の自動保存内部部品を全件復号してから隠す処理を避ける。nativeのvisiblePageだけ`view=visible`を送り、backendはowner/世代/keysetを維持して内部部品をSQLで除外する。旧一覧・書き出し・直接ID読取の既存契約を維持し、visible件数が内部部品数へ比例しないことを直接検査する。
+- 今回の容量設定候補はowner50GiB、live200,000、global100GiB。既存有限受付のowner1/新規登録0/期限/PUT・byte枠/予算値は不変。3設定だけでは受付量が広がらないことを独立確認し、AWSログイン待ちとは独立して準備する。新契約0。最新AWS残額は未確認であり無料保証はしない。写真10枚/日・930,000B/枚・10年の写真本体だけはR2/S3合計約206円/月（10/14計画FX、10/18公式単価、無料枠控除なし）だが、履歴/DB/処理/復元/固定費を加えた全原価は未確定。未計測の20revisions等の感度値869円を実原価や980円成立の証拠にしない。
+- repo外にprepare/package/deploy-partitioned-cloud.pyを準備。実行はまだ0。candidate/入力閉包/main/同SHA全CI、既存owner/records/ACK元表/受付/会員/本人/試用/参照/cron/秘密参照を保護する。各migration境界でschema/ledger/元行、全migration後にusageとACKを独立再計算、新job表空を照合。deletion reader→archive writerの順で一度ずつ反映し、3設定以外のauthority/runtime/公開範囲は維持する。独立レビュー2指摘（main後続製品変更、ACK派生値未照合）を修正。合成SQLiteで誤ACK/誤合計の検出を確認。実version upload後settingsが旧/新どちらになるかは未観測のため、activation前は設定全体が旧または正規3値差分の新のどちらかに限り、activation後は新と完全一致を要求する。
+- 配布前の残不確定: 0046全復旧/故障時再開と0045世代更新の直接検査、最終backend全体と独立レビュー、全体iOS CI、実cloud反映、TestFlight263以降の未使用番号、実機の新形式利用。保持する成功は入力が一致するものだけ。初候補09:18:58Zから計時を継続する。0046の追加実装・直接検査は60〜90分の未実測見込み、その後のfull-v1＋uploadは過去76.6〜110.1分。利用者へ追加時間を説明済みであり、以前の1〜2時間以内の完了を保証しない。
+
+## 20:05 JST の統合候補確認
+
+- 0045のheader-only更新による再構築の停滞は修正済み。601件を200件ずつ進め、その間に3回header世代を更新しても200→400→600→601と進み、最新headerに拘束したACKだけを公開する検査が成功。100,001件の501checkpoint成功は別の大容量境界証拠として保持する。既存15分cronだけなら501回は最低125時間15分であり、これは稀なcursor喪失時の再構築経路であって通常保存の時間ではない。新cron/HTTP経路は作らない。
+- 0046のoffline journalは、空の隔離先・source書込み停止・削除要求なしを各quantumで再確認し、最後までownerをdisabledに保つ。S3全versionの列挙と再列挙、全owner世代の単調性、record全revision/削除intent/写真、v4参照を検査する。小規模の中断再開と写真復旧は成功。追加100,001個のS3 versionを処理した試験と、実treeの100,001 recordを新expected spoolへ展開して末尾ID/総数を確認した試験は別々の証拠であり、前者を大量record復元と呼ばない。後者は546quantum、peak rows200/S3 GET12/D1 prepared57/batch52/bind85、最大199ms/quantum（wall time）。全量の実ユーザー写真復旧ではない。
+- 0044は派生ACK行の喪失をaccounting_valid=0として検出し、容量や復旧成功を偽装しない。0046の完了確認とcloud migration後の独立照合でもaccounting_valid=1を要求する。保管一覧は内部部品1,500件を復号せず、表示対象3件だけを開く境界とcursorの連続性を直接検査済み。
+- 主担当は0046のsource inventory/header/tree、履歴の連続性、削除済みrecordの復活拒否、写真のexact readback、disabled維持、参照再構築、owner erasure順を独立レビューした。final accounting_valid確認は修正済み。最終全backend結果は次の凍結証拠へ記録する。
+- 開発手順の15既存suiteは238.7秒で成功。入力が不変の成功を保持し、push直前はpreflightのみ再評価する。全backendやnative候補の成功とは混同しない。
+- 写真930,000byteは以前の計画上の仮定。現製品は最大4096px/JPEG品質0.92/最大20MiBで、0.93MBを保証しない。実在の43.76MB/26 live写真はmetadata込みなので、写真平均そのものとして使わない。費用確認は実処理数と、1/2/4MB等の明示的な写真サイズ仮定を分ける。
+
+## 20:20 JST 統合実装の固定前検査
+
+- 0044 triggerによるD1 meta.changesの増加を実D1で確認（SQLite changes()=1 / meta.changes=3）。復旧参照の成功判定をINSERT RETURNINGの1行へ修正し、直前CASのchanges()=1条件は維持した。最初の全体検査の13失敗・中断は保持。修正後はNode32・Vitest76file/669case・typecheck・migration5組成功。検査前後350fileのclosureは7386d556161e0efa617b90479e9d6a47eb122ad90042245468a2851ece6db4e9で一致。全体191.90秒。
+- 実100,001件immutable treeの展開・先頭/末尾ID・履歴参照・破損停止・中断/競合からの再開、target disabledの維持を直接確認。10万超S3 versionsの別probeと混同しない。最大200行のbounded処理、546quantum、実測最大199ms wall（CPU時間ではない）。lifetime tree100万ID / offline1000万versionsの防御上限は残る。
+- 本番ArchiveStore経路を外部通信0で直接計測。メモ1編集は写真PUT0、S3 PUT71/GET163/HEAD71・KMS346回、写真1追加は88/201/88・417回、写真10枚まとめ追加は285/643/285・1248回。実写真fixtureは4096B、930k/1/2/4MBは別の仮定感度。128写真程度の実測であり36,500写真時の係数、Worker/container/D1保存量/長期履歴原価は未測定。先行product回帰12.19秒、成功出力回収失敗88.97秒、最終回収89.35秒を全て保持（累積190.51秒）。
+- 検査選択は全native入力の固定source/full-tree照合を条件に既存app-dataの6job（Build/privacy/migration・Photos scan・両OS runtime・app UI3組）を使う専用制御を先行mainへ提案する。Widget target/fixture/runtime入力は不変、独立レビュー済み。native合格とbackend合格は分け、同じ候補SHAのowning Preservation全8stepをクラウド/配布前に別途必須化する。制御検査501件成功78.228秒（source pin確定前、確定後の条件を別確認する）。
+- 初候補09:18:58Zから継続計時。これまでの診断・失敗・修正・準備を含め約2時間。新経路は未計測、旧CI+upload実測76.6–110.1分を目安にし、短縮を実績扱いしない。新クラウド・main製品・TestFlightはこの時点で未実施。

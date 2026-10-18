@@ -369,9 +369,15 @@ it('restores a mutable automatic head and v3 JSON references before publishing d
   expect(await f.db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').bind(ownerId).first()).toEqual({ disabled: 1 });
 });
 
-it('restores v4 radix edges, opaque fragments and a complete head while retaining disabled access', async () => {
+it.each(['whole','paged'] as const)('restores v4 radix edges, opaque fragments and a complete head while retaining disabled access (%s)', async mode => {
   const f = await sharedToolRestoreFixture('v4'), tree = f.tree!;
-  expect(await f.restore.restore(ownerId,1000)).toEqual({ status:'staged-disabled',ownerId,records:8+tree.children.length,photos:1 });
+  let result;
+  if(mode==='whole')result=await f.restore.restore(ownerId,1000);
+  else for(let step=0;step<200;step++){
+    result=await f.restore.resume(ownerId,1000,{async assertSourceFenced(){},async assertTargetOffline(){}});
+    if(result.status!=='pending')break;
+  }
+  expect(result).toEqual({ status:'staged-disabled',ownerId,records:8+tree.children.length,photos:1 });
   expect(await f.db.prepare('SELECT count(*) AS n FROM pa_tool_snapshot_references WHERE owner_id=?').bind(ownerId).first())
     .toEqual({ n:6+tree.children.length });
   expect(await f.db.prepare('SELECT count(*) AS n FROM pa_tool_record_sources WHERE owner_id=? AND upload_snapshot_id=?')
