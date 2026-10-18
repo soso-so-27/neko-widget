@@ -10,3 +10,9 @@
 - 費用は新契約なし。今回の未完了tombstoneは写真なし。一般にlive photoのmarker修復では既存暗号化写真の検証GETが発生するため、写真I/Oなし・費用不変とは主張しない。既存20件上限・payloadWork・S3 write leaseを保持する。
 
 証拠: `C:/dev/neko-evidence/automatic-test-20261018/cleanup-*`。現時点ではcloud未反映・自然定期による復旧未確認。
+
+## 候補固定前の検証記録
+
+- 制御4ファイルの全15 suiteが226.2秒で成功。制御push `39106748398` の必要3 step成功後、PR354をmain `6f555c3`へ統合した。製品はこの承認済み制御を取り込む。
+- 全npm検査を開始した後、主担当が検査中に制御branchへ切り替えたため、その実行は直ちに中断した。`cleanup-ack-service-tests.log` はcancelledとして保持し、全検査成功には数えない。以後、検査中のbranch切替・入力変更をしない。最終製品候補の変更範囲を再検査し、通常pushの全backend検査を必須とする。
+- 現在の製品4入力は `3ee7d5c` の独立レビュー済み内容と同一。署名・native・依存・migrationは不変。
