@@ -295,6 +295,7 @@ CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
 TOOL_CANDIDATE_REFRESH_SCOPE = "reviewed-tool-candidate-refresh-v1"
 JOURNAL_IDENTITY_SCOPE = "reviewed-journal-identity-v1"
+SAVE_SETTINGS_LIST_RACE_SCOPE = "reviewed-save-settings-list-race-v1"
 VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
 MEMBERSHIP_COPY_SCOPE = "reviewed-membership-copy-ui-v1"
 PRESERVATION_USAGE_SCOPE = "reviewed-preservation-usage-ui-v1"
@@ -776,7 +777,7 @@ TOOL_STORAGE_TESTS = TOOL_PRESERVATION_TESTS + (
     "NekoWidgetUITests/SoloMemoriesUITests/testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",
 )
 
-SCOPES = (JOURNAL_IDENTITY_SCOPE, TOOL_STORAGE_SCOPE, TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+SCOPES = (SAVE_SETTINGS_LIST_RACE_SCOPE, JOURNAL_IDENTITY_SCOPE, TOOL_STORAGE_SCOPE, TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REPORT_REPLY_ENTRY_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -1918,6 +1919,33 @@ def reviewed_tool_candidate_refresh_changes(changes: dict[str, tuple[str, str]])
                     for path in TOOL_CANDIDATE_REFRESH_PATHS)
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], TOOL_CANDIDATE_REFRESH_TESTS))
 
+# Account-only settings avoid the archive list; archive presentation is unchanged.
+# Fixed sources: fbed075458dde5c111dbe15f13fccb08dc50423e ->
+# b77cbc1dc837fa3f7e8cadce17c940f9354b30cc. These complete app/test inputs
+# retain full Build, Photos bootstrap, both-OS runtime and three owning UI cases.
+# Merge controls first; mixed controls, storage, backend, Widget or workflow
+# changes cannot enter this exact batch.
+SAVE_SETTINGS_LIST_RACE_DIGESTS = {
+    "NekoWidget/NekoWidget/Services/AppRecordPersistence.swift": ["3db31bb36da7f54c63a4f143dba2a91a505b3c28ccd1ba996e4251f2fc63a328", "e464c372660a9d21a26b80ff6df95f994a61fd410cf827803c4d0f682fbc1e67"],
+    "NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift": ["7cc1f7563a3dbc3a83866e42baa90f3e4b288e52bb61901f88d08cf9a91588ca", "76397ffdecb4da7c7fa596a2a509a39fff7278eefd0ad3daf291624b0039225f"],
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": ["8f13a836f44d042fb4ef182da72f92dea0bf531b4b35388ad571ae7ff72bf00b", "586058c2cacf97bd0ea7e020a38d21ff1fe0044ee6b4279228575968ec3aa85c"],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ["d47d906bab36fc9e5c56e6a192702883f8c9ed4232c754d76fc9e2da3d1c0834", "ec1fa276c94f55f9a1d4eac79d888f0910e73c93264b78e4faecb3c1383054e3"],
+}
+SAVE_SETTINGS_LIST_RACE_PATHS = frozenset(SAVE_SETTINGS_LIST_RACE_DIGESTS)
+SAVE_SETTINGS_LIST_RACE_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testAutomaticRestoreProtectsUnsavedMemoDraft",
+    "testManagedPreservationMembershipLinkConsentAndRetry",
+    "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes",
+))
+
+
+def reviewed_save_settings_list_race_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == SAVE_SETTINGS_LIST_RACE_PATHS
+            and all(list(map(source_digest, changes[path])) == SAVE_SETTINGS_LIST_RACE_DIGESTS[path]
+                    for path in SAVE_SETTINGS_LIST_RACE_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], SAVE_SETTINGS_LIST_RACE_TESTS))
+
+
 # A single owner-bound journal filename comparison and its DEBUG/native probes.
 # Full before/after sources are pinned, including both existing owning cases.
 # No other stores, lifecycle, transfer/delete logic, UI, Widget, backend, signing,
@@ -2523,7 +2551,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = JOURNAL_IDENTITY_PATHS | TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH} | (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = SAVE_SETTINGS_LIST_RACE_PATHS | JOURNAL_IDENTITY_PATHS | TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH} | (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -3468,6 +3496,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == SAVE_SETTINGS_LIST_RACE_SCOPE:
+        return bool(paths) and len(paths) == len(set(paths)) and sources == SAVE_SETTINGS_LIST_RACE_PATHS
     if scope == JOURNAL_IDENTITY_SCOPE:
         return bool(paths) and len(paths) == len(set(paths)) and sources == JOURNAL_IDENTITY_PATHS
     if scope == TOOL_STORAGE_SCOPE:
@@ -3694,6 +3724,8 @@ MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == SAVE_SETTINGS_LIST_RACE_SCOPE:
+        return SAVE_SETTINGS_LIST_RACE_TESTS
     if scope == JOURNAL_IDENTITY_SCOPE:
         return JOURNAL_IDENTITY_TESTS
     if scope == TOOL_STORAGE_SCOPE:
@@ -4012,6 +4044,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_save_settings_list_race_changes(changes):
+        return SAVE_SETTINGS_LIST_RACE_SCOPE
     if reviewed_journal_identity_changes(changes):
         return JOURNAL_IDENTITY_SCOPE
     if reviewed_membership_tools_changes(changes):
