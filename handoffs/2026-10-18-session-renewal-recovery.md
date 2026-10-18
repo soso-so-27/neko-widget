@@ -9,3 +9,9 @@
 - 月980円、追加契約0、既存受付/予算/secret/cron/公開範囲は維持。正常更新の通信量は変わらず、batch不成功時だけ有限のD1読取・署名照合を加える。新規定期・手動cron・受付延長・一般公開・課金開始は行わない。
 
 証拠: `C:/dev/neko-evidence/automatic-test-20261018/session-renewal-recovery-*.log`。
+
+## 独立レビューと制御検査
+
+- journal_identity_reviewが製品2ファイルと新しい限定scopeを独立レビュー。SQL・認証境界・外部削除receipt・回復前の無発行を維持し、blocking findingなし。
+- 制御の初回検査は2suite成功後、planner494case中1件が失敗。新testがpatch後registryから候補も生成して比較対象を同時に置換していた。元候補を保持する`self.select(original)`へ修正し、その1件は0.014秒で成功。変更しない制御本体と他493case/2suiteの成功を保持し、残り12suiteを122.2秒で成功確認した。失敗を削除せず、通常CIでは全15suiteを実行する。
+- control候補5ea1fd2はpreflight ready、PR358。製品2blobは1d6bb09と同一のまま、control main承認後に取り込む。追加Mac起動・workflow変更なし。
