@@ -1,4 +1,105 @@
 import Foundation
+import CryptoKit
+
+/// Immutable content chunks and one atomic pointer. Old raw JSON remains readable.
+/// Missing/corrupt chunks are never reported as a missing root (empty store).
+enum AppRecordJSON {
+    enum Failure: Error { case corrupt, capacity }
+    struct Chunk: Codable, Equatable { let file: String; let bytes: Int; let sha256: String }
+    struct Manifest: Codable { let bytes: Int; let sha256: String; let chunks: [Chunk] }
+    static let maximumBytes = 128 * 1024 * 1024
+    private static let magic = Data("NEKO-JSON-CHUNKS-1\n".utf8)
+    private static let lock = NSRecursiveLock()
+    private static let gear: [UInt64] = (0..<256).map { value in
+        var x = UInt64(value) &+ 0x9e3779b97f4a7c15
+        x = (x ^ (x >> 30)) &* 0xbf58476d1ce4e5b9
+        x = (x ^ (x >> 27)) &* 0x94d049bb133111eb
+        return x ^ (x >> 31)
+    }
+    static func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    static func name(_ digest: String) -> String {
+        let s = Array(digest.prefix(32))
+        return String(s[0..<8]) + "-" + String(s[8..<12]) + "-" + String(s[12..<16]) + "-" + String(s[16..<20]) + "-" + String(s[20..<32]) + ".json"
+    }
+    static func manifest(_ raw: Data) throws -> Manifest? {
+        guard raw.starts(with: magic) else { return nil }
+        guard raw.count <= 8 * 1024 * 1024,
+              let value = try? JSONDecoder().decode(Manifest.self, from: raw.dropFirst(magic.count)),
+              value.bytes > 0, value.bytes <= maximumBytes, !value.chunks.isEmpty, value.chunks.count <= 16_384,
+              value.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { throw Failure.corrupt }
+        var total = 0
+        for chunk in value.chunks {
+            guard chunk.bytes > 0, chunk.bytes <= 32 * 1024,
+                  chunk.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  chunk.file == name(chunk.sha256) else { throw Failure.corrupt }
+            total += chunk.bytes
+            guard total <= maximumBytes else { throw Failure.capacity }
+        }
+        guard total == value.bytes else { throw Failure.corrupt }
+        return value
+    }
+    private static func raw(_ url: URL, maximum: Int) throws -> Data {
+        var fresh = url; fresh.removeAllCachedResourceValues()
+        let values = try fresh.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, size > 0, size <= maximum else { throw Failure.corrupt }
+        let data = try Data(contentsOf: fresh)
+        guard data.count == size else { throw Failure.corrupt }
+        return data
+    }
+    static func read(_ url: URL) throws -> Data {
+        lock.lock(); defer { lock.unlock() }
+        let bytes = try raw(url, maximum: maximumBytes)
+        guard let value = try manifest(bytes) else { return bytes }
+        do {
+            var result = Data(); result.reserveCapacity(value.bytes)
+            for chunk in value.chunks {
+                let data = try raw(url.deletingLastPathComponent().appendingPathComponent(chunk.file), maximum: 32 * 1024)
+                guard data.count == chunk.bytes, hash(data) == chunk.sha256 else { throw Failure.corrupt }
+                result.append(data)
+            }
+            guard hash(result) == value.sha256 else { throw Failure.corrupt }
+            return result
+        } catch { throw Failure.corrupt }
+    }
+    static func write(_ data: Data, to url: URL, options: Data.WritingOptions = .atomic) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !data.isEmpty, data.count <= maximumBytes else { throw Failure.capacity }
+        let previous: Manifest?
+        if FileManager.default.fileExists(atPath: url.path) { previous = try manifest(raw(url, maximum: maximumBytes)) }
+        else { previous = nil }
+        var chunks: [Chunk] = []
+        if data.count > 32 * 1024 {
+            var start = 0, rolling: UInt64 = 0
+            let bytes = [UInt8](data)
+            for offset in bytes.indices {
+                // Deterministic content boundaries regain alignment after a local edit.
+                rolling = (rolling << 1) &+ gear[Int(bytes[offset])]
+                let size = offset + 1 - start
+                if size >= 32 * 1024 || (size >= 8 * 1024 && rolling & 0x3fff == 0) || offset == bytes.count - 1 {
+                    let chunk = data.subdata(in: start..<(offset + 1)), digest = hash(chunk)
+                    let descriptor = Chunk(file: name(digest), bytes: chunk.count, sha256: digest)
+                    let destination = url.deletingLastPathComponent().appendingPathComponent(descriptor.file)
+                    if FileManager.default.fileExists(atPath: destination.path) {
+                        guard try raw(destination, maximum: 32 * 1024) == chunk else { throw Failure.corrupt }
+                    } else { try chunk.write(to: destination, options: options) }
+                    chunks.append(descriptor); start = offset + 1; rolling = 0
+                }
+            }
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let pointer = magic + (try encoder.encode(Manifest(bytes: data.count, sha256: hash(data), chunks: chunks)))
+            _ = try manifest(pointer)
+            try pointer.write(to: url, options: options.union(.atomic))
+        } else { try data.write(to: url, options: options.union(.atomic)) }
+        // Delete only verified old chunks after pointer publication. Cleanup failure
+        // does not undo a successful commit or turn it into an apparent failure.
+        let retained = Set(chunks.map(\.file))
+        for chunk in previous?.chunks ?? [] where !retained.contains(chunk.file) {
+            let old = url.deletingLastPathComponent().appendingPathComponent(chunk.file)
+            if let contents = try? raw(old, maximum: 32 * 1024), hash(contents) == chunk.sha256 { try? FileManager.default.removeItem(at: old) }
+        }
+    }
+}
 
 /// Reading failure is never evidence that the photo has no saved memo.
 enum PhotoMemoryNoteReadState: Equatable, Sendable {
@@ -586,7 +687,7 @@ actor PhotoMemoryNoteStore {
     private func load(from url: URL) throws -> State {
         let data: Data
         do {
-            data = try Data(contentsOf: url)
+            data = try AppRecordJSON.read(url)
         } catch {
             let failure = error as NSError
             // Only an explicit missing-file result can bootstrap empty state.
@@ -711,7 +812,7 @@ actor PhotoMemoryNoteStore {
             // only after a successful write. Protection applies during writing;
             // the parent has already been protected. User-authored text is
             // eligible for OS backup. No fallible mutation follows the commit.
-            try data.write(to: url, options: options)
+            try AppRecordJSON.write(data, to: url, options: options)
             NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: url)
         } catch {
             throw PhotoMemoryNoteStoreError.storageUnavailable
