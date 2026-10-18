@@ -15,3 +15,13 @@
 - journal_identity_reviewが製品2ファイルと新しい限定scopeを独立レビュー。SQL・認証境界・外部削除receipt・回復前の無発行を維持し、blocking findingなし。
 - 制御の初回検査は2suite成功後、planner494case中1件が失敗。新testがpatch後registryから候補も生成して比較対象を同時に置換していた。元候補を保持する`self.select(original)`へ修正し、その1件は0.014秒で成功。変更しない制御本体と他493case/2suiteの成功を保持し、残り12suiteを122.2秒で成功確認した。失敗を削除せず、通常CIでは全15suiteを実行する。
 - control候補5ea1fd2はpreflight ready、PR358。製品2blobは1d6bb09と同一のまま、control main承認後に取り込む。追加Mac起動・workflow変更なし。
+
+## main統合・クラウド反映完了
+
+- control push39109387777の必要3step成功後、PR358をmain556a144へ統合。最終製品b71b17fは限定scopeでpreflight ready。最初のpreflightはGitHubのactive一覧が不完全として停止し、5状態の実読取で件数整合を確認して再試行した。古いqueued5件を取消・再実行せず、条件も緩めていない。
+- 通常push plan39109576858は56秒、Preservation39109576835は123秒で成功。全601 Vitest/70file、Node32件、typecheck、合成migration、private bundle2本の実成功を確認。PR359をmain27be086へ統合し、tree一致とmain plan39109754248/47秒、backend39109754233/122秒の必要step成功も確認した。PRのskipを成功として扱っていない。
+- 固定bundle・multipart・既存設定をjournal_identity_reviewが独立レビュー。実配信コードとの差分はrenewal失敗batch後の再proofと503だけ。writer/plan hashと同SHA push CI・main祖先を実行直前に照合した。
+- 17:03:02 JSTに既存archive Workerだけをversion `e1840824-a64c-48af-a5a1-a4ab1a9eafee`へ更新。実module SHA256 `7cd4ad196727470654682fa98a0c00f1b16c169c8a7378e21b7fc07198a6ce12`一致。version作成/activation各1POST、再送0。bindings/secret継承/runtime/cron/公開範囲は不変、migration/手動cron/app API呼出0。受付期限やcounterを変更していない。
+- 17:03:27のD1 SELECTで最新head revision3の必要34部品が全てlive、旧31記録のrevision/サイズ不変、upload予約なしを確認。本文・写真・tokenを読み出していない。
+- 初回候補16:46:32から反映まで16分30秒、反映後保全読取まで16分56秒。元の再現失敗、control fixture失敗、preflight環境停止、レビュー、CI、待機を含む。45分計画内。新規契約0、価格980円、app入力不変/TestFlight再配布0。失敗batchの追加処理はD1読取・署名照合に加え、既存の外部削除journalのR2読取2件も含む。正常更新・Apple/KMS頻度は不変で、従量処理が完全にゼロとは主張しない。
+- 次は利用者へ、通常写真メモを編集・保存後に再確認を押さず保存済みになるかを依頼した。17:00の読取では最新access期限16:49を過ぎ、device grantは有効なので、次の編集で自動更新を確認できる。実機結果は未回答として保持する。長期容量と別端末v3復元は[残確認](2026-10-18-save-restore-remaining-checks.md)を参照。
