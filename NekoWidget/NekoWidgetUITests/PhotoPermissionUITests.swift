@@ -1692,7 +1692,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--app-records-ui-fixture", "--app-records-capacity-probe",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["容量対応・旧形式の移行・写真とメモの復元を確認しました"].waitForExistence(timeout: 90), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["容量対応・旧形式の移行・写真とメモの復元を確認しました"].waitForExistence(timeout: 180), app.debugDescription)
         capture("automatic-partitioned-records-migration-and-restore")
         app.terminate()
     }

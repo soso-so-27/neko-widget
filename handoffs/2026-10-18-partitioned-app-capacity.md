@@ -1,5 +1,10 @@
 # 長期保存のアプリ組込み
 
+- 21時台の追加修正: 新端末の一覧読込は子nodeごとの429待機・途中receiptがなかった。既存owner30request/分のまま、大量の一覧で初めから再読込する恐れを修正。owner/root ID/root SHAと親edgeに拘束した専用metadata cacheを1root分だけ保持し、破損はそのnodeだけ再取得。全tree/写真/manifest検証前に復元を公開しない。元データやpending/uploaded/restored receiptは消さない。
+- 新差分は独立レビュー済み、Swift実行はこれから。既存実iOS fixtureへ、warm child GET=0、中断前の3node再利用、実60秒429待機、壊れたreceipt1件だけ再取得、写真・全メモ一致の復元を追加。既存modelへ3,839childと128KiB wire境界を追加。診断計画はrepo外`partitioned-cold-resume-plan.json`。初回候補09:18:58Zからの累計を維持し、診断約19分＋配布経路約77〜110分を見込む。前の91a144候補資格は無効化し、新入力で再固定する。
+- 原価probeの整理: `v4-fullpath-cost-20261018T111249Z`は各scenarioで17node全部を読むcold経路。warmアプリは認証済みuploaded/restored receiptを残しており、全nodeを毎回読む原価ではない。memoのpreflightはhead1+node17、KMS18/D1読291/R2 GET78。これを全て除く値もwarm原価ではなく、実際のhead/root/usage分を再加算する必要がある。S3処理回数はこの分類で変わらない。既存raw測定を上書きしない。
+- 実保存量は11:39Z時点の保全baselineから集計: 現在保持する写真object50件で43,611,748B、平均872,234.96B、中央値886,687B。旧コピーを含み、最新datasetの26写真や将来の平均とは区別する。全record課金対象43,756,122B。証拠`current-saved-photo-size-observation.json`。
+
 - 依頼: 月額980円を維持し、アプリ組込み、容量制限、復元を完了する。現在の写真原本・動画の対象外方針は拡張しない。追加の有料契約・枠増額は事前説明する。
 - base: `2c4843801118f7dc0b27a9be5555d952765ff2bd`。前段のowner capture修正、617件backend等の成功は当時の入力へ帰属させて保持する。
 - 最初の診断候補: `0974fa4`、2026-10-18T09:18:58Z。製品変更前に実PhotoMemoryNoteStoreで36,500件の21文字/500文字をread/edit/reopenし、欠落・他記録の書換え・経過時間・peak RSSを確認する。生成した架空データだけを使用する。独立レビューを受け、fixture生成とは別のprocessで各caseを計測する。診断workflowだけで`-O`と専用flagを使い、通常verifierの既存チェックには大容量計測を追加しない。

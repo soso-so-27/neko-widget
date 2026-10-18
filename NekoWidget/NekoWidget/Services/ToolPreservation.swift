@@ -192,6 +192,11 @@ enum ToolBackupTree {
         guard node.snapshotID.uuidString.lowercased() == part.snapshotId else { throw ToolBackupError.invalid }
         _ = try node.summary(); return node
     }
+    static func validateChild(_ part: ToolBackupPart, expected: Child) throws {
+        guard part.snapshotId == expected.snapshotID.uuidString.lowercased(), part.sha256 == expected.sha256 else { throw ToolBackupError.invalid }
+        let node = try decode(part)
+        guard node.prefix == expected.prefix, try node.summary() == expected.summary else { throw ToolBackupError.invalid }
+    }
     static func flatten(_ parts: [ToolBackupPart], root: UUID) throws -> [ToolBackupIndex.File] {
         guard !parts.isEmpty, parts.count <= 8192 else { throw ToolBackupError.capacity }
         var nodes: [UUID: (Node, ToolBackupPart)] = [:]
@@ -260,9 +265,94 @@ enum ToolBackupTree {
     }
 }
 
+/// Disposable metadata, authenticated by the fresh root and each parent edge.
+/// A receipt never establishes that the complete tree or its files are present.
+enum ToolBackupTreeReceipts {
+    // A 128 KiB wire node becomes at most 174,764 base64 bytes. JSON can
+    // escape each slash, doubling that string; reserve another 16 KiB for
+    // the bounded owner/root binding and part envelope. Wire limits stay put.
+    static let maximumBytes = 2 * (((128 * 1024 + 2) / 3) * 4) + 16 * 1024
+    struct Binding: Codable, Equatable, Sendable {
+        let owner: String
+        let rootID: UUID
+        let rootSHA256: String
+    }
+    private struct Receipt: Codable {
+        let version: Int
+        let binding: Binding
+        let part: ToolBackupPart
+    }
+    static func binding(owner: String, root: ToolBackupPart) throws -> Binding {
+        let node = try ToolBackupTree.decode(root)
+        guard !owner.isEmpty, node.prefix.isEmpty else { throw ToolBackupError.invalid }
+        return Binding(owner: owner, rootID: node.snapshotID, rootSHA256: root.sha256)
+    }
+    static func encode(_ part: ToolBackupPart, binding: Binding, child: ToolBackupTree.Child) throws -> Data {
+        try ToolBackupTree.validateChild(part, expected: child)
+        guard try JSONEncoder().encode(binding).count <= 8192 else { throw ToolBackupError.capacity }
+        let bytes = try JSONEncoder().encode(Receipt(version: 1, binding: binding, part: part))
+        guard bytes.count <= maximumBytes else { throw ToolBackupError.capacity }
+        return bytes
+    }
+    static func cached(_ bytes: Data?, binding: Binding, child: ToolBackupTree.Child) -> ToolBackupPart? {
+        guard let bytes, bytes.count <= maximumBytes, let receipt = try? JSONDecoder().decode(Receipt.self, from: bytes),
+              receipt.version == 1, receipt.binding == binding,
+              (try? ToolBackupTree.validateChild(receipt.part, expected: child)) != nil else { return nil }
+        return receipt.part
+    }
+}
+
 /// Each backup is a new, private directory. Restoring never writes a live tool
 /// store or performs name-based identity matching. Only a completed index is listed.
 enum ToolBackupFiles {
+    private static let treeCacheLock = NSLock()
+    private static var treeCacheDirectory: URL { root.appendingPathComponent("index-node-cache-v4", isDirectory: true) }
+    private static func treeCacheFolder() throws -> URL {
+        let folder = treeCacheDirectory
+        if FileManager.default.fileExists(atPath: folder.path) {
+            let attributes = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard attributes.isDirectory == true, attributes.isSymbolicLink != true else { throw ToolBackupError.invalid }
+        }
+        try protect(folder)
+        return folder
+    }
+    private static func treeCacheBinding(_ folder: URL) -> ToolBackupTreeReceipts.Binding? {
+        guard let bytes = try? read(folder.appendingPathComponent("binding.json"), maximum: 8192) else { return nil }
+        return try? JSONDecoder().decode(ToolBackupTreeReceipts.Binding.self, from: bytes)
+    }
+    static func prepareTreeCache(_ binding: ToolBackupTreeReceipts.Binding) -> Bool {
+        treeCacheLock.lock(); defer { treeCacheLock.unlock() }
+        do {
+            let folder = try treeCacheFolder()
+            if treeCacheBinding(folder) == binding { return true }
+            let entries = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            // Only this dedicated metadata directory is reset. Never traverse
+            // subdirectories or remove a pending/uploaded/restored snapshot.
+            for entry in entries {
+                let attributes = try entry.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                guard attributes.isRegularFile == true, attributes.isSymbolicLink != true,
+                      entry.lastPathComponent == "binding.json" || entry.pathExtension == "json" && UUID(uuidString: entry.deletingPathExtension().lastPathComponent) != nil else { return false }
+            }
+            for entry in entries { try FileManager.default.removeItem(at: entry) }
+            try write(JSONEncoder().encode(binding), to: folder.appendingPathComponent("binding.json"))
+            return true
+        } catch { return false }
+    }
+    static func cachedTreeNode(_ child: ToolBackupTree.Child, binding: ToolBackupTreeReceipts.Binding) -> ToolBackupPart? {
+        treeCacheLock.lock(); defer { treeCacheLock.unlock() }
+        guard let folder = try? treeCacheFolder(), treeCacheBinding(folder) == binding else { return nil }
+        let bytes = try? read(folder.appendingPathComponent(child.snapshotID.uuidString + ".json"), maximum: ToolBackupTreeReceipts.maximumBytes)
+        return ToolBackupTreeReceipts.cached(bytes, binding: binding, child: child)
+    }
+    static func cacheTreeNode(_ part: ToolBackupPart, child: ToolBackupTree.Child, binding: ToolBackupTreeReceipts.Binding) {
+        treeCacheLock.lock(); defer { treeCacheLock.unlock() }
+        // A concurrent load may select another root. Its cache wins; this
+        // loader continues remotely without mixing or growing old root files.
+        guard let folder = try? treeCacheFolder(), treeCacheBinding(folder) == binding,
+              let bytes = try? ToolBackupTreeReceipts.encode(part, binding: binding, child: child),
+              bytes.count <= ToolBackupTreeReceipts.maximumBytes else { return }
+        try? write(bytes, to: folder.appendingPathComponent(child.snapshotID.uuidString + ".json"))
+    }
     static func manifestPhotoNames(tool: String, data: Data) throws -> Set<String> {
         if tool == "PhotoMemoryNotes" {
             return Set(try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: data).notes.values.compactMap(\.photoFile))
@@ -570,17 +660,28 @@ enum ToolBackupTransfer {
         }
         let first = try ToolBackupTree.decode(root)
         guard first.prefix.isEmpty else { throw ToolBackupError.invalid }
+        try await client.requireSessionCheckpoint(checkpoint)
+        let binding = try ToolBackupTreeReceipts.binding(owner: checkpoint.ownerID, root: root)
+        let useCache = ToolBackupFiles.prepareTreeCache(binding)
         var parts: [ToolBackupPart] = [], visited = Set<UUID>()
         func collect(_ part: ToolBackupPart) async throws {
             let node = try ToolBackupTree.decode(part)
             guard visited.insert(node.snapshotID).inserted, visited.count <= 8192 else { throw ToolBackupError.invalid }
             for child in node.children ?? [] {
                 try await client.requireSessionCheckpoint(checkpoint)
-                let found = try await client.detail(child.snapshotID, checkpoint: checkpoint).record
-                guard found.revision == 1, let childPart = found.document.toolBackup,
-                      childPart.sha256 == child.sha256 else { throw ToolBackupError.invalid }
-                let decoded = try ToolBackupTree.decode(childPart)
-                guard decoded.prefix == child.prefix, try decoded.summary() == child.summary else { throw ToolBackupError.invalid }
+                let childPart: ToolBackupPart
+                if useCache, let cached = ToolBackupFiles.cachedTreeNode(child, binding: binding) { childPart = cached }
+                else {
+                    let childID = child.snapshotID
+                    let found = try await waitingForRateLimit(client: client, checkpoint: checkpoint) {
+                        try await client.detail(childID, checkpoint: checkpoint)
+                    }.record
+                    guard found.revision == 1, let part = found.document.toolBackup else { throw ToolBackupError.invalid }
+                    try ToolBackupTree.validateChild(part, expected: child)
+                    try await client.requireSessionCheckpoint(checkpoint)
+                    if useCache { ToolBackupFiles.cacheTreeNode(part, child: child, binding: binding) }
+                    childPart = part
+                }
                 try await collect(childPart)
             }
             parts.append(part)

@@ -71,7 +71,86 @@ import Foundation
         try require(Set(next.files.dropFirst().flatMap(\.records)) == Set(tree.files.dropFirst().flatMap(\.records)), "one edit replaced unchanged photo records")
         let wireBytes = next.nodes!.filter { !Set(next.reusedNodes!).contains(UUID(uuidString: $0.snapshotId)!) }
             .reduce(0) { $0 + Data(base64Encoded: $1.payload)!.count }
-        print("TREE_PROBE files=\(next.files.count) nodes=\(next.nodes!.count) reused_nodes=\(next.reusedNodes!.count) changed_index_bytes=\(wireBytes)")
+        let receiptBytes = try encoder.encode(next).count
+        // Saved adds the owner/source envelope around this hydrated index.
+        // Reserve ample room without mistaking wire-root bytes for receipt size.
+        try require(receiptBytes + 8192 <= ToolBackupIndex.maximumReceiptBytes, "large hydrated receipt exceeds local cache reader")
+        print("TREE_PROBE files=\(next.files.count) nodes=\(next.nodes!.count) reused_nodes=\(next.reusedNodes!.count) changed_index_bytes=\(wireBytes) index_receipt_bytes=\(receiptBytes) receipt_envelope_reserve=8192")
+        stage = "validated partial tree receipts"
+        let rootPart = next.nodes!.last!
+        let binding = try ToolBackupTreeReceipts.binding(owner: "synthetic-owner", root: rootPart)
+        let byID = Dictionary(uniqueKeysWithValues: next.nodes!.map { (UUID(uuidString: $0.snapshotId)!, $0) })
+        let edges = try next.nodes!.flatMap { try ToolBackupTree.decode($0).children ?? [] }
+        try require(edges.count == next.nodes!.count - 1 && edges.count > 30, "receipt fixture needs more than one rate window")
+        var receipts: [UUID: Data] = [:]
+        for child in edges.prefix(7) {
+            receipts[child.snapshotID] = try ToolBackupTreeReceipts.encode(byID[child.snapshotID]!, binding: binding, child: child)
+        }
+        var reads = 0
+        func hydrate(_ part: ToolBackupPart) throws {
+            for child in try ToolBackupTree.decode(part).children ?? [] {
+                let found: ToolBackupPart
+                if let cached = ToolBackupTreeReceipts.cached(receipts[child.snapshotID], binding: binding, child: child) { found = cached }
+                else {
+                    reads += 1
+                    found = byID[child.snapshotID]!
+                    receipts[child.snapshotID] = try ToolBackupTreeReceipts.encode(found, binding: binding, child: child)
+                }
+                try hydrate(found)
+            }
+        }
+        try hydrate(rootPart)
+        try require(reads == edges.count - 7, "partial receipts were not reused")
+        reads = 0
+        try hydrate(rootPart)
+        try require(reads == 0, "completed node receipts were fetched again")
+        let child = edges[0], good = receipts[edges[0].snapshotID]!
+        for other in [ToolBackupTreeReceipts.Binding(owner: "another-owner", rootID: binding.rootID, rootSHA256: binding.rootSHA256),
+                      .init(owner: binding.owner, rootID: UUID(), rootSHA256: binding.rootSHA256),
+                      .init(owner: binding.owner, rootID: binding.rootID, rootSHA256: String(repeating: "0", count: 64))] {
+            try require(ToolBackupTreeReceipts.cached(good, binding: other, child: child) == nil, "receipt crossed owner/root/hash")
+        }
+        try require(ToolBackupTreeReceipts.cached(nil, binding: binding, child: child) == nil, "missing receipt accepted")
+        receipts[child.snapshotID] = Data("broken receipt".utf8)
+        reads = 0; try hydrate(rootPart)
+        try require(reads == 1, "corrupt receipt did not refetch exactly its node")
+        var tampered = try JSONSerialization.jsonObject(with: good) as! [String: Any]
+        var tamperedPart = tampered["part"] as! [String: Any]
+        tamperedPart["payload"] = "e30="
+        tampered["part"] = tamperedPart
+        receipts[child.snapshotID] = try JSONSerialization.data(withJSONObject: tampered)
+        reads = 0; try hydrate(rootPart)
+        try require(reads == 1, "tampered receipt did not refetch exactly its node")
+        let wrongEdge = ToolBackupTree.Child(prefix: child.prefix + "0", snapshotID: child.snapshotID, sha256: child.sha256,
+            fileCount: child.fileCount, toolMask: child.toolMask, manifestMask: child.manifestMask, nodeCount: child.nodeCount)
+        try require(ToolBackupTreeReceipts.cached(good, binding: binding, child: wrongEdge) == nil, "receipt ignored parent edge")
+        // JSON whitespace reaches the wire ceiling without changing the node
+        // schema. Authenticate its new hash through a matching fresh root.
+        let rootNode = try ToolBackupTree.decode(rootPart)
+        var largeChildren = rootNode.children!
+        let largeEdge = largeChildren[0]
+        var largePart = byID[largeEdge.snapshotID]!
+        var largeWire = Data(base64Encoded: largePart.payload)!
+        largeWire.append(Data(repeating: 0x20, count: 128 * 1024 - largeWire.count))
+        largePart.payload = largeWire.base64EncodedString(); largePart.sha256 = ToolBackupIndex.hash(largeWire)
+        largeChildren[0] = .init(prefix: largeEdge.prefix, snapshotID: largeEdge.snapshotID, sha256: largePart.sha256,
+            fileCount: largeEdge.fileCount, toolMask: largeEdge.toolMask, manifestMask: largeEdge.manifestMask, nodeCount: largeEdge.nodeCount)
+        let largeRootNode = ToolBackupTree.Node(version: 4, snapshotID: rootNode.snapshotID, uploadSnapshotID: rootNode.uploadSnapshotID,
+            createdAt: rootNode.createdAt, prefix: "", files: nil, children: largeChildren, previousIndexID: rootNode.previousIndexID)
+        let largeRootWire = try encoder.encode(largeRootNode)
+        var largeRoot = rootPart
+        largeRoot.payload = largeRootWire.base64EncodedString(); largeRoot.sha256 = ToolBackupIndex.hash(largeRootWire)
+        let largeBinding = try ToolBackupTreeReceipts.binding(owner: binding.owner, root: largeRoot)
+        let largeReceipt = try ToolBackupTreeReceipts.encode(largePart, binding: largeBinding, child: largeChildren[0])
+        try require(largeReceipt.count <= ToolBackupTreeReceipts.maximumBytes &&
+                    ToolBackupTreeReceipts.cached(largeReceipt, binding: largeBinding, child: largeChildren[0]) == largePart,
+                    "near-limit wire node could not round-trip through receipt")
+        let escapedPayloadBytes = try JSONEncoder().encode(String(repeating: "/", count: largePart.payload.utf8.count)).count
+        try require(escapedPayloadBytes + 8192 < ToolBackupTreeReceipts.maximumBytes, "receipt bound omits worst-case JSON escaping")
+        try require(ToolBackupTreeReceipts.cached(Data(repeating: 0x20, count: ToolBackupTreeReceipts.maximumBytes + 1),
+            binding: binding, child: child) == nil, "oversized receipt accepted")
+        print("TREE_RECEIPT_LIMIT_PROBE wire_bytes=\(largeWire.count) receipt_bytes=\(largeReceipt.count) maximum_receipt_bytes=\(ToolBackupTreeReceipts.maximumBytes)")
+        print("TREE_RECEIPT_PROBE child_nodes=\(edges.count) partial_reused=7 complete_remote_reads=0 corrupt_refetch=1 tampered_refetch=1 owner_root_hash_isolated=true")
         var missing = next; missing.nodes!.removeFirst()
         do { try missing.validate(); throw Failure.invalid("missing tree node accepted") }
         catch is ToolBackupError { }

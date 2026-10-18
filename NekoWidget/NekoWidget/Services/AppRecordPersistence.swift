@@ -1239,6 +1239,12 @@ private actor AppRecordFixtureServer {
     var abandoned = Set<UUID>()
     var requests = 0
     var photoPuts = 0
+    private var indexReads: [UUID: Int] = [:]
+    private var indexRateLimitCountdown: Int?
+    private var indexRateLimitResponses = 0
+    func indexReadCounts() -> [UUID: Int] { indexReads }
+    func rateLimitIndexOnce(after successfulReads: Int) { indexRateLimitCountdown = successfulReads }
+    func indexRateLimits() -> Int { indexRateLimitResponses }
     private var cancelNextDeletion = false
     private var cancelNextHead = false
     private var cleanupCommit: (@Sendable () throws -> Void)?
@@ -1341,6 +1347,17 @@ private actor AppRecordFixtureServer {
             return try response(["recordId": id.uuidString.lowercased(), "revision": (old["revision"] as! Int) + 1])
         }
         guard let record = records[id] else { return try failure("RECORD_NOT_FOUND", 404) }
+        if let document = record["document"] as? [String: Any],
+           let part = document["toolBackup"] as? [String: Any], part["kind"] as? String == "index" {
+            indexReads[id, default: 0] += 1
+            if let remaining = indexRateLimitCountdown {
+                if remaining == 0 {
+                    indexRateLimitCountdown = nil; indexRateLimitResponses += 1
+                    return try failure("RATE_LIMITED", 429)
+                }
+                indexRateLimitCountdown = remaining - 1
+            }
+        }
         return try response(record)
     }
 }
@@ -1393,8 +1410,12 @@ private final class AppRecordFixture {
         await persistence.retry()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
         let head = try AppRecordHead.decode(await client.detail(headID).document)
+        let beforeWarmRead = await server.indexReadCounts()
         let index = try await ToolBackupTransfer.loadIndex(client.detail(head.snapshotID).record, client: client)
+        let afterWarmRead = await server.indexReadCounts()
         guard index.version == 4, (index.nodes?.count ?? 0) > 1,
+              afterWarmRead[head.snapshotID, default: 0] == beforeWarmRead[head.snapshotID, default: 0] + 1,
+              afterWarmRead.filter({ $0.key != head.snapshotID }) == beforeWarmRead.filter({ $0.key != head.snapshotID }),
               index.files.contains(where: { $0.path.hasSuffix(".json") && $0.path != "PhotoMemoryNotes/state.json" && $0.path.hasPrefix("PhotoMemoryNotes/") }),
               index.files.first(where: { $0.path == "PhotoMemoryNotes/" + name }) == oldIndex.files.first(where: { $0.path == "PhotoMemoryNotes/" + name }).map({ file in
                   var value = file; value.sourceSnapshotID = value.sourceSnapshotID ?? oldIndex.snapshotID; return value
@@ -1412,6 +1433,50 @@ private final class AppRecordFixture {
         persistence.setActive(false)
         try AppRecordDataset.nextFixtureDevice()
         let next = AppRecordFixture(configuration: configuration, server: server, profiles: profiles)
+        // The new device has neither the upload receipt nor restored contents.
+        // Interrupt the production 429 wait, then reuse only verified metadata
+        // from the same owner and freshly fetched root on the next attempt.
+        let nextClient = next.authenticationClient()
+        let latestHead = try AppRecordHead.decode(await nextClient.detail(headID).document)
+        let rootRecord = try await nextClient.detail(latestHead.snapshotID).record
+        let coldBefore = await server.indexReadCounts()
+        await server.rateLimitIndexOnce(after: 3)
+        Self.preparationPhase = "一覧の通信待ちを中断"
+        let interrupted = Task { try await ToolBackupTransfer.loadIndex(rootRecord, client: nextClient) }
+        for _ in 0..<100 {
+            if await server.indexRateLimits() == 1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard await server.indexRateLimits() == 1 else {
+            interrupted.cancel(); throw ToolBackupError.invalid
+        }
+        interrupted.cancel()
+        do { _ = try await interrupted.value; throw ToolBackupError.invalid }
+        catch is CancellationError { }
+        let interruptedReads = await server.indexReadCounts()
+        let readIDs = interruptedReads.keys.filter { interruptedReads[$0, default: 0] > coldBefore[$0, default: 0] }
+        guard readIDs.count == 4 else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "一覧を続きから再開して通信制限を待つ"
+        let freshRoot = try await nextClient.detail(latestHead.snapshotID).record
+        await server.rateLimitIndexOnce(after: 2)
+        let resumed = try await ToolBackupTransfer.loadIndex(freshRoot, client: nextClient)
+        let resumedReads = await server.indexReadCounts()
+        // Three successful reads survive cancellation. The failed fourth read
+        // is fetched again; the second 429 is retried by the real 60s policy.
+        guard await server.indexRateLimits() == 2,
+              readIDs.filter({ resumedReads[$0] == interruptedReads[$0] }).count == 3,
+              resumed.version == 4, resumed.snapshotID == latestHead.snapshotID else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "壊れた一覧の一部分だけを再取得"
+        let damagedID = readIDs.first!
+        let damagedReceipt = ToolBackupFiles.root.appendingPathComponent("index-node-cache-v4/" + damagedID.uuidString + ".json")
+        try ToolBackupFiles.write(Data("broken fixture receipt".utf8), to: damagedReceipt)
+        let repaired = try await ToolBackupTransfer.loadIndex(nextClient.detail(latestHead.snapshotID).record, client: nextClient)
+        let repairedReads = await server.indexReadCounts()
+        guard repaired == resumed,
+              repairedReads[damagedID, default: 0] == resumedReads[damagedID, default: 0] + 1,
+              repairedReads[latestHead.snapshotID, default: 0] == resumedReads[latestHead.snapshotID, default: 0] + 1,
+              repairedReads.filter({ $0.key != damagedID && $0.key != latestHead.snapshotID }) == resumedReads.filter({ $0.key != damagedID && $0.key != latestHead.snapshotID }) else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "検証済みの一覧から新しい端末へ復元"
         await next.persistence.enable()
         guard next.persistence.title == "復元しました" else {
             Self.preparationPhase += " / \(next.persistence.title) / \(next.persistence.detail ?? "説明なし")"
