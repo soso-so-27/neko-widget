@@ -1701,7 +1701,7 @@ struct AppRecordPersistenceFixtureView: View {
                     let probe = try await AppRecordFixture.make()
                     try await probe.verifyPartitionedMigrationAndRestore()
                     result = "容量対応・旧形式の移行・写真とメモの復元を確認しました"
-                } catch { result = "容量の検査に失敗: \(AppRecordFixture.preparationPhase) / \(error)" }
+                } catch { result = "容量の検査に失敗: \(AppRecordFixture.preparationPhase)" }
                 return
             }
             if CommandLine.arguments.contains("--app-records-cleanup-probe") {
