@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 // macOS: xcrun --sdk macosx swiftc -parse-as-library \
 //   NekoWidget/Services/PhotoMemoryNoteStore.swift \
@@ -25,7 +28,45 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesRecordsAndContext(at: root.appendingPathComponent("records/state.json"))
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
+        try await measuresLongTermStore(at: root.appendingPathComponent("long-term"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
+    }
+
+    // Exercise the shipping store before choosing a partitioning strategy.
+    // Synthetic notes only; macOS timings/RSS are not an iPhone UI claim.
+    private static func measuresLongTermStore(at root: URL) async throws {
+        struct Fixture: Encodable { let schemaVersion = 4; let notes: [String: PhotoMemoryNote] }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for length in [21, 500] {
+            let url = root.appendingPathComponent("state-\(length).json")
+            let count = 36_500
+            let text = String(repeating: "猫", count: length)
+            var notes: [String: PhotoMemoryNote] = [:]
+            for i in 0..<count {
+                notes["synthetic-photo-\(i)"] = PhotoMemoryNote(text: text, updatedAt: Date(timeIntervalSince1970: 1_800_000_000), revision: UUID().uuidString)
+            }
+            let selected = notes["synthetic-photo-18250"]!
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let initial = try encoder.encode(Fixture(notes: notes))
+            let bytes = initial.count
+            try initial.write(to: url, options: .atomic)
+            notes.removeAll()
+            let started = Date()
+            let store = PhotoMemoryNoteStore(fileURL: url)
+            let loaded = try await store.note(for: "synthetic-photo-18250")
+            try require(loaded == selected, "long-term read changed a note")
+            _ = try await store.save(text: "犬" + String(text.dropFirst()), for: "synthetic-photo-18250", expectedRevision: selected.revision)
+            let reopened = PhotoMemoryNoteStore(fileURL: url)
+            let records = try await reopened.records()
+            try require(records.count == count, "long-term edit/reopen lost records")
+            try require(records.filter { $0.note.text != text }.count == 1, "long-term edit changed another record")
+            var peak: Int64 = -1
+#if canImport(Darwin)
+            var usage = rusage()
+            if getrusage(RUSAGE_SELF, &usage) == 0 { peak = Int64(usage.ru_maxrss) }
+#endif
+            print("CAPACITY_PROBE notes=\(count) characters=\(length) bytes=\(bytes) read_edit_reopen_seconds=\(Date().timeIntervalSince(started)) process_peak_rss_bytes=\(peak)")
+        }
     }
 
     private static func verifiesLibraryScopeAndOrdering() throws {
