@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import CryptoKit
 import StoreKit
 import AuthenticationServices
 import ImageIO
@@ -668,6 +669,9 @@ final class AppRecordPersistence: ObservableObject {
         do {
             guard var value = try binding(), value.enabled else { title = "自動保存は未設定です"; return }
             try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
+            // Every live store commit and foreground entry requests work. An
+            // idle timer must not reassemble years of notes every eight seconds.
+            guard requested || value.pending != nil || !(value.retiring ?? []).isEmpty || waitingForEditor else { return }
             let currentFingerprint = try AppRecordDataset.fingerprint()
             if waitingForEditor, currentFingerprint == value.fingerprint {
                 // A long editing session must not poll the server every eight

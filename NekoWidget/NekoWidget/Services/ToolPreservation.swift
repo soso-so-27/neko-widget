@@ -484,7 +484,10 @@ enum ToolBackupFiles {
                 payload: photo ? "" : bytes.base64EncodedString())
         }
     }
-    static func drafts(_ saved: Saved) throws -> [Draft] {
+    static func drafts(_ saved: Saved) throws -> [(UUID, ToolBackupPart)] {
+        try preparedParts(saved).map { ($0.id, try $0.load(saved)) }
+    }
+    static func preparedParts(_ saved: Saved) throws -> [Draft] {
         try saved.index.validate()
         var result: [Draft] = []
         for file in saved.index.files {
@@ -635,7 +638,7 @@ enum ToolBackupTransfer {
         let id = try JSONDecoder().decode(UUID.self, from: ToolBackupFiles.read(attemptURL, maximum: 128))
         var sent = try ToolBackupFiles.sent(saved)
         if sent.contains(id) { return }
-        guard let expected = try ToolBackupFiles.drafts(saved).first(where: { $0.id == id })?.load(saved) else { throw ToolBackupError.invalid }
+        guard let expected = try ToolBackupFiles.preparedParts(saved).first(where: { $0.id == id })?.load(saved) else { throw ToolBackupError.invalid }
         do {
             let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
             guard snapshot.record.revision == 1, snapshot.document.toolBackup == expected else { throw ToolBackupError.invalid }
@@ -770,7 +773,7 @@ enum ToolBackupTransfer {
                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
         let checkpoint = try await client.captureSessionCheckpoint()
         guard try await client.sessionOwnerID() == saved.owner else { throw ManagedPreservationError.staleSession }
-        let pieces = try ToolBackupFiles.drafts(saved)
+        let pieces = try ToolBackupFiles.preparedParts(saved)
         let attemptURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("attempt.json")
         var sent = try ToolBackupFiles.sent(saved)
         guard sent.isSubset(of: Set(pieces.map(\.id))) else { throw ToolBackupError.invalid }

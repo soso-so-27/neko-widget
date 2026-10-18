@@ -1373,7 +1373,7 @@ final class ManagedPreservationExportPageFile: @unchecked Sendable {
                   header["type"] as? String == "header", Self.integer(header["version"]) == 1,
                   let actualGeneration = Self.integer(header["generation"]), actualGeneration >= 0,
                   generation == nil || generation == actualGeneration,
-                  let total = Self.integer(header["totalRecords"]), (0...1000).contains(total) else {
+                  let total = Self.integer(header["totalRecords"]), (0...200_000).contains(total) else {
                 throw ManagedPreservationError.invalidResponse
             }
             self.generation = actualGeneration; self.totalRecords = total
