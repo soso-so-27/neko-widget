@@ -6,6 +6,11 @@ import Foundation
         guard try value() else { throw Failure.invalid(message) }
     }
     static func main() throws {
+        do { try run() }
+        catch { FileHandle.standardError.write(Data("PARTITION_FAILURE stage=\(stage) error=\(error)\n".utf8)); throw error }
+    }
+    nonisolated(unsafe) static var stage = "local chunks"
+    static func run() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("partitioned-records-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -46,12 +51,15 @@ import Foundation
             files.append(.init(path: "PhotoMemoryNotes/\(id.uuidString).jpg", bytes: 128, sha256: String(repeating: "a", count: 64), records: [UUID()]))
         }
         let firstID = UUID()
+        stage = "first tree build"
         let tree = try ToolBackupTree.build(.init(version: 4, snapshotID: firstID, createdAt: Date(), files: files), previous: nil)
         try require(tree.files.count == 36_501 && tree.nodes!.count > 1, "large tree lost files")
+        stage = "tree receipt round trip"
         let decoded = try JSONDecoder().decode(ToolBackupIndex.self, from: encoder.encode(tree))
         try decoded.validate()
         var changedFiles = tree.files
         changedFiles[0] = .init(path: changedFiles[0].path, bytes: 3, sha256: ToolBackupIndex.hash(Data("{ }".utf8)), records: [UUID()])
+        stage = "edited tree build"
         let next = try ToolBackupTree.build(.init(version: 4, snapshotID: UUID(), createdAt: Date(), files: changedFiles), previous: tree)
         try require(next.reusedNodes!.count >= tree.nodes!.count - 4, "one edit rebuilt most index nodes")
         try require(Set(next.files.dropFirst().flatMap(\.records)) == Set(tree.files.dropFirst().flatMap(\.records)), "one edit replaced unchanged photo records")
@@ -61,6 +69,7 @@ import Foundation
         var missing = next; missing.nodes!.removeFirst()
         do { try missing.validate(); throw Failure.invalid("missing tree node accepted") }
         catch is ToolBackupError { }
+        stage = "shared server wire golden"
         let goldenURL = URL(fileURLWithPath: CommandLine.arguments[1])
         let goldenData = try Data(contentsOf: goldenURL)
         let golden = ToolBackupPart(snapshotId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", kind: "index", path: "index.json", part: 0, count: 1,
