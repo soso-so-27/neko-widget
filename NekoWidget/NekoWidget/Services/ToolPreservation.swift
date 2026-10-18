@@ -147,11 +147,12 @@ enum ToolBackupTree {
         var summary: Summary { .init(fileCount: fileCount, toolMask: toolMask, manifestMask: manifestMask, nodeCount: nodeCount) }
     }
     struct Node: Codable, Equatable {
-        let version: Int; let snapshotID: UUID; let createdAt: Date; let prefix: String
+        let version: Int; let snapshotID: UUID; let uploadSnapshotID: UUID; let createdAt: Date; let prefix: String
         let files: [ToolBackupIndex.File]?; let children: [Child]?; let previousIndexID: UUID?
         func summary() throws -> Summary {
             guard version == 4, prefix.count <= 64, prefix.allSatisfy({ "0123456789abcdef".contains($0) }),
-                  createdAt.timeIntervalSince1970.isFinite, previousIndexID != snapshotID else { throw ToolBackupError.invalid }
+                  createdAt.timeIntervalSince1970.isFinite, previousIndexID != snapshotID,
+                  !prefix.isEmpty || uploadSnapshotID == snapshotID else { throw ToolBackupError.invalid }
             if let files {
                 guard children == nil, !files.isEmpty, files.count <= 128,
                       files.reduce(0, { $0 + $1.records.count }) <= 256 else { throw ToolBackupError.invalid }
@@ -227,7 +228,7 @@ enum ToolBackupTree {
         func buildNode(_ files: [ToolBackupIndex.File], prefix: String) throws -> Child {
             let old = prior[prefix]
             let id = prefix.isEmpty ? input.snapshotID : UUID()
-            let leaf = Node(version: 4, snapshotID: id, createdAt: input.createdAt, prefix: prefix,
+            let leaf = Node(version: 4, snapshotID: id, uploadSnapshotID: input.snapshotID, createdAt: input.createdAt, prefix: prefix,
                 files: files.sorted { $0.path < $1.path }, children: nil,
                 previousIndexID: old?.0.files != nil ? old?.0.snapshotID : previous?.version == 3 ? previous?.snapshotID : nil)
             let node: Node
@@ -236,7 +237,7 @@ enum ToolBackupTree {
                 guard prefix.count < 64 else { throw ToolBackupError.capacity }
                 let grouped = Dictionary(grouping: files) { String(ToolBackupIndex.hash(Data($0.path.utf8)).prefix(prefix.count + 1)) }
                 let children = try grouped.keys.sorted().map { try buildNode(grouped[$0]!, prefix: $0) }
-                node = Node(version: 4, snapshotID: id, createdAt: input.createdAt, prefix: prefix, files: nil, children: children, previousIndexID: nil)
+                node = Node(version: 4, snapshotID: id, uploadSnapshotID: input.snapshotID, createdAt: input.createdAt, prefix: prefix, files: nil, children: children, previousIndexID: nil)
             }
             let part: ToolBackupPart
             if !prefix.isEmpty, let old, old.0.files == node.files, old.0.children == node.children {

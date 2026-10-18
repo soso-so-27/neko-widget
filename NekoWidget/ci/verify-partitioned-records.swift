@@ -54,6 +54,7 @@ import Foundation
         stage = "first tree build"
         let tree = try ToolBackupTree.build(.init(version: 4, snapshotID: firstID, createdAt: Date(), files: files), previous: nil)
         try require(tree.files.count == 36_501 && tree.nodes!.count > 1, "large tree lost files")
+        try require(try tree.nodes!.allSatisfy { try ToolBackupTree.decode($0).uploadSnapshotID == firstID }, "initial upload membership missing")
         stage = "tree receipt round trip"
         let decoded = try JSONDecoder().decode(ToolBackupIndex.self, from: encoder.encode(tree))
         try decoded.validate()
@@ -62,6 +63,11 @@ import Foundation
         stage = "edited tree build"
         let next = try ToolBackupTree.build(.init(version: 4, snapshotID: UUID(), createdAt: Date(), files: changedFiles), previous: tree)
         try require(next.reusedNodes!.count >= tree.nodes!.count - 4, "one edit rebuilt most index nodes")
+        let reusedIDs = Set(next.reusedNodes!)
+        for part in next.nodes! {
+            let node = try ToolBackupTree.decode(part)
+            try require(node.uploadSnapshotID == (reusedIDs.contains(node.snapshotID) ? firstID : next.snapshotID), "upload membership changed on reused node")
+        }
         try require(Set(next.files.dropFirst().flatMap(\.records)) == Set(tree.files.dropFirst().flatMap(\.records)), "one edit replaced unchanged photo records")
         let wireBytes = next.nodes!.filter { !Set(next.reusedNodes!).contains(UUID(uuidString: $0.snapshotId)!) }
             .reduce(0) { $0 + Data(base64Encoded: $1.payload)!.count }

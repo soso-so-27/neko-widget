@@ -42,7 +42,7 @@ class ToolsReviewContracts(unittest.TestCase):
     def test_name_validation_does_not_change_persistent_schema_acceptance(self):
         store = source("VeterinaryVisitStore.swift")
         self.assertIn('guard Self.isValidCatName(catName) else { throw VeterinaryVisitError.invalidName }', store)
-        self.assertIn('guard state.visits.count < 100 else { throw VeterinaryVisitError.visitLimit }', store)
+        self.assertIn('guard state.visits.count < 36_500 else { throw VeterinaryVisitError.visitLimit }', store)
         self.assertIn('guard Self.validName(visit.catName)', store)
         self.assertIn('private static func validName(_ name: String) -> Bool { !name.isEmpty', store)
         view = source("VeterinaryVisitView.swift")
@@ -50,7 +50,8 @@ class ToolsReviewContracts(unittest.TestCase):
         verifier = (ROOT / "ci/verify-veterinary-visits.swift").read_text(encoding="utf-8")
         self.assertIn('Legacy whitespace name became unreadable', verifier)
         self.assertIn('Invalid name changed records', verifier)
-        self.assertIn('Visit limit changed records', verifier)
+        self.assertIn('The former 100-visit ceiling still blocked a new visit', verifier)
+        self.assertIn('Capacity migration changed prior visits', verifier)
 
     def test_lost_cat_cleanup_is_owned_and_wired_without_legacy_file_deletion(self):
         renderer = source("CatPreparednessStore.swift").split('enum LostCatFlyerRenderer', 1)[1]
