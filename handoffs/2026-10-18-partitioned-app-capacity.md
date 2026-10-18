@@ -2,6 +2,7 @@
 
 ## 2026-10-19 長期容量のクラウド反映・配布結果
 
+- 19日07:16 JST、利用者が「263に更新できた。今から確認できる」と回答。独立レビュー済み固定adapterが新しい同owner/epoch/link/会員資格・worker閉包・削除intentなし/全旧26列を再読取し、07:21:40に受付日時2列だけを単発CASで更新、1行/完全読戻しを確認した。期限は同日09:21:40 JST、残56 PUT/88,591,059B、53 mutation/86,993,619Bの補充なし。新契約/予算増額/新規owner/定期変更は0。既存SQLite12件を保持、adapter局所3境界成功。証拠は外部`intake-window/activation-20261018T221616Z/{approval,plan,review,completion}.json`。07:22の読取は旧head revision4、保存43,756,122B/予約0/参照欠落0、読み取り中のinventory一致。263の新v4送信・復元の成功とはしない。以下の「受付未延長」はこの再開前の履歴。
 - 月額980円を維持。追加契約・料金プラン変更・一般公開・新規owner受付・定期タスクの作成/再実行は0。保存対象は写真メモ、ツール入力と添付写真、猫情報。写真ライブラリ全体、写真原本、動画のバックアップではない。
 - 19日06:54頃JST、AWS CLI接続は失効していたが、同account164892691568の既存ログイン済みブラウザでcreditsを明示再読込し、推定119.24USD/確定119.81USD、当月0.57USD、FREE planを確認した。推定値は約24時間更新の遅延があり、瞬時の全原価とはしない。CLI再ログインや料金変更は不要だった。根拠は外部`aws-browser-cost-observation.json`。
 - クラウドは既存73recordを保全し、0042〜0046、削除reader→archive writerの順で反映。live code hash、ACK、独立usage集計が一致。owner 50GiB/200,000 live records、global100GiBの3設定を変更した。証拠: `C:/dev/neko-evidence/automatic-test-20261018/partitioned-cloud-20261018T211114Z/execution/completion.json`。旧「未配備/1GiB/200record」の記載は以下の過去時点の記録として保持する。
