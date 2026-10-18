@@ -12494,6 +12494,27 @@ class PartitionedCapacitySelectionTests(unittest.TestCase):
                 git("rm", note); deleted = commit("handoff removal")
                 self.assertFalse(planner.partitioned_capacity_inputs(paths + [note], approved, deleted))
 
+    def test_fixed_control_introduction_uses_python_checks_without_changing_product(self):
+        base, head = "a" * 40, "b" * 40
+        paths = sorted(planner.PARTITIONED_CAPACITY_CONTROLS)
+        def git(*args):
+            if args[0] == "rev-parse": return head if args[1] == "HEAD" else "same-tree"
+            if args[0] == "merge-base": return "" if "--is-ancestor" in args else base
+            if args[0] == "diff":
+                return "".join(":100644 100644 " + "c"*40 + " " + "d"*40 + " M\0" + p + "\0" for p in paths)
+            self.fail(args)
+        event = {"pull_request": {"base": {"sha": base}}}
+        env = {"GITHUB_SHA": head, "GITHUB_EVENT_NAME": "pull_request"}
+        with patch.object(planner, "git", side_effect=git):
+            self.assertTrue(planner.partitioned_capacity_control_inputs(paths, base, head))
+            self.assertEqual(planner.runtime_scope(paths, event, env), planner.ORCHESTRATION_SCOPE)
+            self.assertEqual(planner.required_jobs(paths, planner.ORCHESTRATION_SCOPE), (planner.PLAN_JOB,))
+            self.assertFalse(planner.partitioned_capacity_control_inputs(paths[:1], base, head))
+            self.assertFalse(planner.partitioned_capacity_control_inputs(paths + ["NekoWidget/Shared/X.swift"], base, head))
+            self.assertFalse(planner.partitioned_capacity_control_inputs(paths + [paths[0]], base, head))
+        with patch.object(planner, "git", side_effect=lambda *a: a[-1]):
+            self.assertFalse(planner.partitioned_capacity_control_inputs(paths, base, head))
+
     def test_unregistered_source_cannot_select_narrow_checks(self):
         with patch.object(planner, "PARTITIONED_CAPACITY_SOURCE", None):
             self.assertFalse(planner.partitioned_capacity_paths_only(["NekoWidget/example.swift"]))

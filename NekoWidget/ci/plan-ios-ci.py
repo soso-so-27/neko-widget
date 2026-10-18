@@ -6337,8 +6337,28 @@ def partitioned_capacity_inputs(paths, base, head):
         return False
 
 
+def partitioned_capacity_control_inputs(paths, base, head):
+    # This one introduction shares paths with a historical frozen controller.
+    # Its product base is exact; only the two Python controls and prose may differ.
+    try:
+        if (not paths or len(paths) != len(set(paths))
+                or source_paths(paths) != PARTITIONED_CAPACITY_CONTROLS
+                or not SHA.fullmatch(base) or not SHA.fullmatch(head)):
+            return False
+        if git("rev-parse", base + "^{tree}") != git("rev-parse", PARTITIONED_CAPACITY_BASE + "^{tree}"):
+            return False
+        git("merge-base", "--is-ancestor", "refs/remotes/origin/main", head)
+        return development_tools_only(paths, base, head, PARTITIONED_CAPACITY_CONTROLS)
+    except (OSError, subprocess.CalledProcessError, TypeError, ValueError):
+        return False
+
+
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources == PARTITIONED_CAPACITY_CONTROLS:
+        base = comparison_base(event, env)
+        if base and partitioned_capacity_control_inputs(paths, base, env["GITHUB_SHA"]):
+            return ORCHESTRATION_SCOPE
     if partitioned_capacity_paths_only(paths):
         base = comparison_base(event, env)
         return (APP_DATA_SCOPE if base and partitioned_capacity_inputs(paths, base, env["GITHUB_SHA"])
