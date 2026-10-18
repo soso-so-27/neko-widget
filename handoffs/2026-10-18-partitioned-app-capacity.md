@@ -105,3 +105,13 @@ treeのref/update総数は100万、全配列へmaterializeするcreate/entries/h
 - 固定control導入はhistorical controllerの同2pathに衝突してfullと判定されたため、exact base tree＋通常Python2files＋proseだけの入口を追加。実preflightでci-orchestration-v1/planのみを確認。独立レビュー済み。502検査中1件のmock設定誤りを直し3対象test成功、他501の成功を保持。最終CIは全development checksが実行成功。
 - クラウドは既存73recordのread-only基準と42～46の移行bundleを作成。新secret/新resource/cron/公開/新契約0、変更設定はowner50GiB・200k live records・global100GiBの3値だけ。まだremote mutation0。
 - クラウドと配布の共通資格確認helperを外部に作り、全tracked product入力のsource/candidate/current main一致・native6job・同SHAの最新owning Preservation8step成功を必須化。署名済release CLIは変更せず、独立レビューと合成境界9件＋wrapper5件成功。rootはhelper・wrapper・cloud接続差分を読み確認。実CI資格確認は後続。
+
+
+## 22時台 JST 長期利用時の端末データと復元再開
+
+- 初候補09:18:58Zからの計時を維持。最初の通常native CI39123642817/6d3c909は67.8分・runner226.583分で、BuildのDEBUG生error privacy検査だけ失敗、Photos・UI3組・runtimeの5必要jobは実成功。生error表示を確認コードだけへ修正済み。失敗を成功にせず、最終候補のnative6jobを別に要求する。backend39123642785の全8step成功は21入力閉包が完全一致する場合だけ保持する。
+- cold復元39127924738/4f72bd7は成功、18分26秒、対象UI test91.092秒。fresh rootの毎回検証、429後の60秒待機、途中取消後の3取得済node再利用、壊れたcache1nodeだけ再取得、新端末fixtureでの全メモ/写真一致と旧dataset保持を確認。端末別cacheはowner/root/hash/parent edgeで拘束する。純モデル39127911535は135秒成功、36,501file/3,840nodeのうち3,836再利用、hydrated index25,600,522B。実iPhone性能/別実機復元の成功ではない。
+- 完了uploadのpending/uploadedに全hydrated indexが各1部残る問題を確認。36,501file仮定では約51.2MB/編集となるため、古いremote rootが実404であることとsessionを確認した後、owner/rootが一致した作業用metadataだけ整理する。pending最初・uploaded最後、対象を全検証してから削除し、contents/restored.jsonや元写真・未完uploadを保持する。独立レビューにデータ損失blockerなし。通常成功時の整理であり、通信/ローカルIO例外時の残骸を別queueで再試行する処理や過去履歴の一括整理は含まない。新しい保存をこの任意整理のために止めない。
+- metadataの直接確認は既存のFoundationモデル診断で実ファイルのv3/v4、owner/root不一致、壊れたreceipt、unknown/symlink、未完upload、部分整理の再開と原本保持を実行する。約135秒の先行モデルで判断し、この追加変更だけのために19分のUI診断を重複起動しない。最終6nativeで実アプリの整理integrationを確認する。
+- AWS再ログイン後、既存164892691568のFREE plan、推定残credit119.25USD・確定残119.81USD・当月0.54USDをread-only確認。見込み値の更新遅延は残る。追加契約/料金プラン変更0。月980円、既存受付/期限/予算/公開範囲を維持する。
+- 累計360分を計画枠とし、最終native約68分＋過去upload約12分＋準備を見込む。元の時間目標内で完了したとは扱わない。実クラウド反映、内部263、実iPhone v4復元はまだ未実施。
