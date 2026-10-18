@@ -294,6 +294,7 @@ EVACUATION_SCOPE = "reviewed-evacuation-ui-v1"
 CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
 TOOL_CANDIDATE_REFRESH_SCOPE = "reviewed-tool-candidate-refresh-v1"
+JOURNAL_IDENTITY_SCOPE = "reviewed-journal-identity-v1"
 VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
 MEMBERSHIP_COPY_SCOPE = "reviewed-membership-copy-ui-v1"
 PRESERVATION_USAGE_SCOPE = "reviewed-preservation-usage-ui-v1"
@@ -775,7 +776,7 @@ TOOL_STORAGE_TESTS = TOOL_PRESERVATION_TESTS + (
     "NekoWidgetUITests/SoloMemoriesUITests/testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",
 )
 
-SCOPES = (TOOL_STORAGE_SCOPE, TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+SCOPES = (JOURNAL_IDENTITY_SCOPE, TOOL_STORAGE_SCOPE, TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REPORT_REPLY_ENTRY_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -1914,6 +1915,28 @@ def reviewed_tool_candidate_refresh_changes(changes: dict[str, tuple[str, str]])
                     for path in TOOL_CANDIDATE_REFRESH_PATHS)
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], TOOL_CANDIDATE_REFRESH_TESTS))
 
+# A single owner-bound journal filename comparison and its DEBUG/native probes.
+# Full before/after sources are pinned, including both existing owning cases.
+# No other stores, lifecycle, transfer/delete logic, UI, Widget, backend, signing,
+# dependency or workflow inputs may change in this batch. Merge controls first.
+JOURNAL_IDENTITY_DIGESTS = {
+    "NekoWidget/NekoWidget/Services/ToolPreservation.swift": ["de11bb5b1fb6191b1a4218478fc5bce867a23a0816bf02cea3661b1f1e7ee677", "b2a8bd5d6bc8a7fc9b1018f470cfbb83bd08255e466533a8cb4a4bf224253e3e"],
+    "NekoWidget/NekoWidget/Services/AppRecordPersistence.swift": ["98d7e3cfcd220b10d1932006708a5b111a97c50f51316c3e8f3173795dc04911", "839c32b5ebc88fb79a052fb7abb40403978f48aaeeaa689dbc3bf4364b948749"],
+    "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift": ["624ffc0d888552db7ad179eaee25eb9e62e92984324adbbff89f8682beb7e293", "19852592adb28d3f31df8dd4020cc9c0a2b32cb755036528ff67f354eb84646d"],
+}
+JOURNAL_IDENTITY_PATHS = frozenset(JOURNAL_IDENTITY_DIGESTS)
+JOURNAL_IDENTITY_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",
+    "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity",
+))
+
+
+def reviewed_journal_identity_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == JOURNAL_IDENTITY_PATHS
+            and all(list(map(source_digest, changes[path])) == JOURNAL_IDENTITY_DIGESTS[path]
+                    for path in JOURNAL_IDENTITY_PATHS)
+            and memory_tests_available(changes[MEMORY_TEST_PATH][1], JOURNAL_IDENTITY_TESTS))
+
 # Exact app-only identity/weight chooser batch against main 201c757.
 # No model, migration, Widget, registration or workflow changes are admitted.
 VET_SAVED_CAT_DIGESTS = {
@@ -2497,7 +2520,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH} | (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = JOURNAL_IDENTITY_PATHS | TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH} | (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -3442,6 +3465,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == JOURNAL_IDENTITY_SCOPE:
+        return bool(paths) and len(paths) == len(set(paths)) and sources == JOURNAL_IDENTITY_PATHS
     if scope == TOOL_STORAGE_SCOPE:
         return (bool(paths) and len(paths) == len(set(paths))
                 and sources in (TOOL_STORAGE_PATHS, TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH}))
@@ -3666,6 +3691,8 @@ MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == JOURNAL_IDENTITY_SCOPE:
+        return JOURNAL_IDENTITY_TESTS
     if scope == TOOL_STORAGE_SCOPE:
         return TOOL_STORAGE_TESTS
     if scope == TOOL_PRESERVATION_SCOPE:
@@ -3980,6 +4007,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_journal_identity_changes(changes):
+        return JOURNAL_IDENTITY_SCOPE
     if reviewed_membership_tools_changes(changes):
         return MEMBERSHIP_TOOLS_SCOPE
     if reviewed_tool_candidate_refresh_changes(changes):
