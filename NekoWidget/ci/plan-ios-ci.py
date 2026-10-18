@@ -3375,6 +3375,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
         return required_jobs_from_scope(runtime_scope)
     if runtime_scope == MODERATION_RESOLUTION_SCOPE and accepts_paths(runtime_scope, paths):
         return required_jobs_from_scope(runtime_scope)
+    if runtime_scope == APP_DATA_SCOPE and partitioned_capacity_paths_only(paths):
+        return required_jobs_from_scope(runtime_scope)
     sources = source_paths(paths)
     if not sources or not sources <= MAPPED_PATHS or not accepts_paths(runtime_scope, paths):
         runtime_scope = FULL_SCOPE
@@ -6222,8 +6224,145 @@ def owner_cloud_native_evidence(jobs, sha, now):
     return True
 
 
+# This one reviewed batch changes only private application persistence and its
+# owning backend. Widget/render/cache/project inputs are byte-for-byte fixed.
+# Keep the existing APP_DATA graph (Build, Photos, runtime and all app UI); do
+# not broaden APP_DATA_PATHS or treat an unknown backend edit as a private UI edit.
+PARTITIONED_CAPACITY_SOURCE = '1dca22ed4d6baa00572fede16266d9769d2e0606'  # Filled only after the product candidate is frozen.
+PARTITIONED_CAPACITY_BASE = "629f6badedf1ae4e87b1ea059c87a694f8c5fd76"
+PARTITIONED_CAPACITY_PATHS = frozenset({
+    'NekoWidget/NekoWidget/Services/AppRecordPersistence.swift',
+    'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift',
+    'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift',
+    'NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift',
+    'NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift',
+    'NekoWidget/NekoWidget/Services/ToolPreservation.swift',
+    'NekoWidget/NekoWidget/Services/VeterinaryVisitStore.swift',
+    'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift',
+    'NekoWidget/PreservationService/migrations/0042_owner_record_deltas.sql',
+    'NekoWidget/PreservationService/migrations/0043_tool_upload_snapshot.sql',
+    'NekoWidget/PreservationService/migrations/0044_owner_usage_counters.sql',
+    'NekoWidget/PreservationService/migrations/0045_owner_recovery_builds.sql',
+    'NekoWidget/PreservationService/migrations/0046_offline_recovery_journal.sql',
+    'NekoWidget/PreservationService/src/documents.ts',
+    'NekoWidget/PreservationService/src/export-page.ts',
+    'NekoWidget/PreservationService/src/immutable-record-tree.ts',
+    'NekoWidget/PreservationService/src/index.ts',
+    'NekoWidget/PreservationService/src/offline-owner-recovery.ts',
+    'NekoWidget/PreservationService/src/owner-archive-recovery.ts',
+    'NekoWidget/PreservationService/src/owner-d1-residue.ts',
+    'NekoWidget/PreservationService/src/owner-quarantine-restore.ts',
+    'NekoWidget/PreservationService/src/owner-recovery-copy.ts',
+    'NekoWidget/PreservationService/src/storage.ts',
+    'NekoWidget/PreservationService/src/tool-index-v4.ts',
+    'NekoWidget/PreservationService/test/d1-erasing-delete-gate.test.ts',
+    'NekoWidget/PreservationService/test/export-page.test.ts',
+    'NekoWidget/PreservationService/test/fixtures/tool-v4-golden.json',
+    'NekoWidget/PreservationService/test/immutable-record-tree.test.ts',
+    'NekoWidget/PreservationService/test/offline-owner-recovery.test.ts',
+    'NekoWidget/PreservationService/test/owner-capture-capacity.test.ts',
+    'NekoWidget/PreservationService/test/owner-d1-residue.test.ts',
+    'NekoWidget/PreservationService/test/owner-purge-events.test.ts',
+    'NekoWidget/PreservationService/test/owner-quarantine-restore.test.ts',
+    'NekoWidget/PreservationService/test/owner-record-deltas.test.ts',
+    'NekoWidget/PreservationService/test/owner-usage-counters.test.ts',
+    'NekoWidget/PreservationService/test/pilot-control.test.ts',
+    'NekoWidget/PreservationService/test/purge-execution-claims.test.ts',
+    'NekoWidget/PreservationService/test/storage.integration.test.ts',
+    'NekoWidget/PreservationService/test/tool-index-v4.test.ts',
+    'NekoWidget/PreservationService/test/tool-owner-trial.integration.test.ts',
+    'NekoWidget/PreservationService/test/tool-tree-storage.integration.test.ts',
+    'NekoWidget/ci/test-tools-review-contracts.py',
+    'NekoWidget/ci/verify-partitioned-records.swift',
+    'NekoWidget/ci/verify-photo-memory-notes.swift',
+    'NekoWidget/ci/verify-veterinary-visits.swift',
+})  # Exact non-handoff product delta.
+PARTITIONED_CAPACITY_CONTROLS = frozenset({
+    "NekoWidget/ci/plan-ios-ci.py", "NekoWidget/ci/test-plan-ios-ci.py",
+})
+
+
+def partitioned_capacity_paths():
+    if not isinstance(PARTITIONED_CAPACITY_SOURCE, str) or not SHA.fullmatch(PARTITIONED_CAPACITY_SOURCE):
+        return frozenset()
+    return PARTITIONED_CAPACITY_PATHS
+
+
+def partitioned_capacity_paths_only(paths):
+    expected = partitioned_capacity_paths()
+    return bool(expected and paths and len(paths) == len(set(paths))
+        and source_paths(paths) == expected)
+
+
+def partitioned_capacity_inputs(paths, base, head):
+    try:
+        if not SHA.fullmatch(base) or not SHA.fullmatch(head) or not partitioned_capacity_paths_only(paths):
+            return False
+        git("merge-base", "--is-ancestor", PARTITIONED_CAPACITY_SOURCE, head)
+        git("merge-base", "--is-ancestor", PARTITIONED_CAPACITY_BASE, base)
+        approved = git("merge-base", "refs/remotes/origin/main", head)
+        # Both the comparison base and current main ancestry must already own
+        # these controls. A product branch cannot grant its own narrower checks.
+        for path in PARTITIONED_CAPACITY_CONTROLS:
+            values = [git("ls-tree", ref, "--", path) for ref in (base, approved, head)]
+            if len(set(values)) != 1 or not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), values[0]):
+                return False
+        def product_tree(ref):
+            result = {}
+            for entry in git("ls-tree", "-r", "-z", ref).split("\0"):
+                if not entry: continue
+                header, path = entry.split("\t", 1)
+                if path in result: raise ValueError("duplicate tree path")
+                if path in PARTITIONED_CAPACITY_CONTROLS or tool_storage_handoff(path):
+                    if not re.fullmatch(r"100644 blob [0-9a-f]{40}", header):
+                        raise ValueError("excluded paths must be ordinary files")
+                    continue
+                result[path] = header
+            return result
+        if product_tree(head) != product_tree(PARTITIONED_CAPACITY_SOURCE):
+            return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+        if raw and not raw[-1]: raw.pop()
+        if len(raw) != 2 * len(paths): return False
+        seen = set()
+        for offset in range(0, len(raw), 2):
+            header, path = raw[offset:offset + 2]
+            fields = header.split()
+            if path not in paths or path in seen or len(fields) != 5: return False
+            if (fields[0], fields[1], fields[4]) not in ((":100644", "100644", "M"), (":000000", "100644", "A")):
+                return False
+            seen.add(path)
+        return seen == set(paths)
+    except (OSError, subprocess.CalledProcessError, TypeError, ValueError):
+        return False
+
+
+def partitioned_capacity_control_inputs(paths, base, head):
+    # This one introduction shares paths with a historical frozen controller.
+    # Its product base is exact; only the two Python controls and prose may differ.
+    try:
+        if (not paths or len(paths) != len(set(paths))
+                or source_paths(paths) != PARTITIONED_CAPACITY_CONTROLS
+                or not SHA.fullmatch(base) or not SHA.fullmatch(head)):
+            return False
+        if git("rev-parse", base + "^{tree}") != git("rev-parse", PARTITIONED_CAPACITY_BASE + "^{tree}"):
+            return False
+        git("merge-base", "--is-ancestor", "refs/remotes/origin/main", head)
+        return development_tools_only(paths, base, head, PARTITIONED_CAPACITY_CONTROLS)
+    except (OSError, subprocess.CalledProcessError, TypeError, ValueError):
+        return False
+
+
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources == PARTITIONED_CAPACITY_CONTROLS:
+        base = comparison_base(event, env)
+        if base and partitioned_capacity_control_inputs(paths, base, env["GITHUB_SHA"]):
+            return ORCHESTRATION_SCOPE
+    if partitioned_capacity_paths_only(paths):
+        base = comparison_base(event, env)
+        return (APP_DATA_SCOPE if base and partitioned_capacity_inputs(paths, base, env["GITHUB_SHA"])
+                else FULL_SCOPE)
     if env.get("GITHUB_REF") == "refs/heads/" + RETAINED_CONTINUATION_BRANCH:
         if retained_continuation_inputs(env["GITHUB_SHA"]): return FULL_SCOPE
         raise ValueError("Fixed retained continuation inputs or approved controls differ; no native work authorized")
