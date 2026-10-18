@@ -1803,8 +1803,9 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    private func prepareAutomaticRecordSavingAndRestore(_ app: XCUIApplication) {
+    private func prepareAutomaticRecordSavingAndRestore(_ app: XCUIApplication, archiveListingConflict: Bool = false) {
         app.launchArguments = ["--app-records-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        if archiveListingConflict { app.launchArguments.append("--app-records-settings-conflict") }
         app.launch()
         XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 0回")
@@ -1830,6 +1831,10 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<4 where !managesSubscription.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(managesSubscription.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(managesSubscription.isHittable)
+        if archiveListingConflict {
+            XCTAssertTrue(app.staticTexts["変更を保存できる会員情報です"].waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertFalse(app.staticTexts["記録が更新されています。最新の内容を読み込み直してください。"].exists)
+        }
         capture("automatic-save-apple-contract-entry")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 4回")
@@ -1876,7 +1881,7 @@ final class SoloMemoriesUITests: XCTestCase {
     func testAutomaticRestoreProtectsUnsavedMemoDraft() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        prepareAutomaticRecordSavingAndRestore(app)
+        prepareAutomaticRecordSavingAndRestore(app, archiveListingConflict: true)
         let openDraft = app.buttons["app-record-open-draft"]
         XCTAssertTrue(openDraft.isEnabled); openDraft.tap()
         let draft = app.textViews["photo-memory-note-text"]

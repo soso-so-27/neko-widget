@@ -170,6 +170,7 @@ enum PreservationFixtureScenario: Sendable {
     case malformedNoticeContact, changedSessionDuringNoticeContact
     case malformedRetention, changedSessionDuringRetention, unavailableRetention
     case requestRejected, saveTimedOut, unavailableMembership
+    case archiveChanged, unauthorizedMembership
     case deletionResultLost, deletionDisabled, deletionUnauthorized, deletionElsewhere, deletionElsewhereLost
 }
 
@@ -191,6 +192,17 @@ actor PreservationFixtureServer {
     private var onFirstExportPage: (@Sendable () -> Void)?
     private var exportRequests = 0
     private var detailRequests = 0
+    private var endpointRequests: [String: Int] = [:]
+    private var holdNextMembership = false
+    private var heldMembership: CheckedContinuation<Void, Never>?
+    private var completedMembershipResponses = 0
+    func endpointCounts() -> [String: Int] { endpointRequests }
+    func holdNextMembershipResponse() { holdNextMembership = true }
+    func membershipResponseIsHeld() -> Bool { heldMembership != nil }
+    func membershipResponseCount() -> Int { completedMembershipResponses }
+    func releaseMembershipResponse() {
+        let waiting = heldMembership; heldMembership = nil; waiting?.resume()
+    }
     func setExportMode(_ value: ExportMode, onFirstPage: (@Sendable () -> Void)? = nil) {
         exportMode = value; exportRequests = 0; detailRequests = 0; onFirstExportPage = onFirstPage
     }
@@ -229,6 +241,7 @@ actor PreservationFixtureServer {
         guard let url = request.url, url.host?.hasSuffix(".preservation-fixture.invalid") == true else {
             throw ManagedPreservationError.invalidResponse
         }
+        endpointRequests[(request.httpMethod ?? "GET") + " " + url.path, default: 0] += 1
         let deletionStatus = request.httpMethod == "GET" && url.path == "/v1/account-deletion/" + session.ownerId
         let authRequest = request.httpMethod == "POST" && ["/v1/auth/challenges", "/v1/auth/sessions"].contains(url.path)
         let expectedToken = deletionStatus ? deletionToken : (renewedSession ?? session).token
@@ -334,6 +347,12 @@ actor PreservationFixtureServer {
             return try json(["linked": true])
         }
         if request.httpMethod == "GET", url.path == "/v1/membership" {
+            if holdNextMembership {
+                holdNextMembership = false
+                await withCheckedContinuation { heldMembership = $0 }
+            }
+            completedMembershipResponses += 1
+            if scenario == .unauthorizedMembership { return try fail("unauthorized", status: 401) }
             if scenario == .unavailableMembership { throw URLError(.networkConnectionLost) }
             if scenario == .pilotCopyResultLost {
                 return try json(["linked": false, "status": "unknown", "access": "pilot",
@@ -342,7 +361,7 @@ actor PreservationFixtureServer {
             if linked && scenario == .changedKeyDuringStatus { keys.replace(nil) }
             if linked && scenario == .changedSessionDuringStatus { try replaceSession() }
             if scenario == .saveRejected || scenario == .copyResultLost || scenario == .copyNotCommitted
-                || scenario == .requestRejected || scenario == .saveTimedOut {
+                || scenario == .requestRejected || scenario == .saveTimedOut || scenario == .archiveChanged {
                 return try json(["linked": true, "status": "active"])
             }
             return try json(["linked": linked, "status": linked ? "expired" : "unknown"])
@@ -426,6 +445,7 @@ actor PreservationFixtureServer {
         }
         if request.httpMethod == "GET", url.path == "/v1/records" {
             reads += 1
+            if scenario == .archiveChanged { return try fail("ARCHIVE_CHANGED", status: 409) }
             if exportMode == .finalCheckThrottled && reads == 1 { return try throttle() }
             return try json(["items": [JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(record))],
                              "nextCursor": NSNull(), "generation": inventoryGeneration])
@@ -11024,12 +11044,142 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     @MainActor
+    private static func testManagedPreservationAccountPresentationBoundary() async throws {
+        func wait(_ condition: () async -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(3)
+            while !(await condition()) {
+                guard ContinuousClock.now < deadline else { throw ManagedPreservationError.interrupted }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        func settle(_ coordinator: ManagedPreservationCoordinator) async throws {
+            try await wait { !coordinator.isBusy && !coordinator.membershipLoading }
+        }
+
+        // A real list 409 is the positive control, not a fabricated presentation
+        // error. The account screen must never make that irrelevant request.
+        let archive = try PreservationNativeFixture.make(.archiveChanged)
+        defer { try? archive.cleanup() }
+        let archiveUI = ManagedPreservationCoordinator(configuration: archive.configuration, client: archive.client)
+        archiveUI.start(); try await settle(archiveUI)
+        guard archiveUI.errorMessage == ManagedPreservationError.conflict.errorDescription,
+              await archive.server.endpointCounts() == ["GET /v1/records": 1] else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        archiveUI.stop()
+
+        let account = try PreservationNativeFixture.make(.archiveChanged)
+        defer { try? account.cleanup() }
+        let accountUI = ManagedPreservationCoordinator(configuration: account.configuration, client: account.client, purpose: .account)
+        accountUI.start(); try await settle(accountUI)
+        guard accountUI.isSignedIn, accountUI.membership?.canSave == true, accountUI.errorMessage == nil,
+              accountUI.records.isEmpty, accountUI.usage == nil,
+              await account.server.endpointCounts() == ["GET /v1/membership": 1] else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        accountUI.refresh(); try await settle(accountUI)
+        guard accountUI.isSignedIn, accountUI.membership?.canSave == true, accountUI.errorMessage == nil,
+              accountUI.records.isEmpty, accountUI.selected == nil, accountUI.usage == nil,
+              accountUI.pendingMemoDrafts.isEmpty, accountUI.pendingToolDeletions.isEmpty,
+              await account.server.endpointCounts() == ["GET /v1/membership": 2] else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        accountUI.stop()
+
+        // Replace secure credentials only after the authenticated GET is in
+        // flight. Even a new token for the same owner invalidates that response.
+        for changeOwner in [true, false] {
+            let fixture = try PreservationNativeFixture.make(.archiveChanged)
+            defer { try? fixture.cleanup() }
+            await fixture.server.holdNextMembershipResponse()
+            let coordinator = ManagedPreservationCoordinator(configuration: fixture.configuration, client: fixture.client, purpose: .account)
+            defer {
+                coordinator.stop()
+                Task { await fixture.server.releaseMembershipResponse() }
+            }
+            coordinator.start()
+            try await wait { await fixture.server.membershipResponseIsHeld() }
+            let replacement = ManagedPreservationSessionStore.Credential(token: String(repeating: "z", count: 43),
+                ownerId: changeOwner ? UUID().uuidString.lowercased() : fixture.session.ownerId,
+                expiresAt: fixture.session.expiresAt)
+            guard try fixture.store.save(replacement, replacing: fixture.session) else {
+                await fixture.server.releaseMembershipResponse()
+                throw ManagedPreservationError.secureStorage
+            }
+            await fixture.server.releaseMembershipResponse(); try await settle(coordinator)
+            guard !coordinator.isSignedIn, coordinator.membership == nil, coordinator.records.isEmpty,
+                  coordinator.selected == nil, coordinator.usage == nil,
+                  try fixture.store.load() == replacement,
+                  await fixture.server.endpointCounts() == ["GET /v1/membership": 1] else {
+                throw ManagedPreservationError.staleSession
+            }
+            coordinator.stop()
+        }
+
+        // Disappearance must cancel publication, while a later start may still
+        // use the intact credential. The old response stays blocked until then.
+        let stopped = try PreservationNativeFixture.make(.archiveChanged)
+        defer { try? stopped.cleanup() }
+        await stopped.server.holdNextMembershipResponse()
+        let stoppedUI = ManagedPreservationCoordinator(configuration: stopped.configuration, client: stopped.client, purpose: .account)
+        defer {
+            stoppedUI.stop()
+            Task { await stopped.server.releaseMembershipResponse() }
+        }
+        stoppedUI.start(); try await wait { await stopped.server.membershipResponseIsHeld() }
+        stoppedUI.stop()
+        guard stoppedUI.membership == nil, stoppedUI.records.isEmpty, stoppedUI.usage == nil,
+              !stoppedUI.isBusy, !stoppedUI.membershipLoading else { throw ManagedPreservationError.invalidResponse }
+        stoppedUI.start(); try await settle(stoppedUI)
+        guard stoppedUI.membership?.canSave == true, stoppedUI.errorMessage == nil else {
+            await stopped.server.releaseMembershipResponse()
+            throw ManagedPreservationError.invalidResponse
+        }
+        await stopped.server.releaseMembershipResponse()
+        try await wait { await stopped.server.membershipResponseCount() == 2 }
+        // Give the canceled presentation task its final actor turn; neither its
+        // success nor cancellation may erase the newer view's membership.
+        try await Task.sleep(for: .milliseconds(20))
+        guard stoppedUI.isSignedIn, stoppedUI.membership?.canSave == true, stoppedUI.errorMessage == nil,
+              stoppedUI.records.isEmpty, stoppedUI.usage == nil,
+              await stopped.server.endpointCounts() == ["GET /v1/membership": 2] else {
+            throw ManagedPreservationError.staleSession
+        }
+        stoppedUI.stop()
+
+        let unauthorized = try PreservationNativeFixture.make(.unauthorizedMembership)
+        defer { try? unauthorized.cleanup() }
+        let unauthorizedUI = ManagedPreservationCoordinator(configuration: unauthorized.configuration, client: unauthorized.client, purpose: .account)
+        unauthorizedUI.start(); try await settle(unauthorizedUI)
+        guard !unauthorizedUI.isSignedIn, unauthorizedUI.membership == nil,
+              unauthorizedUI.records.isEmpty, unauthorizedUI.usage == nil,
+              await unauthorized.server.endpointCounts() == ["GET /v1/membership": 1] else {
+            throw ManagedPreservationError.authenticationRequired
+        }
+        unauthorizedUI.stop()
+
+        let deleting = try PreservationNativeFixture.make(.deletionElsewhere)
+        defer { try? deleting.cleanup() }
+        try await deleting.client.requestAccountDeletion()
+        let beforeDeletion = await deleting.server.endpointCounts()
+        let deletionUI = ManagedPreservationCoordinator(configuration: deleting.configuration, client: deleting.client, purpose: .account)
+        deletionUI.start(); try await settle(deletionUI)
+        guard deletionUI.accountDeletionState == .requestedElsewhere, !deletionUI.isSignedIn,
+              deletionUI.membership == nil, deletionUI.records.isEmpty, deletionUI.usage == nil,
+              await deleting.server.endpointCounts() == beforeDeletion else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        deletionUI.stop()
+    }
+
+    @MainActor
     static func testManagedPreservationMembershipBoundary() async throws {
         try testManagedPreservationUsageBoundary()
         try await testManagedPreservationDeletionReceiptBoundary()
         try await testManagedPreservationArchiveCopySource()
         try await testManagedPreservationSignInFeedback()
         try await testManagedPreservationDeviceSessionRenewal()
+        try await testManagedPreservationAccountPresentationBoundary()
         guard !ManagedPreservationConfiguration.current.isEnabled,
               BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),
               !BillingProtocolV1.isSupportedSignedRequest(method: "GET", pathname: "/v1/preservation/membership-link"),

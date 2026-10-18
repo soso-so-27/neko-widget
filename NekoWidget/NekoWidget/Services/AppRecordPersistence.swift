@@ -1000,7 +1000,7 @@ struct AppRecordSettingsView: View {
     @State private var showsSubscriptionManagement = false
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
          persistence: AppRecordPersistence = .shared) {
-        _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client))
+        _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client, purpose: .account))
         self.persistence = persistence
     }
     var body: some View {
@@ -1231,6 +1231,8 @@ struct AppRecordSavedPhoto: View {
 /// Isolated synthetic transport. The real D1/S3 reference graph is checked by
 /// backend integration tests; this fixture drives the normal iPhone stores/UI.
 private actor AppRecordFixtureServer {
+    private var rejectVisibleInventory = false
+    func simulateArchiveListingConflict() { rejectVisibleInventory = true }
     private var maximumIndexVersion = 4
     func useIndexVersion(_ version: Int) { maximumIndexVersion = version }
     var records: [UUID: [String: Any]] = [:]
@@ -1312,6 +1314,10 @@ private actor AppRecordFixtureServer {
                 "records": ["saved": records.count, "pending": 0, "maximumRecords": 200, "creationLimitReached": false]])
         }
         if url.path == "/v1/records" {
+            if rejectVisibleInventory,
+               URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "view" && $0.value == "visible" }) == true {
+                return try failure("ARCHIVE_CHANGED", 409)
+            }
             let items = records.values.sorted { ($0["recordId"] as! String) < ($1["recordId"] as! String) }
             return try response(["items": items, "nextCursor": NSNull(), "generation": requests])
         }
@@ -1804,7 +1810,13 @@ struct AppRecordPersistenceFixtureView: View {
                 } catch { result = "途中の整理記録を読み直せませんでした: \(AppRecordFixture.preparationPhase)" }
                 return
             }
-            do { fixture = try await AppRecordFixture.make(); fixture?.persistence.setActive(true) }
+            do {
+                let prepared = try await AppRecordFixture.make()
+                if CommandLine.arguments.contains("--app-records-settings-conflict") {
+                    await prepared.server.simulateArchiveListingConflict()
+                }
+                fixture = prepared; prepared.persistence.setActive(true)
+            }
             catch { result = "検査準備失敗: \(AppRecordFixture.preparationPhase)" }
             while !Task.isCancelled {
                 if let fixture { let (_, photos) = await fixture.server.counts(); counts = "写真の送信 \(photos)回" }
