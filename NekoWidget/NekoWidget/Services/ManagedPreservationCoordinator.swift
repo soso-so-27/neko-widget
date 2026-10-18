@@ -985,7 +985,10 @@ final class ManagedPreservationCoordinator: ObservableObject {
         // A damaged local pending snapshot must not hide unrelated cloud records.
         pendingToolBackupDate = (try? ToolBackupFiles.pending(owner: owner, sourceSnapshotID: toolBackupSource))?.index.createdAt
         do { pendingToolDeletions = try ToolBackupFiles.pendingDeletions(owner: owner) }
-        catch { errorMessage = "途中の削除の記録を読み込めませんでした。ほかの保管コピーは引き続き確認できます。" }
+        catch {
+            errorMessage = "途中の削除の記録を読み込めませんでした。ほかの保管コピーは引き続き確認できます。" +
+                ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
+        }
         copyState = copyStates[owner] ?? .deviceOnly
         var ownDrafts: [UUID: ManagedPreservationSessionStore.PendingMemo] = [:]
         do {

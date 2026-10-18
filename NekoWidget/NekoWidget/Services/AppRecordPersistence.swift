@@ -408,6 +408,64 @@ final class AppRecordPersistence: ObservableObject {
     private var requested = true
     private var waitingForEditor = false
     private var nextAttempt = Date.distantPast
+    private struct AcceptedSave {
+        let binding: Binding
+        let fence: ManagedPreservationClient.LocalSessionFence
+    }
+
+    /// Capture only after the remote head and the durable local ACK agree.
+    /// The catch path must not renew credentials or do network work.
+    private func acceptedSave(_ value: Binding,
+                              checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws -> AcceptedSave? {
+        guard value.revision != nil, value.snapshotID != nil, value.fingerprint != nil,
+              value.pending == nil else { return nil }
+        let fence = try await client.localSessionFence(checkpoint)
+        guard let current = try binding(), current.owner == value.owner, current.origin == value.origin,
+              current.revision == value.revision, current.snapshotID == value.snapshotID,
+              current.fingerprint == value.fingerprint, current.pending == nil else { return nil }
+        return AcceptedSave(binding: current, fence: fence)
+    }
+
+    private func stillSaved(_ accepted: AcceptedSave?) -> Bool {
+        guard let accepted else { return false }
+        do {
+            try accepted.fence {
+                AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+                let saved = accepted.binding
+                try AppRecordDataset.requireScope(owner: saved.owner, origin: saved.origin)
+                guard let current = try binding(), current.enabled,
+                      current.owner == saved.owner, current.origin == saved.origin,
+                      current.revision == saved.revision, current.snapshotID == saved.snapshotID,
+                      current.fingerprint == saved.fingerprint, current.pending == nil,
+                      current.requiredDatasetID == saved.requiredDatasetID,
+                      try AppRecordDataset.pointer()?.datasetID == saved.requiredDatasetID,
+                      try AppRecordDataset.fingerprint() == saved.fingerprint else { throw ToolBackupError.changed }
+            }
+            return true
+        } catch { return false }
+    }
+
+    private func reportSyncFailure(_ error: Error, cleanup: Bool, accepted: AcceptedSave?) {
+        // A cleanup failure is not an upload failure. Keep its retry scheduled,
+        // including when the last retirement ID was already durably removed.
+        requested = true
+        if cleanup, stillSaved(accepted) {
+            title = "保存済み"
+            detail = "変更は保存されています。以前の保存データの整理は、アプリを開いている間に自動で再試行します。" +
+                ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
+            nextAttempt = Date().addingTimeInterval(60)
+        } else if error is CancellationError {
+            title = "未送信の変更があります"
+            detail = "保存を中断しました。アプリを開いている間に自動で再開します。"
+            nextAttempt = .distantPast
+        } else {
+            report(error)
+            if cleanup, error is ToolBackupError || error is ToolBackupJournalError {
+                detail = "以前の保存データの整理を確認できず、送信を待っています。端末の記録は残っています。" +
+                    ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
+            }
+        }
+    }
 
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
          bindingURL: URL = AppRecordDataset.control.appendingPathComponent("binding.json")) {
@@ -592,6 +650,8 @@ final class AppRecordPersistence: ObservableObject {
         busy = true
         defer { busy = false }
         var phase = "保存設定を確認"
+        var accepted: AcceptedSave?
+        var cleanup = false
         do {
             guard var value = try binding(), value.enabled else { title = "自動保存は未設定です"; return }
             try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
@@ -642,8 +702,12 @@ final class AppRecordPersistence: ObservableObject {
                     title = "復元しました"; detail = "いつもの画面で記録を使えます。"; return
                 } else { throw ManagedPreservationError.conflict }
             }
+            if remote?.0.revision == value.revision, remote?.1.snapshotID == value.snapshotID {
+                accepted = try await acceptedSave(value, checkpoint: checkpoint)
+            }
             // Retry only queued, previously accepted automatic snapshots. The
             // server head reference refuses removal of the current snapshot.
+            cleanup = true
             let retained: Set<UUID>
             if !(value.retiring ?? []).isEmpty, let remote {
                 let current = try await index(remote.1)
@@ -668,8 +732,12 @@ final class AppRecordPersistence: ObservableObject {
             }
             try await collectParts(value, checkpoint: checkpoint)
             if value.fingerprint == currentFingerprint, value.pending == nil {
+                // Editing may have committed while cleanup was awaiting I/O.
+                // Never overwrite its waiting state with an older fingerprint.
+                guard stillSaved(accepted) else { throw ToolBackupError.changed }
                 title = "保存済み"; detail = nil; return
             }
+            cleanup = false; accepted = nil
             let membership = try await client.membership()
             try await require(value, checkpoint)
             guard membership.canSave else { throw ManagedPreservationError.membershipRequired }
@@ -733,11 +801,14 @@ final class AppRecordPersistence: ObservableObject {
             if let previous = value.pendingPrevious { value.retiring = Array(Set((value.retiring ?? []) + [previous])) }
             value.pendingPrevious = nil
             value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; try write(value)
+            // The publication is complete before any old snapshot is removed.
+            accepted = try await acceptedSave(value, checkpoint: checkpoint)
             releaseUploadedPayload(saved.id, owner: value.owner)
             title = try AppRecordDataset.fingerprint() == value.fingerprint ? "保存済み" : "変更を保存待ち"
             detail = nil
             // Reclaim only the previous automatically published index, after
             // the new CAS head is durable. Shared pieces are server-protected.
+            cleanup = true
             if let previous {
                 try await require(value, checkpoint)
                 try await ToolBackupTransfer.delete(previous, client: client, retaining: Set(saved.index.files.flatMap(\.records))) { _, _ in }
@@ -751,12 +822,12 @@ final class AppRecordPersistence: ObservableObject {
             requested = true; nextAttempt = Date().addingTimeInterval(8)
         } catch ToolBackupError.changed {
             title = "変更を保存待ち"; requested = true; nextAttempt = .distantPast
+            detail = "保存の処理中に記録が変わりました。端末の記録を残して、自動で続きを保存します。"
 #if DEBUG
             if CommandLine.arguments.contains("--app-records-ui-fixture") { detail = "再試行工程: " + phase }
 #endif
         }
-          catch is CancellationError { title = "未送信の変更があります" }
-          catch { report(error) }
+          catch { reportSyncFailure(error, cleanup: cleanup, accepted: accepted) }
     }
     static func needsAuthenticatedWork(_ value: Binding, fingerprint: String, requested: Bool) -> Bool {
         requested || fingerprint != value.fingerprint || value.pending != nil || !(value.retiring ?? []).isEmpty
@@ -790,6 +861,51 @@ final class AppRecordPersistence: ObservableObject {
         detail = ManagedPreservationError.authenticationRequired.errorDescription
     }
 #if DEBUG
+    func verifyAcceptedSaveFences() async throws {
+        guard let value = try binding() else { throw ToolBackupError.storage }
+        let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
+        guard let accepted = try await acceptedSave(value, checkpoint: checkpoint), stillSaved(accepted) else { throw ToolBackupError.storage }
+        let original = try ToolBackupFiles.read(bindingURL, maximum: 8192)
+        defer { try? AppRecordDataset.writeBackedUp(original, to: bindingURL) }
+        for mutation in 0..<5 {
+            var changed = value
+            switch mutation {
+            case 0: changed.enabled = false
+            case 1: changed.pending = UUID()
+            case 2:
+                changed = Binding(version: value.version, origin: value.origin, owner: UUID().uuidString.lowercased(),
+                    consent: value.consent, enabled: value.enabled, revision: value.revision,
+                    snapshotID: value.snapshotID, fingerprint: value.fingerprint,
+                    requiredManifests: value.requiredManifests, requiredDatasetID: value.requiredDatasetID)
+            case 3: changed.snapshotID = UUID()
+            default: changed.requiredDatasetID = UUID()
+            }
+            try AppRecordDataset.writeBackedUp(JSONEncoder().encode(changed), to: bindingURL)
+            guard !stillSaved(accepted) else { throw ToolBackupError.storage }
+        }
+        try AppRecordDataset.writeBackedUp(original, to: bindingURL)
+        let note = AppRecordDataset.directory("CareHandoff").appendingPathComponent("plan.json")
+        let bytes = try Data(contentsOf: note)
+        try AppRecordDataset.writeBackedUp(bytes + Data("\n".utf8), to: note)
+        let changedWasSaved = stillSaved(accepted)
+        try AppRecordDataset.writeBackedUp(bytes, to: note)
+        guard !changedWasSaved, stillSaved(accepted) else { throw ToolBackupError.storage }
+        let store = ManagedPreservationSessionStore(origin: value.origin)
+        guard let credential = try store.load() else { throw ToolBackupError.storage }
+        let replacement = ManagedPreservationSessionStore.Credential(token: String(repeating: "r", count: 43),
+            ownerId: credential.ownerId, expiresAt: credential.expiresAt)
+        guard try store.save(replacement, replacing: credential) else { throw ToolBackupError.storage }
+        let replacedWasSaved = stillSaved(accepted)
+        guard try store.save(credential, replacing: replacement), !replacedWasSaved else { throw ToolBackupError.storage }
+    }
+
+    func verifyCleanupAcknowledgedState() throws {
+        guard let value = try binding(), value.pending == nil,
+              value.fingerprint == (try AppRecordDataset.fingerprint()),
+              !(value.retiring ?? []).isEmpty, requested, title == "保存済み",
+              detail?.contains("以前の保存データの整理") == true else { throw ToolBackupError.storage }
+    }
+
     func verifyEditingPublicationFences() async throws {
         guard let value = try binding(), let remote = try await remoteHead(AppRecordHead.id(origin: value.origin, owner: value.owner)) else { throw ToolBackupError.invalid }
         let record = try await index(remote.1)
@@ -1091,6 +1207,12 @@ private actor AppRecordFixtureServer {
     var abandoned = Set<UUID>()
     var requests = 0
     var photoPuts = 0
+    private var cancelNextDeletion = false
+    private var cancelNextHead = false
+    private var cleanupCommit: (@Sendable () throws -> Void)?
+    func cancelDeletionOnce() { cancelNextDeletion = true }
+    func cancelHeadOnce() { cancelNextHead = true }
+    func commitDuringCleanup(_ commit: @escaping @Sendable () throws -> Void) { cleanupCommit = commit }
     func counts() -> (Int, Int) { (requests, photoPuts) }
     func advanceHeadRevision() throws {
         guard let id = records.first(where: { _, row in
@@ -1120,6 +1242,7 @@ private actor AppRecordFixtureServer {
             }
         }
         if url.path == "/v1/tool-cleanup" {
+            if let commit = cleanupCommit { cleanupCommit = nil; try commit() }
             let items = claimed.compactMap { id -> [String: Any]? in
                 guard let record = records[id], !referenced(id), let document = record["document"] as? [String: Any],
                       let part = document["toolBackup"] as? [String: Any], let kind = part["kind"] as? String else { return nil }
@@ -1160,6 +1283,9 @@ private actor AppRecordFixtureServer {
             if let part = document["toolBackup"] as? [String: Any], let source = part["snapshotId"] as? String,
                let snapshot = UUID(uuidString: source), abandoned.contains(snapshot) { return try failure("TOOL_SNAPSHOT_ABANDONED", 409) }
             let expected = body["expectedRevision"] as? Int
+            if document["text"] is String, document["toolBackup"] == nil, cancelNextHead {
+                cancelNextHead = false; throw CancellationError()
+            }
             let old = records[id]
             if let old, expected == nil {
                 guard NSDictionary(dictionary: old["document"] as! [String: Any]).isEqual(to: document) else { return try failure("REVISION_CONFLICT", 409) }
@@ -1174,6 +1300,7 @@ private actor AppRecordFixtureServer {
             return try response(["recordId": id.uuidString.lowercased(), "revision": revision])
         }
         if request.httpMethod == "DELETE" {
+            if cancelNextDeletion { cancelNextDeletion = false; throw CancellationError() }
             guard let old = records[id] else { return try failure("RECORD_NOT_FOUND", 404) }
             for record in records.values {
                 guard let document = record["document"] as? [String: Any] else { continue }
@@ -1214,6 +1341,93 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static var preparationPhase = "開始"
+    func verifyCleanupFailureAndAutomaticResume() async throws {
+        Self.preparationPhase = "初回保存"
+        await persistence.enable()
+        guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        Self.preparationPhase = "保存完了の境界"
+        try await persistence.verifyAcceptedSaveFences()
+        let repository = try CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
+        let url = AppRecordDataset.directory("CareHandoff").appendingPathComponent("plan.json")
+        var plan = try JSONDecoder().decode(CareHandoffPlan.self, from: Data(contentsOf: url))
+        await server.cancelDeletionOnce()
+        Self.preparationPhase = "保存完了後の中断"
+        plan.contact += " 整理中断後も保存完了"
+        try repository.commit(plan, newPhotos: [:])
+        await persistence.retry()
+        try persistence.verifyCleanupAcknowledgedState()
+        guard let owner = try await authenticationClient().sessionOwnerID(),
+              !(try ToolBackupFiles.pendingDeletions(owner: owner)).isEmpty else { throw ToolBackupError.storage }
+        // Foreground resume drives the production loop; no recheck button.
+        persistence.setActive(true)
+        Self.preparationPhase = "整理の自動再開"
+        for _ in 0..<100 {
+            if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        persistence.setActive(false)
+        guard persistence.title == "保存済み", persistence.detail == nil,
+              try ToolBackupFiles.pendingDeletions(owner: owner).isEmpty else { throw ToolBackupError.storage }
+        await server.cancelHeadOnce()
+        Self.preparationPhase = "保存完了前の中断"
+        plan.contact += " 送信中断"
+        try repository.commit(plan, newPhotos: [:])
+        await persistence.retry()
+        guard persistence.title == "未送信の変更があります",
+              persistence.detail?.contains("自動で再開") == true else { throw ToolBackupError.storage }
+        persistence.setActive(true)
+        Self.preparationPhase = "送信の自動再開"
+        for _ in 0..<100 {
+            if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        persistence.setActive(false)
+        guard persistence.title == "保存済み", persistence.detail == nil else { throw ToolBackupError.storage }
+        plan.contact += " 整理と同時に編集"
+        Self.preparationPhase = "整理中の新しい編集"
+        let editedBytes = try JSONEncoder().encode(plan)
+        await server.commitDuringCleanup {
+            try AppRecordDataset.writeBackedUp(editedBytes, to: url)
+            AppRecordDataset.committed(url)
+        }
+        await persistence.retry()
+        guard persistence.title == "変更を保存待ち", persistence.detail != nil else { throw ToolBackupError.storage }
+        await persistence.retry()
+        guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+    }
+    static func verifyDeletionJournalRoundTrip() throws {
+        let bytes = Data("{}".utf8)
+        let owner = "deletion-journal-fixture-owner"
+        let index = ToolBackupIndex(version: 3, snapshotID: UUID(),
+            createdAt: Date(timeIntervalSince1970: 1_792_262_900.1234567),
+            files: [.init(path: "CareHandoff/plan.json", bytes: bytes.count,
+                          sha256: ToolBackupIndex.hash(bytes), records: [UUID()])])
+        let saved = ToolBackupFiles.Saved(owner: owner, index: index)
+        let journal = try ToolBackupFiles.deletionJournal(index, owner: owner)
+        try ToolBackupFiles.write(JSONEncoder().encode(saved), to: journal)
+        defer { try? FileManager.default.removeItem(at: journal) }
+        let listed = try FileManager.default.contentsOfDirectory(at: ToolBackupFiles.root,
+            includingPropertiesForKeys: nil).first { $0.lastPathComponent == journal.lastPathComponent }
+        let decoded = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
+            from: ToolBackupFiles.read(journal, maximum: 512 * 1024))
+        let recomputed = try ToolBackupFiles.deletionJournal(decoded.index, owner: decoded.owner)
+        preparationPhase = "urlEqual=\(listed == journal) pathEqual=\(listed?.standardizedFileURL.path == journal.standardizedFileURL.path) indexEqual=\(decoded.index == index) hashEqual=\(recomputed.lastPathComponent == journal.lastPathComponent)"
+        print("APP_RECORD_JOURNAL_PROBE \(preparationPhase)")
+        guard try ToolBackupFiles.pendingDeletions(owner: owner).contains(where: { $0.id == index.snapshotID }) else {
+            throw ToolBackupError.invalid
+        }
+        guard try ToolBackupFiles.pendingDeletions(owner: "another-owner").isEmpty else { throw ToolBackupError.storage }
+        try ToolBackupFiles.write(Data("not-json".utf8), to: journal)
+        do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
+        catch ToolBackupJournalError.decode { }
+        let altered = ToolBackupFiles.Saved(owner: "altered-owner", index: index)
+        try ToolBackupFiles.write(JSONEncoder().encode(altered), to: journal)
+        do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
+        catch ToolBackupJournalError.identity { }
+        // Restore the exact synthetic bytes; no malformed journal is ignored.
+        try ToolBackupFiles.write(JSONEncoder().encode(saved), to: journal)
+        guard try ToolBackupFiles.pendingDeletions(owner: owner).count == 1 else { throw ToolBackupError.storage }
+    }
     static func make() async throws -> AppRecordFixture {
         let cacheURL = AppRecordDataset.support.appendingPathComponent("cache-read-probe.json")
         let small = Data("{}".utf8), large = Data("{\"pending\":\"longer replacement\"}".utf8)
@@ -1325,6 +1539,21 @@ struct AppRecordPersistenceFixtureView: View {
         }
         .disabled(switching)
         .task {
+            if CommandLine.arguments.contains("--app-records-cleanup-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifyCleanupFailureAndAutomaticResume()
+                    result = "保存完了・中断の区別と自動再開を確認しました"
+                } catch { result = "整理の再開検査に失敗: \(AppRecordFixture.preparationPhase)" }
+                return
+            }
+            if CommandLine.arguments.contains("--app-records-journal-probe") {
+                do {
+                    try AppRecordFixture.verifyDeletionJournalRoundTrip()
+                    result = "途中の整理記録を読み直しました"
+                } catch { result = "途中の整理記録を読み直せませんでした: \(AppRecordFixture.preparationPhase)" }
+                return
+            }
             do { fixture = try await AppRecordFixture.make(); fixture?.persistence.setActive(true) }
             catch { result = "検査準備失敗: \(AppRecordFixture.preparationPhase)" }
             while !Task.isCancelled {

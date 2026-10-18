@@ -1686,6 +1686,30 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    private func verifyAutomaticSaveKeepsAcknowledgementAndResumesCleanup() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-cleanup-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["保存完了・中断の区別と自動再開を確認しました"].waitForExistence(timeout: 40), app.debugDescription)
+        capture("automatic-save-acknowledgement-and-cleanup-resume")
+        app.terminate()
+    }
+
+    @MainActor
+    private func verifyAutomaticSaveDeletionJournalSurvivesDirectoryEnumeration() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-journal-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["途中の整理記録を読み直しました"].waitForExistence(timeout: 10), app.debugDescription)
+        capture("automatic-save-deletion-journal-roundtrip")
+        app.terminate()
+    }
+
+    @MainActor
     func testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1702,6 +1726,9 @@ final class SoloMemoriesUITests: XCTestCase {
         for _ in 0..<12 where !complete.isHittable { app.swipeDown() }
         XCTAssertTrue(complete.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(resume.exists)
+        app.terminate()
+        verifyAutomaticSaveDeletionJournalSurvivesDirectoryEnumeration()
+        verifyAutomaticSaveKeepsAcknowledgementAndResumesCleanup()
     }
 
     @MainActor

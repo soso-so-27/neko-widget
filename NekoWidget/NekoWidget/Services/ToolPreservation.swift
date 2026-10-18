@@ -45,6 +45,15 @@ enum ToolBackupError: Error, LocalizedError {
     }
 }
 
+/// A failed cleanup journal does not establish that a saved snapshot is bad.
+/// Codes disclose only the failed validation stage, never paths or owner IDs.
+enum ToolBackupJournalError: String, Error, LocalizedError {
+    case read = "J1", decode = "J2", index = "J3", identity = "J4"
+    var errorDescription: String? {
+        "途中の整理記録を確認できませんでした。端末の記録と保存済みのコピーは残しています。（確認コード: \(rawValue)）"
+    }
+}
+
 enum ToolBackupProgress {
     static func message(_ operation: String, completed: Int, total: Int) -> String {
         guard total > 0 else { return "\(operation)の準備中…" }
@@ -199,9 +208,15 @@ enum ToolBackupFiles {
         return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             .filter { $0.lastPathComponent.hasPrefix("deleting-") && $0.pathExtension == "json" }
             .compactMap { url in
-                let saved = try JSONDecoder().decode(Saved.self, from: read(url, maximum: 512 * 1024))
-                try saved.index.validate()
-                guard try deletionJournal(saved.index, owner: saved.owner) == url else { throw ToolBackupError.invalid }
+                let bytes: Data
+                do { bytes = try read(url, maximum: 512 * 1024) }
+                catch { throw ToolBackupJournalError.read }
+                let saved: Saved
+                do { saved = try JSONDecoder().decode(Saved.self, from: bytes) }
+                catch { throw ToolBackupJournalError.decode }
+                do { try saved.index.validate() }
+                catch { throw ToolBackupJournalError.index }
+                guard try deletionJournal(saved.index, owner: saved.owner) == url else { throw ToolBackupJournalError.identity }
                 return saved.owner == owner ? saved : nil
             }.sorted { $0.index.createdAt < $1.index.createdAt }
     }
