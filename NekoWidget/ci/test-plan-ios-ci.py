@@ -12755,5 +12755,249 @@ class PartitionedNativeRetryControlTests(unittest.TestCase):
                 self.assertFalse(planner.partitioned_native_retry_equivalent_inputs(source,git("rev-parse","HEAD")))
 
 
+class PartitionedReadinessInputTests(unittest.TestCase):
+    def test_real_git_requires_prior_main_controls_and_exact_single_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args): return subprocess.check_output(["git", *args], cwd=root, text=True,
+                encoding="utf-8", stderr=subprocess.PIPE).rstrip("\n")
+            def write(path, text):
+                target = root / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_text(text, encoding="utf-8")
+            def commit(label): git("add", "."); git("commit", "-qm", label); return git("rev-parse", "HEAD")
+            git("init", "-q", "-b", "main"); git("config", "user.email", "test@example.invalid"); git("config", "user.name", "Fixture")
+            controls = sorted(planner.PARTITIONED_CAPACITY_CONTROLS); ready = planner.PARTITIONED_READINESS_PATH
+            product = "NekoWidget/Shared/Product.swift"
+            for path in (*controls, ready, product): write(path, "source\n")
+            source = commit("frozen product")
+            old = git("rev-parse", source + ":" + ready)
+            for path in controls: write(path, "previous controller\n")
+            base = commit("current main")
+            git("switch", "-qc", "new-control")
+            for path in controls: write(path, "new controller\n")
+            approved = commit("new controls")
+            git("update-ref", "refs/remotes/origin/main", base)
+            git("switch", "-qc", "continuation"); write(ready, "renewed signatures\n"); head = commit("renewal")
+            new = git("rev-parse", head + ":" + ready)
+            with patch.object(planner, "git", side_effect=git), \
+                    patch.object(planner, "PARTITIONED_NATIVE_RETRY_SOURCE", source), \
+                    patch.object(planner, "PARTITIONED_READINESS_BASE", base), \
+                    patch.object(planner, "PARTITIONED_READINESS_BEFORE", old), \
+                    patch.object(planner, "PARTITIONED_READINESS_AFTER", new):
+                self.assertTrue(planner.partitioned_readiness_control_inputs(controls, base, approved))
+                self.assertFalse(planner.partitioned_readiness_inputs(head))  # Cannot self-approve.
+                git("update-ref", "refs/remotes/origin/main", approved)
+                self.assertTrue(planner.partitioned_readiness_inputs(head))
+                self.assertTrue(planner.partitioned_readiness_delta(approved, head, {ready}))
+                self.assertFalse(planner.partitioned_readiness_control_inputs(controls + [ready], base, head))
+                for paths in ([ready, ready], [], controls, [ready, product]):
+                    self.assertFalse(planner.partitioned_readiness_paths_only(paths))
+                # A merge on main preserves the candidate's exact complete tree.
+                git("switch", "-q", "main"); git("merge", "--no-ff", "--no-edit", "new-control")
+                git("merge", "--no-ff", "--no-edit", "continuation"); main = git("rev-parse", "HEAD")
+                git("update-ref", "refs/remotes/origin/main", main)
+                self.assertTrue(planner.partitioned_readiness_inputs(main))
+                for index, path in enumerate((product, ".github/workflows/testflight.yml",
+                        "NekoWidget/ci/release-testflight.py", "NekoWidget/package-lock.json", "handoffs/new.md", ready, controls[0])):
+                    git("switch", "-qc", "bad-" + str(index), head); write(path, "drift\n"); bad = commit("drift")
+                    self.assertFalse(planner.partitioned_readiness_inputs(bad), path)
+                git("switch", "-qc", "bad-delete", head); git("rm", product); git("commit", "-qm", "delete")
+                self.assertFalse(planner.partitioned_readiness_inputs(git("rev-parse", "HEAD")))
+                with patch.object(planner, "PARTITIONED_READINESS_AFTER", "PENDING"):
+                    self.assertFalse(planner.partitioned_readiness_inputs(head))
+                # Keep the index-only mode probe last: on Unix its working-tree
+                # mode differs, so a later checkout would correctly refuse it.
+                git("switch", "-qc", "bad-mode", head); git("update-index", "--chmod=+x", ready); git("commit", "-qm", "mode")
+                self.assertFalse(planner.partitioned_readiness_inputs(git("rev-parse", "HEAD")))
+
+    def test_runtime_requires_exact_inputs_and_current_signature(self):
+        paths = [planner.PARTITIONED_READINESS_PATH]; head = "a" * 40
+        env = {"GITHUB_SHA": head, "GITHUB_REF": "refs/heads/" + planner.PARTITIONED_READINESS_BRANCH}
+        with patch.object(planner, "partitioned_readiness_inputs", return_value=True), \
+                patch.object(planner, "partitioned_readiness_current", return_value=True):
+            selected = planner.runtime_scope(paths, {}, env)
+            self.assertEqual(selected, scope.APP_DATA_SCOPE)
+            self.assertEqual(planner.required_jobs(paths, selected), planner.required_jobs_from_scope(scope.APP_DATA_SCOPE))
+            with self.assertRaises(ValueError): planner.runtime_scope(paths + ["NekoWidget/new.swift"], {}, env)
+            with patch.object(planner, "partitioned_readiness_current", return_value=False):
+                with self.assertRaises(ValueError): planner.runtime_scope(paths, {}, env)
+            with patch.object(planner, "partitioned_readiness_inputs", return_value=False):
+                with self.assertRaises(ValueError): planner.runtime_scope(paths, {}, env)
+
+    def test_signature_verifier_uses_real_clock_and_exact_pinned_artifact(self):
+        head = "a" * 40
+        def git(*args):
+            if args == ("rev-parse", "HEAD"): return head
+            if args[0] == "status": return ""
+            if args[0] == "ls-tree": return f"100644 blob {planner.PARTITIONED_READINESS_AFTER}\t{planner.PARTITIONED_READINESS_PATH}"
+            if args[0] == "show": return "{}"
+            raise AssertionError(args)
+        good = subprocess.CompletedProcess([], 0, json.dumps({"verified": True, "purpose": "testflight-owner-report-ui-continuation"}))
+        with patch.object(planner, "git", side_effect=git), patch.object(planner.subprocess, "run", return_value=good) as run:
+            self.assertTrue(planner.partitioned_readiness_current(head))
+            self.assertEqual(run.call_args.args, (["node", "NekoWidget/ci/verify-moderation-readiness.mjs"],))
+            self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"policy": {}, "evidence": {}})
+            self.assertNotIn("env", run.call_args.kwargs)  # Never override the verifier's clock.
+            for result in (subprocess.CompletedProcess([], 1, "{}"), subprocess.CompletedProcess([], 0, '{"verified":false}'),
+                    subprocess.CompletedProcess([], 0, '{"verified":true,"purpose":"other"}')):
+                run.return_value = result; self.assertFalse(planner.partitioned_readiness_current(head))
+
+
+class PartitionedReadinessEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.old = PartitionedNativeRetryTests(); self.old.setUp(); self.addCleanup(self.old.doCleanups)
+        self.now = self.old.now; self.head = "a" * 40; self.main = "b" * 40
+        self.current = dict(self.old.run, id=500, head_sha=self.head, head_branch=planner.PARTITIONED_READINESS_BRANCH,
+            run_attempt=1, status="in_progress", conclusion=None)
+        self.index = {"total_count": 1, "workflow_runs": [copy.deepcopy(self.current)]}
+        self.plan = {"schema_version": 1, "repository": "soso-so-27/neko-widget", "head_sha": self.head,
+            "scope": scope.APP_DATA_SCOPE, "required_jobs": list(planner.required_jobs_from_scope(scope.APP_DATA_SCOPE)),
+            "evidence_run_id": self.old.run["id"], "evidence_sha": self.old.run["head_sha"], "test_correction_evidence": None,
+            "partitioned_readiness_continuation": planner.partitioned_readiness_record(self.head)}
+        steps = [{"number": n, "name": name, "status": "completed", "conclusion": "success",
+            "started_at": self.now.isoformat(), "completed_at": self.now.isoformat()}
+            for n, name in enumerate(planner.fixture_navigation_required_steps(planner.PLAN_JOB), 1)]
+        self.jobs = [{"id": 501, "run_id": 500, "head_sha": self.head, "run_attempt": 1, "name": planner.PLAN_JOB,
+            "status": "completed", "conclusion": "success", "started_at": self.now.isoformat(),
+            "completed_at": self.now.isoformat(), "runner_id": 123, "steps": steps}]
+        self.required = planner.required_jobs_from_scope(scope.APP_DATA_SCOPE)
+
+    @contextlib.contextmanager
+    def mocks(self):
+        with patch.object(planner, "partitioned_readiness_inputs", return_value=True), \
+                patch.object(planner, "partitioned_readiness_current", return_value=True), \
+                patch.object(planner, "git", side_effect=lambda *args: self.head if args == ("rev-parse", "HEAD") else "same-tree"):
+            yield
+
+    def api(self, path):
+        if "/workflows/ios-build.yml/runs?" in path: return copy.deepcopy(self.index)
+        if path.endswith("/runs/500"): return copy.deepcopy(self.current)
+        if path.endswith("/runs/" + str(self.old.run["id"])): return copy.deepcopy(self.old.run)
+        if path.endswith("/runs/500/jobs?filter=latest&per_page=100&page=1"):
+            return {"total_count": len(self.jobs), "jobs": copy.deepcopy(self.jobs)}
+        if path.endswith("/jobs/501/logs"): return "IOS_CI_PLAN_JSON=" + json.dumps(self.plan)
+        return self.old.api(path)
+
+    def prove(self, head=None, current=None):
+        return planner.partitioned_readiness_evidence(head or self.head, self.api, self.now, current or self.current)
+
+    def completed(self):
+        self.current.update(status="completed", conclusion="success")
+        self.index["workflow_runs"] = [copy.deepcopy(self.current)]
+
+    def test_fixed_branch_proves_existing_six_raw28_attempts_and_finds_only_original_run(self):
+        with self.mocks():
+            proof = self.prove()
+            self.assertEqual(proof["native_retry"]["run_attempt"], 2)
+            self.assertEqual(len(proof["native_retry"]["passed_cases"]), 28)
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "soso-so-27/neko-widget", "GITHUB_SHA": self.head,
+                "GITHUB_REF": "refs/heads/" + planner.PARTITIONED_READINESS_BRANCH, "GITHUB_RUN_ID": "500"}
+            self.assertEqual(planner.find_evidence(env, self.required, self.api, self.now), (self.old.run["id"], self.old.run["head_sha"]))
+            self.current["head_branch"] = "main"
+            with self.assertRaises(ValueError): planner.find_evidence(env, self.required, self.api, self.now)
+
+    def test_unknown_duplicate_incomplete_failed_or_other_attempt_index_stops(self):
+        original = copy.deepcopy(self.index)
+        changes = [dict(total_count=0, workflow_runs=[]), dict(total_count=2, workflow_runs=original["workflow_runs"]),
+            dict(total_count=2, workflow_runs=original["workflow_runs"] * 2)]
+        for change in ({"id": 999}, {"head_sha": "c" * 40}, {"run_attempt": 2}, {"event": "workflow_dispatch"},
+                {"head_branch": "codex/other"}, {"status": "completed", "conclusion": "failure"}):
+            changes.append({"total_count": 1, "workflow_runs": [self.current | change]})
+        with self.mocks():
+            for value in changes:
+                self.index = value
+                with self.assertRaises(ValueError, msg=str(value)): self.prove()
+            self.index = original
+            with patch.object(planner, "partitioned_readiness_current", return_value=False):
+                with self.assertRaises(ValueError): self.prove()
+
+    def test_main_requires_actual_successful_fresh_candidate_plan_and_exact_tree(self):
+        main = dict(self.current, id=600, head_sha=self.main, head_branch="main")
+        with self.mocks():
+            with self.assertRaises(ValueError): self.prove(self.main, main)
+            self.completed(); self.assertEqual(self.prove(self.main, main)["candidate_sha"], self.main)
+            for key, value in (("evidence_sha", self.head), ("scope", scope.FULL_SCOPE),
+                    ("partitioned_readiness_continuation", None), ("schema_version", True)):
+                saved = self.plan[key]; self.plan[key] = value
+                with self.assertRaises(ValueError): self.prove(self.main, main)
+                self.plan[key] = saved
+            self.jobs[0]["steps"].pop()
+            with self.assertRaises(ValueError): self.prove(self.main, main)
+
+    def test_old_native_expiry_raw_failure_changed_or_mirror_changed_is_rejected(self):
+        with self.mocks():
+            self.old.failed_log += "\ntampered"
+            with self.assertRaises(ValueError): self.prove()
+            self.old.failed_log = self.old.failed_log.removesuffix("\ntampered")
+            self.old.history[-2]["runner_name"] = "changed"
+            with self.assertRaises(ValueError): self.prove()
+            self.old.history[-2]["runner_name"] = "Synthetic runner"
+            self.now += dt.timedelta(hours=24, seconds=1)
+            with self.assertRaises(ValueError): self.prove()
+
+    def test_index_change_and_extra_or_stale_plan_execution_are_rejected(self):
+        calls = 0
+        def changed(path):
+            nonlocal calls
+            result = self.api(path)
+            if "/workflows/ios-build.yml/runs?" in path:
+                calls += 1
+                if calls > 1: result["total_count"] = 2
+            return result
+        with self.mocks():
+            with self.assertRaises(ValueError): planner.partitioned_readiness_evidence(self.head, changed, self.now, self.current)
+            self.completed()
+            self.assertTrue(planner.partitioned_readiness_plan(self.current, self.api, self.now))
+            original = copy.deepcopy(self.jobs)
+            for extra in (dict(self.jobs[0], id=502), dict(self.jobs[0], id=502, name="Unknown success"),
+                    dict(self.jobs[0], id=502, name=self.required[0], conclusion="success")):
+                self.jobs = original + [extra]
+                self.assertFalse(planner.partitioned_readiness_plan(self.current, self.api, self.now))
+            self.jobs = original
+            self.jobs[0]["id"] = True
+            self.assertFalse(planner.partitioned_readiness_plan(self.current, self.api, self.now))
+            self.jobs[0]["id"] = 501
+            self.jobs[0]["completed_at"] = (self.now - dt.timedelta(hours=24, seconds=1)).isoformat()
+            self.assertFalse(planner.partitioned_readiness_plan(self.current, self.api, self.now))
+
+    def test_real_plan_entry_emits_six_requirements_and_empty_native_matrices(self):
+        with tempfile.TemporaryDirectory() as directory, self.mocks():
+            root = Path(directory); event = root / "event.json"; event.write_text("{}", encoding="utf-8")
+            output, summary = root / "output", root / "summary"
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "soso-so-27/neko-widget", "GITHUB_SHA": self.head,
+                "GITHUB_REF": "refs/heads/" + planner.PARTITIONED_READINESS_BRANCH, "GITHUB_RUN_ID": "500",
+                "GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary),
+                "GITHUB_SERVER_URL": "https://github.com", "GITHUB_WORKFLOW": "iOS build check"}
+            result = io.StringIO()
+            with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(result), \
+                    patch.object(planner, "changed_paths", return_value=[planner.PARTITIONED_READINESS_PATH]), \
+                    patch.object(planner, "github_api", side_effect=lambda _env, path: self.api(path)):
+                planner.main()
+            records = [json.loads(s.split("=", 1)[1]) for s in result.getvalue().splitlines() if s.startswith("IOS_CI_PLAN_JSON=")]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["partitioned_readiness_continuation"], planner.partitioned_readiness_record(self.head))
+            self.assertEqual(records[0]["required_jobs"], list(self.required))
+            self.assertEqual(records[0]["evidence_run_id"], self.old.run["id"])
+            values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            self.assertTrue(all(values[k] == "false" for k in ("build", "smoke", "sharing", "app_ui")))
+            self.assertTrue(all(values[k] == "[]" for k in ("lanes", "matrix_lanes", "app_ui_lanes")))
+            self.assertIn("ordinary 24-hour", summary.read_text())
+
+    def test_unchanged_release_cli_accepts_current_plan_and_original_six_only(self):
+        spec = importlib.util.spec_from_file_location("partitioned_readiness_release", Path(__file__).with_name("release-testflight.py"))
+        release = importlib.util.module_from_spec(spec); spec.loader.exec_module(release)
+        self.completed(); case = self
+        class GitHub:
+            def get(self, path):
+                if path == "actions/workflows/ios-build.yml": return {"id": 335014238, "path": ".github/workflows/ios-build.yml", "state": "active"}
+                return case.api("/repos/soso-so-27/neko-widget/" + path)
+            def log(self, run, job=None): return "IOS_CI_PLAN_JSON=" + json.dumps(case.plan)
+        with self.mocks(), patch.object(release, "planner", planner):
+            proof = release.check_ci(GitHub(), self.head, self.current["id"], self.now)
+            self.assertEqual(proof["tested_sha"], self.old.run["head_sha"])
+            self.assertEqual(proof["tested_run"], self.old.run["id"])
+            with patch.object(planner, "partitioned_readiness_current", return_value=False):
+                with self.assertRaises(release.Blocked): release.check_ci(GitHub(), self.head, self.current["id"], self.now)
+
+
 if __name__ == "__main__":
     unittest.main()
