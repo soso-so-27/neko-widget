@@ -139,6 +139,9 @@ describe('device-bound preservation sessions', () => {
     const proof = await f.signed();
     const results = await Promise.allSettled([f.auth.devices.renew(proof, f.verifier), f.auth.devices.renew(proof, f.verifier)]);
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(result => result.status === 'rejected')).toMatchObject({
+      status: 'rejected', reason: { code: 'unauthorized', status: 401 },
+    });
     await expect(f.auth.devices.renew(proof, f.verifier)).rejects.toMatchObject({ code: 'unauthorized' });
     expect(await count('pa_sessions', f.session.ownerId)).toBe(2);
     expect(await count('pa_device_session_challenges', f.session.ownerId)).toBe(1);
@@ -296,7 +299,13 @@ describe('device-bound preservation sessions', () => {
     let calls = 0;
     const verifier = { ...f.verifier, async verifyRefreshIdentity(identity: VerifiedIdentity) { calls++; return { ...identity, refreshToken: 'rotated' }; } };
     await expect(auth.devices.renew(proof, verifier)).rejects.toMatchObject({ code: 'OWNER_RECOVERY_UNAVAILABLE' });
-    await expect(auth.devices.renew(proof, verifier)).rejects.toMatchObject({ code: 'unauthorized' });
+    const grantBeforeRetry = await db.prepare('SELECT * FROM pa_device_session_grants WHERE grant_id=?')
+      .bind(f.session.deviceGrant!.grantId).first();
+    await expect(auth.devices.renew(proof, verifier)).rejects.toMatchObject({ code: 'auth_unavailable', status: 503 });
+    expect(await db.prepare('SELECT * FROM pa_device_session_grants WHERE grant_id=?')
+      .bind(f.session.deviceGrant!.grantId).first()).toEqual(grantBeforeRetry);
+    expect((await db.prepare('SELECT consumed_by FROM pa_device_session_challenges WHERE challenge_id=?')
+      .bind(proof.challengeId).first())!.consumed_by).toBeNull();
     expect(await count('pa_sessions', f.session.ownerId)).toBe(1);
     expect(calls).toBe(1);
     // The existing independent recovery repair can acknowledge this exact
@@ -323,6 +332,23 @@ describe('device-bound preservation sessions', () => {
       .bind(f.session.ownerId).first<{ sealed_credentials: ArrayBuffer }>();
     const opened = await f.dependencies.keys.open(new Uint8Array(row!.sealed_credentials), { ownerId: f.session.ownerId, purpose: 'identity' });
     expect(JSON.parse(new TextDecoder().decode(opened)).refreshToken).toBe('new-sign-in');
+  });
+
+  it('still rejects an expired challenge after provider work without creating a session or extending the grant', async () => {
+    const f = await fixture();
+    f.advance(DAY);
+    const proof = await f.signed();
+    const grantBefore = await db.prepare('SELECT * FROM pa_device_session_grants WHERE grant_id=?')
+      .bind(f.session.deviceGrant!.grantId).first();
+    await expect(f.auth.devices.renew(proof, { ...f.verifier, async verifyRefreshIdentity(identity) {
+      f.advance(300_001);
+      return identity;
+    } })).rejects.toMatchObject({ code: 'unauthorized', status: 401 });
+    expect(await count('pa_sessions', f.session.ownerId)).toBe(1);
+    expect(await db.prepare('SELECT * FROM pa_device_session_grants WHERE grant_id=?')
+      .bind(f.session.deviceGrant!.grantId).first()).toEqual(grantBefore);
+    expect((await db.prepare('SELECT consumed_by FROM pa_device_session_challenges WHERE challenge_id=?')
+      .bind(proof.challengeId).first())!.consumed_by).toBeNull();
   });
 
   it.each(['revocation', 'deletion', 'recovery'] as const)('refuses %s that occurs during provider work', async event => {
