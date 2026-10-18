@@ -12431,5 +12431,73 @@ class ToolStorageActualObservedRegistrationTests(unittest.TestCase):
             self.assertFalse(planner.tool_storage_formal_configured())
 
 
+class PartitionedCapacitySelectionTests(unittest.TestCase):
+    def test_fixed_private_batch_preserves_six_jobs_and_rejects_unknown_or_self_approved_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root, text=True, encoding="utf-8", stderr=subprocess.PIPE).rstrip("\n")
+            def write(path, text):
+                target = root / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_text(text, encoding="utf-8")
+            def commit(message):
+                git("add", "."); git("commit", "-qm", message); return git("rev-parse", "HEAD")
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "test@example.invalid"); git("config", "user.name", "Fixture")
+            product = "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"
+            migration = "NekoWidget/PreservationService/migrations/0044_owner_usage_counters.sql"
+            protected = "NekoWidget/Shared/WidgetRenderPlan.swift"
+            note = "handoffs/capacity.md"
+            controls = sorted(planner.PARTITIONED_CAPACITY_CONTROLS)
+            for path in (product, protected, note, *controls): write(path, "before\n")
+            base = commit("initial")
+            git("switch", "-qc", "product")
+            write(product, "partitioned\n"); write(migration, "exact migration\n")
+            source = commit("frozen product")
+            git("switch", "-q", "main")
+            for path in controls: write(path, "reviewed control\n")
+            approved = commit("approve control")
+            git("update-ref", "refs/remotes/origin/main", approved)
+            git("switch", "-q", "product"); git("merge", "--no-edit", "main")
+            head = git("rev-parse", "HEAD"); paths = [product, migration]
+            with patch.object(planner, "git", side_effect=git), \
+                 patch.object(planner, "PARTITIONED_CAPACITY_SOURCE", source), \
+                 patch.object(planner, "PARTITIONED_CAPACITY_BASE", base), \
+                 patch.object(planner, "PARTITIONED_CAPACITY_PATHS", frozenset(paths)):
+                self.assertTrue(planner.partitioned_capacity_inputs(paths, approved, head))
+                event = {"pull_request": {"base": {"sha": approved}}}
+                env = {"GITHUB_SHA": head, "GITHUB_EVENT_NAME": "pull_request"}
+                self.assertEqual(planner.runtime_scope(paths, event, env), scope.APP_DATA_SCOPE)
+                required = planner.required_jobs(paths, scope.APP_DATA_SCOPE)
+                self.assertEqual(len(required), 6)
+                self.assertEqual(required, planner.required_jobs_from_scope(scope.APP_DATA_SCOPE))
+                self.assertFalse(any("gallery" in job for job in required))
+                self.assertIn(planner.BUILD, required); self.assertIn(planner.SMOKE, required)
+                self.assertIn("runtime", " ".join(required))
+                for bad in (paths[:-1], paths + [product], paths + [protected]):
+                    self.assertFalse(planner.partitioned_capacity_inputs(bad, approved, head))
+                self.assertFalse(planner.partitioned_capacity_inputs(paths, base, head))
+                self.assertFalse(planner.partitioned_capacity_inputs(paths, approved, approved))
+                for index, (path, mutation) in enumerate((
+                    (product, "different product"), (protected, "different widget"),
+                    ("NekoWidget/Shared/new.swift", "unknown input"), (controls[0], "self approval"),
+                )):
+                    git("switch", "-qc", f"changed-{index}", head); write(path, mutation)
+                    changed = commit("unreviewed change")
+                    changed_paths = git("diff", "--name-only", "-z", approved, changed).split("\0")
+                    self.assertFalse(planner.partitioned_capacity_inputs(changed_paths, approved, changed), path)
+                    if path == product:
+                        self.assertEqual(planner.runtime_scope(paths, event, dict(env, GITHUB_SHA=changed)), scope.FULL_SCOPE)
+                git("switch", "-qc", "mode-change", head)
+                git("update-index", "--chmod=+x", product); git("commit", "-qm", "mode changed")
+                self.assertFalse(planner.partitioned_capacity_inputs(paths, approved, git("rev-parse", "HEAD")))
+                git("switch", "-qc", "removed-note", head)
+                git("rm", note); deleted = commit("handoff removal")
+                self.assertFalse(planner.partitioned_capacity_inputs(paths + [note], approved, deleted))
+
+    def test_unregistered_source_cannot_select_narrow_checks(self):
+        with patch.object(planner, "PARTITIONED_CAPACITY_SOURCE", None):
+            self.assertFalse(planner.partitioned_capacity_paths_only(["NekoWidget/example.swift"]))
+
+
 if __name__ == "__main__":
     unittest.main()
