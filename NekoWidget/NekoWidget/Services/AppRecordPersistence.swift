@@ -872,7 +872,11 @@ final class AppRecordPersistence: ObservableObject {
             switch mutation {
             case 0: changed.enabled = false
             case 1: changed.pending = UUID()
-            case 2: changed.owner = UUID().uuidString.lowercased()
+            case 2:
+                changed = Binding(version: value.version, origin: value.origin, owner: UUID().uuidString.lowercased(),
+                    consent: value.consent, enabled: value.enabled, revision: value.revision,
+                    snapshotID: value.snapshotID, fingerprint: value.fingerprint,
+                    requiredManifests: value.requiredManifests, requiredDatasetID: value.requiredDatasetID)
             case 3: changed.snapshotID = UUID()
             default: changed.requiredDatasetID = UUID()
             }
@@ -1343,7 +1347,7 @@ private final class AppRecordFixture {
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
         Self.preparationPhase = "保存完了の境界"
         try await persistence.verifyAcceptedSaveFences()
-        let repository = CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
+        let repository = try CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
         let url = AppRecordDataset.directory("CareHandoff").appendingPathComponent("plan.json")
         var plan = try JSONDecoder().decode(CareHandoffPlan.self, from: Data(contentsOf: url))
         await server.cancelDeletionOnce()
