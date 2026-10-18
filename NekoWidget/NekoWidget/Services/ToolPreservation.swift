@@ -530,14 +530,17 @@ enum ToolBackupFiles {
         }
         return result
     }
-    static func acknowledge(_ id: UUID, sent: Set<UUID>, saved: Saved) throws {
+    static func receiptBuckets(_ sent: Set<UUID>) -> [String: Set<UUID>] {
+        Dictionary(grouping: sent) { String($0.uuidString.lowercased().prefix(2)) }.mapValues { Set($0) }
+    }
+    static func acknowledge(_ id: UUID, sent: Set<UUID>, saved: Saved, buckets: inout [String: Set<UUID>]) throws {
         let folder = directory(saved.id)
         if saved.index.version == 4 {
             // Bounded buckets avoid rewriting every prior acknowledgement for
             // each photo in a large first upload. The immutable snapshot binds IDs.
             let prefix = String(id.uuidString.lowercased().prefix(2))
-            let bucket = sent.filter { $0.uuidString.lowercased().hasPrefix(prefix) }
-            try write(JSONEncoder().encode(bucket), to: folder.appendingPathComponent("sent-v4/" + prefix + ".json"))
+            buckets[prefix, default: []].insert(id)
+            try write(JSONEncoder().encode(buckets[prefix]!), to: folder.appendingPathComponent("sent-v4/" + prefix + ".json"))
         } else { try write(JSONEncoder().encode(sent), to: folder.appendingPathComponent("sent.json")) }
     }
 }
@@ -643,6 +646,7 @@ enum ToolBackupTransfer {
         guard FileManager.default.fileExists(atPath: attemptURL.path) else { return }
         let id = try JSONDecoder().decode(UUID.self, from: ToolBackupFiles.read(attemptURL, maximum: 128))
         var sent = try ToolBackupFiles.sent(saved)
+        var buckets = ToolBackupFiles.receiptBuckets(sent)
         if sent.contains(id) { return }
         guard let expected = try ToolBackupFiles.preparedParts(saved).first(where: { $0.id == id })?.load(saved) else { throw ToolBackupError.invalid }
         do {
@@ -655,7 +659,7 @@ enum ToolBackupTransfer {
         }
         try await client.requireSessionCheckpoint(checkpoint)
         sent.insert(id)
-        try ToolBackupFiles.acknowledge(id, sent: sent, saved: saved)
+        try ToolBackupFiles.acknowledge(id, sent: sent, saved: saved, buckets: &buckets)
     }
 
     /// Remove this index first, then only pieces that no other copy needs.
@@ -782,6 +786,7 @@ enum ToolBackupTransfer {
         let pieces = try ToolBackupFiles.preparedParts(saved)
         let attemptURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("attempt.json")
         var sent = try ToolBackupFiles.sent(saved)
+        var buckets = ToolBackupFiles.receiptBuckets(sent)
         guard sent.isSubset(of: Set(pieces.map(\.id))) else { throw ToolBackupError.invalid }
         let usage = try await client.usage()
         if saved.index.version >= 2 {
@@ -801,7 +806,7 @@ enum ToolBackupTransfer {
                     guard existing.record.revision == 1, existing.document.toolBackup == piece else { throw ToolBackupError.invalid }
                     sent.insert(id)
                     try await client.requireSessionCheckpoint(checkpoint)
-                    try ToolBackupFiles.acknowledge(id, sent: sent, saved: saved)
+                    try ToolBackupFiles.acknowledge(id, sent: sent, saved: saved, buckets: &buckets)
                 } catch ManagedPreservationError.notFound { } }
             }
             try await client.requireSessionCheckpoint(checkpoint)
@@ -835,7 +840,7 @@ enum ToolBackupTransfer {
             guard revision == 1 else { throw ToolBackupError.invalid }
             sent.insert(item.id)
             try await client.requireSessionCheckpoint(checkpoint)
-            try ToolBackupFiles.acknowledge(item.id, sent: sent, saved: saved)
+            try ToolBackupFiles.acknowledge(item.id, sent: sent, saved: saved, buckets: &buckets)
             await progress(offset + 1, pieces.count)
         }
         try await client.requireSessionCheckpoint(checkpoint)
