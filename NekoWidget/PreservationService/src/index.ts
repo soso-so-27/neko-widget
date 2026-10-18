@@ -195,13 +195,15 @@ export async function route(request: Request, services: Services, context?: Pick
     return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
   }
   if (request.method === 'GET' && path === '/v1/records') {
-    for (const [key] of url.searchParams) if (!['after', 'limit'].includes(key) || url.searchParams.getAll(key).length !== 1) {
+    for (const [key] of url.searchParams) if (!['after', 'limit', 'view'].includes(key) || url.searchParams.getAll(key).length !== 1) {
       throw new ServiceError('INVALID_REQUEST');
     }
     const limit = url.searchParams.get('limit') ?? '20';
+    const view = url.searchParams.get('view');
+    if (view !== null && view !== 'visible') throw new ServiceError('INVALID_REQUEST');
     if (!/^\d{1,2}$/.test(limit)) throw new ServiceError('INVALID_PAGE_SIZE');
     return payloadResponse(request, async () =>
-      response(await services.archive.list(token, url.searchParams.get('after') ?? '', Number(limit))));
+      response(await services.archive.list(token, url.searchParams.get('after') ?? '', Number(limit), view === 'visible')));
   }
   const id = /^\/v1\/records\/([0-9a-f-]+)$/.exec(path)?.[1];
   if (id && request.method === 'GET') return payloadResponse(request, async signal => {

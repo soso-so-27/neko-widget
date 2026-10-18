@@ -14,6 +14,7 @@ beforeEach(async () => {
   for (const owner of owners) {
     // Owner creation also creates a generation row through migration 0015.
     await db.prepare('DELETE FROM pa_owner_recovery_generations WHERE owner_id=?').bind(owner).run();
+    await db.prepare('DELETE FROM pa_owner_record_counters WHERE owner_id=?').bind(owner).run();
     await db.prepare('DELETE FROM pa_owners WHERE owner_id=?').bind(owner).run();
   }
   await db.prepare('DELETE FROM pa_pilot_control').run();

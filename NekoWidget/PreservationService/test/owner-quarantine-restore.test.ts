@@ -12,6 +12,7 @@ import type { PurgeIntentEvent, S3PurgeIntentStore } from '../src/s3-purge-inten
 import { syntheticKeyAuthority } from './key-fixture';
 import { OwnerRequestLimiter } from '../src/owner-request-limiter';
 import { ownerD1DeleteOrder } from '../src/owner-d1-residue';
+import { summarizeToolNode, type ToolNode } from '../src/tool-index-v4';
 
 const ownerId = '00000000-0000-4000-8000-000000000001';
 
@@ -158,6 +159,14 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
   expect(await binding.DB.prepare(`SELECT count(*) AS count FROM pa_record_commit_markers
     WHERE owner_id=? AND record_id=?`).bind(ownerId, recordId).first())
     .toMatchObject({ count: 2 });
+  // Derived delta state is rebuilt by record triggers, while a restore never
+  // imports a cursor that could skip the first complete owner verification.
+  expect(await binding.DB.prepare('SELECT sequence,record_count FROM pa_owner_record_counters WHERE owner_id=?')
+    .bind(ownerId).first()).toEqual({sequence:1,record_count:1});
+  expect(await binding.DB.prepare('SELECT record_id,sequence FROM pa_owner_record_changes WHERE owner_id=?')
+    .bind(ownerId).first()).toEqual({record_id:recordId,sequence:1});
+  expect(await binding.DB.prepare('SELECT count(*) AS n FROM pa_owner_recovery_tree_cursors WHERE owner_id=?')
+    .bind(ownerId).first('n')).toBe(0);
   expect(new Uint8Array(await (await binding.ARCHIVE.get(photoKey))!.arrayBuffer()))
     .toEqual(photoCiphertext);
   expect(await binding.DB.prepare('SELECT count(*) AS count FROM pa_sessions').first())
@@ -174,7 +183,8 @@ it('stages a verified owner and photo in empty D1/R2 while keeping access disabl
     .rejects.toMatchObject({ code: 'OWNER_QUARANTINE_RESTORE_UNAVAILABLE' });
 });
 
-async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 'path' | 'source' | 'hash' | 'bytes' | 'json-hash' | 'manifest' | 'photo-name' | 'head') {
+async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 'path' | 'source' | 'hash' | 'bytes' | 'json-hash' | 'manifest' | 'photo-name' | 'head'
+  | 'v4' | 'v4-child-hash' | 'v4-summary' | 'v4-prefix' | 'v4-partial-root') {
   const authority = await syntheticKeyAuthority();
   const keys = envelopeKeyCustody({ enabled: true, wrapper: authority.bridge() });
   const secret = randomToken(), stored = new Map<string, Uint8Array>(), references: RecoveryObject[] = [];
@@ -261,6 +271,42 @@ async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 
       if (revision === 2) ownerRecords.push({ recordId: headID, revision, deleted: false, marker });
     }
   }
+  let tree: { rootID: string; children: string[]; fragmentID: string } | null = null;
+  if (change?.startsWith('v4')) {
+    const rootID = crypto.randomUUID(), fragmentID = crypto.randomUUID(), sourceID = crypto.randomUUID();
+    const path = 'CareHandoff/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.json', content = new Uint8Array([255,0]);
+    await publish(fragmentID,sourceID,'json',path,content);
+    const files = [{ ...photoFile,sourceSnapshotID:original },
+      { path,bytes:content.length,sha256:await sha256(content),records:[fragmentID],sourceSnapshotID:sourceID },
+      ...(change==='v4-partial-root' ? [] : [{ ...jsonFile(jsonIds[1]!),sourceSnapshotID:newer }])];
+    const groups = new Map<string,typeof files>();
+    for (const file of files) {
+      const prefix = (await sha256(file.path)).slice(0,1);
+      groups.set(prefix,[...groups.get(prefix)??[],file]);
+    }
+    const children = [];
+    for (const [prefix,files] of groups) {
+      const node: ToolNode = { version:4,snapshotID:crypto.randomUUID(),uploadSnapshotID:rootID,createdAt:1,prefix,files };
+      if (change==='v4-prefix' && children.length===0) node.prefix = [...'0123456789abcdef'].find(x=>!groups.has(x))!;
+      const bytes = new TextEncoder().encode(JSON.stringify(node));
+      await publish(node.snapshotID,node.snapshotID,'index','index.json',bytes);
+      children.push({ prefix:node.prefix,snapshotID:node.snapshotID,sha256:await sha256(bytes),...summarizeToolNode(node) });
+    }
+    if (change==='v4-child-hash') children[0]!.sha256 = '0'.repeat(64);
+    if (change==='v4-summary') children[0]!.nodeCount++;
+    const node: ToolNode = { version:4,snapshotID:rootID,uploadSnapshotID:rootID,createdAt:1,prefix:'',children };
+    const bytes = new TextEncoder().encode(JSON.stringify(node));
+    await publish(rootID,rootID,'index','index.json',bytes);
+    const document: ArchiveDocument = { formatVersion:1,text:JSON.stringify({ kind:'app-records-v1',snapshotID:rootID,indexHash:await sha256(bytes) }),
+      capturedAt:null,writtenAt:null,updatedAt:null,catNames:[],photoFile:null };
+    const metadata = await keys.seal(new TextEncoder().encode(JSON.stringify({ version:1,ownerId,recordId:headID,
+      revision:1,document,photoSHA256:null,photoBytes:0 })),{ ownerId,purpose:'record',recordId:headID+'/document' });
+    const copied = await records.copy({ ownerId,recordId:headID,revision:1,initialFingerprint:'d'.repeat(64),initialOperation:crypto.randomUUID(),
+      metadata,photoKey:null,photoBytes:0,quotaBytes:metadata.length,deleted:false,photoCiphertext:null });
+    const marker = await records.commit(ownerId,headID,1,copied);
+    ownerRecords.push({ recordId:headID,revision:1,deleted:false,marker });
+    tree = { rootID,children:children.map(x=>x.snapshotID),fragmentID };
+  }
   if (change === 'deleted-source' || change === 'head') {
     const tombstone = await records.copy({ ...originalIndex, revision: 2, deleted: true,
       metadata: null, photoKey: null, photoBytes: 0, photoCiphertext: null, quotaBytes: 0 });
@@ -281,7 +327,7 @@ async function sharedToolRestoreFixture(change?: 'deleted-source' | 'missing' | 
   const purge = { async listOwnerVersionsPage() { return { versions: [], nextCursor: null }; } } as unknown as S3PurgeIntentStore;
   return { restore: new OwnerQuarantineRestore(new OwnerArchiveRecovery(s3, owners, records), records,
     db, bucket, purge, { async assertNotRequested() {} }), db, bucket, original, newer, photoId, jsonIds,
-    references, objectCount: references.length, headID };
+    references, objectCount: references.length, headID, tree };
 }
 
 it.each([undefined, 'deleted-source'] as const)('rebuilds v2 photo edges without duplicating the photo or requiring its original index (%s)', async change => {
@@ -322,3 +368,31 @@ it('restores a mutable automatic head and v3 JSON references before publishing d
     VALUES(?,?,?,2)`).bind(ownerId, f.headID, f.original).run()).rejects.toThrow();
   expect(await f.db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').bind(ownerId).first()).toEqual({ disabled: 1 });
 });
+
+it.each(['whole','paged'] as const)('restores v4 radix edges, opaque fragments and a complete head while retaining disabled access (%s)', async mode => {
+  const f = await sharedToolRestoreFixture('v4'), tree = f.tree!;
+  let result;
+  if(mode==='whole')result=await f.restore.restore(ownerId,1000);
+  else for(let step=0;step<200;step++){
+    result=await f.restore.resume(ownerId,1000,{async assertSourceFenced(){},async assertTargetOffline(){}});
+    if(result.status!=='pending')break;
+  }
+  expect(result).toEqual({ status:'staged-disabled',ownerId,records:8+tree.children.length,photos:1 });
+  expect(await f.db.prepare('SELECT count(*) AS n FROM pa_tool_snapshot_references WHERE owner_id=?').bind(ownerId).first())
+    .toEqual({ n:6+tree.children.length });
+  expect(await f.db.prepare('SELECT count(*) AS n FROM pa_tool_record_sources WHERE owner_id=? AND upload_snapshot_id=?')
+    .bind(ownerId,tree.rootID).first()).toEqual({n:1+tree.children.length});
+  for (const id of [tree.rootID,...tree.children,tree.fragmentID]) {
+    await expect(f.db.prepare('UPDATE pa_records SET deleted=1 WHERE owner_id=? AND record_id=?').bind(ownerId,id).run()).rejects.toThrow();
+  }
+  expect(await f.db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').bind(ownerId).first()).toEqual({ disabled:1 });
+  expect(await f.db.prepare('SELECT count(*) AS n FROM pa_sessions').first()).toEqual({ n:0 });
+});
+
+it.each(['v4-child-hash','v4-summary','v4-prefix','v4-partial-root'] as const)(
+  'refuses staged success for inconsistent v4 recovery graphs (%s)', async change => {
+    const f = await sharedToolRestoreFixture(change);
+    await expect(f.restore.restore(ownerId,1000)).rejects.toMatchObject({ code:change==='v4-prefix'?'INVALID_RECORD':'OWNER_QUARANTINE_RESTORE_UNAVAILABLE' });
+    expect(await f.db.prepare('SELECT disabled FROM pa_owners WHERE owner_id=?').bind(ownerId).first()).toEqual({ disabled:1 });
+    expect(await f.db.prepare('SELECT count(*) AS n FROM pa_sessions').first()).toEqual({ n:0 });
+  });

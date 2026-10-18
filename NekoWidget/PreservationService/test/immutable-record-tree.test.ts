@@ -79,3 +79,30 @@ it('shares the I/O limit across instances and drains siblings before returning a
  await expect(new ImmutableRecordTree(owner,'failed',f.keys,interrupted).create(entries)).rejects.toThrow('first sibling fails');
  expect(active).toBe(0);expect(finished).toBe(attempts-1);
 });
+it('keeps materialized inventories bounded separately from authenticated delta roots',async()=>{
+ const f=await fixture(),entry={key:'a'.repeat(32),value:1};
+ const oversized=Array.from({length:100_001},()=>entry);
+ await expect(f.tree.create(oversized)).rejects.toThrow();
+ await expect(f.tree.logicalHash(oversized)).rejects.toThrow();
+ const root=await f.tree.create([entry]);f.reset();
+ await expect(f.tree.entries({...root,count:100_001})).rejects.toThrow();
+ expect(f.counts().reads).toBe(0);
+ await expect(f.tree.verifyRoot({...root,count:1_000_001})).rejects.toThrow();
+ await expect(f.tree.update({...root,count:1_000_001},[entry])).rejects.toThrow();
+ expect(f.counts().reads).toBe(0);
+});
+it('streams ordered authenticated pages and bounds node reads independently of total records',async()=>{
+ const f=await fixture(),entries:TreeEntry[]=[];
+ for(let i=0;i<2001;i++)entries.push({key:(await sha256('page-'+i)).slice(0,32),value:i});
+ const root=await f.tree.create(entries),actual:TreeEntry[]=[];let after='',pages=0;
+ do {
+   f.reset();const page=await f.tree.page(root,after,200);pages++;
+   expect(page.entries.length).toBeLessThanOrEqual(200);expect(page.nodes).toBeLessThanOrEqual(256);
+   expect(f.counts().reads).toBe(page.nodes);actual.push(...page.entries);
+   if(page.nextAfter===null)break;
+   expect(page.nextAfter>after).toBe(true);after=page.nextAfter;
+ }while(true);
+ expect(pages).toBe(11);expect(actual).toEqual(entries.sort((a,b)=>a.key.localeCompare(b.key)));
+ await expect(f.tree.page({...root,hash:'0'.repeat(64)})).rejects.toThrow();
+ await expect(f.tree.page(root,'x')).rejects.toThrow();
+});

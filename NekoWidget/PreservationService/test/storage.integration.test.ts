@@ -701,6 +701,39 @@ it('listing is paged and carries a mutation generation without downloading image
   expect(JSON.stringify(first)).not.toContain('photoBase64');
 });
 
+it('visible listing filters 1500 internal parts before key use while preserving manual and source-missing records and cursors', async () => {
+  const f = await fixture(); const ids=[crypto.randomUUID(),crypto.randomUUID(),crypto.randomUUID()].sort();
+  for(const id of ids)await f.archive.put(f.session.token,id,f.request());
+  // An old manual index remains visible; missing legacy source rows also remain.
+  await binding.DB.prepare(`INSERT INTO pa_tool_record_sources(owner_id,record_id,snapshot_id,kind)
+    VALUES(?,?,?,'index')`).bind(f.session.ownerId,ids[1],ids[1]).run();
+  await binding.DB.prepare(`WITH RECURSIVE ids(n) AS(SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<1500)
+    INSERT INTO pa_records(owner_id,record_id,revision,initial_fingerprint,initial_operation,metadata,quota_bytes)
+    SELECT ?,'00000000-0000-4000-8000-'||printf('%012d',n),1,'synthetic','synthetic',X'01',1 FROM ids`)
+    .bind(f.session.ownerId).run();
+  await binding.DB.prepare(`INSERT INTO pa_tool_record_sources(owner_id,record_id,snapshot_id,kind,upload_snapshot_id)
+    SELECT owner_id,record_id,record_id,CASE WHEN CAST(substr(record_id,25) AS INTEGER)%3=0 THEN 'index'
+      WHEN CAST(substr(record_id,25) AS INTEGER)%3=1 THEN 'json' ELSE 'photo' END,
+      CASE WHEN CAST(substr(record_id,25) AS INTEGER)%3=0 THEN record_id ELSE NULL END
+    FROM pa_records WHERE owner_id=? AND metadata=X'01'`).bind(f.session.ownerId).run();
+  let opens=0;
+  const archive=new ArchiveStore({...f.options,keys:{...f.options.keys,async open(value,context){
+    opens++;return f.options.keys.open(value,context);
+  }}});
+  const services:Services={auth:f.auth,archive,verifier:{verifyNativeAuthorization:async()=>f.identity}};
+  const headers={authorization:`Bearer ${f.session.token}`};
+  const first=await (await route(new Request('https://preservation.test/v1/records?view=visible&limit=2',{headers}),services)).json() as
+    {items:{recordId:string}[];nextCursor:string;generation:number};
+  expect(first.items.map(x=>x.recordId)).toEqual(ids.slice(0,2));expect(first.nextCursor).toBe(ids[1]);
+  const last=await archive.list(f.session.token,first.nextCursor,2,true);
+  expect(last.items.map(x=>x.recordId)).toEqual(ids.slice(2));expect(last.nextCursor).toBeNull();expect(last.generation).toBe(first.generation);
+  expect(opens).toBe(3);
+  // Omitted mode still attempts to decrypt the raw synthetic internal rows.
+  await expect(archive.list(f.session.token,'',2)).rejects.toMatchObject({code:'ARCHIVE_INTEGRITY_FAILED'});
+  for(const query of ['view=unknown','view=','view=visible&view=visible'])await expect(route(
+    new Request(`https://preservation.test/v1/records?${query}`,{headers}),services)).rejects.toMatchObject({code:'INVALID_REQUEST'});
+});
+
 it('HTTP stays disabled until both the environment gate and recovery policy are active', async () => {
   const request = new Request('https://preservation.test/v1/records', { headers: { 'CF-Connecting-IP': '192.0.2.1' } });
   const closed = await worker.fetch(request, binding as Env);
@@ -730,7 +763,7 @@ it('usage starts empty without creating inventory and never queries membership, 
   const archive = new ArchiveStore({ ...f.options, membership: { status: unavailable },
     keys: { seal: unavailable, open: unavailable }, photos: { validateJPEG: unavailable } });
   expect(await archive.usage(f.session.token)).toEqual({ version: 1, accounting: 'encrypted-records-v1',
-    toolSnapshots: { maximumIndexVersion: 3, strictPartDeletion: true },
+    toolSnapshots: { maximumIndexVersion: 4, strictPartDeletion: true },
     storage: { usedBytes: 0, reservedBytes: 0, limitBytes: 100_000, availableBytes: 100_000, overLimit: false },
     records: { saved: 0, pending: 0, maximumRecords: 100, creationLimitReached: false } });
   expect(await binding.DB.prepare('SELECT 1 FROM pa_inventory WHERE owner_id=?').bind(f.session.ownerId).first()).toBeNull();

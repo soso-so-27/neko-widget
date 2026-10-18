@@ -175,7 +175,7 @@ enum PreservationFixtureScenario: Sendable {
 
 actor PreservationFixtureServer {
     enum ExportMode: Sendable {
-        case single, thousand, truncated, changedGeneration, duplicate, gone, missing, unsupported
+        case single, thousand, aboveThousand, truncated, changedGeneration, duplicate, gone, missing, unsupported
         case throttledOnce, throttledAlways, invalidRetry, finalCheckThrottled
     }
     enum ExportRenewalOutcome { case sameOwner, otherOwner, changedGeneration, unchangedToken }
@@ -390,7 +390,8 @@ actor PreservationFixtureServer {
                 return try throttle()
             }
             if exportMode == .invalidRetry { return try throttle("61") }
-            let total = [ExportMode.thousand, .truncated, .changedGeneration, .duplicate].contains(exportMode) ? 1000 : 1
+            let total = exportMode == .aboveThousand ? 1001
+                : [ExportMode.thousand, .truncated, .changedGeneration, .duplicate].contains(exportMode) ? 1000 : 1
             let parameters = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let after = parameters.first(where: { $0.name == "after" })?.value
             if after != nil && parameters.first(where: { $0.name == "generation" })?.value != String(inventoryGeneration) {
@@ -10526,16 +10527,16 @@ actor SharingRuntimeSelfTestRunner {
         }
         let full = try PreservationNativeFixture.make()
         defer { try? full.cleanup() }
-        await full.server.setExportMode(.thousand)
+        await full.server.setExportMode(.aboveThousand)
         ManagedPreservationExport.prepareAll(client: full.client, using: exporter, validate: {}, progress: { _, _ in })
         try await finish()
         let counts = await full.server.exportCounts()
-        guard counts.pages == 20, counts.details == 0, let archive = exporter.payload else {
+        guard counts.pages == 21, counts.details == 0, let archive = exporter.payload else {
             throw ManagedPreservationError.invalidResponse
         }
         let bytes = try Data(contentsOf: archive.fileURL)
         guard bytes.range(of: Data("00000000-0000-4000-8000-000000000001".utf8)) != nil,
-              bytes.range(of: Data("00000000-0000-4000-8000-0000000003e8".utf8)) != nil,
+              bytes.range(of: Data("00000000-0000-4000-8000-0000000003e9".utf8)) != nil,
               bytes.range(of: Data("manifest.json".utf8)) != nil else { throw ManagedPreservationError.invalidResponse }
         exporter.finishSharing(archive)
         guard try files() == before else { throw ManagedPreservationError.secureStorage }

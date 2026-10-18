@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 // macOS: xcrun --sdk macosx swiftc -parse-as-library \
 //   NekoWidget/Services/PhotoMemoryNoteStore.swift \
@@ -7,6 +10,16 @@ import Foundation
 @main
 enum PhotoMemoryNoteVerifier {
     static func main() async throws {
+        if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--capacity-read" {
+            try await capacityRead(at: URL(fileURLWithPath: CommandLine.arguments[2]), length: Int(CommandLine.arguments[3])!)
+            return
+        }
+        if CommandLine.arguments.contains("--capacity-probe") {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("memo-capacity-\(UUID())")
+            defer { try? FileManager.default.removeItem(at: root) }
+            try measuresLongTermStore(at: root)
+            return
+        }
         try verifiesLibraryScopeAndOrdering()
         try verifiesWeightValues()
         try verifiesReadFailuresNeverMeanEmptyAndLateRequestsStayIsolated()
@@ -25,7 +38,97 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesRecordsAndContext(at: root.appendingPathComponent("records/state.json"))
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
+        try await verifiesMissingPartitionNeverReplacesRecords(at: root.appendingPathComponent("partition-failure/state.json"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
+    }
+
+    private static func verifiesMissingPartitionNeverReplacesRecords(at url: URL) async throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var notes: [String: PhotoMemoryNote] = [:]
+        for i in 0..<400 { notes["synthetic-photo-\(i)"] = capacityNote(i, text: String(repeating: "猫", count: 100)) }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        try AppRecordJSON.write(encoder.encode(PhotoMemoryNoteSnapshot(schemaVersion: 4, notes: notes)), to: url)
+        let pointer = try Data(contentsOf: url), manifest = try AppRecordJSON.manifest(pointer)!
+        let missing = url.deletingLastPathComponent().appendingPathComponent(manifest.chunks[0].file)
+        let originalChunk = try Data(contentsOf: missing)
+        try FileManager.default.removeItem(at: missing)
+        let store = PhotoMemoryNoteStore(fileURL: url)
+        do {
+            _ = try await store.save(text: "別のメモ", for: "new-photo", expectedRevision: nil)
+            throw Failure.failed("missing partition became an empty writable store")
+        } catch let error as Failure { throw error }
+        catch { }
+        try require(try Data(contentsOf: url) == pointer, "failed write replaced a damaged store")
+        try originalChunk.write(to: missing, options: .atomic)
+        let recovered = try await PhotoMemoryNoteStore(fileURL: url).records()
+        try require(recovered.count == notes.count && recovered.allSatisfy { notes[$0.photoIdentifier] == $0.note },
+                    "partition repair lost original records")
+    }
+
+    // Exercise the shipping store before choosing a partitioning strategy.
+    // Synthetic notes only; macOS timings/RSS are not an iPhone UI claim.
+    private static func measuresLongTermStore(at root: URL) throws {
+        struct Fixture: Encodable { let schemaVersion = 4; let notes: [String: PhotoMemoryNote] }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for length in [21, 500] {
+            let url = root.appendingPathComponent("state-\(length).json")
+            let count = 36_500
+            let text = String(repeating: "猫", count: length)
+            var notes: [String: PhotoMemoryNote] = [:]
+            for i in 0..<count {
+                notes["synthetic-photo-\(i)"] = capacityNote(i, text: text)
+            }
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let initial = try encoder.encode(Fixture(notes: notes))
+            try initial.write(to: url, options: .atomic)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            process.arguments = ["--capacity-read", url.path, String(length)]
+            try process.run(); process.waitUntilExit()
+            try require(process.terminationStatus == 0, "isolated capacity probe failed")
+        }
+    }
+
+    private static func capacityNote(_ index: Int, text: String) -> PhotoMemoryNote {
+        let suffix = String(format: "%012x", index)
+        return PhotoMemoryNote(id: UUID(uuidString: "10000000-0000-0000-0000-" + suffix)!, text: text,
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000), revision: "20000000-0000-0000-0000-" + suffix)
+    }
+
+    private static func capacityRead(at url: URL, length: Int) async throws {
+            let count = 36_500
+            let text = String(repeating: "猫", count: length)
+            let bytes = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize!
+            let started = DispatchTime.now().uptimeNanoseconds
+            let store = PhotoMemoryNoteStore(fileURL: url)
+            let loaded = try await store.note(for: "synthetic-photo-18250")
+            guard let selected = loaded else { throw Failure.failed("long-term note missing") }
+            try require(selected.text == text, "long-term read changed a note")
+            let readEnd = DispatchTime.now().uptimeNanoseconds
+            let changed = try await store.save(text: "犬" + String(text.dropFirst()), for: "synthetic-photo-18250", expectedRevision: selected.revision)
+            let saveEnd = DispatchTime.now().uptimeNanoseconds
+            let reopened = PhotoMemoryNoteStore(fileURL: url)
+            let records = try await reopened.records()
+            let reopenEnd = DispatchTime.now().uptimeNanoseconds
+            try require(records.count == count, "long-term edit/reopen lost records")
+            for record in records {
+                guard let i = Int(record.photoIdentifier.replacingOccurrences(of: "synthetic-photo-", with: "")), (0..<count).contains(i) else { throw Failure.failed("unexpected record key") }
+                try require(record.note == (i == 18250 ? changed : capacityNote(i, text: text)), "long-term edit changed another record or lost the saved value")
+            }
+            var peak: Int64 = -1
+#if canImport(Darwin)
+            var usage = rusage()
+            if getrusage(RUSAGE_SELF, &usage) == 0 { peak = Int64(usage.ru_maxrss) }
+#endif
+            print("CAPACITY_PROBE notes=\(count) characters=\(length) bytes=\(bytes) read_ms=\((readEnd-started)/1_000_000) edit_ms=\((saveEnd-readEnd)/1_000_000) reopen_ms=\((reopenEnd-saveEnd)/1_000_000) process_peak_rss_bytes=\(peak)")
+            if let before = try AppRecordJSON.manifest(Data(contentsOf: url)), let changed {
+                _ = try await reopened.save(text: "鳥の記録", for: "synthetic-photo-18250", expectedRevision: changed.revision)
+                let after = try AppRecordJSON.manifest(Data(contentsOf: url))!
+                let original = Set(before.chunks.map(\.sha256))
+                let changedBytes = after.chunks.filter { !original.contains($0.sha256) }.reduce(0) { $0 + $1.bytes }
+                try require(changedBytes < 256 * 1024, "one shipping-store edit rewrote too many chunks")
+                print("MEMO_CHUNK_PROBE characters=\(length) logical_bytes=\(after.bytes) chunks=\(after.chunks.count) changed_bytes=\(changedBytes)")
+            }
     }
 
     private static func verifiesLibraryScopeAndOrdering() throws {

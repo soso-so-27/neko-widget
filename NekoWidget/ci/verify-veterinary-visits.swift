@@ -100,13 +100,10 @@ import CoreGraphics
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil) }
         try JSONEncoder().encode(LegacyState(visits: full)).write(to: capacityRoot.appendingPathComponent("state.json"))
         let capacityStore = VeterinaryVisitStore(directory: capacityRoot)
-        do {
-            _ = try await capacityStore.current(catID: UUID(), catName: "新しい猫") { _ in
-                throw Failure(message: "Full store reached creation")
-            }
-            throw Failure(message: "Visit cap accepted another visit")
-        } catch VeterinaryVisitError.visitLimit {}
-        try require(try await capacityStore.visits() == full, "Visit limit changed records")
+        let capacityAdded = try await capacityStore.current(catID: UUID(), catName: "新しい猫") { try $0() }
+        let afterCapacity = try await capacityStore.visits()
+        try require(afterCapacity.count == 101 && afterCapacity.contains(capacityAdded), "The former 100-visit ceiling still blocked a new visit")
+        try require(Set(afterCapacity.filter { $0.id != capacityAdded.id }.map(\.id)) == Set(full.map(\.id)), "Capacity migration changed prior visits")
         let first = try await store.current(catID: owner, catName: "同じ名前") { try $0() }
         let other = try await store.current(catID: otherOwner, catName: "同じ名前") { try $0() }
         try require(first.id != other.id, "same names merged cats")

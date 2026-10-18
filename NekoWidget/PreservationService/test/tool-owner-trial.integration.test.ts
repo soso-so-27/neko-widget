@@ -155,6 +155,7 @@ it('binds the native wire snapshot tag once, completes its index last and retain
   const f=await fixture(),p=await piece(),p2=await piece(p.part.snapshotId,'LostCatDrafts/drafts.json');
   expect(p.id).not.toBe(p.part.snapshotId);
   const usage=await f.archive.usage(f.session.token);
+  expect(usage.toolSnapshots.maximumIndexVersion).toBe(3);
   expect(usage.storage.availableBytes).toBe(20*1024*1024-20*TRIAL_DOCUMENT_ALLOWANCE-TRIAL_INDEX_ALLOWANCE);
   expect(usage.storage.availableBytes).toBe(usage.storage.limitBytes-usage.storage.usedBytes-usage.storage.reservedBytes);
   expect(usage.records.maximumRecords).toBe(21);

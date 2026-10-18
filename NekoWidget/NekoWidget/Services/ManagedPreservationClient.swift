@@ -1027,11 +1027,12 @@ actor ManagedPreservationClient {
         return try store.load() == nil
     }
 
-    func list(after: String? = nil, forExport: Bool = false) async throws -> ManagedPreservationPage {
+    func list(after: String? = nil, forExport: Bool = false, visibleOnly: Bool = false) async throws -> ManagedPreservationPage {
         if let after, UUID(uuidString: after) == nil { throw ManagedPreservationError.invalidRecord }
         // Ten maximum-sized tool indexes fit the existing 4 MiB read bound.
         let query = [URLQueryItem(name: "limit", value: "10")]
             + (after.map { [URLQueryItem(name: "after", value: $0)] } ?? [])
+            + (visibleOnly ? [URLQueryItem(name: "view", value: "visible")] : [])
         let data: Data
         if forExport {
             data = try await exportRead(path: "/v1/records", query: query, maximumBytes: 4 * 1024 * 1024)
@@ -1373,7 +1374,7 @@ final class ManagedPreservationExportPageFile: @unchecked Sendable {
                   header["type"] as? String == "header", Self.integer(header["version"]) == 1,
                   let actualGeneration = Self.integer(header["generation"]), actualGeneration >= 0,
                   generation == nil || generation == actualGeneration,
-                  let total = Self.integer(header["totalRecords"]), (0...1000).contains(total) else {
+                  let total = Self.integer(header["totalRecords"]), (0...200_000).contains(total) else {
                 throw ManagedPreservationError.invalidResponse
             }
             self.generation = actualGeneration; self.totalRecords = total

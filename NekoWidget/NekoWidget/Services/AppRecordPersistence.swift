@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import CryptoKit
 import StoreKit
 import AuthenticationServices
 import ImageIO
@@ -200,18 +201,18 @@ enum AppRecordDataset {
     static func fingerprint() throws -> String {
         writeLock.lock(); defer { writeLock.unlock() }
         _ = try root()
-        var bytes = Data()
+        var digest = SHA256()
         for (tool, manifest) in ToolBackupIndex.manifests.sorted(by: { $0.key < $1.key }) {
             let url = tool == "CatIdentity" ? identityURL() : directory(tool).appendingPathComponent(manifest)
-            bytes.append(Data((tool + "/" + manifest + "\n").utf8))
+            digest.update(data: Data((tool + "/" + manifest + "\n").utf8))
             if let url, FileManager.default.fileExists(atPath: url.path) {
-                bytes.append(try ToolBackupFiles.read(url, maximum: 8 * 1024 * 1024))
+                digest.update(data: try AppRecordJSON.read(url))
             } else if let url {
                 try requirePreviouslyPresentManifest(tool + "/" + manifest, at: url)
             }
-            bytes.append(0)
+            digest.update(data: Data([0]))
         }
-        return ToolBackupIndex.hash(bytes)
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
     /// Only missing/valid empty stores count as empty. Unknown schemas and
     /// unreadable manifests never authorize replacing local records.
@@ -224,7 +225,7 @@ enum AppRecordDataset {
                 try requireMissingManifestIsEmpty(tool, at: url)
                 continue
             }
-            let data = try ToolBackupFiles.read(url, maximum: 8 * 1024 * 1024)
+            let data = try AppRecordJSON.read(url)
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 // The legacy Showcase array is recognized, but is not empty.
                 throw ToolBackupError.invalid
@@ -270,7 +271,7 @@ enum AppRecordDataset {
         let localIdentity: CatHouseholdIdentityState?
         if let url = identityURL(), FileManager.default.fileExists(atPath: url.path) {
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-            localIdentity = try decoder.decode(CatHouseholdIdentityState.self, from: ToolBackupFiles.read(url, maximum: 8 * 1024 * 1024))
+            localIdentity = try decoder.decode(CatHouseholdIdentityState.self, from: AppRecordJSON.read(url))
         } else { localIdentity = nil }
         let source = try ToolBackupFiles.restoredSource(saved.id, owner: saved.owner)
         try await ToolBackupValidation.validate(saved.index, at: source)
@@ -287,7 +288,7 @@ enum AppRecordDataset {
         let identity = destination.appendingPathComponent("CatIdentity/state.json")
         if FileManager.default.fileExists(atPath: identity.path) {
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-            let remote = try decoder.decode(CatHouseholdIdentityState.self, from: ToolBackupFiles.read(identity, maximum: 8 * 1024 * 1024))
+            let remote = try decoder.decode(CatHouseholdIdentityState.self, from: AppRecordJSON.read(identity))
             let merged = try preservingLocalPhotoLinks(remote, local: localIdentity)
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
             try ToolBackupFiles.write(encoder.encode(merged), to: identity)
@@ -533,9 +534,9 @@ final class AppRecordPersistence: ObservableObject {
         guard let id else { return }
         let folder = ToolBackupFiles.directory(id)
         let receipt = folder.appendingPathComponent("uploaded.json")
-        guard let bytes = try? ToolBackupFiles.read(receipt, maximum: 512 * 1024),
+        guard let bytes = try? ToolBackupFiles.read(receipt, maximum: ToolBackupIndex.maximumReceiptBytes),
               let saved = try? JSONDecoder().decode(ToolBackupFiles.Saved.self, from: bytes),
-              saved.id == id, saved.owner == owner, saved.index.version == 3,
+              saved.id == id, saved.owner == owner, saved.index.version >= 3,
               (try? saved.index.validate()) != nil else { return }
         for file in saved.index.files {
             let url = folder.appendingPathComponent(file.path)
@@ -647,11 +648,15 @@ final class AppRecordPersistence: ObservableObject {
         } catch ManagedPreservationError.notFound { return nil }
     }
     private func index(_ head: AppRecordHead) async throws -> ManagedPreservationRecord {
+        struct Header: Decodable { let version: Int }
         let record = try await client.detail(head.snapshotID).record
         guard record.revision == 1, let part = record.document.toolBackup,
               part.kind == "index", part.sha256 == head.indexHash,
               let bytes = Data(base64Encoded: part.payload), ToolBackupIndex.hash(bytes) == head.indexHash,
-              try JSONDecoder().decode(ToolBackupIndex.self, from: bytes).version == 3 else { throw ToolBackupError.invalid }
+              [3, 4].contains(try JSONDecoder().decode(Header.self, from: bytes).version) else { throw ToolBackupError.invalid }
+        if try JSONDecoder().decode(Header.self, from: bytes).version == 4 {
+            guard try ToolBackupTree.decode(part).prefix.isEmpty else { throw ToolBackupError.invalid }
+        }
         return record
     }
     private func synchronize() async {
@@ -664,6 +669,9 @@ final class AppRecordPersistence: ObservableObject {
         do {
             guard var value = try binding(), value.enabled else { title = "自動保存は未設定です"; return }
             try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
+            // Every live store commit and foreground entry requests work. An
+            // idle timer must not reassemble years of notes every eight seconds.
+            guard requested || value.pending != nil || !(value.retiring ?? []).isEmpty || waitingForEditor else { return }
             let currentFingerprint = try AppRecordDataset.fingerprint()
             if waitingForEditor, currentFingerprint == value.fingerprint {
                 // A long editing session must not poll the server every eight
@@ -720,8 +728,8 @@ final class AppRecordPersistence: ObservableObject {
             let retained: Set<UUID>
             if !(value.retiring ?? []).isEmpty, let remote {
                 let current = try await index(remote.1)
-                let decoded = try JSONDecoder().decode(ToolBackupIndex.self, from: Data(base64Encoded: current.document.toolBackup!.payload)!)
-                retained = Set(decoded.files.flatMap(\.records))
+                let decoded = try await ToolBackupTransfer.loadIndex(current, client: client)
+                retained = decoded.recordIDs
             } else { retained = [] }
             for retiring in value.retiring ?? [] where retiring != remote?.1.snapshotID {
                 do {
@@ -731,9 +739,9 @@ final class AppRecordPersistence: ObservableObject {
                     else {
                         let snapshot = try await client.detail(retiring).record
                         guard let part = snapshot.document.toolBackup, let bytes = Data(base64Encoded: part.payload) else { throw ToolBackupError.invalid }
-                        old = try JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
+                        old = try await ToolBackupTransfer.loadIndex(snapshot, client: client)
                     }
-                    guard old.version == 3 else { throw ToolBackupError.invalid }
+                    guard old.version >= 3 else { throw ToolBackupError.invalid }
                     try await ToolBackupTransfer.delete(old, client: client, retaining: retained) { _, _ in }
                 } catch ManagedPreservationError.notFound { }
                 try await require(value, checkpoint)
@@ -755,7 +763,7 @@ final class AppRecordPersistence: ObservableObject {
             let previous: ToolBackupIndex?
             if let remote {
                 let record = try await index(remote.1)
-                previous = try JSONDecoder().decode(ToolBackupIndex.self, from: Data(base64Encoded: record.document.toolBackup!.payload)!)
+                previous = try await ToolBackupTransfer.loadIndex(record, client: client)
             } else { previous = nil }
             let saved: ToolBackupFiles.Saved
             if let pending = value.pending,
@@ -774,12 +782,12 @@ final class AppRecordPersistence: ObservableObject {
             }
             if let pending = value.pending {
                 saved = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
-                    ToolBackupFiles.directory(pending).appendingPathComponent("pending.json"), maximum: 512 * 1024))
+                    ToolBackupFiles.directory(pending).appendingPathComponent("pending.json"), maximum: ToolBackupIndex.maximumReceiptBytes))
                 guard saved.owner == value.owner, value.pendingBase == value.revision else { throw ManagedPreservationError.conflict }
             } else {
                 phase = "端末の記録から送信を準備"
                 title = "保存の準備中…"
-                saved = try await AppRecordCapture.prepare(owner: value.owner, origin: value.origin, previous: previous)
+                saved = try await AppRecordCapture.prepare(owner: value.owner, origin: value.origin, previous: previous, indexVersion: (support?.maximumIndexVersion ?? 0) >= 4 ? 4 : 3)
                 guard try AppRecordDataset.fingerprint() == currentFingerprint else { throw ToolBackupError.changed }
                 value.pending = saved.id; value.pendingFingerprint = currentFingerprint; value.pendingBase = value.revision
                 value.pendingPrevious = remote?.1.snapshotID
@@ -820,7 +828,7 @@ final class AppRecordPersistence: ObservableObject {
             cleanup = true
             if let previous {
                 try await require(value, checkpoint)
-                try await ToolBackupTransfer.delete(previous, client: client, retaining: Set(saved.index.files.flatMap(\.records))) { _, _ in }
+                try await ToolBackupTransfer.delete(previous, client: client, retaining: saved.index.recordIDs) { _, _ in }
                 value.retiring?.removeAll { $0 == previous.snapshotID }; try write(value)
                 try await collectParts(value, checkpoint: checkpoint)
             }
@@ -973,7 +981,7 @@ final class AppRecordPersistence: ObservableObject {
         }
         guard let accepted, let id = accepted.snapshotID else { throw ToolBackupError.storage }
         let uploaded = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
-            ToolBackupFiles.directory(id).appendingPathComponent("uploaded.json"), maximum: 512 * 1024))
+            ToolBackupFiles.directory(id).appendingPathComponent("uploaded.json"), maximum: ToolBackupIndex.maximumReceiptBytes))
         guard uploaded.index.files.allSatisfy({ !FileManager.default.fileExists(atPath: ToolBackupFiles.directory(id).appendingPathComponent($0.path).path) }) else { throw ToolBackupError.storage }
     }
 #endif
@@ -1109,11 +1117,13 @@ struct AppRecordProductionRoot: View {
 
 @MainActor
 enum AppRecordCapture {
-    static func prepare(owner: String, origin: String, previous: ToolBackupIndex?) async throws -> ToolBackupFiles.Saved {
+    static func prepare(owner: String, origin: String, previous: ToolBackupIndex?, indexVersion: Int = 3) async throws -> ToolBackupFiles.Saved {
+        guard indexVersion >= (previous?.version ?? 3) else { throw ManagedPreservationError.servicePaused }
         try AppRecordDataset.requireScope(owner: owner, origin: origin)
         let source = AppRecordDataset.control.appendingPathComponent("preparing/" + UUID().uuidString, isDirectory: true)
         try ToolBackupFiles.protect(source)
         defer { try? FileManager.default.removeItem(at: source) }
+        let previouslyStoredPhotos = Set(previous?.files.filter { $0.path.hasSuffix(".jpg") }.map(\.path) ?? [])
         for (tool, manifest) in ToolBackupIndex.manifests {
             let live = tool == "CatIdentity" ? AppRecordDataset.identityURL() : AppRecordDataset.directory(tool).appendingPathComponent(manifest)
             guard let live else { throw ToolBackupError.invalid }
@@ -1121,7 +1131,7 @@ enum AppRecordCapture {
                 try AppRecordDataset.requireMissingManifestIsEmpty(tool, at: live)
                 continue
             }
-            var bytes = try ToolBackupFiles.read(live, maximum: 8 * 1024 * 1024)
+            var bytes = try AppRecordJSON.read(live)
             if tool == "CatIdentity" {
                 let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
                 var state = try decoder.decode(CatHouseholdIdentityState.self, from: bytes)
@@ -1136,13 +1146,18 @@ enum AppRecordCapture {
                 let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
                 bytes = try encoder.encode(state)
             } else if tool == "PhotoMemoryNotes" {
-                guard var state = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw ToolBackupError.invalid }
-                guard let notes = state["notes"] as? [String: [String: Any]] else { throw ToolBackupError.invalid }
-                var portable: [String: Any] = [:]
-                for (identifier, input) in notes {
+                var state = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: bytes)
+                guard (2...4).contains(state.schemaVersion) else { throw ToolBackupError.invalid }
+                var portable: [String: PhotoMemoryNote] = [:]
+                for (identifier, input) in state.notes {
                     var note = input
-                    guard let rawID = note["id"] as? String, let id = UUID(uuidString: rawID) else { throw ToolBackupError.invalid }
+                    let id = note.id
                     let name = id.uuidString + ".jpg"
+                    if indexVersion == 4, previouslyStoredPhotos.contains(tool + "/" + name) {
+                        // A missing local cache cannot authorize replacing the
+                        // immutable saved copy with a newly edited PhotoKit asset.
+                        note.photoFile = name; portable["saved:" + id.uuidString] = note; continue
+                    }
                     let cache = live.deletingLastPathComponent().appendingPathComponent(name)
                     if !FileManager.default.fileExists(atPath: cache.path), !identifier.hasPrefix("saved:") {
                         do {
@@ -1150,11 +1165,12 @@ enum AppRecordCapture {
                             try AppRecordDataset.writeBackedUp(photo.jpeg, to: cache)
                         } catch is MemoryPhotoJPEGExportError { /* Text survives an unavailable original. */ }
                     }
-                    if FileManager.default.fileExists(atPath: cache.path) { note["photoFile"] = name }
+                    if FileManager.default.fileExists(atPath: cache.path) { note.photoFile = name }
                     portable["saved:" + id.uuidString] = note
                 }
-                state["notes"] = portable; state.removeValue(forKey: "archiveBindings")
-                bytes = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+                state.notes = portable
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+                bytes = try encoder.encode(state)
             } else if tool == "ShowcasePhotos" {
                 let object = try JSONSerialization.jsonObject(with: bytes)
                 var state = object as? [String: Any] ?? ["entries": object, "scopes": [:]]
@@ -1163,25 +1179,30 @@ enum AppRecordCapture {
                 state["entries"] = entries
                 bytes = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
             }
-            let object = try JSONSerialization.jsonObject(with: bytes)
-            for name in ToolBackupFiles.photoNames(object) {
+            for name in try ToolBackupFiles.manifestPhotoNames(tool: tool, data: bytes) {
                 try ToolBackupIndex.validatePath(tool + "/" + name)
+                if indexVersion == 4, previouslyStoredPhotos.contains(tool + "/" + name) { continue }
                 let photo = try ToolBackupFiles.read(live.deletingLastPathComponent().appendingPathComponent(name), maximum: 20 * 1024 * 1024)
                 try ToolBackupFiles.write(photo, to: source.appendingPathComponent(tool + "/" + name))
             }
-            try ToolBackupFiles.write(bytes, to: source.appendingPathComponent(tool + "/" + manifest))
+            let destination = source.appendingPathComponent(tool + "/" + manifest)
+            try ToolBackupFiles.protect(destination.deletingLastPathComponent())
+            if indexVersion == 4 && ["PhotoMemoryNotes", "VeterinaryVisits"].contains(tool) {
+                try AppRecordJSON.write(bytes, to: destination, options: [.atomic, .completeFileProtection])
+            } else { try ToolBackupFiles.write(bytes, to: destination) }
         }
         let reusable = previous?.files.map { file -> ToolBackupIndex.File in
             var value = file; value.sourceSnapshotID = file.sourceSnapshotID ?? previous!.snapshotID; return value
         } ?? []
-        var saved = try ToolBackupFiles.capture(owner: owner, source: source, reusablePhotos: reusable, indexVersion: 3)
-        if let previous {
+        var saved = try ToolBackupFiles.capture(owner: owner, source: source, reusablePhotos: reusable, indexVersion: indexVersion,
+                                               previousIndex: previous, consumePreparedPhotos: true)
+        if let previous, indexVersion == 3 {
             var index = saved.index; index.previousIndexID = previous.snapshotID
             saved = ToolBackupFiles.Saved(owner: saved.owner, index: index)
             try ToolBackupFiles.write(JSONEncoder().encode(saved), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("pending.json"))
             try ToolBackupFiles.write(JSONEncoder().encode(index), to: ToolBackupFiles.directory(saved.id).appendingPathComponent("index-wire.json"))
         }
-        try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id))
+        try await ToolBackupValidation.validate(saved.index, at: ToolBackupFiles.directory(saved.id), authenticatedPhotos: reusable)
         return saved
     }
 }
@@ -1210,12 +1231,20 @@ struct AppRecordSavedPhoto: View {
 /// Isolated synthetic transport. The real D1/S3 reference graph is checked by
 /// backend integration tests; this fixture drives the normal iPhone stores/UI.
 private actor AppRecordFixtureServer {
+    private var maximumIndexVersion = 4
+    func useIndexVersion(_ version: Int) { maximumIndexVersion = version }
     var records: [UUID: [String: Any]] = [:]
     var deleted = Set<UUID>()
     var claimed = Set<UUID>()
     var abandoned = Set<UUID>()
     var requests = 0
     var photoPuts = 0
+    private var indexReads: [UUID: Int] = [:]
+    private var indexRateLimitCountdown: Int?
+    private var indexRateLimitResponses = 0
+    func indexReadCounts() -> [UUID: Int] { indexReads }
+    func rateLimitIndexOnce(after successfulReads: Int) { indexRateLimitCountdown = successfulReads }
+    func indexRateLimits() -> Int { indexRateLimitResponses }
     private var cancelNextDeletion = false
     private var cancelNextHead = false
     private var cleanupCommit: (@Sendable () throws -> Void)?
@@ -1239,17 +1268,18 @@ private actor AppRecordFixtureServer {
                 headerFields: ["Content-Type": "application/json"])!)
         }
         func failure(_ code: String, _ status: Int) throws -> (Data, URLResponse) { try response(["error": ["code": code]], status) }
-        func referenced(_ id: UUID) -> Bool {
-            records.values.contains { record in
-                guard let document = record["document"] as? [String: Any] else { return false }
-                if let text = document["text"] as? String, let data = text.data(using: .utf8),
-                   let head = try? JSONDecoder().decode(AppRecordHead.self, from: data), head.snapshotID == id { return true }
-                if let part = document["toolBackup"] as? [String: Any], part["kind"] as? String == "index",
-                   let payload = part["payload"] as? String, let data = Data(base64Encoded: payload),
-                   let index = try? JSONDecoder().decode(ToolBackupIndex.self, from: data) { return index.files.contains { $0.records.contains(id) } }
-                return false
+        func references(_ record: [String: Any]) -> Set<UUID> {
+            guard let document = record["document"] as? [String: Any] else { return [] }
+            if let text = document["text"] as? String, let data = text.data(using: .utf8),
+               let head = try? JSONDecoder().decode(AppRecordHead.self, from: data) { return [head.snapshotID] }
+            guard let part = document["toolBackup"] as? [String: Any], part["kind"] as? String == "index",
+                  let payload = part["payload"] as? String, let data = Data(base64Encoded: payload) else { return [] }
+            if let node = try? JSONDecoder().decode(ToolBackupTree.Node.self, from: data), node.version == 4 {
+                return Set((node.files ?? []).flatMap(\.records) + (node.children ?? []).map(\.snapshotID))
             }
+            return Set((try? JSONDecoder().decode(ToolBackupIndex.self, from: data).files.flatMap(\.records)) ?? [])
         }
+        func referenced(_ id: UUID) -> Bool { records.values.contains { references($0).contains(id) } }
         if url.path == "/v1/tool-cleanup" {
             if let commit = cleanupCommit { cleanupCommit = nil; try commit() }
             let items = claimed.compactMap { id -> [String: Any]? in
@@ -1276,7 +1306,7 @@ private actor AppRecordFixtureServer {
         if url.path == "/v1/retention" { return try response(["version": 1, "status": "active", "dueAt": NSNull(), "paused": false]) }
         if url.path == "/v1/usage" {
             return try response(["version": 1, "accounting": "encrypted-records-v1",
-                "toolSnapshots": ["maximumIndexVersion": 3, "strictPartDeletion": true],
+                "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true],
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 100000000,
                     "availableBytes": 100000000, "overLimit": false],
                 "records": ["saved": records.count, "pending": 0, "maximumRecords": 200, "creationLimitReached": false]])
@@ -1311,26 +1341,23 @@ private actor AppRecordFixtureServer {
         if request.httpMethod == "DELETE" {
             if cancelNextDeletion { cancelNextDeletion = false; throw CancellationError() }
             guard let old = records[id] else { return try failure("RECORD_NOT_FOUND", 404) }
-            for record in records.values {
-                guard let document = record["document"] as? [String: Any] else { continue }
-                if let text = document["text"] as? String, let bytes = text.data(using: .utf8),
-                   let head = try? JSONDecoder().decode(AppRecordHead.self, from: bytes), head.snapshotID == id {
-                    return try failure("TOOL_PART_REFERENCED", 409)
-                }
-                if let part = document["toolBackup"] as? [String: Any], part["kind"] as? String == "index",
-                   let payload = part["payload"] as? String, let bytes = Data(base64Encoded: payload),
-                   let index = try? JSONDecoder().decode(ToolBackupIndex.self, from: bytes),
-                   index.files.contains(where: { $0.records.contains(id) }) { return try failure("TOOL_PART_REFERENCED", 409) }
-            }
+            guard !referenced(id) else { return try failure("TOOL_PART_REFERENCED", 409) }
             records.removeValue(forKey: id); deleted.insert(id)
-            if let document = old["document"] as? [String: Any], let part = document["toolBackup"] as? [String: Any],
-               part["kind"] as? String == "index", let payload = part["payload"] as? String, let data = Data(base64Encoded: payload),
-               let index = try? JSONDecoder().decode(ToolBackupIndex.self, from: data) {
-                for partID in index.files.flatMap(\.records) where !referenced(partID) { claimed.insert(partID) }
-            }
+            for partID in references(old) where !referenced(partID) { claimed.insert(partID) }
             return try response(["recordId": id.uuidString.lowercased(), "revision": (old["revision"] as! Int) + 1])
         }
         guard let record = records[id] else { return try failure("RECORD_NOT_FOUND", 404) }
+        if let document = record["document"] as? [String: Any],
+           let part = document["toolBackup"] as? [String: Any], part["kind"] as? String == "index" {
+            indexReads[id, default: 0] += 1
+            if let remaining = indexRateLimitCountdown {
+                if remaining == 0 {
+                    indexRateLimitCountdown = nil; indexRateLimitResponses += 1
+                    return try failure("RATE_LIMITED", 429)
+                }
+                indexRateLimitCountdown = remaining - 1
+            }
+        }
         return try response(record)
     }
 }
@@ -1350,6 +1377,140 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static var preparationPhase = "開始"
+    func verifyPartitionedMigrationAndRestore() async throws {
+        Self.preparationPhase = "旧形式を保存"
+        await server.useIndexVersion(3)
+        await persistence.enable()
+        guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        let client = authenticationClient()
+        guard let owner = try await client.sessionOwnerID() else { throw ToolBackupError.invalid }
+        let headID = AppRecordHead.id(origin: configuration.origin!.absoluteString, owner: owner)
+        let oldHead = try AppRecordHead.decode(await client.detail(headID).document)
+        let oldIndex = try await ToolBackupTransfer.loadIndex(client.detail(oldHead.snapshotID).record, client: client)
+        guard oldIndex.version == 3 else { throw ToolBackupError.invalid }
+        let oldFolder = ToolBackupFiles.directory(oldIndex.snapshotID)
+        let restoredMarker = oldFolder.appendingPathComponent("contents/restored.json")
+        let oldReceipt = try ToolBackupFiles.read(oldFolder.appendingPathComponent("uploaded.json"), maximum: ToolBackupIndex.maximumReceiptBytes)
+        try ToolBackupFiles.write(oldReceipt, to: restoredMarker)
+        let restoredPayload = oldFolder.appendingPathComponent("contents/preserve-fixture.bin")
+        try ToolBackupFiles.write(Data("original restored bytes".utf8), to: restoredPayload)
+        let url = AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+        var state = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: AppRecordJSON.read(url))
+        guard let oldNote = state.notes.values.first, let name = oldNote.photoFile else { throw ToolBackupError.invalid }
+        let photo = try Data(contentsOf: url.deletingLastPathComponent().appendingPathComponent(name))
+        // Previous immutable photo must survive a missing local PhotoKit cache.
+        try FileManager.default.removeItem(at: url.deletingLastPathComponent().appendingPathComponent(name))
+        for i in 0..<400 {
+            let id = UUID()
+            var note = PhotoMemoryNote(id: id, text: String(repeating: "猫", count: 100) + "\(i)", updatedAt: .now, revision: UUID().uuidString)
+            if i < 130 {
+                note.photoFile = id.uuidString + ".jpg"
+                try ToolBackupFiles.write(photo, to: url.deletingLastPathComponent().appendingPathComponent(note.photoFile!))
+            }
+            state.notes["saved:" + id.uuidString] = note
+        }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        try AppRecordJSON.write(encoder.encode(state), to: url, options: [.atomic, .completeFileProtection])
+        Self.preparationPhase = "小分けの形式へ移行"
+        await server.useIndexVersion(4)
+        await persistence.retry()
+        guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        try verifyRetiredMetadata(oldIndex.snapshotID)
+        guard try Data(contentsOf: restoredMarker) == oldReceipt,
+              try Data(contentsOf: restoredPayload) == Data("original restored bytes".utf8) else { throw ToolBackupError.invalid }
+        let head = try AppRecordHead.decode(await client.detail(headID).document)
+        let beforeWarmRead = await server.indexReadCounts()
+        let index = try await ToolBackupTransfer.loadIndex(client.detail(head.snapshotID).record, client: client)
+        let afterWarmRead = await server.indexReadCounts()
+        guard index.version == 4, (index.nodes?.count ?? 0) > 1,
+              afterWarmRead[head.snapshotID, default: 0] == beforeWarmRead[head.snapshotID, default: 0] + 1,
+              afterWarmRead.filter({ $0.key != head.snapshotID }) == beforeWarmRead.filter({ $0.key != head.snapshotID }),
+              index.files.contains(where: { $0.path.hasSuffix(".json") && $0.path != "PhotoMemoryNotes/state.json" && $0.path.hasPrefix("PhotoMemoryNotes/") }),
+              index.files.first(where: { $0.path == "PhotoMemoryNotes/" + name }) == oldIndex.files.first(where: { $0.path == "PhotoMemoryNotes/" + name }).map({ file in
+                  var value = file; value.sourceSnapshotID = value.sourceSnapshotID ?? oldIndex.snapshotID; return value
+              }) else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "変更がない写真の再送を確認"
+        let (_, before) = await server.counts()
+        let selected = state.notes.first(where: { $0.key.hasPrefix("saved:") })!
+        _ = try await PhotoMemoryNoteStore.shared.save(text: "編集した記録", for: selected.key, expectedRevision: selected.value.revision)
+        await persistence.retry()
+        let (_, after) = await server.counts()
+        guard persistence.title == "保存済み", before == after else { throw ToolBackupError.storage }
+        try verifyRetiredMetadata(index.snapshotID)
+        let expected = try await PhotoMemoryNoteStore.shared.records()
+        let original = try AppRecordJSON.read(url)
+        Self.preparationPhase = "新しい端末で復元"
+        persistence.setActive(false)
+        try AppRecordDataset.nextFixtureDevice()
+        let next = AppRecordFixture(configuration: configuration, server: server, profiles: profiles)
+        // The new device has neither the upload receipt nor restored contents.
+        // Interrupt the production 429 wait, then reuse only verified metadata
+        // from the same owner and freshly fetched root on the next attempt.
+        let nextClient = next.authenticationClient()
+        let latestHead = try AppRecordHead.decode(await nextClient.detail(headID).document)
+        let rootRecord = try await nextClient.detail(latestHead.snapshotID).record
+        let coldBefore = await server.indexReadCounts()
+        await server.rateLimitIndexOnce(after: 3)
+        Self.preparationPhase = "一覧の通信待ちを中断"
+        let interrupted = Task { try await ToolBackupTransfer.loadIndex(rootRecord, client: nextClient) }
+        for _ in 0..<100 {
+            if await server.indexRateLimits() == 1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard await server.indexRateLimits() == 1 else {
+            interrupted.cancel(); throw ToolBackupError.invalid
+        }
+        interrupted.cancel()
+        do { _ = try await interrupted.value; throw ToolBackupError.invalid }
+        catch is CancellationError { }
+        let interruptedReads = await server.indexReadCounts()
+        let readIDs = interruptedReads.keys.filter { interruptedReads[$0, default: 0] > coldBefore[$0, default: 0] }
+        guard readIDs.count == 4 else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "一覧を続きから再開して通信制限を待つ"
+        let freshRoot = try await nextClient.detail(latestHead.snapshotID).record
+        await server.rateLimitIndexOnce(after: 2)
+        let resumed = try await ToolBackupTransfer.loadIndex(freshRoot, client: nextClient)
+        let resumedReads = await server.indexReadCounts()
+        // Three successful reads survive cancellation. The failed fourth read
+        // is fetched again; the second 429 is retried by the real 60s policy.
+        guard await server.indexRateLimits() == 2,
+              readIDs.filter({ resumedReads[$0] == interruptedReads[$0] }).count == 3,
+              resumed.version == 4, resumed.snapshotID == latestHead.snapshotID else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "壊れた一覧の一部分だけを再取得"
+        let damagedID = readIDs.first!
+        let damagedReceipt = ToolBackupFiles.root.appendingPathComponent("index-node-cache-v4/" + damagedID.uuidString + ".json")
+        try ToolBackupFiles.write(Data("broken fixture receipt".utf8), to: damagedReceipt)
+        let repaired = try await ToolBackupTransfer.loadIndex(nextClient.detail(latestHead.snapshotID).record, client: nextClient)
+        let repairedReads = await server.indexReadCounts()
+        guard repaired == resumed,
+              repairedReads[damagedID, default: 0] == resumedReads[damagedID, default: 0] + 1,
+              repairedReads[latestHead.snapshotID, default: 0] == resumedReads[latestHead.snapshotID, default: 0] + 1,
+              repairedReads.filter({ $0.key != damagedID && $0.key != latestHead.snapshotID }) == resumedReads.filter({ $0.key != damagedID && $0.key != latestHead.snapshotID }) else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "検証済みの一覧から新しい端末へ復元"
+        await next.persistence.enable()
+        guard next.persistence.title == "復元しました" else {
+            Self.preparationPhase += " / \(next.persistence.title) / \(next.persistence.detail ?? "説明なし")"
+            throw ToolBackupError.storage
+        }
+        let restored = try await PhotoMemoryNoteStore.shared.records()
+        let actual = Dictionary(uniqueKeysWithValues: restored.map { ($0.id, $0.note) })
+        guard actual.count == expected.count, expected.allSatisfy({ actual[$0.id] == $0.note }),
+              try AppRecordJSON.read(url) == original else { throw ToolBackupError.invalid }
+        for record in restored where record.note.photoFile != nil {
+            guard let file = try await PhotoMemoryNoteStore.shared.photoURL(for: record.id),
+                  try Data(contentsOf: file) == photo else { throw ToolBackupError.invalid }
+        }
+    }
+    private func verifyRetiredMetadata(_ id: UUID) throws {
+        let folder = ToolBackupFiles.directory(id)
+        for name in ["pending.json", "uploaded.json", "index-wire.json", "sent.json", "attempt.json"] {
+            guard !FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) else { throw ToolBackupError.storage }
+        }
+        let sent = folder.appendingPathComponent("sent-v4")
+        if FileManager.default.fileExists(atPath: sent.path) {
+            guard try FileManager.default.contentsOfDirectory(atPath: sent.path).isEmpty else { throw ToolBackupError.storage }
+        }
+    }
     func verifyCleanupFailureAndAutomaticResume() async throws {
         Self.preparationPhase = "初回保存"
         await persistence.enable()
@@ -1418,17 +1579,17 @@ private final class AppRecordFixture {
         let listed = try FileManager.default.contentsOfDirectory(at: ToolBackupFiles.root,
             includingPropertiesForKeys: nil).first { $0.lastPathComponent == journal.lastPathComponent }
         let decoded = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
-            from: ToolBackupFiles.read(journal, maximum: 512 * 1024))
+            from: ToolBackupFiles.read(journal, maximum: ToolBackupIndex.maximumReceiptBytes))
         let recomputed = try ToolBackupFiles.deletionJournal(decoded.index, owner: decoded.owner)
         preparationPhase = "基底付きURLと列挙されたURLの照合"
         guard let listed, listed != recomputed,
               listed.standardizedFileURL.path == recomputed.standardizedFileURL.path,
-              try ToolBackupFiles.read(listed, maximum: 512 * 1024) == ToolBackupFiles.read(recomputed, maximum: 512 * 1024)
+              try ToolBackupFiles.read(listed, maximum: ToolBackupIndex.maximumReceiptBytes) == ToolBackupFiles.read(recomputed, maximum: ToolBackupIndex.maximumReceiptBytes)
         else { throw ToolBackupError.storage }
         let relative = URL(string: journal.lastPathComponent, relativeTo: ToolBackupFiles.root)!
         let absolute = URL(fileURLWithPath: relative.path)
         guard relative != absolute, relative.standardizedFileURL.path == absolute.standardizedFileURL.path,
-              try ToolBackupFiles.read(relative, maximum: 512 * 1024) == ToolBackupFiles.read(absolute, maximum: 512 * 1024)
+              try ToolBackupFiles.read(relative, maximum: ToolBackupIndex.maximumReceiptBytes) == ToolBackupFiles.read(absolute, maximum: ToolBackupIndex.maximumReceiptBytes)
         else { throw ToolBackupError.storage }
         preparationPhase = "urlEqual=\(listed == journal) pathEqual=\(listed.standardizedFileURL.path == journal.standardizedFileURL.path) indexEqual=\(decoded.index == index) hashEqual=\(recomputed.lastPathComponent == journal.lastPathComponent)"
         print("APP_RECORD_JOURNAL_PROBE \(preparationPhase)")
@@ -1457,7 +1618,7 @@ private final class AppRecordFixture {
         defer { try? FileManager.default.removeItem(at: wrongName) }
         do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
         catch ToolBackupJournalError.identity { }
-        guard try ToolBackupFiles.read(wrongName, maximum: 512 * 1024) == wrongBytes
+        guard try ToolBackupFiles.read(wrongName, maximum: ToolBackupIndex.maximumReceiptBytes) == wrongBytes
         else { throw ToolBackupError.storage }
         try FileManager.default.removeItem(at: wrongName)
         try FileManager.default.createSymbolicLink(at: wrongName, withDestinationURL: journal)
@@ -1620,6 +1781,14 @@ struct AppRecordPersistenceFixtureView: View {
         }
         .disabled(switching)
         .task {
+            if CommandLine.arguments.contains("--app-records-capacity-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifyPartitionedMigrationAndRestore()
+                    result = "容量対応・旧形式の移行・写真とメモの復元を確認しました"
+                } catch { result = "容量の検査に失敗: \(AppRecordFixture.preparationPhase)" }
+                return
+            }
             if CommandLine.arguments.contains("--app-records-cleanup-probe") {
                 do {
                     let probe = try await AppRecordFixture.make()

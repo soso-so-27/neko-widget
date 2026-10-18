@@ -53,7 +53,7 @@ enum VeterinaryVisitError: Error, LocalizedError {
         case .wrongCat: "この体重は別の猫の記録です。測定した猫を確認してください。"
         case .confirmationRequired: "この記録を見せる猫を確認してください。"
         case .invalidName: "猫の名前を1〜200文字で入力してください。"
-        case .visitLimit: "保存できる診察メモは100件までです。不要な診察メモを削除してから作ってください。"
+        case .visitLimit: "診察メモの保存量を確認できませんでした。記録はそのまま残っています。"
         case .tooLarge: "一度の診察メモには20件まで追加できます。写真は6MB以下で用意してください。"
         }
     }
@@ -97,7 +97,7 @@ actor VeterinaryVisitStore {
         var state = try load()
         if let existing = state.visits.first(where: { $0.catID == catID && $0.completedAt == nil }) { return existing }
         guard Self.isValidCatName(catName) else { throw VeterinaryVisitError.invalidName }
-        guard state.visits.count < 100 else { throw VeterinaryVisitError.visitLimit }
+        guard state.visits.count < 36_500 else { throw VeterinaryVisitError.visitLimit }
         let visit = VeterinaryVisit(id: UUID(), catID: catID, catName: catName, revision: UUID(),
             startedOn: nil, observations: "", questions: "", entries: [], completedAt: nil)
         try create {
@@ -227,8 +227,7 @@ actor VeterinaryVisitStore {
         let data: Data
         do {
             let url = directory.appendingPathComponent("state.json")
-            if let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 8 * 1024 * 1024 { throw VeterinaryVisitError.corrupted }
-            data = try Data(contentsOf: url)
+            data = try AppRecordJSON.read(url)
         }
         catch {
             let ns = error as NSError
@@ -242,7 +241,7 @@ actor VeterinaryVisitStore {
         }
         do {
             let state = try JSONDecoder().decode(State.self, from: data)
-            guard state.schema == 1, state.visits.count <= 100,
+            guard state.schema == 1, state.visits.count <= 36_500,
                   Set(state.visits.map(\.id)).count == state.visits.count,
                   Set(state.visits.filter { $0.completedAt == nil }.map(\.catID)).count == state.visits.filter({ $0.completedAt == nil }).count else { throw VeterinaryVisitError.corrupted }
             var photoFiles = Set<String>()
@@ -306,7 +305,7 @@ actor VeterinaryVisitStore {
         guard retired.count <= 2000, Set(retired).count == retired.count,
               retired.allSatisfy({ Self.validPhotoFile($0) && !live.contains($0) }) else { throw VeterinaryVisitError.storage }
         let bytes = try JSONEncoder().encode(state)
-        guard bytes.count <= 8 * 1024 * 1024 else { throw VeterinaryVisitError.storage }
+        guard bytes.count <= AppRecordJSON.maximumBytes else { throw VeterinaryVisitError.storage }
         try write(bytes, to: directory.appendingPathComponent("state.json"))
         NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: directory)
     }
@@ -320,9 +319,11 @@ actor VeterinaryVisitStore {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 #if os(iOS)
             try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
-            try data.write(to: url, options: [.atomic, .completeFileProtection])
+            if url.lastPathComponent == "state.json" { try AppRecordJSON.write(data, to: url, options: [.atomic, .completeFileProtection]) }
+            else { try data.write(to: url, options: [.atomic, .completeFileProtection]) }
 #else
-            try data.write(to: url, options: .atomic)
+            if url.lastPathComponent == "state.json" { try AppRecordJSON.write(data, to: url) }
+            else { try data.write(to: url, options: .atomic) }
 #endif
         } catch { throw VeterinaryVisitError.storage }
     }

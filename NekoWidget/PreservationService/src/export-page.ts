@@ -4,7 +4,9 @@ import type { ArchiveStore } from './storage';
 import { payloadWork } from './payload-work';
 import { RecordFrame } from './record-frame';
 
-const MAX_RECORDS = 50, MAX_TOTAL_RECORDS = 1000;
+// Total inventory may include bounded v4 tree nodes and legacy copies. This
+// does not raise admission/storage quotas or the work/bytes in one request.
+const MAX_RECORDS = 50, MAX_TOTAL_RECORDS = 200_000;
 const MAX_QUOTA_BYTES = 64 * 1024 * 1024, MAX_FRAME_BYTES = 29 * 1024 * 1024;
 const MAX_WIRE_BYTES = 96 * 1024 * 1024;
 const utf8 = new TextEncoder();
