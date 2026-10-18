@@ -245,7 +245,13 @@ export class DeviceSessions {
           AND EXISTS(SELECT 1 FROM pa_sessions s WHERE s.session_hash=? AND s.device_grant_id=grant_id)`)
           .bind(now + IDLE_MS, input.grantId, hash),
       ]);
-      if (batch.some(result => result.meta.changes !== 1)) throw denied();
+      if (batch.some(result => result.meta.changes !== 1)) {
+        // A current owner snapshot or identity check may be temporarily pending.
+        // Preserve a valid device credential without issuing access. Recheck the
+        // proof so consumed, expired or revoked authority still fails as before.
+        await this.proof(input, 'renew');
+        throw unavailable();
+      }
       return { token, ownerId: grant.owner_id, expiresAt: new Date(now + ACCESS_MS).toISOString(),
         deviceGrant: { grantId: input.grantId, idleExpiresAt: new Date(now + IDLE_MS).toISOString() } };
     } catch (error) { throw safe(error); }
