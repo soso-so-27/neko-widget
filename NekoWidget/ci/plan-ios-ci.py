@@ -925,6 +925,16 @@ PRESERVATION_CLEANUP_ACK_ADDITIONS = frozenset()
 PRESERVATION_CLEANUP_ACK_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
 
 
+# Exact bounded owner inventory capture; no app/protocol/configuration changes.
+PRESERVATION_OWNER_CAPTURE_CAPACITY_SCOPE = "preservation-owner-capture-capacity-v1"
+PRESERVATION_OWNER_CAPTURE_CAPACITY_BLOBS = {
+    "NekoWidget/PreservationService/src/owner-recovery-copy.ts": ("4b05f0457d72272d8816242c580ea4fb6f2ccdbd", "bf05811f0966be4a448954f4715768bffaeea769"),
+    "NekoWidget/PreservationService/test/owner-capture-capacity.test.ts": ("0" * 40, "807605d5dafdb662f7aa178eedbde74322c23abc"),
+}
+PRESERVATION_OWNER_CAPTURE_CAPACITY_PATHS = frozenset(PRESERVATION_OWNER_CAPTURE_CAPACITY_BLOBS)
+PRESERVATION_OWNER_CAPTURE_CAPACITY_ADDITIONS = frozenset(("NekoWidget/PreservationService/test/owner-capture-capacity.test.ts",))
+PRESERVATION_OWNER_CAPTURE_CAPACITY_WORKFLOW_BLOB = "8bef1a5e40cd3cb1da4c6780e369530bfb77ce99"
+
 # Exact transient session renewal classification; no app/protocol/configuration changes.
 PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE = "preservation-session-renewal-recovery-v1"
 PRESERVATION_SESSION_RENEWAL_RECOVERY_BLOBS = {
@@ -2448,6 +2458,36 @@ def preservation_cleanup_ack_requirements(head):
              "head_sha": head, "success_required": True}]
 
 
+def preservation_owner_capture_capacity_paths_only(paths):
+    return (bool(paths) and len(paths) == len(set(paths))
+            and source_paths(paths) == PRESERVATION_OWNER_CAPTURE_CAPACITY_PATHS
+            and all(path in PRESERVATION_OWNER_CAPTURE_CAPACITY_PATHS or is_handoff(path) for path in paths))
+
+
+def preservation_owner_capture_capacity_backend_only(paths, base, head):
+    if (not preservation_owner_capture_capacity_paths_only(paths)
+            or set(PRESERVATION_OWNER_CAPTURE_CAPACITY_BLOBS) != PRESERVATION_OWNER_CAPTURE_CAPACITY_PATHS
+            or not all(len(pair) == 2 and all(SHA.fullmatch(blob) for blob in pair)
+                       and pair[1] != "0" * 40 and pair[0] != pair[1]
+                       and (pair[0] == "0" * 40) == (path in PRESERVATION_OWNER_CAPTURE_CAPACITY_ADDITIONS)
+                       for path, pair in PRESERVATION_OWNER_CAPTURE_CAPACITY_BLOBS.items())):
+        return False
+    blob = PRESERVATION_OWNER_CAPTURE_CAPACITY_WORKFLOW_BLOB
+    if (not SHA.fullmatch(blob) or blob == "0" * 40
+            or any(git("ls-tree", revision, "--", PRESERVATION_WORKFLOW)
+                   != f"100644 blob {blob}\t{PRESERVATION_WORKFLOW}" for revision in (base, head))):
+        return False
+    return reviewed_hub_only(paths, base, head, product_blobs=PRESERVATION_OWNER_CAPTURE_CAPACITY_BLOBS,
+                             companion_paths=frozenset(), companion_digests={},
+                             companion_name="PRESERVATION_OWNER_CAPTURE_CAPACITY_COMPANION_DIGESTS")
+
+
+def preservation_owner_capture_capacity_requirements(head):
+    # Required real backend success at this SHA; the plan does not certify it.
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "success_required": True}]
+
+
 def preservation_session_renewal_recovery_paths_only(paths):
     return (bool(paths) and len(paths) == len(set(paths))
             and source_paths(paths) == PRESERVATION_SESSION_RENEWAL_RECOVERY_PATHS
@@ -3281,6 +3321,8 @@ def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> t
     if runtime_scope == PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE and preservation_photo_upload_body_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_CLEANUP_ACK_SCOPE and preservation_cleanup_ack_paths_only(paths):
+        return (PRESERVATION_JOB,)
+    if runtime_scope == PRESERVATION_OWNER_CAPTURE_CAPACITY_SCOPE and preservation_owner_capture_capacity_paths_only(paths):
         return (PRESERVATION_JOB,)
     if runtime_scope == PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE and preservation_session_renewal_recovery_paths_only(paths):
         return (PRESERVATION_JOB,)
@@ -6352,6 +6394,7 @@ def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
                                        (PRESERVATION_PUBLIC_RETENTION_SCOPE, preservation_public_retention_paths_only, preservation_public_retention_backend_only),
                                        (PRESERVATION_NOTICE_MESSAGE_ID_SCOPE, preservation_notice_message_id_paths_only, preservation_notice_message_id_backend_only),
                                        (PRESERVATION_CLEANUP_ACK_SCOPE, preservation_cleanup_ack_paths_only, preservation_cleanup_ack_backend_only),
+                                       (PRESERVATION_OWNER_CAPTURE_CAPACITY_SCOPE, preservation_owner_capture_capacity_paths_only, preservation_owner_capture_capacity_backend_only),
                                        (PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE, preservation_session_renewal_recovery_paths_only, preservation_session_renewal_recovery_backend_only),
                                        (PRESERVATION_RECOVERY_READ_SCOPE, preservation_recovery_read_paths_only, preservation_recovery_read_backend_only),
                                        (PRESERVATION_REQUEST_BUFFER_SCOPE, preservation_request_buffer_paths_only, preservation_request_buffer_backend_only),
@@ -9674,7 +9717,7 @@ def main() -> None:
               "head_sha": env["GITHUB_SHA"], "scope": selected_scope, "native_evidence": False}))
         return
 
-    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, JPEG_BODY_TRANSPORT_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE, PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE, PRESERVATION_STORAGE_USAGE_SCOPE, PRESERVATION_TOOL_OWNER_TRIAL_SCOPE, PRESERVATION_ALL_PUT_BYTES_SCOPE, PRESERVATION_PUBLIC_RETENTION_SCOPE, PRESERVATION_NOTICE_MESSAGE_ID_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_CLEANUP_ACK_SCOPE, PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
+    if selected_scope in (DEVELOPMENT_SCOPE, ORCHESTRATION_SCOPE, CI_EVIDENCE_SCOPE, JPEG_SCOPE, PRESERVATION_SCOPE, PRESERVATION_UPLOAD_SCOPE, PRESERVATION_PROVIDER_SCOPE, JPEG_BODY_TRANSPORT_SCOPE, PRESERVATION_PHOTO_STARTUP_SCOPE, PRESERVATION_R2_VIEW_SCOPE, PRESERVATION_RECOVERY_CHUNKS_SCOPE, PRESERVATION_TOOL_TRIAL_REPAIR_SCOPE, PRESERVATION_TOOL_TRIAL_FINGERPRINT_SCOPE, PRESERVATION_STORAGE_USAGE_SCOPE, PRESERVATION_TOOL_OWNER_TRIAL_SCOPE, PRESERVATION_ALL_PUT_BYTES_SCOPE, PRESERVATION_PUBLIC_RETENTION_SCOPE, PRESERVATION_NOTICE_MESSAGE_ID_SCOPE, PRESERVATION_OWNED_BUFFERS_SCOPE, PRESERVATION_REQUEST_BUFFER_SCOPE, PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE, PRESERVATION_CLEANUP_ACK_SCOPE, PRESERVATION_OWNER_CAPTURE_CAPACITY_SCOPE, PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE, PRESERVATION_RECOVERY_READ_SCOPE, MODERATION_ENROLLMENT_SCOPE, MODERATION_AI_SCOPE, MODERATION_AI_TRANSPORT_SCOPE, MODERATION_AI_DURABLE_SCOPE, MODERATION_CONSOLE_SCOPE, MODERATION_REVIEW_EVIDENCE_SCOPE, MODERATION_ENROLLMENT_CEREMONY_SCOPE, MODERATION_INITIAL_ADMISSION_SCOPE, MODERATION_OPERATOR_STARTUP_SCOPE, MODERATION_REPORT_BPLIST_SCOPE, MODERATION_RETIRED_SCOPE, MODERATION_RETIRED_WINDOW_SCOPE, MODERATION_RESPONSE_READER_SCOPE, MODERATION_OPERATOR_HOST_SCOPE, MODERATION_OWNER_FLOW_SCOPE, BILLING_SCOPE, BILLING_AUTHORITY_SCOPE, RELEASE_PREP_SCOPE, POLICY_DOC_SCOPE, BILLING_OPERATOR_SCOPE):
         # No claim of iOS validation; this scope is intentionally absent from
         # required_jobs_from_scope, so TestFlight cannot consume it as proof.
         values = {"build": "false", "build_name": BUILD, "smoke": "false", "smoke_name": SMOKE,
@@ -9719,6 +9762,8 @@ def main() -> None:
                  if selected_scope == PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE else {}),
               **({"required_backend_runs": preservation_cleanup_ack_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_CLEANUP_ACK_SCOPE else {}),
+              **({"required_backend_runs": preservation_owner_capture_capacity_requirements(env["GITHUB_SHA"])}
+                 if selected_scope == PRESERVATION_OWNER_CAPTURE_CAPACITY_SCOPE else {}),
               **({"required_backend_runs": preservation_session_renewal_recovery_requirements(env["GITHUB_SHA"])}
                  if selected_scope == PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE else {}),
               **({"required_backend_runs": preservation_recovery_read_requirements(env["GITHUB_SHA"])}
@@ -9770,6 +9815,7 @@ def main() -> None:
                        PRESERVATION_REQUEST_BUFFER_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_CLEANUP_ACK_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
+                       PRESERVATION_OWNER_CAPTURE_CAPACITY_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        PRESERVATION_RECOVERY_READ_SCOPE: (PRESERVATION_JOB, PRESERVATION_WORKFLOW),
                        BILLING_SCOPE: (BILLING_CALLER_JOB + ", " + PRESERVATION_JOB, BILLING_WORKFLOW),
