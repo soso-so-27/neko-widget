@@ -42,6 +42,16 @@ DIAGNOSTIC_SHARD_ADDITION_PAIRS = {
     "NekoWidget/ci/test-ci-lanes.py": (
         "af90e5821d25fd7892b242b3b8b7ae1b8b5fa5d6", "2622015e786b04b3f85a6bd507a663b0da328691"),
 }
+# Only this account-settings diagnostic may cross this new selector registration.
+# The complete pair must already be approved on main, with every changed helper
+# also identical to that main ancestor. This never supplies release evidence.
+DIAGNOSTIC_SAVE_SETTINGS_SOURCE = "b77cbc1dc837fa3f7e8cadce17c940f9354b30cc"
+DIAGNOSTIC_SAVE_SETTINGS_PAIRS = {
+    "NekoWidget/ci/ios_ci_scope.py": (
+        "835fc6cebee388961f02561d42bb9b067aeae358", "2aed10f5b54758aa139ee5fa002efaa690986e17"),
+    "NekoWidget/ci/test-ci-lanes.py": (
+        "f942708909f532e36d0d888b3859878136eff46b", "e381f4bf1dfa5e7fded6b1bba5494ed93ccd4429"),
+}
 DIAGNOSTIC_JOB_NAMES = frozenset({
     "Diagnostic only - one native UI test (not release evidence)",
     "Diagnostic only - up to three native UI tests (not release evidence)",
@@ -641,19 +651,35 @@ def diagnostic_source_matches(source, head):
     if len(records) % 2:
         return False
     seen = set()
+    selector_pairs = {}
+    after_blobs = {}
     for index in range(0, len(records), 2):
         fields, path = records[index].split(), records[index + 1]
         if (path in seen or len(fields) != 5
                 or fields[:2] != [":100644", "100644"] or fields[4] != "M"
                 or not all(re.fullmatch(r"[0-9a-f]{40}", value) and value != "0" * 40 for value in fields[2:4])):
             return False
-        if (path not in DIAGNOSTIC_HELPER_PATHS
-                and tuple(fields[2:4]) != DIAGNOSTIC_SHARD_ADDITION_PAIRS.get(path)):
-            return False
+        if path not in DIAGNOSTIC_HELPER_PATHS:
+            pair = tuple(fields[2:4])
+            if pair not in (DIAGNOSTIC_SHARD_ADDITION_PAIRS.get(path), DIAGNOSTIC_SAVE_SETTINGS_PAIRS.get(path)):
+                return False
+            selector_pairs[path] = pair
         seen.add(path)
-    shard_changes = seen & DIAGNOSTIC_SHARD_ADDITION_PAIRS.keys()
-    if shard_changes and shard_changes != DIAGNOSTIC_SHARD_ADDITION_PAIRS.keys():
+        after_blobs[path] = fields[3]
+    if selector_pairs and selector_pairs not in (DIAGNOSTIC_SHARD_ADDITION_PAIRS, DIAGNOSTIC_SAVE_SETTINGS_PAIRS):
         return False
+    if selector_pairs == DIAGNOSTIC_SAVE_SETTINGS_PAIRS:
+        if source != DIAGNOSTIC_SAVE_SETTINGS_SOURCE:
+            return False
+        try:
+            main = planner.git("rev-parse", "origin/main^{commit}")
+            if not re.fullmatch(r"[0-9a-f]{40}", main):
+                return False
+            planner.git("merge-base", "--is-ancestor", main, head)
+            if any(planner.git("rev-parse", f"{main}:{path}") != blob for path, blob in after_blobs.items()):
+                return False
+        except subprocess.CalledProcessError:
+            return False
     # Examining the entire raw diff also proves equality of every other tracked
     # path, including its mode/type. Added/deleted/renamed/symlink helpers fail.
     return True

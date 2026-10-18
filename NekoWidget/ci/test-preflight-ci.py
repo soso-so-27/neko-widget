@@ -3684,6 +3684,100 @@ class PreflightTests(unittest.TestCase):
             with patch.object(planner, "git", side_effect=["", raw]):
                 self.assertFalse(preflight.diagnostic_source_matches(source, head), raw)
 
+    def test_save_settings_diagnosis_requires_exact_complete_pair_and_approved_main(self):
+        source, head, main = preflight.DIAGNOSTIC_SAVE_SETTINGS_SOURCE, "b" * 40, "e" * 40
+        self.assertEqual(source, "b77cbc1dc837fa3f7e8cadce17c940f9354b30cc")
+        pairs = preflight.DIAGNOSTIC_SAVE_SETTINGS_PAIRS
+        self.assertEqual(set(pairs), set(preflight.DIAGNOSTIC_SHARD_ADDITION_PAIRS))
+        records = [f":100644 100644 {old} {new} M\0{path}\0" for path, (old, new) in pairs.items()]
+        helper = "NekoWidget/ci/preflight-ci.py"
+        helper_row = f":100644 100644 {'c' * 40} {'d' * 40} M\0{helper}\0"
+        good = "".join(records)
+        approved = {path: new for path, (_, new) in pairs.items()} | {helper: "d" * 40}
+
+        def check(raw=good, origin=main, blobs=None, source_sha=source, reject_ancestor=None):
+            def git(*args):
+                if args[0] == "diff": return raw
+                if args[0] == "merge-base":
+                    if args[2] == reject_ancestor: raise subprocess.CalledProcessError(1, "git")
+                    return ""
+                if args == ("rev-parse", "origin/main^{commit}"): return origin
+                if args[0] == "rev-parse": return (approved if blobs is None else blobs).get(args[1].split(":", 1)[1], "f" * 40)
+                raise AssertionError(args)
+            with patch.object(planner, "git", side_effect=git):
+                return preflight.diagnostic_source_matches(source_sha, head)
+
+        self.assertTrue(check())
+        self.assertTrue(check(good + helper_row))
+        invalid = [*records, good + records[0], good.replace(" M\0", " A\0", 1),
+                   good.replace(" M\0", " R100\0", 1), good.replace(" M\0", " D\0", 1),
+                   good.replace(":100644", ":100755", 1), good.replace(" 100644 ", " 120000 ", 1),
+                   good + "incomplete"]
+        for path, (old, new) in pairs.items():
+            invalid += [good.replace(old, "c" * 40), good.replace(new, "d" * 40),
+                        good.replace(old, "0" * 40)]
+            legacy_old, legacy_new = preflight.DIAGNOSTIC_SHARD_ADDITION_PAIRS[path]
+            invalid.append(good.replace(old, legacy_old).replace(new, legacy_new))
+        for extra in ("unknown.swift", "handoffs/note.md", ".github/workflows/ios-ui-diagnostic.yml",
+                      "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift", "NekoWidget/ci/run-native-ui.sh"):
+            invalid.append(good + helper_row.replace(helper, extra))
+        for raw in invalid:
+            self.assertFalse(check(raw), raw)
+        self.assertFalse(check(source_sha="a" * 40))
+        for origin in ("", "main", "f" * 39):
+            self.assertFalse(check(origin=origin))
+        self.assertFalse(check(reject_ancestor=source))
+        self.assertFalse(check(reject_ancestor=main))
+        for path in approved:
+            self.assertFalse(check(good + helper_row, blobs=approved | {path: "f" * 40}))
+        with patch.object(planner, "git", side_effect=["", good, subprocess.CalledProcessError(1, "git")]):
+            self.assertFalse(preflight.diagnostic_source_matches(source, head))
+
+    def test_real_git_save_settings_diagnosis_survives_only_main_approved_control_merge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.check_output(["git", "-C", directory, *args], text=True,
+                                               encoding="utf-8", stderr=subprocess.PIPE).rstrip("\n")
+            def commit():
+                git("add", ".")
+                git("commit", "-qm", "fixture")
+                return git("rev-parse", "HEAD")
+            git("init", "-q")
+            git("config", "user.name", "CI")
+            git("config", "user.email", "ci@example.invalid")
+            paths = tuple(preflight.DIAGNOSTIC_SAVE_SETTINGS_PAIRS)
+            helper = "NekoWidget/ci/preflight-ci.py"
+            for path in (*paths, helper, "App.swift"):
+                target = root / path; target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("before\n", encoding="utf-8")
+            base = commit()
+            (root / "App.swift").write_text("account settings\n", encoding="utf-8")
+            source = commit()
+            git("checkout", "--detach", "-q", base)
+            for path in (*paths, helper):
+                (root / path).write_text("reviewed control\n", encoding="utf-8")
+            control = commit()
+            pairs = {path: (git("rev-parse", f"{base}:{path}"), git("rev-parse", f"{control}:{path}")) for path in paths}
+            git("merge", "--no-ff", "-qm", "approved controls and unchanged product", source)
+            head = git("rev-parse", "HEAD")
+            with patch.object(planner, "git", side_effect=git), \
+                    patch.object(preflight, "DIAGNOSTIC_SAVE_SETTINGS_SOURCE", source), \
+                    patch.object(preflight, "DIAGNOSTIC_SAVE_SETTINGS_PAIRS", pairs):
+                git("update-ref", "refs/remotes/origin/main", base)
+                self.assertFalse(preflight.diagnostic_source_matches(source, head))
+                git("update-ref", "refs/remotes/origin/main", control)
+                self.assertTrue(preflight.diagnostic_source_matches(source, head))
+                (root / helper).write_text("unapproved helper\n", encoding="utf-8")
+                self.assertFalse(preflight.diagnostic_source_matches(source, commit()))
+                git("checkout", "--detach", "-q", head)
+                (root / "App.swift").write_text("different product\n", encoding="utf-8")
+                self.assertFalse(preflight.diagnostic_source_matches(source, commit()))
+                git("checkout", "--detach", "-q", control)
+                (root / "App.swift").write_text("new main\n", encoding="utf-8")
+                git("update-ref", "refs/remotes/origin/main", commit())
+                self.assertFalse(preflight.diagnostic_source_matches(source, head))
+
     def test_raw_logs_are_captured_with_escape_sequences_but_not_printed(self):
         response = subprocess.CompletedProcess([], 0, stdout="\x1b[31mfailed\x1b[0m", stderr="")
         with patch.object(preflight.subprocess, "run", return_value=response) as invoke, \

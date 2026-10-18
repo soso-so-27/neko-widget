@@ -156,6 +156,110 @@ class LaneTests(unittest.TestCase):
             with self.subTest(context=index):
                 self.assertFalse(accepts(value))
 
+    def test_save_settings_list_race_requires_exact_sources_and_closed_regular_diff(self):
+        selected = scope.SAVE_SETTINGS_LIST_RACE_SCOPE
+        self.assertEqual(len(scope.SAVE_SETTINGS_LIST_RACE_PATHS), 4)
+        methods = "\n".join("    func " + test.rsplit("/", 1)[1] + "() {}"
+                            for test in scope.SAVE_SETTINGS_LIST_RACE_TESTS)
+        tests = "final class SoloMemoriesUITests: XCTestCase {\n" + methods + "\n}"
+        changes = {path: ("before", tests if path == scope.MEMORY_TEST_PATH else "after")
+                   for path in scope.SAVE_SETTINGS_LIST_RACE_PATHS}
+        digests = {path: list(map(scope.source_digest, pair)) for path, pair in changes.items()}
+        base, head = "a" * 40, "b" * 40
+
+        def raw_scope(override=None, transform=lambda rows: rows, extra_changes=None):
+            inputs = changes | (extra_changes or {})
+            records = []
+            for path in sorted(inputs):
+                modes, status = (":100644 100644", "M")
+                if override and override[0] == path:
+                    modes, status = override[1:]
+                records.append(f"{modes} {'c' * 40} {'d' * 40} {status}\0{path}\0")
+            def git(*args):
+                if args[0] == "diff": return "".join(transform(records))
+                if args[0] == "show":
+                    revision, path = args[1].split(":", 1)
+                    return inputs[path][0 if revision == base else 1]
+                return head
+            with patch.object(planner, "comparison_base", return_value=base), patch.object(planner, "git", side_effect=git):
+                return planner.runtime_scope(sorted(inputs), {}, {"GITHUB_SHA": head})
+
+        with patch.object(scope, "SAVE_SETTINGS_LIST_RACE_DIGESTS", digests):
+            self.assertEqual(scope.select_scope(changes), selected)
+            self.assertEqual(raw_scope(), selected)
+            self.assertEqual(raw_scope(extra_changes={"handoffs/save-settings.md": ("old", "new")}), selected)
+            for transform in (lambda rows: rows[:-1], lambda rows: rows + [rows[0]],
+                              lambda rows: rows[:-1] + [rows[0]],
+                              lambda rows: rows + [f":100644 100644 {'c' * 40} {'d' * 40} M\0unreported.swift\0"]):
+                self.assertEqual(raw_scope(transform=transform), scope.FULL_SCOPE)
+            for path in changes:
+                self.assertEqual(scope.select_scope({p: v for p, v in changes.items() if p != path}), scope.FULL_SCOPE)
+                for index in (0, 1):
+                    altered = dict(changes); pair = list(altered[path]); pair[index] += "unreviewed"
+                    altered[path] = tuple(pair)
+                    self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+                for modes, status in ((":100644 000000", "D"), (":100644 100755", "M"),
+                                      (":100644 120000", "T"), (":000000 100644", "A"),
+                                      (":100644 100644", "R100"), (":100644 100644", "C100")):
+                    self.assertEqual(raw_scope((path, modes, status)), scope.FULL_SCOPE)
+            for path in ("unknown.swift", "NekoWidget/NekoWidget/Services/ToolPreservation.swift",
+                         "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift",
+                         "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+                         "NekoWidget/Shared/Storage/AtomicJSON.swift",
+                         "NekoWidget/PreservationService/src/storage.ts",
+                         "NekoWidget/NekoWidget.xcodeproj/project.pbxproj",
+                         ".github/workflows/ios-build.yml", "NekoWidget/ci/ios_ci_scope.py",
+                         "NekoWidget/ci/test-ci-lanes.py"):
+                mixed = {path: ("old", "new")}
+                self.assertEqual(scope.select_scope(changes | mixed), scope.FULL_SCOPE)
+                self.assertEqual(raw_scope(extra_changes=mixed), scope.FULL_SCOPE)
+
+    def test_save_settings_list_race_requires_each_owning_ui_method_once(self):
+        tests = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
+            "    func " + name.rsplit("/", 1)[1] + "() {}"
+            for name in scope.SAVE_SETTINGS_LIST_RACE_TESTS) + "\n}"
+        changes = {path: ("before", tests if path == scope.MEMORY_TEST_PATH else "after")
+                   for path in scope.SAVE_SETTINGS_LIST_RACE_PATHS}
+        for method in scope.SAVE_SETTINGS_LIST_RACE_TESTS:
+            declaration = "    func " + method.rsplit("/", 1)[1] + "() {}"
+            for replacement in ("", "    //" + declaration, declaration + "\n" + declaration):
+                altered = changes | {scope.MEMORY_TEST_PATH: ("before", tests.replace(declaration, replacement))}
+                # Even a reviewed digest pair cannot advertise a missing/duplicate case.
+                digests = {path: list(map(scope.source_digest, pair)) for path, pair in altered.items()}
+                with patch.object(scope, "SAVE_SETTINGS_LIST_RACE_DIGESTS", digests):
+                    self.assertEqual(scope.select_scope(altered), scope.FULL_SCOPE)
+
+    def test_save_settings_list_race_keeps_four_release_jobs_and_three_ui_cases(self):
+        selected = scope.SAVE_SETTINGS_LIST_RACE_SCOPE
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), tuple(
+            "NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+                "testAutomaticRestoreProtectsUnsavedMemoDraft",
+                "testManagedPreservationMembershipLinkConsentAndRetry",
+                "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes")))
+        self.assertEqual(scope.smoke_tests(selected), (
+            "NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess",
+            "NekoWidgetUITests/PhotoPermissionUITests/testMainlineAcceptanceScreensWithAuthorizedLibrary"))
+        required = (planner.BUILD, planner.BOOTSTRAP_SMOKE,
+                    f"Sharing checks [runtime; scope {selected}]",
+                    f"Sharing checks [app-ui; scope {selected}]")
+        self.assertEqual(planner.required_jobs_from_scope(selected), required)
+        sha = "a" * 40
+        jobs = [dict(name=name, status="completed", conclusion="success", head_sha=sha) for name in required]
+        self.assertTrue(planner.covers_jobs(jobs, required, sha))
+        for index in range(len(jobs)):
+            self.assertFalse(planner.covers_jobs(jobs[:index] + jobs[index + 1:], required, sha))
+            self.assertFalse(planner.covers_jobs(jobs + [jobs[index]], required, sha))
+            for key, value in (("conclusion", "failure"), ("conclusion", "skipped"), ("head_sha", "b" * 40)):
+                altered = copy.deepcopy(jobs); altered[index][key] = value
+                self.assertFalse(planner.covers_jobs(altered, required, sha))
+        paths = sorted(scope.SAVE_SETTINGS_LIST_RACE_PATHS)
+        self.assertTrue(scope.accepts_paths(selected, paths + ["handoffs/save-settings.md"]))
+        for invalid in ([], paths[:-1], paths + [paths[0]], paths + ["NekoWidget/ci/ios_ci_scope.py"]):
+            self.assertFalse(scope.accepts_paths(selected, invalid))
+        for gallery in scope.LANES[2:]:
+            with self.assertRaises(ValueError): scope.lane_tests(selected, gallery)
+
     def test_journal_identity_requires_exact_batch_and_preserves_release_checks(self):
         selected = scope.JOURNAL_IDENTITY_SCOPE
         self.assertEqual(len(scope.JOURNAL_IDENTITY_PATHS), 3)
