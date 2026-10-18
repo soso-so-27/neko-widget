@@ -93,3 +93,10 @@ treeのref/update総数は100万、全配列へmaterializeするcreate/entries/h
 - 本番ArchiveStore経路を外部通信0で直接計測。メモ1編集は写真PUT0、S3 PUT71/GET163/HEAD71・KMS346回、写真1追加は88/201/88・417回、写真10枚まとめ追加は285/643/285・1248回。実写真fixtureは4096B、930k/1/2/4MBは別の仮定感度。128写真程度の実測であり36,500写真時の係数、Worker/container/D1保存量/長期履歴原価は未測定。先行product回帰12.19秒、成功出力回収失敗88.97秒、最終回収89.35秒を全て保持（累積190.51秒）。
 - 検査選択は全native入力の固定source/full-tree照合を条件に既存app-dataの6job（Build/privacy/migration・Photos scan・両OS runtime・app UI3組）を使う専用制御を先行mainへ提案する。Widget target/fixture/runtime入力は不変、独立レビュー済み。native合格とbackend合格は分け、同じ候補SHAのowning Preservation全8stepをクラウド/配布前に別途必須化する。制御検査501件成功78.228秒（source pin確定前、確定後の条件を別確認する）。
 - 初候補09:18:58Zから継続計時。これまでの診断・失敗・修正・準備を含め約2時間。新経路は未計測、旧CI+upload実測76.6–110.1分を目安にし、短縮を実績扱いしない。新クラウド・main製品・TestFlightはこの時点で未実施。
+
+## 20:32 JST 配布候補の検査開始準備
+
+- source 1dca22ed4d6baa00572fede16266d9769d2e0606を固定。制御PR366/a71fbe7727ad05b3f95310d4dd03ebfdd85c0ba3をmain c299f9deへ先行統合。通常push39123373067のPython planは成功（58秒）。先行39123244115はLinuxでindex chmod後のworktree mode差によりfixtureのbranch switchが失敗（23秒）、一時test repoのcore.filemodeを明示しraw mode拒否試験を維持して修正。製品変更ではない。PR側skipは成功証拠に使用しない。
+- 固定control導入はhistorical controllerの同2pathに衝突してfullと判定されたため、exact base tree＋通常Python2files＋proseだけの入口を追加。実preflightでci-orchestration-v1/planのみを確認。独立レビュー済み。502検査中1件のmock設定誤りを直し3対象test成功、他501の成功を保持。最終CIは全development checksが実行成功。
+- クラウドは既存73recordのread-only基準と42～46の移行bundleを作成。新secret/新resource/cron/公開/新契約0、変更設定はowner50GiB・200k live records・global100GiBの3値だけ。まだremote mutation0。
+- クラウドと配布の共通資格確認helperを外部に作り、全tracked product入力のsource/candidate/current main一致・native6job・同SHAの最新owning Preservation8step成功を必須化。署名済release CLIは変更せず、独立レビューと合成境界9件＋wrapper5件成功。rootはhelper・wrapper・cloud接続差分を読み確認。実CI資格確認は後続。
