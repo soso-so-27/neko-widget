@@ -12709,6 +12709,16 @@ class PartitionedNativeRetryTests(unittest.TestCase):
 
 
 class PartitionedNativeRetryControlTests(unittest.TestCase):
+    def test_failure_pin_preserves_observed_utf8_bom(self):
+        # The actual 1,582,662-byte job log starts with EF BB BF. GitHub's raw
+        # adapter decodes UTF-8, not UTF-8-SIG; only newline normalization applies.
+        self.assertEqual(planner.PARTITIONED_NATIVE_RETRY_FAILURE_HASH,
+            "595e0bbd8908dcc9b50f83a3234fbaba78081b223683a2415870a7133b5066a5")
+        raw = b"\xef\xbb\xbf2026-10-18T13:04:51Z synthetic job log\r\n\r\n"
+        expected = hashlib.sha256(b"\xef\xbb\xbf2026-10-18T13:04:51Z synthetic job log\n").hexdigest()
+        self.assertEqual(planner.tool_log_digest(raw.decode("utf-8")), expected)
+        self.assertNotEqual(planner.tool_log_digest(raw.decode("utf-8-sig")), expected)
+
     def test_real_git_control_admission_and_product_closure(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
