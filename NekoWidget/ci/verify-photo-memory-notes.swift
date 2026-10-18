@@ -97,6 +97,14 @@ enum PhotoMemoryNoteVerifier {
             if getrusage(RUSAGE_SELF, &usage) == 0 { peak = Int64(usage.ru_maxrss) }
 #endif
             print("CAPACITY_PROBE notes=\(count) characters=\(length) bytes=\(bytes) read_ms=\((readEnd-started)/1_000_000) edit_ms=\((saveEnd-readEnd)/1_000_000) reopen_ms=\((reopenEnd-saveEnd)/1_000_000) process_peak_rss_bytes=\(peak)")
+            if let before = try AppRecordJSON.manifest(Data(contentsOf: url)), let changed {
+                _ = try await reopened.save(text: "鳥の記録", for: "synthetic-photo-18250", expectedRevision: changed.revision)
+                let after = try AppRecordJSON.manifest(Data(contentsOf: url))!
+                let original = Set(before.chunks.map(\.sha256))
+                let changedBytes = after.chunks.filter { !original.contains($0.sha256) }.reduce(0) { $0 + $1.bytes }
+                try require(changedBytes < 256 * 1024, "one shipping-store edit rewrote too many chunks")
+                print("MEMO_CHUNK_PROBE characters=\(length) logical_bytes=\(after.bytes) chunks=\(after.chunks.count) changed_bytes=\(changedBytes)")
+            }
     }
 
     private static func verifiesLibraryScopeAndOrdering() throws {

@@ -76,7 +76,9 @@ enum AppRecordJSON {
                 // Deterministic content boundaries regain alignment after a local edit.
                 rolling = (rolling << 1) &+ gear[Int(bytes[offset])]
                 let size = offset + 1 - start
-                if size >= 32 * 1024 || (size >= 8 * 1024 && rolling & 0x3fff == 0) || offset == bytes.count - 1 {
+                // Repeated JSON text needs denser anchors to avoid fixed-offset
+                // fallback amplifying an insertion across the remaining file.
+                if size >= 32 * 1024 || (size >= 8 * 1024 && rolling & 0xff == 0) || offset == bytes.count - 1 {
                     let chunk = data.subdata(in: start..<(offset + 1)), digest = hash(chunk)
                     let descriptor = Chunk(file: name(digest), bytes: chunk.count, sha256: digest)
                     let destination = url.deletingLastPathComponent().appendingPathComponent(descriptor.file)
@@ -256,6 +258,12 @@ struct PhotoMemoryNoteRecord: Identifiable, Equatable, Sendable {
     let photoIdentifier: String
     let note: PhotoMemoryNote
     var id: UUID { note.id }
+}
+
+/// Portable payload deliberately omits device/account-specific archive bindings.
+struct PhotoMemoryNoteSnapshot: Codable {
+    let schemaVersion: Int
+    var notes: [String: PhotoMemoryNote]
 }
 
 /// Explicit consent and an outbox are device-local. Neither identifiers nor

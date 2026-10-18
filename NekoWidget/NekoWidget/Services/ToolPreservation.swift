@@ -111,7 +111,7 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     }
     func validate() throws {
         guard [1, 2, 3, 4].contains(version), createdAt.timeIntervalSince1970.isFinite, !files.isEmpty, files.count <= (version == 4 ? 100_000 : 999),
-              Set(files.map(\.path)).count == files.count else { throw ToolBackupError.invalid }
+              Set(files.map { $0.path.lowercased() }).count == files.count else { throw ToolBackupError.invalid }
         guard previousIndexID == nil || version >= 3 && previousIndexID != snapshotID else { throw ToolBackupError.invalid }
         var ids: Set<UUID> = [snapshotID]
         let paths = Set(files.map(\.path))
@@ -261,6 +261,16 @@ enum ToolBackupTree {
 /// Each backup is a new, private directory. Restoring never writes a live tool
 /// store or performs name-based identity matching. Only a completed index is listed.
 enum ToolBackupFiles {
+    static func manifestPhotoNames(tool: String, data: Data) throws -> Set<String> {
+        if tool == "PhotoMemoryNotes" {
+            return Set(try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: data).notes.values.compactMap(\.photoFile))
+        }
+        if tool == "VeterinaryVisits" {
+            struct Visits: Decodable { let visits: [VeterinaryVisit] }
+            return Set(try JSONDecoder().decode(Visits.self, from: data).visits.flatMap { $0.entries.compactMap(\.photoFile) })
+        }
+        return photoNames(try JSONSerialization.jsonObject(with: data))
+    }
     struct Saved: Codable, Identifiable, Sendable {
         var id: UUID { index.snapshotID }
         let owner: String
@@ -416,8 +426,7 @@ enum ToolBackupFiles {
             let logical = try AppRecordJSON.read(manifestURL)
             let metadata = indexVersion == 4 ? raw : logical
             originalManifests.append((manifestURL, metadata))
-            let object = try JSONSerialization.jsonObject(with: logical)
-            var names = photoNames(object)
+            var names = try manifestPhotoNames(tool: tool, data: logical)
             if indexVersion == 4, let manifest = try AppRecordJSON.manifest(metadata) { names.formUnion(manifest.chunks.map(\.file)) }
             for name in [manifest] + names.sorted() {
                 let path = tool + "/" + name
@@ -906,8 +915,7 @@ enum ToolBackupValidation {
                 fragments.formUnion(manifest.chunks.map { tool + "/" + $0.file })
             }
             let data = try AppRecordJSON.read(url)
-            let object = try JSONSerialization.jsonObject(with: data)
-            for name in ToolBackupFiles.photoNames(object) {
+            for name in try ToolBackupFiles.manifestPhotoNames(tool: tool, data: data) {
                 let path = tool + "/" + name; try ToolBackupIndex.validatePath(path); referenced.insert(path)
             }
             switch tool {
