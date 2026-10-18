@@ -21,6 +21,7 @@
 - 境界の独立レビューで、cleanup成功時の古い fingerprint と changed catch の空説明の2件を修正。後続レビューで fixture の生エラーを固定stageへ変更した。
 - 診断ログprivacy検査: 12成功、ローカルSwiftコンパイラ不在の1件は未実行。CI lane inventory検査26成功。既存の削除再開UI caseへ probe helperを追加し、既存assertを保持した。
 - `8165df4` の診断 [39086761952](https://github.com/soso-so-27/neko-widget/actions/runs/39086761952) はDEBUG fixtureのcompile失敗（ownerのlet代入、throwing initのtry不足）。job6分23秒・run6分34秒を履歴へ含める。製品条件を変えず `d594fbc` で訂正し、[39087301030](https://github.com/soso-so-27/neko-widget/actions/runs/39087301030) で診断中。journal往復・改ざん拒否、ACK前/後の transport CancellationError、foreground loopの自動再開、cleanup中のmanifest変更を検証する。bindingのrootID不一致拒否と、実pointer切替の試験は区別する。実Task.cancel・実機の画面消失の原因までは実証していない。
+- 上記 `39087301030` は **10:57 JSTまでに成功**。run17分19秒、runtime42件＋対象UI1件（内部で旧削除再開、journal往復/改ざん拒否、ACK/再開境界を実行）、失敗/skip0。検査完了PNGも確認。最終候補との差分は後続のrelease-test訂正とhandoffだけで、診断が読むnative/runtime/fixture/workflow入力は同一。診断成功を配布用CIへ代用しない。ローカルdevelopment-flowも15組すべて成功、441秒。
 - 旧 `27fe784` から backend・CI・workflow入力は不変で成功を保持する。アプリ入力が変わるため、最終候補の必須native検査と署名uploadは新しく必要。直近実績はfull 97分11秒＋upload11分06秒で、今回の終了保証ではない。
 - 独立に確認した旧 `test-preservation-pilot-release.py` は11成功/1失敗。既存workflowの内部通報設定が増えたのに、テストが全体の文字列数を3回と仮定していた。workflowは変更せず、実際の準備/archive/exportの各工程でenvとpreservation CLIのbilling引数を確認する検査へ訂正し、12成功。訂正途中の存在しないサブコマンドを仮定したassert失敗も修正した。`internal-billing-release-prep-v1` 専用で、今回のfull native/配布の成功の代用にはしない。
 - 月額980円を維持。既存GitHub無料対象構成を使用。新規契約・クラウド更新・受付/カウンター変更・定期タスク作成/再実行・一般公開・実課金開始は0。
