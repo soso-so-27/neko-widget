@@ -1,5 +1,5 @@
 {
-  "as_of": "2026-10-18",
+  "as_of": "2026-10-19",
   "description": "Historical observations, not a promise. Includes failed/retried CI. Total task rework may take longer. Re-measure after execution changes.",
   "upload_minutes": 12.183,
   "upload_run": 36834987212,
@@ -89,6 +89,14 @@
       "source_sha": "a8f4b95fccdd48b1958411abb381ab66af0d0e08",
       "apple_upload_succeeded_at": "2026-10-18T06:36:14.6634970Z",
       "note": "First candidate 2026-10-18T05:10:16.7978355Z to Apple upload: 5157.866 seconds, including both diagnostics, controls, normal CI and waits. Apple processing and actual-device J4 resolution remain unverified."
+    },
+    {
+      "run_id": 39176548675,
+      "minutes": 13.067,
+      "runner_minutes": 11.6,
+      "build_number": 264,
+      "source_sha": "0bb6bebb6375f418485bbc7eb5df8e6121b7fae9",
+      "apple_upload_succeeded_at": "2026-10-18T23:39:46.3941440Z"
     }
   ],
   "observations": [
@@ -857,6 +865,15 @@
       "outcome": "success",
       "runner_minutes": 79.533,
       "note": "Fresh Build/privacy/migration, Photos bootstrap, both-OS runtime and both deletion-resume/private-copy UI cases passed on a8f4b95. No failed-job reruns. Diagnostic/prototype time remains separate; first candidate 2026-10-18T05:10:16.7978355Z."
+    },
+    {
+      "scope": "reviewed-save-settings-list-race-v1",
+      "candidate_minutes": 21.8,
+      "run_id": 39174673944,
+      "attempt": 1,
+      "outcome": "success",
+      "runner_minutes": 70.483,
+      "note": "Fresh Build/privacy/migration, Photos bootstrap, both-OS runtime and three owning account/save/restore/deletion UI cases passed on 0bb6bebb. No reruns. Diagnostic/control/local preparation stays in first-fix elapsed time from 2026-10-18T22:35:39Z; older capacity history retained separately."
     }
   ],
   "rework_observations": [
@@ -939,6 +956,16 @@
       "source_sha": "c9bbd87fff815acbc351936a7614cc07f11df8a2",
       "executed_tests": 2,
       "note": "Focused diagnosis, not normal release evidence. First probe did not reproduce device J4; second proved a synthetic same-file URL representation regression. Keep first-candidate clock and actual-device uncertainty."
+    },
+    {
+      "task": "save-settings-list-race-20261019",
+      "run_id": 39173406929,
+      "attempt": 1,
+      "outcome": "success",
+      "total_seconds": 939,
+      "source_sha": "b77cbc1dc837fa3f7e8cadce17c940f9354b30cc",
+      "executed_tests": 2,
+      "note": "Focused diagnostic only, not release evidence. Runtime42 and two owning UI cases passed. Actual live failed endpoint was not captured; real second-iPhone restore remains unverified."
     }
   ]
 }
