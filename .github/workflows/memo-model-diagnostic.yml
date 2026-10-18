@@ -42,6 +42,8 @@ jobs:
           {
             xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift ci/verify-photo-memory-notes.swift -o "$RUNNER_TEMP/verify-notes"
             "$RUNNER_TEMP/verify-notes"
+            xcrun swiftc -O -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift ci/verify-photo-memory-notes.swift -o "$RUNNER_TEMP/verify-notes-capacity"
+            "$RUNNER_TEMP/verify-notes-capacity" --capacity-probe
             xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-visits"
             "$RUNNER_TEMP/verify-visits"
             xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" NekoWidget/Services/PersonalArchiveStore.swift NekoWidget/Services/PersonalArchiveCloudClient.swift NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoCoordinator.swift ci/verify-personal-archive.swift -o "$RUNNER_TEMP/verify-archive"

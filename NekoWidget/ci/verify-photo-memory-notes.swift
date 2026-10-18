@@ -10,6 +10,16 @@ import Darwin
 @main
 enum PhotoMemoryNoteVerifier {
     static func main() async throws {
+        if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--capacity-read" {
+            try await capacityRead(at: URL(fileURLWithPath: CommandLine.arguments[2]), length: Int(CommandLine.arguments[3])!)
+            return
+        }
+        if CommandLine.arguments.contains("--capacity-probe") {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("memo-capacity-\(UUID())")
+            defer { try? FileManager.default.removeItem(at: root) }
+            try measuresLongTermStore(at: root)
+            return
+        }
         try verifiesLibraryScopeAndOrdering()
         try verifiesWeightValues()
         try verifiesReadFailuresNeverMeanEmptyAndLateRequestsStayIsolated()
@@ -28,13 +38,12 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesRecordsAndContext(at: root.appendingPathComponent("records/state.json"))
         try await verifiesRecordIntegrity(at: root.appendingPathComponent("integrity/state.json"))
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
-        try await measuresLongTermStore(at: root.appendingPathComponent("long-term"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
     }
 
     // Exercise the shipping store before choosing a partitioning strategy.
     // Synthetic notes only; macOS timings/RSS are not an iPhone UI claim.
-    private static func measuresLongTermStore(at root: URL) async throws {
+    private static func measuresLongTermStore(at root: URL) throws {
         struct Fixture: Encodable { let schemaVersion = 4; let notes: [String: PhotoMemoryNote] }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         for length in [21, 500] {
@@ -45,16 +54,26 @@ enum PhotoMemoryNoteVerifier {
             for i in 0..<count {
                 notes["synthetic-photo-\(i)"] = PhotoMemoryNote(text: text, updatedAt: Date(timeIntervalSince1970: 1_800_000_000), revision: UUID().uuidString)
             }
-            let selected = notes["synthetic-photo-18250"]!
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
             let initial = try encoder.encode(Fixture(notes: notes))
-            let bytes = initial.count
             try initial.write(to: url, options: .atomic)
-            notes.removeAll()
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            process.arguments = ["--capacity-read", url.path, String(length)]
+            try process.run(); process.waitUntilExit()
+            try require(process.terminationStatus == 0, "isolated capacity probe failed")
+        }
+    }
+
+    private static func capacityRead(at url: URL, length: Int) async throws {
+            let count = 36_500
+            let text = String(repeating: "猫", count: length)
+            let bytes = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize!
             let started = Date()
             let store = PhotoMemoryNoteStore(fileURL: url)
             let loaded = try await store.note(for: "synthetic-photo-18250")
-            try require(loaded == selected, "long-term read changed a note")
+            guard let selected = loaded else { throw Failure.failed("long-term note missing") }
+            try require(selected.text == text, "long-term read changed a note")
             _ = try await store.save(text: "犬" + String(text.dropFirst()), for: "synthetic-photo-18250", expectedRevision: selected.revision)
             let reopened = PhotoMemoryNoteStore(fileURL: url)
             let records = try await reopened.records()
@@ -66,7 +85,6 @@ enum PhotoMemoryNoteVerifier {
             if getrusage(RUSAGE_SELF, &usage) == 0 { peak = Int64(usage.ru_maxrss) }
 #endif
             print("CAPACITY_PROBE notes=\(count) characters=\(length) bytes=\(bytes) read_edit_reopen_seconds=\(Date().timeIntervalSince(started)) process_peak_rss_bytes=\(peak)")
-        }
     }
 
     private static func verifiesLibraryScopeAndOrdering() throws {
