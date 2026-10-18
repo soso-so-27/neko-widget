@@ -11,7 +11,10 @@ const bad = () => new ServiceError('IMMUTABLE_TREE_UNAVAILABLE',503);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const hex = /^[0-9a-f]{64}$/u;
 const maximumNodeBytes = 2 * 1024 * 1024;
-const maximumEntries = 100_000;
+// A previously authenticated root can be updated without materializing its
+// inventory. Keep that lifetime bound separate from all-array operations.
+const maximumTreeEntries = 1_000_000;
+const maximumMaterializedEntries = 100_000;
 const maximumValueBytes = 24 * 1024;
 // Shared within this Worker isolate, including independently constructed owner
 // and application trees. A permit is transferred directly to the next waiter.
@@ -52,7 +55,7 @@ export class ImmutableRecordTree {
   private validRef(ref: TreeRef) {
     if (!ref || !exact(ref,'count,hash,object,prefix') || typeof ref.prefix !== 'string'
       || ref.prefix.length > this.keyLength || !/^[0-9a-f]*$/u.test(ref.prefix)
-      || !Number.isSafeInteger(ref.count) || ref.count < 0 || ref.count > maximumEntries || !hex.test(ref.hash)
+      || !Number.isSafeInteger(ref.count) || ref.count < 0 || ref.count > maximumTreeEntries || !hex.test(ref.hash)
       || !ref.object || !exact(ref.object,'bytes,key,sha256,versionId')
       || !ref.object.key.startsWith('recovery/v1/' + this.ownerId + '/record/')
       || !uuid.test(ref.object.key.split('/').at(-1) ?? '')
@@ -143,7 +146,7 @@ export class ImmutableRecordTree {
     return this.writeNode({version:1,ownerId:this.ownerId,tree:this.tree,prefix:expected.prefix,children},expected.hash,expected.count);
   }
   async create(input: TreeEntry[], previous?: TreeRef): Promise<TreeRef> {
-    if(input.length>maximumEntries)throw bad();
+    if(input.length>maximumMaterializedEntries)throw bad();
     const entries=input.map(entry=>({key:entry.key,value:JSON.parse(canonicalJSON(entry.value)) as unknown})).sort((a,b)=>a.key.localeCompare(b.key));let prior='';
     for(const entry of entries){
       this.validKey(entry.key);
@@ -154,14 +157,14 @@ export class ImmutableRecordTree {
     return this.store(await this.expected(entries),previous);
   }
   async entries(root: TreeRef): Promise<TreeEntry[]> {
-    if(root.prefix!=='')throw bad();
+    if(root.prefix!=='' || root.count>maximumMaterializedEntries)throw bad();
     const output:TreeEntry[]=[];const seen=new Set<string>();
     const walk=async(ref:TreeRef):Promise<void>=>{
       if(seen.has(ref.object.key))throw bad();seen.add(ref.object.key);
       const node=await this.readNode(ref);
       if('entries' in node)output.push(...node.entries);
       else for(const child of node.children)await walk(child);
-      if(output.length>maximumEntries)throw bad();
+      if(output.length>maximumMaterializedEntries)throw bad();
     };
     await walk(root);
     if(output.length!==root.count)throw bad();
@@ -173,6 +176,7 @@ export class ImmutableRecordTree {
     await this.readNode(root);
   }
   async logicalHash(input: TreeEntry[]): Promise<string> {
+    if(input.length>maximumMaterializedEntries)throw bad();
     const entries=[...input].sort((a,b)=>a.key.localeCompare(b.key));return (await this.expected(entries)).hash;
   }
   /** Apply a bounded logical delta without downloading unchanged subtrees. */
@@ -198,7 +202,7 @@ export class ImmutableRecordTree {
       }
       const list=[...children.values()].sort((a,b)=>a.prefix.localeCompare(b.prefix));
       const next:Branch={...node,children:list};const count=list.reduce((sum,child)=>sum+child.count,0);
-      if(count>maximumEntries)throw bad();
+      if(count>maximumTreeEntries)throw bad();
       const hash=await sha256(bytes(this.semantic(next)));
       if(hash===ref.hash && count===ref.count)return ref;
       return this.writeNode(next,hash,count);

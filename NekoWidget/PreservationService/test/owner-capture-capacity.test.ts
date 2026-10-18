@@ -172,6 +172,16 @@ it.each(['new-copy', 'existing-copy', 'before-insert'] as const)(
     if (timing === 'before-insert') {
       const original = recovery.copy.bind(recovery);
       recovery.copy = async (...args) => { const ref = await original(...args); await mutate(); return ref; };
+    } else if (timing === 'existing-copy') {
+      // Incremental ACK no longer expands read(expected). Interleave at the
+      // actual S3 read shared by full and incremental verification instead.
+      const original = s3.getVerified.bind(s3);
+      let raced = false;
+      s3.getVerified = async (...args) => {
+        const value = await original(...args);
+        if (!raced) { raced = true; await mutate(); }
+        return value;
+      };
     } else {
       const original = recovery.read.bind(recovery);
       recovery.read = async (...args) => { const value = await original(...args); await mutate(); return value; };

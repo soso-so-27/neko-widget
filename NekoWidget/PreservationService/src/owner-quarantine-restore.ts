@@ -1,5 +1,6 @@
 import { ServiceError, sha256, type ToolBackupPart } from './contracts';
-import { parseToolIndex, parseAppRecordHead, type AppRecordHead } from './documents';
+import { parseAppRecordHead, type AppRecordHead } from './documents';
+import { parseToolNode, summarizeToolNode, validateToolNodePaths, isCompleteToolRoot } from './tool-index-v4';
 import { OwnerArchiveRecovery } from './owner-archive-recovery';
 import { loadOwnerPurgeReplay } from './purge-intent-replay';
 import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
@@ -7,7 +8,7 @@ import { RecordRecoveryCopy, type DiscoveredDeleteIntent,
 import type { S3PurgeIntentStore } from './s3-purge-intent';
 
 const unavailable = () => new ServiceError('OWNER_QUARANTINE_RESTORE_UNAVAILABLE', 503);
-type RestoredToolPart = Omit<ToolBackupPart, 'payload'> & { bytes: number };
+type RestoredToolPart = Omit<ToolBackupPart, 'payload'> & { bytes: number; uploadSnapshotID: string | null };
 
 /** Writes only to a migrated, empty and offline D1/R2 target. The owner is
  * inserted disabled, without sessions or notice contact. Even a fully staged
@@ -43,17 +44,22 @@ export class OwnerQuarantineRestore {
       (SELECT count(*) FROM pa_tool_owner_trials) AS trial_grants,
       (SELECT count(*) FROM pa_tool_trial_records) AS trial_slots,
       (SELECT count(*) FROM pa_tool_trial_resume_repairs) AS trial_repairs,
+      (SELECT count(*) FROM pa_owner_record_counters) AS record_counters,
+      (SELECT count(*) FROM pa_owner_record_changes) AS record_changes,
+      (SELECT count(*) FROM pa_owner_recovery_tree_cursors) AS tree_cursors,
       (SELECT delete_intent_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS record_policy,
       (SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)
         AS owner_policy`).first<{ owners: number; records: number; fences: number;
         owner_copies: number; record_copies: number; tool_references: number;
         tool_delete_claims: number; trial_grants: number; trial_slots: number;
-        trial_repairs: number; record_policy: number; owner_policy: number }>();
+        trial_repairs: number; record_counters: number; record_changes: number; tree_cursors: number;
+        record_policy: number; owner_policy: number }>();
     if (!row || row.owners !== 0 || row.records !== 0 || row.fences !== 0
       || row.owner_copies !== 0 || row.record_copies !== 0
       || row.tool_references !== 0 || row.tool_delete_claims !== 0
       || row.trial_grants !== 0 || row.trial_slots !== 0 || row.trial_repairs !== 0
+      || row.record_counters !== 0 || row.record_changes !== 0 || row.tree_cursors !== 0
       || row.record_policy !== 0 || row.owner_policy !== 0) throw unavailable();
     const listed = await this.bucket.list({ prefix: `personal/${ownerId}/`, limit: 1 });
     if (listed.objects.length !== 0 || listed.truncated) throw unavailable();
@@ -86,9 +92,27 @@ export class OwnerQuarantineRestore {
       const metadata = await this.restoredMetadata(ownerId, snapshotId);
       const tag = metadata.document.toolBackup;
       if (!tag || tag.kind !== 'index' || tag.snapshotId !== snapshotId) throw unavailable();
-      const index = parseToolIndex(tag);
+      const index = parseToolNode(tag);
       const edges: D1PreparedStatement[] = [];
-      for (const file of index.files) {
+      if (index.version === 4) {
+        await validateToolNodePaths(index);
+        for (const child of index.children ?? []) {
+          const id = child.snapshotID.toLowerCase(), descriptor = parts.get(id);
+          if (!descriptor || descriptor.kind !== 'index' || descriptor.snapshotId !== id
+            || descriptor.sha256 !== child.sha256) throw unavailable();
+          const tag = (await this.restoredMetadata(ownerId,id)).document.toolBackup;
+          if (!tag || tag.kind !== 'index' || tag.snapshotId !== id || tag.sha256 !== child.sha256) throw unavailable();
+          const node = parseToolNode(tag);
+          if (node.version !== 4 || node.prefix !== child.prefix) throw unavailable();
+          const actual = summarizeToolNode(node);
+          if (actual.fileCount !== child.fileCount || actual.nodeCount !== child.nodeCount
+            || actual.toolMask !== child.toolMask || actual.manifestMask !== child.manifestMask) throw unavailable();
+          edges.push(this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id)
+            VALUES(?,?,?)`).bind(ownerId,snapshotId,id));
+          expectedReferences++;
+        }
+      }
+      for (const file of index.files ?? []) {
         const photo = file.path.endsWith('.jpg');
         const source = (file.sourceSnapshotID ?? index.snapshotID).toLowerCase();
         let bytes = 0;
@@ -139,8 +163,8 @@ export class OwnerQuarantineRestore {
       const target = head.snapshotID.toLowerCase();
       const metadata = await this.restoredMetadata(ownerId, target);
       const index = metadata.document.toolBackup;
-      if (!index || index.kind !== 'index' || index.sha256 !== head.indexHash
-        || parseToolIndex(index).version !== 3) throw unavailable();
+      if (!index || index.kind !== 'index' || index.snapshotId !== target || index.sha256 !== head.indexHash
+        || !isCompleteToolRoot(parseToolNode(index))) throw unavailable();
       await this.db.prepare(`INSERT INTO pa_tool_snapshot_references(owner_id,snapshot_id,part_id,source_revision)
         VALUES(?,?,?,?)`).bind(ownerId, id, target, revision).run();
       expectedReferences++;
@@ -262,8 +286,10 @@ export class OwnerQuarantineRestore {
         if (tag) {
           if (image.revision !== 1 || (tag.kind === 'index' && tag.snapshotId !== expected.recordId)) throw unavailable();
           const { payload, ...part } = tag;
+          const node = tag.kind === 'index' ? parseToolNode(tag) : null;
           toolParts.set(expected.recordId, { ...part,
-            bytes: tag.kind === 'photo' ? image.photoBytes : atob(payload).length });
+            bytes: tag.kind === 'photo' ? image.photoBytes : atob(payload).length,
+            uploadSnapshotID: node?.version === 4 ? node.uploadSnapshotID.toLowerCase() : null });
         }
         if (image.photoKey !== null) {
           if (image.photoCiphertext === null) throw unavailable();
@@ -282,8 +308,8 @@ export class OwnerQuarantineRestore {
               image.photoBytes, image.quotaBytes, image.deleted ? 1 : 0),
         ];
         const source = toolParts.get(expected.recordId);
-        if (source) statements.push(this.db.prepare(`INSERT INTO pa_tool_record_sources(owner_id,record_id,snapshot_id,kind)
-          VALUES(?,?,?,?)`).bind(ownerId, expected.recordId, source.snapshotId, source.kind));
+        if (source) statements.push(this.db.prepare(`INSERT INTO pa_tool_record_sources(owner_id,record_id,snapshot_id,kind,upload_snapshot_id)
+          VALUES(?,?,?,?,?)`).bind(ownerId, expected.recordId, source.snapshotId, source.kind, source.uploadSnapshotID));
         for (const historical of [...commits.values()].sort((a, b) => a.revision - b.revision)) {
           statements.push(this.db.prepare(`INSERT INTO pa_record_recovery_versions(owner_id,record_id,
             revision,record_object_key,record_version_id,record_sha256,record_bytes,

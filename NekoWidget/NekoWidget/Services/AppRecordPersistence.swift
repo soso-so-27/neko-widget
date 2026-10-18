@@ -1413,7 +1413,10 @@ private final class AppRecordFixture {
         try AppRecordDataset.nextFixtureDevice()
         let next = AppRecordFixture(configuration: configuration, server: server, profiles: profiles)
         await next.persistence.enable()
-        guard next.persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        guard next.persistence.title == "復元しました" else {
+            Self.preparationPhase += " / \(next.persistence.title) / \(next.persistence.detail ?? "説明なし")"
+            throw ToolBackupError.storage
+        }
         let restored = try await PhotoMemoryNoteStore.shared.records()
         let actual = Dictionary(uniqueKeysWithValues: restored.map { ($0.id, $0.note) })
         guard actual.count == expected.count, expected.allSatisfy({ actual[$0.id] == $0.note }),

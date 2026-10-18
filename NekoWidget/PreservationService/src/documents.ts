@@ -7,16 +7,23 @@ const countWithin = (value: string, maximum: number) => {
   return true;
 };
 const fail = (): never => { throw new ServiceError('INVALID_RECORD'); };
-const toolManifests: Record<string, string> = {
+export const toolManifests: Record<string, string> = {
   CareHandoff: 'plan.json', EvacuationPreparation: 'plan.json', VeterinaryVisits: 'state.json',
   ShowcasePhotos: 'selected.json', LostCatDrafts: 'drafts.json', CatPreparedness: 'records.json',
   PhotoMemoryNotes: 'state.json', CatIdentity: 'state.json',
 };
 const toolPhotoName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/iu;
-function validToolPath(path: string): boolean {
+export function validToolPath(path: string): boolean {
   const pieces = path.split('/');
   return pieces.length === 2 && Object.hasOwn(toolManifests, pieces[0]!)
     && (pieces[1] === toolManifests[pieces[0]!] || toolPhotoName.test(pieces[1]!));
+}
+/** Raw fragments are transport bytes, not independently decodable tool models.
+ * Only v4 leaves may bind these paths; legacy index validation stays unchanged. */
+export function isToolFragmentPath(path: string): boolean {
+  const pieces = path.split('/');
+  return pieces.length === 2 && Object.hasOwn(toolManifests, pieces[0]!)
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/iu.test(pieces[1]!);
 }
 function date(value: unknown): string | null {
   if (value === null) return null;
@@ -78,7 +85,7 @@ function validateToolBackup(input: unknown): ToolBackupPart {
     || typeof v.payload !== 'string' || v.payload.length > (v.kind === 'index' ? 349528 : 65536) || typeof v.path !== 'string') return fail();
   if (v.kind === 'index') {
     if (v.path !== 'index.json' || v.part !== 0 || v.count !== 1 || !v.payload) return fail();
-  } else if (!validToolPath(v.path)) return fail();
+  } else if (!validToolPath(v.path) && !isToolFragmentPath(v.path)) return fail();
   if (v.kind === 'photo') {
     if (!v.path.endsWith('.jpg') || v.part !== 0 || v.count !== 1 || v.payload !== '') return fail();
   } else {

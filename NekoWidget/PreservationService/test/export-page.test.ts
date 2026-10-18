@@ -181,28 +181,28 @@ it('streams an actual 20 MiB encrypted photo with Japanese metadata through arch
   expect(await lease(f.session.ownerId)).toEqual({ export_lease_id: null, export_lease_expires_at: 0 });
 }, 20_000);
 
-it('exports 1000 small records in 20 pages below owner quota and 1000 SQL statements per request', async () => {
-  const f = await fixture(1000); let cursor: string | null = null, generation: number | undefined;
+it('exports beyond the old 1000-record ceiling with bounded pages and a complete final tail', async () => {
+  const f = await fixture(1001); let cursor: string | null = null, generation: number | undefined;
   const identifiers: string[] = [], counts: number[] = [];
-  for (let page = 0; page < 20; page++) {
+  for (let page = 0; page < 21; page++) {
     f.resetQueries();
     const response = await route(f.make(cursor ? `?after=${cursor}&generation=${generation}` : ''), f.services);
     expect(response.headers.get('content-type')).toBe('application/x-ndjson');
     const output = await frames(response); counts.push(f.queries());
-    expect(output[0]).toMatchObject({ version: 1, type: 'header', totalRecords: 1000 });
+    expect(output[0]).toMatchObject({ version: 1, type: 'header', totalRecords: 1001 });
     generation ??= output[0]!.generation as number;
     expect(output[0]!.generation).toBe(generation);
-    const records = output.slice(1, -1); expect(records).toHaveLength(50);
+    const records = output.slice(1, -1); expect(records).toHaveLength(page < 20 ? 50 : 1);
     expect(records.every(value => value.type === 'record')).toBe(true);
     identifiers.push(...records.map(value => value.recordId as string));
     const complete = output.at(-1)!;
-    expect(complete).toMatchObject({ type: 'complete', generation, recordCount: 50 });
+    expect(complete).toMatchObject({ type: 'complete', generation, recordCount: page < 20 ? 50 : 1 });
     cursor = complete.nextCursor as string | null;
-    expect(cursor === null).toBe(page === 19);
+    expect(cursor === null).toBe(page === 20);
     expect(await lease(f.session.ownerId)).toEqual({ export_lease_id: null, export_lease_expires_at: 0 });
   }
-  expect(new Set(identifiers).size).toBe(1000); expect(identifiers).toEqual([...identifiers].sort());
-  expect(counts).toEqual([463, ...Array<number>(19).fill(464)]);
+  expect(new Set(identifiers).size).toBe(1001); expect(identifiers).toEqual([...identifiers].sort());
+  expect(counts.slice(0,20)).toEqual([463, ...Array<number>(19).fill(464)]);
   expect(await db.prepare('SELECT http_request_count FROM pa_owners WHERE owner_id=?').bind(f.session.ownerId).first())
     .toMatchObject({ http_request_count: expect.any(Number) });
   expect(Math.max(...counts)).toBeLessThan(1000);
@@ -344,8 +344,16 @@ it('checks schema defaults, owner snapshot generation, and atomic final-release 
 });
 
 it('bounds declared total and refuses a non-empty owner without generation accounting', async () => {
-  const f = await fixture(1001);
-  await expect(route(f.make(), f.services)).rejects.toMatchObject({ code: 'EXPORT_UNAVAILABLE' });
+  const f = await fixture(2);
+  // Exercise a rejected declaration without allocating 200,001 encrypted rows.
+  const excessive = new Proxy(f.observed, { get(target, property) {
+    if (property === 'prepare') return (sql: string) => sql.includes('AS total_records')
+      ? { bind: () => ({ first: async () => ({ generation: 1, total_records: 200_001, inventory_present: 1 }) }) }
+      : target.prepare(sql);
+    const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  await expect(exportPage({ db: excessive, auth: f.auth, read: (token, id) => f.archive.readBinary(token, id) },
+    f.make(), f.session.token)).rejects.toMatchObject({ code: 'EXPORT_UNAVAILABLE' });
   expect((await lease(f.session.ownerId))!.export_lease_id).toBeNull();
   await db.prepare(`UPDATE pa_records SET deleted=1,metadata=NULL,quota_bytes=0
     WHERE owner_id=? AND record_id='00000001-0000-4000-8000-000000000001'`).bind(f.session.ownerId).run();

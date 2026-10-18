@@ -79,3 +79,15 @@ it('shares the I/O limit across instances and drains siblings before returning a
  await expect(new ImmutableRecordTree(owner,'failed',f.keys,interrupted).create(entries)).rejects.toThrow('first sibling fails');
  expect(active).toBe(0);expect(finished).toBe(attempts-1);
 });
+it('keeps materialized inventories bounded separately from authenticated delta roots',async()=>{
+ const f=await fixture(),entry={key:'a'.repeat(32),value:1};
+ const oversized=Array.from({length:100_001},()=>entry);
+ await expect(f.tree.create(oversized)).rejects.toThrow();
+ await expect(f.tree.logicalHash(oversized)).rejects.toThrow();
+ const root=await f.tree.create([entry]);f.reset();
+ await expect(f.tree.entries({...root,count:100_001})).rejects.toThrow();
+ expect(f.counts().reads).toBe(0);
+ await expect(f.tree.verifyRoot({...root,count:1_000_001})).rejects.toThrow();
+ await expect(f.tree.update({...root,count:1_000_001},[entry])).rejects.toThrow();
+ expect(f.counts().reads).toBe(0);
+});

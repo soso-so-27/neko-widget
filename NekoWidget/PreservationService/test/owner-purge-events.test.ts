@@ -58,6 +58,7 @@ it('allows pre-erasure abort but never an erasing event afterward', async () => 
     .rejects.toThrow();
   await db.prepare('DELETE FROM pa_owner_recovery_generations WHERE owner_id=?')
     .bind(ownerId).run();
+  await db.prepare('DELETE FROM pa_owner_record_counters WHERE owner_id=?').bind(ownerId).run();
   await db.prepare('DELETE FROM pa_owners WHERE owner_id=?').bind(ownerId).run();
   expect((await db.prepare('SELECT count(*) AS n FROM pa_owner_purge_events WHERE owner_id=?')
     .bind(ownerId).first<{ n: number }>())?.n).toBe(2);

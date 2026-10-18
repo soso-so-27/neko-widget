@@ -61,6 +61,10 @@ interface OwnerRow {
   inventory_generation: number; record_count: number;
 }
 interface RefRow { object_key: string; version_id: string; sha256: string; bytes: number }
+interface DeltaState { image: OwnerRecoveryImage; sequence: number; count: number }
+interface CursorRow extends RefRow {
+  generation: number; inventory_generation: number; record_sequence: number; record_count: number;
+}
 interface InventoryPageRow {
   generation: number; inventory_generation: number;
   record_id: string | null; revision: number; deleted: number;
@@ -69,6 +73,9 @@ interface InventoryPageRow {
 }
 const inventoryPageSize = 256;
 const maximumInventoryRecords = 100_000;
+// Only a verified tree cursor may pass this bound. Full baseline capture and
+// explicit recovery expansion retain their separate 100k memory protection.
+const maximumIncrementalInventoryRecords = 1_000_000;
 
 function blob(value: unknown, maximum: number): Uint8Array {
   const bytes = value instanceof ArrayBuffer ? new Uint8Array(value)
@@ -152,6 +159,26 @@ function valid(image: OwnerRecoveryImage): void {
       || ((r.expiredAt === null) !== (r.dueAt === null))
       || (r.dueAt !== null && r.expiredAt !== null && r.dueAt <= r.expiredAt)) throw unavailable();
   }
+}
+
+function wireHeader(image: OwnerRecoveryImage): Omit<PagedImage, 'version' | 'recordsTree'> {
+  const { records: _records, credential, contact, ...header } = image;
+  return { ...header,
+    credential: { ownerEpoch: credential.ownerEpoch,
+      sealedCredentialsBase64: encoded(credential.sealedCredentials, 131_072), updatedAt: credential.updatedAt },
+    contact: contact === null ? null : { sealedEmailBase64: encoded(contact.sealedEmail, 8192),
+      emailTag: contact.emailTag, verifiedAt: contact.verifiedAt, updatedAt: contact.updatedAt } };
+}
+
+function decodedHeader(payload: PagedImage): OwnerRecoveryImage {
+  const { version: _version, recordsTree: _tree, credential, contact, ...header } = payload;
+  const image: OwnerRecoveryImage = { ...header, records: [],
+    credential: { ownerEpoch: credential.ownerEpoch,
+      sealedCredentials: decoded(credential.sealedCredentialsBase64, 131_072), updatedAt: credential.updatedAt },
+    contact: contact === null ? null : { sealedEmail: decoded(contact.sealedEmailBase64, 8192),
+      emailTag: contact.emailTag, verifiedAt: contact.verifiedAt, updatedAt: contact.updatedAt } };
+  valid(image);
+  return image;
 }
 
 /** This protects an owner-state image independently of D1. It does not
@@ -289,11 +316,221 @@ export class OwnerRecoveryCopy {
     } catch { throw unavailable(); }
   }
 
+  /** Bounded owner header and transactionally maintained record counters.
+   * No record/marker history is expanded on the incremental path. */
+  private async deltaState(db: D1Database, ownerId: string): Promise<DeltaState> {
+    if (!ownerPattern.test(ownerId)) throw unavailable();
+    try {
+      const row = await db.prepare(`SELECT o.owner_id,g.generation,o.identity_key,o.epoch,o.disabled,
+        o.purge_fence_id,o.created_at,c.owner_epoch AS credential_epoch,
+        c.sealed_credentials,c.updated_at AS credential_updated_at,
+        n.sealed_email,n.email_tag,n.source AS contact_source,n.verified_at,
+        n.updated_at AS contact_updated_at,l.billing_account_id,l.created_at AS billing_created_at,
+        r.revision AS retention_revision,r.episode,r.verified_status,r.checked_at,
+        r.expired_at,r.due_at,r.paused_at,r.notice_not_before_at,
+        r.final_notice_delivered_at,r.final_notice_receipt,
+        coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=o.owner_id),0)
+          AS inventory_generation,
+        d.record_count,d.sequence AS record_sequence
+        FROM pa_owners o JOIN pa_owner_recovery_generations g ON g.owner_id=o.owner_id
+        JOIN pa_identity_credentials c ON c.owner_id=o.owner_id
+        JOIN pa_owner_record_counters d ON d.owner_id=o.owner_id
+        LEFT JOIN pa_notice_contacts n ON n.owner_id=o.owner_id
+        LEFT JOIN pa_membership_links l ON l.owner_id=o.owner_id
+        LEFT JOIN pa_retention r ON r.owner_id=o.owner_id
+        WHERE o.owner_id=?`).bind(ownerId).first<OwnerRow & {record_sequence:number}>();
+      if (!row || (row.disabled !== 0 && row.disabled !== 1)
+        || (row.sealed_email !== null && row.contact_source !== 'apple')
+        || !safeInteger(row.record_sequence) || !safeInteger(row.record_count)
+        || row.record_count > maximumIncrementalInventoryRecords) throw unavailable();
+      const image: OwnerRecoveryImage = { ownerId, generation: row.generation,
+        identityKey: row.identity_key, epoch: row.epoch, disabled: row.disabled === 1,
+        purgeFenceId: row.purge_fence_id, createdAt: row.created_at,
+        credential: { ownerEpoch: row.credential_epoch,
+          sealedCredentials: blob(row.sealed_credentials, 131_072),
+          updatedAt: row.credential_updated_at },
+        contact: row.sealed_email === null ? null : {
+          sealedEmail: blob(row.sealed_email, 8192), emailTag: row.email_tag,
+          verifiedAt: row.verified_at!, updatedAt: row.contact_updated_at! },
+        billing: row.billing_account_id === null ? null : {
+          accountId: row.billing_account_id, createdAt: row.billing_created_at! },
+        inventoryGeneration: row.inventory_generation, records: [],
+        retention: row.retention_revision === null ? null : {
+          revision: row.retention_revision, episode: row.episode!,
+          status: row.verified_status as NonNullable<OwnerRecoveryImage['retention']>['status'],
+          checkedAt: row.checked_at!, expiredAt: row.expired_at, dueAt: row.due_at,
+          pausedAt: row.paused_at, noticeNotBeforeAt: row.notice_not_before_at!,
+          finalNoticeDeliveredAt: row.final_notice_delivered_at,
+          finalNoticeReceipt: row.final_notice_receipt },
+      };
+      valid(image);
+      if (image.purgeFenceId !== null || image.inventoryGeneration < row.record_count) throw unavailable();
+      return { image, sequence: row.record_sequence, count: row.record_count };
+    } catch { throw unavailable(); }
+  }
+
+  /** The cursor is only an optimization of a verified S3 ACK. Every fence is
+   * checked in the same statement; restoring D1 without this derived row falls
+   * back to full capture. A concurrent older copy cannot rewind the cursor. */
+  private async rememberTree(db: D1Database, state: DeltaState, ref: RecoveryObject): Promise<boolean> {
+    const image = state.image;
+    const result = await db.prepare(`INSERT INTO pa_owner_recovery_tree_cursors
+      (owner_id,generation,inventory_generation,record_sequence,record_count)
+      SELECT v.owner_id,v.generation,?,d.sequence,d.record_count FROM pa_owner_recovery_versions v
+      JOIN pa_owner_recovery_generations g ON g.owner_id=v.owner_id AND g.generation=v.generation
+      JOIN pa_owner_record_counters d ON d.owner_id=v.owner_id
+      WHERE v.owner_id=? AND v.generation=? AND v.object_key=? AND v.version_id=? AND v.sha256=? AND v.bytes=?
+        AND d.sequence=? AND d.record_count=?
+        AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=v.owner_id),0)=?
+      ON CONFLICT(owner_id) DO UPDATE SET generation=excluded.generation,
+        inventory_generation=excluded.inventory_generation,record_sequence=excluded.record_sequence,
+        record_count=excluded.record_count WHERE excluded.generation>=pa_owner_recovery_tree_cursors.generation`)
+      .bind(image.inventoryGeneration,image.ownerId,image.generation,ref.key,ref.versionId,ref.sha256,ref.bytes,
+        state.sequence,state.count,image.inventoryGeneration).run();
+    return result.success && result.meta.changes === 1;
+  }
+
+  /** Normal writes read only the latest changes and affected immutable paths.
+   * The complete inventory remains the bounded migration/recovery baseline.
+   * No tombstone, record version or old recovery tree is discarded. */
+  async copyCurrent(db: D1Database, ownerId: string, now: number): Promise<RecoveryObject> {
+    if (!safeInteger(now, 1)) throw unavailable();
+    if (!this.options.pagedWrites) return this.copyCurrentFull(db, ownerId, now);
+    try {
+      const state = await this.deltaState(db,ownerId), image = state.image;
+      const prior = await db.prepare(`SELECT v.object_key,v.version_id,v.sha256,v.bytes,
+        c.generation,c.inventory_generation,c.record_sequence,c.record_count
+        FROM pa_owner_recovery_tree_cursors c JOIN pa_owner_recovery_versions v
+          ON v.owner_id=c.owner_id AND v.generation=c.generation
+        WHERE c.owner_id=?`)
+        .bind(ownerId).first<CursorRow>();
+      if (!prior) {
+        const reference = await this.copyCurrentFull(db,ownerId,now);
+        // A race after the full copy's final fence can prevent cursor seeding;
+        // the full copy itself already had a valid acknowledgement point.
+        const verified=await this.readWire(ownerId,reference);
+        if (verified.version===3 && verified.recordsTree.count===state.count
+          && canonicalJSON(wireHeader(decodedHeader(verified)))===canonicalJSON(wireHeader(image))) {
+          await this.rememberTree(db,state,reference);
+        }
+        return reference;
+      }
+      if (!safeInteger(prior.generation,1) || prior.generation>image.generation
+        || !safeInteger(prior.inventory_generation) || prior.inventory_generation>image.inventoryGeneration
+        || !safeInteger(prior.record_sequence) || prior.record_sequence>state.sequence
+        || !safeInteger(prior.record_count) || prior.record_count>state.count) throw unavailable();
+      await this.verifyInnerIdentity(image);
+      const previous = await this.readWire(ownerId,{key:prior.object_key,versionId:prior.version_id,
+        sha256:prior.sha256,bytes:prior.bytes});
+      if (previous.version !== 3) throw unavailable();
+      const previousHeader = decodedHeader(previous);
+      if (previousHeader.generation!==prior.generation || previousHeader.inventoryGeneration!==prior.inventory_generation
+        || previous.recordsTree.count!==prior.record_count) throw unavailable();
+      const tree = new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
+      let root = previous.recordsTree;
+      await tree.verifyRoot(root);
+      if (prior.generation===image.generation && prior.inventory_generation===image.inventoryGeneration
+        && prior.record_sequence===state.sequence && prior.record_count===state.count) {
+        if (canonicalJSON(wireHeader(previousHeader))!==canonicalJSON(wireHeader(image))) throw unavailable();
+        // Idempotent preflight: authenticate the existing root once and perform
+        // a final read fence; do not rewrite the same cursor or S3 image.
+        const fenced=await db.prepare(`SELECT 1 AS present FROM pa_owner_recovery_tree_cursors c
+          JOIN pa_owner_recovery_generations g ON g.owner_id=c.owner_id AND g.generation=c.generation
+          JOIN pa_owner_record_counters d ON d.owner_id=c.owner_id
+          WHERE c.owner_id=? AND c.generation=? AND c.record_sequence=? AND c.record_count=?
+            AND c.inventory_generation=? AND d.sequence=c.record_sequence AND d.record_count=c.record_count
+            AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=c.owner_id),0)=c.inventory_generation`)
+          .bind(ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration).first();
+        if (!fenced) throw unavailable();
+        return {key:prior.object_key,versionId:prior.version_id,sha256:prior.sha256,bytes:prior.bytes};
+      }
+      let after = prior.record_sequence, changes = 0;
+      for (;;) {
+        const page = await db.prepare(`SELECT d.sequence AS record_sequence,d.record_count,
+          g.generation,coalesce(i.generation,0) AS inventory_generation,items.*
+          FROM pa_owner_record_counters d JOIN pa_owner_recovery_generations g ON g.owner_id=d.owner_id
+          LEFT JOIN pa_inventory i ON i.owner_id=d.owner_id
+          LEFT JOIN (SELECT ch.sequence AS change_sequence,pr.record_id,pr.revision,pr.deleted,
+            cm.marker_object_key,cm.marker_version_id,cm.marker_sha256,cm.marker_bytes
+            FROM pa_owner_record_changes ch LEFT JOIN pa_records pr
+              ON pr.owner_id=ch.owner_id AND pr.record_id=ch.record_id
+            LEFT JOIN pa_record_commit_markers cm ON cm.owner_id=pr.owner_id
+              AND cm.record_id=pr.record_id AND cm.revision=pr.revision
+            WHERE ch.owner_id=? AND ch.sequence>? AND ch.sequence<=? ORDER BY ch.sequence LIMIT 200) items ON 1=1
+          WHERE d.owner_id=? ORDER BY items.change_sequence`)
+          .bind(ownerId,after,state.sequence,ownerId).all<InventoryPageRow & {
+            record_sequence:number;record_count:number;change_sequence:number|null;
+          }>();
+        if (!page.success || !page.results.length || page.results.length>200) throw unavailable();
+        const records: OwnerRecoveryImage['records'] = [];
+        for (const row of page.results) {
+          if (row.generation!==image.generation || row.inventory_generation!==image.inventoryGeneration
+            || row.record_sequence!==state.sequence || row.record_count!==state.count) throw unavailable();
+          if (row.change_sequence===null) {
+            if (page.results.length!==1) throw unavailable();
+            continue;
+          }
+          if (!safeInteger(row.change_sequence,after+1) || row.change_sequence>state.sequence
+            || !row.record_id || !row.marker_object_key || (row.deleted!==0 && row.deleted!==1)) throw unavailable();
+          after=row.change_sequence;
+          records.push({recordId:row.record_id,revision:row.revision,deleted:row.deleted===1,
+            marker:{key:row.marker_object_key,versionId:row.marker_version_id,sha256:row.marker_sha256,bytes:row.marker_bytes}});
+        }
+        changes+=records.length;
+        if (changes>state.count) throw unavailable();
+        valid({...image,records:[...records].sort((a,b)=>a.recordId.localeCompare(b.recordId))});
+        if (records.length) root=await tree.update(root,records.map(record=>({key:record.recordId.replaceAll('-',''),value:record})));
+        if (page.results[0]!.change_sequence===null || page.results.length<200) break;
+      }
+      // The final sequence is retained even when intermediate changes coalesce.
+      if (after!==state.sequence || root.count!==state.count) throw unavailable();
+      const expected: PagedImage = {...wireHeader(image),version:3,recordsTree:root};
+      const current = async (): Promise<RecoveryObject|null> => {
+        const row = await db.prepare(`SELECT v.object_key,v.version_id,v.sha256,v.bytes
+          FROM pa_owner_recovery_versions v JOIN pa_owner_recovery_generations g
+            ON g.owner_id=v.owner_id AND g.generation=v.generation
+          JOIN pa_owner_record_counters d ON d.owner_id=v.owner_id
+          WHERE v.owner_id=? AND v.generation=? AND d.sequence=? AND d.record_count=?
+            AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=v.owner_id),0)=?`)
+          .bind(ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration).first<RefRow>();
+        return row ? {key:row.object_key,versionId:row.version_id,sha256:row.sha256,bytes:row.bytes} : null;
+      };
+      let reference=await current();
+      if (!reference) {
+        const json=new TextEncoder().encode(JSON.stringify(expected));
+        const plaintext=this.options.compressWrites ? await compressOwnerSnapshot(json) : json;
+        const sealed=await this.keys.seal(plaintext,{ownerId,purpose:'recovery'});
+        const written=await this.s3.putVersioned(`recovery/v1/${ownerId}/owner/${crypto.randomUUID()}`,sealed);
+        await db.prepare(`INSERT INTO pa_owner_recovery_versions(owner_id,generation,object_key,version_id,sha256,bytes,confirmed_at)
+          SELECT ?,g.generation,?,?,?,?,? FROM pa_owner_recovery_generations g
+          JOIN pa_owner_record_counters d ON d.owner_id=g.owner_id
+          WHERE g.owner_id=? AND g.generation=? AND d.sequence=? AND d.record_count=?
+            AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=g.owner_id),0)=?
+          ON CONFLICT(owner_id,generation) DO NOTHING`)
+          .bind(ownerId,written.key,written.versionId,written.sha256,written.bytes,now,
+            ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration).run();
+        reference=await current();
+      }
+      if (!reference) throw unavailable();
+      const restored=await this.readWire(ownerId,reference);
+      // A verified old cursor remains usable if a newer version was inserted
+      // but its readback/cursor publication was interrupted. Reconcile legacy
+      // v2 writers only through the separately bounded full-inventory path.
+      if (restored.version===2) return this.copyCurrentFull(db,ownerId,now);
+      if (restored.recordsTree.count!==root.count || restored.recordsTree.hash!==root.hash
+        || canonicalJSON(wireHeader(decodedHeader(restored)))!==canonicalJSON(wireHeader(image))) throw unavailable();
+      await tree.verifyRoot(restored.recordsTree);
+      // This atomic cursor statement is also the final acknowledgement fence.
+      if (!await this.rememberTree(db,state,reference)) throw unavailable();
+      return reference;
+    } catch { throw unavailable(); }
+  }
+
   /** Capture, independently verify S3, then bind the exact object version to
    * the still-current D1 generation. A racing owner mutation fails closed.
    * The caller must not acknowledge its mutation before this returns.
    */
-  async copyCurrent(db: D1Database, ownerId: string, now: number): Promise<RecoveryObject> {
+  private async copyCurrentFull(db: D1Database, ownerId: string, now: number): Promise<RecoveryObject> {
     if (!safeInteger(now, 1)) throw unavailable();
     const image = await this.capture(db, ownerId);
     // A fenced owner is already covered by the independent purge intent.

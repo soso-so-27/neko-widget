@@ -61,6 +61,7 @@ it('requires external erasing proof before child-first D1 owner deletion under s
     await db.prepare('DELETE FROM pa_owner_recovery_generations WHERE owner_id=?')
       .bind(owner).run();
     await db.prepare('DELETE FROM pa_inventory WHERE owner_id=?').bind(owner).run();
+    await db.prepare('DELETE FROM pa_owner_record_counters WHERE owner_id=?').bind(owner).run();
     await db.prepare('DELETE FROM pa_purge_fences WHERE owner_id=?').bind(owner).run();
     await db.prepare('DELETE FROM pa_owners WHERE owner_id=?').bind(owner).run();
     expect(await db.prepare('SELECT owner_id FROM pa_owners WHERE owner_id=?')

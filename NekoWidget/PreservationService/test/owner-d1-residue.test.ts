@@ -48,7 +48,8 @@ it('counts every owner row, photo cleanup key and singleton cursor without readi
   expect(report.content.pa_owners).toBe(1);
   expect(report.content.pa_inventory).toBe(1);
   expect(report.content.pa_owner_recovery_generations).toBe(1);
-  expect(report.contentTotal).toBe(3);
+  expect(report.content.pa_owner_record_counters).toBe(1);
+  expect(report.contentTotal).toBe(4);
   expect(report.purgeWorkTotal).toBe(0);
   expect(report.pendingPhotoDeletes).toBe(1);
   expect(report.ownerCursors.pa_expiry_review_cursor).toBe(1);

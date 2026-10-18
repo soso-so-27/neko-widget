@@ -59,3 +59,11 @@ treeのref/update総数は100万、全配列へmaterializeするcreate/entries/h
 実環境の200物理record/1GiBと全体3GiBはまだ変更していない。既存本人1・新規受付0・追加100PUT/128MiB・19日03:09JSTまでの有限受付と月予算を維持する。新しい有料契約0。実データの43.76MB/予約0、現record ACK済み・未参照live部品0を10:00:58Zに確認した。検査用合成データを実保存先へ大量投入しない。
 
 長期原価には写真のR2/S3二重保持、復旧tree全version、PUT/GET/HEAD、KMS、D1/Worker、検証containerを含める。無料枠を1人ごとに重複適用しない。旧月2の14.42円を10年後の原価へ代用しない。写真0.93MB/10枚日＋メモ編集1回日を仮定した10年は36,500写真、deltaだけでも履歴約277,400ID・mutation約558,000。これは仮定の外挿であり実運用計測や写真原本/動画の容量ではない。新上限や追加費用が必要な設定は、この計算と現残額を確かめてから説明する。
+
+## 19:24 JST 時点の追加証拠
+
+- モデル診断39118395672、99b73a5は全成功。36,500メモ・500文字の実storeは60,286,919B、read665ms/edit1799ms/reopen1117ms、RSS319,995,904B。36,501ファイルのtreeは3,840node中3,836を再利用し変更index12,478B。raw移行、破損拒否、uploadSnapshotID新旧帰属、101件目の診察記録、既存コピー、書き出しまで成功。Mac合成モデルであり実iPhoneのメモリ/画面や実クラウドの証拠ではない。
+- backend最終凍結292入力hash `bce4e8db93656258ad677eb0b986e35a9f43fbae33672748e938b3d117b6e666`。Node32、Vitest74file/652case全成功（140.08秒）、typecheck、migration5本（8.22秒）、0043既存data保持の実SQLite成功。直接223入力の前後hashも一致。fixture FK訂正後の成功であり、先の失敗を消さない。
+- 独立再レビューで旧cursor再試行、root未送信abandon、set単位claimの3指摘は修正確認。cursor欠損/全災害hydrateの100k制限とusage全件SQLは残る。
+- iOS診断39117493330は18分26秒で2成功1失敗。未保存メモ保護と中断整理の検査は成功。新規復元テストは `enable()` の正常復元時のtitleが「復元しました」であるのに「保存済み」を期待して停止した。fixtureの期待値だけを訂正し、失敗時には実title/detailを表示する。内容一致の後続assertはこのrunでは未実行なので再診断が必要。
+- CI inventory専用PR365/a7cccc0は既存配置を維持して新テストだけsoloへ登録。ローカル251.6秒・owning plan39118959720成功、main629f6baへmerge。diagnostic workflowの一時拡張は製品差分から外す。通常CIの必須範囲は削らない。

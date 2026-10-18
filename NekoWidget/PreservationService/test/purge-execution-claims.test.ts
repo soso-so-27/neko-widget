@@ -109,6 +109,7 @@ it('cannot complete an erasure claim without matching prepared, erasing and comp
   await db.prepare('DELETE FROM pa_owner_recovery_generations WHERE owner_id=?')
     .bind(f.ownerId).run();
   await db.prepare('DELETE FROM pa_inventory WHERE owner_id=?').bind(f.ownerId).run();
+  await db.prepare('DELETE FROM pa_owner_record_counters WHERE owner_id=?').bind(f.ownerId).run();
   await db.prepare('DELETE FROM pa_purge_fences WHERE owner_id=?').bind(f.ownerId).run();
   await db.prepare('DELETE FROM pa_owners WHERE owner_id=?').bind(f.ownerId).run();
   expect(await db.prepare('SELECT owner_id FROM pa_owners WHERE owner_id=?')
