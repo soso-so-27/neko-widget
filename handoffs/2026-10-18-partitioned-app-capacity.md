@@ -115,3 +115,5 @@ treeのref/update総数は100万、全配列へmaterializeするcreate/entries/h
 - metadataの直接確認は既存のFoundationモデル診断で実ファイルのv3/v4、owner/root不一致、壊れたreceipt、unknown/symlink、未完upload、部分整理の再開と原本保持を実行する。約135秒の先行モデルで判断し、この追加変更だけのために19分のUI診断を重複起動しない。最終6nativeで実アプリの整理integrationを確認する。
 - AWS再ログイン後、既存164892691568のFREE plan、推定残credit119.25USD・確定残119.81USD・当月0.54USDをread-only確認。見込み値の更新遅延は残る。追加契約/料金プラン変更0。月980円、既存受付/期限/予算/公開範囲を維持する。
 - 累計360分を計画枠とし、最終native約68分＋過去upload約12分＋準備を見込む。元の時間目標内で完了したとは扱わない。実クラウド反映、内部263、実iPhone v4復元はまだ未実施。
+
+- metadata実ファイル診断39129473810/20c4634は169秒で成功。未ACK・owner/root不一致・破損・symlink/unknownの拒否、v3/v4完了metadataの削除、partial pruneのhelper再開、原本保持を確認。初候補時刻と失敗履歴は維持する。
