@@ -799,7 +799,8 @@ final class UnrelatedUITests: XCTestCase {
         foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
         if foreground in methods:
             added |= {foreground}
-        first_count = 26 + int("testAutomaticRestoreProtectsUnsavedMemoDraft" in methods)
+        first_count = (26 + int("testAutomaticRestoreProtectsUnsavedMemoDraft" in methods)
+                       + int(scope.SOLO_PARTITIONED_RECORDS_METHOD in methods))
         self.assertEqual((len(solo1), len(solo2)), (first_count, len(methods) - first_count))
         self.assertFalse(set(solo1) & set(solo2))
         solo = solo1 + solo2
@@ -824,8 +825,9 @@ final class UnrelatedUITests: XCTestCase {
         foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
         if foreground in scope.solo_test_methods(source):
             complete = tuple(sorted(complete + (foreground,)))
-        before_automatic = tuple(name for name in complete if name not in scope.SOLO_AUTOMATIC_RESTORE_METHODS)
-        self.assertIn(scope.solo_test_methods(source), (scope.SOLO_TEST_METHODS, before_automatic, complete))
+        before_partitioned = tuple(name for name in complete if name != scope.SOLO_PARTITIONED_RECORDS_METHOD)
+        before_automatic = tuple(name for name in before_partitioned if name not in scope.SOLO_AUTOMATIC_RESTORE_METHODS)
+        self.assertIn(scope.solo_test_methods(source), (scope.SOLO_TEST_METHODS, before_automatic, before_partitioned, complete))
         name = scope.SOLO_TEST_METHODS[0]
         for changed in (source + "\nextension SoloMemoriesUITests { func testExtensionAdded() {} }\n",
                         source.replace("final class SoloMemoriesUITests: XCTestCase {",
@@ -846,11 +848,11 @@ final class UnrelatedUITests: XCTestCase {
         source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
         method = "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity"
         foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
-        automatic = set(scope.SOLO_AUTOMATIC_RESTORE_METHODS)
+        automatic = set(scope.SOLO_AUTOMATIC_RESTORE_METHODS) | {scope.SOLO_PARTITIONED_RECORDS_METHOD}
         self.assertEqual({name: shard for name, shard in scope.SOLO_ADDITIONAL_TEST_METHODS.items()
                           if name not in automatic}, {method: 1})
-        present_automatic = tuple(name for name in scope.SOLO_AUTOMATIC_RESTORE_METHODS
-                                  if name in scope.solo_test_methods(source))
+        present_automatic = tuple(name for name in scope.SOLO_ADDITIONAL_TEST_METHODS
+                                  if name in automatic and name in scope.solo_test_methods(source))
         original = [tuple(test for test in scope.lane_tests(scope.FULL_SCOPE, lane)
                           if test.rsplit("/", 1)[1] not in (method, foreground) + present_automatic)
                     for lane in ("app-ui-solo-1", "app-ui-solo-2")]
@@ -928,7 +930,10 @@ final class UnrelatedUITests: XCTestCase {
                 "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
                     "    func " + name + "() {}" for name in names), 1)
         complete = adding(draft, showcase)
-        with patch.object(scope, "SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST", scope.source_digest(legacy)):
+        historical_additions = {name: shard for name, shard in scope.SOLO_ADDITIONAL_TEST_METHODS.items()
+                                if name != scope.SOLO_PARTITIONED_RECORDS_METHOD}
+        with patch.object(scope, "SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST", scope.source_digest(legacy)), \
+                patch.object(scope, "SOLO_ADDITIONAL_TEST_METHODS", historical_additions):
             self.assertEqual(scope.solo_test_methods(legacy), tuple(sorted(prior)))
             self.assertEqual(scope.solo_test_methods(complete), tuple(sorted(prior + (draft, showcase))))
             for invalid in (legacy + "// changed\n", adding(draft), adding(showcase), adding(draft, draft, showcase),
@@ -945,6 +950,37 @@ final class UnrelatedUITests: XCTestCase {
         self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/" + showcase, after[1])
         self.assertFalse(set(after[0]) & set(after[1]))
         self.assertEqual(len(set(after[0] + after[1])), len(prior) + 2)
+
+    def test_partitioned_records_probe_requires_explicit_transition_and_only_appends_solo1(self):
+        method = scope.SOLO_PARTITIONED_RECORDS_METHOD
+        self.assertEqual(scope.SOLO_ADDITIONAL_TEST_METHODS[method], 0)
+        prior = scope.SOLO_TEST_METHODS + tuple(
+            name for name in scope.SOLO_ADDITIONAL_TEST_METHODS if name != method) + (
+                "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",)
+        legacy = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
+            "    func " + name + "() {}" for name in prior) + "\n}\n"
+        complete = legacy.replace("final class SoloMemoriesUITests: XCTestCase {",
+            "final class SoloMemoriesUITests: XCTestCase {\n    func " + method + "() {}", 1)
+        with patch.object(scope, "SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST", scope.source_digest(legacy)):
+            self.assertEqual(scope.solo_test_methods(legacy), tuple(sorted(prior)))
+            self.assertEqual(scope.solo_test_methods(complete), tuple(sorted(prior + (method,))))
+            for invalid in (legacy + "// changed\n",
+                            complete.replace("func " + method + "(", "func removedPartitionedProbe("),
+                            complete.replace("func " + prior[0] + "(", "func removedExistingProbe("),
+                            complete.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                "final class SoloMemoriesUITests: XCTestCase {\n    func " + method + "() {}", 1),
+                            complete.replace("final class SoloMemoriesUITests: XCTestCase {",
+                                "final class SoloMemoriesUITests: XCTestCase {\n    func testUnregisteredProbe() {}", 1)):
+                with self.assertRaises(ValueError):
+                    scope.solo_test_methods(invalid)
+            with patch.object(scope.Path, "read_text", return_value=legacy):
+                before = [scope.lane_tests(scope.FULL_SCOPE, lane) for lane in ("app-ui-solo-1", "app-ui-solo-2")]
+            with patch.object(scope.Path, "read_text", return_value=complete):
+                after = [scope.lane_tests(scope.FULL_SCOPE, lane) for lane in ("app-ui-solo-1", "app-ui-solo-2")]
+        self.assertEqual(after[0], before[0] + ("NekoWidgetUITests/SoloMemoriesUITests/" + method,))
+        self.assertEqual(after[1], before[1])
+        self.assertFalse(set(after[0]) & set(after[1]))
+        self.assertEqual(len(set(after[0] + after[1])), len(prior) + 1)
 
     def test_mapped_scope_keeps_runtime_and_its_existing_ui_suites(self):
         for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE,
