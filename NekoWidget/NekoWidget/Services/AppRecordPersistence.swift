@@ -70,8 +70,17 @@ enum AppRecordDataset {
         var manifests: [String]? = nil
     }
     #if DEBUG
-    private static var fixtureSupport: URL? = CommandLine.arguments.contains("--app-records-ui-fixture")
-        ? FileManager.default.temporaryDirectory.appendingPathComponent("app-records-fixture-" + UUID().uuidString, isDirectory: true) : nil
+    private static var fixtureSupport: URL? = {
+        guard CommandLine.arguments.contains("--app-records-ui-fixture") else { return nil }
+        let name = "app-records-fixture-" + UUID().uuidString
+        if CommandLine.arguments.contains("--app-records-journal-probe") {
+            // Exercise an actual Application Support directory through a valid
+            // base-relative URL. All files still belong to this isolated fixture.
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            return URL(string: name + "/", relativeTo: support)
+        }
+        return FileManager.default.temporaryDirectory.appendingPathComponent(name, isDirectory: true)
+    }()
     @MainActor static func nextFixtureDevice() throws {
         guard fixtureSupport != nil else { throw ToolBackupError.invalid }
         fixtureSupport = FileManager.default.temporaryDirectory.appendingPathComponent("app-records-fixture-" + UUID().uuidString, isDirectory: true)
@@ -1411,7 +1420,17 @@ private final class AppRecordFixture {
         let decoded = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
             from: ToolBackupFiles.read(journal, maximum: 512 * 1024))
         let recomputed = try ToolBackupFiles.deletionJournal(decoded.index, owner: decoded.owner)
-        preparationPhase = "urlEqual=\(listed == journal) pathEqual=\(listed?.standardizedFileURL.path == journal.standardizedFileURL.path) indexEqual=\(decoded.index == index) hashEqual=\(recomputed.lastPathComponent == journal.lastPathComponent)"
+        preparationPhase = "基底付きURLと列挙されたURLの照合"
+        guard let listed, listed != recomputed,
+              listed.standardizedFileURL.path == recomputed.standardizedFileURL.path,
+              try ToolBackupFiles.read(listed, maximum: 512 * 1024) == ToolBackupFiles.read(recomputed, maximum: 512 * 1024)
+        else { throw ToolBackupError.storage }
+        let relative = URL(string: journal.lastPathComponent, relativeTo: ToolBackupFiles.root)!
+        let absolute = URL(fileURLWithPath: relative.path)
+        guard relative != absolute, relative.standardizedFileURL.path == absolute.standardizedFileURL.path,
+              try ToolBackupFiles.read(relative, maximum: 512 * 1024) == ToolBackupFiles.read(absolute, maximum: 512 * 1024)
+        else { throw ToolBackupError.storage }
+        preparationPhase = "urlEqual=\(listed == journal) pathEqual=\(listed.standardizedFileURL.path == journal.standardizedFileURL.path) indexEqual=\(decoded.index == index) hashEqual=\(recomputed.lastPathComponent == journal.lastPathComponent)"
         print("APP_RECORD_JOURNAL_PROBE \(preparationPhase)")
         guard try ToolBackupFiles.pendingDeletions(owner: owner).contains(where: { $0.id == index.snapshotID }) else {
             throw ToolBackupError.invalid
@@ -1424,9 +1443,64 @@ private final class AppRecordFixture {
         try ToolBackupFiles.write(JSONEncoder().encode(altered), to: journal)
         do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
         catch ToolBackupJournalError.identity { }
+        let changedIndex = ToolBackupIndex(version: index.version, snapshotID: UUID(), createdAt: index.createdAt, files: index.files)
+        try ToolBackupFiles.write(JSONEncoder().encode(ToolBackupFiles.Saved(owner: owner, index: changedIndex)), to: journal)
+        do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
+        catch ToolBackupJournalError.identity { }
+        guard FileManager.default.fileExists(atPath: journal.path) else { throw ToolBackupError.storage }
         // Restore the exact synthetic bytes; no malformed journal is ignored.
         try ToolBackupFiles.write(JSONEncoder().encode(saved), to: journal)
         guard try ToolBackupFiles.pendingDeletions(owner: owner).count == 1 else { throw ToolBackupError.storage }
+        let wrongName = ToolBackupFiles.root.appendingPathComponent("deleting-" + String(repeating: "0", count: 64) + ".json")
+        let wrongBytes = try JSONEncoder().encode(saved)
+        try ToolBackupFiles.write(wrongBytes, to: wrongName)
+        defer { try? FileManager.default.removeItem(at: wrongName) }
+        do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
+        catch ToolBackupJournalError.identity { }
+        guard try ToolBackupFiles.read(wrongName, maximum: 512 * 1024) == wrongBytes
+        else { throw ToolBackupError.storage }
+        try FileManager.default.removeItem(at: wrongName)
+        try FileManager.default.createSymbolicLink(at: wrongName, withDestinationURL: journal)
+        do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
+        catch ToolBackupJournalError.read { }
+        try FileManager.default.removeItem(at: wrongName)
+        try FileManager.default.createDirectory(at: wrongName, withIntermediateDirectories: false)
+        do { _ = try ToolBackupFiles.pendingDeletions(owner: owner); throw ToolBackupError.storage }
+        catch ToolBackupJournalError.read { }
+        try FileManager.default.removeItem(at: wrongName)
+        guard try ToolBackupFiles.pendingDeletions(owner: owner).count == 1 else { throw ToolBackupError.storage }
+        try verifyDeletionJournalIdentityInputs(index: index, owner: owner)
+        journalIdentityProbe = "sameFileDifferentURL=true legacyJournalMatch=\(listed == recomputed) " + journalIdentityProbe
+    }
+    static var journalIdentityProbe = ""
+    private static func verifyDeletionJournalIdentityInputs(index: ToolBackupIndex, owner: String) throws {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        var mismatches = 0
+        // Exercise Date's actual Foundation encode/decode path, including adjacent
+        // representable values rather than only the previous fixed timestamp.
+        let epoch = Date(timeIntervalSince1970: 1_792_262_900).timeIntervalSinceReferenceDate
+        for offset in 0..<4096 {
+            let date = Date(timeIntervalSinceReferenceDate: Double(bitPattern: epoch.bitPattern + UInt64(offset)))
+            let sample = ToolBackupIndex(version: 3, snapshotID: index.snapshotID, createdAt: date, files: index.files)
+            let original = try encoder.encode(sample)
+            let decoded = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
+                from: JSONEncoder().encode(ToolBackupFiles.Saved(owner: owner, index: sample)))
+            if try encoder.encode(decoded.index) != original { mismatches += 1 }
+        }
+        var observations: [String] = ["dateMismatch=\(mismatches)/4096"]
+        let roots = [FileManager.default.temporaryDirectory,
+                     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]]
+        for (number, parent) in roots.enumerated() {
+            let directory = parent.appendingPathComponent("journal probe 猫-" + UUID().uuidString, isDirectory: true)
+            try ToolBackupFiles.protect(directory)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let expected = directory.appendingPathComponent("deleting-synthetic.json")
+            try ToolBackupFiles.write(Data("{}".utf8), to: expected)
+            let listed = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            guard listed.count == 1, let actual = listed.first else { throw ToolBackupError.storage }
+            observations.append("root\(number):url=\(actual == expected),path=\(actual.standardizedFileURL.path == expected.standardizedFileURL.path),resolved=\(actual.resolvingSymlinksInPath().path == expected.resolvingSymlinksInPath().path)")
+        }
+        journalIdentityProbe = observations.joined(separator: " ")
     }
     static func make() async throws -> AppRecordFixture {
         let cacheURL = AppRecordDataset.support.appendingPathComponent("cache-read-probe.json")
@@ -1535,7 +1609,14 @@ struct AppRecordPersistenceFixtureView: View {
     var body: some View {
         Group {
             if let fixture { AppRecordFixtureContent(fixture: fixture, result: result, counts: counts, switchDevice: { Task { await secondDevice() } }) }
-            else { Text(result.isEmpty ? "自動保存の検査を準備中…" : result) }
+            else {
+                VStack {
+                    Text(result.isEmpty ? "自動保存の検査を準備中…" : result)
+                    if !AppRecordFixture.journalIdentityProbe.isEmpty {
+                        Text(AppRecordFixture.journalIdentityProbe).accessibilityIdentifier("journal-identity-probe")
+                    }
+                }
+            }
         }
         .disabled(switching)
         .task {

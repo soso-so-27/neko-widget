@@ -1705,6 +1705,9 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         XCTAssertTrue(app.staticTexts["途中の整理記録を読み直しました"].waitForExistence(timeout: 10), app.debugDescription)
+        let identity = app.staticTexts["journal-identity-probe"]
+        XCTAssertTrue(identity.exists, app.debugDescription)
+        print("APP_RECORD_JOURNAL_IDENTITY_INPUTS \(identity.label)")
         capture("automatic-save-deletion-journal-roundtrip")
         app.terminate()
     }

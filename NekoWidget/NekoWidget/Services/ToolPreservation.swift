@@ -216,7 +216,13 @@ enum ToolBackupFiles {
                 catch { throw ToolBackupJournalError.decode }
                 do { try saved.index.validate() }
                 catch { throw ToolBackupJournalError.index }
-                guard try deletionJournal(saved.index, owner: saved.owner) == url else { throw ToolBackupJournalError.identity }
+                // This entry comes directly from root's nonrecursive listing;
+                // read above already rejects symlinks and nonregular files.
+                // URL equality also compares base/relative representations,
+                // which need not identify different files. Keep the complete
+                // owner + index hash binding, independent of that representation.
+                guard try deletionJournal(saved.index, owner: saved.owner).lastPathComponent == url.lastPathComponent
+                else { throw ToolBackupJournalError.identity }
                 return saved.owner == owner ? saved : nil
             }.sorted { $0.index.createdAt < $1.index.createdAt }
     }
