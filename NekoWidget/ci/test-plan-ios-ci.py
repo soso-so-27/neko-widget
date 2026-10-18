@@ -12443,6 +12443,8 @@ class PartitionedCapacitySelectionTests(unittest.TestCase):
                 git("add", "."); git("commit", "-qm", message); return git("rev-parse", "HEAD")
             git("init", "-q", "-b", "main")
             git("config", "user.email", "test@example.invalid"); git("config", "user.name", "Fixture")
+            # Exercise index modes explicitly without a host filesystem chmod mismatch.
+            git("config", "core.filemode", "false")
             product = "NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift"
             migration = "NekoWidget/PreservationService/migrations/0044_owner_usage_counters.sql"
             protected = "NekoWidget/Shared/WidgetRenderPlan.swift"
