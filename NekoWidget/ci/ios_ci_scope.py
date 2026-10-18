@@ -842,6 +842,8 @@ SOLO_TEST_METHODS = (
 # Only that frozen source may omit this reviewed addition; no unknown inventory.
 SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST = "8a9658354055524d71673806cce28c9738956bf2ebe277b682e6933dbc1e31bf"
 SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST = "8118f420fc1df78f5d7f503dba3a19897e943d884d4ff01f350b406894155930"
+SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST = "19852592adb28d3f31df8dd4020cc9c0a2b32cb755036528ff67f354eb84646d"
+SOLO_PARTITIONED_RECORDS_METHOD = "testAutomaticPartitionedRecordsMigrationAndRestore"
 SOLO_AUTOMATIC_RESTORE_METHODS = (
     "testAutomaticRestoreProtectsUnsavedMemoDraft",
     "testAutomaticRestoredShowcaseWithoutPhotoAccess",
@@ -850,6 +852,7 @@ SOLO_ADDITIONAL_TEST_METHODS = {
     "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity": 1,
     "testAutomaticRestoreProtectsUnsavedMemoDraft": 0,
     "testAutomaticRestoredShowcaseWithoutPhotoAccess": 1,
+    SOLO_PARTITIONED_RECORDS_METHOD: 0,
 }
 
 LANE_JOB_PREFIX = "Sharing checks"
@@ -3849,13 +3852,15 @@ def solo_test_methods(source: str) -> tuple[str, ...]:
         complete = tuple(sorted(complete + (foreground,)))
     # Admit the unchanged main source while the product tests land separately.
     # A missing probe in any other source, including partial additions, fails.
-    before_automatic = tuple(name for name in complete if name not in SOLO_AUTOMATIC_RESTORE_METHODS)
+    before_partitioned = tuple(name for name in complete if name != SOLO_PARTITIONED_RECORDS_METHOD)
+    before_automatic = tuple(name for name in before_partitioned if name not in SOLO_AUTOMATIC_RESTORE_METHODS)
     if (len(actual) != len(set(actual))
             or len(complete) != len(set(complete))
             or any(shard not in (0, 1) for shard in SOLO_ADDITIONAL_TEST_METHODS.values())
             or actual != complete and not (
                 actual == SOLO_TEST_METHODS and source_digest(source) == SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST
-                or actual == before_automatic and source_digest(source) == SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST)):
+                or actual == before_automatic and source_digest(source) == SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST
+                or actual == before_partitioned and source_digest(source) == SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST)):
         raise ValueError("SoloMemoriesUITests changed: update both explicit shards")
     return actual
 
