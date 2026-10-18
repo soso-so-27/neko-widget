@@ -276,6 +276,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
     typealias ExportValidation = @MainActor () async throws -> Void
     typealias ExportHandler = @MainActor (ManagedPreservationExportSnapshot, @escaping ExportValidation) async throws -> Void
 
+    enum Purpose { case archive, account }
+
     let isEnabled: Bool
     let canExport: Bool
     @Published private(set) var isSignedIn = false
@@ -316,6 +318,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     let draft: ManagedPreservationDraft?
     private let toolBackupSource: UUID?
     private let client: ManagedPreservationClient
+    private let purpose: Purpose
     private let onExport: ExportHandler?
     private let draftStore: ManagedPreservationSessionStore
     private var task: Task<Void, Never>?
@@ -347,7 +350,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
 
     init(configuration: ManagedPreservationConfiguration = .current,
          draft: ManagedPreservationDraft? = nil, onExport: ExportHandler? = nil,
-         client injectedClient: ManagedPreservationClient? = nil, toolBackupSource: UUID? = nil) {
+         client injectedClient: ManagedPreservationClient? = nil, toolBackupSource: UUID? = nil,
+         purpose: Purpose = .archive) {
+        self.purpose = purpose
         self.toolBackupSource = toolBackupSource
         isEnabled = configuration.isEnabled
         client = injectedClient ?? ManagedPreservationClient(configuration: configuration)
@@ -376,7 +381,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             let authenticated = try await self.client.prepareSessionIfAvailable()
             try self.check(ticket)
             self.isSignedIn = authenticated
-            if authenticated { try await self.loadFirstPage(ticket) }
+            if authenticated { try await self.loadPresentation(ticket) }
             else {
                 let challenge = try await self.client.prepareSignIn()
                 try self.check(ticket)
@@ -413,7 +418,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 self.membership = nil; self.membershipMessage = nil
                 self.noticeContact = nil
                 self.retention = nil
-                try await self.loadFirstPage(ticket)
+                try await self.loadPresentation(ticket)
             case .failure(let error):
                 await self.client.cancelSignIn()
                 if (error as? ASAuthorizationError)?.code == .canceled {
@@ -485,7 +490,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     func refresh() {
-        run { ticket in try await self.loadFirstPage(ticket) }
+        run { ticket in try await self.loadPresentation(ticket) }
     }
 
     func refreshUsage() {
@@ -962,6 +967,22 @@ final class ManagedPreservationCoordinator: ObservableObject {
         exportProgress = nil
     }
 
+    private func loadPresentation(_ ticket: UUID) async throws {
+        guard purpose == .account else { return try await loadFirstPage(ticket) }
+        // Automatic-save settings need authenticated membership, not an archive
+        // inventory that can legitimately change while a save is in progress.
+        let checkpoint = try await client.captureSessionCheckpoint()
+        try check(ticket)
+        if authenticatedOwnerID != checkpoint.ownerID {
+            clearAccountPresentation()
+        }
+        try await client.requireSessionCheckpoint(checkpoint)
+        try check(ticket)
+        isSignedIn = true
+        authenticatedOwnerID = checkpoint.ownerID
+        loadMembership(ticket, owner: checkpoint.ownerID)
+    }
+
     private func loadFirstPage(_ ticket: UUID) async throws {
         let requestedOwner = try await client.sessionOwnerID()
         try check(ticket)
@@ -1227,7 +1248,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 if known == .authenticationRequired || known == .staleSession {
                     self.clearAccountPresentation()
                 }
-                if let owner = self.authenticatedOwnerID, self.isSignedIn {
+                if self.purpose == .archive, let owner = self.authenticatedOwnerID, self.isSignedIn {
                     self.pendingToolDeletions = (try? ToolBackupFiles.pendingDeletions(owner: owner)) ?? self.pendingToolDeletions
                 }
                 self.errorMessage = error is CancellationError
