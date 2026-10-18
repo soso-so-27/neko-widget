@@ -44,6 +44,8 @@ import Foundation
         try require(try Data(contentsOf: file) == preserved, "failed read replaced the root")
         try chunk.write(to: broken, options: .atomic)
         try require(try AppRecordJSON.read(file) == second, "repair did not retain exact bytes")
+        stage = "retired transport metadata"
+        try verifyMetadataRetirement(root: root)
         var files = [ToolBackupIndex.File(path: "PhotoMemoryNotes/state.json", bytes: 2,
                     sha256: ToolBackupIndex.hash(Data("{}".utf8)), records: [UUID()])]
         for i in 0..<36_500 {
@@ -162,5 +164,87 @@ import Foundation
         let summary = try ToolBackupTree.decode(golden).summary()
         try require(summary.fileCount == 2 && summary.nodeCount == 1 && summary.toolMask == 32 && summary.manifestMask == 32, "server/native golden diverged")
         print("Partitioned records verifier passed: raw migration, local edit, missing chunk preservation, 36501 files, reuse, incomplete tree, shared wire golden")
+    }
+
+    static func verifyMetadataRetirement(root: URL) throws {
+        struct Receipt: Encodable { let owner: String; let index: ToolBackupIndex }
+        let manager = FileManager.default, owner = "synthetic-owner", encoder = JSONEncoder()
+        let contents = Data("original restored contents".utf8)
+        func fixture(version: Int) throws -> (ToolBackupIndex, URL) {
+            let file = ToolBackupIndex.File(path: "CareHandoff/plan.json", bytes: 2,
+                sha256: ToolBackupIndex.hash(Data("{}".utf8)), records: [UUID()])
+            let raw = ToolBackupIndex(version: version, snapshotID: UUID(), createdAt: Date(), files: [file])
+            let index = try version == 4 ? ToolBackupTree.build(raw, previous: nil) : raw
+            let directory = root.appendingPathComponent(index.snapshotID.uuidString, isDirectory: true)
+            try manager.createDirectory(at: directory.appendingPathComponent("contents"), withIntermediateDirectories: true)
+            try manager.createDirectory(at: directory.appendingPathComponent("sent-v4"), withIntermediateDirectories: true)
+            let receipt = try encoder.encode(Receipt(owner: owner, index: index))
+            for name in ["pending.json", "uploaded.json"] { try receipt.write(to: directory.appendingPathComponent(name)) }
+            for name in ["index-wire.json", "sent.json", "attempt.json", "sent-v4/ab.json"] {
+                try Data("transport metadata".utf8).write(to: directory.appendingPathComponent(name))
+            }
+            try contents.write(to: directory.appendingPathComponent("contents/restored.json"))
+            try contents.write(to: directory.appendingPathComponent("contents/original-photo.jpg"))
+            return (index, directory)
+        }
+        func assertOriginals(_ directory: URL) throws {
+            for name in ["contents/restored.json", "contents/original-photo.jpg"] {
+                try require(try Data(contentsOf: directory.appendingPathComponent(name)) == contents, "retirement changed original/restored data")
+            }
+        }
+        func rejected(_ index: ToolBackupIndex, _ directory: URL, owner suppliedOwner: String = "synthetic-owner") throws {
+            let pending = try Data(contentsOf: directory.appendingPathComponent("pending.json"))
+            let uploaded = try Data(contentsOf: directory.appendingPathComponent("uploaded.json"))
+            var refused = false
+            do { _ = try ToolBackupMetadataRetirement.retire(index, owner: suppliedOwner, directory: directory) }
+            catch { refused = true }
+            try require(refused, "unsafe retirement was not rejected")
+            try require(try Data(contentsOf: directory.appendingPathComponent("pending.json")) == pending &&
+                        Data(contentsOf: directory.appendingPathComponent("uploaded.json")) == uploaded,
+                        "failed validation removed receipts")
+            try require(manager.fileExists(atPath: directory.appendingPathComponent("index-wire.json").path), "failed validation partially pruned metadata")
+            try assertOriginals(directory)
+        }
+        for version in [3, 4] {
+            let (index, directory) = try fixture(version: version)
+            try require(try ToolBackupMetadataRetirement.retire(index, owner: owner, directory: directory), "completed receipt not retired")
+            for name in ["pending.json", "uploaded.json", "index-wire.json", "sent.json", "attempt.json", "sent-v4/ab.json"] {
+                try require(!manager.fileExists(atPath: directory.appendingPathComponent(name).path), "completed transport metadata remained")
+            }
+            try assertOriginals(directory)
+            try require(try !ToolBackupMetadataRetirement.retire(index, owner: owner, directory: directory), "retirement was not idempotent")
+        }
+        let (wrongOwner, ownerDirectory) = try fixture(version: 4)
+        try rejected(wrongOwner, ownerDirectory, owner: "another-owner")
+        let (pending, pendingDirectory) = try fixture(version: 4)
+        try manager.removeItem(at: pendingDirectory.appendingPathComponent("uploaded.json"))
+        let pendingBytes = try Data(contentsOf: pendingDirectory.appendingPathComponent("pending.json"))
+        try require(try !ToolBackupMetadataRetirement.retire(pending, owner: owner, directory: pendingDirectory), "pending upload was retired")
+        try require(try Data(contentsOf: pendingDirectory.appendingPathComponent("pending.json")) == pendingBytes, "pending upload changed")
+        try assertOriginals(pendingDirectory)
+        for name in ["pending.json", "uploaded.json"] {
+            let (index, directory) = try fixture(version: 4)
+            try Data("broken receipt".utf8).write(to: directory.appendingPathComponent(name))
+            try rejected(index, directory)
+        }
+        let (unknown, unknownDirectory) = try fixture(version: 4)
+        try contents.write(to: unknownDirectory.appendingPathComponent("sent-v4/unknown.json"))
+        try rejected(unknown, unknownDirectory)
+        let (linked, linkedDirectory) = try fixture(version: 4)
+        let target = linkedDirectory.appendingPathComponent("contents/original-photo.jpg")
+        let link = linkedDirectory.appendingPathComponent("sent-v4/cd.json")
+        try manager.createSymbolicLink(at: link, withDestinationURL: target)
+        try rejected(linked, linkedDirectory)
+        try require(try Data(contentsOf: target) == contents, "symlink target changed")
+        let (partial, partialDirectory) = try fixture(version: 4)
+        try manager.removeItem(at: partialDirectory.appendingPathComponent("pending.json"))
+        try require(try ToolBackupMetadataRetirement.retire(partial, owner: owner, directory: partialDirectory), "partial prune could not resume")
+        try assertOriginals(partialDirectory)
+        let (mismatch, mismatchDirectory) = try fixture(version: 4)
+        var changed = mismatch.files
+        changed[0] = .init(path: changed[0].path, bytes: 3, sha256: ToolBackupIndex.hash(Data("{ }".utf8)), records: [UUID()])
+        let otherRoot = try ToolBackupTree.build(.init(version: 4, snapshotID: mismatch.snapshotID, createdAt: mismatch.createdAt, files: changed), previous: nil)
+        try rejected(otherRoot, mismatchDirectory)
+        print("METADATA_RETIREMENT_PROBE v3_v4=true pending_preserved=true owner_root_isolated=true corrupt_receipt_refused=true unknown_symlink_refused=true partial_resume=true originals_preserved=true")
     }
 }

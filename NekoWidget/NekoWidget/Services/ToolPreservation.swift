@@ -302,9 +302,83 @@ enum ToolBackupTreeReceipts {
     }
 }
 
+/// Removes only an acknowledged upload's disposable transport metadata.
+/// The caller must first prove this exact remote root is gone in its session.
+enum ToolBackupMetadataRetirement {
+    private struct Receipt: Decodable { let owner: String; let index: ToolBackupIndex }
+    private static func attributes(_ url: URL) throws -> [FileAttributeKey: Any]? {
+        do { return try FileManager.default.attributesOfItem(atPath: url.path) }
+        catch let error as NSError where error.domain == NSCocoaErrorDomain &&
+            [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) { return nil }
+    }
+    private static func regularFile(_ url: URL) throws -> Bool {
+        guard let values = try attributes(url) else { return false }
+        guard values[.type] as? FileAttributeType == .typeRegular else { throw ToolBackupError.invalid }
+        return true
+    }
+    private static func receipt(_ url: URL, index: ToolBackupIndex, owner: String) throws {
+        guard let values = try attributes(url), values[.type] as? FileAttributeType == .typeRegular,
+              let size = values[.size] as? NSNumber, size.int64Value > 0,
+              size.int64Value <= Int64(ToolBackupIndex.maximumReceiptBytes) else { throw ToolBackupError.invalid }
+        let bytes = try Data(contentsOf: url)
+        guard bytes.count == size.intValue else { throw ToolBackupError.changed }
+        let saved = try JSONDecoder().decode(Receipt.self, from: bytes)
+        guard saved.owner == owner, saved.index.snapshotID == index.snapshotID,
+              saved.index.version == index.version else { throw ToolBackupError.invalid }
+        try saved.index.validate()
+        if index.version == 4 {
+            guard saved.index.nodes?.last == index.nodes?.last else { throw ToolBackupError.invalid }
+        } else { guard saved.index == index else { throw ToolBackupError.invalid } }
+    }
+    @discardableResult
+    static func retire(_ index: ToolBackupIndex, owner: String, directory: URL) throws -> Bool {
+        try index.validate()
+        guard directory.isFileURL, directory.lastPathComponent == index.snapshotID.uuidString else { throw ToolBackupError.invalid }
+        guard let folder = try attributes(directory) else { return false }
+        guard folder[.type] as? FileAttributeType == .typeDirectory,
+              let parent = try attributes(directory.deletingLastPathComponent()),
+              parent[.type] as? FileAttributeType == .typeDirectory else { throw ToolBackupError.invalid }
+        let uploaded = directory.appendingPathComponent("uploaded.json")
+        // An upload that never completed still owns its pending bytes. If a
+        // prior prune reached uploaded-last, no transport metadata remains.
+        guard try regularFile(uploaded) else { return false }
+        try receipt(uploaded, index: index, owner: owner)
+        let pending = directory.appendingPathComponent("pending.json")
+        let hasPending = try regularFile(pending)
+        if hasPending { try receipt(pending, index: index, owner: owner) }
+        let other = try ["index-wire.json", "sent.json", "attempt.json"].compactMap { name -> URL? in
+            let url = directory.appendingPathComponent(name)
+            return try regularFile(url) ? url : nil
+        }
+        let bucketDirectory = directory.appendingPathComponent("sent-v4", isDirectory: true)
+        var buckets: [URL] = []
+        if let values = try attributes(bucketDirectory) {
+            guard values[.type] as? FileAttributeType == .typeDirectory else { throw ToolBackupError.invalid }
+            buckets = try FileManager.default.contentsOfDirectory(at: bucketDirectory, includingPropertiesForKeys: nil)
+            guard buckets.count <= 256 else { throw ToolBackupError.invalid }
+            for url in buckets {
+                guard url.lastPathComponent.range(of: "^[0-9a-f]{2}\\.json$", options: .regularExpression) != nil,
+                      try regularFile(url) else { throw ToolBackupError.invalid }
+            }
+        }
+        // Prevalidation finishes before the first removal. Never remove an
+        // uploaded marker while pending.json could resurrect this old upload.
+        if hasPending { try FileManager.default.removeItem(at: pending) }
+        for url in other + buckets { try FileManager.default.removeItem(at: url) }
+        // Leave the now-empty bucket directory: no recursive directory removal
+        // can race a new/unknown child. contents and tool payloads stay intact.
+        try FileManager.default.removeItem(at: uploaded)
+        return true
+    }
+}
+
 /// Each backup is a new, private directory. Restoring never writes a live tool
 /// store or performs name-based identity matching. Only a completed index is listed.
 enum ToolBackupFiles {
+    @discardableResult
+    static func retireUploadedMetadata(_ index: ToolBackupIndex, owner: String) throws -> Bool {
+        try ToolBackupMetadataRetirement.retire(index, owner: owner, directory: directory(index.snapshotID))
+    }
     private static let treeCacheLock = NSLock()
     private static var treeCacheDirectory: URL { root.appendingPathComponent("index-node-cache-v4", isDirectory: true) }
     private static func treeCacheFolder() throws -> URL {
@@ -828,8 +902,8 @@ enum ToolBackupTransfer {
                 completed += 1; await progress(completed, total)
             }
         }
-        try await client.requireSessionCheckpoint(checkpoint)
-        try FileManager.default.removeItem(at: journal)
+        try await finishDeletion(index, owner: owner, journal: journal, receipt: receipt,
+                                 retaining: retaining, client: client, checkpoint: checkpoint)
         await progress(total, total)
     }
 
@@ -878,7 +952,37 @@ enum ToolBackupTransfer {
             try ToolBackupFiles.write(JSONEncoder().encode(deleted), to: receipt)
             await progress(completed, targets.count)
         }
+        try await finishDeletion(index, owner: owner, journal: journal, receipt: receipt,
+                                 retaining: retaining, client: client, checkpoint: checkpoint)
+    }
+
+    private static func finishDeletion(_ index: ToolBackupIndex, owner: String, journal: URL, receipt: URL,
+                                      retaining: Set<UUID>, client: ManagedPreservationClient,
+                                      checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
+        try Task.checkCancellation(); try await client.requireSessionCheckpoint(checkpoint)
+        guard owner == checkpoint.ownerID else { throw ManagedPreservationError.staleSession }
+        if !retaining.contains(index.snapshotID), FileManager.default.fileExists(atPath:
+            ToolBackupFiles.directory(index.snapshotID).appendingPathComponent("uploaded.json").path) {
+            // Completed progress also includes retained/referenced records. It
+            // cannot authorize local retirement without an actual root 404.
+            var rootIsGone = false
+            do {
+                _ = try await waitingForRateLimit(client: client, checkpoint: checkpoint) {
+                    try await client.detail(index.snapshotID, checkpoint: checkpoint)
+                }
+            } catch ManagedPreservationError.notFound { rootIsGone = true }
+              catch { /* Best effort: retain local receipts if root absence is unproven. */ }
+            try Task.checkCancellation(); try await client.requireSessionCheckpoint(checkpoint)
+            if rootIsGone {
+                let fence = try await client.localSessionFence(checkpoint)
+                try fence { _ = try? ToolBackupFiles.retireUploadedMetadata(index, owner: owner) }
+            }
+        }
+        try Task.checkCancellation(); try await client.requireSessionCheckpoint(checkpoint)
         try FileManager.default.removeItem(at: journal)
+        // A progress receipt must not disappear while its retry journal still
+        // exists. Failure here leaves only disposable metadata, not a retry.
+        try? FileManager.default.removeItem(at: receipt)
     }
 
     static func upload(_ saved: ToolBackupFiles.Saved, client: ManagedPreservationClient,

@@ -1388,6 +1388,12 @@ private final class AppRecordFixture {
         let oldHead = try AppRecordHead.decode(await client.detail(headID).document)
         let oldIndex = try await ToolBackupTransfer.loadIndex(client.detail(oldHead.snapshotID).record, client: client)
         guard oldIndex.version == 3 else { throw ToolBackupError.invalid }
+        let oldFolder = ToolBackupFiles.directory(oldIndex.snapshotID)
+        let restoredMarker = oldFolder.appendingPathComponent("contents/restored.json")
+        let oldReceipt = try ToolBackupFiles.read(oldFolder.appendingPathComponent("uploaded.json"), maximum: ToolBackupIndex.maximumReceiptBytes)
+        try ToolBackupFiles.write(oldReceipt, to: restoredMarker)
+        let restoredPayload = oldFolder.appendingPathComponent("contents/preserve-fixture.bin")
+        try ToolBackupFiles.write(Data("original restored bytes".utf8), to: restoredPayload)
         let url = AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
         var state = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: AppRecordJSON.read(url))
         guard let oldNote = state.notes.values.first, let name = oldNote.photoFile else { throw ToolBackupError.invalid }
@@ -1409,6 +1415,9 @@ private final class AppRecordFixture {
         await server.useIndexVersion(4)
         await persistence.retry()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        try verifyRetiredMetadata(oldIndex.snapshotID)
+        guard try Data(contentsOf: restoredMarker) == oldReceipt,
+              try Data(contentsOf: restoredPayload) == Data("original restored bytes".utf8) else { throw ToolBackupError.invalid }
         let head = try AppRecordHead.decode(await client.detail(headID).document)
         let beforeWarmRead = await server.indexReadCounts()
         let index = try await ToolBackupTransfer.loadIndex(client.detail(head.snapshotID).record, client: client)
@@ -1427,6 +1436,7 @@ private final class AppRecordFixture {
         await persistence.retry()
         let (_, after) = await server.counts()
         guard persistence.title == "保存済み", before == after else { throw ToolBackupError.storage }
+        try verifyRetiredMetadata(index.snapshotID)
         let expected = try await PhotoMemoryNoteStore.shared.records()
         let original = try AppRecordJSON.read(url)
         Self.preparationPhase = "新しい端末で復元"
@@ -1489,6 +1499,16 @@ private final class AppRecordFixture {
         for record in restored where record.note.photoFile != nil {
             guard let file = try await PhotoMemoryNoteStore.shared.photoURL(for: record.id),
                   try Data(contentsOf: file) == photo else { throw ToolBackupError.invalid }
+        }
+    }
+    private func verifyRetiredMetadata(_ id: UUID) throws {
+        let folder = ToolBackupFiles.directory(id)
+        for name in ["pending.json", "uploaded.json", "index-wire.json", "sent.json", "attempt.json"] {
+            guard !FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) else { throw ToolBackupError.storage }
+        }
+        let sent = folder.appendingPathComponent("sent-v4")
+        if FileManager.default.fileExists(atPath: sent.path) {
+            guard try FileManager.default.contentsOfDirectory(atPath: sent.path).isEmpty else { throw ToolBackupError.storage }
         }
     }
     func verifyCleanupFailureAndAutomaticResume() async throws {
