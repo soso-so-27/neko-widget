@@ -6340,7 +6340,7 @@ def partitioned_capacity_inputs(paths, base, head):
 PARTITIONED_NATIVE_RETRY_SOURCE = "4d63f37284a8528476fab40407802310eeacf3c6"
 PARTITIONED_NATIVE_RETRY_RUN = 39129913547
 PARTITIONED_NATIVE_RETRY_BRANCH = "codex/partitioned-app-records-20261018"
-PARTITIONED_NATIVE_RETRY_CONTROL_BASE = "33feca1161951fdb244cb30e16c46e46dd15c1a8"
+PARTITIONED_NATIVE_RETRY_CONTROL_BASE = "8bb0b0532ee0ff406ac33b7ad6297309555449c3"
 PARTITIONED_NATIVE_RETRY_CONTROL_BEFORE = {
     "NekoWidget/ci/plan-ios-ci.py": "3fea4de6f90749138de6a20a9441561a55e537f6",
     "NekoWidget/ci/test-plan-ios-ci.py": "4ce4e805a080e423407a14de6a0f1b91380105b9",
@@ -6351,6 +6351,19 @@ PARTITIONED_NATIVE_RETRY_JOBS = {
     "app-ui-solo-2": 117682950389, "app-ui-other": 117682950384,
 }
 PARTITIONED_NATIVE_RETRY_PLACEHOLDERS = frozenset({117682951463, 117688910774})
+PARTITIONED_NATIVE_RETRY_JOB = 117698881863
+# The one job-only rerun copied retained API rows into attempt2. These are
+# mirrors, not new executions: their original times/steps/runner remain proof.
+PARTITIONED_NATIVE_RETRY_MIRRORS = {
+    117698882131: (117682784799, "CR_kwDOT5OxS88AAAAbZ2ZqUw", "2026-10-18T14:19:01Z"),
+    117698882618: (117682950347, "CR_kwDOT5OxS88AAAAbZ2ZsOg", "2026-10-18T14:19:01Z"),
+    117698882711: (117682950388, "CR_kwDOT5OxS88AAAAbZ2Zslw", "2026-10-18T14:19:01Z"),
+    117698882864: (117682950384, "CR_kwDOT5OxS88AAAAbZ2ZtMA", "2026-10-18T14:19:01Z"),
+    117698883068: (117688909413, "CR_kwDOT5OxS88AAAAbZ2Zt_A", "2026-10-18T14:19:01Z"),
+    117698915000: (117682950389, "CR_kwDOT5OxS88AAAAbZ2bquA", "2026-10-18T14:19:11Z"),
+    117698882374: (117682951463, "CR_kwDOT5OxS88AAAAbZ2ZrRg", "2026-10-18T14:19:01Z"),
+    117698882569: (117688910774, "CR_kwDOT5OxS88AAAAbZ2ZsCQ", "2026-10-18T14:19:01Z"),
+}
 PARTITIONED_NATIVE_RETRY_CREATED = "2026-10-18T13:03:53Z"
 PARTITIONED_NATIVE_RETRY_FAILURE = "SoloMemoriesUITests/testAlbumCoversAndFavoritesRemainReachableWithLargestText"
 PARTITIONED_NATIVE_RETRY_FAILURE_HASH = "12e783bca1efa13860486ced29c5c1ea4e384f7fe333e9495cd24804452ada39"
@@ -6464,13 +6477,13 @@ def partitioned_native_retry_history(run, api, now=None):
     partitioned_native_retry_fresh(original.get("updated_at"), now)
     response = api(prefix + "/jobs?filter=all&per_page=100&page=1")
     history = response.get("jobs")
-    if (type(response.get("total_count")) is not int or response["total_count"] != 10
-            or not isinstance(history, list) or len(history) != 10
+    if (type(response.get("total_count")) is not int or response["total_count"] != 18
+            or not isinstance(history, list) or len(history) != 18
             or any(not isinstance(j, dict) or type(j.get("id")) is not int or j["id"] <= 0
                 or j.get("run_id") != PARTITIONED_NATIVE_RETRY_RUN or j.get("head_sha") != PARTITIONED_NATIVE_RETRY_SOURCE
                 or type(j.get("run_attempt")) is not int or j["run_attempt"] not in (1, 2)
                 or j.get("status") != "completed" for j in history)
-            or len({j["id"] for j in history}) != 10): raise ValueError("Fixed native attempt history is incomplete or ambiguous")
+            or len({j["id"] for j in history}) != 18): raise ValueError("Fixed native attempt history is incomplete or ambiguous")
     old = {j["id"]: j for j in history if j["run_attempt"] == 1}
     if set(old) != set(PARTITIONED_NATIVE_RETRY_JOBS.values()) | PARTITIONED_NATIVE_RETRY_PLACEHOLDERS:
         raise ValueError("Original native jobs were changed or omitted")
@@ -6484,8 +6497,25 @@ def partitioned_native_retry_history(run, api, now=None):
     if any(old[i].get("name") != UNEXPANDED_SHARING_JOB or old[i].get("conclusion") != "skipped"
             or old[i].get("steps") != [] for i in PARTITIONED_NATIVE_RETRY_PLACEHOLDERS):
         raise ValueError("Original placeholders executed or changed")
-    newer = [j for j in history if j["run_attempt"] == 2]
-    if (len(newer) != 1 or newer[0].get("name") != names["app-ui-solo-1"]
+    attempt2 = {j["id"]: j for j in history if j["run_attempt"] == 2}
+    if set(attempt2) != set(PARTITIONED_NATIVE_RETRY_MIRRORS) | {PARTITIONED_NATIVE_RETRY_JOB}:
+        raise ValueError("Fixed retry/mirror identities differ")
+    for identifier, (original_id, node_id, created_at) in PARTITIONED_NATIVE_RETRY_MIRRORS.items():
+        source = old[original_id]
+        # Compare every other API field, including full timestamped step rows,
+        # labels, runner_id/name/group_name, run URL, branch and workflow name.
+        expected = dict(source, id=identifier, node_id=node_id, run_attempt=2, created_at=created_at,
+            url=f"https://api.github.com/repos/soso-so-27/neko-widget/actions/jobs/{identifier}",
+            check_run_url=f"https://api.github.com/repos/soso-so-27/neko-widget/check-runs/{identifier}",
+            html_url=f"https://github.com/soso-so-27/neko-widget/actions/runs/{PARTITIONED_NATIVE_RETRY_RUN}/job/{identifier}")
+        if original_id in PARTITIONED_NATIVE_RETRY_PLACEHOLDERS:
+            expected["started_at"] = "2026-10-18T14:19:01Z"
+        else:
+            if source.get("runner_group_id") != 0: raise ValueError("Original retained runner group differs")
+            expected["runner_group_id"] = None
+        if attempt2[identifier] != expected: raise ValueError("Retained API mirror changed execution or attribution")
+    newer = [attempt2[PARTITIONED_NATIVE_RETRY_JOB]]
+    if (newer[0].get("name") != names["app-ui-solo-1"]
             or newer[0].get("conclusion") != "success" or not partitioned_native_retry_steps(newer[0], "app-ui-solo-1")):
         raise ValueError("Only the complete solo-1 job may execute in attempt2")
     partitioned_native_retry_fresh(newer[0].get("completed_at"), now)
@@ -6496,7 +6526,9 @@ def partitioned_native_retry_history(run, api, now=None):
         "source_sha": PARTITIONED_NATIVE_RETRY_SOURCE, "original_attempt": 1, "run_attempt": 2,
         "failed_job_id": PARTITIONED_NATIVE_RETRY_JOBS["app-ui-solo-1"], "retry_job_id": newer[0]["id"],
         "retained_jobs": [{"id": j["id"], "name": j["name"], "run_attempt": 1} for j in retained],
-        "original_empty_skipped_ids": sorted(PARTITIONED_NATIVE_RETRY_PLACEHOLDERS)}
+        "original_empty_skipped_ids": sorted(PARTITIONED_NATIVE_RETRY_PLACEHOLDERS),
+        "api_mirrors_not_executions": [{"id": i, "original_id": values[0]}
+            for i, values in sorted(PARTITIONED_NATIVE_RETRY_MIRRORS.items())]}
 
 
 def partitioned_native_retry_evidence(run, api, now):
