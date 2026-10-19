@@ -1391,8 +1391,8 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         self.assertIn("python3 ci/test-app-store-local-only-readiness.py", copy_workflow)
         release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn(
-            "if: ${{ inputs.retain_signed_artifacts && "
-            "(inputs.release_mode != 'disabled' || !inputs.upload_to_testflight) }}",
+            "- name: Upload encrypted signed app and symbols\n"
+            "        if: ${{ inputs.retain_signed_artifacts }}",
             release_workflow,
         )
         self.assertIn(
@@ -1423,7 +1423,7 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         self.assertLess(final_bundle_index, failure_stage_index)
         self.assertLess(failure_stage_index, failure_archive_index)
         self.assertIn(
-            "if: ${{ failure() && inputs.retain_signed_artifacts && "
+            "if: ${{ inputs.legacy_release_evidence && failure() && inputs.retain_signed_artifacts && "
             "inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}",
             release_workflow,
         )
