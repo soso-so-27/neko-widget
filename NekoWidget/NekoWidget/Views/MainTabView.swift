@@ -41,6 +41,7 @@ final class PhotoLibrarySelectionState: ObservableObject {
 
 struct PhotoLibrarySectionPicker: View {
     @Binding var selection: PhotoLibrarySection
+    var isCompact = false
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -63,7 +64,7 @@ struct PhotoLibrarySectionPicker: View {
         }
         .padding(4)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.horizontal, isCompact ? 0 : 16).padding(.vertical, 8)
     }
 }
 
@@ -547,12 +548,14 @@ struct MainTabView: View {
 
     private var photoLibrary: some View {
         VStack(spacing: 0) {
-            photoLibraryCatPicker
-            PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding)
+            HStack(spacing: 8) {
+                PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
+                photoLibraryCatPicker
+            }.padding(.horizontal, 16)
             photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
         }
         .navigationTitle("写真")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .background(Color(.systemGroupedBackground))
         .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
             PhotoLibraryReadingPosition.activeSection = key
@@ -564,7 +567,7 @@ struct MainTabView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("window-settings-button")
@@ -659,7 +662,7 @@ struct MainTabView: View {
         .navigationTitle("ツール")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("tools-settings-button")
@@ -676,7 +679,7 @@ struct MainTabView: View {
                 requestPhotoAccess()
             }
         } label: {
-            ToolTile(title: "うちの子を見せる", systemImage: "photo.on.rectangle.angled",
+            ToolTile(title: "写真を見せる", systemImage: "photo.on.rectangle.angled",
                      subtitle: "初回はおすすめ、あとから選べる", catPose: "tilt")
         }
         .buttonStyle(ToolCardButtonStyle())
@@ -809,7 +812,7 @@ struct MainTabView: View {
 
     private func showcaseScopeTitle(_ scopeID: String) -> String {
         catProfilesPresentation.profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "みんな" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ猫")
     }
 
     private var unregisteredCatPhotos: [PhotoPresentation] {
@@ -880,16 +883,17 @@ struct MainTabView: View {
     }
 
     private var photoLibraryCatPicker: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                photoLibraryCatButton("全猫", identifier: nil)
-                ForEach(photoLibraryRegisteredIdentifiers.sorted(), id: \.self) { identifier in
-                    photoLibraryCatButton(currentPhotoLibraryProfileNames[identifier] ?? "猫", identifier: identifier)
-                }
-                photoLibraryCatButton("未指定", identifier: "unassigned")
-            }.padding(.horizontal, 16).padding(.vertical, 8)
+        Menu {
+            photoLibraryCatButton("すべての猫", identifier: nil)
+            ForEach(catProfilesPresentation.profiles) { profile in
+                photoLibraryCatButton(profile.displayName, identifier: profile.identifier)
+            }
+            photoLibraryCatButton("未指定", identifier: "unassigned")
+        } label: {
+            Label(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" }
+                    ?? "すべての猫", systemImage: "chevron.down")
+                .font(.subheadline).lineLimit(1).frame(minHeight: 44)
         }
-        .scrollIndicators(.hidden)
         .accessibilityIdentifier("photos-cat-picker")
     }
 
@@ -2209,7 +2213,7 @@ struct MainTabView: View {
     private func scopedLifeReference(for scope: CatProfileScopePresentation) -> CatLifeReference? {
         guard case let .profile(identifier) = scope else {
             // Preserve the legacy single-cat birthday/adoption buckets until a
-            // profile exists. Once profiles exist, "みんな" must not apply one
+            // profile exists. Once profiles exist, "すべての猫" must not apply one
             // cat's date to the whole household. Household growth itself is
             // always built separately from calendar years.
             return catProfilesPresentation.profiles.isEmpty

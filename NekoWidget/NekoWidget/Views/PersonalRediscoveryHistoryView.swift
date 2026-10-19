@@ -60,7 +60,7 @@ struct PersonalRediscoveryHistoryView: View {
                 } else {
                     ContentUnavailableView(loadFailed ? "履歴を読み込めませんでした" : "めくった写真はまだありません",
                         systemImage: "photo.on.rectangle",
-                        description: Text(loadFailed ? "時間をおいてもう一度お試しください。" : "めくった一枚と直前の写真を、48時間ここから開けます。"))
+                        description: Text(loadFailed ? "時間をおいてもう一度お試しください。" : "最近ウィジェットに出た写真を48時間表示します。"))
                         .accessibilityIdentifier("personal-rediscovery-empty")
                 }
             }

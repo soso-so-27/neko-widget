@@ -51,7 +51,7 @@ struct InitialScanView: View {
                                 Label("途中までの写真を表示しています", systemImage: "exclamationmark.triangle")
                                     .font(.headline)
                                 Text(scanErrorMessage).font(.subheadline)
-                                Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                                Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                                     .frame(minHeight: 44)
                                     .accessibilityIdentifier("onboarding-partial-scan-retry")
                             }
@@ -219,10 +219,10 @@ struct InitialScanView: View {
             if isFinalZero {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
-                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                         .buttonStyle(.bordered)
                 }
             }

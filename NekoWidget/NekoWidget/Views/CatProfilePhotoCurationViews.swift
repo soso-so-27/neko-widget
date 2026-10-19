@@ -711,14 +711,14 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("\(profile.displayName)への所属だけを外します。他の子や「みんな」には残ります。")
+            Text("\(profile.displayName)への所属だけを外します。他の子や「すべての猫」には残ります。")
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("表示候補から外す", role: .destructive) {
+            Button("候補から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -770,7 +770,7 @@ struct CatProfileConfirmedPhotosView: View {
                     Button("\(profile.displayName)ではない") {
                         showsRemoveConfirmation = true
                     }
-                    Button("表示候補から外す", role: .destructive) {
+                    Button("候補から外す", role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     }
                 } label: {
@@ -885,11 +885,11 @@ struct UnassignedCatPhotosView: View {
             )
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("表示候補から外す", role: .destructive) {
+            Button("候補から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -945,7 +945,7 @@ struct UnassignedCatPhotosView: View {
                     Button(role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     } label: {
-                        Label("表示候補から外す", systemImage: "eye.slash")
+                        Label("候補から外す", systemImage: "eye.slash")
                     }
                 }
             }

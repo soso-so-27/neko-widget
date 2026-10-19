@@ -301,7 +301,7 @@ struct HomeView: View {
                     .id("photo-library-all-archive")
             }
             .scrollTargetLayout(isEnabled: isEmbedded)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, isEmbedded ? 0 : 16)
             .padding(.vertical, 12)
         }
         .accessibilityIdentifier("photo-library-all-scroll")
@@ -381,7 +381,7 @@ struct HomeView: View {
                   systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
                 .font(.subheadline)
             if scan.hasFailed || scan.hasDeferredAssets || scan.isPaused {
-                Button("もう一度確認", action: rescan)
+                Button("もう一度探す", action: rescan)
                     .frame(minHeight: 44)
                     .disabled(scan.isScanning)
                     .accessibilityIdentifier("photo-library-partial-retry")
@@ -571,14 +571,14 @@ struct HomeView: View {
             ContentUnavailableView {
                 Label("写真の確認を完了できませんでした", systemImage: "exclamationmark.triangle")
             } description: {
-                Text("写真へのアクセスや通信を確認して、もう一度スキャンしてください。")
+                Text("写真へのアクセスを確認して、もう一度探してください。")
             } actions: {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
-                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                         .buttonStyle(.bordered)
                 }
             }
@@ -586,21 +586,21 @@ struct HomeView: View {
             .accessibilityIdentifier("photo-hub-scan-failed")
         } else if let readingPositionKey, readingPositionKey != "all", !scan.isScanning {
             ContentUnavailableView("この表示の写真がありません", systemImage: "photo.on.rectangle",
-                description: Text("猫の選択、写真の所属、写真へのアクセス範囲を確認してください。"))
+                description: Text("猫の選択と写真の許可を確認してください。"))
                 .frame(maxWidth: .infinity, minHeight: 280)
                 .accessibilityIdentifier("photo-library-scoped-empty")
         } else if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
                 Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")
             } description: {
-                Text("スキャンは正常に完了しました。猫が主役に写った写真を写真アプリに追加するか、写真へのアクセス範囲を確認して、もう一度スキャンしてください。")
+                Text("猫の写真を追加するか、写真の許可を確認してください。")
             } actions: {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
-                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                         .buttonStyle(.bordered)
                 }
             }

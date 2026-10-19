@@ -115,7 +115,7 @@ struct AlbumView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("アルバムの確認を完了できませんでした", systemImage: "exclamationmark.triangle")
                         .font(.subheadline.weight(.semibold))
-                    Text("表示できるアルバムは残しています。写真へのアクセスや通信を確認し、設定から再スキャンしてください。")
+                    Text("写真へのアクセスを確認し、設定からもう一度探してください。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -126,7 +126,7 @@ struct AlbumView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("一部の写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
                         .font(.subheadline.weight(.semibold))
-                    Text("作成できたアルバムは表示しています。もう一度確認したい場合は、設定から再スキャンできます。")
+                    Text("読み込めた写真のアルバムを表示しています。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -193,7 +193,7 @@ struct AlbumView: View {
         let dates = AlbumShelfLayoutPolicy.dateAlbums(in: sections)
 
         return VStack(alignment: .leading, spacing: 16) {
-            Text("時期・ほかの写真から探す")
+            Text(comparisons.isEmpty ? "探す" : "成長")
                 .font(.title3.bold()).accessibilityAddTraits(.isHeader)
             if let periodContent {
                 periodContent
@@ -201,7 +201,10 @@ struct AlbumView: View {
             LazyVGrid(columns: cardColumns, spacing: 12) {
                 ForEach(comparisons) { album in
                     NavigationLink(value: route(for: album.id)) {
-                        AlbumCatalogEntry(title: album.title, symbol: "rectangle.split.2x1")
+                        AlbumOverviewCard(identifier: album.coverPhoto.localIdentifier,
+                            catBoundingBox: album.coverPhoto.catBoundingBox, title: album.cardTitle,
+                            subtitle: GrowthAlbumOverviewCard.dateRange(for: album), isMovie: false,
+                            isNew: false, previewPhotos: [album.photos.first, album.photos.last].compactMap { $0 })
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("album-card-\(album.id.logKey)")
@@ -210,7 +213,7 @@ struct AlbumView: View {
                 }
                 if !periods.isEmpty || !dates.isEmpty {
                     NavigationLink(value: AlbumCatalogRoute.years(profileIdentifier: selectedProfileIdentifier)) {
-                        AlbumCatalogEntry(title: "年月・日付から探す", symbol: "calendar")
+                        AlbumCatalogEntry(title: "日付から探す", symbol: "calendar")
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("albums-years-toggle")
@@ -263,7 +266,7 @@ struct AlbumView: View {
                 ForEach(years) { album in albumLink(album, isPrimary: false) }
             }.padding(16)
         }
-        .navigationTitle("年月・日付から探す")
+        .navigationTitle("日付から探す")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("albums-years-list")
     }
@@ -481,35 +484,10 @@ struct AlbumView: View {
 /// Theme covers use the same authorized photo pipeline as collection details.
 private struct AlbumThemeEntry: View {
     let album: CuratedAlbumPresentation
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Color(.tertiarySystemFill)
-                .aspectRatio(4.0 / 3.0, contentMode: .fit)
-                .overlay {
-                    GeometryReader { geometry in
-                        PhotoAssetImageView(
-                            localIdentifier: album.coverPhoto.localIdentifier,
-                            catBoundingBox: album.coverPhoto.catBoundingBox,
-                            targetPixelSize: CGSize(width: 640, height: 480),
-                            targetAspectRatio: 4.0 / 3.0
-                        )
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                    }
-                }
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(album.cardTitle).font(.subheadline.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(album.countLabel).font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        AlbumOverviewCard(identifier: album.coverPhoto.localIdentifier,
+            catBoundingBox: album.coverPhoto.catBoundingBox, title: album.cardTitle,
+            subtitle: album.countLabel, isMovie: false, isNew: false)
     }
 }
 
@@ -776,14 +754,14 @@ struct CuratedAlbumDetailView: View {
                             pendingAssignmentIdentifiers = Array(selectedIdentifiers)
                             showsAssignmentSheet = true
                         } label: {
-                            Label("写っている子", systemImage: "person.crop.circle.badge.checkmark")
+                            Label("写っている猫を選ぶ", systemImage: "person.crop.circle.badge.checkmark")
                         }
                         .disabled(selectedIdentifiers.isEmpty)
                     }
                     Button(role: .destructive) {
                         requestExclusion(Array(selectedIdentifiers))
                     } label: {
-                        Label("表示候補から外す", systemImage: "eye.slash")
+                        Label("候補から外す", systemImage: "eye.slash")
                     }
                     .disabled(selectedIdentifiers.isEmpty)
                 }
@@ -800,11 +778,11 @@ struct CuratedAlbumDetailView: View {
             }
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("すべてから除外", role: .destructive) {
+            Button("候補から外す", role: .destructive) {
                 let identifiers = pendingExclusionIdentifiers
                 pendingExclusionIdentifiers.removeAll()
                 selectedIdentifiers.subtract(identifiers)
@@ -815,7 +793,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("アプリの「写真」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("写真は削除せず、アプリの候補から外します（設定で戻せます）。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -876,7 +854,7 @@ struct CuratedAlbumDetailView: View {
                 Button {
                     requestExclusion([photo.localIdentifier])
                 } label: {
-                    Label("表示候補から外す", systemImage: "cat.circle")
+                    Label("候補から外す", systemImage: "eye.slash")
                 }
             }
         }
@@ -998,7 +976,8 @@ struct LikedPhotosView: View {
         isCatDetail: Bool = false, navigationTitleOverride: String? = nil,
         recommendationStore: AlbumHighlightRecommendationStore = .shared,
         featuredSnapshotDefaults: UserDefaults = .standard,
-        memoryNoteStore: PhotoMemoryNoteStore = .shared
+        memoryNoteStore: PhotoMemoryNoteStore = .shared,
+        navigationTitle: String = "写真"
     ) {
         self.photos = photos
         self.hasPhotoAccess = hasPhotoAccess
@@ -1209,7 +1188,7 @@ struct LikedPhotosView: View {
         .membershipFeature(.automaticAlbums, hasContent: hasPhotoAccess && !isPreparingAlbums
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
-        .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月の写真・ムービー" : navigationTitleOverride ?? "アルバム")
+        .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月のまとめ・ムービー" : navigationTitleOverride ?? "アルバム")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
@@ -1359,7 +1338,7 @@ struct LikedPhotosView: View {
                 }
             }.padding(16)
         }
-        .navigationTitle(showsMovies ? "ムービー" : "月の写真")
+        .navigationTitle(showsMovies ? "ムービー" : "月のまとめ")
         .navigationBarTitleDisplayMode(.inline)
     }
     private var featuredPhotoRecommendation: AlbumRecommendationItem? {
@@ -1418,7 +1397,7 @@ struct LikedPhotosView: View {
     }
     private var reflectionArchive: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            if !hasPeriodCollections { ContentUnavailableView("月の写真・ムービーはありません", systemImage: "photo.stack") }
+            if !hasPeriodCollections { ContentUnavailableView("月のまとめ・ムービーはありません", systemImage: "photo.stack") }
             if hasPeriodCollections {
                 ForEach(months) { monthLink($0, isLatest: $0.id == months.first?.id, showsCover: false) }
                 ForEach(seasonalMovies) { movieLink($0, isLatest: $0.id == seasonalMovies.first?.id, showsCover: false) }
@@ -1453,7 +1432,7 @@ struct LikedPhotosView: View {
         NavigationLink(value: MemoriesRoute.monthlyWindow(month)) {
             if showsCover {
                 AlbumOverviewCard(identifier: month.coverPhoto?.localIdentifier, catBoundingBox: month.coverPhoto?.catBoundingBox,
-                    title: "\(month.monthNumber)月の猫たち", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
+                    title: "\(month.monthNumber)月のまとめ", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
                     isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread,
                     networkAccessAllowed: true, previewPhotos: Array(month.photos.prefix(3)), isCompact: false, isWide: isWide)
             } else {
@@ -1600,8 +1579,8 @@ private struct AlbumOverviewCard: View {
             .padding(12)
         }
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder
@@ -1750,12 +1729,12 @@ struct SavedMemoriesGalleryView: View {
                 emptyGalleryState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 3) {
+                    LazyVStack(spacing: 2) {
                         if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
                             unavailableSavedPhotosBanner
                         }
                         ForEach(PhotoLibraryGridRow.rows(photos)) { row in
-                            PhotoLibraryGridRowView(row: row, spacing: 3) { photo in
+                            PhotoLibraryGridRowView(row: row, spacing: 2) { photo in
                                 gridItem(photo)
                                     .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
                             }
@@ -1763,7 +1742,6 @@ struct SavedMemoriesGalleryView: View {
                         }
                     }
                     .scrollTargetLayout(isEnabled: isEmbedded)
-                    .padding(3)
                 }
                 .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") : nil,
                     normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: photos) })
@@ -2462,6 +2440,7 @@ struct PhotoBrowserView: View {
     let widgetShownAt: Date?
     let showsWidgetTiming: Bool
     let setMemorySaved: (String, Bool) -> Void
+    let navigationTitleText: String
     let exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)?
     let excludedCatCandidateIdentifiers: Set<String>
     let excludeFromCatCandidates: ([String]) -> Void
@@ -2530,6 +2509,7 @@ struct PhotoBrowserView: View {
                 .rounded()
         )
 
+        self.navigationTitleText = navigationTitle
         self.photos = photos
         self.libraryPhotos = libraryPhotos
         self.initialPhoto = initialPhoto
@@ -2797,7 +2777,7 @@ struct PhotoBrowserView: View {
     private var browserNavigation: some View {
         browserContent
         .background(Color.black)
-        .navigationTitle("写真")
+        .navigationTitle(navigationTitleText)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
@@ -2883,7 +2863,7 @@ struct PhotoBrowserView: View {
                             pendingExclusionIdentifier = selectedPhotoIdentifier
                             showsExclusionConfirmation = true
                         } label: {
-                            Label("表示候補から外す", systemImage: "cat.circle")
+                            Label("候補から外す", systemImage: "eye.slash")
                         }
                     }
                 } label: {
@@ -2990,11 +2970,11 @@ struct PhotoBrowserView: View {
             Text(widgetTimingMessage)
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("すべてから除外", role: .destructive) {
+            Button("候補から外す", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])
@@ -3003,7 +2983,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("アプリの「写真」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("写真は削除せず、アプリの候補から外します（設定で戻せます）。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(

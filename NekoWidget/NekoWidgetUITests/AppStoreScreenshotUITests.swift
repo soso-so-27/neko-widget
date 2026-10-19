@@ -10,6 +10,26 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewConsistentPhotosAndAlbums() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["albums-settings-button"].waitForExistence(timeout: 20))
+        captureScreenshot(named: "PR3-albums")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        let picker = app.buttons["photos-cat-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["photos-section-all"].isSelected)
+        captureScreenshot(named: "PR3-photos")
+        picker.tap()
+        XCTAssertTrue(app.buttons["すべての猫"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["すべての猫"].firstMatch.tap()
+        app.buttons["photos-section-favorites"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["saved-memories-gallery"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewPhotoEntryAndAlbums() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
