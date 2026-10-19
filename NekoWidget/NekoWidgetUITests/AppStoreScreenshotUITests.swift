@@ -26,12 +26,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(all.isSelected)
         app.buttons["photos-section-notes"].tap()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"))
-        XCTAssertTrue(app.descendants(matching: .any)["memories-monthly-window"].waitForExistence(timeout: 10))
-        captureScreenshot(named: "PR2-albums")
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
         XCTAssertTrue(all.isSelected)
         app.terminate()
 
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "solo-memories-monthly"
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["memories-monthly-window"].waitForExistence(timeout: 20))
+        captureScreenshot(named: "PR2-albums")
+        app.terminate()
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "review-photo"
         app.launch()
         let menu = app.buttons["photo-browser-related"]
