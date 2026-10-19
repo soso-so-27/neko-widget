@@ -1319,8 +1319,8 @@ class ModerationAIDurableScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_AI_DURABLE_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_ai_durable_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -1598,8 +1598,8 @@ class ModerationEnrollmentCeremonyScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_ENROLLMENT_CEREMONY_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_enrollment_ceremony_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -1949,8 +1949,8 @@ class ModerationInitialAdmissionScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_INITIAL_ADMISSION_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_initial_admission_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -2158,8 +2158,8 @@ class ModerationOwnerFlowScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_OWNER_FLOW_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_owner_flow_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -2359,8 +2359,8 @@ class ModerationReviewEvidenceScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_REVIEW_EVIDENCE_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_review_evidence_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -2539,8 +2539,8 @@ class ModerationConsoleScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_CONSOLE_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_console_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -2719,8 +2719,8 @@ class ModerationAITransportScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_AI_TRANSPORT_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_ai_transport_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -2886,8 +2886,8 @@ class ModerationAIAdvisoryScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_AI_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_ai_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3053,8 +3053,8 @@ class ModerationEnrollmentScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.MODERATION_ENROLLMENT_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.moderation_enrollment_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3204,8 +3204,8 @@ class PreservationCleanupAckScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_CLEANUP_ACK_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_cleanup_ack_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3335,8 +3335,8 @@ class PreservationOwnerCaptureCapacityScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_OWNER_CAPTURE_CAPACITY_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_owner_capture_capacity_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3466,8 +3466,8 @@ class PreservationSessionRenewalRecoveryScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_SESSION_RENEWAL_RECOVERY_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_session_renewal_recovery_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3597,8 +3597,8 @@ class PreservationRecoveryReadScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_RECOVERY_READ_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_recovery_read_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3728,8 +3728,8 @@ class PreservationRequestBufferScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_REQUEST_BUFFER_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_request_buffer_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3857,8 +3857,8 @@ class PreservationPhotoUploadBodyScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_PHOTO_UPLOAD_BODY_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_photo_upload_body_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -3986,8 +3986,8 @@ class PreservationOwnedBuffersScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_OWNED_BUFFERS_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_owned_buffers_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -4115,8 +4115,8 @@ class PreservationR2ViewScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_R2_VIEW_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_r2_view_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -4244,8 +4244,8 @@ class PreservationRecoveryChunksScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_RECOVERY_CHUNKS_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_recovery_chunks_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -4960,8 +4960,8 @@ class PreservationPublicRetentionScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_PUBLIC_RETENTION_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_public_retention_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -5632,8 +5632,8 @@ class PreservationAllPutBytesScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_ALL_PUT_BYTES_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_all_put_bytes_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -5790,8 +5790,8 @@ class PreservationNoticeMessageIdScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_NOTICE_MESSAGE_ID_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_notice_message_id_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -5929,8 +5929,8 @@ class PreservationProviderStreamScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_PROVIDER_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_provider_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -6059,8 +6059,8 @@ class JPEGBodyTransportScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.JPEG_BODY_TRANSPORT_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.jpeg_body_transport_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -6208,8 +6208,8 @@ class PreservationPhotoStartupScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_PHOTO_STARTUP_SCOPE)
         for absent in (None, []):
             self.assertFalse(planner.preservation_photo_startup_paths_only(absent))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
         self.assertEqual(planner.PRESERVATION_UPLOAD_SCOPE, "preservation-upload-memory-v1")
 
     def test_partial_unknown_modes_and_unreviewed_blobs_cannot_borrow_the_scope(self):
@@ -6335,8 +6335,8 @@ class PreservationUploadMemoryScopeTests(unittest.TestCase):
         with self.assertRaises(ValueError): planner.required_jobs_from_scope(planner.PRESERVATION_UPLOAD_SCOPE)
         self.assertFalse(planner.preservation_upload_paths_only(None))
         self.assertFalse(planner.preservation_upload_paths_only([]))
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
-        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f2e26488e11b5d1ce8ba037e60d3762ddda972b1")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertEqual(planner.PRESERVATION_REVIEWED_TREE, "f47283322add742d417c42befed46c1a425af9df")
 
     def test_partial_unknown_mixed_modes_blobs_and_changed_workflow_fail_closed(self):
         original = self.rows()
@@ -7595,7 +7595,7 @@ class PlanTests(unittest.TestCase):
             "test/intake-control.test.ts", "test/pilot-control.test.ts", "test/pilot-wiring.test.ts",
         )
         self.assertEqual(len(planner.PRESERVATION_PATHS), 175)
-        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v27")
+        self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
         self.assertIn("NekoWidget/PreservationService/migrations/0029_general_admission.sql", planner.PRESERVATION_PATHS)
         self.assertIn("NekoWidget/PreservationService/migrations/0030_general_cost_review.sql", planner.PRESERVATION_PATHS)
         self.assertTrue(all("NekoWidget/PreservationService/" + path in planner.PRESERVATION_PATHS
