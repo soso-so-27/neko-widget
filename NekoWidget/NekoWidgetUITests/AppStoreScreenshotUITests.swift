@@ -10,6 +10,31 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewPersonalPhotoLayout() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "review-photo-layout"
+        app.launch()
+        XCTAssertTrue(app.buttons["photo-browser-deliver"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.buttons["photo-browser-deliver"].label, "まどに届ける")
+        captureScreenshot(named: "personal-photo-deliver")
+        XCTAssertFalse(app.buttons["photo-memory-note-open"].exists)
+        app.buttons["photo-browser-related"].tap()
+        XCTAssertTrue(app.buttons["photo-memory-note-open"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["photo-browser-rediscovery-history"].exists)
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "NEKO_MAINLINE_ACCEPTANCE_CASE")
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        app.buttons["photos-cat-picker"].tap()
+        let profiles = app.buttons["photos-cat-profiles"]
+        XCTAssertTrue(profiles.waitForExistence(timeout: 5)); profiles.tap()
+        XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 10))
+        captureScreenshot(named: "personal-cat-profiles")
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewStartupTab() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
