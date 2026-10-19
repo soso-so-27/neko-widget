@@ -10,6 +10,17 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewOctoberLayoutBatch() {
+        executionTimeAllowance = 360
+        // One simulator build for the four stacked feature PRs. Each check
+        // retains its own two named screenshots and launches its own fixture.
+        testReviewStartupTab()
+        testReviewPersonalPhotoLayout()
+        testReviewInvitationOnboarding()
+        testReviewReceivedFavorites()
+    }
+
+    @MainActor
     func testReviewReceivedFavorites() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
