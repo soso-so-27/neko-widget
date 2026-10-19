@@ -11,6 +11,7 @@
 - 部品のまとめ保存は、owner・epoch・固定manifest・生の送信byteのhash・device grant・削除状態を検証する専用経路だけで続行する。通常の認証条件は緩めない。部品の到着、目録の確定、アプリ全体の保存完了は別に扱う。
 - 暗号化済みの途中作業を記録し、送信結果が不明でも同じkeyとbyteで再試行する。変更済み作業の競合・改ざん・鍵失効は拒否する。端末に途中ファイルがない場合と、接続期限切れの場合も、通常読取より先に本人に結び付いた目録を少しずつ修復する。
 - 契約の定期確認は続ける。同じ有効/猶予状態だけの観察で保存履歴を毎回増やさない。期限切れ/不明/通知/削除の既存条件は残す。再開位置と一度の再試行を記録し、予算切れや恒常的な障害のownerで巡回全体を止め続けない。
+- 巡回対象の読取後・予約前に利用者が無効化された場合の競合を実local D1で再現し、予約SQL内でowner状態を再確認するよう修正。未適用0047の削除guardと0048の既存外部キーで、旧版の削除処理でも新しい作業行・巡回参照を残して削除完了とならないことを4条件で確認した。新しい削除処理は参照を整理して正常完了する。対象50件と型検査は成功、元失敗を保持。
 - 実local D1と暗号処理による集約・中断・権限・復元の境界検査、型検査、migration検査を実施。定期確認/両削除経路等の最終対象50件も成功。新しいSwiftの実行はまだ未確認で、既存の所有XCTest内に中断再開と途中ファイル喪失の検査を登録した。
 
 ## 効果と限界
@@ -30,3 +31,5 @@
 新規有料契約、料金プラン変更、容量/テスト受付枠の変更、期限延長、定期の作成・手動再実行、一般公開、審査提出は行わない。cloudは新しい2 migrationと両Workerを、稼働設定・秘密情報参照・保護対象の記録を保った手順で別途確認する。
 
 詳細な入力hash・private証拠・元失敗log: `C:/dev/neko-evidence/save-batch-history-20261019`。主な記録は `candidate-plan.md`、`batch-boundary-review-final.md`、`batch-recovery-review.md`、`retention-fairness-fix.md`、`retention-final-independent-review.md`、`batch-cost-measurement.md`、`release-route-plan.md`。
+
+追加の削除競合検査は `cursor-delete-guard/report.md`。旧schemaで準備したcloud package/protected manifestは新guardを含まないため未武装のまま保持し、最終候補で新しく固定する。旧scheduled実行がすべて終了したという推測は、DB側の防止策の成功証拠とは区別する。

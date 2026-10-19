@@ -220,7 +220,7 @@ describe('scheduled retention observations', () => {
 
   it('rejects a stale billing identity returned by an advisory scan', async () => {
     const f = await fixture(); await f.ledger.observe(f.ownerId, 'active'); f.later(day);
-    const staleBilling = crypto.randomUUID(); let acks = 0;
+    const staleBilling = crypto.randomUUID(); let acks = 0; let calls = 0;
     // Membership links are immutable in the real schema. Inject a stale scan
     // result to exercise the identity fence without bypassing those triggers.
     const staleScan = new Proxy(db, { get(target, property) {
@@ -239,10 +239,41 @@ describe('scheduled retention observations', () => {
     } });
     const ledger = new RetentionLedger(staleScan, f.now, { async copyCurrent() { acks++; } });
     await expect(ledger.refreshBatch(async id => {
-      expect(id).toBe(staleBilling); return 'active';
+      calls++; expect(id).toBe(staleBilling); return 'active';
     })).rejects.toMatchObject({ code: 'RETENTION_UNAVAILABLE' });
+    expect(calls).toBe(0);
     expect(acks).toBe(0);
     expect(await state(f.ownerId)).toMatchObject({ verified_status: 'active' });
+  });
+
+  it('does not reserve or call billing for an owner disabled after the scan resolves', async () => {
+    const f = await fixture(); let disabled = false; let calls = 0;
+    const raced = new Proxy(db, { get(target, property) {
+      if (property !== 'prepare') return Reflect.get(target, property, target);
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (!sql.includes('r.revision AS retention_revision')) return statement;
+        return { bind: (...values: unknown[]) => {
+          const bound = statement.bind(...values);
+          return { all: async () => {
+            const result = await bound.all();
+            if (!disabled && result.results.some(row => row.owner_id === f.ownerId)) {
+              disabled = true;
+              await db.prepare('UPDATE pa_owners SET disabled=1 WHERE owner_id=?').bind(f.ownerId).run();
+            }
+            return result;
+          } };
+        } };
+      };
+    } });
+    const outcome = await new RetentionLedger(raced, f.now).refreshBatch(async () => { calls++; return 'active'; })
+      .then(count => ({ count }), error => ({ error: error.code }));
+    const cursor = await db.prepare('SELECT revision,last_owner_id,retry_pending FROM pa_retention_scan_cursor').first();
+    console.log('CURSOR_RESERVATION_RACE', JSON.stringify({ disabled, calls, outcome, cursor }));
+    expect(disabled).toBe(true);
+    expect(calls).toBe(0);
+    expect(outcome).toEqual({ count: 0 });
+    expect(cursor).toEqual({ revision: 0, last_owner_id: '', retry_pending: 0 });
   });
 
   it('rejects an owner revocation during recovery at the final fence', async () => {

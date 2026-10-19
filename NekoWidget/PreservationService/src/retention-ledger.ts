@@ -220,9 +220,12 @@ export class RetentionLedger {
       // Do not reserve a duplicate and leave an unprocessed pending marker.
       if (seen.has(row.owner_id)) return null;
       const retryPending = retry ? 0 : 1;
+      // The advisory scan can race erasure/revocation. Validate the same owner
+      // authority inside the cursor mutation, before any provider call.
       const reserved = await this.db.prepare(`UPDATE pa_retention_scan_cursor SET revision=revision+1,last_owner_id=?,retry_pending=?
-        WHERE singleton=1 AND revision=? AND last_owner_id=? AND retry_pending=?`)
-        .bind(row.owner_id, retryPending, cursor.revision, cursor.last_owner_id, cursor.retry_pending).run();
+        WHERE singleton=1 AND revision=? AND last_owner_id=? AND retry_pending=? AND ${refreshOwnerFence}`)
+        .bind(row.owner_id, retryPending, cursor.revision, cursor.last_owner_id, cursor.retry_pending,
+          row.owner_id, row.epoch, row.billing_account_id).run();
       if (reserved.meta.changes === 1) return { row, revision: cursor.revision + 1, retryPending };
     }
     throw new ServiceError('RETENTION_UNAVAILABLE', 503);
