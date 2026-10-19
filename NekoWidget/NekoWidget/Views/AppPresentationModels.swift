@@ -1122,3 +1122,19 @@ enum MainTabStartupPolicy {
         return previous == .windows && !showsMado ? .memories : previous
     }
 }
+
+enum FavoritePhotoOrigin: String, CaseIterable {
+    case all, ownCats, received
+    var title: String {
+        switch self { case .all: "すべて"; case .ownCats: "自分の猫"; case .received: "まどから" }
+    }
+    func includes(isReceived: Bool) -> Bool {
+        switch self { case .all: true; case .ownCats: !isReceived; case .received: isReceived }
+    }
+}
+
+enum ReceivedPhotoAlbumPolicy {
+    static func includes(isReceived: Bool, hasExplicitCat: Bool) -> Bool {
+        !isReceived || hasExplicitCat
+    }
+}

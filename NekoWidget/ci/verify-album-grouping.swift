@@ -1505,6 +1505,12 @@ private func verifyAlbumShelfPreservesSparseAndSecondaryCollections() throws {
 @MainActor
 private struct AlbumGroupingVerifier {
     static func main() async throws {
+        precondition(!ReceivedPhotoAlbumPolicy.includes(isReceived: true, hasExplicitCat: false))
+        precondition(ReceivedPhotoAlbumPolicy.includes(isReceived: true, hasExplicitCat: true))
+        precondition(ReceivedPhotoAlbumPolicy.includes(isReceived: false, hasExplicitCat: false))
+        precondition(FavoritePhotoOrigin.received.includes(isReceived: true))
+        precondition(!FavoritePhotoOrigin.ownCats.includes(isReceived: true))
+
         precondition(MainTabStartupPolicy.selection(lastTab: "tools", hasNewPhotos: false, showsMado: true) == .tools)
         precondition(MainTabStartupPolicy.selection(lastTab: "photos", hasNewPhotos: true, showsMado: true) == .windows)
         precondition(MainTabStartupPolicy.selection(lastTab: "windows", hasNewPhotos: false, showsMado: false) == .memories)

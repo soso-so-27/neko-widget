@@ -10,6 +10,24 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewReceivedFavorites() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "received-favorites"
+        app.launch()
+        XCTAssertTrue(app.buttons["favorites-origin-received"].waitForExistence(timeout: 15))
+        captureScreenshot(named: "favorites-all-origins")
+        app.buttons["favorites-origin-received"].tap()
+        XCTAssertTrue(app.buttons["favorites-origin-received"].isSelected)
+        XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.waitForExistence(timeout: 5))
+        captureScreenshot(named: "favorites-from-mado")
+        app.buttons["favorites-origin-ownCats"].tap()
+        XCTAssertTrue(app.buttons["favorites-origin-ownCats"].isSelected)
+        XCTAssertFalse(app.staticTexts["お母さんから"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewInvitationOnboarding() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]

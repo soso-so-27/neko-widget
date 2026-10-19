@@ -208,6 +208,7 @@ struct MainTabView: View {
     let libraryPhotos: [PhotoPresentation]
     var photoLibraryAssignments: [String: Set<String>]? = nil
     var photoLibraryProfileNames: [String: String]? = nil
+    var receivedPhotoIdentifiers: Set<String> = []
     var savedPhotoIdentifiers: Set<String>? = nil
     var savedPhotoStateReadFailed: Bool = false
     var readablePhotoIdentifiers: Set<String>? = nil
@@ -259,6 +260,7 @@ struct MainTabView: View {
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
     @State private var arrivalReadFailed = false
+    @State private var receivedPhotoSourceLabels: [String: String] = [:]
 
     private var showsMadoTab: Bool {
         SharingAPIConfiguration.current.isReviewVisible
@@ -270,6 +272,23 @@ struct MainTabView: View {
             let seen = UserDefaults.standard.double(forKey: "navigation.madoVisited.v1.\(entry.key)")
             return count + entry.value.filter { $0.timeIntervalSince1970 > seen }.count
         }
+    }
+
+    private func refreshReceivedPhotoSources() async {
+        let sources = await Task.detached(priority: .utility) { () -> [String: String] in
+            (try? SharingLifecycleGate.withExclusive {
+                guard let catalog = try PrivateWindowCatalogStore.load() else { return [:] }
+                var labels: [String: String] = [:]
+                for window in catalog.windows {
+                    guard let state = try? MomentSharingStateStore.loadWhileLifecycleLocked(localWindowID: window.localWindowID) else { continue }
+                    for record in state.importedMemories {
+                        labels[record.photoLocalIdentifier] = window.displayName + "から"
+                    }
+                }
+                return labels
+            }) ?? [:]
+        }.value
+        receivedPhotoSourceLabels = sources
     }
 
     private func rememberMadoVisit() {
@@ -569,6 +588,10 @@ struct MainTabView: View {
                     lastTab: lastViewedTab, hasNewPhotos: false, showsMado: false)
             }
             await refreshMadoArrivals()
+            await refreshReceivedPhotoSources()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .receivedMemoryImportNeedsRefresh)) { _ in
+            Task { await refreshReceivedPhotoSources() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingSynchronizationSucceeded)) { _ in
             Task { await refreshMadoArrivals() }
@@ -1039,6 +1062,8 @@ struct MainTabView: View {
                                     unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount,
                                     hasPhotoAccess: hasPhotoAccess,
                                     savedStateReadFailed: savedPhotoStateReadFailed,
+                                    receivedPhotoIdentifiers: receivedPhotoIdentifiers,
+                                    receivedPhotoSourceLabels: receivedPhotoSourceLabels,
                                     exportPhotoBook: exportPhotoBook)
         case .notes:
             PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
@@ -1592,7 +1617,9 @@ struct MainTabView: View {
         case .favorites:
             SavedMemoriesGalleryView(
                 photos: likedPhotos, startsInExportMode: false,
-                exportPhotoBook: exportPhotoBook
+                receivedPhotoIdentifiers: receivedPhotoIdentifiers,
+                                    receivedPhotoSourceLabels: receivedPhotoSourceLabels,
+                                    exportPhotoBook: exportPhotoBook
             )
         case .reflectionsArchive:
             albumsView(showsReflectionArchive: true)
@@ -1873,6 +1900,22 @@ struct MainTabView: View {
         }
     }
 
+    private var albumEligibleCatPhotos: [PhotoPresentation] {
+        let assigned = Set(currentPhotoLibraryAssignments.compactMap { $0.value.isEmpty ? nil : $0.key })
+        var seen = Set<String>()
+        // Explicit cat selection also admits an imported photo before a scan
+        // detects a cat. Clearing that selection removes only derived entries.
+        guard !savedPhotoStateReadFailed else { return [] }
+        let explicitlyAssignedImports = profileAlbumPhotos.values.flatMap { $0 }.filter {
+            receivedPhotoIdentifiers.contains($0.localIdentifier)
+        }
+        return (catPhotos + explicitlyAssignedImports).filter { photo in
+            ReceivedPhotoAlbumPolicy.includes(isReceived: receivedPhotoIdentifiers.contains(photo.localIdentifier),
+                hasExplicitCat: assigned.contains(photo.localIdentifier))
+                && seen.insert(photo.localIdentifier).inserted
+        }
+    }
+
     private var householdAlbumCatalogKey: HouseholdAlbumCatalogKey {
         let timeZone = TimeZone.current
         var calendar = Calendar(identifier: .gregorian)
@@ -1894,7 +1937,7 @@ struct MainTabView: View {
             ),
             content: HouseholdAlbumCatalogContentKey(
                 photoContentRevision: photoPresentationVersion.photoContentRevision,
-                photoCount: catPhotos.count,
+                photoCount: albumEligibleCatPhotos.count,
                 legacyLifeReference: settings.catLifeReference,
                 growthPhotoOverridesJSON: growthPhotoOverridesJSON,
                 referenceDay: calendar.startOfDay(for: albumHighlightsReferenceDate),
@@ -1913,7 +1956,7 @@ struct MainTabView: View {
         householdAlbumCatalog.submit(HouseholdAlbumCatalogRequest(
             key: key,
             input: HouseholdAlbumCatalogInput(
-                photos: key.access.canBuild ? catPhotos : [],
+                photos: key.access.canBuild ? albumEligibleCatPhotos : [],
                 excludedIdentifiers: key.access.canBuild ? excludedCatCandidateIdentifiers : [],
                 lifeReference: catProfilesPresentation.profiles.isEmpty ? settings.catLifeReference : nil,
                 growthPhotoOverridesJSON: growthPhotoOverridesJSON,
@@ -2053,7 +2096,7 @@ struct MainTabView: View {
         }
         guard completedMonthlyWindowCollectionKey != key else { return }
 
-        let photos = catPhotos
+        let photos = albumEligibleCatPhotos
         let referenceDate = Date()
         let buildTask = Task.detached(priority: .utility) {
             MonthlyWindowBuilder().buildCompletedCollection(
@@ -2134,7 +2177,7 @@ struct MainTabView: View {
             return
         }
         let service = SeasonalMovieCandidateService()
-        let photoCandidates = await service.photoCandidates(catPhotos, in: quarter)
+        let photoCandidates = await service.photoCandidates(albumEligibleCatPhotos, in: quarter)
         guard !Task.isCancelled else { return }
         var archiveDraft: SeasonalMovieArchiveDraft?
         if case let .ready(photoPresentation) = builder.buildMostRecent(
@@ -2195,7 +2238,7 @@ struct MainTabView: View {
 
     private var currentMonthlyWindowCollection: MonthlyWindowCollectionPresentation? {
         monthlyWindowCollection?.refreshed(
-            from: photoSourceStatus == .unavailable ? [] : catPhotos,
+            from: photoSourceStatus == .unavailable ? [] : albumEligibleCatPhotos,
             hasPhotoAccess: hasPhotoAccess && photoPresentationVersion.canPresent,
             excludedIdentifiers: excludedCatCandidateIdentifiers
         )
@@ -2294,7 +2337,7 @@ struct MainTabView: View {
         _ snapshot: MonthlyWindowPresentation
     ) -> MonthlyWindowPresentation {
         snapshot.refreshed(
-            from: photoSourceStatus == .unavailable ? [] : catPhotos,
+            from: photoSourceStatus == .unavailable ? [] : albumEligibleCatPhotos,
             hasPhotoAccess: hasPhotoAccess && photoPresentationVersion.canPresent,
             excludedIdentifiers: excludedCatCandidateIdentifiers
         )
@@ -2315,12 +2358,12 @@ struct MainTabView: View {
         if relatedPhotoUsesLibraryScope, photoLibraryProfileIdentifier != nil {
             guard permitsPhotoLibraryRediscovery,
                   scope == photoLibraryRediscoveryScope else { return [] }
-            return catPhotos.filter {
+            return albumEligibleCatPhotos.filter {
                 photoLibraryIncludes($0.localIdentifier) && !excludedIdentifiers.contains($0.localIdentifier)
             }
         }
         guard case let .profile(identifier) = scope else {
-            return catPhotos.filter { !excludedIdentifiers.contains($0.localIdentifier) }
+            return albumEligibleCatPhotos.filter { !excludedIdentifiers.contains($0.localIdentifier) }
         }
         guard let profile = catProfilesPresentation.profile(identifier: identifier) else { return [] }
         let assignedIDs = Set(profile.confirmedPhotos.map(\.localIdentifier))

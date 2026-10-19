@@ -1680,6 +1680,33 @@ struct SavedMemoriesGalleryView: View {
     }
 
     let photos: [PhotoPresentation]
+    let receivedPhotoIdentifiers: Set<String>
+    let receivedPhotoSourceLabels: [String: String]
+    @State private var originFilter: FavoritePhotoOrigin = .all
+
+    private var visiblePhotos: [PhotoPresentation] {
+        photos.filter { originFilter.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier)) }
+    }
+
+    private var originPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(FavoritePhotoOrigin.allCases, id: \.rawValue) { origin in
+                let count = photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier)) }.count
+                Button { originFilter = origin } label: {
+                    Text("\(origin.title) \(count)")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 12).frame(minHeight: 44)
+                        .background(originFilter == origin ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(originFilter == origin ? .isSelected : [])
+                .accessibilityIdentifier("favorites-origin-\(origin.rawValue)")
+                .disabled(isExportingPhotoBook)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+    }
     let isDedicatedPhotoBookFlow: Bool
     let isEmbedded: Bool
     let readingPositionKey: String?
@@ -1706,9 +1733,13 @@ struct SavedMemoriesGalleryView: View {
         unavailableSavedPhotoCount: Int = 0,
         hasPhotoAccess: Bool = true,
         savedStateReadFailed: Bool = false,
+        receivedPhotoIdentifiers: Set<String> = [],
+        receivedPhotoSourceLabels: [String: String] = [:],
         exportPhotoBook: @escaping ([String]) async throws -> URL
     ) {
         self.photos = photos
+        self.receivedPhotoIdentifiers = receivedPhotoIdentifiers
+        self.receivedPhotoSourceLabels = receivedPhotoSourceLabels
         self.isDedicatedPhotoBookFlow = startsInExportMode
         self.isEmbedded = isEmbedded
         self.readingPositionKey = readingPositionKey
@@ -1725,8 +1756,10 @@ struct SavedMemoriesGalleryView: View {
     }
 
     var body: some View {
-        ZStack {
-            if !hasPhotoAccess || photos.isEmpty {
+        VStack(spacing: 0) {
+            if hasPhotoAccess && !isDedicatedPhotoBookFlow { originPicker }
+            ZStack {
+            if !hasPhotoAccess || visiblePhotos.isEmpty {
                 emptyGalleryState
             } else {
                 ScrollView {
@@ -1734,7 +1767,7 @@ struct SavedMemoriesGalleryView: View {
                         if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
                             unavailableSavedPhotosBanner
                         }
-                        ForEach(PhotoLibraryGridRow.rows(photos)) { row in
+                        ForEach(PhotoLibraryGridRow.rows(visiblePhotos)) { row in
                             PhotoLibraryGridRowView(row: row, spacing: 2) { photo in
                                 gridItem(photo)
                                     .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
@@ -1744,9 +1777,10 @@ struct SavedMemoriesGalleryView: View {
                     }
                     .scrollTargetLayout(isEnabled: isEmbedded)
                 }
-                .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") : nil,
-                    normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: photos) })
+                .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") + "." + originFilter.rawValue : nil,
+                    normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: visiblePhotos) })
             }
+        }
         }
         .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")
         .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
@@ -1796,6 +1830,9 @@ struct SavedMemoriesGalleryView: View {
         } message: {
             Text(photoBookErrorMessage ?? "時間をおいて、もう一度お試しください。")
         }
+        .onChange(of: originFilter) { _, _ in
+            selectedExportIdentifiers.formIntersection(Set(visiblePhotos.map(\.localIdentifier)))
+        }
         .onChange(of: Set(photos.map(\.localIdentifier))) { _, available in
             selectedExportIdentifiers.formIntersection(available)
             if available.isEmpty {
@@ -1823,6 +1860,9 @@ struct SavedMemoriesGalleryView: View {
             ContentUnavailableView("お気に入りの写真を表示できません", systemImage: "photo",
                 description: Text("お気に入りに保存された写真が\(unavailableSavedPhotoCount.formatted())枚ありますが、今は読み込めません。写真許可や元の写真を確認してください。"))
                 .accessibilityIdentifier("saved-memories-photos-unavailable")
+        } else if !photos.isEmpty {
+            ContentUnavailableView("この範囲にはまだありません", systemImage: "bookmark",
+                description: Text("別の切り替えから、お気に入りの写真を確認できます。"))
         } else {
             ContentUnavailableView("まだありません", systemImage: "bookmark",
                 description: Text("写真で「お気に入りに追加」を押すと、ここに並びます"))
@@ -1844,6 +1884,20 @@ struct SavedMemoriesGalleryView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .accessibilityIdentifier("saved-memories-partially-unavailable")
+    }
+
+    private func originThumbnail(_ photo: PhotoPresentation, selectionState: Bool? = nil) -> some View {
+        MemoryPhotoThumbnail(photo: photo, selectionState: selectionState)
+            .overlay(alignment: .bottomLeading) {
+                if receivedPhotoIdentifiers.contains(photo.localIdentifier) {
+                    Text(receivedPhotoSourceLabels[photo.localIdentifier] ?? "まどから")
+                        .font(.caption2.weight(.medium)).foregroundStyle(.white)
+                        .lineLimit(2).padding(.horizontal, 6).padding(.vertical, 4)
+                        .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 5))
+                        .padding(4).padding(.trailing, selectionState == nil ? 0 : 30)
+                        .accessibilityIdentifier("favorite-source-\(photo.localIdentifier)")
+                }
+            }
     }
 
     private var galleryAccessibilityValue: String {
@@ -1904,7 +1958,7 @@ struct SavedMemoriesGalleryView: View {
             Button {
                 toggleExportSelection(photo.localIdentifier)
             } label: {
-                MemoryPhotoThumbnail(photo: photo, selectionState: isSelected)
+                originThumbnail(photo, selectionState: isSelected)
             }
             .buttonStyle(.plain)
             .disabled(
@@ -1917,7 +1971,7 @@ struct SavedMemoriesGalleryView: View {
             .accessibilityValue(isSelected ? "選択中" : "未選択")
         } else {
             NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
-                MemoryPhotoThumbnail(photo: photo)
+                originThumbnail(photo)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(memoryPhotoAccessibilityLabel(photo))

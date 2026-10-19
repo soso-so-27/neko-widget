@@ -412,6 +412,7 @@ struct AppRootView: View {
                     (profile.id.uuidString, profile.displayName)
                 })
             },
+            receivedPhotoIdentifiers: viewModel.receivedPhotoIdentifiers,
             savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
             savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
             readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
