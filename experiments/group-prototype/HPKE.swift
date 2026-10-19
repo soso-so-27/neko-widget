@@ -49,6 +49,12 @@ enum PrototypeHPKE {
         precondition(third.1[b1.id] == nil && third.1[b2.id] == nil)
         let cipher = try AES.GCM.seal(Data("after removal".utf8), using: SymmetricKey(data: third.0), authenticating: Data("room|3|a1".utf8))
         precondition((try? AES.GCM.open(cipher, using: SymmetricKey(data: second.0), authenticating: Data("room|3|a1".utf8))) == nil)
+        let signedContent = Data("room|3|a1".utf8) + cipher.combined!
+        let signature = try a.signing.signature(for: signedContent)
+        precondition(a.signing.publicKey.isValidSignature(signature, for: signedContent))
+        let impersonation = try c.signing.signature(for: signedContent)
+        precondition(!a.signing.publicKey.isValidSignature(impersonation, for: signedContent))
+        print("HPKE PASS payload sender signature and impersonation rejection")
         print("HPKE PASS removed both devices cannot decrypt next epoch")
         let roster = Set([a.id,c.id]); let currentEpoch = 3
         func relayAccepts(sender: String, epoch: Int) -> Bool { epoch == currentEpoch && roster.contains(sender) }
