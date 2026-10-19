@@ -189,7 +189,7 @@ export class OwnerRecoveryCopy {
   private readonly indexKey: Promise<CryptoKey>;
 
   constructor(private readonly keys: KeyCustody, private readonly s3: S3RecoveryCopy,
-    identityIndexSecret: string, private readonly options: { compressWrites?: boolean; pagedWrites?: boolean } = {}) {
+    private readonly identityIndexSecret: string, private readonly options: { compressWrites?: boolean; pagedWrites?: boolean } = {}) {
     this.indexKey = identityIndexKey(identityIndexSecret);
   }
 
@@ -416,6 +416,12 @@ export class OwnerRecoveryCopy {
    * The complete inventory remains the bounded migration/recovery baseline.
    * No tombstone, record version or old recovery tree is discarded. */
   async copyCurrent(db: D1Database, ownerId: string, now: number): Promise<RecoveryObject> {
+    if (typeof this.s3.withOwnerWriteGroup !== 'function') return this.copyCurrentUngrouped(db, ownerId, now);
+    return this.s3.withOwnerWriteGroup(ownerId, scoped => new OwnerRecoveryCopy(
+      this.keys, scoped, this.identityIndexSecret, this.options).copyCurrentUngrouped(db, ownerId, now));
+  }
+
+  private async copyCurrentUngrouped(db: D1Database, ownerId: string, now: number): Promise<RecoveryObject> {
     if (!safeInteger(now, 1)) throw unavailable();
     if (!this.options.pagedWrites) return this.copyCurrentFull(db, ownerId, now);
     try {

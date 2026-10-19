@@ -116,8 +116,19 @@ async function readRecoveryObject(body: ReadableStream<Uint8Array>, expected: nu
 export class S3RecoveryCopy {
   private readonly config: BoundConfig;
   constructor(config: S3RecoveryConfig, private readonly fetcher: Fetcher = fetch,
-    private readonly writeLease?: Pick<RecoveryWriteLease, 'withOwnerWrite'>) {
+    private readonly writeLease?: Pick<RecoveryWriteLease, 'withOwnerWrite'>
+      & Partial<Pick<RecoveryWriteLease, 'withOwnerWriteGroup'>>) {
     this.config = configured(config);
+  }
+
+  async withOwnerWriteGroup<T>(ownerId: string, action: (copy: S3RecoveryCopy) => Promise<T>): Promise<T> {
+    if (!this.writeLease?.withOwnerWriteGroup) return action(this);
+    const config = this.config;
+    return this.writeLease.withOwnerWriteGroup(ownerId, lease => action(new S3RecoveryCopy({
+      enabled: 'YES', region: config.region, bucket: config.bucket,
+      expectedAccountId: config.accountId, accessKeyId: config.access,
+      secretAccessKey: config.secret,
+    }, this.fetcher, lease)));
   }
 
   private async request(method: 'PUT' | 'HEAD' | 'GET', key: string,
