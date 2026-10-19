@@ -33,7 +33,7 @@ boot_pid=$!
 
 xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
   -configuration Release -sdk iphonesimulator \
-  -destination 'generic/platform=iOS Simulator' \
+  -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
   -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
   build
