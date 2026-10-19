@@ -7594,7 +7594,12 @@ class PlanTests(unittest.TestCase):
             "src/intake-control.ts", "src/pilot-control.ts",
             "test/intake-control.test.ts", "test/pilot-control.test.ts", "test/pilot-wiring.test.ts",
         )
-        self.assertEqual(len(planner.PRESERVATION_PATHS), 175)
+        self.assertEqual(len(planner.PRESERVATION_PATHS), 176)
+        root_proof_paths = ["NekoWidget/PreservationService/" + name for name in (
+            "src/owner-recovery-copy.ts", "test/owner-record-deltas.test.ts")]
+        self.assertTrue(planner.preservation_paths_only(root_proof_paths))
+        self.assertFalse(planner.preservation_paths_only(root_proof_paths + [
+            "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift"]))
         self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
         self.assertIn("NekoWidget/PreservationService/migrations/0029_general_admission.sql", planner.PRESERVATION_PATHS)
         self.assertIn("NekoWidget/PreservationService/migrations/0030_general_cost_review.sql", planner.PRESERVATION_PATHS)

@@ -540,6 +540,7 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "test/owner-purge-preflight.test.ts",
     "test/owner-purge-remote-manifest-ledger.test.ts",
     "test/owner-quarantine-restore.test.ts",
+    "test/owner-record-deltas.test.ts",
     "test/owner-record-inventory.test.ts",
     "test/owner-recovery-copy.test.ts",
     "test/owner-snapshot-codec.test.ts",
