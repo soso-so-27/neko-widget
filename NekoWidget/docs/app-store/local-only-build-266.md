@@ -58,14 +58,14 @@ Appleの現行案内：[App Privacy](https://developer.apple.com/help/app-store-
 | 季節のムービー | アルバムのふりかえり | 再生、消音、場面を外す・戻す、書き出し | 未確認 |
 | 季節のムービーについて | ムービー内の説明 | 生成条件や扱いを読む | 未確認 |
 | 写真・すべて | 下部「写真」→「すべて」 | 猫別・すべての猫写真を開く | [参考](C:/dev/neko-uiux-review-20261003/screenshots/S03-photo-hub-cats.png) |
-| 写真・お気に入り | 写真 → お気に入り | 写真を開く、かたちにする | 未確認 |
+| 写真・お気に入り | 写真 → お気に入り | 写真を開く、作成 | 未確認 |
 | 写真詳細 | 写真一覧／アルバム／Widget | めくる、お気に入りに追加、メモ、関連写真を見る | [参考](C:/dev/neko-uiux-review-20261003/screenshots/S04-photo-browser-compact-actions-standard.png) |
 | 写真の情報・同じ日・関連アルバム | 写真詳細 → … | 撮影情報を見る、関連する写真へ移動 | 未確認 |
 | メモ一覧・検索 | 写真 → メモ | メモを探す、開く | [参考](C:/dev/neko-uiux-review-20261003/screenshots/S05-memory-library-list.png) |
 | メモ検索中 | メモ一覧 → 検索 | キーワードで絞る | [参考](C:/dev/neko-uiux-review-20261003/screenshots/S08-memory-library-search.png) |
 | メモ詳細 | メモ一覧 → 記録 | 読む、写真を開く、編集、診察メモへ使う | [参考](C:/dev/neko-uiux-review-20261003/screenshots/S06-memory-library-detail.png) |
 | メモ編集 | 写真の鉛筆／メモ詳細 → 編集 | 文章・体重・測定日を保存、閉じる | [参考](C:/dev/neko-uiux-review-20261003/screenshots/S07-weight-only-memo-editor.png) |
-| かたちにする・PDF写真選択 | 写真 → お気に入り → かたちにする | 1〜30枚選択、PDFを端末内で作り書き出す | 未確認 |
+| 作るものを選ぶ・PDF写真選択 | 写真 → お気に入り → 作成 → PDF | 1〜30枚選択、PDFを端末内で作り書き出す | 未確認 |
 | 本のイメージ | お気に入りの制作導線（条件あり） | 試作プレビューを見る | 未確認。物販の注文・決済は提供しない |
 | ツール | 下部「ツール」 | 5つのツールを選ぶ | [参考](C:/dev/neko-uiux-review-20261003/screenshots/S21-tools-hub-light.png) |
 | うちの子を見せる | ツール → うちの子を見せる | 写真を全画面で見せる | 未確認 |
