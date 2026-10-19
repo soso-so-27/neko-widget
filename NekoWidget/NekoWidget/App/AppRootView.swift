@@ -35,10 +35,11 @@ struct AppRootView: View {
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
     @State private var firstRunPhoto: PhotoPresentation?
+    @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
     @State private var officialWindowPresentationID = UUID()
     @State private var onboardingScanErrorMessage: String?
-    @StateObject private var widgetShowcaseStore = ShowcasePhotoStore()
+    @StateObject private var widgetShowcaseStore = ShowcasePhotoStore.shared
     @State private var widgetShowcasePhoto: WidgetShowcasePhoto?
     @Environment(\.membershipActions) private var showcaseAccess
     @State private var showcaseMembershipNotice: MembershipAccessDecision?
@@ -145,14 +146,16 @@ struct AppRootView: View {
             )
         }
         .sheet(item: $firstRunPhoto) { photo in
-            NavigationStack {
-                mainTabContent.firstRunPhotoDestination(for: photo.localIdentifier)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("閉じる") { firstRunPhoto = nil }
-                                .accessibilityIdentifier("first-run-photo-close")
+            personalPhotoActions {
+                NavigationStack {
+                    mainTabContent.firstRunPhotoDestination(for: photo.localIdentifier)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("閉じる") { firstRunPhoto = nil }
+                                    .accessibilityIdentifier("first-run-photo-close")
+                            }
                         }
-                    }
+                }
             }
         }
         .sheet(item: $officialWindowRoute) { route in
@@ -208,25 +211,37 @@ struct AppRootView: View {
                 }
             }
         case let .personal(localIdentifier, shownAt):
-            NavigationStack {
-                Group {
-                    switch viewModel.widgetPhotoLibraryLoadSucceeded {
-                    case nil:
-                        ProgressView("写真を確認しています…")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    case .some(false):
-                        ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                               description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
-                    case .some(true):
-                        mainTabContent.widgetPhotoDestination(
-                            for: localIdentifier, shownAt: shownAt
-                        )
+            personalPhotoActions {
+                NavigationStack {
+                    Group {
+                        switch viewModel.widgetPhotoLibraryLoadSucceeded {
+                        case nil:
+                            ProgressView("写真を確認しています…")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        case .some(false):
+                            ContentUnavailableView("この写真は開けません", systemImage: "photo",
+                                                   description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                        case .some(true):
+                            mainTabContent.widgetPhotoDestination(
+                                for: localIdentifier, shownAt: shownAt
+                            )
+                        }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) }
                     }
                 }
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) }
-                }
             }
+            .task {
+                // Refresh an App Intent's saved state in place; opening the
+                // photograph no longer waits for this independent update.
+                await viewModel.syncLikesForPresentation(trigger: "deeplink")
+            }
+        }
+    }
+
+    private func personalPhotoActions<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
             .environment(\.showcaseOpenOne, { identifier in
                 let decision = showcaseAccess.decision(for: .presentCatPhotos)
                 guard decision == .allowed else {
@@ -235,6 +250,17 @@ struct AppRootView: View {
                 }
                 widgetShowcasePhoto = WidgetShowcasePhoto(photoIdentifier: identifier)
             })
+            .environment(\.showcaseAddPhoto, { identifier, scope in
+                guard mainTabContent.catPhotos.contains(where: { $0.localIdentifier == identifier }) else {
+                    throw ShowcasePhotoStore.Error.unavailable
+                }
+                try await widgetShowcaseStore.add(photoIdentifier: identifier, to: scope)
+            })
+            .environment(\.showcaseAddTargets,
+                [ShowcaseAddTarget(id: "", title: "すべての猫")]
+                + (viewModel.catHouseholdIdentity?.profiles ?? []).map {
+                    ShowcaseAddTarget(id: $0.id.uuidString, title: $0.displayName)
+                })
             .membershipActionNotice($showcaseMembershipNotice)
             .fullScreenCover(item: $widgetShowcasePhoto) { selected in
                 ShowcasePhotoView(
@@ -245,12 +271,6 @@ struct AppRootView: View {
                     onManage: nil
                 )
             }
-            .task {
-                // Refresh an App Intent's saved state in place; opening the
-                // photograph no longer waits for this independent update.
-                await viewModel.syncLikesForPresentation(trigger: "deeplink")
-            }
-        }
     }
 
     @ViewBuilder
@@ -428,10 +448,10 @@ struct AppRootView: View {
                 )
             },
             exportMemoryPhoto: { identifier in
-                try await MemoryPhotoJPEGExporter().export(
-                    from: viewModel.likedAssets,
-                    localIdentifier: identifier
-                )
+                guard readableSnapshot.assets.contains(where: { $0.localIdentifier == identifier }) else {
+                    throw MemoryPhotoJPEGExportError.photoUnavailable
+                }
+                return try await PhotoLibraryJPEGExporter().export(localIdentifier: identifier)
             },
             albumOpened: { key, group in
                 Task {
@@ -472,7 +492,8 @@ struct AppRootView: View {
             exportJSON: {
                 await viewModel.exportJSON()
             },
-            personalArchiveStore: personalArchiveStore
+            personalArchiveStore: personalArchiveStore,
+            startsInPhotos: startsInPhotosAfterOnboarding
         )
     }
 
@@ -1200,6 +1221,7 @@ struct AppRootView: View {
     }
 
     private func completeOnboardingWithoutWidgetPhoto() {
+        startsInPhotosAfterOnboarding = hasPhotoAccess
         // Also used when the person chooses to see a photo first and defers
         // placement. Completion does not mark a Widget as installed.
         var state = onboardingState

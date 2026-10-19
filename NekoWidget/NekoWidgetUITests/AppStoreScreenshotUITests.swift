@@ -10,6 +10,46 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewPhotoEntryAndAlbums() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "review-first-photo"
+        app.launch()
+        let continueButton = app.buttons["initial-scan-continue"]
+        XCTAssertTrue(continueButton.waitForExistence(timeout: 20))
+        continueButton.tap()
+        let close = app.buttons["first-run-photo-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        close.tap()
+        let all = app.buttons["photos-section-all"]
+        XCTAssertTrue(all.waitForExistence(timeout: 10))
+        XCTAssertTrue(all.isSelected)
+        app.buttons["photos-section-notes"].tap()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"))
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        XCTAssertTrue(all.isSelected)
+        app.terminate()
+
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "solo-memories-monthly"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["アルバム"].waitForExistence(timeout: 20))
+        captureScreenshot(named: "PR2-albums")
+        let month = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "2025年8月")).firstMatch
+        XCTAssertTrue(month.waitForExistence(timeout: 10), app.debugDescription)
+        app.terminate()
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "review-photo"
+        app.launch()
+        let menu = app.buttons["photo-browser-related"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 20))
+        menu.tap()
+        XCTAssertTrue(app.buttons["写真を書き出す"].waitForExistence(timeout: 5))
+        captureScreenshot(named: "PR2-photo-menu")
+        app.buttons["photo-browser-showcase-add"].tap()
+        XCTAssertTrue(app.staticTexts["見せる写真に追加しました"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
     func testCaptureJapaneseLocalOnlyProductScreens() {
         captureOnDevicePrivacyScreen()
         captureFixtureProductScreens()

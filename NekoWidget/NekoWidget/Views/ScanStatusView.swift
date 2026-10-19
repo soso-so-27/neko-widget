@@ -87,20 +87,16 @@ struct InitialScanView: View {
         .safeAreaInset(edge: .bottom) {
             if scan.hasPreliminaryResult {
                 VStack(spacing: 8) {
-                    Button(action: continueToApp) {
-                        Text(continueButtonTitle)
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 5)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("initial-scan-continue")
                     if let widgetGuideAction, scan.displayedCatCount > 0 {
-                        Button("ウィジェットの置き方", action: widgetGuideAction)
-                            .font(.subheadline.weight(.semibold))
-                            .frame(minHeight: 44)
+                        Button("ウィジェットを置く", action: widgetGuideAction)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
                             .accessibilityIdentifier("initial-scan-widget-guide")
+                        continueAction.buttonStyle(.plain)
+                    } else {
+                        continueAction.buttonStyle(.borderedProminent)
                     }
                 }
                 .padding(.horizontal, 28)
@@ -109,6 +105,15 @@ struct InitialScanView: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: scan.hasPreliminaryResult)
+    }
+
+    private var continueAction: some View {
+        Button(action: continueToApp) {
+            Text(continueButtonTitle).font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .controlSize(.large)
+        .accessibilityIdentifier("initial-scan-continue")
     }
 
     private var result: some View {
@@ -171,6 +176,18 @@ struct InitialScanView: View {
                     Text(date.formatted(.dateTime.year().month().day()))
                         .font(.title3.weight(.semibold))
                 }
+            }
+
+            if widgetGuideAction != nil, scan.displayedCatCount > 0 {
+                Label {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("ホーム画面に猫写真を").font(.headline)
+                        Text("ウィジェットを置くと、見つけた写真が時間とともに入れ替わります。")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                } icon: { Image(systemName: "rectangle.on.rectangle") }
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
             }
 
             if OnboardingPartialScanRecovery.showsProgress(hasFinalResult: scan.hasFinalResult,

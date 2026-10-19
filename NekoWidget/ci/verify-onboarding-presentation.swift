@@ -111,15 +111,13 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.scanBodyLines == [
-                "新しい写真から先に見ています。",
-                "全部の集計は、",
-                "次にひらいたときに続きます。"
+                "アプリを開いている間、新しい写真から順に調べます。"
             ],
             "scan manuscript copy changed"
         )
         try require(
             OnboardingPresentationCopy.scanContinueAction
-                == "先に進む（スキャンは続きます）",
+                == "写真を見る",
             "scan page stopped offering a non-blocking continuation"
         )
         try require(

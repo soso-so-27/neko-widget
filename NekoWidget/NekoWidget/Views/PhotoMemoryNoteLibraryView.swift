@@ -1140,7 +1140,6 @@ struct PhotoMemoryNoteLibraryFixture: View {
                     _ = try await PhotoMemoCoordinator(noteStore: Self.store, archiveStore: Self.archiveStore)
                         .enableUpdates(for: existing, jpegData: jpeg, expectedAccount: account)
                 }
-                await selection.resolveInitialSelection(noteStore: Self.store, archiveStore: Self.archiveStore)
                 ready = true
             } catch { failure = true }
         }
