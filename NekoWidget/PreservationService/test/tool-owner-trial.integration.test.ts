@@ -42,7 +42,7 @@ async function fixture(options:{bytes?:number;attempts?:number;records?:number;d
   const settings={...common,toolTrial:trial,pilotStorageAccess:trialPilotAccess(trial,pilot),
     mutationAdmission:pilot,intakeControl:new IntakeControl(db,()=>now),requireIntakeControl:true,
     globalActiveBytesLimit:3221225472,requireGlobalAdmissionLimit:true,
-    ownerRecovery:{copyCurrent:copy} as unknown as OwnerRecoveryCopy,requireOwnerRecovery:true};
+    ownerRecovery:{copyCurrent:copy,supportsMetadataBatch:()=>false} as unknown as OwnerRecoveryCopy,requireOwnerRecovery:true};
   seal.mockClear();open.mockClear();photo.mockClear();copy.mockClear();
   return {trial,auth,authOptions,identity,session,oldID,settings,archive:new ArchiveStore(settings),seal,photo,copy,
     now:()=>now,setNow:(value:number)=>{now=value;}};
@@ -156,6 +156,7 @@ it('binds the native wire snapshot tag once, completes its index last and retain
   expect(p.id).not.toBe(p.part.snapshotId);
   const usage=await f.archive.usage(f.session.token);
   expect(usage.toolSnapshots.maximumIndexVersion).toBe(3);
+  expect(usage.toolSnapshots.metadataBatchVersion).toBe(0);
   expect(usage.storage.availableBytes).toBe(20*1024*1024-20*TRIAL_DOCUMENT_ALLOWANCE-TRIAL_INDEX_ALLOWANCE);
   expect(usage.storage.availableBytes).toBe(usage.storage.limitBytes-usage.storage.usedBytes-usage.storage.reservedBytes);
   expect(usage.records.maximumRecords).toBe(21);
