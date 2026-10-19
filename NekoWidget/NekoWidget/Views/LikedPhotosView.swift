@@ -976,8 +976,7 @@ struct LikedPhotosView: View {
         isCatDetail: Bool = false, navigationTitleOverride: String? = nil,
         recommendationStore: AlbumHighlightRecommendationStore = .shared,
         featuredSnapshotDefaults: UserDefaults = .standard,
-        memoryNoteStore: PhotoMemoryNoteStore = .shared,
-        navigationTitle: String = "写真"
+        memoryNoteStore: PhotoMemoryNoteStore = .shared
     ) {
         self.photos = photos
         self.hasPhotoAccess = hasPhotoAccess
@@ -2497,7 +2496,8 @@ struct PhotoBrowserView: View {
         deliveryActions: PhotoWindowDeliveryActions? = nil,
         dayCollectionDate: Date? = nil,
         rediscoveryStore: PersonalRediscoveryStore? = nil,
-        memoryNoteStore: PhotoMemoryNoteStore = .shared
+        memoryNoteStore: PhotoMemoryNoteStore = .shared,
+        navigationTitle: String = "写真"
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
