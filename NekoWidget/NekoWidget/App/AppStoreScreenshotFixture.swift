@@ -604,8 +604,10 @@ private struct MainlineAcceptanceFixtureRootView: View {
                         photos: AppStoreScreenshotFixture.photos,
                         libraryPhotos: AppStoreScreenshotFixture.photos,
                         initialPhoto: AppStoreScreenshotFixture.photos[0],
+                        widgetShownAt: nil, showsWidgetTiming: false,
+                        setMemorySaved: { _, _ in },
                         exportMemoryPhoto: { _ in throw CocoaError(.fileWriteUnknown) },
-                        setMemorySaved: { _, _ in }, excludedCatCandidateIdentifiers: [],
+                        excludedCatCandidateIdentifiers: [],
                         excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
                         profiles: [], assignmentsByPhotoIdentifier: [:],
                         replaceProfileAssignments: { _ in true }
