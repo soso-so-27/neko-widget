@@ -3019,6 +3019,7 @@ class PreflightTests(unittest.TestCase):
             {"scope": "preservation-service-v1", "candidate_minutes": 0.65, "run_id": 4, "outcome": "success"},
             {"scope": "preservation-service-v2", "candidate_minutes": 0.75, "run_id": 5, "outcome": "success"}]}
         self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
+        self.assertIn("NekoWidget/PreservationService/test/owner-record-deltas.test.ts", planner.PRESERVATION_PATHS)
         cost = preflight.observe_cost(planner.PRESERVATION_SCOPE, history, False)
         self.assertEqual(cost["status"], "unmeasured")
         self.assertEqual(cost["samples"], [])
