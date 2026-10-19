@@ -638,6 +638,16 @@ private struct MainlineAcceptanceFixtureRootView: View {
                         try await Task.sleep(for: .milliseconds(200))
                     })
                 }
+            } else if scenario == "received-favorites" {
+                NavigationStack {
+                    SavedMemoriesGalleryView(photos: AppStoreScreenshotFixture.photos,
+                        startsInExportMode: false, isEmbedded: true,
+                        receivedPhotoIdentifiers: Set(AppStoreScreenshotFixture.photos.prefix(2).map(\.localIdentifier)),
+                        ownCatPhotoIdentifiers: Set(AppStoreScreenshotFixture.photos.prefix(1).map(\.localIdentifier)),
+                        receivedPhotoSourceLabels: Dictionary(uniqueKeysWithValues:
+                            AppStoreScreenshotFixture.photos.prefix(2).map { ($0.localIdentifier, "お母さんから") }),
+                        exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
+                }
             } else if scenario == "family-settings" {
                 NavigationStack { FamilyWindowView(initialPresentation: .settings) }
             } else if scenario == "solo-memories-rediscovery" {

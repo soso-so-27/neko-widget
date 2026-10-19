@@ -308,6 +308,12 @@ final class AppViewModel: ObservableObject {
     private var managedOutputMutationSequence = 0
     private var successfulImageLoadCount = 0
     private var sharedLikeRecords: [String: SharedLikeRecord] = [:]
+
+    /// Existing import provenance survives removal from Favorites and rescans.
+    var receivedPhotoIdentifiers: Set<String> {
+        Set(sharedLikeRecords.compactMap { $0.value.isReceivedMemoryImport == true ? $0.key : nil })
+    }
+
     private var isManualRescanRequestPending = false
     private var sharingSyncObserver: NSObjectProtocol?
     private var momentPresentationRefreshObserver: NSObjectProtocol?

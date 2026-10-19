@@ -10,6 +10,37 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewOctoberLayoutBatch() {
+        executionTimeAllowance = 360
+        // One simulator build for the four stacked feature PRs. Each check
+        // retains its own two named screenshots and launches its own fixture.
+        testReviewStartupTab()
+        testReviewPersonalPhotoLayout()
+        testReviewInvitationOnboarding()
+        testReviewReceivedFavorites()
+    }
+
+    @MainActor
+    func testReviewReceivedFavorites() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "received-favorites"
+        app.launch()
+        XCTAssertTrue(app.buttons["favorites-origin-received"].waitForExistence(timeout: 15))
+        captureScreenshot(named: "favorites-all-origins")
+        app.buttons["favorites-origin-received"].tap()
+        XCTAssertTrue(app.buttons["favorites-origin-received"].isSelected)
+        XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.waitForExistence(timeout: 5))
+        captureScreenshot(named: "favorites-from-mado")
+        app.buttons["favorites-origin-ownCats"].tap()
+        XCTAssertTrue(app.buttons["favorites-origin-ownCats"].isSelected)
+        // A received photo explicitly assigned to one's cat also belongs to
+        // Own Cats, while retaining its true received provenance label.
+        XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewInvitationOnboarding() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
