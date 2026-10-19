@@ -212,3 +212,47 @@ enum FamilyRecordCrypto {
         return try JSONDecoder().decode(FamilyRecordPayload.self, from: decoded).validated(kind: row.kind)
     }
 }
+
+/// Withdrawn photo IDs that the server last confirmed for one window.
+/// Tombstones are irreversible, so a remembered set can only hide more photos.
+/// It lets already-delivered local photos stay visible while the catalog
+/// cannot be refreshed (for example offline), as the Widget already does.
+/// Only opaque record IDs are stored: never photo bytes, words or the window ID.
+struct FamilyRecordTombstoneCache {
+    static let maximumCount = 1100
+    private let defaults: UserDefaults
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    /// Nil means "never confirmed" (or unreadable): callers keep failing closed.
+    func load(spaceID: String) -> Set<String>? {
+        guard let key = Self.key(spaceID: spaceID),
+              let values = defaults.array(forKey: key) as? [String],
+              values.count <= Self.maximumCount else { return nil }
+        let ids = Set(values.filter { UUID(uuidString: $0) != nil })
+        return ids.count == values.count ? ids : nil
+    }
+
+    /// Call only with a catalog already validated for the expected window.
+    func remember(_ catalog: FamilyRecordCatalog) {
+        guard let key = Self.key(spaceID: catalog.spaceID) else { return }
+        let withdrawn = catalog.records.filter { $0.kind == .photo && $0.state == .withdrawn }.map(\.id)
+        let merged = (load(spaceID: catalog.spaceID) ?? []).union(withdrawn)
+        guard merged.count <= Self.maximumCount else {
+            // Too many to keep exactly: forget, so the next open waits for the server.
+            defaults.removeObject(forKey: key)
+            return
+        }
+        defaults.set(merged.sorted(), forKey: key)
+    }
+
+    func forget(spaceID: String) {
+        guard let key = Self.key(spaceID: spaceID) else { return }
+        defaults.removeObject(forKey: key)
+    }
+
+    private static func key(spaceID: String) -> String? {
+        guard PairingValidation.isOpaqueIdentifier(spaceID) else { return nil }
+        let digest = SHA256.hash(data: Data("NW.FAMILY-RECORD.TOMBSTONES.1|\(spaceID)".utf8))
+        return "familyRecord.tombstones.v1." + digest.prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
+}

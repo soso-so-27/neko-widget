@@ -44,6 +44,14 @@ struct MomentPhotoDeliveryProgressView: View {
         .task(id: ClockInput(photos: photos, isActive: scenePhase == .active)) {
             await updateElapsedTime()
         }
+        // A light confirmation when a photo newly becomes "届けました".
+        .sensoryFeedback(trigger: acceptedIDs) { previous, current in
+            current.subtracting(previous).isEmpty ? nil : .success
+        }
+    }
+
+    private var acceptedIDs: Set<String> {
+        Set(photos.filter { $0.phase == .accepted }.map(\.id))
     }
 
     private struct ClockInput: Equatable {
@@ -154,7 +162,7 @@ private struct MomentPhotoDeliveryProgressRow: View {
     private var statusText: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(photo.title(at: now))
-                .font(.subheadline)
+                .font(photo.phase == .accepted ? .subheadline.weight(.semibold) : .subheadline)
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel(statusAccessibilityLabel)
@@ -171,7 +179,7 @@ private struct MomentPhotoDeliveryProgressRow: View {
     private var statusAccessibilityLabel: String {
         switch photo.phase {
         case .accepted:
-            "送信しました。サーバーの受付を確認しました"
+            "届けました。サーバーで受け付けました"
         default:
             photo.title(at: now)
         }
@@ -186,8 +194,8 @@ private struct MomentPhotoDeliveryProgressRow: View {
             } else {
                 switch photo.phase {
                 case .accepted:
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "paperplane.circle.fill")
+                        .foregroundStyle(.tint)
                 case .attention, .resultUnknown:
                     Image(systemName: "exclamationmark.circle")
                         .foregroundStyle(.orange)

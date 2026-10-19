@@ -218,11 +218,11 @@ struct PhotoWindowDeliveryView: View {
                         .frame(height: 180)
                         .background(.black, in: RoundedRectangle(cornerRadius: 16))
                         .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .accessibilityLabel("追加する写真")
+                        .accessibilityLabel("届ける写真")
                     if isLoading || isPreparing {
-                        ProgressView(isPreparing ? "写真を準備しています…" : "共有先を確認しています…")
+                        ProgressView(isPreparing ? "写真を準備しています…" : "届け先を確認しています…")
                     } else if destinations.isEmpty && errorMessage == nil {
-                        ContentUnavailableView("共有先のまどがありません", systemImage: "rectangle.grid.2x2",
+                        ContentUnavailableView("届け先のまどがありません", systemImage: "rectangle.grid.2x2",
                             description: Text("「まど」で共有相手と接続してください。"))
                             .accessibilityIdentifier("photo-window-no-destinations")
                     } else {
@@ -243,7 +243,7 @@ struct PhotoWindowDeliveryView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("photo-window-destination-\(choice.localWindowID)")
-                                .accessibilityHint("このまどへ追加する写真を確認します")
+                                .accessibilityHint("このまどへ届ける写真を確認します")
                             }
                         }
                     }
@@ -257,7 +257,7 @@ struct PhotoWindowDeliveryView: View {
                 .padding(16)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("共有先を選ぶ")
+            .navigationTitle("届け先を選ぶ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -283,7 +283,7 @@ struct PhotoWindowDeliveryView: View {
         } catch {
             guard !Task.isCancelled else { return }
             destinations = []
-            errorMessage = "共有先を読み込めませんでした。時間をおいて、もう一度お試しください。"
+            errorMessage = "届け先を読み込めませんでした。時間をおいて、もう一度お試しください。"
         }
         isLoading = false
     }

@@ -11,6 +11,51 @@ private func rejects(_ message: String, _ action: () throws -> Void) {
 
 @main
 struct VerifyFamilyRecords {
+    /// Offline display may rely only on tombstones the server already confirmed.
+    static func verifyTombstoneCache() throws {
+        let suite = "verify-family-record-tombstones-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { fatalError("Test defaults are unavailable") }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cache = FamilyRecordTombstoneCache(defaults: defaults)
+        let space = "fixture_tombstone_space", participant = "fixture_tombstone_member"
+        func photo(_ state: FamilyRecordRow.State, createdAt: Double = 1) -> FamilyRecordRow {
+            let id = UUID().uuidString.lowercased()
+            return FamilyRecordRow(id: id, entryID: id, kind: .photo, authorID: participant, revision: 1,
+                state: state, keyEpoch: 1, ciphertext: nil, createdAt: createdAt, updatedAt: createdAt)
+        }
+        func catalog(_ rows: [FamilyRecordRow], spaceID: String = space) throws -> FamilyRecordCatalog {
+            try FamilyRecordCatalog(schemaVersion: 1, spaceID: spaceID, participantID: participant,
+                maximumPhotos: 100, records: rows).validated(spaceID: spaceID, participantID: participant)
+        }
+        require(cache.load(spaceID: space) == nil, "A window never confirmed by the server must stay unresolved")
+
+        try cache.remember(catalog([]))
+        require(cache.load(spaceID: space) == [], "A confirmed catalog without withdrawals resolves as empty")
+
+        let withdrawn = photo(.withdrawn), active = photo(.active)
+        try cache.remember(catalog([withdrawn, active]))
+        require(cache.load(spaceID: space) == [withdrawn.id], "Only withdrawn photo IDs are remembered")
+
+        let later = photo(.withdrawn, createdAt: 2)
+        try cache.remember(catalog([later]))
+        require(cache.load(spaceID: space) == [withdrawn.id, later.id],
+                "Tombstones are irreversible: a later catalog never forgets an earlier withdrawal")
+
+        let otherSpace = "fixture_tombstone_other"
+        require(cache.load(spaceID: otherSpace) == nil, "Windows never share remembered tombstones")
+        let storedKeys = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("familyRecord.tombstones.v1.") }
+        require(storedKeys.count == 1 && !storedKeys[0].contains(space), "The stored key must not reveal the window ID")
+        let stored = defaults.array(forKey: storedKeys[0]) as? [String] ?? []
+        require(Set(stored) == [withdrawn.id, later.id], "Only opaque record IDs are stored")
+
+        defaults.set(["not-a-record-id"], forKey: storedKeys[0])
+        require(cache.load(spaceID: space) == nil, "An unreadable remembered set fails closed")
+
+        require(cache.load(spaceID: "") == nil, "An invalid window ID never resolves")
+        cache.forget(spaceID: space)
+        require(cache.load(spaceID: space) == nil, "Forgetting returns the window to the server-only state")
+    }
+
     static func main() throws {
         let key = Data(repeating: 7, count: 32)
         let space = "fixture_record_space", author = "fixture_record_author"
@@ -138,6 +183,7 @@ struct VerifyFamilyRecords {
                 records: portableRecords, words: [:], participantID: author,
                 image: FamilyRecordPhotoContent(jpeg: Data([0xff, 0xd8]), capturedAt: nil))
         }
+        try verifyTombstoneCache()
         print("Family record text, authenticated context, withdrawal and catalog boundaries passed.")
     }
 }

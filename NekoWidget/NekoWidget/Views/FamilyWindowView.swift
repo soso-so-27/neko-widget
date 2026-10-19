@@ -1045,6 +1045,14 @@ struct FamilyWindowView: View {
             .padding(16)
         }
         .background(Color(uiColor: .systemGroupedBackground))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if canShowSendPhotoAction {
+                sendPhotoAction
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.bar)
+            }
+        }
         .refreshable { await model.synchronize() }
         .sheet(isPresented: $showsSharedPhotoInformation) {
             sharedPhotoInformation
@@ -1076,8 +1084,9 @@ struct FamilyWindowView: View {
         if let spaceID = model.pairingState?.spaceID {
             FamilyWindowPhotoCollection<AnyView>(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
-                addPhotoAction: !model.isReportOnly && !model.isShowingLastKnownState
-                    && pendingNotificationRoute?.target == nil ? AnyView(sendPhotoAction) : nil,
+                // The send button is fixed at the bottom of the window (pairedContent).
+                addPhotoAction: nil,
+                canSendPhoto: canShowSendPhotoAction,
                 hasImageLessHistory: !unavailable.isEmpty,
                 showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
                 let caption: String? = switch captionSource {
@@ -1255,6 +1264,11 @@ struct FamilyWindowView: View {
         }
     }
 
+    private var canShowSendPhotoAction: Bool {
+        !model.isReportOnly && !model.isShowingLastKnownState
+            && pendingNotificationRoute?.target == nil
+    }
+
     private var sendPhotoAction: some View {
         PhotosPicker(
             selection: $selectedPhotoItem,
@@ -1262,16 +1276,22 @@ struct FamilyWindowView: View {
             preferredItemEncoding: .compatible,
             photoLibrary: .shared()
         ) {
-            Group {
+            // The window's primary action: a full-width, labelled button fixed
+            // above the tab bar, never an icon beside a section heading.
+            HStack(spacing: 10) {
                 if isPreparingSelectedPhoto {
                     ProgressView()
-                        .tint(.accentColor)
+                        .tint(.white)
                 } else {
-                    Image(systemName: "photo.badge.plus")
+                    Image(systemName: "paperplane.fill")
                 }
+                Text(isPreparingSelectedPhoto ? "写真を準備しています" : "写真を届ける")
             }
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .disabled(
             model.isWorking
@@ -1279,9 +1299,9 @@ struct FamilyWindowView: View {
                 || isPreparingSelectedPhoto
                 || isDeliveringSelectedPhoto
         )
-        .accessibilityLabel(isPreparingSelectedPhoto ? "写真を準備しています" : "写真を追加")
+        .accessibilityLabel(isPreparingSelectedPhoto ? "写真を準備しています" : "写真を届ける")
         .accessibilityIdentifier("family-window-photo-picker")
-        .accessibilityHint("写真を1枚選び、共有先を確認します")
+        .accessibilityHint("写真を1枚選び、届け先を確認します")
         .onChange(of: selectedPhotoItem) { _, item in
             prepareSelectedPhoto(item)
         }
@@ -2860,6 +2880,19 @@ struct MomentPhotoActionsLayout<Content: View>: View {
 
 /// The shipping received-photo controls. Owners supply presentation state and
 /// callbacks; this view never changes a subscription, PhotoKit, or the outbox.
+/// A ready heart is filled red; after sending (or when unavailable) it steps back.
+private struct MomentHeartButtonStyle: ViewModifier {
+    let isReady: Bool
+
+    func body(content: Content) -> some View {
+        if isReady {
+            content.buttonStyle(.borderedProminent).tint(.red)
+        } else {
+            content.buttonStyle(.bordered).tint(.red)
+        }
+    }
+}
+
 struct MomentReceivedPhotoActions: View {
     enum HeartState {
         case ready, retry, unavailable, sent
@@ -2869,7 +2902,7 @@ struct MomentReceivedPhotoActions: View {
             case .ready: "ハートを送る"
             case .retry: "ハートを再送"
             case .unavailable: "ハートを送れません"
-            case .sent: "ハート送信済み"
+            case .sent: "ハートを送りました"
             }
         }
 
@@ -2906,7 +2939,8 @@ struct MomentReceivedPhotoActions: View {
 
     var body: some View {
         MomentPhotoActionsLayout {
-            memoryControl
+            // The heart is the reaction this photo is for, so it comes first,
+            // always shows its words and uses the strongest style while ready.
             if let heartState {
                 Button(action: sendHeart) {
                     HStack(spacing: 6) {
@@ -2916,20 +2950,19 @@ struct MomentReceivedPhotoActions: View {
                         } else {
                             Image(systemName: heartState.icon).font(.body)
                         }
-                        if heartState == .retry || heartState == .unavailable {
-                            Text(heartState.title)
-                        }
+                        Text(heartState.title)
                     }
-                    .font(.caption.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
-                .tint(.accentColor)
+                .modifier(MomentHeartButtonStyle(isReady: heartState == .ready))
                 .disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)
                 .accessibilityLabel(heartState.accessibilityLabel)
                 .accessibilityIdentifier("family-window-send-paw")
+                .sensoryFeedback(trigger: heartState == .sent) { _, isSent in isSent ? .success : nil }
             }
+            memoryControl
         }
     }
 
