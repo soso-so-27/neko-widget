@@ -4540,12 +4540,34 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin() throws {
+        let fullAccessLabels = ["Allow Full Access", "Allow Access to All Photos",
+                                "フルアクセスを許可", "すべての写真へのアクセスを許可"]
+        let acceptPhotosAccess: (XCUIElement) -> Bool = { alert in
+            guard alert.staticTexts.allElementsBoundByIndex.contains(where: {
+                $0.label.localizedCaseInsensitiveContains("photos") || $0.label.contains("写真")
+            }), let button = fullAccessLabels.map({ alert.buttons[$0] }).first(where: { $0.exists }) else {
+                return false
+            }
+            button.tap()
+            return true
+        }
+        // This fixture expects photo access. Do not let XCTest's default
+        // interruption handler silently deny it during the Menu tap.
+        let photosMonitor = addUIInterruptionMonitor(withDescription: "Related photo fixture Photos authorization",
+                                                     handler: acceptPhotosAccess)
+        defer { removeUIInterruptionMonitor(photosMonitor) }
         func hittableElements(_ query: XCUIElementQuery, count: Int = 1, timeout: TimeInterval = 5,
                               file: StaticString = #filePath, line: UInt = #line) throws -> [XCUIElement] {
             let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }.count == count
             }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: timeout), .completed,
+            let result = XCTWaiter.wait(for: [visible], timeout: timeout)
+            if result != .completed {
+                capture("photo-related-foreground-failure")
+                print("RELATED_MENU_QUERY_FAILURE \(query.debugDescription)")
+                print("RELATED_MENU_APP_FAILURE \(XCUIApplication().debugDescription)")
+            }
+            XCTAssertEqual(result, .completed,
                            "Expected exactly \(count) foreground elements", file: file, line: line)
             let matches = query.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
             return try XCTUnwrap(matches.count == count ? matches : nil,
@@ -4567,12 +4589,21 @@ final class SoloMemoriesUITests: XCTestCase {
                 "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
                 + (largeText ? ["--ux-large-text"] : [])
             app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "rediscovery"
+            app.resetAuthorizationStatus(for: .photos)
             app.launch()
+            defer { app.terminate() }
             let related = app.buttons.matching(identifier: "photo-browser-rediscover")
             let sameDay = app.buttons.matching(identifier: "photo-browser-same-day")
             let secondDayPhoto = app.buttons.matching(identifier: "day-photos-photo-app-store-screenshot-fixture-2")
             let secondPage = app.staticTexts.matching(NSPredicate(format: "label == %@", "2 / 2"))
             let back = app.buttons.matching(identifier: "BackButton")
+            let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            for alert in springboard.alerts.allElementsBoundByIndex where alert.exists {
+                if acceptPhotosAccess(alert) {
+                    XCTAssertTrue(alert.waitForNonExistence(timeout: 5), "Photos alert must finish before the route check")
+                    print("RELATED_MENU_PHOTOS_EXPLICITLY_ACCEPTED")
+                }
+            }
             _ = try foreground(related, timeout: 15)
             XCTAssertEqual(try foreground(related).label, "関連する写真")
             capture(largeText ? "photo-related-largest-text" : "photo-related-widget-detail")
@@ -4580,6 +4611,20 @@ final class SoloMemoriesUITests: XCTestCase {
             let theme = app.buttons.matching(identifier: "photo-related-theme-close_up")
             let cat = app.buttons.matching(identifier: "photo-related-cat-fixture-cat-0")
             let year = app.buttons.matching(identifier: "photo-related-year-calendar_year_2025")
+            capture(largeText ? "photo-related-menu-probe-largest-text" : "photo-related-menu-probe")
+            print("RELATED_MENU_APP_AFTER_TAP \(app.debugDescription)")
+            for (role, query) in [
+                ("buttons-id", app.buttons.matching(identifier: "photo-related-theme-close_up")),
+                ("menuItems-id", app.menuItems.matching(identifier: "photo-related-theme-close_up")),
+                ("any-id", app.descendants(matching: .any).matching(identifier: "photo-related-theme-close_up")),
+                ("any-label", app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "同じテーマ、大きく写った猫")))
+            ] {
+                let elements = query.allElementsBoundByIndex
+                print("RELATED_MENU_TRACE role=\(role) count=\(elements.count)")
+                for element in elements {
+                    print("RELATED_MENU_ELEMENT type=\(element.elementType.rawValue) id=\(element.identifier) label=\(element.label) frame=\(element.frame) exists=\(element.exists) enabled=\(element.isEnabled) hittable=\(element.isHittable)")
+                }
+            }
             _ = try foreground(theme)
             _ = try foreground(cat)
             XCTAssertEqual(try foreground(cat).label, "この猫、ミケ")

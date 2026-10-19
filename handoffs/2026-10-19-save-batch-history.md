@@ -33,3 +33,11 @@
 詳細な入力hash・private証拠・元失敗log: `C:/dev/neko-evidence/save-batch-history-20261019`。主な記録は `candidate-plan.md`、`batch-boundary-review-final.md`、`batch-recovery-review.md`、`retention-fairness-fix.md`、`retention-final-independent-review.md`、`batch-cost-measurement.md`、`release-route-plan.md`。
 
 追加の削除競合検査は `cursor-delete-guard/report.md`。旧schemaで準備したcloud package/protected manifestは新guardを含まないため未武装のまま保持し、最終候補で新しく固定する。旧scheduled実行がすべて終了したという推測は、DB側の防止策の成功証拠とは区別する。
+
+## 最初のnative検査の切り分け
+
+6057953 / iOS39210489764ではBuild・Photos smoke・runtime・gallery-variantsが成功し、solo-2は28件中27件成功・1件失敗。今回のまとめ保存を含む `testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity` は160.350秒で成功した。既存の `testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin` だけがthemeのforeground判定で失敗した。兄弟jobは取り消さず、全体成功とは扱わない。
+
+失敗前にPhotosダイアログをXCTest default handlerが拒否したことをraw logで確認。ただし取得した録画の20秒時点では、Menuとtheme/cat/yearの項目が見えているため、「Menuが開かなかった」とは断定しない。該当methodと関連route/fixture等7ファイルは0968/6057/b88で同一。製品を変えず、当該fixtureのPhotos前提を明示処理し、元の一意性/hittable assertionを保ったままAX role/ID/label/count/状態と失敗直前画像を取得する限定候補を用意した。この時点ではその限定候補の実行・原因解決は未確認。
+
+初回の約1〜2時間見込みを超過。元候補・backend fixture失敗・native失敗・診断待機を累積のまま記録し、限定診断約20〜30分＋その後の既存必須検査/配布約1〜2時間を追加計画とした。成功済み15 control検査等は依存入力不変として保持し、同じ確認を再実行しない。新たなCI scope/selector免除を作らない。
