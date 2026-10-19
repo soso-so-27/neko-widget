@@ -1902,11 +1902,11 @@ struct SavedMemoriesGalleryView: View {
 
     private var galleryAccessibilityValue: String {
         guard hasPhotoAccess else { return "お気に入り、写真許可を確認してください" }
-        if savedStateReadFailed { return "お気に入り、表示できる写真\(photos.count.formatted())枚、保存状態は確認できません" }
+        if savedStateReadFailed { return "お気に入り、表示できる写真\(visiblePhotos.count.formatted())枚、保存状態は確認できません" }
         if unavailableSavedPhotoCount > 0 {
-            return "お気に入り、表示できる写真\(photos.count.formatted())枚、表示できない写真\(unavailableSavedPhotoCount.formatted())枚"
+            return "お気に入り、表示できる写真\(visiblePhotos.count.formatted())枚、表示できない写真\(unavailableSavedPhotoCount.formatted())枚"
         }
-        return "お気に入り、\(photos.count.formatted())枚"
+        return "お気に入り、\(visiblePhotos.count.formatted())枚"
     }
 
     private var creationOptions: some View {

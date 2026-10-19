@@ -2382,6 +2382,9 @@ struct MainTabView: View {
         return (profileAlbumPhotos[identifier] ?? []).filter {
             assignedIDs.contains($0.localIdentifier)
                 && !excludedIdentifiers.contains($0.localIdentifier)
+                && ReceivedPhotoAlbumPolicy.includes(
+                    isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier),
+                    hasExplicitCat: !(currentPhotoLibraryAssignments[$0.localIdentifier] ?? []).isEmpty)
         }
     }
 
