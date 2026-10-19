@@ -41,3 +41,5 @@
 失敗前にPhotosダイアログをXCTest default handlerが拒否したことをraw logで確認。ただし取得した録画の20秒時点では、Menuとtheme/cat/yearの項目が見えているため、「Menuが開かなかった」とは断定しない。該当methodと関連route/fixture等7ファイルは0968/6057/b88で同一。製品を変えず、当該fixtureのPhotos前提を明示処理し、元の一意性/hittable assertionを保ったままAX role/ID/label/count/状態と失敗直前画像を取得する限定候補を用意した。この時点ではその限定候補の実行・原因解決は未確認。
 
 初回の約1〜2時間見込みを超過。元候補・backend fixture失敗・native失敗・診断待機を累積のまま記録し、限定診断約20〜30分＋その後の既存必須検査/配布約1〜2時間を追加計画とした。成功済み15 control検査等は依存入力不変として保持し、同じ確認を再実行しない。新たなCI scope/selector免除を作らない。
+
+その後solo-1も成功、app-ui-otherは53件中skip1/失敗1。失敗した既存family wrapperは、共有ZIPの実ShareSheet containerが出た後、OSのclose button待ちで止まり、後半の共有撤回/権限解除には未到達。元AXはremote subtreeが空で代替のclose/handleを示さず、アプリ録画だけではsystem共有画面の実描画を確定できない。UIHostingControllerのreparenting警告もあるが原因とは断定しない。製品を変えず、同じ5秒waitの結果を固定してからdevice全体の画像と失敗時AXを保存する限定probeを追加した。実cancel・sheet消失・後続assertionは維持。二つの別classの既存失敗操作を確認してから、最終候補の必須CIへ進む。

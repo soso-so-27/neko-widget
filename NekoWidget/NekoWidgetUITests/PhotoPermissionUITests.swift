@@ -5894,7 +5894,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         // Complete real cancellation before restarting this fixture, so its
         // prepared ZIP does not survive into the next export-cleanup test.
         let shareClose = app.buttons["header.closeButton"].firstMatch
-        XCTAssertTrue(shareClose.waitForExistence(timeout: 5))
+        let shareCloseFound = shareClose.waitForExistence(timeout: 5)
+        let shareScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shareScreen.name = "family-export-system-share-screen"
+        shareScreen.lifetime = .keepAlways
+        add(shareScreen)
+        print("FAMILY_EXPORT_SHARE_CLOSE_FOUND=\(shareCloseFound)")
+        if !shareCloseFound {
+            print("FAMILY_EXPORT_SHARE_APP_FAILURE \(app.debugDescription)")
+        }
+        XCTAssertTrue(shareCloseFound)
         shareClose.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: share
