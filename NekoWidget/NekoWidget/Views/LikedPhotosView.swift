@@ -2801,6 +2801,8 @@ struct PhotoBrowserView: View {
     private var browserNavigation: some View {
         browserContent
         .background(Color.black)
+        .environment(\.colorScheme, .dark)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationTitle(navigationTitleText)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
