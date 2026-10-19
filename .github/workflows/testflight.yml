@@ -246,7 +246,7 @@ jobs:
               info = plistlib.load(stream)
           rule = info["NSExtension"]["NSExtensionAttributes"]["NSExtensionActivationRule"]
           if sys.argv[2] == "disabled":
-              if rule != "FALSEPREDICATE":
+              if rule != "extensionItems.@count == 0":
                   raise SystemExit("Disabled Share Extension plist is not fail closed.")
           elif not isinstance(rule, dict) or rule.get(
               "NSExtensionActivationSupportsImageWithMaxCount"

@@ -217,7 +217,7 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         self.assertEqual(
             enabled_rule["NSExtensionActivationSupportsImageWithMaxCount"], 1
         )
-        self.assertEqual(disabled_rule, "FALSEPREDICATE")
+        self.assertEqual(disabled_rule, "extensionItems.@count == 0")
         enabled_without_extension = dict(enabled_share)
         disabled_without_extension = dict(disabled_share)
         enabled_without_extension.pop("NSExtension")
