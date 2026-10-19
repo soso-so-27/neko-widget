@@ -19,6 +19,8 @@ import urllib.request
 from app_icon_ci import ICON_SCOPE, ICON_PATHS, ICON_DOC_PATHS, icon_paths_only, validate_png
 
 from ios_ci_scope import REPORT_REPLY_ENTRY_SCOPE, REPORT_RUNTIME_CONTINUATION_DIGESTS, REPORT_RUNTIME_ORDER_DIGESTS
+from ios_ci_scope import (RESTORE_PAGES_SCOPE, RESTORE_PAGES_PATHS, RESTORE_PAGES_DIGESTS,
+                          RESTORE_PAGES_TESTS, reviewed_restore_pages_changes)
 from ios_ci_scope import (INTERNAL_REPORT_SCOPE, INTERNAL_REPORT_BLOBS, INTERNAL_REPORT_PATHS, INTERNAL_REPORT_CONTROLS, INTERNAL_REPORT_IMMUTABLE_TREE_SHA256, INTERNAL_REPORT_METADATA_REPAIR_BLOBS, INTERNAL_REPORT_METADATA_REPAIR_PATHS, OWNER_CLOUD_SCOPE, OWNER_CLOUD_BLOBS, OWNER_CLOUD_PATHS, OWNER_CLOUD_CONTROLS, OWNER_CLOUD_IMMUTABLE_TREE_SHA256, OWNER_CLOUD_CORRECTION_BLOBS, OWNER_CLOUD_CORRECTED_PATHS, OWNER_CLOUD_CORRECTION_TREE_SHA256, MODERATION_RESOLUTION_SCOPE, MODERATION_RESOLUTION_PATHS, MODERATION_RESOLUTION_BLOBS,
                           MODERATION_RESOLUTION_BUILD_TEST, MODERATION_RESOLUTION_EXPORT_VIEW, MODERATION_RESOLUTION_PRIVATE_COVER_TEST,
                           MODERATION_RESOLUTION_MODIFIED_PATHS, MODERATION_RESOLUTION_IMMUTABLE_BLOBS,
@@ -6734,8 +6736,84 @@ def partitioned_capacity_control_inputs(paths, base, head):
         return False
 
 
+RESTORE_PAGES_BASE = "c0a1363902c1cddda1ec349c29ee9aa9927f3457"
+RESTORE_PAGES_BRANCH = "codex/long-term-cost-recovery-20261019"
+RESTORE_PAGES_CONTROLS = frozenset("NekoWidget/ci/" + name for name in (
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-ci-lanes.py", "test-plan-ios-ci.py"))
+
+
+def restore_pages_control_inputs(paths, base, head):
+    """Only this control introduction, against the unchanged complete base tree."""
+    try:
+        return (source_paths(paths) == RESTORE_PAGES_CONTROLS
+                and git("rev-parse", base + "^{tree}") == git("rev-parse", RESTORE_PAGES_BASE + "^{tree}")
+                and git("merge-base", "--is-ancestor", "refs/remotes/origin/main", head) == ""
+                and development_tools_only(paths, base, head, RESTORE_PAGES_CONTROLS))
+    except (OSError, subprocess.CalledProcessError, TypeError, ValueError):
+        return False
+
+
+def restore_pages_inputs(head):
+    """Full tracked closure; the six modified regular files and approved controls only."""
+    try:
+        if not isinstance(head, str) or not SHA.fullmatch(head): return False
+        git("merge-base", "--is-ancestor", RESTORE_PAGES_BASE, head)
+        approval = git("merge-base", "refs/remotes/origin/main", head)
+        declaration = 'RESTORE_PAGES_SCOPE = "' + RESTORE_PAGES_SCOPE + '"'
+        if git("show", approval + ":NekoWidget/ci/ios_ci_scope.py").splitlines().count(declaration) != 1:
+            return False
+        for path in RESTORE_PAGES_CONTROLS:
+            approved = git("ls-tree", approval, "--", path)
+            if (not re.fullmatch(r"100644 blob [0-9a-f]{40}\t" + re.escape(path), approved)
+                    or git("ls-tree", head, "--", path) != approved): return False
+        raw = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", RESTORE_PAGES_BASE, head).split("\0")
+        if raw[-1:] == [""]: raw.pop()
+        if len(raw) % 2: return False
+        seen = set()
+        changes = {}
+        for index in range(0, len(raw), 2):
+            fields, path = raw[index].split(), raw[index + 1]
+            if (path in seen or len(fields) != 5 or not all(SHA.fullmatch(v) for v in fields[2:4])):
+                return False
+            seen.add(path)
+            if path in RESTORE_PAGES_PATHS | RESTORE_PAGES_CONTROLS:
+                if fields[:2] != [":100644", "100644"] or fields[4] != "M": return False
+                if path in RESTORE_PAGES_PATHS:
+                    changes[path] = tuple(git("show", f"{ref}:{path}") for ref in (RESTORE_PAGES_BASE, head))
+            elif not is_handoff(path) or (fields[:2], fields[4]) not in (
+                    ([":000000", "100644"], "A"), ([":100644", "100644"], "M")):
+                return False
+        return (set(changes) == RESTORE_PAGES_PATHS
+                and all(list(map(source_digest, changes[path])) == RESTORE_PAGES_DIGESTS[path]
+                        for path in RESTORE_PAGES_PATHS)
+                and memory_tests_available(git("show", f"{head}:{MEMORY_TEST_PATH}"), RESTORE_PAGES_TESTS))
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def restore_pages_only(paths, base, head):
+    # comparison_base covers the entire branch; controls cannot accompany product.
+    return (accepts_paths(RESTORE_PAGES_SCOPE, paths)
+            and development_tools_only(paths, base, head, RESTORE_PAGES_PATHS)
+            and restore_pages_inputs(head))
+
+
+def restore_pages_requirements(head):
+    return [{"workflow": PRESERVATION_WORKFLOW, "job": PRESERVATION_JOB,
+             "head_sha": head, "event": "push", "success_required": True,
+             "required_steps": list(TOOL_STORAGE_BACKEND_STEPS)}]
+
+
 def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
     sources = source_paths(paths)
+    if sources in (RESTORE_PAGES_CONTROLS, RESTORE_PAGES_PATHS):
+        try:
+            base = comparison_base(event, env)
+            if sources == RESTORE_PAGES_CONTROLS:
+                return ORCHESTRATION_SCOPE if base and restore_pages_control_inputs(paths, base, env["GITHUB_SHA"]) else FULL_SCOPE
+            return RESTORE_PAGES_SCOPE if base and restore_pages_only(paths, base, env["GITHUB_SHA"]) else FULL_SCOPE
+        except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+            return FULL_SCOPE
     if sources == PARTITIONED_CAPACITY_CONTROLS:
         base = comparison_base(event, env)
         if base and (partitioned_native_retry_control_inputs(paths, base, env["GITHUB_SHA"])
@@ -9614,6 +9692,113 @@ def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str,
     return True
 
 
+def restore_pages_build_steps():
+    workflow = git("show", f"{RESTORE_PAGES_BASE}:.github/workflows/ios-build.yml")
+    block = workflow.split("  build-without-signing:\n", 1)[1].split("  simulator-smoke-test:\n", 1)[0]
+    optional = {"Verify packaged icons and capture first launch", "Upload icon display evidence", "Upload build result bundle"}
+    names = tuple(name for name in re.findall(r"^      - name: (.+)$", block, re.M) if name not in optional)
+    if not names or len(names) != len(set(names)):
+        raise ValueError("Restore Build step inventory is invalid")
+    return names
+
+
+def restore_pages_graph(run, repository, api, now, jobs):
+    """Same native/backend proof for main and the unchanged signed release CLI.
+
+    The CLI's executed_jobs adapter is JSON-only. Raw UI started/passed evidence
+    is checked separately by the strict external qualifier before main/release;
+    this graph requires the owning five-test lane and its executable steps.
+    """
+    sha = run.get("head_sha")
+    if (repository != "soso-so-27/neko-widget" or not isinstance(sha, str) or not SHA.fullmatch(sha)
+            or type(run.get("id")) is not int or run["id"] <= 0
+            or run.get("workflow_id") != 335014238 or run.get("path") != ".github/workflows/ios-build.yml"
+            or run.get("event") != "push" or run.get("head_branch") != RESTORE_PAGES_BRANCH
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+            or (run.get("status"), run.get("conclusion")) != ("completed", "success")
+            or any(run.get(key, {}).get("full_name") != repository for key in ("repository", "head_repository"))
+            or not restore_pages_inputs(sha)):
+        raise ValueError("Selected restore native identity or complete inputs differ")
+    updated = dt.datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= now - updated <= dt.timedelta(hours=24):
+        raise ValueError("Selected restore native run is outside 24 hours")
+    required = required_jobs_from_scope(RESTORE_PAGES_SCOPE)
+    expected = set(required) | {PLAN_JOB}
+
+    def validate_jobs(rows, owner_run, required_names):
+        if (not isinstance(rows, list) or any(not isinstance(job, dict)
+                or type(job.get("id")) is not int or job["id"] <= 0
+                or job.get("run_id") != owner_run["id"] or job.get("head_sha") != sha
+                or type(job.get("run_attempt")) is not int or job["run_attempt"] != 1 for job in rows)
+                or len({job["id"] for job in rows}) != len(rows)
+                or not covers_jobs(rows, tuple(required_names), sha, now=now)):
+            raise ValueError("Selected restore owning jobs are incomplete or stale")
+
+    validate_jobs(jobs, run, (*required, PLAN_JOB))
+    if any(sum(job.get("name") == name for job in jobs) != 1 for name in expected):
+        raise ValueError("Only the exact selected native graph may qualify")
+    extras = [job for job in jobs if job.get("name") not in expected]
+    if (len(extras) != 2 or any(job.get("name") != UNEXPANDED_SHARING_JOB
+            or (job.get("status"), job.get("conclusion")) != ("completed", "skipped")
+            or job.get("steps") != [] for job in extras)):
+        raise ValueError("Selected restore native graph has an unknown execution")
+    steps = {BUILD: restore_pages_build_steps(), BOOTSTRAP_SMOKE: (
+        "Check out repository", "Run Simulator smoke test", "Upload Simulator smoke-test artifacts"),
+        lane_job(RESTORE_PAGES_SCOPE, "runtime"): OWNER_CLOUD_RUNTIME_STEPS,
+        lane_job(RESTORE_PAGES_SCOPE, "app-ui"): OWNER_CLOUD_RUNTIME_STEPS,
+        PLAN_JOB: ("Check out repository", "Test CI selection and evidence boundaries", "Select checks")}
+    for name, names in steps.items():
+        if not moderation_steps_succeeded(next(job for job in jobs if job["name"] == name), names):
+            raise ValueError("Selected restore native required step did not execute")
+
+    endpoint = (f"/repos/{repository}/actions/workflows/preservation-service.yml/runs?"
+                + urllib.parse.urlencode({"head_sha": sha, "event": "push", "per_page": 100}))
+    index = api(endpoint)
+    if (type(index.get("total_count")) is not int or index["total_count"] != 1
+            or not isinstance(index.get("workflow_runs"), list) or len(index["workflow_runs"]) != 1):
+        raise ValueError("One same-SHA owning backend push is required; no failed-history fallback")
+    backend = index["workflow_runs"][0]
+    if (not isinstance(backend, dict) or type(backend.get("id")) is not int or backend["id"] <= 0
+            or backend.get("head_sha") != sha or backend.get("head_branch") != run["head_branch"]
+            or backend.get("event") != "push" or backend.get("workflow_id") != 363932714
+            or backend.get("path") != PRESERVATION_WORKFLOW
+            or type(backend.get("run_attempt")) is not int or backend["run_attempt"] != 1
+            or (backend.get("status"), backend.get("conclusion")) != ("completed", "success")
+            or any(backend.get(key, {}).get("full_name") != repository for key in ("repository", "head_repository"))):
+        raise ValueError("Selected restore backend identity or owning success differs")
+    completed = dt.datetime.fromisoformat(backend["updated_at"].replace("Z", "+00:00"))
+    if not dt.timedelta(0) <= now - completed <= dt.timedelta(hours=24):
+        raise ValueError("Selected restore backend run is outside 24 hours")
+    actual = api(f"/repos/{repository}/actions/runs/{backend['id']}")
+    if any(actual.get(key) != backend.get(key) for key in (
+            "id", "head_sha", "head_branch", "event", "workflow_id", "path", "run_attempt",
+            "status", "conclusion", "updated_at", "repository", "head_repository")):
+        raise ValueError("Selected restore backend changed while being read")
+    backend_jobs = executed_jobs(actual, repository, api)
+    validate_jobs(backend_jobs, actual, (PRESERVATION_JOB,))
+    if (len(backend_jobs) != 1 or backend_jobs[0].get("name") != PRESERVATION_JOB
+            or not moderation_steps_succeeded(backend_jobs[0], TOOL_STORAGE_BACKEND_STEPS)):
+        raise ValueError("All eight preservation steps must execute in the one owning job")
+    if api(endpoint) != index:
+        raise ValueError("Selected restore backend history changed during verification")
+    return {"native_run_id": run["id"], "sha": sha, "native_job_ids": [
+        next(job["id"] for job in jobs if job["name"] == name) for name in required],
+        "backend_run_id": backend["id"], "backend_job_id": backend_jobs[0]["id"],
+        "required_backend_steps": list(TOOL_STORAGE_BACKEND_STEPS), "raw_ui_external_verification_required": True}
+
+
+def restore_pages_verify_execution(run, repository, api, jobs):
+    # Existing main/release call this same adapter. Do not mistake a JSON job
+    # label alone for a same-SHA backend proof or accept an unrelated full run.
+    named = any(isinstance(job, dict) and RESTORE_PAGES_SCOPE in str(job.get("name", "")) for job in jobs)
+    candidate = (run.get("path") == ".github/workflows/ios-build.yml"
+                 and run.get("head_branch") == RESTORE_PAGES_BRANCH
+                 and restore_pages_inputs(run.get("head_sha")))
+    if named or candidate:
+        restore_pages_graph(run, repository, api, dt.datetime.now(dt.timezone.utc), jobs)
+    return jobs
+
+
 def executed_jobs(run: dict, repository: str, api) -> list[dict]:
     """Latest execution of each job, including unchanged siblings after a rerun.
 
@@ -9635,7 +9820,7 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
         result = api(prefix + "?filter=latest&per_page=100&page=1")
         if result["total_count"] != len(result["jobs"]):
             raise ValueError("Incomplete job response")
-        return result["jobs"]
+        return restore_pages_verify_execution(run, repository, api, result["jobs"])
     jobs, total = [], None
     for page in range(1, 6):
         result = api(prefix + f"?filter=all&per_page=100&page={page}")
@@ -9664,7 +9849,7 @@ def executed_jobs(run: dict, repository: str, api) -> list[dict]:
         keys.add(key)
         if job["name"] not in latest or number > latest[job["name"]]["run_attempt"]:
             latest[job["name"]] = job
-    return list(latest.values())
+    return restore_pages_verify_execution(run, repository, api, list(latest.values()))
 
 
 PRESERVATION_EXPORT_BACKEND_JOBS = {
@@ -10580,6 +10765,8 @@ def main() -> None:
         "schema_version": 1, "repository": env["GITHUB_REPOSITORY"],
         "head_sha": env["GITHUB_SHA"], "scope": scope,
         "required_jobs": required,
+        **({"required_backend_runs": restore_pages_requirements(evidence[1] if evidence else env["GITHUB_SHA"])}
+           if selected_scope == RESTORE_PAGES_SCOPE else {}),
         **({"retained_continuation": retained_continuation_record(env["GITHUB_SHA"])} if retained else {}),
         **({"partitioned_readiness_continuation": partitioned_readiness_record(env["GITHUB_SHA"])} if partitioned_continuation else {}),
         **({"backend_wait": tool_backend_wait} if tool_backend_wait is not None else {}),
