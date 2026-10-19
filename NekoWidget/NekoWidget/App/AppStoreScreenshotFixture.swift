@@ -1461,7 +1461,12 @@ private struct ToolProfileDataCheckView: View {
             .accessibilityValue(failureMessage)
             .task {
                 do { try await ToolProfileDataChecks.run(); passed = true }
-                catch { failureMessage = String(describing: error); failed = true }
+                catch {
+                    let failure = error as NSError
+                    failureMessage = failure.domain == "ToolProfileDataCheck"
+                        ? "fixture-check-\(failure.code)" : "fixture-operation-failed"
+                    failed = true
+                }
             }
     }
 }
