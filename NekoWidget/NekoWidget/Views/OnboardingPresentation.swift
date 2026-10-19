@@ -65,7 +65,7 @@ enum OnboardingPresentationCopy {
         "猫だけを端末内で見つけて、",
         "自動アルバムとホーム画面へ。"
     ]
-    static let purposeAction = "はじめる"
+    static let purposeAction = "自分で始める"
 
     static let permissionTitleLines = [
         "このiPhoneの猫の写真や動画を",
@@ -259,4 +259,10 @@ struct OnboardingPresentationState: Equatable, Sendable {
         let lastPageIndex = max(0, OnboardingPresentationPage.allCases.count - 1)
         return min(max(0, value), lastPageIndex)
     }
+}
+
+// Invitation receivers post this only after their own route validation and
+// staging. No invitation token, URL, or participant identity is carried here.
+extension Notification.Name {
+    static let onboardingInvitationReceived = Notification.Name("OnboardingInvitationReceived")
 }

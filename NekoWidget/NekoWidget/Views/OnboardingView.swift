@@ -25,14 +25,14 @@ struct OnboardingView: View {
     let finishWithoutWidgetPhoto: () -> Void
     let finish: () -> Void
     let openPhoto: (PhotoPresentation) -> Void
+    var joinInvitation: (() -> Void)? = nil
 
     var body: some View {
         Group {
             switch page {
             case .purpose:
-                OnboardingPurposePage {
-                    page = .photoPermission
-                }
+                OnboardingPurposePage(continueAction: { page = .photoPermission },
+                                      joinInvitation: joinInvitation)
 
             case .photoPermission:
                 photoPermissionPage
@@ -199,6 +199,7 @@ private struct OnboardingScanErrorPage: View {
 
 private struct OnboardingPurposePage: View {
     let continueAction: () -> Void
+    var joinInvitation: (() -> Void)? = nil
 
     var body: some View {
         ScrollView {
@@ -228,18 +229,26 @@ private struct OnboardingPurposePage: View {
             .padding(.bottom, 30)
         }
         .safeAreaInset(edge: .bottom) {
-            Button(action: continueAction) {
-                Text(OnboardingPresentationCopy.purposeAction)
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
+            VStack(spacing: 10) {
+                if let joinInvitation {
+                    Button("招待を受け取った", action: joinInvitation)
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("onboarding-purpose-join")
+                }
+                Button(action: continueAction) {
+                    Text(OnboardingPresentationCopy.purposeAction)
+                        .font(.headline).frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("onboarding-purpose-start")
             }
-            .buttonStyle(.borderedProminent)
+            .font(.headline)
             .controlSize(.large)
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 28)
             .padding(.vertical, 12)
             .background(.bar)
-            .accessibilityIdentifier("onboarding-purpose-start")
         }
     }
 }

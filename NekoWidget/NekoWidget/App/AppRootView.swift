@@ -34,6 +34,7 @@ struct AppRootView: View {
     @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
+    @State private var showsInvitationJoin = false
     @State private var firstRunPhoto: PhotoPresentation?
     @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
@@ -57,6 +58,24 @@ struct AppRootView: View {
             }
         } photo: { opening, close in
             widgetPhotoDestination(opening, close: close)
+        }
+        .sheet(isPresented: $showsInvitationJoin, onDismiss: {
+            // Completion follows a successful pairing, never merely a tap.
+            if (try? PairingStateStore.load())?.phase == .paired {
+                completeOnboardingWithoutPhotoAccess()
+                viewModel.isFamilyWindowPresented = true
+            }
+        }) {
+            NavigationStack {
+                PairingView(initialSetupPath: .join)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { showsInvitationJoin = false }
+                    } }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .onboardingInvitationReceived)) { _ in
+            guard SharingAPIConfiguration.current.isReviewVisible else { return }
+            showsInvitationJoin = true
         }
         .task {
             widgetInstallationChecker.refresh()
@@ -315,7 +334,9 @@ struct AppRootView: View {
                 // Widget placement remains available in Settings and Home.
                 completeOnboardingWithoutWidgetPhoto()
                 firstRunPhoto = photo
-            }
+            },
+            joinInvitation: SharingAPIConfiguration.current.isReviewVisible
+                ? { showsInvitationJoin = true } : nil
         )
     }
 

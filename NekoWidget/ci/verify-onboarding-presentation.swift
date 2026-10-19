@@ -59,7 +59,7 @@ enum OnboardingPresentationVerifier {
             "page-one product promise changed"
         )
         try require(
-            OnboardingPresentationCopy.purposeAction == "はじめる",
+            OnboardingPresentationCopy.purposeAction == "自分で始める",
             "page-one action changed"
         )
         try require(

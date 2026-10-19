@@ -604,7 +604,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
 
     init(scenario: String) {
         self.scenario = scenario
-        _page = State(initialValue: scenario == "skip" ? .photoPermission : .scanResult)
+        _page = State(initialValue: scenario == "invite-entry" ? .purpose : (scenario == "skip" ? .photoPermission : .scanResult))
     }
 
     var body: some View {
@@ -691,7 +691,8 @@ private struct MainlineAcceptanceFixtureRootView: View {
                               firstRunPhoto == nil else { return }
                         finished = true
                         firstRunPhoto = photo
-                    }
+                    },
+                    joinInvitation: scenario == "invite-entry" ? { action = "invitation" } : nil
                 )
             }
         }
