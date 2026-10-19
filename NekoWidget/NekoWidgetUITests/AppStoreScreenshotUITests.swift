@@ -10,6 +10,21 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewStartupTab() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        XCTAssertTrue(app.buttons["tools-care-open"].waitForExistence(timeout: 10))
+        captureScreenshot(named: "startup-last-tools")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["tools-care-open"].waitForExistence(timeout: 15), app.debugDescription)
+        captureScreenshot(named: "startup-restored-tools")
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewToolProfilesAndExistingData() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]

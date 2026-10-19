@@ -732,7 +732,7 @@ enum AlbumPresentationState: Equatable {
     case failed(message: String)
 }
 
-enum AppTab: Hashable {
+enum AppTab: String, Hashable {
     case photos
     case memories
     case windows
@@ -1111,5 +1111,14 @@ final class AlbumHighlightRecommendationStore {
         guard state != previous, let data = try? JSONEncoder().encode(state),
               data.count <= Self.maximumStoredBytes else { return }
         defaults.set(data, forKey: storageKey)
+    }
+}
+
+/// Device-local navigation preference; never a delivery/read receipt.
+enum MainTabStartupPolicy {
+    static func selection(lastTab: String?, hasNewPhotos: Bool, showsMado: Bool) -> AppTab {
+        if showsMado && hasNewPhotos { return .windows }
+        let previous = lastTab.flatMap(AppTab.init(rawValue:)) ?? .memories
+        return previous == .windows && !showsMado ? .memories : previous
     }
 }

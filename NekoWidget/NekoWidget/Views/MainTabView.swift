@@ -256,6 +256,78 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .memories
     @State private var didApplyInitialTab = false
+    @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
+    @State private var arrivalDates: [String: [Date]] = [:]
+    @State private var arrivalReadFailed = false
+    @State private var arrivalRefreshSequence = 0
+
+    private var showsMadoTab: Bool {
+        SharingAPIConfiguration.current.isReviewVisible
+            || OfficialWindowConfiguration.definitions.contains { $0.endpoint != nil }
+    }
+
+    private var newMadoPhotoCount: Int {
+        arrivalDates.reduce(0) { count, entry in
+            let seen = UserDefaults.standard.double(forKey: "navigation.madoVisited.v1.\(entry.key)")
+            return count + entry.value.filter { $0.timeIntervalSince1970 > seen }.count
+        }
+    }
+
+    private func rememberMadoVisit() {
+        // Only dates in the successfully loaded snapshot are consumed. Photos
+        // arriving later remain new. This preference never sends a read ACK.
+        guard !arrivalReadFailed else { return }
+        for (window, dates) in arrivalDates {
+            guard let latest = dates.max() else { continue }
+            let key = "navigation.madoVisited.v1.\(window)"
+            UserDefaults.standard.set(max(UserDefaults.standard.double(forKey: key),
+                                          latest.timeIntervalSince1970), forKey: key)
+        }
+    }
+
+    private func refreshMadoArrivals() async {
+        guard showsMadoTab else { return }
+        arrivalRefreshSequence &+= 1
+        let sequence = arrivalRefreshSequence
+        let result = await Task.detached(priority: .utility) { () -> [String: [Date]]? in
+            try? SharingLifecycleGate.withExclusive {
+                let catalog = try PrivateWindowCatalogStore.load()
+                var dates: [String: [Date]] = [:]
+                let now = Date()
+                for window in catalog?.windows ?? [] where window.spaceID != nil {
+                    let state = try MomentSharingStateStore.loadWhileLifecycleLocked(localWindowID: window.localWindowID)
+                    guard state.reportOnlyUntil == nil else { continue }
+                    dates[window.localWindowID] = state.inbox.compactMap { item in
+                        guard item.state == .available || item.state == .acknowledged,
+                              item.localJPEGFileName != nil, item.accessExpiresAt > now,
+                              !state.isModerationHidden(item.id) else { return nil }
+                        return item.receivedAt
+                    }
+                }
+                for definition in OfficialWindowConfiguration.definitions where definition.endpoint != nil {
+                    // The existing store validates subscription, channel, cat,
+                    // expiry and the build-owned endpoint. No feed is fetched.
+                    let state = OfficialWindowStore.forWindow(definition).snapshot()
+                    dates["official:" + definition.id] = state.photos.map(\.publishedAt)
+                }
+                return dates
+            }
+        }.value
+        guard sequence == arrivalRefreshSequence else { return }
+        arrivalReadFailed = result == nil
+        arrivalDates = result ?? [:]
+        guard !didApplyInitialTab else { return }
+        didApplyInitialTab = true
+        // Explicit routes and the first-run photo destination take precedence.
+        if deepLinkedFamilyWindowIsPresented || pendingFamilyNotificationRoute != nil {
+            selectedTab = .windows
+        } else if widgetOpenedPhotoIdentifier != nil || startsInPhotos {
+            selectedTab = .photos
+        } else {
+            selectedTab = MainTabStartupPolicy.selection(lastTab: lastViewedTab,
+                hasNewPhotos: newMadoPhotoCount > 0, showsMado: showsMadoTab)
+        }
+    }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
     @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
@@ -291,7 +363,7 @@ struct MainTabView: View {
     @AppStorage(GrowthAlbumPhotoOverrides.storageKey)
     private var growthPhotoOverridesJSON = ""
 
-    var body: some View {
+    private var tabContent: some View {
         TabView(selection: Binding(get: { selectedTab }, set: { tab in
             // This setter is for a person's tab tap. Deep links continue to
             // set selectedTab directly and keep their exact-photo destination.
@@ -299,6 +371,9 @@ struct MainTabView: View {
                 photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
             }
+            if selectedTab == .windows && tab != .windows { rememberMadoVisit() }
+            didApplyInitialTab = true
+            lastViewedTab = tab.rawValue
             selectedTab = tab
         })) {
             NavigationStack(path: $memoriesPath) {
@@ -352,6 +427,7 @@ struct MainTabView: View {
                     Label("まど", systemImage: "rectangle.split.2x2")
                         .accessibilityIdentifier("main-tab-windows")
                 }
+                .badge(newMadoPhotoCount)
                 .tag(AppTab.windows)
             }
 
@@ -364,6 +440,10 @@ struct MainTabView: View {
             }
             .tag(AppTab.tools)
         }
+    }
+
+    private var presentedTabContent: some View {
+        tabContent
         .environment(\.toolProfileActions, catProfilesActions)
         .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
@@ -431,6 +511,10 @@ struct MainTabView: View {
         .sheet(item: $relatedPhotoRoute, onDismiss: { relatedPhotoUsesLibraryScope = false }) { route in
             relatedAlbumsSheet(for: route)
         }
+    }
+
+    private var routedTabContent: some View {
+        presentedTabContent
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
             relatedPhotoUsesLibraryScope = false
@@ -480,15 +564,36 @@ struct MainTabView: View {
             widgetOpenedPhotoIdentifier = nil
             widgetShownAt = nil
         }
+    }
+
+    var body: some View {
+        routedTabContent
         .onChange(of: scenePhase, initial: true) { _, phase in
-            if phase == .active { consumeShowcaseLaunchRequest() }
+            if phase == .active {
+                consumeShowcaseLaunchRequest()
+                Task { await refreshMadoArrivals() }
+            } else if selectedTab == .windows { rememberMadoVisit() }
         }
-        .onAppear {
-            guard !didApplyInitialTab else { return }
-            didApplyInitialTab = true
-            if startsInPhotos { selectedTab = .photos }
+        .task {
+            if !showsMadoTab && !didApplyInitialTab {
+                didApplyInitialTab = true
+                selectedTab = startsInPhotos ? .photos : MainTabStartupPolicy.selection(
+                    lastTab: lastViewedTab, hasNewPhotos: false, showsMado: false)
+            }
+            await refreshMadoArrivals()
         }
-        .onChange(of: selectedTab) { _, tab in
+        .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
+            Task { await refreshMadoArrivals() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingSynchronizationSucceeded)) { _ in
+            Task { await refreshMadoArrivals() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
+            Task { await refreshMadoArrivals() }
+        }
+        .onChange(of: selectedTab) { oldTab, tab in
+            if oldTab == .windows && tab != .windows { rememberMadoVisit() }
+            lastViewedTab = tab.rawValue
             if tab != .tools { showcaseWaitingToOpen = nil }
         }
         .onChange(of: showcaseScopeID) { _, _ in
