@@ -478,6 +478,9 @@ struct LostCatDraftView: View {
             .toolbar { Button("閉じる") { showsCatChooser = false } }
         }
     }
+    private var sortedPhotos: [CatProfilePhotoPresentation] {
+        allPhotos.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
+    }
     private var ownPhotos: [CatProfilePhotoPresentation] {
         let ids = Set(profiles.first(where: { $0.identifier == key })?.confirmedPhotos.map(\.localIdentifier) ?? [])
         return sortedPhotos.filter { ids.contains($0.localIdentifier) }

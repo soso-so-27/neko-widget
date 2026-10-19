@@ -15,7 +15,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launchEnvironment["NEKO_TOOL_PROFILE_DATA_CHECK"] = "1"
         app.launch()
-        XCTAssertTrue(app.staticTexts["tool-profile-data-passed"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["tool-profile-data-passed"].waitForExistence(timeout: 30), app.debugDescription)
         XCTAssertFalse(app.staticTexts["tool-profile-data-failed"].exists)
         app.terminate()
         app.launchEnvironment.removeValue(forKey: "NEKO_TOOL_PROFILE_DATA_CHECK")

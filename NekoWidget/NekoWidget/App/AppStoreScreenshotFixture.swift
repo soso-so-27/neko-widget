@@ -1454,20 +1454,22 @@ private struct SoloRediscoveryFixtureView: View {
 private struct ToolProfileDataCheckView: View {
     @State private var passed = false
     @State private var failed = false
+    @State private var failureMessage = ""
     var body: some View {
         Text(passed ? "passed" : failed ? "failed" : "checking")
             .accessibilityIdentifier(passed ? "tool-profile-data-passed" : failed ? "tool-profile-data-failed" : "tool-profile-data-checking")
+            .accessibilityValue(failureMessage)
             .task {
                 do { try await ToolProfileDataChecks.run(); passed = true }
-                catch { failed = true }
+                catch { failureMessage = String(describing: error); failed = true }
             }
     }
 }
 
 @MainActor
 private enum ToolProfileDataChecks {
-    static func require(_ value: Bool) throws {
-        if !value { throw CocoaError(.fileReadCorruptFile) }
+    static func require(_ value: Bool, line: Int = #line) throws {
+        if !value { throw NSError(domain: "ToolProfileDataCheck", code: line) }
     }
     static func run() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ToolProfileTest-" + UUID().uuidString)
