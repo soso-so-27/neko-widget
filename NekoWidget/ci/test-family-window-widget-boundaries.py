@@ -1275,8 +1275,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MemoriesRoute.seasonalMovie(movie.periodID)", album_root)
         self.assertIn('"memories-monthly-window"', album_root)
         self.assertIn('"albums-seasonal-movie"', album_root)
-        self.assertIn('accessibilityIdentifier("albums-months-all")', album_root)
-        self.assertIn('accessibilityIdentifier("albums-movies-all")', album_root)
+        # The album root opens one combined archive of months and movies (#397).
+        self.assertIn('NavigationLink("これまでのまとめとムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
         self.assertIn("ForEach(months)", album_root)
         self.assertIn("ForEach(seasonalMovies)", album_root)
         self.assertIn("sections: albumSections", album_root)
@@ -1315,8 +1315,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
         self.assertNotIn("NavigationLink(value: MemoriesRoute.favorites)", memory_view)
-        self.assertIn("NavigationLink(value: AlbumCatalogRoute.months)", memory_view)
-        self.assertIn("NavigationLink(value: AlbumCatalogRoute.movies)", memory_view)
+        self.assertIn('NavigationLink("これまでのまとめとムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
         self.assertIn("albumsView().periodArchive(showsMovies: false)", main_tab)
         self.assertIn("albumsView().periodArchive(showsMovies: true)", main_tab)
         destinations = section(
@@ -3481,8 +3480,18 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn('Picker("まどに表示する内容"', paired)
         self.assertIn("receivedSectionContent", paired)
         self.assertIn("sharedPhotoContent", paired)
-        self.assertNotIn("sendPhotoAction", paired,
-                         "The photo picker belongs beside the shared photos, not in the window toolbar")
+        # The primary "写真を届ける" button is fixed at the bottom of the window,
+        # never in the toolbar, and hidden whenever sending is not allowed.
+        toolbar = paired[paired.index(".toolbar {"):]
+        self.assertNotIn("sendPhotoAction", toolbar,
+                         "The photo picker belongs with the window's photos, not in the window toolbar")
+        self.assertIn(
+            ".safeAreaInset(edge: .bottom, spacing: 0) {\n            if canShowSendPhotoAction {\n                sendPhotoAction",
+            paired,
+        )
+        can_send = section(family, "private var canShowSendPhotoAction: Bool {", "private var sendPhotoAction: some View {")
+        self.assertIn("!model.isReportOnly && !model.isShowingLastKnownState", can_send)
+        self.assertIn("&& pendingNotificationRoute?.target == nil", can_send)
         received_start = paired.index("if model.isReportOnly {\n                    receivedSectionContent")
         sent_start = paired.index("} else {", received_start)
         received_branch = paired[received_start:sent_start]
@@ -3495,9 +3504,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("received: model.receivedMoments", gallery)
         self.assertIn("sent: model.outgoingPresentation.sentRecords", gallery)
         self.assertIn("FamilyWindowPhotoCollection<AnyView>(", gallery)
-        self.assertIn("addPhotoAction: !model.isReportOnly && !model.isShowingLastKnownState", gallery)
-        self.assertIn("&& pendingNotificationRoute?.target == nil ? AnyView(sendPhotoAction) : nil", gallery)
-        self.assertEqual(gallery.count("sendPhotoAction"), 1)
+        self.assertIn("addPhotoAction: nil", gallery)
+        self.assertIn("canSendPhoto: canShowSendPhotoAction", gallery)
+        self.assertNotIn("sendPhotoAction", gallery)
         self.assertIn("canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly", gallery)
         self.assertIn(".id(spaceID)", gallery)
         collection = section(source("NekoWidget/Views/FamilyRecordView.swift"),
@@ -3697,7 +3706,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         project = source("NekoWidget.xcodeproj/project.pbxproj")
 
         self.assertIn("PhotosPicker(", family)
-        self.assertIn('"写真を追加"', family)
+        self.assertIn('"写真を届ける"', family)
         self.assertIn("preferredItemEncoding: .compatible", family)
         self.assertIn("deliveryConfirmation", family)
         self.assertIn("type: PickedMomentIngressPhoto.self", family)

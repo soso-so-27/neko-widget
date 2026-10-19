@@ -25,6 +25,11 @@ xcrun swiftc -parse-as-library \
   Shared/Sharing/FamilyRecordCore.swift ci/verify-family-records.swift \
   -o "$RUNNER_TEMP/family-record-tests"
 "$RUNNER_TEMP/family-record-tests"
+xcrun --sdk macosx swiftc -parse-as-library \
+  Shared/Routing/DeepLink.swift NekoWidget/Views/MomentSharingPresentation.swift \
+  ci/verify-moment-sharing-presentation.swift -o "$RUNNER_TEMP/moment-sharing-presentation-tests"
+"$RUNNER_TEMP/moment-sharing-presentation-tests"
+python3 ci/test-family-window-widget-boundaries.py
 
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do

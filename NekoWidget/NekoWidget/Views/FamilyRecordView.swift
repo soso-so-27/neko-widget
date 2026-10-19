@@ -136,6 +136,8 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     let canShowRecords: Bool
     let hasImageLessHistory: Bool
     let addPhotoAction: AnyView?
+    /// The host shows its own fixed "写真を届ける" button below this collection.
+    let canSendPhoto: Bool
     let showInformation: () -> Void
     let deliveryCard: (MomentSharedPhoto, CaptionSource) -> DeliveryCard
     private let fixturePhoto: MomentShareIngressPhoto?
@@ -169,11 +171,12 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     init(spaceID: String, windowName: String, photos: [MomentSharedPhoto], canShowRecords: Bool,
          client: (any FamilyRecordServing)? = nil, fixturePhoto: MomentShareIngressPhoto? = nil,
-         addPhotoAction: AnyView? = nil, hasImageLessHistory: Bool = false,
+         addPhotoAction: AnyView? = nil, canSendPhoto: Bool = false, hasImageLessHistory: Bool = false,
          showInformation: @escaping () -> Void,
          deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
         self.spaceID = spaceID; self.windowName = windowName; self.photos = photos
         self.canShowRecords = canShowRecords; self.addPhotoAction = addPhotoAction
+        self.canSendPhoto = canSendPhoto
         self.hasImageLessHistory = hasImageLessHistory
         self.showInformation = showInformation
         self.deliveryCard = deliveryCard
@@ -293,9 +296,11 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                         .font(.headline)
                     Text(hasImageLessHistory
                         ? "写真のない送信履歴で、以前の送信状況を確認できます。"
-                        : addPhotoAction != nil
-                            ? "相手からの写真はここに届きます。＋から写真を1枚選び、相手と共有することもできます。"
-                            : "相手からの写真はここに届きます。")
+                        : canSendPhoto
+                            ? "まどに届いた写真はここに並びます。下の「写真を届ける」から、1枚選んで届けられます。"
+                            : addPhotoAction != nil
+                                ? "相手からの写真はここに届きます。＋から写真を1枚選び、相手と共有することもできます。"
+                                : "相手からの写真はここに届きます。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .fixedSize(horizontal: false, vertical: true)
