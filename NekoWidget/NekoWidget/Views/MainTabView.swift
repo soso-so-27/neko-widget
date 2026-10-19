@@ -256,6 +256,68 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .memories
     @State private var didApplyInitialTab = false
+    @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
+    @State private var arrivalDates: [String: [Date]] = [:]
+    @State private var arrivalReadFailed = false
+
+    private var showsMadoTab: Bool {
+        SharingAPIConfiguration.current.isReviewVisible
+            || OfficialWindowConfiguration.definitions.contains { $0.endpoint != nil }
+    }
+
+    private var newMadoPhotoCount: Int {
+        arrivalDates.reduce(0) { count, entry in
+            let seen = UserDefaults.standard.double(forKey: "navigation.madoVisited.v1.\(entry.key)")
+            return count + entry.value.filter { $0.timeIntervalSince1970 > seen }.count
+        }
+    }
+
+    private func rememberMadoVisit() {
+        // Only dates in the successfully loaded snapshot are consumed. Photos
+        // arriving later remain new. This preference never sends a read ACK.
+        guard !arrivalReadFailed else { return }
+        for (window, dates) in arrivalDates {
+            guard let latest = dates.max() else { continue }
+            let key = "navigation.madoVisited.v1.\(window)"
+            UserDefaults.standard.set(max(UserDefaults.standard.double(forKey: key),
+                                          latest.timeIntervalSince1970), forKey: key)
+        }
+    }
+
+    private func refreshMadoArrivals() async {
+        guard showsMadoTab else { return }
+        let result = await Task.detached(priority: .utility) { () -> [String: [Date]]? in
+            try? SharingLifecycleGate.withExclusive {
+                guard let catalog = try PrivateWindowCatalogStore.load() else { return [:] }
+                var dates: [String: [Date]] = [:]
+                let now = Date()
+                for window in catalog.windows where window.spaceID != nil {
+                    let state = try MomentSharingStateStore.loadWhileLifecycleLocked(localWindowID: window.localWindowID)
+                    guard state.reportOnlyUntil == nil else { continue }
+                    dates[window.localWindowID] = state.inbox.compactMap { item in
+                        guard item.state == .available || item.state == .acknowledged,
+                              item.localJPEGFileName != nil, item.accessExpiresAt > now,
+                              !state.isModerationHidden(item.id) else { return nil }
+                        return item.receivedAt
+                    }
+                }
+                return dates
+            }
+        }.value
+        arrivalReadFailed = result == nil
+        arrivalDates = result ?? [:]
+        guard !didApplyInitialTab else { return }
+        didApplyInitialTab = true
+        // Explicit routes and the first-run photo destination take precedence.
+        if deepLinkedFamilyWindowIsPresented || pendingFamilyNotificationRoute != nil {
+            selectedTab = .windows
+        } else if widgetOpenedPhotoIdentifier != nil || startsInPhotos {
+            selectedTab = .photos
+        } else {
+            selectedTab = MainTabStartupPolicy.selection(lastTab: lastViewedTab,
+                hasNewPhotos: newMadoPhotoCount > 0, showsMado: showsMadoTab)
+        }
+    }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
     @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
@@ -299,6 +361,9 @@ struct MainTabView: View {
                 photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
             }
+            if selectedTab == .windows && tab != .windows { rememberMadoVisit() }
+            didApplyInitialTab = true
+            lastViewedTab = tab.rawValue
             selectedTab = tab
         })) {
             NavigationStack(path: $memoriesPath) {
@@ -339,7 +404,7 @@ struct MainTabView: View {
             }
             .tag(AppTab.photos)
 
-            if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
+            if showsMadoTab {
                 NavigationStack {
                     WindowListView(
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
@@ -352,6 +417,7 @@ struct MainTabView: View {
                     Label("まど", systemImage: "rectangle.split.2x2")
                         .accessibilityIdentifier("main-tab-windows")
                 }
+                .badge(newMadoPhotoCount)
                 .tag(AppTab.windows)
             }
 
@@ -481,14 +547,28 @@ struct MainTabView: View {
             widgetShownAt = nil
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
-            if phase == .active { consumeShowcaseLaunchRequest() }
+            if phase == .active {
+                consumeShowcaseLaunchRequest()
+                Task { await refreshMadoArrivals() }
+            } else if selectedTab == .windows { rememberMadoVisit() }
         }
-        .onAppear {
-            guard !didApplyInitialTab else { return }
-            didApplyInitialTab = true
-            if startsInPhotos { selectedTab = .photos }
+        .task {
+            if !showsMadoTab && !didApplyInitialTab {
+                didApplyInitialTab = true
+                selectedTab = startsInPhotos ? .photos : MainTabStartupPolicy.selection(
+                    lastTab: lastViewedTab, hasNewPhotos: false, showsMado: false)
+            }
+            await refreshMadoArrivals()
         }
-        .onChange(of: selectedTab) { _, tab in
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingSynchronizationSucceeded)) { _ in
+            Task { await refreshMadoArrivals() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
+            Task { await refreshMadoArrivals() }
+        }
+        .onChange(of: selectedTab) { oldTab, tab in
+            if oldTab == .windows && tab != .windows { rememberMadoVisit() }
+            lastViewedTab = tab.rawValue
             if tab != .tools { showcaseWaitingToOpen = nil }
         }
         .onChange(of: showcaseScopeID) { _, _ in
