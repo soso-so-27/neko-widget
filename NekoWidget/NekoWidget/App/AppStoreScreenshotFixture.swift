@@ -330,6 +330,8 @@ struct AppStoreScreenshotFixtureRootView: View {
     @State private var selectedPhotoShownAt: Date?
     @State private var showsFamilyWindow = false
     @State private var photoPositionDiagnostics = ""
+    @State private var addedToolProfiles: [CatProfilePresentation] = []
+    @State private var deletedToolProfiles = Set<String>()
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     private var photos: [PhotoPresentation] {
@@ -374,13 +376,13 @@ struct AppStoreScreenshotFixtureRootView: View {
         }
     }
     private var catProfiles: CatProfilesPresentation {
-        guard ["cats", "rediscovery"].contains(widgetRecoveryCase ?? "") else { return CatProfilesPresentation() }
+        guard ["cats", "rediscovery", "tool-profiles"].contains(widgetRecoveryCase ?? "") else { return CatProfilesPresentation(profiles: addedToolProfiles) }
         let all = photos.map {
             CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
                                         creationDate: $0.creationDate)
         }
-        return CatProfilesPresentation(profiles: (0..<2).map { index in
-            let identifier = "fixture-cat-\(index)"
+        let values: [CatProfilePresentation] = (0..<2).map { index in
+            let identifier = widgetRecoveryCase == "tool-profiles" ? (index == 0 ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222") : "fixture-cat-\(index)"
             let selected = widgetRecoveryCase == "rediscovery"
                 ? Array(all[(index * 2)..<(index * 2 + 2)]) : [all[index]]
             let confirmed = selected.map { source in
@@ -394,13 +396,28 @@ struct AppStoreScreenshotFixtureRootView: View {
                 coverPhoto: confirmed[0], confirmedPhotos: confirmed,
                 manualCandidatePhotos: all.filter { !assigned.contains($0.localIdentifier) }
             )
-        })
+        }
+        return CatProfilesPresentation(profiles: values.filter { !deletedToolProfiles.contains($0.identifier) } + addedToolProfiles)
+    }
+    private var profileActions: CatProfilesViewActions {
+        var actions = CatProfilesViewActions.noOp
+        actions.createProfile = { draft in
+            let id = UUID().uuidString
+            addedToolProfiles.append(CatProfilePresentation(identifier: id, name: draft.name, coverPhoto: nil, confirmedPhotos: [], lifeReference: nil))
+            return id
+        }
+        actions.deleteProfile = { id in
+            deletedToolProfiles.insert(id); addedToolProfiles.removeAll { $0.identifier == id }; return true
+        }
+        return actions
     }
     private let likedPhotos = AppStoreScreenshotFixture.likedPhotos
     private let windowPhoto = AppStoreScreenshotFixture.windowPhoto
 
     var body: some View {
-        if let widgetPhotoIdentifier {
+        if ProcessInfo.processInfo.environment["NEKO_TOOL_PROFILE_DATA_CHECK"] == "1" {
+            ToolProfileDataCheckView()
+        } else if let widgetPhotoIdentifier {
             // Match AppRootView's direct destination call inside its own
             // NavigationStack. MainTabView.body must not supply environments.
             mainTabContent.widgetPhotoDestination(
@@ -451,7 +468,7 @@ struct AppStoreScreenshotFixtureRootView: View {
                 let assigned = Set(profile.confirmedPhotos.map(\.localIdentifier))
                 return (profile.identifier, photos.filter { assigned.contains($0.localIdentifier) })
             }),
-            catProfilesActions: .noOp,
+            catProfilesActions: profileActions,
             hasPhotoAccess: photoAccess,
             isLimitedAccess: false,
             isScanning: false,
@@ -1432,4 +1449,100 @@ private struct SoloRediscoveryFixtureView: View {
 }
 #endif
 
+
+@MainActor
+private struct ToolProfileDataCheckView: View {
+    @State private var passed = false
+    @State private var failed = false
+    var body: some View {
+        Text(passed ? "passed" : failed ? "failed" : "checking")
+            .accessibilityIdentifier(passed ? "tool-profile-data-passed" : failed ? "tool-profile-data-failed" : "tool-profile-data-checking")
+            .task {
+                do { try await ToolProfileDataChecks.run(); passed = true }
+                catch { failed = true }
+            }
+    }
+}
+
+@MainActor
+private enum ToolProfileDataChecks {
+    static func require(_ value: Bool) throws {
+        if !value { throw CocoaError(.fileReadCorruptFile) }
+    }
+    static func run() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ToolProfileTest-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let careRoot = root.appendingPathComponent("CareHandoff")
+        let evacRoot = root.appendingPathComponent("EvacuationPreparation")
+        let legacyRoot = root.appendingPathComponent("CatPreparedness")
+        let lostRoot = root.appendingPathComponent("LostCatDrafts")
+        let showcaseRoot = root.appendingPathComponent("ShowcasePhotos")
+        let vetRoot = root.appendingPathComponent("VeterinaryVisits")
+        let profileID = UUID().uuidString
+        let toolID = UUID()
+        let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!.jpegData(compressionQuality: 0.85)!
+        let carePhoto = UUID().uuidString + ".jpg", evacPhoto = UUID().uuidString + ".jpg"
+        var cat = CareCat(); cat.name = "以前の名前"; cat.toolCatID = toolID; cat.photoName = carePhoto
+        cat.usualFood = "いつものごはん"; cat.handling = "静かに"; cat.healthDetails = "記録を維持"
+        let carePlan = CareHandoffPlan(cats: [cat])
+        var evac = EvacuationCat(); evac.name = cat.name; evac.toolCatID = toolID
+        evac.photos = ["face": evacPhoto]; evac.food = "水とフード"; evac.medicalDetails = "薬の記録"
+        var evacPlan = EvacuationPlan(); evacPlan.cats = [evac]
+        try CareHandoffRepository(directory: careRoot).commit(carePlan, newPhotos: [carePhoto: jpeg])
+        try EvacuationRepository(directory: evacRoot).commit(evacPlan, newPhotos: [evacPhoto: jpeg])
+        let legacy = CatPreparednessStore(directory: legacyRoot)
+        var legacyRecord = CatPreparednessRecord(); legacyRecord.name = "古い猫"; legacyRecord.collar = "赤"
+        try legacy.save(legacyRecord, for: "old-key")
+        var draft = LostCatDraft(); draft.name = "残る猫"; draft.features = "茶白"; draft.faceFileName = UUID().uuidString + ".jpg"
+        try FileManager.default.createDirectory(at: lostRoot, withIntermediateDirectories: true)
+        try jpeg.write(to: lostRoot.appendingPathComponent(draft.faceFileName!))
+        try JSONEncoder().encode([profileID: draft]).write(to: lostRoot.appendingPathComponent("drafts.json"))
+        try FileManager.default.createDirectory(at: showcaseRoot, withIntermediateDirectories: true)
+        let showcasePhoto = UUID().uuidString + ".jpg"
+        try jpeg.write(to: showcaseRoot.appendingPathComponent(showcasePhoto))
+        let entry = ShowcasePhotoStore.Entry(scopeID: profileID, photoIdentifier: "legacy-photo", imageFileName: showcasePhoto)
+        try JSONEncoder().encode([entry]).write(to: showcaseRoot.appendingPathComponent("selected.json"))
+        let vet = VeterinaryVisitStore(directory: vetRoot)
+        let originalVisit = try await vet.current(catID: UUID(uuidString: profileID)!, catName: "作成時の名前") { try $0() }
+        let manifestPaths = ["CareHandoff/plan.json", "EvacuationPreparation/plan.json", "CatPreparedness/records.json", "LostCatDrafts/drafts.json", "ShowcasePhotos/selected.json", "VeterinaryVisits/state.json"]
+        let originalBytes = try manifestPaths.map { try Data(contentsOf: root.appendingPathComponent($0)) }
+        let care = CareHandoffStore(directory: careRoot)
+        let evacuation = EvacuationStore(directory: evacRoot)
+        _ = CatPreparednessStore(directory: legacyRoot)
+        let loadedLost = LostCatDraftStore(directory: lostRoot, legacy: legacy)
+        let loadedShowcase = ShowcasePhotoStore(directory: showcaseRoot)
+        let secondVet = VeterinaryVisitStore(directory: vetRoot)
+        let unchangedVisit = try await secondVet.current(catID: originalVisit.catID, catName: "変更後の表示名") { _ in throw CocoaError(.fileWriteUnknown) }
+        try require(unchangedVisit == originalVisit && unchangedVisit.catName == "作成時の名前")
+        try require(loadedLost.drafts[profileID]?.features == "茶白" && loadedShowcase.entries == [entry])
+        for (path, bytes) in zip(manifestPaths, originalBytes) { try require(Data(contentsOf: root.appendingPathComponent(path)) == bytes) }
+        try require(ToolCatProfileLinker.care(cat.id, profileID: profileID, care: care, evacuation: evacuation))
+        var expectedCare = carePlan; expectedCare.cats[0].profileID = profileID
+        var expectedEvac = evacPlan; expectedEvac.cats[0].profileID = profileID
+        try require(care.plan == expectedCare && evacuation.plan == expectedEvac)
+        try require(Data(contentsOf: careRoot.appendingPathComponent(carePhoto)) == jpeg)
+        try require(Data(contentsOf: evacRoot.appendingPathComponent(evacPhoto)) == jpeg)
+        // The shipping backup validators must still accept all existing formats and owned JPEGs.
+        let paths = manifestPaths + ["CareHandoff/" + carePhoto, "EvacuationPreparation/" + evacPhoto,
+            "LostCatDrafts/" + draft.faceFileName!, "ShowcasePhotos/" + showcasePhoto]
+        let files = try paths.map { path -> ToolBackupIndex.File in
+            let data = try Data(contentsOf: root.appendingPathComponent(path))
+            return .init(path: path, bytes: data.count, sha256: ToolBackupIndex.hash(data), records: [UUID()])
+        }
+        try await ToolBackupValidation.validate(ToolBackupIndex(snapshotID: UUID(), createdAt: Date(), files: files), at: root)
+        var duplicate = cat; duplicate.id = UUID(); duplicate.photoName = nil; duplicate.profileID = profileID
+        try require(care.update { $0.cats.append(duplicate) })
+        let beforeDuplicateSelection = try Data(contentsOf: careRoot.appendingPathComponent("plan.json"))
+        try require(care.addCat(profileID: profileID, using: evacuation, access: MembershipActionAccess(enforcementEnabled: false)) == nil)
+        try require(Data(contentsOf: careRoot.appendingPathComponent("plan.json")) == beforeDuplicateSelection)
+        let badRoot = root.appendingPathComponent("UnreadableLegacy")
+        try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
+        let badURL = badRoot.appendingPathComponent("records.json"), badBytes = Data("not valid JSON".utf8)
+        try badBytes.write(to: badURL)
+        let unreadable = CatPreparednessStore(directory: badRoot)
+        var rejected = false
+        do { try unreadable.save(CatPreparednessRecord(), for: "must-not-overwrite") } catch { rejected = true }
+        try require(rejected && unreadable.hasCorruptManifest && Data(contentsOf: badURL) == badBytes)
+    }
+}
 #endif

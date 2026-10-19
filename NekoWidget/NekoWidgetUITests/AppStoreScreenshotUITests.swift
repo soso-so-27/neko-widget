@@ -10,6 +10,38 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewToolProfilesAndExistingData() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launchEnvironment["NEKO_TOOL_PROFILE_DATA_CHECK"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["tool-profile-data-passed"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.staticTexts["tool-profile-data-failed"].exists)
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "NEKO_TOOL_PROFILE_DATA_CHECK")
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        app.buttons["tools-care-open"].tap()
+        let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(profile.waitForExistence(timeout: 10))
+        captureScreenshot(named: "PR5-cat-picker")
+        profile.tap()
+        XCTAssertTrue(app.staticTexts["この子のこと"].waitForExistence(timeout: 10))
+        captureScreenshot(named: "PR5-profile-in-tool")
+        let edit = app.buttons["猫のプロフィールで編集"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10)); edit.tap()
+        let delete = app.buttons["プロフィールを削除"]
+        XCTAssertTrue(scrollUpUntilHittable(delete, application: app)); delete.tap()
+        let confirmation = app.alerts.firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["プロフィールを削除"].tap()
+        // The profile disappears but the tool's original record remains editable.
+        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 10))
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewToolsAndAutomaticVisitSave() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
