@@ -40,10 +40,10 @@ enum PrototypeHPKE {
             return (key, try Dictionary(uniqueKeysWithValues: devices.map { ($0.id, try wrap(key, epoch: number, device: $0, owner: a)) }))
         }
         let first = try epoch(1, devices: [a,b1,c])
-        for device in [a,b1,c] { precondition(try unwrap(first.1[device.id]!, device: device, owner: a) == first.0) }
+        for device in [a,b1,c] { let key = try unwrap(first.1[device.id]!, device: device, owner: a); precondition(key == first.0) }
         print("HPKE PASS three people")
         let second = try epoch(2, devices: [a,b1,b2,c])
-        for device in [a,b1,b2,c] { precondition(try unwrap(second.1[device.id]!, device: device, owner: a) == second.0) }
+        for device in [a,b1,b2,c] { let key = try unwrap(second.1[device.id]!, device: device, owner: a); precondition(key == second.0) }
         print("HPKE PASS one person two independent devices")
         let third = try epoch(3, devices: [a,c])
         precondition(third.1[b1.id] == nil && third.1[b2.id] == nil)
@@ -55,7 +55,7 @@ enum PrototypeHPKE {
         precondition(!relayAccepts(sender: b1.id, epoch: 2) && !relayAccepts(sender: b2.id, epoch: 3))
         print("HPKE PASS immediate stale send rejected by relay model")
         let resumed = try unwrap(third.1[c.id]!, device: c, owner: a)
-        precondition(try AES.GCM.open(cipher, using: SymmetricKey(data: resumed), authenticating: Data("room|3|a1".utf8)) == Data("after removal".utf8))
+        let recovered = try AES.GCM.open(cipher, using: SymmetricKey(data: resumed), authenticating: Data("room|3|a1".utf8)); precondition(recovered == Data("after removal".utf8))
         do { _ = try unwrap(third.1[c.id]!, device: b1, owner: a); preconditionFailure("wrong device accepted") }
         catch { }
         print("HPKE PASS offline latest epoch catch-up and wrong-device rejection")
