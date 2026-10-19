@@ -100,7 +100,7 @@ struct LimitedAccessBanner: View {
 
             Spacer(minLength: 4)
 
-            Button("もっと選ぶ", action: chooseMorePhotos)
+            Button("写真を追加で選ぶ", action: chooseMorePhotos)
                 .font(.subheadline.weight(.semibold))
         }
         .padding(14)

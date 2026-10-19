@@ -98,11 +98,9 @@ enum OnboardingPresentationCopy {
 
     static let scanTitle = "このiPhoneの猫写真を探しています"
     static let scanBodyLines = [
-        "新しい写真から先に見ています。",
-        "全部の集計は、",
-        "次にひらいたときに続きます。"
+        "アプリを開いている間、新しい写真から順に調べます。"
     ]
-    static let scanContinueAction = "先に進む（スキャンは続きます）"
+    static let scanContinueAction = "写真を見る"
     static let resultLeadLines = [
         "このiPhoneで見つけた",
         "猫写真は"

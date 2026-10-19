@@ -9,6 +9,7 @@ struct CareHandoffView: View {
     @ObservedObject var reuseStore: EvacuationStore = .shared
     @State private var newCatID: UUID?
     @State private var opensNewCat = false
+    @State private var duplicateProfile: CatProfilePresentation?
     @Environment(\.membershipActions) private var actionAccess
     @State private var membershipNotice: MembershipAccessDecision?
 
@@ -22,50 +23,23 @@ struct CareHandoffView: View {
                 List {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("いつものお世話を\nそのまま伝える").font(.title2.bold())
+                            Text("いつものお世話を伝える").font(.headline)
                             Text("ごはんの量も、この子の苦手も。写真付きのメモを作って渡せます。")
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }.padding(.vertical, 8)
                     }
-                    Section("猫ごとのお世話メモ") {
-                        ForEach(store.plan.cats) { cat in
-                            NavigationLink { editor(cat.id) } label: {
-                                HStack(spacing: 12) {
-                                    CarePhoto(image: store.image(cat.photoName)).frame(width: 64, height: 64)
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(cat.displayName).font(.headline)
-                                        Text(cat.reusableFood.isEmpty ? "お世話の内容を記入" : cat.reusableFood)
-                                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-                                    }
-                                }.padding(.vertical, 4)
-                            }.accessibilityIdentifier("care-cat-\(cat.id.uuidString)")
-                        }
-                        ForEach(availableSavedCats) { cat in
-                            Button {
-                                addCat(sourceCatID: cat.id)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    CarePhoto(image: reuseStore.image(cat.photos["face"] ?? cat.photos["body"] ?? cat.photos["reference"]))
-                                        .frame(width: 64, height: 64)
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(cat.displayName).font(.headline)
-                                        Text("入力済みの情報で作る").font(.subheadline).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                                }.padding(.vertical, 4)
-                            }.accessibilityIdentifier("care-saved-cat-\(cat.id.uuidString)")
-                                .disabled(store.plan.cats.count >= 20 || store.saveError != nil)
-                        }
-                        Button(store.plan.cats.isEmpty ? "お世話メモを作る" : "猫を追加", systemImage: "plus") { addCat() }
-                            .accessibilityIdentifier("care-add-cat").disabled(store.plan.cats.count >= 20)
-                        let available = profiles.filter { profile in !store.plan.cats.contains { $0.profileID == profile.identifier } }
-                        if !available.isEmpty {
-                            Menu("登録した猫から作る") {
-                                ForEach(available) { profile in
-                                    Button(profile.displayName) { addCat(profileID: profile.identifier, name: profile.displayName) }
+                    ToolCatPicker(profiles: profiles, select: selectProfile) {
+                        Section("プロフィール未登録の猫") {
+                            ForEach(store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }) { cat in
+                                NavigationLink { editor(cat.id) } label: { Label(cat.displayName, systemImage: "cat") }
+                                    .accessibilityIdentifier("care-cat-\(cat.id.uuidString)")
+                                ToolPromoteCatButton(name: cat.name) { profileID in
+                                    ToolCatProfileLinker.care(cat.id, profileID: profileID, care: store, evacuation: reuseStore)
                                 }
-                            }.disabled(store.plan.cats.count >= 20)
+                            }
+                            ForEach(availableSavedCats) { cat in
+                                Button(cat.displayName) { addCat(sourceCatID: cat.id) }
+                            }
                         }
                     }
                     if !store.plan.cats.isEmpty {
@@ -92,6 +66,29 @@ struct CareHandoffView: View {
         .navigationDestination(isPresented: $opensNewCat) { if let newCatID { editor(newCatID) } }
         .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
         .membershipActionNotice($membershipNotice)
+        .confirmationDialog("この子の記録が複数あります", isPresented: Binding(
+            get: { duplicateProfile != nil }, set: { if !$0 { duplicateProfile = nil } }
+        ), titleVisibility: .visible) {
+            if let profile = duplicateProfile {
+                ForEach(store.plan.cats.filter { $0.profileID == profile.identifier }) { cat in
+                    Button("\(cat.displayName)・\(cat.updatedAt.formatted(date: .abbreviated, time: .shortened))") {
+                        openExisting(cat.id, profile: profile); duplicateProfile = nil
+                    }
+                }
+            }
+        }
+    }
+    private func selectProfile(_ profile: CatProfilePresentation) {
+        let matches = store.plan.cats.filter { $0.profileID == profile.identifier }
+        if matches.count > 1 { duplicateProfile = profile }
+        else if let cat = matches.first { openExisting(cat.id, profile: profile) }
+        else { addCat(profileID: profile.identifier, name: profile.displayName) }
+    }
+    private func openExisting(_ id: UUID, profile: CatProfilePresentation) {
+        if store.plan.cats.first(where: { $0.id == id })?.name != profile.displayName {
+            store.editCat(id) { $0.name = profile.displayName }
+        }
+        newCatID = id; opensNewCat = true
     }
     private func addCat(profileID: String? = nil, name: String = "", sourceCatID: UUID? = nil) {
         if let id = store.addCat(profileID: profileID, name: name, using: reuseStore,
@@ -119,7 +116,7 @@ struct CareHandoffView: View {
             + unregisteredPhotos.map { CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
                 creationDate: $0.creationDate, catBoundingBox: $0.catBoundingBox) })
             .filter { seen.insert($0.localIdentifier).inserted }
-        return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore)
+        return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore, profiles: profiles)
     }
 }
 
@@ -168,6 +165,7 @@ private struct CareCatEditor: View {
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: CareHandoffStore
     @ObservedObject var reuseStore: EvacuationStore
+    var profiles: [CatProfilePresentation] = []
     @State private var showsPhotoPicker = false
     @State private var deleteRequested = false
     @State private var refreshedCandidates = false
@@ -187,9 +185,14 @@ private struct CareCatEditor: View {
     var body: some View {
         Form {
             if let cat {
+                if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
+                    ToolCatProfileInfo(profile: profile, profiles: profiles)
+                }
                 Section {
-                    CareField(label: "猫の名前", example: "例：むぎ", identifier: "care-cat-name", text: text(\.name), limit: 80,
-                              isPrefilled: cat.prefilledFields?.contains("name") == true)
+                    if !profiles.contains(where: { $0.identifier == cat.profileID }) {
+                        CareField(label: "猫の名前", example: "例：むぎ", identifier: "care-cat-name", text: text(\.name), limit: 80,
+                                  isPrefilled: cat.prefilledFields?.contains("name") == true)
+                    }
                     Button { showsPhotoPicker = true } label: {
                         HStack(spacing: 16) {
                             CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
@@ -207,14 +210,14 @@ private struct CareCatEditor: View {
                 }
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
-                } footer: { Text("必ず守ってほしいことを先頭に載せます。空欄のままでも保存できます。") }
+                }
                 if cat.usualFood != nil {
                     Section {
                         CareField(label: "いつものごはん", example: "フード名・普段の量など", identifier: "care-usual-food",
                             text: Binding(get: { self.cat?.usualFood ?? "" }, set: { new in
                                 store.editCat(id) { $0.usualFood = new }
                             }), isPrefilled: cat.prefilledFields?.contains("food") == true)
-                    } footer: { Text("このままお世話メモに載ります。時間や量を分けたい場合は、下の欄に追加できます。") }
+                    }
                 }
                 ForEach(Array(cat.meals.enumerated()), id: \.element.id) { index, meal in
                     Section("ごはん \(index + 1)") {
@@ -246,10 +249,11 @@ private struct CareCatEditor: View {
                         if cat.healthStatus == .recorded {
                             CareField(label: "伝える内容", example: "獣医師からの指示、薬の名前・時間・量など", identifier: "care-health", text: text(\.healthDetails))
                         }
-                        Text("獣医師から指示された内容を記入してください。薬の量の判断や計算はしません。")
-                            .font(.footnote).foregroundStyle(.secondary)
                     }
-                } footer: { Text("薬・連絡先を渡すかどうかは、最後の確認画面で選べます。") }
+                }
+                Section {
+                    ToolImportantInformation(text: "空欄でも自動保存されます。薬は獣医師の指示を記入してください。薬や連絡先を渡すかはプレビュー前に選べます。")
+                }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
                 } footer: { Text("入力した内容はこの端末に自動保存します。") }
@@ -274,7 +278,14 @@ private struct CareCatEditor: View {
                 if store.update({ $0.cats.removeAll { $0.id == id } }) { dismiss() }
             }
         } message: { Text("このツールの記録と写真のコピーだけを削除します。元の写真・猫プロフィール・他のツールの記録は残ります。") }
-        .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 6) {
+                CareSaveNotice(store: store)
+                NavigationLink { CareDisclosureView(store: store) } label: {
+                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
+            }.padding().background(.regularMaterial)
+        }
     }
 }
 
@@ -409,7 +420,7 @@ private struct CareDisclosureView: View {
             } header: { Text("必要な相手に渡す情報")
             } footer: { Text("写真・名前・お世話・今回のお願いは載せます。薬や連絡先は、渡す相手に合わせて選んでください。") }
             Section {
-                Button("この内容でプレビュー", systemImage: "doc.text.magnifyingglass") {
+                Button("プレビュー", systemImage: "doc.text.magnifyingglass") {
                     do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
                     catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "控えを開けません。元の記録は残っています。" }
                 }.font(.headline).disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
@@ -458,10 +469,11 @@ private struct CareDisplayView: View {
         }.background(Color(.systemGroupedBackground))
             .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
-                ViewThatFits(in: .horizontal) {
-                    HStack { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
-                    VStack { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
-                }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
+                Menu {
+                    shareButton("画像", pdf: false)
+                    shareButton("PDF", pdf: true)
+                } label: { Label("書き出す", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
+                .buttonStyle(.borderedProminent).padding().background(.regularMaterial)
             }
             .confirmationDialog("表示中の内容を控えにします", isPresented: $confirmShare, titleVisibility: .visible) {
                 Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
@@ -500,4 +512,14 @@ private struct CareActivitySheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Ordinary guidance is collapsed; destructive and recipient confirmations stay explicit.
+struct ToolImportantInformation: View {
+    let text: String
+    var body: some View {
+        DisclosureGroup("大事なこと") {
+            Text(text).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
 }

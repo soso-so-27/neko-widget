@@ -18,6 +18,7 @@ xcrun swiftc -parse-as-library \
   ci/verify-album-catalog-coordinator.swift ci/verify-album-grouping.swift \
   -o "$RUNNER_TEMP/album-tests"
 "$RUNNER_TEMP/album-tests"
+
 xcrun swiftc -parse-as-library \
   Shared/Sharing/PairingCore.swift Shared/Models/WidgetRenderPlan.swift \
   Shared/Models/WidgetManifest.swift Shared/Sharing/MomentSharingCore.swift \
@@ -29,6 +30,15 @@ xcrun --sdk macosx swiftc -parse-as-library \
   ci/verify-moment-sharing-presentation.swift -o "$RUNNER_TEMP/moment-sharing-presentation-tests"
 "$RUNNER_TEMP/moment-sharing-presentation-tests"
 python3 ci/test-family-window-widget-boundaries.py
+
+settings_paths=()
+for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do
+  output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"
+  xcodebuild -project NekoWidget.xcodeproj -target "$target" \
+    -configuration Release -sdk iphonesimulator -showBuildSettings -json > "$output"
+  settings_paths+=("$output")
+done
+python3 ci/validate-disabled-release-build-settings.py "${settings_paths[@]}"
 
 runtime=$(xcrun simctl list runtimes -j | python3 -c '
 import json,sys

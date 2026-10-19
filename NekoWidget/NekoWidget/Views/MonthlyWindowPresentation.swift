@@ -22,11 +22,11 @@ struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
     }
 
     var title: String {
-        "\(monthNumber)月の猫たち"
+        "\(monthNumber)月のまとめ"
     }
 
     var accessibilityTitle: String {
-        "\(yearNumber)年\(monthNumber)月の猫たち"
+        "\(yearNumber)年\(monthNumber)月のまとめ"
     }
 
     var coverPhoto: PhotoPresentation? {
