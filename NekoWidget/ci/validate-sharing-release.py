@@ -421,7 +421,7 @@ def validate_share_extension_boundary(
 ) -> tuple[bool, bool]:
     """Keep enabled-mode Share Extension capture-only and installation-bound.
 
-    The disabled archive separately uses a FALSEPREDICATE activation rule and
+    The disabled archive separately uses a zero-item activation rule and
     an early runtime refusal, so this boundary is defense in depth for every
     mode where the extension is intentionally visible.
 
@@ -798,9 +798,9 @@ def validate_expected_mode(
         else None
     )
     if expected_mode == "disabled":
-        if activation_rule != "FALSEPREDICATE":
+        if activation_rule != "extensionItems.@count == 0":
             failures.append(
-                "Disabled Share Extension activation rule must be FALSEPREDICATE."
+                "Disabled Share Extension activation rule must be extensionItems.@count == 0."
             )
     else:
         if activation_rule != {

@@ -42,8 +42,9 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
+			<!-- Match no nonempty share input. Disabled runtime also exits before reading attachments. -->
 			<key>NSExtensionActivationRule</key>
-			<string>FALSEPREDICATE</string>
+			<string>extensionItems.@count == 0</string>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>

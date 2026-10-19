@@ -17,7 +17,7 @@ Keywordsだけは文字数ではなくUTF-8 bytesで確認する。AppleのPlatf
 Support URLは実際の連絡先情報へ到達できるページでなければならない。GitHub Issuesへの誘導だけ、
 「窓口未掲載」の表示、または連絡不能なplaceholderはこの要件を満たさない。
 
-今回の所有者チェックリストと画面一覧は[Build 266公開準備](local-only-build-266.md)を参照する。
+今回の所有者チェックリストと画面一覧は[Build 267公開準備](local-only-build-267.md)を参照する。
 旧来のJSON台帳を新規作成せず、今回の完了確認はCI結果と実機チェックで行う。審査提出はまだ行わない。
 
 ## 貼り付け用本文
