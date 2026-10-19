@@ -32,8 +32,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
 
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "solo-memories-monthly"
         app.launch()
-        XCTAssertTrue(app.descendants(matching: .any)["memories-monthly-window"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.navigationBars["アルバム"].waitForExistence(timeout: 20))
         captureScreenshot(named: "PR2-albums")
+        let month = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "2025年8月")).firstMatch
+        XCTAssertTrue(month.waitForExistence(timeout: 10), app.debugDescription)
         app.terminate()
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "review-photo"
         app.launch()
