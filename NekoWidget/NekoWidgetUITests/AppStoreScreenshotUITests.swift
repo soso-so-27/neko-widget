@@ -26,9 +26,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
         alert.textFields.firstMatch.tap(); alert.textFields.firstMatch.typeText("むぎ")
         alert.buttons["作る"].tap()
-        let observations = app.textFields["vet-observations"].exists
-            ? app.textFields["vet-observations"] : app.textViews["vet-observations"]
-        XCTAssertTrue(observations.waitForExistence(timeout: 10))
+        let observations = app.descendants(matching: .any)["vet-observations"].firstMatch
+        XCTAssertTrue(observations.waitForExistence(timeout: 10), app.debugDescription)
         observations.tap(); observations.typeText("いつもの様子")
         let preview = app.buttons["vet-show"]
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: preview)
