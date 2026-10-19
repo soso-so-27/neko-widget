@@ -10,6 +10,37 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewLocalOnlySettingsAndCreation() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launch()
+        let settings = app.buttons["albums-settings-button"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 20))
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
+        for identifier in ["settings-membership-preview", "settings-window-support-preview",
+                           "settings-restored-tools", "settings-personal-archive",
+                           "settings-sharing-review", "settings-billing-owner-enrollment"] {
+            XCTAssertFalse(app.buttons[identifier].exists, identifier)
+        }
+        XCTAssertFalse(app.staticTexts["まど"].exists)
+        XCTAssertFalse(app.staticTexts["診断情報"].exists)
+        captureScreenshot(named: "PR1-local-settings")
+        app.buttons["閉じる"].firstMatch.tap()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        let favorites = app.buttons["photos-section-favorites"]
+        XCTAssertTrue(favorites.waitForExistence(timeout: 10))
+        favorites.tap()
+        let create = app.buttons["saved-memories-selection-toggle"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        create.tap()
+        XCTAssertTrue(app.buttons["saved-memories-create-pdf"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["saved-memories-create-book-preview"].exists)
+        captureScreenshot(named: "PR1-local-creation")
+        app.terminate()
+    }
+
+    @MainActor
     func testCaptureJapaneseLocalOnlyProductScreens() {
         captureOnDevicePrivacyScreen()
         captureFixtureProductScreens()

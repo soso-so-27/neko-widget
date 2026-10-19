@@ -1866,19 +1866,21 @@ struct SavedMemoriesGalleryView: View {
                 }
                 .accessibilityIdentifier("saved-memories-create-pdf")
 
-                Button {
-                    beginCreation(.bookPreview)
-                } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("本のイメージ", systemImage: "book.closed")
-                            .font(.headline)
-                        Text("写真を20枚選んで、このiPhoneで本の形を確認します。")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                if !SharingAPIConfiguration.current.isDisabledRelease {
+                    Button {
+                        beginCreation(.bookPreview)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("本のイメージ", systemImage: "book.closed")
+                                .font(.headline)
+                            Text("写真を20枚選んで、このiPhoneで本の形を確認します。")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 8)
                     }
-                    .padding(.vertical, 8)
+                    .accessibilityIdentifier("saved-memories-create-book-preview")
                 }
-                .accessibilityIdentifier("saved-memories-create-book-preview")
             }
             .navigationTitle("作るものを選ぶ")
             .navigationBarTitleDisplayMode(.inline)
@@ -1995,7 +1997,8 @@ struct SavedMemoriesGalleryView: View {
 
     private func openBookDemandPreview() {
         guard !isExportingPhotoBook else { return }
-        guard creationOutput == .bookPreview else { return }
+        guard !SharingAPIConfiguration.current.isDisabledRelease,
+              creationOutput == .bookPreview else { return }
         let selectedPhotos = photos.filter {
             selectedExportIdentifiers.contains($0.localIdentifier)
         }
@@ -2709,7 +2712,8 @@ struct PhotoBrowserView: View {
                 photoActionLabel("お気に入り", systemImage: "bookmark")
             }
             .accessibilityLabel("お気に入りに追加")
-            .accessibilityHint("自分のお気に入りに追加します。相手には共有されません")
+            .accessibilityHint(SharingAPIConfiguration.current.isDisabledRelease
+                ? "自分のお気に入りに追加します" : "自分のお気に入りに追加します。相手には共有されません")
             .disabled(isExportingMemoryPhoto)
         }
 
@@ -2719,7 +2723,8 @@ struct PhotoBrowserView: View {
         }
         .accessibilityLabel(personalNote.state(for: selectedPhoto.localIdentifier).actionTitle(
             hasNote: personalNote.note(for: selectedPhoto.localIdentifier) != nil))
-        .accessibilityHint("自分だけのメモです。相手には送られません")
+        .accessibilityHint(SharingAPIConfiguration.current.isDisabledRelease
+            ? "自分だけのメモです" : "自分だけのメモです。相手には送られません")
         .accessibilityIdentifier("photo-memory-note-open")
         .disabled(isExportingMemoryPhoto || personalNote.state(for: selectedPhoto.localIdentifier).isLoading)
 
@@ -2806,7 +2811,7 @@ struct PhotoBrowserView: View {
                         .accessibilityIdentifier("photo-browser-managed-preserve")
                     }
                     Button { showsRediscoveryHistory = true } label: {
-                        Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
+                        Label(SharingAPIConfiguration.current.isDisabledRelease ? "ウィジェットに出た写真" : "まどでめくった写真", systemImage: "clock.arrow.circlepath")
                     }
                     .accessibilityIdentifier("photo-browser-rediscovery-history")
                     Divider()

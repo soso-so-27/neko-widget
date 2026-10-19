@@ -93,7 +93,8 @@ struct SettingsView: View {
     @State private var showsWindowSupportPreview = false
 
     private var canOpenMembershipOffer: Bool {
-        PlusPurchaseConfiguration.current.isConfigured
+        !SharingAPIConfiguration.current.isDisabledRelease
+            && PlusPurchaseConfiguration.current.isConfigured
             && BillingClientConfiguration.current.isConfigured
     }
 
@@ -204,12 +205,14 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-managed-preservation")
                 }
-                NavigationLink { RestoredToolsView() } label: {
-                    Label("復元したツール", systemImage: "arrow.counterclockwise")
-                }
-                .accessibilityIdentifier("settings-restored-tools")
-                if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+                if !SharingAPIConfiguration.current.isDisabledRelease {
+                    NavigationLink { RestoredToolsView() } label: {
+                        Label("復元したツール", systemImage: "arrow.counterclockwise")
+                    }
+                    .accessibilityIdentifier("settings-restored-tools")
+                    if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
+                        PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+                    }
                 }
                 NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
                     Label("メモを書き出す", systemImage: "square.and.arrow.up")
@@ -225,47 +228,49 @@ struct SettingsView: View {
                 NavigationLink {
                     PersonalRediscoveryHistoryView()
                 } label: {
-                    Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
+                    Label(SharingAPIConfiguration.current.isDisabledRelease ? "ウィジェットに出た写真" : "まどでめくった写真", systemImage: "clock.arrow.circlepath")
                 }
                 .accessibilityIdentifier("settings-personal-rediscovery")
             } header: {
                 Text("ウィジェット")
             }
 
-            Section {
-                if SharingAPIConfiguration.current.isReviewVisible {
-                    NavigationLink {
-                        if SharingAPIConfiguration.current.isMediaAvailable {
-                            FamilyWindowView(initialPresentation: .settings)
-                        } else if SharingAPIConfiguration.current.isAvailable {
-                            PairingView()
-                        } else {
-                            SharingReviewPreviewView()
-                        }
-                    } label: {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("まどの設定")
-                                Text("\(privateWindowDisplayName)・\(sharingSettingsSummary)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+            if !SharingAPIConfiguration.current.isDisabledRelease {
+                Section {
+                    if SharingAPIConfiguration.current.isReviewVisible {
+                        NavigationLink {
+                            if SharingAPIConfiguration.current.isMediaAvailable {
+                                FamilyWindowView(initialPresentation: .settings)
+                            } else if SharingAPIConfiguration.current.isAvailable {
+                                PairingView()
+                            } else {
+                                SharingReviewPreviewView()
                             }
-                        } icon: {
-                            Image(systemName: "rectangle.split.2x2")
+                        } label: {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("まどの設定")
+                                    Text("\(privateWindowDisplayName)・\(sharingSettingsSummary)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } icon: {
+                                Image(systemName: "rectangle.split.2x2")
+                            }
                         }
+                        .accessibilityIdentifier("settings-sharing-review")
                     }
-                    .accessibilityIdentifier("settings-sharing-review")
-                }
-                if SharingAPIConfiguration.current.isAvailable {
-                    NavigationLink {
-                        BlockedSharingView()
-                    } label: {
-                        Label("ブロックした共有", systemImage: "hand.raised")
+                    if SharingAPIConfiguration.current.isAvailable {
+                        NavigationLink {
+                            BlockedSharingView()
+                        } label: {
+                            Label("ブロックした共有", systemImage: "hand.raised")
+                        }
+                        .accessibilityIdentifier("settings-blocked-sharing")
                     }
-                    .accessibilityIdentifier("settings-blocked-sharing")
+                } header: {
+                    Text("まど")
                 }
-            } header: {
-                Text("まど")
             }
 
             Section {
@@ -304,7 +309,7 @@ struct SettingsView: View {
                 }
             }
 
-            if BillingSandboxOwnerEnrollmentAvailability.isAvailable {
+            if !SharingAPIConfiguration.current.isDisabledRelease, BillingSandboxOwnerEnrollmentAvailability.isAvailable {
                 Section {
                     NavigationLink("本人限定テストの端末確認") {
                         BillingSandboxOwnerEnrollmentView()
@@ -338,18 +343,20 @@ struct SettingsView: View {
                     Label("対応OS", systemImage: "iphone")
                 }
 
-                NavigationLink {
-                    advancedDiagnosticsView
-                } label: {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("診断情報")
-                            Text("不具合を調べるための情報")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                if !SharingAPIConfiguration.current.isDisabledRelease {
+                    NavigationLink {
+                        advancedDiagnosticsView
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("診断情報")
+                                Text("不具合を調べるための情報")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "wrench.and.screwdriver")
                         }
-                    } icon: {
-                        Image(systemName: "wrench.and.screwdriver")
                     }
                 }
             } header: {

@@ -65,7 +65,7 @@ struct WidgetPlacementGuideView: View {
                     Label("毎日一枚。1日1回だけ選び直せます。", systemImage: "arrow.clockwise")
                         .font(.footnote).foregroundStyle(.secondary)
                         .accessibilityIdentifier("widget-placement-daily-rule")
-                    Button("まどでめくった写真を見る") { showsRediscoveryHistory = true }
+                    Button(SharingAPIConfiguration.current.isDisabledRelease ? "ウィジェットに出た写真を見る" : "まどでめくった写真を見る") { showsRediscoveryHistory = true }
                         .font(.subheadline).frame(minHeight: 44)
                         .accessibilityIdentifier("widget-placement-rediscovery")
                 }

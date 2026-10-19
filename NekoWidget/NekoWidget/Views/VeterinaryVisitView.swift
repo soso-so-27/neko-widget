@@ -303,7 +303,7 @@ private struct VeterinaryConsultationView: View {
         .confirmationDialog("この診察メモを削除しますか？", isPresented: $deletesVisit, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("この診察用の控えだけを削除します。元の写真・メモ・保管した記録は残ります。") }
+        } message: { Text(SharingAPIConfiguration.current.isDisabledRelease ? "この診察用の控えだけを削除します。元の写真・メモは残ります。" : "この診察用の控えだけを削除します。元の写真・メモ・保管した記録は残ります。") }
         .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || pendingSource != nil)
     }
     private func save(completing: Bool = false) async {
@@ -427,7 +427,7 @@ private struct VeterinaryRecordConfirmation: View {
                     Button(visit.entries.contains { $0.sourceNoteID == source.id } ? "選んだ記録を更新" : "診察メモに追加") { Task { await add() } }
                         .disabled(!confirmed || wrongCat || busy).accessibilityIdentifier("vet-add-confirmed")
                     if busy { ProgressView("写真の控えを準備しています…") }
-                } footer: { Text("選んだこの記録だけを追加します。まどへの共有や自動送信はしません。") }
+                } footer: { Text(SharingAPIConfiguration.current.isDisabledRelease ? "選んだこの記録だけを追加します。" : "選んだこの記録だけを追加します。まどへの共有や自動送信はしません。") }
                 if let error { Text(error).accessibilityIdentifier("vet-add-error") }
             }
             .navigationTitle("内容を確認").navigationBarTitleDisplayMode(.inline)

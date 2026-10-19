@@ -126,7 +126,7 @@ struct MemoryNoteExportView: View {
                 .disabled(exporter.preparing || exporter.payload != nil)
                 .accessibilityIdentifier("memory-note-export-start")
             } footer: {
-                Text("このiPhoneのメモ・日時・猫の名前を、テキストとJSONのZIPファイルにします。写真は含みません。保管した写真は、各記録の「…」から取り出せます。")
+                Text(SharingAPIConfiguration.current.isDisabledRelease ? "このiPhoneのメモ・日時・猫の名前を、テキストとJSONのZIPファイルにします。写真は含みません。" : "このiPhoneのメモ・日時・猫の名前を、テキストとJSONのZIPファイルにします。写真は含みません。保管した写真は、各記録の「…」から取り出せます。")
             }
             if exporter.preparing { ProgressView() }
             if let error = exporter.error {
@@ -582,7 +582,7 @@ struct PhotoMemoryNoteEditor: View {
                 Button("削除", role: .destructive) { Task { await save("") } }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("写真とお気に入りはそのまま残ります。メモの文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。")
+                Text(SharingAPIConfiguration.current.isDisabledRelease ? "写真とお気に入りはそのまま残ります。メモの文章・体重・測定日を削除します。" : "写真とお気に入りはそのまま残ります。メモの文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。")
             }
             .alert("メモを保存できませんでした", isPresented: Binding(
                 get: { saveError != nil }, set: { if !$0 { saveError = nil } }

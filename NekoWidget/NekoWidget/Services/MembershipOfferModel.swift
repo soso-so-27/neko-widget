@@ -493,10 +493,11 @@ struct MembershipOfferSheet: View {
 /// production receipts never expose it; no authority is derived from this flag.
 enum MembershipOfferPreviewAvailability {
     static var isAvailable: Bool {
+        guard !SharingAPIConfiguration.current.isDisabledRelease else { return false }
 #if DEBUG
-        true
+        return true
 #else
-        Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
 #endif
     }
 }

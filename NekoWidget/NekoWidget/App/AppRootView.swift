@@ -177,6 +177,7 @@ struct AppRootView: View {
 
     private func handleNonPhotoURL(_ url: URL) {
         if let route = OfficialWindowRoute(url: url) {
+            guard !SharingAPIConfiguration.current.isDisabledRelease else { return }
             officialWindowPresentationID = UUID()
             officialWindowRoute = route
             return

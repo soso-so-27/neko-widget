@@ -851,7 +851,7 @@ struct PhotoMemoryNoteDetailView: View {
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("写真とお気に入りはそのまま残ります。文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。診察メモに選んだ控えは残ります。") }
+        } message: { Text(SharingAPIConfiguration.current.isDisabledRelease ? "写真とお気に入りはそのまま残ります。文章・体重・測定日を削除します。診察メモに選んだ控えは残ります。" : "写真とお気に入りはそのまま残ります。文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。診察メモに選んだ控えは残ります。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }

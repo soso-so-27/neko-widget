@@ -111,6 +111,7 @@ struct WidgetPhotoSource: AppEntity {
     /// Add future selectable sources here, or replace this with App Group data.
     /// Existing widget instances continue to resolve by their stable `id`.
     static var availableSources: [WidgetPhotoSource] {
+        guard Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String != "disabled" else { return [.personalLibrary] }
         var sources: [WidgetPhotoSource] = [.personalLibrary]
             + OfficialWindowConfiguration.definitions
                 .filter { $0.id == OfficialWindowCatalog.sourceID || $0.endpoint != nil }
@@ -172,7 +173,7 @@ struct WidgetPhotoSourceQuery: EntityQuery {
 struct NekoWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "表示する写真を選ぶ"
     static var description = IntentDescription(
-        "このiPhoneの猫写真、公式まど、またはまどに届いた一枚を選びます。"
+        "ウィジェットに表示する猫写真を選びます。"
     )
     // This intent belongs to WidgetKit's edit UI, not Siri or Shortcuts.
     static var isDiscoverable = false

@@ -66,7 +66,7 @@ struct PersonalRediscoveryHistoryView: View {
             }
             .padding(20)
         }
-        .navigationTitle("まどでめくった写真")
+        .navigationTitle(SharingAPIConfiguration.current.isDisabledRelease ? "ウィジェットに出た写真" : "まどでめくった写真")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("personal-rediscovery-history")
         .refreshable { reload() }
@@ -101,7 +101,7 @@ struct PersonalRediscoveryHistoryView: View {
                     .frame(minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
-            .accessibilityHint("1日に1回、このiPhoneのまどの写真を切り替えます")
+            .accessibilityHint(SharingAPIConfiguration.current.isDisabledRelease ? "1日に1回、ウィジェットの写真を切り替えます" : "1日に1回、このiPhoneのまどの写真を切り替えます")
             .accessibilityIdentifier("personal-rediscovery-turn")
         } else if let next = snapshot?.nextAvailableAt, next > displayDate {
             Label("今日はめくりました", systemImage: "checkmark.circle")
@@ -143,7 +143,7 @@ struct PersonalRediscoveryHistoryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
-        .accessibilityHint("写真を大きく開きます。まどの表示や今日の回数は変わりません")
+        .accessibilityHint(SharingAPIConfiguration.current.isDisabledRelease ? "写真を大きく開きます。ウィジェットの表示は変わりません" : "写真を大きく開きます。まどの表示や今日の回数は変わりません")
         .accessibilityIdentifier("personal-rediscovery-\(previous ? "previous" : "result")-\(grant.id)")
         #if DEBUG
         .accessibilityValue(identifier)
