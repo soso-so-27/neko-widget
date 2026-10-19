@@ -392,7 +392,7 @@ JPEG_COMPANION_DIGESTS = {
 }
 
 
-PRESERVATION_SCOPE = "preservation-service-v27"
+PRESERVATION_SCOPE = "preservation-service-v28"
 PRESERVATION_JOB = "Validate preservation identity and storage"
 PRESERVATION_WORKFLOW = ".github/workflows/preservation-service.yml"
 PRESERVATION_JOB_TIMEOUT_MINUTES = 5
@@ -574,12 +574,12 @@ PRESERVATION_PATHS = frozenset("NekoWidget/PreservationService/" + name for name
     "wrangler.r2-probe.jsonc",
 ))
 PRESERVATION_COMPANION_PATHS = JPEG_COMPANION_PATHS
-# v27 reviews the owner-publication lease group and its boundary tests.
-# The complete service tree is pinned to candidate 3349283; all other tracked
+# v28 reviews removal of duplicate old-root authentication and its branch tests.
+# The complete service tree is pinned to candidate 92856cd; all other tracked
 # source inputs and workflow requirements retain the closed path checks below.
 # Any later service edit requires a new review/profile or FULL. This is backend
 # validation only, never native release, live restoration or deletion evidence.
-PRESERVATION_REVIEWED_TREE = "f2e26488e11b5d1ce8ba037e60d3762ddda972b1"
+PRESERVATION_REVIEWED_TREE = "f47283322add742d417c42befed46c1a425af9df"
 PRESERVATION_WORKFLOW_DIGEST = "265a4f8d50a1fdcad666e084207a3a28034baab6d852662357f11c3bd355fa90"
 PRESERVATION_COMPANION_DIGESTS = {
     "NekoWidget/ci/plan-ios-ci.py": [
