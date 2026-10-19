@@ -75,11 +75,11 @@ struct GrowthAlbumDetailView: View {
             Text(aboutSelectionMessage)
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("すべてから除外", role: .destructive) {
+            Button("候補から外す", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])
@@ -253,14 +253,14 @@ struct GrowthAlbumDetailView: View {
                     pendingAssignmentIdentifier = item.photo.localIdentifier
                     showsAssignmentSheet = true
                 } label: {
-                    Label("写っている子を修正", systemImage: "person.crop.circle.badge.checkmark")
+                    Label("写っている猫を選ぶ", systemImage: "person.crop.circle.badge.checkmark")
                 }
             }
             Button {
                 pendingExclusionIdentifier = item.photo.localIdentifier
                 showsExclusionConfirmation = true
             } label: {
-                Label("表示候補から外す", systemImage: "cat.circle")
+                Label("候補から外す", systemImage: "eye.slash")
             }
         }
     }

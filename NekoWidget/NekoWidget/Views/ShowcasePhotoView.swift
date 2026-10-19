@@ -105,7 +105,7 @@ struct ShowcasePhotoView: View {
     private var visibleTitle: String {
         guard initialScopeID != nil else { return title }
         return profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "みんな" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ猫")
     }
 
     private var isDirectPhoto: Bool {
@@ -132,7 +132,7 @@ struct ShowcasePhotoView: View {
                 Spacer(minLength: 8)
                 if detailIndex == nil && initialScopeID != nil && !profiles.isEmpty {
                     Menu {
-                        Button("みんな") { selectScope("") }
+                        Button("すべての猫") { selectScope("") }
                         ForEach(profiles) { profile in
                             Button(profile.displayName) { selectScope(profile.identifier) }
                         }
@@ -357,7 +357,7 @@ struct ShowcasePreparationView: View {
 
     private var scopeTitle: String {
         profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "みんな" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ猫")
     }
 
     /// Manual choices may use any detected-cat photo; prior profile sorting is
@@ -384,7 +384,7 @@ struct ShowcasePreparationView: View {
                     HStack {
                         if !profiles.isEmpty || !scopeID.isEmpty {
                             Picker("見せる猫", selection: $scopeID) {
-                                Text("みんな").tag("")
+                                Text("すべての猫").tag("")
                                 if !scopeID.isEmpty && !profiles.contains(where: { $0.identifier == scopeID }) {
                                     Text("前に選んだ猫").tag(scopeID)
                                 }
@@ -395,7 +395,7 @@ struct ShowcasePreparationView: View {
                             .pickerStyle(.menu)
                             .accessibilityIdentifier("showcase-scope-picker")
                         } else {
-                            Text("みんな").font(.headline)
+                            Text("すべての猫").font(.headline)
                         }
                         Spacer()
                         Text("\(allEntries.count) / \(ShowcasePhotoStore.maximumCount)")

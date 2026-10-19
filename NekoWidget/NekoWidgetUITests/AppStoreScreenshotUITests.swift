@@ -10,6 +10,32 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewConsistentPhotosAndAlbums() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["albums-settings-button"].waitForExistence(timeout: 20))
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 3) {
+            let deny = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
+            if deny.exists { deny.tap() }
+        }
+        captureScreenshot(named: "PR3-albums")
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        let picker = app.buttons["photos-cat-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["photos-section-all"].isSelected)
+        captureScreenshot(named: "PR3-photos")
+        picker.tap()
+        XCTAssertTrue(app.buttons["すべての猫"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["すべての猫"].firstMatch.tap()
+        app.buttons["photos-section-favorites"].tap()
+        XCTAssertTrue(app.buttons["photos-section-favorites"].isSelected, app.debugDescription)
+        XCTAssertTrue(app.buttons["saved-memories-selection-toggle"].waitForExistence(timeout: 10), app.debugDescription)
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewPhotoEntryAndAlbums() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]

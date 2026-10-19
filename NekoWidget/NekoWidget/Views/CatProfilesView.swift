@@ -515,7 +515,7 @@ struct CatProfileScopePicker: View {
             HStack(spacing: 10) {
                 scopeButton(
                     scope: .everyone,
-                    title: "みんな",
+                    title: "すべての猫",
                     photo: nil,
                     systemImage: "square.stack.3d.up.fill"
                 )
