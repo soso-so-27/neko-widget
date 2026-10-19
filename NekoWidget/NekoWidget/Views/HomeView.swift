@@ -308,7 +308,7 @@ struct HomeView: View {
         .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "all") : nil,
             normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
         .navigationTitle("写真")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
             if !isEmbedded {
@@ -438,6 +438,7 @@ struct HomeView: View {
             }
             .padding(.top, 2)
             .padding(.bottom, 8)
+            .padding(.horizontal, isEmbedded ? 16 : 0)
             .id("photo-library-all-heading")
 
             ForEach(PhotoLibraryGridRow.rows(Array(catPhotos.prefix(restoredDetectedPhotoCount)))) { row in
