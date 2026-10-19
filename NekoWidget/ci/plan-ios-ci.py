@@ -6739,7 +6739,7 @@ def partitioned_capacity_control_inputs(paths, base, head):
 RESTORE_PAGES_BASE = "c0a1363902c1cddda1ec349c29ee9aa9927f3457"
 RESTORE_PAGES_BRANCH = "codex/long-term-cost-recovery-20261019"
 RESTORE_PAGES_CONTROLS = frozenset("NekoWidget/ci/" + name for name in (
-    "ios_ci_scope.py", "plan-ios-ci.py", "test-ci-lanes.py", "test-plan-ios-ci.py"))
+    "ios_ci_scope.py", "plan-ios-ci.py", "test-ci-lanes.py", "test-plan-ios-ci.py", "test-release-testflight.py"))
 
 
 def restore_pages_control_inputs(paths, base, head):
