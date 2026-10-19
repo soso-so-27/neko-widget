@@ -37,7 +37,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         confirmation.buttons["プロフィールを削除"].tap()
         // The profile disappears but the tool's original record remains editable.
-        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 10))
+        let retainedName = app.descendants(matching: .any)["care-cat-name"].firstMatch
+        XCTAssertTrue(retainedName.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(retainedName.value as? String, "ミケ")
         app.terminate()
     }
 
