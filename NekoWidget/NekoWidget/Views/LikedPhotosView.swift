@@ -211,13 +211,15 @@ struct AlbumView: View {
                     .accessibilityLabel("\(album.title)、\(GrowthAlbumOverviewCard.dateRange(for: album))")
                     .accessibilityValue(GrowthAlbumOverviewCard.dateRange(for: album))
                 }
-                if !periods.isEmpty || !dates.isEmpty {
-                    NavigationLink(value: AlbumCatalogRoute.years(profileIdentifier: selectedProfileIdentifier)) {
-                        AlbumCatalogEntry(title: "日付から探す", symbol: "calendar")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("albums-years-toggle")
-                }
+            }
+            if !comparisons.isEmpty {
+                Text("探す").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            }
+            if !periods.isEmpty || !dates.isEmpty {
+                NavigationLink(value: AlbumCatalogRoute.years(profileIdentifier: selectedProfileIdentifier)) {
+                    AlbumNavigationRow(title: "日付から探す", subtitle: "", symbol: "calendar")
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+                }.buttonStyle(.plain).accessibilityIdentifier("albums-years-toggle")
             }
             if !lifePeriods.isEmpty {
                 periodShelf(lifePeriods, title: "年齢・暮らした時期", compact: true)
@@ -1187,8 +1189,8 @@ struct LikedPhotosView: View {
         .membershipFeature(.automaticAlbums, hasContent: hasPhotoAccess && !isPreparingAlbums
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
-        .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月のまとめ・ムービー" : navigationTitleOverride ?? "アルバム")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
+        .navigationBarTitleDisplayMode(isCatDetail || showsReflectionArchive || showsHighlightArchive ? .inline : .large)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
         .onAppear { freezeRecommendations(allowAppend: true) }
@@ -1221,7 +1223,7 @@ struct LikedPhotosView: View {
         .toolbar {
             if !isCatDetail && !showsReflectionArchive && !showsHighlightArchive {
                 if let showSettings {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button(action: showSettings) { Image(systemName: "gearshape") }
                             .accessibilityLabel("設定").accessibilityIdentifier("albums-settings-button")
                     }
@@ -1747,7 +1749,7 @@ struct SavedMemoriesGalleryView: View {
             }
         }
         .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("saved-memories-gallery")
