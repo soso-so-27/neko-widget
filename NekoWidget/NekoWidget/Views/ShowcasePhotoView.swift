@@ -5,8 +5,17 @@ struct ShowcaseOpenOneKey: EnvironmentKey {
     static let defaultValue: ((String) -> Void)? = nil
 }
 
+struct ShowcaseAddTarget: Identifiable {
+    let id: String
+    let title: String
+}
+
 struct ShowcaseAddPhotoKey: EnvironmentKey {
-    static let defaultValue: ((String) -> Void)? = nil
+    static let defaultValue: ((String, String) async throws -> Void)? = nil
+}
+
+struct ShowcaseAddTargetsKey: EnvironmentKey {
+    static let defaultValue = [ShowcaseAddTarget(id: "", title: "すべての猫")]
 }
 
 extension EnvironmentValues {
@@ -14,9 +23,13 @@ extension EnvironmentValues {
         get { self[ShowcaseOpenOneKey.self] }
         set { self[ShowcaseOpenOneKey.self] = newValue }
     }
-    var showcaseAddPhoto: ((String) -> Void)? {
+    var showcaseAddPhoto: ((String, String) async throws -> Void)? {
         get { self[ShowcaseAddPhotoKey.self] }
         set { self[ShowcaseAddPhotoKey.self] = newValue }
+    }
+    var showcaseAddTargets: [ShowcaseAddTarget] {
+        get { self[ShowcaseAddTargetsKey.self] }
+        set { self[ShowcaseAddTargetsKey.self] = newValue }
     }
 }
 

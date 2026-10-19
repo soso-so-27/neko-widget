@@ -324,6 +324,8 @@ struct AppStoreScreenshotFixtureRootView: View {
     var widgetPhotoIdentifier: String? = nil
     var widgetPhotoShownAt: Date? = nil
     var photoAccess = true
+    var startsInPhotos = false
+    var ignoresAcceptanceScenario = false
     @State private var selectedPhotoIdentifier: String?
     @State private var selectedPhotoShownAt: Date?
     @State private var showsFamilyWindow = false
@@ -406,7 +408,7 @@ struct AppStoreScreenshotFixtureRootView: View {
             )
         } else {
 #if targetEnvironment(simulator)
-            if let scenario = ProcessInfo.processInfo.environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] {
+            if !ignoresAcceptanceScenario, let scenario = ProcessInfo.processInfo.environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] {
                 MainlineAcceptanceFixtureRootView(scenario: scenario)
             } else {
                 productScreens
@@ -481,7 +483,8 @@ struct AppStoreScreenshotFixtureRootView: View {
             selectPhotoSourceAlbum: { _ in },
             refreshPhotoSourceAlbums: {},
             exportJSON: { nil },
-            personalArchiveStore: Self.archiveStore
+            personalArchiveStore: Self.archiveStore,
+            startsInPhotos: startsInPhotos
         )
     }
 
@@ -590,7 +593,28 @@ private struct MainlineAcceptanceFixtureRootView: View {
     var body: some View {
         Group {
             if finished {
-                Text("確認完了").accessibilityIdentifier("mainline-fixture-finished")
+                if scenario == "review-first-photo" {
+                    AppStoreScreenshotFixtureRootView(startsInPhotos: true, ignoresAcceptanceScenario: true)
+                } else {
+                    Text("確認完了").accessibilityIdentifier("mainline-fixture-finished")
+                }
+            } else if scenario == "review-photo" {
+                NavigationStack {
+                    PhotoBrowserView(
+                        photos: AppStoreScreenshotFixture.photos,
+                        libraryPhotos: AppStoreScreenshotFixture.photos,
+                        initialPhoto: AppStoreScreenshotFixture.photos[0],
+                        exportMemoryPhoto: { _ in throw CocoaError(.fileWriteUnknown) },
+                        setMemorySaved: { _, _ in }, excludedCatCandidateIdentifiers: [],
+                        excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
+                        profiles: [], assignmentsByPhotoIdentifier: [:],
+                        replaceProfileAssignments: { _ in true }
+                    )
+                    .environment(\.showcaseOpenOne, { _ in })
+                    .environment(\.showcaseAddPhoto, { _, _ in
+                        try await Task.sleep(for: .milliseconds(200))
+                    })
+                }
             } else if scenario == "family-settings" {
                 NavigationStack { FamilyWindowView(initialPresentation: .settings) }
             } else if scenario == "solo-memories-rediscovery" {
@@ -678,7 +702,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
 
     private var photos: [PhotoPresentation] {
         switch scenario {
-        case "one": return Array(AppStoreScreenshotFixture.photos.prefix(1))
+        case "one", "review-first-photo": return Array(AppStoreScreenshotFixture.photos.prefix(1))
         // Four inputs exercise the shipping three-thumbnail cap.
         case "three": return Array(AppStoreScreenshotFixture.photos.prefix(4))
         case "unavailable":
