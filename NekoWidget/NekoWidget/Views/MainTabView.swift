@@ -259,6 +259,7 @@ struct MainTabView: View {
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
     @State private var arrivalReadFailed = false
+    @State private var arrivalRefreshSequence = 0
 
     private var showsMadoTab: Bool {
         SharingAPIConfiguration.current.isReviewVisible
@@ -286,12 +287,14 @@ struct MainTabView: View {
 
     private func refreshMadoArrivals() async {
         guard showsMadoTab else { return }
+        arrivalRefreshSequence &+= 1
+        let sequence = arrivalRefreshSequence
         let result = await Task.detached(priority: .utility) { () -> [String: [Date]]? in
             try? SharingLifecycleGate.withExclusive {
-                guard let catalog = try PrivateWindowCatalogStore.load() else { return [:] }
+                let catalog = try PrivateWindowCatalogStore.load()
                 var dates: [String: [Date]] = [:]
                 let now = Date()
-                for window in catalog.windows where window.spaceID != nil {
+                for window in catalog?.windows ?? [] where window.spaceID != nil {
                     let state = try MomentSharingStateStore.loadWhileLifecycleLocked(localWindowID: window.localWindowID)
                     guard state.reportOnlyUntil == nil else { continue }
                     dates[window.localWindowID] = state.inbox.compactMap { item in
@@ -301,9 +304,16 @@ struct MainTabView: View {
                         return item.receivedAt
                     }
                 }
+                for definition in OfficialWindowConfiguration.definitions where definition.endpoint != nil {
+                    // The existing store validates subscription, channel, cat,
+                    // expiry and the build-owned endpoint. No feed is fetched.
+                    let state = OfficialWindowStore.forWindow(definition).snapshot()
+                    dates["official:" + definition.id] = state.photos.map(\.publishedAt)
+                }
                 return dates
             }
         }.value
+        guard sequence == arrivalRefreshSequence else { return }
         arrivalReadFailed = result == nil
         arrivalDates = result ?? [:]
         guard !didApplyInitialTab else { return }
@@ -581,6 +591,9 @@ struct MainTabView: View {
                     lastTab: lastViewedTab, hasNewPhotos: false, showsMado: false)
             }
             await refreshMadoArrivals()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
+            Task { await refreshMadoArrivals() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingSynchronizationSucceeded)) { _ in
             Task { await refreshMadoArrivals() }
