@@ -405,7 +405,7 @@ struct MainTabView: View {
             }
             .tag(AppTab.photos)
 
-            if showsMadoTab {
+            if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
                 NavigationStack {
                     WindowListView(
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
