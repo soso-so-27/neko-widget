@@ -268,7 +268,7 @@ class ReleaseTests(unittest.TestCase):
                 if scope == release.planner.TOOL_STORAGE_SCOPE:
                     self.plan["required_backend_runs"] = release.planner.tool_storage_requirements(self.sha)
                 self.set_plan()
-                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True), patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "tool_storage_graph", return_value={"native_evidence": {"sha": self.sha}, "backend_evidence": {"preservation-service.yml": {"sha": self.sha}}}):
+                with patch.object(release.planner, "moderation_resolution_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "internal_report_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "owner_cloud_native_evidence", return_value=True), patch.object(release.planner, "tool_preservation_backend_evidence", return_value={"verified": True}), patch.object(release.planner, "tool_storage_graph", return_value={"native_evidence": {"sha": self.sha}, "backend_evidence": {"preservation-service.yml": {"sha": self.sha}}}), patch.object(release.planner, "restore_pages_graph", return_value={"verified": True}):
                     # The new fresh-only graph is owned by its candidate push;
                     # generic routing still mocks the separately tested graph.
                     candidate = {"head_branch": release.planner.TOOL_STORAGE_BRANCH, "run_attempt": 1,

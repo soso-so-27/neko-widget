@@ -12999,5 +12999,221 @@ class PartitionedReadinessEvidenceTests(unittest.TestCase):
                 with self.assertRaises(release.Blocked): release.check_ci(GitHub(), self.head, self.current["id"], self.now)
 
 
+
+class RestorePagesInputsTests(unittest.TestCase):
+    def setUp(self):
+        self.head, self.approval, self.base = "b" * 40, "c" * 40, "d" * 40
+        self.contents = {p: ("before " + p, "after " + p) for p in planner.RESTORE_PAGES_PATHS}
+        self.digests = {p: list(map(scope.source_digest, pair)) for p, pair in self.contents.items()}
+        self.rows = {p: [":100644", "100644", "e" * 40, "f" * 40, "M"]
+                     for p in planner.RESTORE_PAGES_PATHS | planner.RESTORE_PAGES_CONTROLS}
+        self.methods = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
+            "func " + name.rsplit("/", 1)[1] + "() {}" for name in scope.RESTORE_PAGES_TESTS) + "\n}"
+    def git(self, *args):
+        if args[:2] == ("merge-base", "--is-ancestor"): return ""
+        if args[0] == "merge-base": return self.approval
+        if args[0] == "ls-tree": return f"100644 blob {'a' * 40}\t{args[-1]}"
+        if args[0] == "diff":
+            return "".join(" ".join(fields) + "\0" + path + "\0" for path, fields in self.rows.items()
+                if args[-2] == planner.RESTORE_PAGES_BASE or path not in planner.RESTORE_PAGES_CONTROLS)
+        if args[0] == "show":
+            ref, path = args[1].split(":", 1)
+            if ref == self.approval: return 'RESTORE_PAGES_SCOPE = "' + planner.RESTORE_PAGES_SCOPE + '"\n'
+            if path == scope.MEMORY_TEST_PATH: return self.methods
+            return self.contents[path][0 if ref == planner.RESTORE_PAGES_BASE else 1]
+        if args[0] == "rev-parse": return "a" * 40
+        raise AssertionError(args)
+    def prove(self, override=None):
+        def git(*args): return override[args] if override and args in override else self.git(*args)
+        with patch.object(planner, "git", side_effect=git), patch.object(planner, "RESTORE_PAGES_DIGESTS", self.digests):
+            return planner.restore_pages_inputs(self.head)
+    def test_full_tracked_closure_requires_reviewed_main_controls_and_all_six_inputs(self):
+        self.assertTrue(self.prove())
+        for path in planner.RESTORE_PAGES_PATHS:
+            for index in (0, 1):
+                original = self.contents[path]; pair = list(original); pair[index] += " changed"
+                self.contents[path] = tuple(pair); self.assertFalse(self.prove()); self.contents[path] = original
+            original = self.rows.pop(path); self.assertFalse(self.prove()); self.rows[path] = original
+        for path in planner.RESTORE_PAGES_CONTROLS:
+            self.assertFalse(self.prove({("ls-tree", self.head, "--", path): f"100644 blob {'b' * 40}\t{path}"}))
+        self.assertFalse(self.prove({("show", self.approval + ":NekoWidget/ci/ios_ci_scope.py"): "old controls"}))
+        for path in ("unknown.txt", ".github/workflows/ios-build.yml", planner.PRESERVATION_WORKFLOW,
+                     "NekoWidget/SharingService/src/index.ts", scope.MEMORY_TEST_PATH):
+            self.rows[path] = [":100644", "100644", "e" * 40, "f" * 40, "M"]
+            self.assertFalse(self.prove()); del self.rows[path]
+    def test_modes_deletions_renames_duplicates_and_missing_owning_ui_reject(self):
+        for path in planner.RESTORE_PAGES_PATHS | planner.RESTORE_PAGES_CONTROLS:
+            original = self.rows[path]
+            for changed in ([":100644", "100755", *original[2:]], [":100644", "120000", *original[2:]],
+                            [":000000", "100644", "0" * 40, original[3], "A"], original[:-1] + ["D"],
+                            original[:-1] + ["R100"]):
+                self.rows[path] = changed; self.assertFalse(self.prove())
+            self.rows[path] = original
+        raw_args = ("diff", "--raw", "--no-renames", "--no-abbrev", "-z", planner.RESTORE_PAGES_BASE, self.head)
+        raw = self.git(*raw_args)
+        self.assertFalse(self.prove({raw_args: raw + raw}))
+        self.assertFalse(self.prove({raw_args: raw + "broken"}))
+        saved = self.methods; self.methods = ""; self.assertFalse(self.prove()); self.methods = saved
+        doc = "handoffs/restore-pages.md"
+        self.rows[doc] = [":000000", "100644", "0" * 40, "f" * 40, "A"]
+        self.assertTrue(self.prove()); self.rows[doc] = [":100644", "000000", "e" * 40, "0" * 40, "D"]
+        self.assertFalse(self.prove())
+    def test_runtime_branch_diff_cannot_hide_controls_unreported_or_partial_changes(self):
+        paths = sorted(planner.RESTORE_PAGES_PATHS)
+        with patch.object(planner, "git", side_effect=self.git), patch.object(planner, "RESTORE_PAGES_DIGESTS", self.digests), \
+                patch.object(planner, "comparison_base", return_value=self.base):
+            self.assertEqual(planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head}), planner.RESTORE_PAGES_SCOPE)
+            self.assertEqual(planner.required_jobs(paths, planner.RESTORE_PAGES_SCOPE), planner.required_jobs_from_scope(planner.RESTORE_PAGES_SCOPE))
+            for invalid in (paths[:-1], paths + paths[:1], paths + ["unreported.swift"], paths + list(planner.RESTORE_PAGES_CONTROLS)):
+                self.assertFalse(planner.restore_pages_only(invalid, self.base, self.head))
+            self.rows["unreported.swift"] = [":100644", "100644", "e" * 40, "f" * 40, "M"]
+            self.assertEqual(planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head}), scope.FULL_SCOPE)
+    def test_control_introduction_is_plan_only_and_exact_base_tree(self):
+        paths = sorted(planner.RESTORE_PAGES_CONTROLS)
+        def git(*args):
+            if args[0] == "diff": return "".join(" ".join(self.rows[p]) + "\0" + p + "\0" for p in paths)
+            return self.git(*args)
+        with patch.object(planner, "git", side_effect=git), patch.object(planner, "comparison_base", return_value=self.base):
+            self.assertEqual(planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head}), planner.ORCHESTRATION_SCOPE)
+            self.assertEqual(planner.required_jobs(paths, planner.ORCHESTRATION_SCOPE), (planner.PLAN_JOB,))
+            for invalid in (paths[:-1], paths + paths[:1], paths + [next(iter(planner.RESTORE_PAGES_PATHS))]):
+                self.assertFalse(planner.restore_pages_control_inputs(invalid, self.base, self.head))
+            def wrong(*args): return "b" * 40 if args == ("rev-parse", self.base + "^{tree}") else git(*args)
+            with patch.object(planner, "git", side_effect=wrong):
+                self.assertEqual(planner.runtime_scope(paths, {}, {"GITHUB_SHA": self.head}), scope.FULL_SCOPE)
+
+
+class RestorePagesGraphTests(unittest.TestCase):
+    def setUp(self):
+        self.now = dt.datetime.now(dt.timezone.utc)
+        self.sha = "a" * 40; self.repo = "soso-so-27/neko-widget"
+        self.run = {"id": 10, "head_sha": self.sha, "workflow_id": 335014238, "path": ".github/workflows/ios-build.yml",
+            "event": "push", "head_branch": "codex/long-term-cost-recovery-20261019", "run_attempt": 1,
+            "status": "completed", "conclusion": "success", "updated_at": self.now.isoformat(),
+            "repository": {"full_name": self.repo}, "head_repository": {"full_name": self.repo}}
+        self.required = planner.required_jobs_from_scope(planner.RESTORE_PAGES_SCOPE)
+        self.build = ("Check out repository", "Full build fixture")
+        def job(name, identifier, run, steps):
+            return {"id": identifier, "name": name, "run_id": run["id"], "head_sha": self.sha, "run_attempt": 1,
+                "status": "completed", "conclusion": "success", "completed_at": self.now.isoformat(),
+                "steps": [{"name": s, "status": "completed", "conclusion": "success"} for s in steps]}
+        names = {planner.BUILD: self.build, planner.BOOTSTRAP_SMOKE: (
+            "Check out repository", "Run Simulator smoke test", "Upload Simulator smoke-test artifacts"),
+            planner.lane_job(planner.RESTORE_PAGES_SCOPE, "runtime"): planner.OWNER_CLOUD_RUNTIME_STEPS,
+            planner.lane_job(planner.RESTORE_PAGES_SCOPE, "app-ui"): planner.OWNER_CLOUD_RUNTIME_STEPS,
+            planner.PLAN_JOB: ("Check out repository", "Test CI selection and evidence boundaries", "Select checks")}
+        self.jobs = [job(n, 100+i, self.run, s) for i, (n, s) in enumerate(names.items())]
+        self.jobs += [dict(job(planner.UNEXPANDED_SHARING_JOB, 200+i, self.run, ()), conclusion="skipped") for i in range(2)]
+        self.backend = dict(self.run, id=20, workflow_id=363932714, path=planner.PRESERVATION_WORKFLOW)
+        self.backend_jobs = [job(planner.PRESERVATION_JOB, 300, self.backend, planner.TOOL_STORAGE_BACKEND_STEPS)]
+        self.index = {"total_count": 1, "workflow_runs": [self.backend]}
+    def api(self, path):
+        if "/workflows/preservation-service.yml/runs?" in path: return copy.deepcopy(self.index)
+        if path.endswith("/runs/20"): return copy.deepcopy(self.backend)
+        if "/runs/20/jobs?" in path: return {"total_count": len(self.backend_jobs), "jobs": copy.deepcopy(self.backend_jobs)}
+        if "/runs/10/jobs?" in path: return {"total_count": len(self.jobs), "jobs": copy.deepcopy(self.jobs)}
+        raise AssertionError(path) # JSON adapter only: no implicit raw-log request.
+    def mocks(self, module=planner):
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(module, "restore_pages_inputs", return_value=True))
+        stack.enter_context(patch.object(module, "restore_pages_build_steps", return_value=self.build))
+        return stack
+    def prove(self): return planner.restore_pages_graph(self.run, self.repo, self.api, self.now, self.jobs)
+    def test_four_fresh_native_and_all_eight_same_sha_backend_steps_required(self):
+        with self.mocks():
+            proof = self.prove()
+            self.assertEqual(len(proof["native_job_ids"]), 4)
+            self.assertEqual(proof["required_backend_steps"], list(planner.TOOL_STORAGE_BACKEND_STEPS))
+            self.assertTrue(proof["raw_ui_external_verification_required"])
+            self.assertEqual(planner.executed_jobs(self.run, self.repo, self.api), self.jobs)
+        requirements = planner.restore_pages_requirements(self.sha)
+        self.assertEqual(requirements[0]["head_sha"], self.sha)
+        self.assertEqual(requirements[0]["required_steps"], list(planner.TOOL_STORAGE_BACKEND_STEPS))
+    def test_native_identity_attempt_stale_duplicate_missing_and_unknown_jobs_reject(self):
+        with self.mocks():
+            for key, value in (("head_sha", "b"*40), ("head_branch", "main"), ("event", "workflow_dispatch"),
+                ("workflow_id", 1), ("run_attempt", 2), ("run_attempt", True), ("status", "in_progress"), ("conclusion", "failure"),
+                ("updated_at", (self.now-dt.timedelta(hours=25)).isoformat()), ("updated_at", (self.now+dt.timedelta(minutes=1)).isoformat())):
+                with self.subTest(key=key, value=value), patch.dict(self.run, {key: value}), self.assertRaises((ValueError, TypeError)): self.prove()
+            for row in self.jobs:
+                for key, value in (("head_sha", "b"*40), ("run_id", 2), ("run_attempt", 2), ("id", 0)):
+                    with patch.dict(row, {key: value}), self.assertRaises(ValueError): self.prove()
+                if row["name"] != planner.UNEXPANDED_SHARING_JOB:
+                    for key, value in (("conclusion", "skipped"), ("completed_at", None), ("completed_at", (self.now-dt.timedelta(hours=25)).isoformat())):
+                        with patch.dict(row, {key: value}), self.assertRaises(ValueError): self.prove()
+                    with patch.dict(row["steps"][0], {"conclusion": "skipped"}), self.assertRaises(ValueError): self.prove()
+            for altered in (self.jobs[:-1], self.jobs+self.jobs[:1], self.jobs+[dict(self.jobs[0], id=900, name="Unknown")]):
+                original = self.jobs; self.jobs = altered
+                with self.assertRaises(ValueError): self.prove()
+                self.jobs = original
+            with patch.dict(self.jobs[-1], {"name": "Unknown skipped"}), self.assertRaises(ValueError): self.prove()
+            with patch.object(planner, "restore_pages_inputs", return_value=False), self.assertRaises(ValueError): self.prove()
+    def test_backend_failure_active_wrong_owner_missing_duplicate_stale_or_step_skip_reject(self):
+        with self.mocks():
+            for key, value in (("head_sha", "b"*40), ("head_branch", "codex/other"), ("event", "pull_request"),
+                ("workflow_id", 1), ("run_attempt", 2), ("status", "in_progress"), ("conclusion", "failure"),
+                ("repository", {"full_name": "other/repo"}), ("updated_at", (self.now-dt.timedelta(hours=25)).isoformat())):
+                with patch.dict(self.backend, {key: value}), self.assertRaises(ValueError): self.prove()
+            for bad in ({"total_count": 0, "workflow_runs": []}, {"total_count": 1, "workflow_runs": []},
+                        {"total_count": 2, "workflow_runs": [self.backend, self.backend]}):
+                original = self.index; self.index = bad
+                with self.assertRaises(ValueError): self.prove()
+                self.index = original
+            for step in self.backend_jobs[0]["steps"]:
+                with patch.dict(step, {"conclusion": "skipped"}), self.assertRaises(ValueError): self.prove()
+            row = self.backend_jobs[0]
+            for key, value in (("run_id", 11), ("head_sha", "b"*40), ("run_attempt", 2), ("conclusion", "skipped"),
+                               ("completed_at", None), ("completed_at", (self.now+dt.timedelta(minutes=1)).isoformat())):
+                with patch.dict(row, {key: value}), self.assertRaises(ValueError): self.prove()
+            self.backend_jobs.append(dict(row, id=999))
+            with self.assertRaises(ValueError): self.prove()
+    def test_backend_index_race_and_actual_run_mismatch_reject(self):
+        original = self.api; calls = 0
+        def changed(path):
+            nonlocal calls
+            if "/workflows/" in path:
+                calls += 1
+                if calls == 2: return {"total_count": 0, "workflow_runs": []}
+            return original(path)
+        with self.mocks():
+            with self.assertRaises(ValueError): planner.restore_pages_graph(self.run, self.repo, changed, self.now, self.jobs)
+            def wrong(path): return dict(self.backend, head_sha="b"*40) if path.endswith("/runs/20") else original(path)
+            with self.assertRaises(ValueError): planner.restore_pages_graph(self.run, self.repo, wrong, self.now, self.jobs)
+    def test_main_reuse_uses_the_same_backend_gate_and_cannot_reuse_native_alone(self):
+        main = "b" * 40
+        current = dict(self.run, id=30, head_sha=main, head_branch="main")
+        def api(path):
+            if path.endswith("/runs/30"): return current
+            if "/workflows/ios-build.yml/runs?" in path: return {"workflow_runs": [self.run]}
+            return self.api(path)
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": self.repo, "GITHUB_REF": "refs/heads/main",
+               "GITHUB_SHA": main, "GITHUB_RUN_ID": "30"}
+        with self.mocks(), patch.object(planner, "git", return_value=main), \
+                patch.object(planner, "reusable_run", return_value=True):
+            self.assertEqual(planner.find_evidence(env, self.required, api, self.now), (self.run["id"], self.sha))
+            with patch.dict(self.backend_jobs[0]["steps"][0], {"conclusion": "skipped"}), self.assertRaises(ValueError):
+                planner.find_evidence(env, self.required, api, self.now)
+    def test_unchanged_release_json_adapter_enforces_backend_and_never_requests_raw_logs(self):
+        spec = importlib.util.spec_from_file_location("restore_release", Path(__file__).with_name("release-testflight.py"))
+        release = importlib.util.module_from_spec(spec); spec.loader.exec_module(release)
+        fixture = self
+        class GitHub:
+            def get(self, path):
+                if path == "actions/workflows/ios-build.yml":
+                    return {"id": 335014238, "state": "active", "path": ".github/workflows/ios-build.yml"}
+                if path == "actions/runs/10": return fixture.run
+                return fixture.api("/repos/" + fixture.repo + "/" + path)
+            def log(self, run_id, job_id):
+                return "IOS_CI_PLAN_JSON=" + json.dumps({"schema_version": 1, "repository": fixture.repo,
+                    "head_sha": fixture.sha, "scope": planner.RESTORE_PAGES_SCOPE,
+                    "required_jobs": list(fixture.required), "required_backend_runs": planner.restore_pages_requirements(fixture.sha),
+                    "evidence_run_id": None, "evidence_sha": None})
+        with self.mocks(release.planner):
+            self.assertEqual(release.executed_jobs_for(GitHub(), self.run), self.jobs)
+            self.assertEqual(release.check_ci(GitHub(), self.sha, self.run["id"], self.now)["tested_sha"], self.sha)
+            with patch.dict(self.backend_jobs[0]["steps"][-1], {"conclusion": "skipped"}), self.assertRaises(ValueError):
+                release.check_ci(GitHub(), self.sha, self.run["id"], self.now)
+
+
 if __name__ == "__main__":
     unittest.main()
