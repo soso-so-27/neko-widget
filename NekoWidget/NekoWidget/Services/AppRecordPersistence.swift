@@ -611,11 +611,13 @@ final class AppRecordPersistence: ObservableObject {
             let fingerprint = try AppRecordDataset.fingerprint()
             // Retain a complete remote copy even when choosing this device.
             let record = try await index(remote.1)
-            let saved = try await ToolBackupTransfer.restore(record, client: client) { _, _ in }
-            try await require(value, checkpoint)
+            let restored = try await ToolBackupTransfer.restoreWithSession(record, client: client) { _, _ in }
+            let saved = restored.saved
+            let restoredCheckpoint = restored.checkpoint
+            try await require(value, restoredCheckpoint)
             guard try await remoteHead(headID)?.0.revision == remote.0.revision else { throw ManagedPreservationError.conflict }
             if useRemote {
-                let fence = try await client.localSessionFence(checkpoint)
+                let fence = try await client.localSessionFence(restoredCheckpoint)
                 try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: fingerprint, validateSession: fence)
                 value.fingerprint = try AppRecordDataset.fingerprint()
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil
@@ -627,7 +629,7 @@ final class AppRecordPersistence: ObservableObject {
                 value.fingerprint = nil
             }
             value.revision = remote.0.revision; value.snapshotID = remote.1.snapshotID
-            try await require(value, checkpoint); try write(value)
+            try await require(value, restoredCheckpoint); try write(value)
             conflict = false; requested = true; detail = "切替前の記録もこの端末に残しています。"
         } catch { report(error) }
         busy = false
@@ -708,10 +710,11 @@ final class AppRecordPersistence: ObservableObject {
                     try AppRecordEditingLease.requireIdle()
                     title = "記録を復元しています…"
                     let record = try await index(remote.1)
-                    let saved = try await ToolBackupTransfer.restore(record, client: client) { _, _ in }
-                    try await require(value, checkpoint)
+                    let restored = try await ToolBackupTransfer.restoreWithSession(record, client: client) { _, _ in }
+                    let saved = restored.saved
+                    try await require(value, restored.checkpoint)
                     guard try await remoteHead(headID)?.0.revision == remote.0.revision else { throw ManagedPreservationError.conflict }
-                    let fence = try await client.localSessionFence(checkpoint)
+                    let fence = try await client.localSessionFence(restored.checkpoint)
                     try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: currentFingerprint, validateSession: fence)
                     value.revision = remote.0.revision; value.snapshotID = saved.id
                     value.fingerprint = try AppRecordDataset.fingerprint(); value.pending = nil
@@ -1244,6 +1247,10 @@ private actor AppRecordFixtureServer {
     private var indexReads: [UUID: Int] = [:]
     private var indexRateLimitCountdown: Int?
     private var indexRateLimitResponses = 0
+    private var generation = 0
+    private var selectedPageSizes: [Int] = []
+    private var payloadReads = 0
+    func restoreReads() -> (pages: [Int], individualPayloads: Int) { (selectedPageSizes, payloadReads) }
     func indexReadCounts() -> [UUID: Int] { indexReads }
     func rateLimitIndexOnce(after successfulReads: Int) { indexRateLimitCountdown = successfulReads }
     func indexRateLimits() -> Int { indexRateLimitResponses }
@@ -1260,7 +1267,7 @@ private actor AppRecordFixtureServer {
                   let bytes = text.data(using: .utf8), let head = try? JSONDecoder().decode(AppRecordHead.self, from: bytes) else { return false }
             return head.kind == "app-records-v1"
         })?.key, var row = records[id], let revision = row["revision"] as? Int else { throw ToolBackupError.invalid }
-        row["revision"] = revision + 1; records[id] = row
+        row["revision"] = revision + 1; records[id] = row; generation += 1
     }
     func request(_ request: URLRequest) throws -> (Data, URLResponse) {
         requests += 1
@@ -1321,6 +1328,26 @@ private actor AppRecordFixtureServer {
             let items = records.values.sorted { ($0["recordId"] as! String) < ($1["recordId"] as! String) }
             return try response(["items": items, "nextCursor": NSNull(), "generation": requests])
         }
+        if request.httpMethod == "GET", url.path == "/v1/export-page" {
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            guard let selection = query.first(where: { $0.name == "ids" })?.value else { throw ToolBackupError.invalid }
+            let ids = selection.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+            guard !ids.isEmpty, ids.count <= 50, Set(ids).count == ids.count,
+                  ids.allSatisfy({ records[$0] != nil }) else { throw ToolBackupError.invalid }
+            if let expected = query.first(where: { $0.name == "generation" })?.value, expected != String(generation) {
+                return try failure("ARCHIVE_CHANGED", 409)
+            }
+            selectedPageSizes.append(ids.count)
+            var lines: [[String: Any]] = [["version": 1, "type": "header", "generation": generation, "totalRecords": ids.count]]
+            for id in ids.sorted(by: { $0.uuidString < $1.uuidString }) {
+                var row = records[id]!; row["type"] = "record"; lines.append(row)
+            }
+            lines.append(["type": "complete", "generation": generation, "recordCount": ids.count, "nextCursor": NSNull()])
+            var bytes = Data()
+            for line in lines { bytes.append(try JSONSerialization.data(withJSONObject: line)); bytes.append(10) }
+            return (bytes, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/x-ndjson"])!)
+        }
         guard let id = UUID(uuidString: url.lastPathComponent) else { throw ToolBackupError.invalid }
         if request.httpMethod == "PUT" {
             guard !deleted.contains(id), let body = try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any],
@@ -1342,6 +1369,7 @@ private actor AppRecordFixtureServer {
             if photo != nil { photoPuts += 1 }
             records[id] = ["recordId": id.uuidString.lowercased(), "revision": revision, "document": document,
                 "photoBase64": body["photoBase64"] ?? NSNull(), "photoSHA256": photo.map { ToolBackupIndex.hash($0) as Any } ?? NSNull()]
+            generation += 1
             return try response(["recordId": id.uuidString.lowercased(), "revision": revision])
         }
         if request.httpMethod == "DELETE" {
@@ -1349,6 +1377,7 @@ private actor AppRecordFixtureServer {
             guard let old = records[id] else { return try failure("RECORD_NOT_FOUND", 404) }
             guard !referenced(id) else { return try failure("TOOL_PART_REFERENCED", 409) }
             records.removeValue(forKey: id); deleted.insert(id)
+            generation += 1
             for partID in references(old) where !referenced(partID) { claimed.insert(partID) }
             return try response(["recordId": id.uuidString.lowercased(), "revision": (old["revision"] as! Int) + 1])
         }
@@ -1363,7 +1392,7 @@ private actor AppRecordFixtureServer {
                 }
                 indexRateLimitCountdown = remaining - 1
             }
-        }
+        } else if let document = record["document"] as? [String: Any], document["toolBackup"] != nil { payloadReads += 1 }
         return try response(record)
     }
 }
@@ -1493,11 +1522,23 @@ private final class AppRecordFixture {
               repairedReads[latestHead.snapshotID, default: 0] == resumedReads[latestHead.snapshotID, default: 0] + 1,
               repairedReads.filter({ $0.key != damagedID && $0.key != latestHead.snapshotID }) == resumedReads.filter({ $0.key != damagedID && $0.key != latestHead.snapshotID }) else { throw ToolBackupError.invalid }
         Self.preparationPhase = "検証済みの一覧から新しい端末へ復元"
+        // Retain the interrupted/resumed metadata assertions above, then drive
+        // a genuinely cold paged restore rather than hiding it behind that cache.
+        for part in repaired.nodes ?? [] where part.snapshotId != latestHead.snapshotID.uuidString.lowercased() {
+            let cache = ToolBackupFiles.root.appendingPathComponent("index-node-cache-v4/" + part.snapshotId.uppercased() + ".json")
+            if FileManager.default.fileExists(atPath: cache.path) { try FileManager.default.removeItem(at: cache) }
+        }
+        let readsBefore = await server.restoreReads()
         await next.persistence.enable()
         guard next.persistence.title == "復元しました" else {
             Self.preparationPhase += " / \(next.persistence.title) / \(next.persistence.detail ?? "説明なし")"
             throw ToolBackupError.storage
         }
+        let readsAfter = await server.restoreReads()
+        let pages = Array(readsAfter.pages.dropFirst(readsBefore.pages.count))
+        guard pages.count > 2, pages.allSatisfy({ (1...50).contains($0) }),
+              pages.count < repaired.recordIDs.count / 10,
+              readsAfter.individualPayloads == readsBefore.individualPayloads else { throw ToolBackupError.invalid }
         let restored = try await PhotoMemoryNoteStore.shared.records()
         let actual = Dictionary(uniqueKeysWithValues: restored.map { ($0.id, $0.note) })
         guard actual.count == expected.count, expected.allSatisfy({ actual[$0.id] == $0.note }),

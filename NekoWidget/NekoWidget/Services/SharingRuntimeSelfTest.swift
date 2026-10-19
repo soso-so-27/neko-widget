@@ -48,9 +48,15 @@ private actor PreservationDeviceSessionFixtureServer {
     private var outcome: Outcome = .success
     private(set) var renewals = 0
     private(set) var revocations = 0
-    init(owner: String, grant: String, key: Data, now: @escaping @Sendable () -> Date) {
+    private(set) var restorePages = 0
+    private var restoreRecords: [UUID: ManagedPreservationDocument] = [:]
+    private let advanceRestoreClock: @Sendable (Int) -> Void
+    init(owner: String, grant: String, key: Data, now: @escaping @Sendable () -> Date,
+         advanceRestoreClock: @escaping @Sendable (Int) -> Void = { _ in }) {
         self.owner = owner; self.grant = grant; self.key = key; self.now = now
+        self.advanceRestoreClock = advanceRestoreClock
     }
+    func configureRestore(_ records: [UUID: ManagedPreservationDocument]) { restoreRecords = records }
     func configure(_ value: Outcome) { outcome = value }
     func entered() -> Bool { held != nil }
     func release() { held?.resume(); held = nil; outcome = .success }
@@ -95,6 +101,32 @@ private actor PreservationDeviceSessionFixtureServer {
             (status == 204 ? Data() : try JSONSerialization.data(withJSONObject: object),
              HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"])!)
+        }
+        if request.httpMethod == "GET", url.path == "/v1/export-page" {
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            guard let text = query.first(where: { $0.name == "ids" })?.value else { throw ToolBackupError.invalid }
+            let ids = text.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+            let expectedGeneration = query.first(where: { $0.name == "generation" })?.value
+            guard !ids.isEmpty, ids.count <= 50, Set(ids).count == ids.count,
+                  ids.allSatisfy({ restoreRecords[$0] != nil }),
+                  expectedGeneration == nil || expectedGeneration == "1" else {
+                throw ToolBackupError.invalid
+            }
+            // Force a complete one-record page, so the real restore exercises
+            // both byte-limited continuation and renewal between its pages.
+            let id = ids.sorted { $0.uuidString < $1.uuidString }[0]
+            let document = try JSONSerialization.jsonObject(with: ManagedPreservationWire.encoder().encode(restoreRecords[id]!))
+            let lines: [[String: Any]] = [
+                ["version": 1, "type": "header", "generation": 1, "totalRecords": ids.count],
+                ["type": "record", "recordId": id.uuidString.lowercased(), "revision": 1,
+                    "document": document, "photoBase64": NSNull(), "photoSHA256": NSNull()],
+                ["type": "complete", "generation": 1, "recordCount": 1,
+                    "nextCursor": ids.count > 1 ? id.uuidString.lowercased() as Any : NSNull()]]
+            var data = Data()
+            for line in lines { data.append(try JSONSerialization.data(withJSONObject: line)); data.append(10) }
+            restorePages += 1; advanceRestoreClock(restorePages)
+            return (data, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/x-ndjson"])!)
         }
         if request.httpMethod == "GET", url.path == "/v1/membership" {
             if outcome == .heldRead { await withCheckedContinuation { held = $0 } }
@@ -148,7 +180,8 @@ private struct PreservationDeviceSessionFixture {
         let store = ManagedPreservationSessionStore(origin: origin.absoluteString)
         guard try store.save(prepared, replacing: nil), let initial = try store.load() else { throw ManagedPreservationError.secureStorage }
         return Self(configuration: .init(isEnabled: true, origin: origin, membershipAudience: "preservation.device-fixture"),
-            clock: clock, os: os, server: PreservationDeviceSessionFixtureServer(owner: owner, grant: grant, key: key, now: { clock.now() }),
+            clock: clock, os: os, server: PreservationDeviceSessionFixtureServer(owner: owner, grant: grant, key: key,
+                now: { clock.now() }, advanceRestoreClock: { clock.advance(Double($0) * 700) }),
             store: store, initial: initial)
     }
     func client() -> ManagedPreservationClient {
@@ -10880,6 +10913,66 @@ actor SharingRuntimeSelfTestRunner {
         let restarted = first.client()
         _ = try await restarted.prepareSession(expectedOwner: first.initial.ownerId)
         guard await first.server.renewals == 1 else { throw ManagedPreservationError.invalidResponse }
+
+        // A long restore renews only at a complete page boundary. The 210s
+        // margin covers a bounded page plus one owner-rate-window wait.
+        let restore = try PreservationDeviceSessionFixture.make(); defer { restore.cleanup() }
+        let restoreClient = restore.client()
+        let originalRestore = try await restoreClient.captureSessionCheckpoint()
+        restore.clock.advance(700) // 200s left: ordinary prepareSession would keep this token.
+        let nextRestore = try await restoreClient.prepareRestoreBoundary(replacing: originalRestore)
+        guard await restore.server.renewals == 1, nextRestore.ownerID == originalRestore.ownerID else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        var oldRejected = false
+        do { try await restoreClient.requireSessionCheckpoint(originalRestore) } catch { oldRejected = true }
+        guard oldRejected else { throw ManagedPreservationError.staleSession }
+        try await restoreClient.requireSessionCheckpoint(nextRestore)
+        restore.clock.advance(1601) // The same grant also renews after actual access expiry.
+        let afterExpiry = try await restoreClient.prepareRestoreBoundary(replacing: nextRestore)
+        try await restoreClient.requireSessionCheckpoint(afterExpiry)
+        guard await restore.server.renewals == 2, let prior = try restore.store.load() else {
+            throw ManagedPreservationError.invalidResponse
+        }
+        let external = ManagedPreservationSessionStore.Credential(token: String(repeating: "z", count: 43),
+            ownerId: prior.ownerId, expiresAt: restore.clock.now().addingTimeInterval(900))
+        guard try restore.store.save(external, replacing: prior) else { throw ManagedPreservationError.secureStorage }
+        var replacementRejected = false
+        do { _ = try await restoreClient.prepareRestoreBoundary(replacing: afterExpiry) } catch { replacementRejected = true }
+        guard replacementRejected, await restore.server.renewals == 2 else { throw ManagedPreservationError.staleSession }
+
+        // Run the complete production restore, not only its renewal helper.
+        // Each complete synthetic page advances 700s; actual wall-clock sleep
+        // and real Apple/network requests are deliberately absent.
+        let long = try PreservationDeviceSessionFixture.make(); defer { long.cleanup() }
+        let rootID = UUID(), payload = Data("{}".utf8)
+        let files = ["CatPreparedness/records.json", "LostCatDrafts/drafts.json"].map {
+            ToolBackupIndex.File(path: $0, bytes: payload.count, sha256: ToolBackupIndex.hash(payload), records: [UUID()])
+        }
+        let index = try ToolBackupTree.build(.init(version: 4, snapshotID: rootID, createdAt: .now, files: files), previous: nil)
+        var documents: [UUID: ManagedPreservationDocument] = [:]
+        func document(_ part: ToolBackupPart) -> ManagedPreservationDocument {
+            .init(formatVersion: 3, text: "synthetic restore", capturedAt: nil, writtenAt: nil, updatedAt: nil,
+                catNames: [], photoFile: nil, toolBackup: part)
+        }
+        for file in files {
+            documents[file.records[0]] = document(.init(snapshotId: rootID.uuidString.lowercased(), kind: "json",
+                path: file.path, part: 0, count: 1, sha256: file.sha256, payload: payload.base64EncodedString()))
+        }
+        for part in index.nodes ?? [] { documents[UUID(uuidString: part.snapshotId)!] = document(part) }
+        guard let rootDocument = documents[rootID] else { throw ToolBackupError.invalid }
+        await long.server.configureRestore(documents)
+        let longClient = long.client()
+        let oldLong = try await longClient.captureSessionCheckpoint()
+        let restored = try await ToolBackupTransfer.restoreWithSession(
+            .init(recordId: rootID, revision: 1, document: rootDocument), client: longClient) { _, _ in }
+        try await longClient.requireSessionCheckpoint(restored.checkpoint)
+        var oldLongRejected = false
+        do { try await longClient.requireSessionCheckpoint(oldLong) } catch { oldLongRejected = true }
+        guard oldLongRejected, await long.server.restorePages >= 3, await long.server.renewals >= 2,
+              restored.saved.owner == long.initial.ownerId, restored.saved.index.files == index.files,
+              try ToolBackupFiles.read(ToolBackupFiles.restoredSource(rootID, owner: long.initial.ownerId)
+                .appendingPathComponent(files[0].path), maximum: 10) == payload else { throw ToolBackupError.invalid }
 
         for outcome in [PreservationDeviceSessionFixtureServer.Outcome.lostResponse, .unavailable, .wrongOwner] {
             let f = try PreservationDeviceSessionFixture.make(); defer { f.cleanup() }
