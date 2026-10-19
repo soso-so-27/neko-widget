@@ -5,6 +5,7 @@ import SwiftUI
 struct MonthlyWindowView: View {
     let presentation: MonthlyWindowPresentation
     let setMemorySaved: (String, Bool) -> Void
+    var exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)? = nil
     var libraryPhotos: [PhotoPresentation]? = nil
     var excludedCatCandidateIdentifiers: Set<String> = []
     var excludeFromCatCandidates: ([String]) -> Void = { _ in }
@@ -23,13 +24,15 @@ struct MonthlyWindowView: View {
                     initialPhoto: first,
                     widgetShownAt: nil, showsWidgetTiming: false,
                     setMemorySaved: setMemorySaved,
+                    exportMemoryPhoto: exportMemoryPhoto,
                     excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                     excludeFromCatCandidates: excludeFromCatCandidates,
                     restoreCatCandidates: restoreCatCandidates,
                     profiles: profiles,
                     assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                     replaceProfileAssignments: replaceProfileAssignments,
-                    deliveryActions: deliveryActions
+                    deliveryActions: deliveryActions,
+                    navigationTitle: "\(presentation.monthNumber)月のまとめ"
                 )
             } else {
                 ContentUnavailableView(

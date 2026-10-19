@@ -325,4 +325,88 @@ struct CareHandoffFixtureView: View {
         return [image, last.thumbnail(of: CGSize(width: 595, height: 842), for: .mediaBox)]
     }
 }
+
+/// Saved-data checks use only repositories rooted in a fresh temporary directory.
+@MainActor
+enum ToolProfileDataChecks {
+    static func require(_ value: Bool, line: Int = #line) throws {
+        if !value { throw NSError(domain: "ToolProfileDataCheck", code: line) }
+    }
+    static func run() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ToolProfileTest-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let careRoot = root.appendingPathComponent("CareHandoff")
+        let evacRoot = root.appendingPathComponent("EvacuationPreparation")
+        let legacyRoot = root.appendingPathComponent("CatPreparedness")
+        let lostRoot = root.appendingPathComponent("LostCatDrafts")
+        let showcaseRoot = root.appendingPathComponent("ShowcasePhotos")
+        let vetRoot = root.appendingPathComponent("VeterinaryVisits")
+        let profileID = UUID().uuidString
+        let toolID = UUID()
+        let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!.jpegData(compressionQuality: 0.85)!
+        let carePhoto = UUID().uuidString + ".jpg", evacPhoto = UUID().uuidString + ".jpg"
+        var cat = CareCat(); cat.name = "以前の名前"; cat.toolCatID = toolID; cat.photoName = carePhoto
+        cat.usualFood = "いつものごはん"; cat.handling = "静かに"; cat.healthDetails = "記録を維持"
+        let carePlan = CareHandoffPlan(cats: [cat])
+        var evac = EvacuationCat(); evac.name = cat.name; evac.toolCatID = toolID
+        evac.photos = ["face": evacPhoto]; evac.food = "水とフード"; evac.medicalDetails = "薬の記録"
+        var evacPlan = EvacuationPlan(); evacPlan.cats = [evac]
+        try CareHandoffRepository(directory: careRoot).commit(carePlan, newPhotos: [carePhoto: jpeg])
+        try EvacuationRepository(directory: evacRoot).commit(evacPlan, newPhotos: [evacPhoto: jpeg])
+        let legacy = CatPreparednessStore(directory: legacyRoot)
+        var legacyRecord = CatPreparednessRecord(); legacyRecord.name = "古い猫"; legacyRecord.collar = "赤"
+        try legacy.save(legacyRecord, for: "old-key")
+        var draft = LostCatDraft(); draft.name = "残る猫"; draft.features = "茶白"; draft.faceFileName = UUID().uuidString + ".jpg"
+        try FileManager.default.createDirectory(at: lostRoot, withIntermediateDirectories: true)
+        try jpeg.write(to: lostRoot.appendingPathComponent(draft.faceFileName!))
+        try JSONEncoder().encode([profileID: draft]).write(to: lostRoot.appendingPathComponent("drafts.json"))
+        try FileManager.default.createDirectory(at: showcaseRoot, withIntermediateDirectories: true)
+        let showcasePhoto = UUID().uuidString + ".jpg"
+        try jpeg.write(to: showcaseRoot.appendingPathComponent(showcasePhoto))
+        let entry = ShowcasePhotoStore.Entry(scopeID: profileID, photoIdentifier: "legacy-photo", imageFileName: showcasePhoto)
+        try JSONEncoder().encode([entry]).write(to: showcaseRoot.appendingPathComponent("selected.json"))
+        let vet = VeterinaryVisitStore(directory: vetRoot)
+        let originalVisit = try await vet.current(catID: UUID(uuidString: profileID)!, catName: "作成時の名前") { try $0() }
+        let manifestPaths = ["CareHandoff/plan.json", "EvacuationPreparation/plan.json", "CatPreparedness/records.json", "LostCatDrafts/drafts.json", "ShowcasePhotos/selected.json", "VeterinaryVisits/state.json"]
+        let originalBytes = try manifestPaths.map { try Data(contentsOf: root.appendingPathComponent($0)) }
+        let care = CareHandoffStore(directory: careRoot)
+        let evacuation = EvacuationStore(directory: evacRoot)
+        _ = CatPreparednessStore(directory: legacyRoot)
+        let loadedLost = LostCatDraftStore(directory: lostRoot, legacy: legacy)
+        let loadedShowcase = ShowcasePhotoStore(directory: showcaseRoot)
+        let secondVet = VeterinaryVisitStore(directory: vetRoot)
+        let unchangedVisit = try await secondVet.current(catID: originalVisit.catID, catName: "変更後の表示名") { _ in throw CocoaError(.fileWriteUnknown) }
+        try require(unchangedVisit == originalVisit && unchangedVisit.catName == "作成時の名前")
+        try require(loadedLost.drafts[profileID]?.features == "茶白" && loadedShowcase.entries == [entry])
+        try require(loadedLost.preparedKeys.contains("old-key") && loadedLost.preparedKeys.contains(profileID))
+        for (path, bytes) in zip(manifestPaths, originalBytes) { try require(Data(contentsOf: root.appendingPathComponent(path)) == bytes) }
+        try require(ToolCatProfileLinker.care(cat.id, profileID: profileID, care: care, evacuation: evacuation))
+        var expectedCare = carePlan; expectedCare.cats[0].profileID = profileID
+        var expectedEvac = evacPlan; expectedEvac.cats[0].profileID = profileID
+        try require(care.plan == expectedCare && evacuation.plan == expectedEvac)
+        try require(Data(contentsOf: careRoot.appendingPathComponent(carePhoto)) == jpeg)
+        try require(Data(contentsOf: evacRoot.appendingPathComponent(evacPhoto)) == jpeg)
+        // The shipping backup validators must still accept all existing formats and owned JPEGs.
+        let paths = manifestPaths + ["CareHandoff/" + carePhoto, "EvacuationPreparation/" + evacPhoto,
+            "LostCatDrafts/" + draft.faceFileName!, "ShowcasePhotos/" + showcasePhoto]
+        let files = try paths.map { path -> ToolBackupIndex.File in
+            let data = try Data(contentsOf: root.appendingPathComponent(path))
+            return .init(path: path, bytes: data.count, sha256: ToolBackupIndex.hash(data), records: [UUID()])
+        }
+        try await ToolBackupValidation.validate(ToolBackupIndex(snapshotID: UUID(), createdAt: Date(), files: files), at: root)
+        var duplicate = cat; duplicate.id = UUID(); duplicate.photoName = nil; duplicate.profileID = profileID
+        try require(care.update { $0.cats.append(duplicate) })
+        let beforeDuplicateSelection = try Data(contentsOf: careRoot.appendingPathComponent("plan.json"))
+        try require(care.addCat(profileID: profileID, using: evacuation, access: MembershipActionAccess(enforcementEnabled: false)) == nil)
+        try require(Data(contentsOf: careRoot.appendingPathComponent("plan.json")) == beforeDuplicateSelection)
+        let badRoot = root.appendingPathComponent("UnreadableLegacy")
+        try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
+        let badURL = badRoot.appendingPathComponent("records.json"), badBytes = Data("not valid JSON".utf8)
+        try badBytes.write(to: badURL)
+        let unreadable = CatPreparednessStore(directory: badRoot)
+        var rejected = false
+        do { try unreadable.save(CatPreparednessRecord(), for: "must-not-overwrite") } catch { rejected = true }
+        try require(rejected && unreadable.hasCorruptManifest && Data(contentsOf: badURL) == badBytes)
+    }
+}
 #endif

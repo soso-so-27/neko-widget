@@ -15,22 +15,16 @@ enum PhotoLibrarySection: String, CaseIterable {
     }
 }
 
-/// Device-local navigation preference. Initial inference only reads existing
-/// catalogs; it never restores, uploads or reconciles a user's records.
+/// Photo entry always starts at All; list positions remain device-local.
 @MainActor
 final class PhotoLibrarySelectionState: ObservableObject {
-    @Published private(set) var selection: PhotoLibrarySection
+    @Published private(set) var selection: PhotoLibrarySection = .all
     private let defaults: UserDefaults
     private let storageKey: String
-    private var hasResolvedSelection: Bool
-    private var resolutionID: UUID?
 
     init(defaults: UserDefaults = .standard, storageKey: String = "photoLibrary.lastSection.v1") {
         self.defaults = defaults
         self.storageKey = storageKey
-        let saved = defaults.string(forKey: storageKey).flatMap(PhotoLibrarySection.init(rawValue:))
-        selection = saved ?? .all
-        hasResolvedSelection = saved != nil
         PhotoLibraryReadingPosition.activeSection = selection.rawValue
     }
 
@@ -39,61 +33,15 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 
     func select(_ section: PhotoLibrarySection) {
-        // Freeze the outgoing list before its disappearance/layout callbacks.
         if selection != section { PhotoLibraryReadingPosition.activeSection = section.rawValue }
-        PhotoLibraryReadingPosition.diagnose("section \(selection.rawValue) -> \(section.rawValue)")
-        resolutionID = nil
-        hasResolvedSelection = true
         selection = section
         defaults.set(section.rawValue, forKey: storageKey)
-    }
-
-    func resolveInitialSelection(noteStore: PhotoMemoryNoteStore,
-                                 archiveStore: PersonalArchiveStore?) async {
-        guard !hasResolvedSelection, !Task.isCancelled else { return }
-        let requestID = UUID()
-        resolutionID = requestID
-        let hasLocalNotes: Bool?
-        do {
-            hasLocalNotes = try await noteStore.records().contains {
-                !$0.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-        } catch {
-            hasLocalNotes = nil
-        }
-        guard canResolve(requestID) else { return }
-        if hasLocalNotes == true { select(.notes); return }
-
-        let hasArchivedNotes: Bool?
-        if let archiveStore {
-            do {
-                let snapshot = try await archiveStore.readingSnapshot()
-                hasArchivedNotes = snapshot.records.contains {
-                    !$0.isDeletionPending && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }
-            } catch {
-                hasArchivedNotes = nil
-            }
-        } else {
-            hasArchivedNotes = false
-        }
-        guard canResolve(requestID) else { return }
-        if hasArchivedNotes == true {
-            select(.notes)
-        } else if hasLocalNotes == false && hasArchivedNotes == false {
-            select(.all)
-        }
-        // Failed reads leave the temporary All presentation unresolved. A later
-        // appearance may retry; an explicit choice always wins and is retained.
-    }
-
-    private func canResolve(_ requestID: UUID) -> Bool {
-        !Task.isCancelled && !hasResolvedSelection && resolutionID == requestID
     }
 }
 
 struct PhotoLibrarySectionPicker: View {
     @Binding var selection: PhotoLibrarySection
+    var isCompact = false
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -116,7 +64,7 @@ struct PhotoLibrarySectionPicker: View {
         }
         .padding(4)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.horizontal, isCompact ? 0 : 16).padding(.vertical, 8)
     }
 }
 
@@ -304,11 +252,13 @@ struct MainTabView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
     var personalArchiveStore: PersonalArchiveStore? = nil
+    var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
+    @State private var didApplyInitialTab = false
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
     @State private var photoLibraryProfileIdentifier: String?
-    @StateObject private var showcaseStore = ShowcasePhotoStore()
+    @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
     @Environment(\.membershipActions) private var showcaseAccess
@@ -317,8 +267,7 @@ struct MainTabView: View {
     @State private var preparingShowcaseScopes = Set<String>()
     @State private var showcaseWaitingToOpen: String?
     @State private var showcasePreparationError = false
-    @State private var showcaseAddPhotoIdentifier: String?
-    @State private var showcaseAddError = false
+    @State private var showsShowcaseNoPhotos = false
     @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
@@ -343,7 +292,15 @@ struct MainTabView: View {
     private var growthPhotoOverridesJSON = ""
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: Binding(get: { selectedTab }, set: { tab in
+            // This setter is for a person's tab tap. Deep links continue to
+            // set selectedTab directly and keep their exact-photo destination.
+            if tab == .photos {
+                photoLibrarySelection.select(.all)
+                photosPath = NavigationPath()
+            }
+            selectedTab = tab
+        })) {
             NavigationStack(path: $memoriesPath) {
                 albumsView()
                     .navigationDestination(for: AlbumRoute.self) { route in
@@ -407,36 +364,23 @@ struct MainTabView: View {
             }
             .tag(AppTab.tools)
         }
+        .environment(\.toolProfileActions, catProfilesActions)
         .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
             guard allowShowcaseOpening() else { return }
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
         })
         .membershipActionNotice($showcaseMembershipNotice)
-        .environment(\.showcaseAddPhoto, { identifier in
-            showcaseAddPhotoIdentifier = identifier
-        })
-        .confirmationDialog("追加先を選ぶ", isPresented: Binding(
-            get: { showcaseAddPhotoIdentifier != nil },
-            set: { if !$0 { showcaseAddPhotoIdentifier = nil } }
-        )) {
-            ForEach(showcaseAddScopes, id: \.self) { scope in
-                Button(showcaseScopeTitle(scope)) {
-                    guard let identifier = showcaseAddPhotoIdentifier else { return }
-                    showcaseAddPhotoIdentifier = nil
-                    showcaseScopeID = scope
-                    Task {
-                        do { try await showcaseStore.add(photoIdentifier: identifier, to: scope) }
-                        catch { showcaseAddError = true }
-                    }
-                }
+        .environment(\.showcaseAddPhoto, { identifier, scope in
+            guard showcaseCandidates.contains(where: { $0.localIdentifier == identifier }) else {
+                throw ShowcasePhotoStore.Error.unavailable
             }
-        } message: {
-            Text("この写真を「見せる写真」に追加します。")
-        }
-        .alert("写真を追加できませんでした", isPresented: $showcaseAddError) {
-            Button("閉じる", role: .cancel) {}
-        }
+            try await showcaseStore.add(photoIdentifier: identifier, to: scope)
+            showcaseScopeID = scope
+        })
+        .environment(\.showcaseAddTargets, showcaseAddScopes.map {
+            ShowcaseAddTarget(id: $0, title: showcaseScopeTitle($0))
+        })
         .alert("見せる写真を準備できませんでした", isPresented: $showcasePreparationError) {
             Button("編集画面を開く") { showsShowcasePreparation = true }
             Button("閉じる", role: .cancel) {}
@@ -539,6 +483,11 @@ struct MainTabView: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active { consumeShowcaseLaunchRequest() }
         }
+        .onAppear {
+            guard !didApplyInitialTab else { return }
+            didApplyInitialTab = true
+            if startsInPhotos { selectedTab = .photos }
+        }
         .onChange(of: selectedTab) { _, tab in
             if tab != .tools { showcaseWaitingToOpen = nil }
         }
@@ -601,12 +550,14 @@ struct MainTabView: View {
 
     private var photoLibrary: some View {
         VStack(spacing: 0) {
-            photoLibraryCatPicker
-            PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding)
+            HStack(spacing: 8) {
+                PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
+                photoLibraryCatPicker
+            }.padding(.horizontal, 16)
             photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
         }
         .navigationTitle("写真")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .background(Color(.systemGroupedBackground))
         .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
             PhotoLibraryReadingPosition.activeSection = key
@@ -618,18 +569,13 @@ struct MainTabView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("window-settings-button")
             }
         }
-        .task(id: canResolveInitialPhotoSection) {
-            guard canResolveInitialPhotoSection else { return }
-            let archiveStore = personalArchiveStore
-                ?? (PersonalArchiveStore.isConfigured ? PersonalArchiveStore.shared : nil)
-            await photoLibrarySelection.resolveInitialSelection(noteStore: memoStore, archiveStore: archiveStore)
-        }
+
     }
 
     private var showcaseCandidates: [PhotoPresentation] {
@@ -665,8 +611,11 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                toolSection("暮らしのツール") {
-                        showcaseToolCard
+                showcaseToolCard
+                if !preparingShowcaseScopes.isEmpty {
+                    ProgressView("見せる写真を準備中")
+                }
+                toolSection("ふだんの準備") {
                         NavigationLink {
                             CareHandoffView(profiles: catProfilesPresentation.profiles,
                                             unregisteredPhotos: unregisteredCatPhotos)
@@ -716,9 +665,9 @@ struct MainTabView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
                     .accessibilityLabel("設定")
                     .accessibilityIdentifier("tools-settings-button")
@@ -728,18 +677,32 @@ struct MainTabView: View {
 
     private var showcaseToolCard: some View {
         Button {
-            if hasPhotoAccess || !showcaseStore.availableEntries(in: "").isEmpty {
-                openPreparedShowcase(scopeID: "")
-            } else {
-                selectedTab = .photos
-                requestPhotoAccess()
-            }
+            if showcaseStore.availableEntries(in: "").isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
+                showsShowcaseNoPhotos = true
+            } else { openPreparedShowcase(scopeID: "") }
         } label: {
-            ToolTile(title: "うちの子を見せる", systemImage: "photo.on.rectangle.angled",
-                     subtitle: "初回はおすすめ、あとから選べる", catPose: "tilt")
+            HStack(spacing: 20) {
+                ToolCatArtwork(pose: "tilt", systemImage: "photo.on.rectangle.angled")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("写真を見せる").font(.title2.bold())
+                    Text("お気に入りの写真を、さっと見せる").font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            }.padding(20).frame(maxWidth: .infinity, minHeight: 140)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
+        .alert(hasPhotoAccess ? "猫の写真を準備しましょう" : "写真の許可が必要です", isPresented: $showsShowcaseNoPhotos) {
+            Button(hasPhotoAccess ? "写真を開く" : "写真の許可を確認") {
+                selectedTab = .photos
+                if !hasPhotoAccess { requestPhotoAccess() }
+            }
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」で猫の写真とアクセス範囲を確認してください。")
+        }
     }
 
     private func toolSection<Content: View>(_ title: String,
@@ -860,8 +823,6 @@ struct MainTabView: View {
     }
 
     private var showcaseAddScopes: [String] {
-        guard let identifier = showcaseAddPhotoIdentifier,
-              showcaseCandidates.contains(where: { $0.localIdentifier == identifier }) else { return [] }
         // Choosing a showcase set does not assign the photo to a cat profile.
         let scopes = [""] + catProfilesPresentation.profiles.map(\.identifier)
         guard scopes.contains(showcaseScopeID) else { return scopes }
@@ -870,7 +831,7 @@ struct MainTabView: View {
 
     private func showcaseScopeTitle(_ scopeID: String) -> String {
         catProfilesPresentation.profiles.first(where: { $0.identifier == scopeID })?.displayName
-            ?? (scopeID.isEmpty ? "みんな" : "前に選んだ猫")
+            ?? (scopeID.isEmpty ? "すべての猫" : "前に選んだ猫")
     }
 
     private var unregisteredCatPhotos: [PhotoPresentation] {
@@ -878,10 +839,6 @@ struct MainTabView: View {
             profile.confirmedPhotos.map(\.localIdentifier)
         })
         return catPhotos.filter { !registeredIdentifiers.contains($0.localIdentifier) }
-    }
-
-    private var canResolveInitialPhotoSection: Bool {
-        selectedTab == .photos && photosPath.isEmpty && scenePhase == .active
     }
 
     private var photoLibraryPositionKey: String {
@@ -936,11 +893,7 @@ struct MainTabView: View {
     private var photoLibraryCatPhotos: [PhotoPresentation] { catPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
     private var photoLibraryLikedPhotos: [PhotoPresentation] { likedPhotos.filter { photoLibraryIncludes($0.localIdentifier) } }
     private var photoLibraryBrowserPhotos: [PhotoPresentation] {
-        guard photoLibraryProfileIdentifier != nil else { return libraryPhotos }
-        var seen = Set<String>()
-        return (libraryPhotos + likedPhotos).filter {
-            photoLibraryIncludes($0.localIdentifier) && seen.insert($0.localIdentifier).inserted
-        }
+        photoLibraryCatPhotos.filter { !excludedCatCandidateIdentifiers.contains($0.localIdentifier) }
     }
     private var unavailablePhotoLibrarySavedCount: Int {
         let saved = savedPhotoIdentifiers ?? Set(likedPhotos.map(\.localIdentifier))
@@ -949,16 +902,17 @@ struct MainTabView: View {
     }
 
     private var photoLibraryCatPicker: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                photoLibraryCatButton("全猫", identifier: nil)
-                ForEach(photoLibraryRegisteredIdentifiers.sorted(), id: \.self) { identifier in
-                    photoLibraryCatButton(currentPhotoLibraryProfileNames[identifier] ?? "猫", identifier: identifier)
-                }
-                photoLibraryCatButton("未指定", identifier: "unassigned")
-            }.padding(.horizontal, 16).padding(.vertical, 8)
+        Menu {
+            photoLibraryCatButton("すべての猫", identifier: nil)
+            ForEach(catProfilesPresentation.profiles) { profile in
+                photoLibraryCatButton(profile.displayName, identifier: profile.identifier)
+            }
+            photoLibraryCatButton("未指定", identifier: "unassigned")
+        } label: {
+            Label(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" }
+                    ?? "すべての猫", systemImage: "chevron.down")
+                .font(.subheadline).lineLimit(1).frame(minHeight: 44)
         }
-        .scrollIndicators(.hidden)
         .accessibilityIdentifier("photos-cat-picker")
     }
 
@@ -1184,11 +1138,12 @@ struct MainTabView: View {
                 // The grid uses a separate route whose browser can page through
                 // the detected cat-photo collection.
                 photos: [initialPhoto],
-                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : libraryPhotos,
+                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : scopedCatPhotos(for: .everyone),
                 initialPhoto: initialPhoto,
                 widgetShownAt: shownAt,
                 showsWidgetTiming: openedFromWidget,
                 setMemorySaved: setMemorySaved,
+                exportMemoryPhoto: exportMemoryPhoto,
                 excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                 excludeFromCatCandidates: { identifiers in
                     Task { await excludeFromCatCandidates(identifiers) }
@@ -1288,7 +1243,7 @@ struct MainTabView: View {
                     photos: photos, libraryPhotos: browserLibraryPhotos(for: context.scope),
                     initialPhoto: initialPhoto, widgetShownAt: nil, showsWidgetTiming: false,
                     setMemorySaved: setMemorySaved,
-                    exportMemoryPhoto: context.allowsPhotoExport ? exportMemoryPhoto : nil,
+                    exportMemoryPhoto: exportMemoryPhoto,
                     excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                     excludeFromCatCandidates: { identifiers in
                         Task { await excludeFromCatCandidates(identifiers) }
@@ -1355,6 +1310,7 @@ struct MainTabView: View {
                 widgetShownAt: nil,
                 showsWidgetTiming: false,
                 setMemorySaved: setMemorySaved,
+                exportMemoryPhoto: exportMemoryPhoto,
                 excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                 excludeFromCatCandidates: { identifiers in
                     Task { await excludeFromCatCandidates(identifiers) }
@@ -1387,7 +1343,7 @@ struct MainTabView: View {
             let initialPhoto = photo(for: localIdentifier)
             PhotoBrowserView(
                 photos: libraryContext ? photoLibraryLikedPhotos : likedPhotos,
-                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : libraryPhotos,
+                libraryPhotos: libraryContext ? photoLibraryBrowserPhotos : scopedCatPhotos(for: .everyone),
                 initialPhoto: initialPhoto,
                 widgetShownAt: nil,
                 showsWidgetTiming: false,
@@ -1557,7 +1513,8 @@ struct MainTabView: View {
             MonthlyWindowView(
                 presentation: refreshedMonthlyWindow(snapshot),
                 setMemorySaved: setMemorySaved,
-                libraryPhotos: libraryPhotos,
+                exportMemoryPhoto: exportMemoryPhoto,
+                libraryPhotos: scopedCatPhotos(for: .everyone),
                 excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                 excludeFromCatCandidates: { identifiers in
                     Task { await excludeFromCatCandidates(identifiers) }
@@ -1606,6 +1563,7 @@ struct MainTabView: View {
                 photos: photos, libraryPhotos: browserLibraryPhotos(for: scope), initialPhoto: first,
                 widgetShownAt: nil, showsWidgetTiming: false,
                 setMemorySaved: setMemorySaved,
+                exportMemoryPhoto: exportMemoryPhoto,
                 excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                 excludeFromCatCandidates: { identifiers in
                     Task { await excludeFromCatCandidates(identifiers) }
@@ -1794,6 +1752,7 @@ struct MainTabView: View {
                 initialPhoto: initialPhoto,
                 widgetShownAt: nil, showsWidgetTiming: false,
                 setMemorySaved: setMemorySaved,
+                exportMemoryPhoto: exportMemoryPhoto,
                 excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                 excludeFromCatCandidates: { identifiers in
                     Task { await excludeFromCatCandidates(identifiers) }
@@ -2246,7 +2205,7 @@ struct MainTabView: View {
     }
 
     private func browserLibraryPhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
-        scope == .everyone ? libraryPhotos : scopedCatPhotos(for: scope)
+        scopedCatPhotos(for: scope)
     }
 
     private func scopedCatPhotos(for scope: CatProfileScopePresentation) -> [PhotoPresentation] {
@@ -2273,7 +2232,7 @@ struct MainTabView: View {
     private func scopedLifeReference(for scope: CatProfileScopePresentation) -> CatLifeReference? {
         guard case let .profile(identifier) = scope else {
             // Preserve the legacy single-cat birthday/adoption buckets until a
-            // profile exists. Once profiles exist, "みんな" must not apply one
+            // profile exists. Once profiles exist, "すべての猫" must not apply one
             // cat's date to the whole household. Household growth itself is
             // always built separately from calendar years.
             return catProfilesPresentation.profiles.isEmpty

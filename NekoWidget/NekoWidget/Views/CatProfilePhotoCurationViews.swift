@@ -200,7 +200,7 @@ struct CatProfileDetailView: View {
             } header: {
                 Text("その他")
             } footer: {
-                Text("プロフィールを削除しても写真は削除されません。この子への手動所属とアルバム連携だけを外し、他の子の所属は保ちます。")
+                Text("プロフィールを削除しても、写真や預けるとき・迷子のときなどの入力は残ります。")
             }
         }
         .disabled(isDeleting || isSavingName)
@@ -214,16 +214,13 @@ struct CatProfileDetailView: View {
                     let deleted = await actions.deleteProfile(profile.identifier)
                     isDeleting = false
                     if deleted {
-                        try? CatPreparednessStore.shared.delete(for: profile.identifier)
-                        try? LostCatDraftStore.shared.delete(for: profile.identifier)
-                        try? ShowcasePhotoStore().removeScope(profile.identifier)
                         dismiss()
                     } else { deleteFailed = true }
                 }
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("写真は削除されません。この子への手動所属とアルバム連携を外します。")
+            Text("写真やツールの入力は残ります。この子への写真の指定とアルバム連携だけを外します。")
         }
         .sheet(isPresented: $showsLifeReferenceEditor) {
             CatProfileLifeReferenceEditor(
@@ -711,14 +708,14 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("\(profile.displayName)への所属だけを外します。他の子や「みんな」には残ります。")
+            Text("\(profile.displayName)への所属だけを外します。他の子や「すべての猫」には残ります。")
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("表示候補から外す", role: .destructive) {
+            Button("候補から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -770,7 +767,7 @@ struct CatProfileConfirmedPhotosView: View {
                     Button("\(profile.displayName)ではない") {
                         showsRemoveConfirmation = true
                     }
-                    Button("表示候補から外す", role: .destructive) {
+                    Button("候補から外す", role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     }
                 } label: {
@@ -885,11 +882,11 @@ struct UnassignedCatPhotosView: View {
             )
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("表示候補から外す", role: .destructive) {
+            Button("候補から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -945,7 +942,7 @@ struct UnassignedCatPhotosView: View {
                     Button(role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     } label: {
-                        Label("表示候補から外す", systemImage: "eye.slash")
+                        Label("候補から外す", systemImage: "eye.slash")
                     }
                 }
             }

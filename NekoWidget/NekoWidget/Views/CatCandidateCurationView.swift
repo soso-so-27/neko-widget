@@ -34,7 +34,7 @@ struct CatCandidateCurationView: View {
                     ContentUnavailableView(
                         "除外した写真はありません",
                         systemImage: "cat",
-                        description: Text("写真の大表示メニューやアルバムの長押しから「表示候補から外す」を選べます。")
+                        description: Text("写真の大表示メニューやアルバムの長押しから「候補から外す」を選べます。")
                     )
                     .frame(maxWidth: .infinity, minHeight: 230)
                     .listRowBackground(Color.clear)
@@ -58,7 +58,7 @@ struct CatCandidateCurationView: View {
                     .disabled(isRestoringAll)
                 }
             } header: {
-                Text("「表示候補から外す」")
+                Text("「候補から外す」")
             } footer: {
                 Text("ここでの除外や復元は、アプリの「写真」・ウィジェット・「自動アルバム」の候補だけに影響します。写真アプリの写真は削除・変更されません。")
             }
@@ -106,7 +106,7 @@ struct CatCandidateCurationView: View {
             }
 
             if isLimitedAccess {
-                Button("アクセスできる写真を選び直す", action: chooseMorePhotos)
+                Button("写真を追加で選ぶ", action: chooseMorePhotos)
             }
         } header: {
             Text("写真の対象・上級設定")
@@ -183,7 +183,7 @@ struct PhotoSourceAlbumSelectionView: View {
                         .foregroundStyle(.orange)
                     }
                     if isLimitedAccess {
-                        Button("アクセスできる写真を選び直す", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", action: chooseMorePhotos)
                     }
                 }
             }

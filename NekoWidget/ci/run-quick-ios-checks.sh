@@ -25,6 +25,22 @@ xcrun swiftc -parse-as-library \
   -o "$RUNNER_TEMP/family-record-tests"
 "$RUNNER_TEMP/family-record-tests"
 
+xcrun swiftc -parse-as-library \
+  Shared/Sharing/PairingCore.swift Shared/Models/WidgetRenderPlan.swift \
+  Shared/Models/WidgetManifest.swift Shared/Sharing/MomentSharingCore.swift \
+  Shared/Sharing/FamilyRecordCore.swift ci/verify-family-records.swift \
+  -o "$RUNNER_TEMP/family-record-tests"
+"$RUNNER_TEMP/family-record-tests"
+
+settings_paths=()
+for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do
+  output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"
+  xcodebuild -project NekoWidget.xcodeproj -target "$target" \
+    -configuration Release -sdk iphonesimulator -showBuildSettings -json > "$output"
+  settings_paths+=("$output")
+done
+python3 ci/validate-disabled-release-build-settings.py "${settings_paths[@]}"
+
 runtime=$(xcrun simctl list runtimes -j | python3 -c '
 import json,sys
 items=[r for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and ".iOS-" in r["identifier"]]

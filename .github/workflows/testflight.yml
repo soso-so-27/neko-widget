@@ -79,6 +79,18 @@ jobs:
       RELEASE_SOURCE_SHA: ${{ inputs.expected_main_sha || github.sha }}
 
     steps:
+      - name: Require signed artifact retention for TestFlight uploads
+        shell: bash
+        env:
+          UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
+          RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
+        run: |
+          set -euo pipefail
+          if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" && "$RETAIN_SIGNED_ARTIFACTS" != "true" ]]; then
+            echo "TestFlight uploads require retain_signed_artifacts=true." >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

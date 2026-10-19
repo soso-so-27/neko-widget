@@ -147,7 +147,7 @@ struct SeasonalMoviePresentation: Codable, Identifiable, Hashable, Sendable {
     let scenes: [SeasonalMovieCandidate]
 
     var id: Date { quarterStart }
-    var title: String { "この季節の小さな映画" }
+    var title: String { "季節のムービー" }
 
     var periodTitle: String {
         if startYearNumber == endYearNumber {
