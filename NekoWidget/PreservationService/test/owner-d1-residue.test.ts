@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { expect, it } from 'vitest';
-import { inspectOwnerD1Residue, ownerContentTables,
+import { inspectOwnerD1Residue, lastOwnerCursorTables, ownerContentTables,
   ownerCursorTables, ownerD1DeleteOrder, purgeWorkTables } from '../src/owner-d1-residue';
+import { insertOwnerWork } from './owner-work-fixture';
 
 const db = (env as unknown as { DB: D1Database }).DB;
 
@@ -14,6 +15,15 @@ it('classifies every D1 table with an owner_id column', async () => {
     ...ownerCursorTables].sort();
   expect(classified).toEqual(rows);
   expect(new Set(classified).size).toBe(classified.length);
+});
+
+it('classifies every D1 table with a last_owner_id cursor column', async () => {
+  const rows = (await db.prepare(`SELECT m.name FROM sqlite_master m
+    WHERE m.type='table' AND m.name LIKE 'pa_%'
+      AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='last_owner_id')
+    ORDER BY m.name`).all<{ name: string }>()).results.map(row => row.name);
+  expect([...lastOwnerCursorTables].sort()).toEqual(rows);
+  expect(new Set(lastOwnerCursorTables).size).toBe(lastOwnerCursorTables.length);
 });
 
 it('keeps every owner row in child-before-parent FK deletion order', async () => {
@@ -40,21 +50,30 @@ it('counts every owner row, photo cleanup key and singleton cursor without readi
   await db.prepare(`INSERT INTO pa_owners(owner_id,identity_key,created_at)
     VALUES(?,?,1)`).bind(otherId, crypto.randomUUID()).run();
   await db.prepare('INSERT INTO pa_inventory(owner_id) VALUES(?)').bind(ownerId).run();
+  await insertOwnerWork(db, ownerId);
+  await insertOwnerWork(db, otherId);
   await db.prepare(`INSERT INTO pa_pending_deletes(object_key,created_at)
     VALUES(?,1)`).bind(`personal/${ownerId}/${crypto.randomUUID()}/${crypto.randomUUID()}`).run();
   await db.prepare(`UPDATE pa_expiry_review_cursor SET owner_id=? WHERE id=1`)
+    .bind(ownerId).run();
+  await db.prepare(`UPDATE pa_retention_scan_cursor SET last_owner_id=?,revision=revision+1 WHERE singleton=1`)
     .bind(ownerId).run();
   const report = await inspectOwnerD1Residue(db, ownerId);
   expect(report.content.pa_owners).toBe(1);
   expect(report.content.pa_inventory).toBe(1);
   expect(report.content.pa_owner_recovery_generations).toBe(1);
   expect(report.content.pa_owner_record_counters).toBe(1);
-  expect(report.contentTotal).toBe(4);
+  expect(report.contentTotal).toBe(7);
+  for (const table of ['pa_tool_metadata_batches', 'pa_owner_delta_work', 'pa_owner_delta_nodes']) {
+    expect(report.content[table]).toBe(1);
+  }
   expect(report.purgeWorkTotal).toBe(0);
   expect(report.pendingPhotoDeletes).toBe(1);
   expect(report.ownerCursors.pa_expiry_review_cursor).toBe(1);
   expect(report.ownerCursors.pa_notice_scan_cursor).toBe(0);
   expect(report.recoveryRepairCursors.pa_recovery_repair_cursor).toBe(0);
+  expect(report.recoveryRepairCursors.pa_retention_scan_cursor).toBe(1);
+  expect((await inspectOwnerD1Residue(db, otherId)).recoveryRepairCursors.pa_retention_scan_cursor).toBe(0);
   await expect(inspectOwnerD1Residue(db, 'wrong-owner'))
     .rejects.toMatchObject({ code: 'OWNER_D1_RESIDUE_UNAVAILABLE' });
 });

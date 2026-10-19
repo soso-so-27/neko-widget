@@ -9,6 +9,7 @@ import type { S3RecoveryCopy, RecoveryVersion } from '../src/s3-recovery-copy';
 import { route } from '../src/index';
 import { RecoveryWriteLease } from '../src/recovery-write-lease';
 import { OwnerQuarantineRestore } from '../src/owner-quarantine-restore';
+import { insertOwnerWork } from './owner-work-fixture';
 
 const { DB: db, ARCHIVE: bucket } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 const now = () => 100_000;
@@ -100,6 +101,10 @@ describe('explicit owner-requested deletion', () => {
   it('erases all cloud versions and D1 content, resumes after interruption, leaves the other owner intact', async () => {
     const f = await fixture();
     const other = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+    await insertOwnerWork(db, f.session.ownerId);
+    await insertOwnerWork(db, other.ownerId);
+    await db.prepare('UPDATE pa_retention_scan_cursor SET last_owner_id=?,revision=7,retry_pending=1 WHERE singleton=1')
+      .bind(f.session.ownerId).run();
     const exportLease = crypto.randomUUID();
     await db.prepare(`UPDATE pa_owners SET http_request_count=30,
       http_request_minute=CAST(unixepoch()/60 AS INTEGER),export_lease_id=?,export_lease_expires_at=?
@@ -151,6 +156,14 @@ describe('explicit owner-requested deletion', () => {
     expect(residue.contentTotal).toBe(0);
     expect(residue.content.pa_tool_snapshot_references).toBe(0);
     expect(residue.content.pa_tool_part_delete_claims).toBe(0);
+    const otherResidue = await inspectOwnerD1Residue(db, other.ownerId);
+    for (const table of ['pa_tool_metadata_batches', 'pa_owner_delta_work', 'pa_owner_delta_nodes']) {
+      expect(residue.content[table]).toBe(0);
+      expect(otherResidue.content[table]).toBe(1);
+    }
+    expect(residue.recoveryRepairCursors.pa_retention_scan_cursor).toBe(0);
+    expect(await db.prepare('SELECT last_owner_id,revision,retry_pending FROM pa_retention_scan_cursor WHERE singleton=1').first())
+      .toEqual({ last_owner_id: '', revision: 8, retry_pending: 0 });
     expect(residue.purgeWorkTotal).toBe(0);
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'completed' });
     await expect(f.journal.assertNotRequested(f.session.ownerId)).rejects.toThrow();

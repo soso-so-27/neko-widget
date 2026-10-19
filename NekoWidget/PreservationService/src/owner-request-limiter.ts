@@ -13,6 +13,14 @@ export class OwnerRequestLimiter {
   constructor(private readonly db: D1Database) {}
 
   async admit(session: Session): Promise<void> {
+    return this.admitInternal(session,null);
+  }
+  async admitToolMetadataBatch(session:Session,batchId:string):Promise<void>{
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(batchId))
+      throw new ServiceError('SESSION_INVALID',401);
+    return this.admitInternal(session,batchId);
+  }
+  private async admitInternal(session:Session,batchId:string|null):Promise<void>{
     try {
       // A write always reaches D1's primary. The conditional increment and
       // current session/epoch checks are one statement, never a read-then-write.
@@ -28,15 +36,19 @@ export class OwnerRequestLimiter {
           AND (http_request_minute<(SELECT minute FROM clock) OR http_request_count<30)
           AND EXISTS(SELECT 1 FROM pa_sessions s WHERE s.session_hash=?
             AND s.owner_id=pa_owners.owner_id AND s.owner_epoch=pa_owners.epoch
-            AND s.expires_at>(SELECT now_ms FROM clock))
+            AND s.expires_at>(SELECT now_ms FROM clock)
+            AND (s.device_grant_id IS NULL OR EXISTS(SELECT 1 FROM pa_device_session_grants d
+              WHERE d.grant_id=s.device_grant_id AND d.owner_id=pa_owners.owner_id AND d.owner_epoch=pa_owners.epoch
+                AND d.revoked_at IS NULL AND d.idle_expires_at>(SELECT now_ms FROM clock))))
           AND NOT EXISTS(SELECT 1 FROM pa_owner_deletion_requests d
             WHERE d.owner_id=pa_owners.owner_id)
-          AND ((SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=0
+          AND ${batchId ? `EXISTS(SELECT 1 FROM pa_tool_metadata_batches b WHERE b.owner_id=pa_owners.owner_id
+            AND b.owner_epoch=pa_owners.epoch AND b.batch_id=? AND b.state IN ('open','ready'))` : `((SELECT owner_snapshot_required FROM pa_recovery_write_policy WHERE singleton=1)=0
             OR EXISTS(SELECT 1 FROM pa_owner_recovery_generations g
               JOIN pa_owner_recovery_versions v ON v.owner_id=g.owner_id AND v.generation=g.generation
-              WHERE g.owner_id=pa_owners.owner_id))
+              WHERE g.owner_id=pa_owners.owner_id))`}
         RETURNING http_request_minute,http_request_count`)
-        .bind(session.ownerId, session.sessionHash)
+        .bind(session.ownerId, session.sessionHash,...(batchId?[batchId]:[]))
         .first<{ http_request_minute: number; http_request_count: number }>();
       // A session invalidated after requireSession also fails closed here;
       // no downstream handler runs and no quota is consumed for that session.

@@ -192,6 +192,43 @@ export class DurableAuth {
     } catch (error) { throw safeError(error); }
   }
 
+  /** The only continuation while a grouped immutable-parts inventory is not
+   * yet covered. This grants no general read/edit/delete authority. Normal
+   * requireSession retains its covered-generation requirement. */
+  async requireToolMetadataBatchSession(token: string, batchId: string): Promise<Session> {
+    try {
+      if (typeof token !== 'string' || !opaquePattern.test(token)
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(batchId)) throw denied();
+      const now = this.now();
+      const row = await this.dependencies.db.prepare(`SELECT s.owner_id,s.session_hash,s.expires_at
+        FROM pa_sessions s JOIN pa_owners o ON o.owner_id=s.owner_id
+        JOIN pa_tool_metadata_batches b ON b.owner_id=o.owner_id AND b.owner_epoch=o.epoch
+        WHERE s.session_hash=? AND s.expires_at>? AND o.disabled=0 AND o.purge_fence_id IS NULL
+          AND s.owner_epoch=o.epoch AND b.batch_id=? AND b.state IN ('open','ready')
+          AND (s.device_grant_id IS NULL OR EXISTS(SELECT 1 FROM pa_device_session_grants g
+            WHERE g.grant_id=s.device_grant_id AND g.owner_id=o.owner_id AND g.owner_epoch=o.epoch
+              AND g.revoked_at IS NULL AND g.idle_expires_at>?))`)
+        .bind(await sha256(token),now,batchId,now).first<SessionRow>();
+      if (!row) throw denied();
+      await this.dependencies.ownerDeletion?.assertNotRequested(row.owner_id);
+      return {ownerId:row.owner_id,sessionHash:row.session_hash,expiresAt:row.expires_at};
+    } catch (error) { throw safeError(error); }
+  }
+
+  /** Discover only this session's current recovery operation. No record body,
+   * owner selector, general authorization or logical save is returned. */
+  async currentToolMetadataBatchSession(token:string):Promise<{session:Session;batchId:string}>{
+    if(typeof token!=='string'||!opaquePattern.test(token))throw denied();
+    const row=await this.dependencies.db.prepare(`SELECT b.batch_id FROM pa_tool_metadata_batches b
+      JOIN pa_sessions s ON s.owner_id=b.owner_id WHERE s.session_hash=?`)
+      .bind(await sha256(token)).first<{batch_id:string}>();
+    if(!row) {
+      await this.requireSession(token);
+      throw new ServiceError('TOOL_METADATA_BATCH_NOT_FOUND',404);
+    }
+    return {session:await this.requireToolMetadataBatchSession(token,row.batch_id),batchId:row.batch_id};
+  }
+
   /** Read for the signed-in owner only. An Apple claim is not a delivery receipt. */
   async noticeContact(token: string): Promise<{ email: string | null; source: 'apple' | null }> {
     const session = await this.requireSession(token);

@@ -1864,6 +1864,17 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    private func verifyAutomaticSaveGroupsMetadataAndResumesInterruptedUnion() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-metadata-batch-probe",
+            "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["集約保存・中断再開・復元を確認しました"].waitForExistence(timeout: 60), app.debugDescription)
+        app.terminate()
+    }
+
+    @MainActor
     private func verifyAutomaticRecordSavingAndRestore(_ app: XCUIApplication) {
         prepareAutomaticRecordSavingAndRestore(app)
         app.buttons["写真メモ"].tap()
@@ -1875,6 +1886,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.terminate()
+        verifyAutomaticSaveGroupsMetadataAndResumesInterruptedUnion()
     }
 
     @MainActor

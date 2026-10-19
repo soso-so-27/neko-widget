@@ -220,6 +220,11 @@ export class DeviceSessions {
   async renew(input: DeviceSessionRequest, verifier: IdentityVerifier): Promise<SessionCredential> {
     try {
       const grant = await this.proof(input, 'renew');
+      // A verified device may advance one bounded inventory repair before
+      // access renewal. It receives no token until the existing covered-owner
+      // SQL guard succeeds; unknown/deleted/revoked authority still stops here.
+      const repair=await this.d.ownerRecovery?.recoverStagedMetadata?.(this.d.db,grant.owner_id,this.now());
+      if(repair?.status==='pending')throw unavailable();
       await this.identityCurrent(grant, verifier);
       // The external deletion receipt is checked again after provider/key I/O.
       await this.d.ownerDeletion?.assertNotRequested(grant.owner_id);

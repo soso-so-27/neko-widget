@@ -6,7 +6,8 @@ export type TreeRef = { object: RecoveryObject; prefix: string; count: number; h
 export type TreeDiffFrame = { before:TreeRef|null; after:TreeRef };
 type Leaf = { version: 1; ownerId: string; tree: string; prefix: string; entries: TreeEntry[] };
 type Branch = { version: 1; ownerId: string; tree: string; prefix: string; children: TreeRef[] };
-type Node = Leaf | Branch;
+export type TreeNode = Leaf | Branch;
+type Node = TreeNode;
 type Expected = { prefix: string; count: number; hash: string; entries?: TreeEntry[]; children?: Expected[] };
 const bad = () => new ServiceError('IMMUTABLE_TREE_UNAVAILABLE',503);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -101,6 +102,9 @@ export class ImmutableRecordTree {
     if (await sha256(bytes(this.semantic(node))) !== ref.hash) throw bad();
     return node;
   }
+  /** Continuation callers share the exact reference and authenticated-node checks. */
+  validateReference(ref: TreeRef): void { this.validRef(ref); }
+  async readAuthenticatedNode(ref: TreeRef): Promise<TreeNode> { return this.readNode(ref); }
   private async expected(entries: TreeEntry[], prefix=''): Promise<Expected> {
     if (entries.length <= 64 && bytes(entries).length < maximumNodeBytes-512) {
       const node: Leaf={version:1,ownerId:this.ownerId,tree:this.tree,prefix,entries};

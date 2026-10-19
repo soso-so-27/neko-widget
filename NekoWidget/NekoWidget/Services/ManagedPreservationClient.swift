@@ -331,6 +331,7 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
     struct ToolSnapshots: Decodable, Equatable, Sendable {
         let maximumIndexVersion: Int
         let strictPartDeletion: Bool
+        var metadataBatchVersion: Int? = nil
     }
     struct Storage: Decodable, Equatable, Sendable {
         let usedBytes: Int64
@@ -524,7 +525,7 @@ actor ManagedPreservationClient {
         let deviceProof: String
     }
     private struct DeviceChallenge: Decodable { let challengeId: String; let nonce: String; let expiresAt: Date }
-    private struct Put: Encodable {
+    private struct Put: Codable {
         let expectedRevision: Int?; let consentVersion: String
         let document: ManagedPreservationDocument; let photoBase64: String?
         private enum CodingKeys: String, CodingKey { case expectedRevision, consentVersion, document, photoBase64 }
@@ -1167,6 +1168,89 @@ actor ManagedPreservationClient {
             throw ManagedPreservationError.invalidResponse
         }
         return result.revision
+    }
+
+    struct MetadataBatch: Codable, Sendable {
+        struct Item: Codable, Sendable { let recordID: UUID; let body: Data }
+        let id: UUID
+        let owner: String
+        let snapshotID: UUID
+        let items: [Item]
+    }
+    func metadataBatchItem(_ draft: ManagedPreservationDraft) throws -> MetadataBatch.Item {
+        let document = try draft.document.validated()
+        guard draft.jpegData == nil, document.formatVersion == 3, document.photoFile == nil,
+              let part = document.toolBackup, ["index", "json"].contains(part.kind) else {
+            throw ManagedPreservationError.invalidRecord
+        }
+        let encoder = ManagedPreservationWire.encoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let body = try encoder.encode(Put(expectedRevision: nil, consentVersion: Self.consentVersion,
+            document: document, photoBase64: nil))
+        guard body.count <= 512 * 1024 else { throw ManagedPreservationError.invalidRecord }
+        return .init(recordID: draft.recordID, body: body)
+    }
+    func validateMetadataBatchItem(_ item: MetadataBatch.Item, draft: ManagedPreservationDraft) throws {
+        guard item.recordID == draft.recordID, item.body.count <= 512 * 1024, draft.jpegData == nil else {
+            throw ManagedPreservationError.invalidRecord
+        }
+        let input = try ManagedPreservationWire.decoder().decode(Put.self, from: item.body)
+        let document = try input.document.validated()
+        guard input.expectedRevision == nil, input.photoBase64 == nil, input.consentVersion == Self.consentVersion,
+              document.formatVersion == 3, document.photoFile == nil,
+              let part = document.toolBackup, part == draft.document.toolBackup, ["index", "json"].contains(part.kind) else {
+            throw ManagedPreservationError.invalidRecord
+        }
+        // Send the original durable bytes. A later app's encoder or display
+        // text is not allowed to change the server's immutable raw-body hash.
+    }
+    private func validateMetadataBatch(_ batch: MetadataBatch, checkpoint: SessionCheckpoint) throws {
+        try requireSessionCheckpoint(checkpoint)
+        guard batch.owner == checkpoint.ownerID, (1...16).contains(batch.items.count),
+              Set(batch.items.map(\.recordID)).count == batch.items.count,
+              batch.items.allSatisfy({ !$0.body.isEmpty && $0.body.count <= 512 * 1024 }) else {
+            throw ManagedPreservationError.invalidRecord
+        }
+    }
+    func beginMetadataBatch(_ batch: MetadataBatch, checkpoint: SessionCheckpoint) async throws {
+        try validateMetadataBatch(batch, checkpoint: checkpoint)
+        struct Entry: Encodable { let recordId: String; let bodySHA256: String }
+        struct Input: Encodable { let batchId: String; let items: [Entry] }
+        struct Reply: Decodable { let batchId: UUID; let status: String }
+        // UUID record strings in manifests use the same lower-case wire form as paths.
+        let items = batch.items.map { Entry(recordId: $0.recordID.uuidString.lowercased(),
+            bodySHA256: SHA256.hash(data: $0.body).map { String(format: "%02x", $0) }.joined()) }
+        let raw = try JSONEncoder().encode(Input(batchId: batch.id.uuidString.lowercased(), items: items))
+        let data = try await authenticated("POST", path: "/v1/tool-metadata-batches", body: raw, checkpoint: checkpoint)
+        let reply: Reply = try decode(data)
+        guard reply.batchId == batch.id, ["open", "parts-ready"].contains(reply.status) else { throw ManagedPreservationError.invalidResponse }
+    }
+    func stageMetadataBatch(_ batch: MetadataBatch, item: MetadataBatch.Item, checkpoint: SessionCheckpoint) async throws {
+        try validateMetadataBatch(batch, checkpoint: checkpoint)
+        guard batch.items.contains(where: { $0.recordID == item.recordID && $0.body == item.body }) else { throw ManagedPreservationError.invalidRecord }
+        struct Reply: Decodable { let batchId: UUID; let recordId: UUID; let revision: Int; let status: String }
+        let data = try await authenticated("PUT", path: "/v1/tool-metadata-batches/" + batch.id.uuidString.lowercased()
+            + "/parts/" + item.recordID.uuidString.lowercased(), body: item.body, checkpoint: checkpoint)
+        let reply: Reply = try decode(data)
+        guard reply.batchId == batch.id, reply.recordId == item.recordID, reply.revision == 1,
+              reply.status == "part-staged" else { throw ManagedPreservationError.invalidResponse }
+    }
+    func finishMetadataBatch(_ batch: MetadataBatch, checkpoint: SessionCheckpoint) async throws -> Bool {
+        try validateMetadataBatch(batch, checkpoint: checkpoint)
+        struct Reply: Decodable { let batchId: UUID; let status: String }
+        let data = try await authenticated("POST", path: "/v1/tool-metadata-batches/" + batch.id.uuidString.lowercased()
+            + "/finish", checkpoint: checkpoint)
+        let reply: Reply = try decode(data)
+        guard reply.batchId == batch.id, ["pending", "parts-ready"].contains(reply.status) else { throw ManagedPreservationError.invalidResponse }
+        return reply.status == "parts-ready"
+    }
+    func recoverMetadataInventory(checkpoint: SessionCheckpoint) async throws -> Bool {
+        try requireSessionCheckpoint(checkpoint)
+        struct Reply: Decodable { let status: String }
+        let data = try await authenticated("POST", path: "/v1/tool-metadata-batches/recovery", checkpoint: checkpoint)
+        let reply: Reply = try decode(data)
+        guard ["pending", "inventory-ready"].contains(reply.status) else { throw ManagedPreservationError.invalidResponse }
+        return reply.status == "inventory-ready"
     }
 
     func delete(_ record: ManagedPreservationRecord, checkpoint: SessionCheckpoint? = nil, requireUnreferenced: Bool = false) async throws {

@@ -8,6 +8,7 @@ import type { VerifiedMembershipStatus } from '../src/retention-ledger';
 import type { PurgeIntentEvent, S3PurgeIntentStore } from '../src/s3-purge-intent';
 import type { S3PurgeManifestStore } from '../src/s3-purge-manifest';
 import type { S3RecoveryCopy } from '../src/s3-recovery-copy';
+import { insertOwnerWork } from './owner-work-fixture';
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const now = 1_800_000_000_000;
@@ -109,6 +110,9 @@ it('erases an owner in bounded, externally gated steps while retaining purge evi
     WHERE singleton=1`).run();
   try {
     const f = await fixture();
+    await insertOwnerWork(db, f.ownerId);
+    await db.prepare('UPDATE pa_retention_scan_cursor SET last_owner_id=?,revision=7,retry_pending=1 WHERE singleton=1')
+      .bind(f.ownerId).run();
     const eraser = f.make();
     const steps = [];
     for (let i = 0; i < 30; i++) {
@@ -117,6 +121,13 @@ it('erases an owner in bounded, externally gated steps while retaining purge evi
       if (step.state === 'owner-erased') break;
     }
     expect(steps.at(-1)).toEqual({ state: 'owner-erased' });
+    for (const table of ['pa_retention_scan_cursor', 'pa_owner_delta_nodes', 'pa_owner_delta_work', 'pa_tool_metadata_batches']) {
+      expect(steps.some(step => step.state === 'progress' && step.table === table)).toBe(true);
+    }
+    expect(await db.prepare('SELECT last_owner_id,revision,retry_pending FROM pa_retention_scan_cursor WHERE singleton=1').first())
+      .toEqual({ last_owner_id: '', revision: 8, retry_pending: 0 });
+    expect((await db.prepare(`UPDATE pa_retention_scan_cursor SET last_owner_id=?,revision=revision+1
+      WHERE singleton=1 AND last_owner_id=? AND revision=7`).bind(f.ownerId, f.ownerId).run()).meta.changes).toBe(0);
     const residue = await inspectOwnerD1Residue(db, f.ownerId);
     expect(residue.contentTotal).toBe(0);
     expect(residue.purgeWork.pa_owner_purge_events).toBe(2);
@@ -182,6 +193,9 @@ it('stops later D1 steps on renewal without restoring already erased rows', asyn
 it('does not delete on grace, unknown or failed fresh membership checks', async () => {
   for (const denied of ['grace', 'unknown'] as const) {
     const f = await fixture();
+    await insertOwnerWork(db, f.ownerId);
+    await db.prepare('UPDATE pa_retention_scan_cursor SET last_owner_id=?,revision=7,retry_pending=1 WHERE singleton=1')
+      .bind(f.ownerId).run();
     f.setStatus(denied);
     const before = await inspectOwnerD1Residue(db, f.ownerId);
     await expect(f.make().step(f.ownerId, f.intentId, f.root)).rejects
