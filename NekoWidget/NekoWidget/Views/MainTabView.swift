@@ -353,7 +353,7 @@ struct MainTabView: View {
     @AppStorage(GrowthAlbumPhotoOverrides.storageKey)
     private var growthPhotoOverridesJSON = ""
 
-    var body: some View {
+    private var tabContent: some View {
         TabView(selection: Binding(get: { selectedTab }, set: { tab in
             // This setter is for a person's tab tap. Deep links continue to
             // set selectedTab directly and keep their exact-photo destination.
@@ -430,6 +430,10 @@ struct MainTabView: View {
             }
             .tag(AppTab.tools)
         }
+    }
+
+    private var presentedTabContent: some View {
+        tabContent
         .environment(\.toolProfileActions, catProfilesActions)
         .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
@@ -497,6 +501,10 @@ struct MainTabView: View {
         .sheet(item: $relatedPhotoRoute, onDismiss: { relatedPhotoUsesLibraryScope = false }) { route in
             relatedAlbumsSheet(for: route)
         }
+    }
+
+    private var routedTabContent: some View {
+        presentedTabContent
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
             relatedPhotoUsesLibraryScope = false
@@ -546,6 +554,10 @@ struct MainTabView: View {
             widgetOpenedPhotoIdentifier = nil
             widgetShownAt = nil
         }
+    }
+
+    var body: some View {
+        routedTabContent
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
                 consumeShowcaseLaunchRequest()
