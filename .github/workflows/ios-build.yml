@@ -52,6 +52,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  safety-check:
+    name: Privacy, saved data, and sharing checks
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check privacy, saved data, and sharing contracts
+        run: bash NekoWidget/ci/run-cheap-safety-checks.sh
+
   plan:
     name: Select iOS checks and verify reusable evidence
     # Same-repository branches already have push CI. Forks need PR CI.
