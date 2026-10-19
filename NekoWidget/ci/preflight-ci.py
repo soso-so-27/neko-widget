@@ -21,6 +21,7 @@ spec = importlib.util.spec_from_file_location("planner", CI / "plan-ios-ci.py")
 planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 # preservation-service-v28 retains the existing Node-only job and five-minute ceiling.
+# Its frozen root-proof pair includes owner-record-deltas.test.ts (176 closed paths).
 REPOSITORY = "soso-so-27/neko-widget"
 DIAGNOSTIC_WORKFLOW = ".github/workflows/ios-ui-diagnostic.yml"
 # Deliberately narrower than DEVELOPMENT_PATHS. No workflow, selector, test
