@@ -48,6 +48,11 @@ on:
         required: true
         default: false
         type: boolean
+      legacy_release_evidence:
+        description: "従来の証拠書き出しを手動で有効にする（通常は不要）"
+        required: false
+        default: false
+        type: boolean
       retain_signed_artifacts:
         description: "IPA・xcarchive・dSYMを暗号化artifactとして14日保存する"
         required: true
@@ -844,10 +849,6 @@ jobs:
           fi
 
           if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" ]]; then
-            if [[ "$RETAIN_SIGNED_ARTIFACTS" != "true" ]]; then
-              echo "TestFlight upload requires retain_signed_artifacts=true so the matching archive is preserved." >&2
-              exit 1
-            fi
             upload_required=(
               APP_STORE_CONNECT_KEY_ID
               APP_STORE_CONNECT_ISSUER_ID
@@ -1465,6 +1466,7 @@ jobs:
           echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
 
       - name: Generate build-bound moderation release metadata
+        if: ${{ inputs.retain_signed_artifacts }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1607,23 +1609,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Re-authenticate the retained evidence immediately before checking the
-          # exact IPA bytes that altool will receive. Authentication must precede
-          # digest comparison so a rewritten metadata file cannot bless a new IPA.
-          python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
-            --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
-            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
-            --authentication "$RUNNER_TEMP/signed-artifact-authentication.json"
-          python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
-            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
-            --ipa "$IPA_PATH" \
-            --expected-source-commit "$RELEASE_SOURCE_SHA" \
-            --expected-build-number "$RELEASE_BUILD_NUMBER" \
-            --expected-github-run-id "$GITHUB_RUN_ID" \
-            --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --expected-release-mode "$SHARING_EXPECTED_MODE" \
-            --expected-internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
-            --expected-internal-report-scope "$RELEASE_INTERNAL_REPORTS_SCOPE"
+          if [[ "${{ inputs.retain_signed_artifacts }}" == "true" ]]; then
+            # Re-authenticate the retained evidence immediately before checking the
+            # exact IPA bytes that altool will receive. Authentication must precede
+            # digest comparison so a rewritten metadata file cannot bless a new IPA.
+            python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
+              --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+              --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+              --authentication "$RUNNER_TEMP/signed-artifact-authentication.json"
+            python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
+              --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+              --ipa "$IPA_PATH" \
+              --expected-source-commit "$RELEASE_SOURCE_SHA" \
+              --expected-build-number "$RELEASE_BUILD_NUMBER" \
+              --expected-github-run-id "$GITHUB_RUN_ID" \
+              --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --expected-release-mode "$SHARING_EXPECTED_MODE" \
+              --expected-internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
+              --expected-internal-report-scope "$RELEASE_INTERNAL_REPORTS_SCOPE"
+          fi
 
           run_altool_stage() {
             local stage="$1"
@@ -1669,7 +1673,7 @@ jobs:
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
 
       - name: Write local-only signed release evidence
-        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
+        if: ${{ inputs.legacy_release_evidence && success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
         shell: bash
         env:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
@@ -1700,7 +1704,7 @@ jobs:
             --retain-signed-artifacts "$RETAIN_SIGNED_ARTIFACTS"
 
       - name: Upload local-only signed release evidence
-        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
+        if: ${{ inputs.legacy_release_evidence && success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-local-only-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1710,7 +1714,7 @@ jobs:
           retention-days: 14
 
       - name: Stage authenticated local-only evidence after failure
-        if: ${{ failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
+        if: ${{ inputs.legacy_release_evidence && failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
         shell: bash
         env:
           SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
@@ -1738,7 +1742,7 @@ jobs:
           /bin/cp "$ciphertext" "$metadata" "$authentication" "$evidence_directory/"
 
       - name: Preserve authenticated local-only evidence after failure
-        if: ${{ failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
+        if: ${{ inputs.legacy_release_evidence && failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-failed-local-only-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
