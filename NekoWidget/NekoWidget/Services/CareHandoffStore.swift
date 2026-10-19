@@ -69,12 +69,17 @@ final class CareHandoffStore: ObservableObject {
     }
     @discardableResult
     func linkProfile(_ profileID: String, to id: UUID) -> Bool {
-        guard UUID(uuidString: profileID) != nil, loadError == nil, saveError == nil,
-              plan.cats.contains(where: { $0.id == id }) else { return false }
-        return update { plan in
-            if let index = plan.cats.firstIndex(where: { $0.id == id }) {
-                plan.cats[index].profileID = profileID
-            }
+        guard UUID(uuidString: profileID) != nil, loadError == nil, saveError == nil, let repository,
+              let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
+        var next = plan
+        next.cats[index].profileID = profileID
+        do {
+            try repository.commit(next)
+            plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+            return true
+        } catch {
+            saveError = "プロフィールとの接続を保存できませんでした。保存を再試行してから接続してください。"
+            return false
         }
     }
     func addCat(profileID: String? = nil, name: String = "",

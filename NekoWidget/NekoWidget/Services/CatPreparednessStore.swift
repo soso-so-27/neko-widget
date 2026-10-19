@@ -167,6 +167,7 @@ final class LostCatDraftStore: ObservableObject {
     @Published private(set) var drafts: [String: LostCatDraft] = [:]
     private let directory: URL
     private let manifest: URL
+    var preparedKeys: Set<String> { Set(drafts.keys).union(legacy.records.keys) }
     private let legacy: CatPreparednessStore
     private let allowsCandidateRefresh: Bool
     private var manifestUnreadable: Bool

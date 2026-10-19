@@ -83,7 +83,7 @@ struct LostCatEmergencyEntryView: View {
 
     private var savedGuestKeys: [String] {
         let listed = Set(savedCats.map(\.id))
-        return draftStore.drafts.keys
+        return draftStore.preparedKeys
             .filter { key in !profiles.contains { $0.identifier == key } && !listed.contains(key) }
             .sorted { (draftStore.drafts[$0]?.updatedAt ?? .distantPast)
                 > (draftStore.drafts[$1]?.updatedAt ?? .distantPast) }
@@ -129,7 +129,7 @@ struct LostCatEmergencyEntryView: View {
     }
 
     private func guestLabel(_ key: String) -> String {
-        guard let draft = draftStore.drafts[key] else { return "未登録の猫" }
+        guard let draft = draftStore.drafts[key] else { return CatPreparednessStore.shared.record(for: key).name.isEmpty ? "未登録の猫" : CatPreparednessStore.shared.record(for: key).name }
         let name = draft.name.isEmpty ? "未登録の猫" : draft.name
         return "\(name)・\(draft.updatedAt.formatted(date: .abbreviated, time: .shortened))"
     }
@@ -484,7 +484,7 @@ struct LostCatDraftView: View {
     }
     private var savedGuestKeys: [String] {
         let listed = Set(savedCats.map(\.id))
-        return store.drafts.keys.filter { key in !profiles.contains { $0.identifier == key } && !listed.contains(key) }
+        return store.preparedKeys.filter { key in !profiles.contains { $0.identifier == key } && !listed.contains(key) }
             .sorted { (store.drafts[$0]?.updatedAt ?? .distantPast) > (store.drafts[$1]?.updatedAt ?? .distantPast) }
     }
     private var savedCats: [LostCatSavedCat] {

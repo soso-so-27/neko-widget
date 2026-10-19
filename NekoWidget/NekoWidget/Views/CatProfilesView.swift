@@ -823,15 +823,15 @@ enum ToolCatProfileLinker {
               care.loadError == nil, care.saveError == nil, evacuation.loadError == nil, evacuation.saveError == nil else { return false }
         let matches = evacuation.plan.cats.filter { ($0.toolCatID ?? $0.id) == (cat.toolCatID ?? cat.id) }
         guard matches.count <= 1, matches.allSatisfy({ $0.profileID == nil || $0.profileID == cat.profileID || $0.profileID == profileID }) else { return false }
-        guard care.linkProfile(profileID, to: id) else { return false }
-        return matches.first.map { evacuation.linkProfile(profileID, to: $0.id) } ?? true
+        if let counterpart = matches.first, !evacuation.linkProfile(profileID, to: counterpart.id) { return false }
+        return care.linkProfile(profileID, to: id)
     }
     static func evacuation(_ id: UUID, profileID: String, care: CareHandoffStore, evacuation: EvacuationStore) -> Bool {
         guard let cat = evacuation.plan.cats.first(where: { $0.id == id }),
               care.loadError == nil, care.saveError == nil, evacuation.loadError == nil, evacuation.saveError == nil else { return false }
         let matches = care.plan.cats.filter { ($0.toolCatID ?? $0.id) == (cat.toolCatID ?? cat.id) }
         guard matches.count <= 1, matches.allSatisfy({ $0.profileID == nil || $0.profileID == cat.profileID || $0.profileID == profileID }) else { return false }
-        guard evacuation.linkProfile(profileID, to: id) else { return false }
-        return matches.first.map { care.linkProfile(profileID, to: $0.id) } ?? true
+        if let counterpart = matches.first, !care.linkProfile(profileID, to: counterpart.id) { return false }
+        return evacuation.linkProfile(profileID, to: id)
     }
 }

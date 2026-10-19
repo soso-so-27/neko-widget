@@ -1515,6 +1515,7 @@ private enum ToolProfileDataChecks {
         let unchangedVisit = try await secondVet.current(catID: originalVisit.catID, catName: "変更後の表示名") { _ in throw CocoaError(.fileWriteUnknown) }
         try require(unchangedVisit == originalVisit && unchangedVisit.catName == "作成時の名前")
         try require(loadedLost.drafts[profileID]?.features == "茶白" && loadedShowcase.entries == [entry])
+        try require(loadedLost.preparedKeys.contains("old-key") && loadedLost.preparedKeys.contains(profileID))
         for (path, bytes) in zip(manifestPaths, originalBytes) { try require(Data(contentsOf: root.appendingPathComponent(path)) == bytes) }
         try require(ToolCatProfileLinker.care(cat.id, profileID: profileID, care: care, evacuation: evacuation))
         var expectedCare = carePlan; expectedCare.cats[0].profileID = profileID
