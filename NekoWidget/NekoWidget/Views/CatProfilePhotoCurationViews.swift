@@ -200,7 +200,7 @@ struct CatProfileDetailView: View {
             } header: {
                 Text("その他")
             } footer: {
-                Text("プロフィールを削除しても写真は削除されません。この子への手動所属とアルバム連携だけを外し、他の子の所属は保ちます。")
+                Text("プロフィールを削除しても、写真や預けるとき・迷子のときなどの入力は残ります。")
             }
         }
         .disabled(isDeleting || isSavingName)
