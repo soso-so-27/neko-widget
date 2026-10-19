@@ -97,6 +97,15 @@
       "build_number": 264,
       "source_sha": "0bb6bebb6375f418485bbc7eb5df8e6121b7fae9",
       "apple_upload_succeeded_at": "2026-10-18T23:39:46.3941440Z"
+    },
+    {
+      "run_id": 39187574527,
+      "minutes": 10.9,
+      "runner_minutes": 10.033,
+      "build_number": 265,
+      "source_sha": "4937928619f16371e8e3bd10200857b58edfdc60",
+      "apple_upload_succeeded_at": "2026-10-19T02:06:43.6233970Z",
+      "note": "Apple upload succeeded; processing/device availability unconfirmed. Includes queue from run creation through job completion."
     }
   ],
   "observations": [
@@ -874,6 +883,15 @@
       "outcome": "success",
       "runner_minutes": 70.483,
       "note": "Fresh Build/privacy/migration, Photos bootstrap, both-OS runtime and three owning account/save/restore/deletion UI cases passed on 0bb6bebb. No reruns. Diagnostic/control/local preparation stays in first-fix elapsed time from 2026-10-18T22:35:39Z; older capacity history retained separately."
+    },
+    {
+      "scope": "reviewed-selected-restore-pages-v1",
+      "candidate_minutes": 25.883,
+      "run_id": 39183357481,
+      "attempt": 1,
+      "outcome": "success",
+      "runner_minutes": 69.35,
+      "note": "Fresh full Build/privacy/migration, Photos bootstrap, both-OS runtime and five owning restore/draft/private-copy/membership/deletion UI passed on4937928. No rerun. First candidate00:00:24Z, prior diagnostics/control fixture failure and cloud baseline refusal remain in task elapsed; runner minutes are not billed cost."
     }
   ],
   "rework_observations": [
@@ -966,6 +984,16 @@
       "source_sha": "b77cbc1dc837fa3f7e8cadce17c940f9354b30cc",
       "executed_tests": 2,
       "note": "Focused diagnostic only, not release evidence. Runtime42 and two owning UI cases passed. Actual live failed endpoint was not captured; real second-iPhone restore remains unverified."
+    },
+    {
+      "task": "long-term-cost-recovery-20261019",
+      "run_id": 39180994155,
+      "attempt": 1,
+      "outcome": "success",
+      "total_seconds": 975,
+      "source_sha": "7dc988f8c31d98fd447414b73cb0834daed1c289",
+      "executed_tests": 2,
+      "note": "Focused diagnosis only, not release evidence: runtime42 plus cold partitioned restore and unsaved memo protection. Virtual long-restore clock is not real-device elapsed performance."
     }
   ]
 }
