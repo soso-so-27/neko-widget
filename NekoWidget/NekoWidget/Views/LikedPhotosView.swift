@@ -1681,17 +1681,18 @@ struct SavedMemoriesGalleryView: View {
 
     let photos: [PhotoPresentation]
     let receivedPhotoIdentifiers: Set<String>
+    let ownCatPhotoIdentifiers: Set<String>
     let receivedPhotoSourceLabels: [String: String]
     @State private var originFilter: FavoritePhotoOrigin = .all
 
     private var visiblePhotos: [PhotoPresentation] {
-        photos.filter { originFilter.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier)) }
+        photos.filter { originFilter.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }
     }
 
     private var originPicker: some View {
         HStack(spacing: 8) {
             ForEach(FavoritePhotoOrigin.allCases, id: \.rawValue) { origin in
-                let count = photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier)) }.count
+                let count = photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }.count
                 Button { originFilter = origin } label: {
                     Text("\(origin.title) \(count)")
                         .font(.subheadline.weight(.medium))
@@ -1734,11 +1735,13 @@ struct SavedMemoriesGalleryView: View {
         hasPhotoAccess: Bool = true,
         savedStateReadFailed: Bool = false,
         receivedPhotoIdentifiers: Set<String> = [],
+        ownCatPhotoIdentifiers: Set<String> = [],
         receivedPhotoSourceLabels: [String: String] = [:],
         exportPhotoBook: @escaping ([String]) async throws -> URL
     ) {
         self.photos = photos
         self.receivedPhotoIdentifiers = receivedPhotoIdentifiers
+        self.ownCatPhotoIdentifiers = ownCatPhotoIdentifiers
         self.receivedPhotoSourceLabels = receivedPhotoSourceLabels
         self.isDedicatedPhotoBookFlow = startsInExportMode
         self.isEmbedded = isEmbedded

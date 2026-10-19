@@ -1128,8 +1128,8 @@ enum FavoritePhotoOrigin: String, CaseIterable {
     var title: String {
         switch self { case .all: "すべて"; case .ownCats: "自分の猫"; case .received: "まどから" }
     }
-    func includes(isReceived: Bool) -> Bool {
-        switch self { case .all: true; case .ownCats: !isReceived; case .received: isReceived }
+    func includes(isReceived: Bool, hasOwnCat: Bool = false) -> Bool {
+        switch self { case .all: true; case .ownCats: !isReceived || hasOwnCat; case .received: isReceived }
     }
 }
 

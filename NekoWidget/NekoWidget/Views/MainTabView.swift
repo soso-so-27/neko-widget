@@ -1088,6 +1088,7 @@ struct MainTabView: View {
                                     hasPhotoAccess: hasPhotoAccess,
                                     savedStateReadFailed: savedPhotoStateReadFailed,
                                     receivedPhotoIdentifiers: receivedPhotoIdentifiers,
+                                    ownCatPhotoIdentifiers: Set(currentPhotoLibraryAssignments.compactMap { $0.value.isEmpty ? nil : $0.key }),
                                     receivedPhotoSourceLabels: receivedPhotoSourceLabels,
                                     exportPhotoBook: exportPhotoBook)
         case .notes:
@@ -1643,6 +1644,7 @@ struct MainTabView: View {
             SavedMemoriesGalleryView(
                 photos: likedPhotos, startsInExportMode: false,
                 receivedPhotoIdentifiers: receivedPhotoIdentifiers,
+                                    ownCatPhotoIdentifiers: Set(currentPhotoLibraryAssignments.compactMap { $0.value.isEmpty ? nil : $0.key }),
                                     receivedPhotoSourceLabels: receivedPhotoSourceLabels,
                                     exportPhotoBook: exportPhotoBook
             )

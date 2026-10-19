@@ -643,6 +643,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
                     SavedMemoriesGalleryView(photos: AppStoreScreenshotFixture.photos,
                         startsInExportMode: false, isEmbedded: true,
                         receivedPhotoIdentifiers: Set(AppStoreScreenshotFixture.photos.prefix(2).map(\.localIdentifier)),
+                        ownCatPhotoIdentifiers: Set(AppStoreScreenshotFixture.photos.prefix(1).map(\.localIdentifier)),
                         receivedPhotoSourceLabels: Dictionary(uniqueKeysWithValues:
                             AppStoreScreenshotFixture.photos.prefix(2).map { ($0.localIdentifier, "お母さんから") }),
                         exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })

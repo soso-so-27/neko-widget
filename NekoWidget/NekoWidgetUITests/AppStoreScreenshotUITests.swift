@@ -34,7 +34,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
         captureScreenshot(named: "favorites-from-mado")
         app.buttons["favorites-origin-ownCats"].tap()
         XCTAssertTrue(app.buttons["favorites-origin-ownCats"].isSelected)
-        XCTAssertFalse(app.staticTexts["お母さんから"].exists)
+        // A received photo explicitly assigned to one's cat also belongs to
+        // Own Cats, while retaining its true received provenance label.
+        XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.exists)
         app.terminate()
     }
 
