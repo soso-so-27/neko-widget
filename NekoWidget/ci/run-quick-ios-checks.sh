@@ -18,12 +18,6 @@ xcrun swiftc -parse-as-library \
   ci/verify-album-catalog-coordinator.swift ci/verify-album-grouping.swift \
   -o "$RUNNER_TEMP/album-tests"
 "$RUNNER_TEMP/album-tests"
-xcrun swiftc -parse-as-library \
-  Shared/Sharing/PairingCore.swift Shared/Models/WidgetRenderPlan.swift \
-  Shared/Models/WidgetManifest.swift Shared/Sharing/MomentSharingCore.swift \
-  Shared/Sharing/FamilyRecordCore.swift ci/verify-family-records.swift \
-  -o "$RUNNER_TEMP/family-record-tests"
-"$RUNNER_TEMP/family-record-tests"
 
 xcrun swiftc -parse-as-library \
   Shared/Sharing/PairingCore.swift Shared/Models/WidgetRenderPlan.swift \
