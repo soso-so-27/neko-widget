@@ -7581,7 +7581,8 @@ class PlanTests(unittest.TestCase):
                         for path, pair in sorted(changes.items())))
                 if args[0] == "show":
                     revision, path = args[1].split(":", 1)
-                    return changes[path][1 if revision == self.sha else 0]
+                    pair = changes[path] if path in changes else original[path]
+                    return pair[1 if revision == self.sha else 0]
                 raise AssertionError(args)
             with patch.object(planner, "comparison_base", return_value="b" * 40), \
                     patch.object(planner, "git", side_effect=git), \
@@ -7598,6 +7599,11 @@ class PlanTests(unittest.TestCase):
         root_proof_paths = ["NekoWidget/PreservationService/" + name for name in (
             "src/owner-recovery-copy.ts", "test/owner-record-deltas.test.ts")]
         self.assertTrue(planner.preservation_paths_only(root_proof_paths))
+        root_changes = {path: ("old", "reviewed root proof") for path in root_proof_paths}
+        self.assertEqual(select(root_changes), planner.PRESERVATION_SCOPE)
+        self.assertEqual(select(root_changes, tree_ok=False), scope.FULL_SCOPE)
+        self.assertEqual(select({**root_changes,
+            "NekoWidget/PreservationService/test/unreviewed.test.ts": ("old", "new")}), scope.FULL_SCOPE)
         self.assertFalse(planner.preservation_paths_only(root_proof_paths + [
             "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift"]))
         self.assertEqual(planner.PRESERVATION_SCOPE, "preservation-service-v28")
