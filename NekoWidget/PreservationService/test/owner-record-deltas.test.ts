@@ -5,12 +5,14 @@ import { randomToken, sha256 } from '../src/contracts';
 import { envelopeKeyCustody } from '../src/key-custody';
 import { OwnerRecoveryCopy } from '../src/owner-recovery-copy';
 import { syntheticKeyAuthority } from './key-fixture';
+import { openOwnerSnapshot } from '../src/owner-snapshot-codec';
 import type { RecoveryObject, S3RecoveryCopy } from '../src/s3-recovery-copy';
 
 const db = (env as unknown as {DB:D1Database}).DB;
 const now = 1_790_035_200_000;
 async function fixture(count=0) {
-  const keys=envelopeKeyCustody({enabled:true,wrapper:(await syntheticKeyAuthority()).make()});
+  const authority=await syntheticKeyAuthority();
+  const keys=envelopeKeyCustody({enabled:true,wrapper:authority.make()});
   const secret=randomToken(), objects=new Map<string,Uint8Array>();
   const io={reads:0,writes:0,readBytes:0,writeBytes:0};
   const s3={
@@ -42,7 +44,7 @@ async function fixture(count=0) {
   const baselineIO={...io};
   const reset=()=>{io.reads=io.writes=io.readBytes=io.writeBytes=0;};
   reset();
-  return {copy,owner,first,ids,io,baselineIO,reset,objects,s3,keys,secret};
+  return {copy,owner,first,ids,io,baselineIO,reset,objects,s3,keys,secret,authority};
 }
 async function markers(owner:string) {
   await db.batch([
@@ -283,4 +285,69 @@ it('concurrent copies bind one winning S3 version and preserve owner isolation',
   expect(a).toEqual(b);
   expect(await f.copy.read(f.owner,a)).toEqual(await f.copy.capture(db,f.owner));
   await expect(f.copy.read(other.owner,a)).rejects.toMatchObject({code:'OWNER_RECOVERY_UNAVAILABLE'});
+});
+
+
+it('authenticates the changed root through update without an extra root download, retaining both versions',async()=>{
+  const f=await fixture(1),before=new Map(f.objects);
+  await change(f.owner,f.ids[0]!);
+  const next=await f.copy.copyCurrent(db,f.owner,now);
+  // Existing owner + update old leaf + new owner readback + new root readback.
+  expect(f.io.reads).toBe(4);expect(f.io.writes).toBe(2);
+  for(const [key,value]of before)expect(f.objects.get(key)).toBe(value);
+  expect(await f.copy.read(f.owner,next)).toEqual(await f.copy.capture(db,f.owner));
+  f.reset();expect(await f.copy.copyCurrent(db,f.owner,now)).toEqual(next);
+  expect(f.io.reads).toBe(2);expect(f.io.writes).toBe(0);
+});
+
+it.each(['delta','idempotent','header-only']as const)(
+  'rejects a missing authenticated root before new publication on the %s path',async path=>{
+  const f=await fixture(1);
+  const generation=await db.prepare('SELECT generation FROM pa_owner_recovery_tree_cursors WHERE owner_id=?').bind(f.owner).first('generation');
+  const versions=await db.prepare('SELECT count(*)AS n FROM pa_owner_recovery_versions WHERE owner_id=?').bind(f.owner).first('n');
+  if(path==='delta')await change(f.owner,f.ids[0]!);
+  if(path==='header-only')await db.prepare('UPDATE pa_identity_credentials SET updated_at=updated_at+1 WHERE owner_id=?').bind(f.owner).run();
+  const roots=[...f.objects.keys()].filter(key=>key.includes('/record/'));
+  expect(roots).toHaveLength(1);f.objects.delete(roots[0]!);f.reset();
+  await expect(f.copy.copyCurrent(db,f.owner,now)).rejects.toMatchObject({code:'OWNER_RECOVERY_UNAVAILABLE'});
+  expect(f.io.writes).toBe(0);
+  expect(await db.prepare('SELECT generation FROM pa_owner_recovery_tree_cursors WHERE owner_id=?').bind(f.owner).first('generation')).toBe(generation);
+  expect(await db.prepare('SELECT count(*)AS n FROM pa_owner_recovery_versions WHERE owner_id=?').bind(f.owner).first('n')).toBe(versions);
+});
+
+it('still rechecks key authority when the old root is opened after the delta query',async()=>{
+  const f=await fixture(1);await change(f.owner,f.ids[0]!);let revoked=false;
+  const observed=intercept(async(sql,method)=>{
+    if(!revoked&&sql.includes('ORDER BY items.change_sequence')&&method==='all'){
+      revoked=true;f.authority.remove('synthetic/v1');
+    }
+  });
+  await expect(f.copy.copyCurrent(observed,f.owner,now)).rejects.toMatchObject({code:'OWNER_RECOVERY_UNAVAILABLE'});
+  expect(revoked).toBe(true);expect(f.io.writes).toBe(0);
+});
+
+it('verifies and publishes a header-only change with no record delta and keeps the old tree',async()=>{
+  const f=await fixture(1),before=new Map(f.objects);
+  await db.prepare('UPDATE pa_identity_credentials SET updated_at=updated_at+1 WHERE owner_id=?').bind(f.owner).run();
+  const next=await f.copy.copyCurrent(db,f.owner,now);
+  expect(f.io.reads).toBe(4);expect(f.io.writes).toBe(1);
+  for(const [key,value]of before)expect(f.objects.get(key)).toBe(value);
+  expect(await f.copy.read(f.owner,next)).toEqual(await f.copy.capture(db,f.owner));
+});
+
+
+it('rejects an authenticated owner image whose claimed old root semantic hash does not match the stored node',async()=>{
+  const f=await fixture(1),scope={ownerId:f.owner,purpose:'recovery' as const};
+  const opened=await f.keys.open(f.objects.get(f.first.key)!,scope);
+  const wire=JSON.parse(new TextDecoder().decode(await openOwnerSnapshot(opened)));
+  wire.recordsTree.hash='0'.repeat(64);
+  const changed=await f.keys.seal(new TextEncoder().encode(JSON.stringify(wire)),scope);
+  // A self-consistent synthetic outer ciphertext/ref still must not make a
+  // mismatching inner semantic root trustworthy. No real object is rewritten.
+  f.objects.set(f.first.key,changed);
+  await db.prepare('UPDATE pa_owner_recovery_versions SET sha256=?,bytes=? WHERE owner_id=? AND object_key=?')
+    .bind(await sha256(changed),changed.length,f.owner,f.first.key).run();
+  await change(f.owner,f.ids[0]!);f.reset();
+  await expect(f.copy.copyCurrent(db,f.owner,now)).rejects.toMatchObject({code:'OWNER_RECOVERY_UNAVAILABLE'});
+  expect(f.io.reads).toBe(2);expect(f.io.writes).toBe(0);
 });

@@ -461,9 +461,9 @@ export class OwnerRecoveryCopy {
         || previous.recordsTree.count!==prior.record_count) throw unavailable();
       const tree = new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
       let root = previous.recordsTree;
-      await tree.verifyRoot(root);
       if (prior.generation===image.generation && prior.inventory_generation===image.inventoryGeneration
         && prior.record_sequence===state.sequence && prior.record_count===state.count) {
+        await tree.verifyRoot(root);
         if (canonicalJSON(wireHeader(previousHeader))!==canonicalJSON(wireHeader(image))) throw unavailable();
         // Idempotent preflight: authenticate the existing root once and perform
         // a final read fence; do not rewrite the same cursor or S3 image.
@@ -517,6 +517,10 @@ export class OwnerRecoveryCopy {
       }
       // The final sequence is retained even when intermediate changes coalesce.
       if (after!==state.sequence || root.count!==state.count) throw unavailable();
+      // A nonempty update authenticates the old root at readNode. Header-only
+      // changes have no update, so authenticate that unchanged root here.
+      // Keep the independent publication readback and final cursor fence.
+      if (changes===0) await tree.verifyRoot(root);
       return await this.publishTree(db,state,root,now);
     } catch { throw unavailable(); }
   }
