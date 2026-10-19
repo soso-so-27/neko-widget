@@ -7,8 +7,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: app-store-screenshots-${{ github.ref }}
-  cancel-in-progress: false
+  # Targeted checks use isolated Simulators and keep only the latest run per test.
+  # Full App Store capture retains its existing serial group.
+  group: app-store-screenshots-${{ github.ref }}${{ inputs.review_test != '' && format('-review-{0}', inputs.review_test) || '' }}
+  cancel-in-progress: ${{ inputs.review_test != '' }}
 
 jobs:
   capture-local-only-iphone:
