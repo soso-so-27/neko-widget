@@ -217,53 +217,56 @@ private struct EvacuationCatsView: View {
     @ObservedObject var reuseStore: CareHandoffStore
     @State private var openedID: UUID?
     @State private var opensNewCat = false
+    @State private var duplicateProfile: CatProfilePresentation?
     var body: some View {
         List {
-            if !store.plan.cats.isEmpty {
-                Section("猫を選ぶ") {
-                    ForEach(store.plan.cats) { cat in
-                        NavigationLink { destination(cat.id) } label: {
-                            Label(cat.displayName, systemImage: "cat")
-                        }.accessibilityIdentifier("evacuation-cat-\(cat.id.uuidString)")
+            ToolCatPicker(profiles: profiles, select: selectProfile) {
+                Section("プロフィール未登録の猫") {
+                    ForEach(store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }) { cat in
+                        NavigationLink { destination(cat.id) } label: { Label(cat.displayName, systemImage: "cat") }
+                            .accessibilityIdentifier("evacuation-cat-\(cat.id.uuidString)")
+                        ToolPromoteCatButton(name: cat.name) { profileID in
+                            ToolCatProfileLinker.evacuation(cat.id, profileID: profileID, care: reuseStore, evacuation: store)
+                        }
+                    }
+                    ForEach(availableSavedCats) { cat in
+                        Button(cat.displayName) {
+                            if let id = store.addCat(using: reuseStore, sourceCatID: cat.id) {
+                                openedID = id; opensNewCat = true
+                            }
+                        }
                     }
                 }
             }
-            let available = profiles.filter { profile in !store.plan.cats.contains { $0.profileID == profile.identifier } }
-            Section {
-                ForEach(availableSavedCats) { cat in
-                    Button {
-                        if let id = store.addCat(using: reuseStore, sourceCatID: cat.id) {
-                            openedID = id; opensNewCat = true
-                        }
-                    } label: {
-                        HStack(spacing: 12) {
-                            EvacuationPhoto(image: reuseStore.image(cat.photoName), label: "いつもの写真")
-                                .frame(width: 54, height: 60)
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(cat.displayName).font(.headline)
-                                Text("入力済みの情報で作る").font(.subheadline).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                        }
-                    }.accessibilityIdentifier("evacuation-saved-cat-\(cat.id.uuidString)")
-                        .disabled(store.plan.cats.count >= 30 || store.saveError != nil)
-                }
-                ForEach(available) { profile in
-                    Button {
-                        openNew(profileID: profile.identifier, name: profile.displayName)
-                    } label: { Label("\(profile.displayName)の備えを作る", systemImage: "cat") }
-                }
-                Button("登録せずに猫の情報を作る", systemImage: "plus") { openNew() }
-                    .accessibilityIdentifier("evacuation-add-guest")
-                    .disabled(store.plan.cats.count >= 30)
-            } footer: { Text("見せる写真と必要なことだけを準備できます。猫のプロフィール登録は不要です。") }
         }
         .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $opensNewCat) {
             if let openedID { destination(openedID) }
         }
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
+        .confirmationDialog("この子の記録が複数あります", isPresented: Binding(
+            get: { duplicateProfile != nil }, set: { if !$0 { duplicateProfile = nil } }
+        ), titleVisibility: .visible) {
+            if let profile = duplicateProfile {
+                ForEach(store.plan.cats.filter { $0.profileID == profile.identifier }) { cat in
+                    Button("\(cat.displayName)・\(cat.updatedAt.formatted(date: .abbreviated, time: .shortened))") {
+                        openExisting(cat.id, profile: profile); duplicateProfile = nil
+                    }
+                }
+            }
+        }
+    }
+    private func selectProfile(_ profile: CatProfilePresentation) {
+        let matches = store.plan.cats.filter { $0.profileID == profile.identifier }
+        if matches.count > 1 { duplicateProfile = profile }
+        else if let cat = matches.first { openExisting(cat.id, profile: profile) }
+        else { openNew(profileID: profile.identifier, name: profile.displayName) }
+    }
+    private func openExisting(_ id: UUID, profile: CatProfilePresentation) {
+        if store.plan.cats.first(where: { $0.id == id })?.name != profile.displayName {
+            store.editCat(id) { $0.name = profile.displayName }
+        }
+        openedID = id; opensNewCat = true
     }
     private func openNew(profileID: String? = nil, name: String = "") {
         if let id = store.addCat(profileID: profileID, name: name, using: reuseStore) { openedID = id; opensNewCat = true }
@@ -303,7 +306,7 @@ private struct EvacuationCatView: View {
                         EvacuationPhoto(image: store.image(cat.photos["face"] ?? cat.photos["body"] ?? cat.photos["reference"]), label: "この子の写真")
                             .frame(width: 80, height: 90)
                         VStack(alignment: .leading, spacing: 7) {
-                            Text(cat.displayName).font(.title2.bold())
+                            Text(profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName).font(.title2.bold())
                             Text(cat.features.isEmpty ? "特徴は未記入" : cat.features)
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
@@ -311,7 +314,7 @@ private struct EvacuationCatView: View {
                     NavigationLink {
                         EvacuationCatEditor(id: id,
                             ownPhotos: profiles.first(where: { $0.identifier == cat.profileID })?.confirmedPhotos ?? [],
-                            otherPhotos: otherPhotos, store: store, reuseStore: reuseStore)
+                            otherPhotos: otherPhotos, store: store, reuseStore: reuseStore, profiles: profiles)
                     } label: { Label("写真やこの子の情報を編集", systemImage: "pencil") }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 }
@@ -364,6 +367,7 @@ private struct EvacuationCatEditor: View {
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: EvacuationStore
     @ObservedObject var reuseStore: CareHandoffStore
+    var profiles: [CatProfilePresentation] = []
     @State private var photoRole: EvacuationCat.PhotoRole?
     @State private var refreshedCandidates = false
     @State private var candidateRefreshError = false
@@ -378,9 +382,14 @@ private struct EvacuationCatEditor: View {
                     Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                if let profile = profiles.first(where: { $0.identifier == cat.profileID }) {
+                    ToolCatProfileInfo(profile: profile, profiles: profiles)
+                }
                 Section("写真と名前") {
-                    TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
-                        .foregroundStyle(Color.primary)
+                    if !profiles.contains(where: { $0.identifier == cat.profileID }) {
+                        TextField("名前（任意）", text: text(\.name)).accessibilityIdentifier("evacuation-cat-name")
+                            .foregroundStyle(Color.primary)
+                    }
                     ForEach(EvacuationCat.PhotoRole.allCases.filter { $0 != .reference || cat.photos["reference"] != nil }) { role in
                         Button { photoRole = role } label: {
                             HStack {

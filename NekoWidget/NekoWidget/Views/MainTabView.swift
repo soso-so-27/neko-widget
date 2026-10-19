@@ -364,6 +364,7 @@ struct MainTabView: View {
             }
             .tag(AppTab.tools)
         }
+        .environment(\.toolProfileActions, catProfilesActions)
         .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
             guard allowShowcaseOpening() else { return }

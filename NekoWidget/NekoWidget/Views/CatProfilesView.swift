@@ -715,3 +715,123 @@ private struct AddCatProfileView: View {
         referenceCandidates.first { $0.localIdentifier == draft.referencePhotoIdentifier }
     }
 }
+
+private struct ToolProfileActionsKey: EnvironmentKey {
+    static let defaultValue = CatProfilesViewActions.noOp
+}
+extension EnvironmentValues {
+    var toolProfileActions: CatProfilesViewActions {
+        get { self[ToolProfileActionsKey.self] }
+        set { self[ToolProfileActionsKey.self] = newValue }
+    }
+}
+
+/// Every tool reads the same ordered profile list. Creation is an explicit user action.
+struct ToolCatPicker<Legacy: View>: View {
+    let profiles: [CatProfilePresentation]
+    let select: (CatProfilePresentation) -> Void
+    @ViewBuilder var legacy: () -> Legacy
+    @Environment(\.toolProfileActions) private var actions
+    @State private var addsCat = false
+    @State private var name = ""
+    @State private var failed = false
+    @State private var busy = false
+    var body: some View {
+        Group {
+            Section("猫のプロフィール") {
+                ForEach(profiles) { profile in
+                    Button { select(profile) } label: { Label(profile.displayName, systemImage: "cat") }
+                        .accessibilityIdentifier("tool-profile-\(profile.identifier)")
+                }
+                Button("猫を追加", systemImage: "plus") { name = ""; addsCat = true }
+                    .accessibilityIdentifier("tool-profile-add").disabled(busy)
+            }
+            legacy()
+        }
+        .alert("猫を追加", isPresented: $addsCat) {
+            TextField("名前", text: $name)
+            Button("追加") {
+                busy = true
+                Task {
+                    let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let id = await actions.createProfile(CatProfileDraftPresentation(name: value))
+                    busy = false
+                    if let id {
+                        select(CatProfilePresentation(identifier: id, name: value, coverPhoto: nil,
+                            confirmedPhotos: [], lifeReference: nil))
+                    } else { failed = true }
+                }
+            }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("キャンセル", role: .cancel) {}
+        } message: { Text("名前だけで登録できます。写真や日付はあとから設定できます。") }
+        .alert("プロフィールを追加できませんでした", isPresented: $failed) {
+            Button("閉じる", role: .cancel) {}
+        } message: { Text("入力は残っています。もう一度お試しください。") }
+    }
+}
+
+struct ToolCatProfileInfo: View {
+    let profile: CatProfilePresentation
+    let profiles: [CatProfilePresentation]
+    @Environment(\.toolProfileActions) private var actions
+    var body: some View {
+        Section("この子のこと") {
+            LabeledContent("名前", value: profile.displayName)
+            if let birthday = profile.lifeDates.birthday {
+                LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
+            }
+            if let adoption = profile.lifeDates.adoptionDay {
+                LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
+            }
+            NavigationLink("猫のプロフィールで編集") {
+                CatProfileDetailView(profile: profile, allProfiles: profiles,
+                    manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: actions)
+            }
+        }
+    }
+}
+
+struct ToolPromoteCatButton: View {
+    let name: String
+    let link: (String) -> Bool
+    @Environment(\.toolProfileActions) private var actions
+    @State private var busy = false
+    @State private var failed = false
+    @State private var createdID: String?
+    var body: some View {
+        Button(createdID == nil ? "プロフィールにする" : "プロフィールとの接続を再試行") {
+            busy = true
+            Task {
+                let id: String?
+                if let createdID { id = createdID }
+                else { id = await actions.createProfile(CatProfileDraftPresentation(name: name.isEmpty ? "名前未設定の猫" : name)) }
+                createdID = id
+                failed = id.map { !link($0) } ?? true
+                busy = false
+            }
+        }.disabled(busy)
+        .alert("プロフィールとの接続を完了できませんでした", isPresented: $failed) {
+            Button("閉じる", role: .cancel) {}
+        } message: { Text("元の記録と写真は残っています。保存状態を確認して再試行してください。") }
+    }
+}
+
+@MainActor
+enum ToolCatProfileLinker {
+    static func care(_ id: UUID, profileID: String, care: CareHandoffStore, evacuation: EvacuationStore) -> Bool {
+        guard let cat = care.plan.cats.first(where: { $0.id == id }),
+              care.loadError == nil, care.saveError == nil, evacuation.loadError == nil, evacuation.saveError == nil else { return false }
+        let matches = evacuation.plan.cats.filter { ($0.toolCatID ?? $0.id) == (cat.toolCatID ?? cat.id) }
+        guard matches.count <= 1, matches.allSatisfy({ $0.profileID == nil || $0.profileID == cat.profileID || $0.profileID == profileID }) else { return false }
+        if let counterpart = matches.first, !evacuation.linkProfile(profileID, to: counterpart.id) { return false }
+        return care.linkProfile(profileID, to: id)
+    }
+    static func evacuation(_ id: UUID, profileID: String, care: CareHandoffStore, evacuation: EvacuationStore) -> Bool {
+        guard let cat = evacuation.plan.cats.first(where: { $0.id == id }),
+              care.loadError == nil, care.saveError == nil, evacuation.loadError == nil, evacuation.saveError == nil else { return false }
+        let matches = care.plan.cats.filter { ($0.toolCatID ?? $0.id) == (cat.toolCatID ?? cat.id) }
+        guard matches.count <= 1, matches.allSatisfy({ $0.profileID == nil || $0.profileID == cat.profileID || $0.profileID == profileID }) else { return false }
+        if let counterpart = matches.first, !care.linkProfile(profileID, to: counterpart.id) { return false }
+        return evacuation.linkProfile(profileID, to: id)
+    }
+}

@@ -330,6 +330,8 @@ struct AppStoreScreenshotFixtureRootView: View {
     @State private var selectedPhotoShownAt: Date?
     @State private var showsFamilyWindow = false
     @State private var photoPositionDiagnostics = ""
+    @State private var addedToolProfiles: [CatProfilePresentation] = []
+    @State private var deletedToolProfiles = Set<String>()
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     private var photos: [PhotoPresentation] {
@@ -374,13 +376,13 @@ struct AppStoreScreenshotFixtureRootView: View {
         }
     }
     private var catProfiles: CatProfilesPresentation {
-        guard ["cats", "rediscovery"].contains(widgetRecoveryCase ?? "") else { return CatProfilesPresentation() }
+        guard ["cats", "rediscovery", "tool-profiles"].contains(widgetRecoveryCase ?? "") else { return CatProfilesPresentation(profiles: addedToolProfiles) }
         let all = photos.map {
             CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
                                         creationDate: $0.creationDate)
         }
-        return CatProfilesPresentation(profiles: (0..<2).map { index in
-            let identifier = "fixture-cat-\(index)"
+        let values: [CatProfilePresentation] = (0..<2).map { index in
+            let identifier = widgetRecoveryCase == "tool-profiles" ? (index == 0 ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222") : "fixture-cat-\(index)"
             let selected = widgetRecoveryCase == "rediscovery"
                 ? Array(all[(index * 2)..<(index * 2 + 2)]) : [all[index]]
             let confirmed = selected.map { source in
@@ -394,13 +396,28 @@ struct AppStoreScreenshotFixtureRootView: View {
                 coverPhoto: confirmed[0], confirmedPhotos: confirmed,
                 manualCandidatePhotos: all.filter { !assigned.contains($0.localIdentifier) }
             )
-        })
+        }
+        return CatProfilesPresentation(profiles: values.filter { !deletedToolProfiles.contains($0.identifier) } + addedToolProfiles)
+    }
+    private var profileActions: CatProfilesViewActions {
+        var actions = CatProfilesViewActions.noOp
+        actions.createProfile = { draft in
+            let id = UUID().uuidString
+            addedToolProfiles.append(CatProfilePresentation(identifier: id, name: draft.name, coverPhoto: nil, confirmedPhotos: [], lifeReference: nil))
+            return id
+        }
+        actions.deleteProfile = { id in
+            deletedToolProfiles.insert(id); addedToolProfiles.removeAll { $0.identifier == id }; return true
+        }
+        return actions
     }
     private let likedPhotos = AppStoreScreenshotFixture.likedPhotos
     private let windowPhoto = AppStoreScreenshotFixture.windowPhoto
 
     var body: some View {
-        if let widgetPhotoIdentifier {
+        if ProcessInfo.processInfo.environment["NEKO_TOOL_PROFILE_DATA_CHECK"] == "1" {
+            ToolProfileDataCheckView()
+        } else if let widgetPhotoIdentifier {
             // Match AppRootView's direct destination call inside its own
             // NavigationStack. MainTabView.body must not supply environments.
             mainTabContent.widgetPhotoDestination(
@@ -451,7 +468,7 @@ struct AppStoreScreenshotFixtureRootView: View {
                 let assigned = Set(profile.confirmedPhotos.map(\.localIdentifier))
                 return (profile.identifier, photos.filter { assigned.contains($0.localIdentifier) })
             }),
-            catProfilesActions: .noOp,
+            catProfilesActions: profileActions,
             hasPhotoAccess: photoAccess,
             isLimitedAccess: false,
             isScanning: false,
@@ -1431,5 +1448,28 @@ private struct SoloRediscoveryFixtureView: View {
     }
 }
 #endif
+
+
+@MainActor
+private struct ToolProfileDataCheckView: View {
+    @State private var passed = false
+    @State private var failed = false
+    @State private var failureMessage = ""
+    var body: some View {
+        Text(passed ? "passed" : failed ? "failed" : "checking")
+            .accessibilityIdentifier(passed ? "tool-profile-data-passed" : failed ? "tool-profile-data-failed" : "tool-profile-data-checking")
+            .accessibilityValue(failureMessage)
+            .task {
+                do { try await ToolProfileDataChecks.run(); passed = true }
+                catch {
+                    let failure = error as NSError
+                    failureMessage = failure.domain == "ToolProfileDataCheck"
+                        ? "fixture-check-\(failure.code)" : "fixture-operation-failed"
+                    failed = true
+                }
+            }
+    }
+}
+
 
 #endif

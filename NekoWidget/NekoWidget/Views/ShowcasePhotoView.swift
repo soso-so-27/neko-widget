@@ -88,9 +88,11 @@ struct ShowcasePhotoView: View {
     @State private var selectedIndex: Int?
     @State private var selectedScopeID: String?
     @State private var showsPreparation = false
+    @State private var showsCatPicker = false
     @State private var accessRevision = 0
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
+    private var storedScopeIDs: [String] { Array(Set(store.entries.map(\.scopeID))).sorted() }
 
     private var visibleItems: [Item] {
         guard initialScopeID != nil else { return items }
@@ -130,19 +132,9 @@ struct ShowcasePhotoView: View {
                 .accessibilityLabel(detailIndex != nil && !isDirectPhoto ? "写真の一覧に戻る" : "閉じる")
                 .accessibilityIdentifier("showcase-back")
                 Spacer(minLength: 8)
-                if detailIndex == nil && initialScopeID != nil && !profiles.isEmpty {
-                    Menu {
-                        Button("すべての猫") { selectScope("") }
-                        ForEach(profiles) { profile in
-                            Button(profile.displayName) { selectScope(profile.identifier) }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(visibleTitle).lineLimit(1)
-                            Image(systemName: "chevron.down").font(.caption)
-                        }
-                        .font(.headline)
-                        .frame(minHeight: 44)
+                if detailIndex == nil && initialScopeID != nil {
+                    Button { showsCatPicker = true } label: {
+                        Label(visibleTitle, systemImage: "chevron.down").font(.headline).frame(minHeight: 44)
                     }
                     .accessibilityLabel("見せる猫、\(visibleTitle)")
                     .accessibilityIdentifier("showcase-gallery-scope")
@@ -245,6 +237,9 @@ struct ShowcasePhotoView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { accessRevision &+= 1 }
         }
+        .sheet(isPresented: $showsCatPicker) {
+            ShowcaseToolCatPicker(profiles: profiles, storedScopes: storedScopeIDs) { selectScope($0) }
+        }
         .sheet(isPresented: $showsPreparation) {
             ShowcasePreparationView(
                 store: store,
@@ -323,6 +318,7 @@ struct ShowcasePreparationView: View {
     let profiles: [CatProfilePresentation]
     @Binding var scopeID: String
 
+    @State private var showsCatPicker = false
     @State private var previewEntry: ShowcasePhotoStore.Entry?
     @State private var pendingReplacement: ShowcasePhotoStore.Entry?
     @State private var pickerMode: PickerMode?
@@ -382,21 +378,9 @@ struct ShowcasePreparationView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
-                        if !profiles.isEmpty || !scopeID.isEmpty {
-                            Picker("見せる猫", selection: $scopeID) {
-                                Text("すべての猫").tag("")
-                                if !scopeID.isEmpty && !profiles.contains(where: { $0.identifier == scopeID }) {
-                                    Text("前に選んだ猫").tag(scopeID)
-                                }
-                                ForEach(profiles) { profile in
-                                    Text(profile.displayName).tag(profile.identifier)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .accessibilityIdentifier("showcase-scope-picker")
-                        } else {
-                            Text("すべての猫").font(.headline)
-                        }
+                        Button { showsCatPicker = true } label: {
+                            Label(scopeTitle, systemImage: "chevron.down").frame(minHeight: 44)
+                        }.accessibilityIdentifier("showcase-scope-picker")
                         Spacer()
                         Text("\(allEntries.count) / \(ShowcasePhotoStore.maximumCount)")
                             .font(.subheadline.monospacedDigit())
@@ -480,6 +464,9 @@ struct ShowcasePreparationView: View {
                         .padding(12)
                         .background(.regularMaterial)
                 }
+            }
+            .sheet(isPresented: $showsCatPicker) {
+                ShowcaseToolCatPicker(profiles: profiles, storedScopes: Array(Set(store.entries.map(\.scopeID))).sorted()) { scopeID = $0 }
             }
             .sheet(item: $previewEntry, onDismiss: {
                 if let replacement = pendingReplacement {
@@ -738,4 +725,29 @@ private struct ShowcaseCandidatePicker: View {
         }
         .appRecordEditing(retainWhileHidden: !selected.isEmpty || isSaving)
     }
+}
+
+struct ShowcaseToolCatPicker: View {
+    let profiles: [CatProfilePresentation]
+    let storedScopes: [String]
+    let select: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            List {
+                ToolCatPicker(profiles: profiles, select: { select($0.identifier); dismiss() }) {
+                    Section {
+                        Button("すべての猫") { select(""); dismiss() }
+                    }
+                    Section("プロフィール未登録の猫") {
+                        ForEach(storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }, id: \.self) { scope in
+                            Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
+                        }
+                    }
+                }
+            }.navigationTitle("猫を選ぶ").navigationBarTitleDisplayMode(.inline)
+                .toolbar { Button("閉じる") { dismiss() } }
+        }
+    }
+    private func storeOrder(_ scope: String) -> Int { (storedScopes.firstIndex(of: scope) ?? 0) + 1 }
 }

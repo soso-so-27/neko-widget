@@ -78,9 +78,28 @@ final class EvacuationStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func linkProfile(_ profileID: String, to id: UUID) -> Bool {
+        guard UUID(uuidString: profileID) != nil, loadError == nil, saveError == nil, let repository,
+              let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
+        var next = plan
+        next.cats[index].profileID = profileID
+        do {
+            try repository.commit(next)
+            plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+            return true
+        } catch {
+            saveError = "プロフィールとの接続を保存できませんでした。保存を再試行してから接続してください。"
+            return false
+        }
+    }
     func addCat(profileID: String? = nil, name: String = "",
                 using source: CareHandoffStore? = nil, sourceCatID: UUID? = nil) -> UUID? {
-        if let profileID, let found = plan.cats.first(where: { $0.profileID == profileID }) { return found.id }
+        if let profileID {
+            let matches = plan.cats.filter { $0.profileID == profileID }
+            if matches.count > 1 { return nil }
+            if let found = matches.first { return found.id }
+        }
         guard plan.cats.count < 30, loadError == nil, saveError == nil, let repository else { return nil }
         let candidates = source?.loadError == nil && source?.saveError == nil ? source?.plan.cats ?? [] : []
         let matches = candidates.filter { cat in
