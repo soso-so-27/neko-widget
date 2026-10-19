@@ -295,6 +295,7 @@ CARE_HANDOFF_SCOPE = "reviewed-care-handoff-ui-v1"
 TOOL_CAT_AUTOFILL_SCOPE = "reviewed-tool-cat-autofill-v1"
 TOOL_CANDIDATE_REFRESH_SCOPE = "reviewed-tool-candidate-refresh-v1"
 JOURNAL_IDENTITY_SCOPE = "reviewed-journal-identity-v1"
+RESTORE_PAGES_SCOPE = "reviewed-selected-restore-pages-v1"
 SAVE_SETTINGS_LIST_RACE_SCOPE = "reviewed-save-settings-list-race-v1"
 VET_SAVED_CAT_SCOPE = "reviewed-vet-saved-cat-ui-v1"
 MEMBERSHIP_COPY_SCOPE = "reviewed-membership-copy-ui-v1"
@@ -777,7 +778,7 @@ TOOL_STORAGE_TESTS = TOOL_PRESERVATION_TESTS + (
     "NekoWidgetUITests/SoloMemoriesUITests/testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",
 )
 
-SCOPES = (SAVE_SETTINGS_LIST_RACE_SCOPE, JOURNAL_IDENTITY_SCOPE, TOOL_STORAGE_SCOPE, TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
+SCOPES = (RESTORE_PAGES_SCOPE, SAVE_SETTINGS_LIST_RACE_SCOPE, JOURNAL_IDENTITY_SCOPE, TOOL_STORAGE_SCOPE, TOOL_PRESERVATION_SCOPE, INTERNAL_REPORT_SCOPE, OWNER_CLOUD_SCOPE, MODERATION_RESOLUTION_SCOPE, PRESERVATION_EXPORT_SCOPE, FULL_SCOPE, PHOTO_SCOPE, OFFICIAL_SCOPE, COMBINED_SCOPE,
           WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE, WIDGET_STYLE_SCOPE, CI_SELECTION_SCOPE,
           APP_VIEW_SCOPE, APP_DATA_SCOPE, BILLING_LOCAL_PREPARATION_SCOPE, LOST_CAT_PHOTO_SCOPE, LOST_CAT_UX_SCOPE, EVACUATION_SCOPE, CARE_HANDOFF_SCOPE, TOOL_CAT_AUTOFILL_SCOPE, TOOL_CANDIDATE_REFRESH_SCOPE, VET_SAVED_CAT_SCOPE, MEMBERSHIP_COPY_SCOPE, PRESERVATION_USAGE_SCOPE, MEMBERSHIP_TOOLS_SCOPE, TOOLS_HUB_SCOPE, WINDOW_HUB_SCOPE, FAMILY_WINDOW_UI_SCOPE, REPORT_REPLY_ENTRY_SCOPE, REVIEWED_FAMILY_EXPORT_SCOPE,
           REVIEWED_APP_SCOPE, ARCHIVE_PICKER_SCOPE, REVIEWED_MEMORY_SCOPE, REVIEWED_MEMORY_FAMILY_SCOPE,
@@ -1919,6 +1920,52 @@ def reviewed_tool_candidate_refresh_changes(changes: dict[str, tuple[str, str]])
                     for path in TOOL_CANDIDATE_REFRESH_PATHS)
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], TOOL_CANDIDATE_REFRESH_TESTS))
 
+# Fixed selected export + renewable native restore batch. Other tracked inputs,
+# including the unchanged owning UI inventory, are fenced by the planner.
+# c0a1363 -> 7dc988f; merge reviewed controls before candidate native work.
+RESTORE_PAGES_DIGESTS = {
+    "NekoWidget/NekoWidget/Services/AppRecordPersistence.swift": [
+        "e464c372660a9d21a26b80ff6df95f994a61fd410cf827803c4d0f682fbc1e67",
+        "985d024153f1602a8eca7a0f42ee70d85edb30fa6f1fb24a0e564923d74e44f9"
+    ],
+    "NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift": [
+        "9c72c83db626518536b56066574d17a6f8b08bafe72ab2bd847f8a73b8bcaa9d",
+        "4300d8415f95f0b81c5d0680bf461837fc16ed593f65142f56751b43f08fadc4"
+    ],
+    "NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift": [
+        "586058c2cacf97bd0ea7e020a38d21ff1fe0044ee6b4279228575968ec3aa85c",
+        "7a95acdec58c4bfd353777703e9f294b9bfcb6467146fea268727ff999cf9855"
+    ],
+    "NekoWidget/NekoWidget/Services/ToolPreservation.swift": [
+        "854ac2538c9bd0621e0bbf40b2750f75842839896a38e9a87a2694e4c903bfff",
+        "4c6ce3a1234e45ba57ca63aa1abd1133306fe30e201723e426943160bda7734c"
+    ],
+    "NekoWidget/PreservationService/src/export-page.ts": [
+        "936ffaaa1196338356db0959c1542e3c0a25e114e09464837c139139eeb992f0",
+        "324bb3a5d4fad1a663d9c01f0d9da990f4e82d3da9944ac6ca80c932fbfaef4a"
+    ],
+    "NekoWidget/PreservationService/test/export-page.test.ts": [
+        "1d2bbf1dd4d6f1ef094a2cac032e388802db2937c59b7b12011c3ac59f22edff",
+        "d1362f8ad70045f84fe88049c431fc152cc5ec3d57ecec540b75007e93750414"
+    ]
+}
+RESTORE_PAGES_PATHS = frozenset(RESTORE_PAGES_DIGESTS)
+RESTORE_PAGES_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name for name in (
+    "testAutomaticPartitionedRecordsMigrationAndRestore",
+    "testAutomaticRestoreProtectsUnsavedMemoDraft",
+    "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity",
+    "testManagedPreservationMembershipLinkConsentAndRetry",
+    "testManagedPreservationAccountDeletionRetainsReceiptAndCompletes",
+))
+
+
+def reviewed_restore_pages_changes(changes: dict[str, tuple[str, str]]) -> bool:
+    return (set(changes) == RESTORE_PAGES_PATHS
+            and all(list(map(source_digest, changes[path])) == RESTORE_PAGES_DIGESTS[path]
+                    for path in RESTORE_PAGES_PATHS)
+            and memory_tests_available(managed_validation_source(changes, MEMORY_TEST_PATH), RESTORE_PAGES_TESTS))
+
+
 # Account-only settings avoid the archive list; archive presentation is unchanged.
 # Fixed sources: fbed075458dde5c111dbe15f13fccb08dc50423e ->
 # b77cbc1dc837fa3f7e8cadce17c940f9354b30cc. These complete app/test inputs
@@ -2551,7 +2598,7 @@ def reviewed_membership_tools_changes(changes: dict[str, tuple[str, str]]) -> bo
             and memory_tests_available(changes[MEMORY_TEST_PATH][1], MEMBERSHIP_TOOLS_TESTS))
 
 
-MAPPED_PATHS = SAVE_SETTINGS_LIST_RACE_PATHS | JOURNAL_IDENTITY_PATHS | TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH} | (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
+MAPPED_PATHS = RESTORE_PAGES_PATHS | SAVE_SETTINGS_LIST_RACE_PATHS | JOURNAL_IDENTITY_PATHS | TOOL_STORAGE_PATHS | {TOOL_STORAGE_READINESS_PATH} | (TOOL_PRESERVATION_PATHS | frozenset(REPORT_REPLY_ENTRY_DIGESTS) | frozenset(REPORT_RUNTIME_CONTINUATION_DIGESTS) | frozenset(REPORT_RUNTIME_ORDER_DIGESTS) | PRESERVATION_EXPORT_PATHS | PRESERVATION_EXPORT_COMPANIONS | PURCHASE_CATALOG_PATHS | PURCHASE_CATALOG_COMPANIONS | MEMBERSHIP_MANAGEMENT_PATHS | MEMBERSHIP_MANAGEMENT_COMPANIONS | MEMBERSHIP_STATE_PATHS | MEMBERSHIP_STATE_COMPANIONS | PRESERVATION_USAGE_PATHS | MEMBERSHIP_TOOLS_PATHS | APP_DATA_PATHS | WINDOW_HUB_PATHS | WINDOW_HUB_COMPANIONS | TOOLS_HUB_PATHS | CARE_HANDOFF_PATHS | EVACUATION_PATHS | MAPPED_VIEWS | WIDGET_BEHAVIOR_PATHS | WIDGET_LAYOUT_PATHS
                 | APP_ONLY_VIEWS | APP_VIEW_PATHS | APP_ONLY_RECORD_EXPORT_PATHS | CI_SELECTION_PATHS | REVIEWABLE_APP_PATHS | ARCHIVE_PICKER_PATHS | REVIEWABLE_MEMORY_PATHS
                 | FAMILY_COMPANION_PATHS | {LOCAL_EDITOR_PATH} | CAT_NOTE_PATHS | PHOTO_ACTIONS_PATHS | MEMBERSHIP_OFFER_PATHS | MEMBERSHIP_ACCESS_PATHS | DELIVERY_MEMBERSHIP_PATHS | WINDOW_SUPPORT_PATHS | RECORD_PORTABILITY_PATHS | MANAGED_PRESERVATION_PATHS | ICON_PATHS | ICON_DOC_PATHS)
 
@@ -3496,6 +3543,8 @@ def source_paths(paths):
 
 def accepts_paths(scope: str, paths) -> bool:
     sources = source_paths(paths)
+    if scope == RESTORE_PAGES_SCOPE:
+        return bool(paths) and len(paths) == len(set(paths)) and sources == RESTORE_PAGES_PATHS
     if scope == SAVE_SETTINGS_LIST_RACE_SCOPE:
         return bool(paths) and len(paths) == len(set(paths)) and sources == SAVE_SETTINGS_LIST_RACE_PATHS
     if scope == JOURNAL_IDENTITY_SCOPE:
@@ -3724,6 +3773,8 @@ MODERATION_RESOLUTION_TESTS = FAMILY_WINDOW_NATIVE_TESTS + (
 
 
 def native_tests(scope: str) -> tuple[str, ...]:
+    if scope == RESTORE_PAGES_SCOPE:
+        return RESTORE_PAGES_TESTS
     if scope == SAVE_SETTINGS_LIST_RACE_SCOPE:
         return SAVE_SETTINGS_LIST_RACE_TESTS
     if scope == JOURNAL_IDENTITY_SCOPE:
@@ -4044,6 +4095,8 @@ def select_scope(changes: dict[str, tuple[str, str]] | None, *,
     changes = {path: values for path, values in changes.items() if not is_handoff(path)}
     if not changes or not set(changes) <= MAPPED_PATHS:
         return FULL_SCOPE
+    if reviewed_restore_pages_changes(changes):
+        return RESTORE_PAGES_SCOPE
     if reviewed_save_settings_list_race_changes(changes):
         return SAVE_SETTINGS_LIST_RACE_SCOPE
     if reviewed_journal_identity_changes(changes):

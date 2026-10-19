@@ -32,6 +32,45 @@ def workflow_jobs():
 
 
 class LaneTests(unittest.TestCase):
+    def test_restore_pages_exact_six_sources_and_five_existing_ui_cases(self):
+        self.assertEqual(len(scope.RESTORE_PAGES_PATHS), 6)
+        changes = {path: ("before", "after") for path in scope.RESTORE_PAGES_PATHS}
+        digests = {path: list(map(scope.source_digest, values)) for path, values in changes.items()}
+        tests = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
+            "func " + name.rsplit("/", 1)[1] + "() {}" for name in scope.RESTORE_PAGES_TESTS) + "\n}"
+        with patch.object(scope, "RESTORE_PAGES_DIGESTS", digests), \
+                patch.object(scope, "managed_validation_source", return_value=tests):
+            self.assertEqual(scope.select_scope(changes), scope.RESTORE_PAGES_SCOPE)
+            for path in changes:
+                self.assertEqual(scope.select_scope({p: v for p, v in changes.items() if p != path}), scope.FULL_SCOPE)
+                for index in (0, 1):
+                    pair = list(changes[path]); pair[index] += "unknown"
+                    self.assertEqual(scope.select_scope(changes | {path: tuple(pair)}), scope.FULL_SCOPE)
+            for path in ("unknown.swift", *planner.RESTORE_PAGES_CONTROLS,
+                         ".github/workflows/preservation-service.yml", scope.MEMORY_TEST_PATH):
+                self.assertEqual(scope.select_scope(changes | {path: ("old", "new")}), scope.FULL_SCOPE)
+            for method in scope.RESTORE_PAGES_TESTS:
+                name = "func " + method.rsplit("/", 1)[1] + "() {}"
+                for replacement in ("", "// " + name, name + "\n" + name):
+                    with patch.object(scope, "managed_validation_source", return_value=tests.replace(name, replacement)):
+                        self.assertEqual(scope.select_scope(changes), scope.FULL_SCOPE)
+
+    def test_restore_pages_keeps_full_build_photos_both_os_runtime_and_five_ui(self):
+        selected = scope.RESTORE_PAGES_SCOPE
+        self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
+        self.assertEqual(scope.lane_tests(selected, "app-ui"), scope.RESTORE_PAGES_TESTS)
+        self.assertEqual(len(set(scope.RESTORE_PAGES_TESTS)), 5)
+        self.assertEqual(scope.lane_tests(selected, "runtime"), scope.lane_tests(scope.FULL_SCOPE, "runtime"))
+        self.assertEqual(planner.required_jobs_from_scope(selected), (
+            planner.BUILD, planner.BOOTSTRAP_SMOKE, scope.lane_job(selected, "runtime"), scope.lane_job(selected, "app-ui")))
+        self.assertEqual(scope.smoke_tests(selected), scope.smoke_tests(scope.SAVE_SETTINGS_LIST_RACE_SCOPE))
+        for lane in scope.LANES[2:]:
+            with self.assertRaises(ValueError): scope.lane_tests(selected, lane)
+        paths = sorted(scope.RESTORE_PAGES_PATHS)
+        self.assertTrue(scope.accepts_paths(selected, paths + ["handoffs/restore-pages.md"]))
+        for bad in ([], paths[:-1], paths + paths[:1], paths + ["unknown.swift"]):
+            self.assertFalse(scope.accepts_paths(selected, bad))
+
     def test_photo_library_root_return_lifecycle_contracts(self):
         result = subprocess.run(
             [sys.executable, str(CI / "test-photo-library-reading-controls.py")],
