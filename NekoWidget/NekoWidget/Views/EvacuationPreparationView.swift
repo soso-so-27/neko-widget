@@ -33,17 +33,14 @@ struct EvacuationPreparationView: View {
                             entry("行き先と連絡先", detail: "候補と受入条件を残す", icon: "mappin.and.ellipse")
                         }
                         .accessibilityIdentifier("evacuation-destinations-open")
-                    } footer: {
-                        Text("保存した写真と入力内容は、通信がなくても開けます。外部サイトや送信には通信が必要です。")
                     }
                     Section {
-                        Text("災害時は、ご自身と家族の安全を優先してください。")
-                            .font(.footnote).foregroundStyle(.secondary)
+                        ToolImportantInformation(text: "災害時は自身と家族の安全を優先し、避難先の受入条件を事前に確認してください。保存済みの入力・写真は通信なしで開けます。")
                     }
                 }
             }
         }
-        .navigationTitle("避難に備える")
+        .navigationTitle("避難に備える").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
 
@@ -135,7 +132,7 @@ private struct EvacuationPackingView: View {
                     .disabled(store.plan.carriedIDs.isEmpty)
             }
         }
-        .navigationTitle("持ち出すもの")
+        .navigationTitle("持ち出すもの").navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("今回のチェックだけを消します", isPresented: $resetRequested, titleVisibility: .visible) {
             Button("チェックを消す", role: .destructive) {
                 store.update { $0.carriedIDs = []; $0.checkStartedAt = nil }
@@ -168,7 +165,7 @@ private struct EvacuationSuppliesEditor: View {
                     .font(.subheadline)
                 Link("東京都の公式案内（通信が必要）", destination: URL(string: "https://www.hokeniryo.metro.tokyo.lg.jp/kankyo/aigo/bousai/doukou-hinan")!)
             }
-        }.navigationTitle("リストを編集")
+        }.navigationTitle("リストを編集").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
 }
@@ -203,7 +200,7 @@ private struct EvacuationSupplyEditor: View {
                 } footer: { Text("変更は自動で保存します。編集した項目の持出チェックは外れます。") }
                 Section { Button("この持ち物を削除", role: .destructive) { deleteRequested = true } }
             }
-        }.navigationTitle("持ち物と置き場所")
+        }.navigationTitle("持ち物と置き場所").navigationBarTitleDisplayMode(.inline)
             .confirmationDialog("この持ち物を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("削除", role: .destructive) {
                     if store.update({ $0.supplies.removeAll { $0.id == id }; $0.carriedIDs.remove(id) }) { dismiss() }
@@ -223,7 +220,7 @@ private struct EvacuationCatsView: View {
     var body: some View {
         List {
             if !store.plan.cats.isEmpty {
-                Section("備えを作った猫") {
+                Section("猫を選ぶ") {
                     ForEach(store.plan.cats) { cat in
                         NavigationLink { destination(cat.id) } label: {
                             Label(cat.displayName, systemImage: "cat")
@@ -262,7 +259,7 @@ private struct EvacuationCatsView: View {
                     .disabled(store.plan.cats.count >= 30)
             } footer: { Text("見せる写真と必要なことだけを準備できます。猫のプロフィール登録は不要です。") }
         }
-        .navigationTitle("猫の情報")
+        .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $opensNewCat) {
             if let openedID { destination(openedID) }
         }
@@ -350,7 +347,7 @@ private struct EvacuationCatView: View {
                     Button("この子の備えを削除", role: .destructive) { deleteRequested = true }
                 }
             }
-        }.navigationTitle("猫の情報を見せる")
+        }.navigationTitle("猫の情報を見せる").navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $preview) { EvacuationDisplayView(record: $0.record) }
             .confirmationDialog("この子の避難用の記録を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("避難用の記録を削除", role: .destructive) {
@@ -426,18 +423,17 @@ private struct EvacuationCatEditor: View {
                             .accessibilityIdentifier("evacuation-cat-handling")
                             .foregroundStyle(Color.primary)
                     }
-                    DisclosureGroup("病歴・薬") {
-                        Picker("病歴・薬の記録", selection: Binding(get: { cat.medicalStatus }, set: { new in
+                    DisclosureGroup("薬・アレルギー") {
+                        Picker("記録の状態", selection: Binding(get: { cat.medicalStatus }, set: { new in
                             store.editCat(id) { $0.medicalStatus = new }
                         })) { ForEach(EvacuationCat.MedicalStatus.allCases, id: \.self) { Text($0.title).tag($0) } }
                         if cat.medicalStatus == .recorded {
                             TextField("獣医師から指示された内容など", text: text(\.medicalDetails), axis: .vertical)
                         }
-                        Text("診断や薬の量の判断はしません。必要な相手に伝えるための記録です。")
-                            .font(.footnote).foregroundStyle(.secondary)
+                        ToolImportantInformation(text: "薬は獣医師の指示を記入してください。薬・連絡先を見せるかは前の画面で選べます。")
                     }
                 } header: { Text("必要なことだけ")
-                } footer: { Text("空欄があっても使えます。変更は自動で保存します。見せる項目は前の画面で選べます。") }
+                } footer: { Text("変更は自動で保存します。") }
                 Section("家庭で共通の連絡先") {
                     TextField("相手に伝える連絡先（任意）", text: Binding(get: { store.plan.contact }, set: { new in
                         store.update { plan in
@@ -447,7 +443,7 @@ private struct EvacuationCatEditor: View {
                     }), axis: .vertical).accessibilityIdentifier("evacuation-contact")
                 }
             }
-        }.navigationTitle("この子の情報を編集")
+        }.navigationTitle("この子の情報を編集").navigationBarTitleDisplayMode(.inline)
             .task {
                 guard !refreshedCandidates else { return }
                 refreshedCandidates = true
@@ -499,7 +495,7 @@ private struct EvacuationPhotoPicker: View {
             if !remaining.isEmpty { grid("ほかの猫写真から選ぶ", remaining) }
             if let error { Section { Text(error).foregroundStyle(.red) } }
         }
-        .navigationTitle(role.title)
+        .navigationTitle(role.title).navigationBarTitleDisplayMode(.inline)
         .toolbar { Button("キャンセル") { dismiss() }.disabled(busy) }
         .interactiveDismissDisabled(busy)
         .overlay { if busy { ProgressView("写真を保存中…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) } }
@@ -574,13 +570,17 @@ private struct EvacuationDisplayView: View {
                 Text("内容確認日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
                     .font(.footnote).foregroundStyle(.secondary)
                 if let error { Text(error).foregroundStyle(.red) }
-                Button("家族に送る", systemImage: "square.and.arrow.up") { wantsPrint = false; confirmShare = true }
-                    .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-images")
-                Button("印刷して持つ", systemImage: "printer") { wantsPrint = true; confirmShare = true }
-                    .buttonStyle(.bordered).accessibilityIdentifier("evacuation-share-pdf")
+
             }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
         }
-        .navigationTitle("この子の避難メモ").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            Menu {
+                Button("画像") { wantsPrint = false; confirmShare = true }.accessibilityIdentifier("evacuation-share-images")
+                Button("PDF") { wantsPrint = true; confirmShare = true }.accessibilityIdentifier("evacuation-share-pdf")
+            } label: { Label("書き出す", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
+            .buttonStyle(.borderedProminent).padding().background(.regularMaterial)
+        }
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
         .confirmationDialog("表示中の内容を控えにします", isPresented: $confirmShare, titleVisibility: .visible) {
@@ -642,7 +642,7 @@ private struct EvacuationDestinationsView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                 Link("環境省の公式案内（通信が必要）", destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/1_law/disaster.html")!)
             }
-        }.navigationTitle("行き先と連絡先")
+        }.navigationTitle("行き先と連絡先").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
 }
@@ -689,7 +689,7 @@ private struct EvacuationDestinationEditor: View {
                 } footer: { Text("自分で確認した内容と日付の記録です。現在の空きや受入を保証するものではありません。内容を編集すると未確認に戻ります。") }
                 Section { Button("この候補を削除", role: .destructive) { deleteRequested = true } }
             }
-        }.navigationTitle("候補を編集")
+        }.navigationTitle("候補を編集").navigationBarTitleDisplayMode(.inline)
             .confirmationDialog("この候補を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("削除", role: .destructive) {
                     if store.update({ $0.destinations.removeAll { $0.id == id } }) { dismiss() }

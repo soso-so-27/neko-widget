@@ -267,6 +267,7 @@ struct MainTabView: View {
     @State private var preparingShowcaseScopes = Set<String>()
     @State private var showcaseWaitingToOpen: String?
     @State private var showcasePreparationError = false
+    @State private var showsShowcaseNoPhotos = false
     @State private var photoLibraryRevision = 0
     @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
@@ -609,8 +610,11 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                toolSection("暮らしのツール") {
-                        showcaseToolCard
+                showcaseToolCard
+                if !preparingShowcaseScopes.isEmpty {
+                    ProgressView("見せる写真を準備中")
+                }
+                toolSection("ふだんの準備") {
                         NavigationLink {
                             CareHandoffView(profiles: catProfilesPresentation.profiles,
                                             unregisteredPhotos: unregisteredCatPhotos)
@@ -660,7 +664,7 @@ struct MainTabView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
@@ -672,18 +676,32 @@ struct MainTabView: View {
 
     private var showcaseToolCard: some View {
         Button {
-            if hasPhotoAccess || !showcaseStore.availableEntries(in: "").isEmpty {
-                openPreparedShowcase(scopeID: "")
-            } else {
-                selectedTab = .photos
-                requestPhotoAccess()
-            }
+            if showcaseStore.availableEntries(in: "").isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
+                showsShowcaseNoPhotos = true
+            } else { openPreparedShowcase(scopeID: "") }
         } label: {
-            ToolTile(title: "写真を見せる", systemImage: "photo.on.rectangle.angled",
-                     subtitle: "初回はおすすめ、あとから選べる", catPose: "tilt")
+            HStack(spacing: 20) {
+                ToolCatArtwork(pose: "tilt", systemImage: "photo.on.rectangle.angled")
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("写真を見せる").font(.title2.bold())
+                    Text("お気に入りの写真を、さっと見せる").font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            }.padding(20).frame(maxWidth: .infinity, minHeight: 140)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
+        .alert(hasPhotoAccess ? "猫の写真を準備しましょう" : "写真の許可が必要です", isPresented: $showsShowcaseNoPhotos) {
+            Button(hasPhotoAccess ? "写真を開く" : "写真の許可を確認") {
+                selectedTab = .photos
+                if !hasPhotoAccess { requestPhotoAccess() }
+            }
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」で猫の写真とアクセス範囲を確認してください。")
+        }
     }
 
     private func toolSection<Content: View>(_ title: String,

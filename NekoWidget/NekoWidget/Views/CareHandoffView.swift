@@ -22,12 +22,12 @@ struct CareHandoffView: View {
                 List {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("いつものお世話を\nそのまま伝える").font(.title2.bold())
+                            Text("いつものお世話を伝える").font(.headline)
                             Text("ごはんの量も、この子の苦手も。写真付きのメモを作って渡せます。")
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }.padding(.vertical, 8)
                     }
-                    Section("猫ごとのお世話メモ") {
+                    Section("猫を選ぶ") {
                         ForEach(store.plan.cats) { cat in
                             NavigationLink { editor(cat.id) } label: {
                                 HStack(spacing: 12) {
@@ -207,14 +207,14 @@ private struct CareCatEditor: View {
                 }
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
-                } footer: { Text("必ず守ってほしいことを先頭に載せます。空欄のままでも保存できます。") }
+                }
                 if cat.usualFood != nil {
                     Section {
                         CareField(label: "いつものごはん", example: "フード名・普段の量など", identifier: "care-usual-food",
                             text: Binding(get: { self.cat?.usualFood ?? "" }, set: { new in
                                 store.editCat(id) { $0.usualFood = new }
                             }), isPrefilled: cat.prefilledFields?.contains("food") == true)
-                    } footer: { Text("このままお世話メモに載ります。時間や量を分けたい場合は、下の欄に追加できます。") }
+                    }
                 }
                 ForEach(Array(cat.meals.enumerated()), id: \.element.id) { index, meal in
                     Section("ごはん \(index + 1)") {
@@ -246,10 +246,11 @@ private struct CareCatEditor: View {
                         if cat.healthStatus == .recorded {
                             CareField(label: "伝える内容", example: "獣医師からの指示、薬の名前・時間・量など", identifier: "care-health", text: text(\.healthDetails))
                         }
-                        Text("獣医師から指示された内容を記入してください。薬の量の判断や計算はしません。")
-                            .font(.footnote).foregroundStyle(.secondary)
                     }
-                } footer: { Text("薬・連絡先を渡すかどうかは、最後の確認画面で選べます。") }
+                }
+                Section {
+                    ToolImportantInformation(text: "空欄でも自動保存されます。薬は獣医師の指示を記入してください。薬や連絡先を渡すかはプレビュー前に選べます。")
+                }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
                 } footer: { Text("入力した内容はこの端末に自動保存します。") }
@@ -274,7 +275,14 @@ private struct CareCatEditor: View {
                 if store.update({ $0.cats.removeAll { $0.id == id } }) { dismiss() }
             }
         } message: { Text("このツールの記録と写真のコピーだけを削除します。元の写真・猫プロフィール・他のツールの記録は残ります。") }
-        .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 6) {
+                CareSaveNotice(store: store)
+                NavigationLink { CareDisclosureView(store: store) } label: {
+                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
+            }.padding().background(.regularMaterial)
+        }
     }
 }
 
@@ -409,7 +417,7 @@ private struct CareDisclosureView: View {
             } header: { Text("必要な相手に渡す情報")
             } footer: { Text("写真・名前・お世話・今回のお願いは載せます。薬や連絡先は、渡す相手に合わせて選んでください。") }
             Section {
-                Button("この内容でプレビュー", systemImage: "doc.text.magnifyingglass") {
+                Button("プレビュー", systemImage: "doc.text.magnifyingglass") {
                     do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
                     catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "控えを開けません。元の記録は残っています。" }
                 }.font(.headline).disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
@@ -458,10 +466,11 @@ private struct CareDisplayView: View {
         }.background(Color(.systemGroupedBackground))
             .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
-                ViewThatFits(in: .horizontal) {
-                    HStack { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
-                    VStack { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
-                }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
+                Menu {
+                    shareButton("画像", pdf: false)
+                    shareButton("PDF", pdf: true)
+                } label: { Label("書き出す", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
+                .buttonStyle(.borderedProminent).padding().background(.regularMaterial)
             }
             .confirmationDialog("表示中の内容を控えにします", isPresented: $confirmShare, titleVisibility: .visible) {
                 Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
@@ -500,4 +509,14 @@ private struct CareActivitySheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Ordinary guidance is collapsed; destructive and recipient confirmations stay explicit.
+struct ToolImportantInformation: View {
+    let text: String
+    var body: some View {
+        DisclosureGroup("大事なこと") {
+            Text(text).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
 }

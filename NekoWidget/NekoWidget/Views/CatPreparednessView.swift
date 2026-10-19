@@ -116,7 +116,7 @@ struct LostCatEmergencyEntryView: View {
                         }
                     }
                     if !savedCats.isEmpty {
-                        Section("入力済みの猫") {
+                        Section("猫を選ぶ") {
                             ForEach(savedCats) { cat in
                                 NavigationLink { editor(cat.id, "") } label: {
                                     Label(cat.displayName, systemImage: "cat")
@@ -147,7 +147,7 @@ struct LostCatEmergencyEntryView: View {
     private func guestLabel(_ key: String) -> String {
         guard let draft = draftStore.drafts[key] else { return "未登録の猫" }
         let name = draft.name.isEmpty ? "未登録の猫" : draft.name
-        return "\(name)・\(draft.updatedAt.formatted(date: .abbreviated, time: .shortened))・\(key.suffix(4))"
+        return "\(name)・\(draft.updatedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 }
 
@@ -236,7 +236,7 @@ struct LostCatDraftView: View {
                     Text("仕上がりで調整する項目があります")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Button("仕上がりを確認") { openPreview() }
+                Button("プレビュー") { openPreview() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canPreview)
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -477,7 +477,7 @@ struct LostCatDraftView: View {
                     Button(profile.displayName) { switchTo(profile.identifier, name: profile.displayName) }
                 }
                 if !savedCats.isEmpty {
-                    Section("入力済みの猫") {
+                    Section("猫を選ぶ") {
                         ForEach(savedCats) { cat in
                             Button(cat.displayName) { switchTo(cat.id, name: "") }
                                 .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
@@ -911,9 +911,9 @@ private struct LostCatPreviewView: View {
                     .font(.footnote).foregroundStyle(.red).padding()
             }
         }
-        .navigationTitle("仕上がり")
+        .navigationTitle("プレビュー")
         .safeAreaInset(edge: .bottom) {
-            Button(format == 0 ? "送る・保存する" : "保存・印刷する", systemImage: "square.and.arrow.up") {
+            Button("書き出す", systemImage: "square.and.arrow.up") {
                 do {
                     let url: URL
                     #if DEBUG

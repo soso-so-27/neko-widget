@@ -91,8 +91,8 @@ struct VeterinaryVisitsView: View {
                     }
                     Button("猫の名前を入力して作る", systemImage: "plus") { newName = ""; addsCat = true }
                         .accessibilityIdentifier("vet-new-cat")
-                } header: { Text("診察する猫") }
-                  footer: { Text("気になった写真やメモを選んで、診察で伝える内容をまとめます。診断は行いません。") }
+                } header: { Text("猫を選ぶ") }
+                  footer: { ToolImportantInformation(text: "診察で伝える記録です。診断や薬の量の判断はしません。") }
                 if !visits.filter({ $0.completedAt != nil }).isEmpty {
                     Section("これまでの診察メモ") {
                         ForEach(visits.filter { $0.completedAt != nil }.reversed()) { visit in
@@ -196,6 +196,7 @@ private struct VeterinaryConsultationView: View {
     @State private var busy = false
     @State private var chosen: PhotoMemoryNoteRecord?
     @State private var pendingSource: PhotoMemoryNoteRecord?
+    @State private var autosaveTask: Task<Void, Never>?
 
     private var changes: Bool {
         guard let visit else { return false }
@@ -246,12 +247,11 @@ private struct VeterinaryConsultationView: View {
                 } header: { Text("見せる記録 · \(visit.entries.count)件") }
                   footer: { Text("選んだ時点の控えです。元のメモを編集しても自動では変わりません。外しても元の写真・メモは残ります。") }
                 Section {
-                    Button("この内容を見せる", systemImage: "rectangle.inset.filled") { showing = true }
-                        .accessibilityIdentifier("vet-show").disabled(changes)
+
                     if visit.completedAt == nil {
                         Button("診察済みとして残す", systemImage: "checkmark") { finishing = true }.disabled(changes)
                     }
-                    if changes { Text("変更を保存してから見せてください。").font(.caption).foregroundStyle(.secondary) }
+                    if changes { Text("変更を自動保存しています。").font(.caption).foregroundStyle(.secondary) }
                     Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
                 }
             }
@@ -260,10 +260,24 @@ private struct VeterinaryConsultationView: View {
         .navigationTitle("診察メモ").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("閉じる") { if changes { discarding = true } else { dismiss() } }.disabled(busy) }
-            ToolbarItem(placement: .confirmationAction) { Button("保存") { Task { await save() } }
-                .disabled(!changes || busy || observations.count > 500 || questions.count > 500)
-                .accessibilityIdentifier("vet-save") }
+
         }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 6) {
+                if error != nil, changes {
+                    Button("保存を再試行") { Task { await save() } }.accessibilityIdentifier("vet-save")
+                }
+                Text(observations.count > 500 || questions.count > 500 ? "各項目は500文字以内で入力してください" : changes ? "保存中…" : "自動保存済み").font(.caption).foregroundStyle(.secondary)
+                Button("プレビュー", systemImage: "rectangle.inset.filled") { showing = true }
+                    .buttonStyle(.borderedProminent).frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityIdentifier("vet-show").disabled(changes || busy)
+            }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
+        }
+        .onChange(of: observations) { _, _ in scheduleSave() }
+        .onChange(of: questions) { _, _ in scheduleSave() }
+        .onChange(of: hasStartedDay) { _, _ in scheduleSave() }
+        .onChange(of: startedDay) { _, _ in scheduleSave() }
+        .onDisappear { autosaveTask?.cancel() }
         .disabled(busy)
         .interactiveDismissDisabled(changes || busy)
         .task {
@@ -306,8 +320,20 @@ private struct VeterinaryConsultationView: View {
         } message: { Text("この診察用の控えだけを削除します。元の写真・メモ・保管した記録は残ります。") }
         .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || pendingSource != nil)
     }
+    private func scheduleSave() {
+        autosaveTask?.cancel()
+        autosaveTask = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+            while busy {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+            guard !Task.isCancelled, changes else { return }
+            await save()
+        }
+    }
     private func save(completing: Bool = false) async {
-        guard var draft = visit, !busy else { return }
+        guard var draft = visit, !busy, completing || changes,
+              observations.count <= 500, questions.count <= 500 else { return }
         busy = true; defer { busy = false }
         draft.observations = observations; draft.questions = questions
         draft.startedOn = hasStartedDay ? VeterinaryVisit.day(startedDay) : nil

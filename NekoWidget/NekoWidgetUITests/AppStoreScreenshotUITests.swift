@@ -10,6 +10,35 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewToolsAndAutomaticVisitSave() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        for identifier in ["tools-showcase-open", "tools-care-open", "tools-vet-open", "tools-lost-cat-open", "tools-evacuation-open"] {
+            XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 10))
+        }
+        captureScreenshot(named: "PR4-tools")
+        app.buttons["tools-vet-open"].tap()
+        let add = app.buttons["vet-new-cat"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10)); add.tap()
+        let alert = app.alerts["猫の名前"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.textFields.firstMatch.tap(); alert.textFields.firstMatch.typeText("むぎ")
+        alert.buttons["作る"].tap()
+        let observations = app.descendants(matching: .any)["vet-observations"].firstMatch
+        XCTAssertTrue(observations.waitForExistence(timeout: 10), app.debugDescription)
+        observations.tap(); observations.typeText("いつもの様子")
+        let preview = app.buttons["vet-show"]
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: preview)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 10), .completed)
+        preview.tap()
+        XCTAssertTrue(app.staticTexts["いつもの様子"].waitForExistence(timeout: 10))
+        captureScreenshot(named: "PR4-visit-preview")
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewConsistentPhotosAndAlbums() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
