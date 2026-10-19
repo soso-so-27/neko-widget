@@ -6350,7 +6350,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.launch()
         let status = app.staticTexts["photo-delivery-progress-status-fixture-photo"]
         XCTAssertTrue(status.waitForExistence(timeout: 15))
-        XCTAssertEqual(status.label, "送信中")
+        XCTAssertEqual(status.label, "届けています")
         attach(app, name: "photo-delivery-progress-sending")
         app.buttons["delivery-progress-fixture-support-required"].tap()
         XCTAssertEqual(status.label, "このまどへの送信はお休み中です")
@@ -6371,7 +6371,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         otherAction.tap()
         XCTAssertEqual(app.staticTexts["delivery-progress-fixture-other-action-count"].label, "別の操作：2回")
         app.buttons["delivery-progress-fixture-accepted"].tap()
-        XCTAssertEqual(status.label, "送信しました。サーバーの受付を確認しました")
+        XCTAssertEqual(status.label, "届けました。サーバーで受け付けました")
         attach(app, name: "photo-delivery-progress-accepted")
         XCTAssertFalse(app.alerts.firstMatch.exists)
     }
@@ -7169,7 +7169,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             let photo = app.descendants(matching: .any)["family-window-composer-photo"].firstMatch
             XCTAssertTrue(photo.exists)
             XCTAssertTrue(photo.frame.insetBy(dx: -1, dy: -1).contains(edit.frame), "The caption belongs inside the photo preview.")
-            let navigation = app.navigationBars["写真を確認"]
+            let navigation = app.navigationBars["写真を届ける"]
             let destination = app.staticTexts["family-window-composer-destination"]
             XCTAssertGreaterThanOrEqual(photo.frame.minY, navigation.frame.maxY - 2,
                                        "Finishing input must return the complete photo below the navigation bar.")
@@ -7203,7 +7203,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             app.buttons["family-window-cancel-delivery"].tap()
             discard.buttons["破棄してやめる"].tap()
             XCTAssertTrue(open.waitForExistence(timeout: 5))
-            XCTAssertFalse(app.navigationBars["写真を確認"].exists)
+            XCTAssertFalse(app.navigationBars["写真を届ける"].exists)
             open.tap()
             XCTAssertTrue(edit.waitForExistence(timeout: 5))
             XCTAssertEqual(edit.label, "メモを添える")

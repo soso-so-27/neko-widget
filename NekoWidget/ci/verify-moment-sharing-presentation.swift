@@ -61,7 +61,7 @@ enum MomentSharingPresentationVerifier {
                 id: "photo-a", thumbnailJPEG: jpeg, startedAt: date(100), phase: phase
             )
             try require(!photo.animates(at: date(101)), "a deferred or unresolved photo animated")
-            try require(photo.title(at: date(101)) != "送信しました", "an unresolved photo claimed success")
+            try require(photo.title(at: date(101)) != "届けました", "an unresolved photo claimed success")
         }
         let preparations = [
             MomentPreparationPresentationInput(destinationKey: "window-a", phase: .pending,
@@ -111,10 +111,10 @@ enum MomentSharingPresentationVerifier {
         try require(accepted.count == 1 && accepted.first?.id == photo.id
             && accepted.first?.phase == .accepted && accepted.first?.thumbnailJPEG == photo.thumbnailJPEG,
             "success did not preserve the exact observed photograph")
-        try require(tracker.nextCompletionExpiry == date(104), "success did not last two seconds")
-        _ = tracker.update(photos: [], acceptedIDs: [photo.id], now: date(103.9))
-        try require(tracker.nextCompletionExpiry == date(104), "refresh extended success indefinitely")
-        try require(tracker.update(photos: [], acceptedIDs: [photo.id], now: date(104)).isEmpty
+        try require(tracker.nextCompletionExpiry == date(106), "success did not last four seconds")
+        _ = tracker.update(photos: [], acceptedIDs: [photo.id], now: date(105.9))
+        try require(tracker.nextCompletionExpiry == date(106), "refresh extended success indefinitely")
+        try require(tracker.update(photos: [], acceptedIDs: [photo.id], now: date(106)).isEmpty
             && tracker.nextCompletionExpiry == nil, "expired success retained its photograph")
         let disappearingPhases: [MomentPhotoDeliveryProgress.Phase] = [.sending, .attention, .resultUnknown]
         for phase in disappearingPhases {

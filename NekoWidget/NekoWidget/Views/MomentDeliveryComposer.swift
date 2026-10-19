@@ -110,7 +110,7 @@ struct MomentDeliveryComposer: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("共有先：\(destinationName)")
+                        Text("届け先：\(destinationName)")
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("family-window-composer-destination")
@@ -123,11 +123,11 @@ struct MomentDeliveryComposer: View {
                             .font(.subheadline)
                             .frame(minWidth: 44, minHeight: 44)
                             .disabled(isSending)
-                            .accessibilityLabel("共有先を変更")
+                            .accessibilityLabel("届け先を変更")
                             .accessibilityIdentifier("photo-window-change-destination")
                         }
                     }
-                    Text("写真とメモがこのまどに残り、相手と見返せます。")
+                    Text("写真と送るメモがこのまどに届き、あとから一緒に見返せます。")
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if isEditingCaption {
@@ -150,15 +150,15 @@ struct MomentDeliveryComposer: View {
                         } label: {
                             HStack {
                                 if isSending { ProgressView().tint(.white) }
-                                else if !dynamicTypeSize.isAccessibilitySize { Image(systemName: "photo.badge.plus") }
-                                Text(isSending ? "追加しています…" : "追加する")
+                                else if !dynamicTypeSize.isAccessibilitySize { Image(systemName: "paperplane.fill") }
+                                Text(isSending ? "届けています…" : "届ける")
                             }
                             .frame(maxWidth: .infinity, minHeight: 28)
                         }
                         .disabled(isSending || !canSend
                             || MomentCaption.validationMessage(for: caption) != nil)
                         .accessibilityIdentifier("family-window-confirm-delivery")
-                        .accessibilityLabel(isSending ? "追加しています" : "この1枚をまどに追加")
+                        .accessibilityLabel(isSending ? "届けています" : "この1枚をまどに届ける")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -167,7 +167,7 @@ struct MomentDeliveryComposer: View {
                 .background(.bar)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("写真を確認")
+            .navigationTitle("写真を届ける")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(isSending || !caption.isEmpty)
             .toolbar {
@@ -197,7 +197,7 @@ struct MomentDeliveryComposer: View {
             .alert("写真の共有について", isPresented: $showsSharingInformation) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真の位置情報を除き、この画面で添えたメモと一緒に、選んだまどに保管します。Widgetにも届きます。共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に書き出せます。")
+                Text("写真の位置情報を除き、この画面で添えたメモと一緒に、選んだまどへ届けます。まどのウィジェットにも表示されます。共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に書き出せます。")
             }
             .alert("送るメモを破棄しますか？", isPresented: $showsDiscardConfirmation) {
                 Button("破棄してやめる", role: .destructive, action: onCancel)
@@ -438,9 +438,10 @@ struct MomentSentRecordCard: View {
                         .padding(.horizontal, 2)
                 }
                 if record.hasReceivedHeart {
-                    Image(systemName: "heart.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    // A returned heart is the reward for sending: show it in colour.
+                    Label("ハート", systemImage: "heart.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.red)
                         .accessibilityLabel("ハートが届いています")
                 }
             } else {
