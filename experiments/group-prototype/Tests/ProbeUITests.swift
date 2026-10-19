@@ -18,10 +18,21 @@ final class ProbeUITests: XCTestCase {
         XCTAssertTrue(addButton.waitForExistence(timeout: 10), spring.debugDescription); addButton.tap()
         let search = spring.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 15)); search.tap(); search.typeText("Neko Group Probe")
-        let result = spring.staticTexts["Neko Group Probe"].firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 20), spring.debugDescription); result.tap()
-        let pass = spring.staticTexts["WIDGET_HPKE_MLS_PASS"].firstMatch
-        XCTAssertTrue(pass.waitForExistence(timeout: 30), spring.debugDescription)
+        // Gallery results are hittable cells; identical text on the obscured
+        // Home Screen is not a gallery result (as observed in the first run).
+        let candidates = spring.cells.matching(NSPredicate(format: "label IN %@ OR identifier IN %@",
+            ["Neko Group Probe", "Probe"], ["Neko Group Probe", "Probe"]))
+        let deadline = Date().addingTimeInterval(20)
+        var result: XCUIElement?
+        repeat {
+            result = candidates.allElementsBoundByIndex.first { $0.isHittable }
+            if result != nil { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        } while Date() < deadline
+        XCTAssertNotNil(result, spring.debugDescription); result!.tap()
+        // WidgetKit can aggregate the preview's accessibility text. The app's
+        // shared-container marker below is the actual crypto-read assertion.
+        _ = spring.staticTexts["WIDGET_HPKE_MLS_PASS"].firstMatch.waitForExistence(timeout: 20)
         let screenshot = XCTAttachment(screenshot: spring.screenshot()); screenshot.name = "isolated-widget-crypto-read"; screenshot.lifetime = .keepAlways; add(screenshot)
         // The extension wrote its success marker into the shared container.
         app.terminate(); app.launch()
