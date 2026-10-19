@@ -29,7 +29,8 @@ fn plaintext(group: &mut MlsGroup, dev: &Device, bytes: &[u8]) -> Option<Vec<u8>
     else { None }
 }
 fn join(dev: &Device, config: &MlsGroupCreateConfig, welcome: &[u8]) -> MlsGroup {
-    let w = MlsMessageIn::tls_deserialize_exact(welcome).unwrap().into_welcome().unwrap();
+    let MlsMessageBodyIn::Welcome(w) = MlsMessageIn::tls_deserialize_exact(welcome).unwrap().extract()
+        else { panic!("expected welcome"); };
     StagedWelcome::new_from_welcome(&dev.provider, config.join_config(), w, None).unwrap()
         .into_group(&dev.provider).unwrap()
 }
