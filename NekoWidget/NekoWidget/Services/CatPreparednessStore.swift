@@ -35,6 +35,7 @@ final class CatPreparednessStore: ObservableObject {
     @Published private(set) var records: [String: CatPreparednessRecord] = [:]
     private let directory: URL
     private let manifest: URL
+    let hasCorruptManifest: Bool
 
     init(directory: URL? = nil) {
         let base = directory ?? AppRecordDataset.directory("CatPreparedness")
@@ -43,7 +44,8 @@ final class CatPreparednessStore: ObservableObject {
         if let data = try? Data(contentsOf: manifest),
            let saved = try? JSONDecoder().decode([String: CatPreparednessRecord].self, from: data) {
             records = saved
-        }
+            hasCorruptManifest = false
+        } else { hasCorruptManifest = FileManager.default.fileExists(atPath: manifest.path) }
     }
 
     func record(for key: String) -> CatPreparednessRecord {
@@ -67,6 +69,7 @@ final class CatPreparednessStore: ObservableObject {
         _ localIdentifier: String, role: PhotoRole,
         record: CatPreparednessRecord, for key: String
     ) async throws -> CatPreparednessRecord {
+        guard !hasCorruptManifest else { throw CocoaError(.fileReadCorruptFile) }
         let photo = try await PhotoLibraryJPEGExporter().export(localIdentifier: localIdentifier)
         guard PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).count == 1 else {
             throw MemoryPhotoJPEGExportError.photoUnavailable
@@ -114,6 +117,7 @@ final class CatPreparednessStore: ObservableObject {
     }
 
     private func persist(_ next: [String: CatPreparednessRecord]) throws {
+        guard !hasCorruptManifest else { throw CocoaError(.fileReadCorruptFile) }
         try AppRecordDataset.requireWritable(manifest)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try AppRecordDataset.requireWritable(manifest)

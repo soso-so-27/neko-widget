@@ -84,7 +84,7 @@ struct LostCatEmergencyEntryView: View {
     private var savedGuestKeys: [String] {
         let listed = Set(savedCats.map(\.id))
         return draftStore.drafts.keys
-            .filter { $0.hasPrefix("guest-") && $0 != "guest-legacy" && !listed.contains($0) }
+            .filter { key in !profiles.contains { $0.identifier == key } && !listed.contains(key) }
             .sorted { (draftStore.drafts[$0]?.updatedAt ?? .distantPast)
                 > (draftStore.drafts[$1]?.updatedAt ?? .distantPast) }
     }
@@ -100,41 +100,25 @@ struct LostCatEmergencyEntryView: View {
             .filter { seen.insert($0.localIdentifier).inserted }
     }
 
+    @State private var chosenProfile: CatProfilePresentation?
+    @State private var opensProfile = false
     var body: some View {
-        Group {
-            if profiles.count == 1, savedCats.isEmpty, let profile = profiles.first {
-                editor(profile.identifier, profile.displayName)
-            } else if profiles.isEmpty, savedCats.isEmpty {
-                editor("guest-legacy", "")
-            } else {
-                List {
-                    ForEach(profiles) { profile in
-                        NavigationLink {
-                            editor(profile.identifier, profile.displayName)
-                        } label: {
-                            Label(profile.displayName, systemImage: "cat")
-                        }
+        List {
+            ToolCatPicker(profiles: profiles, select: { chosenProfile = $0; opensProfile = true }) {
+                Section("プロフィール未登録の猫") {
+                    ForEach(savedCats) { cat in
+                        NavigationLink { editor(cat.id, "") } label: { Label(cat.displayName, systemImage: "cat") }
+                            .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
                     }
-                    if !savedCats.isEmpty {
-                        Section("猫を選ぶ") {
-                            ForEach(savedCats) { cat in
-                                NavigationLink { editor(cat.id, "") } label: {
-                                    Label(cat.displayName, systemImage: "cat")
-                                }.accessibilityIdentifier("lost-cat-saved-\(cat.id)")
-                            }
-                        }
-                    }
-                    NavigationLink { editor("guest-legacy", "") } label: {
-                        Label("登録せずに使う", systemImage: "photo")
-                    }
-                    ForEach(savedGuestKeys, id: \.self) { guestKey in
-                        NavigationLink { editor(guestKey, "") } label: {
-                            Label(guestLabel(guestKey), systemImage: "photo")
-                        }
+                    ForEach(savedGuestKeys, id: \.self) { key in
+                        NavigationLink { editor(key, "") } label: { Label(guestLabel(key), systemImage: "cat") }
                     }
                 }
-                .navigationTitle("どの子ですか？")
             }
+        }
+        .navigationTitle("迷子のとき").navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $opensProfile) {
+            if let profile = chosenProfile { editor(profile.identifier, profile.displayName) }
         }
     }
 
@@ -312,7 +296,12 @@ struct LostCatDraftView: View {
     }
 
     private var catSection: some View {
+        Group {
+        if let profile = profiles.first(where: { $0.identifier == key }) {
+            ToolCatProfileInfo(profile: profile, profiles: profiles)
+        }
         Section {
+            if !profiles.contains(where: { $0.identifier == key }) {
             LabeledContent("名前") {
                 TextField("猫の名前（任意）", text: textBinding(\.name, field: "name"), prompt: Text("任意"))
                     .foregroundStyle(Color.primary)
@@ -321,6 +310,7 @@ struct LostCatDraftView: View {
                     .focused($focus, equals: .name)
             }
             fieldIssue("name")
+            }
             HStack(alignment: .top, spacing: 12) {
                 photoTile("顔・毛柄", role: .face, image: faceImage)
                 photoTile("全身（任意）", role: .body, image: bodyImage)
@@ -359,6 +349,7 @@ struct LostCatDraftView: View {
                 Text("入力候補は保存済みの情報です。今の姿に合わせて直せます。")
                     .accessibilityIdentifier("lost-cat-prefill-note")
             }
+        }
         }
     }
 
@@ -473,30 +464,19 @@ struct LostCatDraftView: View {
     private var catSheet: some View {
         NavigationStack {
             List {
-                ForEach(profiles) { profile in
-                    Button(profile.displayName) { switchTo(profile.identifier, name: profile.displayName) }
-                }
-                if !savedCats.isEmpty {
-                    Section("猫を選ぶ") {
+                ToolCatPicker(profiles: profiles, select: { switchTo($0.identifier, name: $0.displayName) }) {
+                    Section("プロフィール未登録の猫") {
                         ForEach(savedCats) { cat in
                             Button(cat.displayName) { switchTo(cat.id, name: "") }
-                                .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
+                        }
+                        ForEach(savedGuestKeys, id: \.self) { guestKey in
+                            Button(guestLabel(guestKey)) { switchTo(guestKey, name: "") }
                         }
                     }
                 }
-                Button("登録せずに使う") { switchTo("guest-legacy", name: "") }
-                ForEach(savedGuestKeys, id: \.self) { guestKey in
-                    Button(guestLabel(guestKey)) { switchTo(guestKey, name: "") }
-                }
-                Button("別の猫で作る") { switchTo("guest-\(UUID().uuidString)", name: "") }
-            }
-            .navigationTitle("対象の猫")
+            }.navigationTitle("猫を選ぶ")
             .toolbar { Button("閉じる") { showsCatChooser = false } }
         }
-    }
-
-    private var sortedPhotos: [CatProfilePhotoPresentation] {
-        allPhotos.sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
     }
     private var ownPhotos: [CatProfilePhotoPresentation] {
         let ids = Set(profiles.first(where: { $0.identifier == key })?.confirmedPhotos.map(\.localIdentifier) ?? [])
@@ -504,7 +484,7 @@ struct LostCatDraftView: View {
     }
     private var savedGuestKeys: [String] {
         let listed = Set(savedCats.map(\.id))
-        return store.drafts.keys.filter { $0.hasPrefix("guest-") && $0 != "guest-legacy" && !listed.contains($0) }
+        return store.drafts.keys.filter { key in !profiles.contains { $0.identifier == key } && !listed.contains(key) }
             .sorted { (store.drafts[$0]?.updatedAt ?? .distantPast) > (store.drafts[$1]?.updatedAt ?? .distantPast) }
     }
     private var savedCats: [LostCatSavedCat] {
@@ -525,7 +505,7 @@ struct LostCatDraftView: View {
     private var publicDraft: LostCatPublicDraft? {
         guard let faceImage else { return nil }
         return LostCatPublicDraft(
-            name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: profiles.first(where: { $0.identifier == key })?.displayName ?? draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
             features: draft.features, collar: draft.collar,
             approachAdvice: draft.approachAdvice, lastSeenAt: draft.lastSeenAt,
             lastSeenNear: draft.lastSeenNear.trimmingCharacters(in: .whitespacesAndNewlines),

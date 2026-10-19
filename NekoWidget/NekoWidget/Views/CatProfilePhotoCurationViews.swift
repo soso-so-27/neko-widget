@@ -214,16 +214,13 @@ struct CatProfileDetailView: View {
                     let deleted = await actions.deleteProfile(profile.identifier)
                     isDeleting = false
                     if deleted {
-                        try? CatPreparednessStore.shared.delete(for: profile.identifier)
-                        try? LostCatDraftStore.shared.delete(for: profile.identifier)
-                        try? ShowcasePhotoStore().removeScope(profile.identifier)
                         dismiss()
                     } else { deleteFailed = true }
                 }
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("写真は削除されません。この子への手動所属とアルバム連携を外します。")
+            Text("写真やツールの入力は残ります。この子への写真の指定とアルバム連携だけを外します。")
         }
         .sheet(isPresented: $showsLifeReferenceEditor) {
             CatProfileLifeReferenceEditor(

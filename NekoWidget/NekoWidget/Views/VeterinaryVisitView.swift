@@ -71,34 +71,23 @@ struct VeterinaryVisitsView: View {
     var body: some View {
         List {
             if ready {
-                Section {
-                    ForEach(cats, id: \.id) { cat in
-                        Button { Task { await open(cat) } } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Label(cat.name, systemImage: "cat")
-                                    if let source = toolSources[cat.id] {
-                                        Text(source).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                Spacer()
-                                if let visit = visits.first(where: { $0.catID == cat.id && $0.completedAt == nil }), !visit.entries.isEmpty {
-                                    Text("\(visit.entries.count)件").foregroundStyle(.secondary)
-                                }
-                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                            }.foregroundStyle(.primary).padding(.vertical, 6)
-                        }.accessibilityIdentifier("vet-cat-\(cat.id.uuidString)")
+                ToolCatPicker(profiles: profiles, select: { profile in
+                    guard let id = UUID(uuidString: profile.identifier) else { return }
+                    Task { await open(PhotoMemoryNoteCat(id: id, name: profile.displayName)) }
+                }) {
+                    Section("プロフィール未登録の猫") {
+                        ForEach(cats.filter { cat in !profiles.contains { $0.identifier == cat.id.uuidString } }, id: \.id) { cat in
+                            Button(cat.name) { Task { await open(cat) } }
+                                .accessibilityIdentifier("vet-cat-\(cat.id.uuidString)")
+                        }
                     }
-                    Button("猫の名前を入力して作る", systemImage: "plus") { newName = ""; addsCat = true }
-                        .accessibilityIdentifier("vet-new-cat")
-                } header: { Text("猫を選ぶ") }
-                  footer: { ToolImportantInformation(text: "診察で伝える記録です。診断や薬の量の判断はしません。") }
+                }
                 if !visits.filter({ $0.completedAt != nil }).isEmpty {
                     Section("これまでの診察メモ") {
                         ForEach(visits.filter { $0.completedAt != nil }.reversed()) { visit in
                             Button { selected = visit } label: {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(visit.catName).foregroundStyle(.primary)
+                                    Text(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName).foregroundStyle(.primary)
                                     Text(visit.completedAt!.formatted(.dateTime.year().month().day())).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
@@ -123,7 +112,7 @@ struct VeterinaryVisitsView: View {
         .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
             NavigationStack {
                 VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
-                    store: store, initialRecord: initialRecord)
+                    store: store, initialRecord: initialRecord, profiles: profiles)
             }
             .environment(\.dynamicTypeSize, typeSize)
         }
@@ -180,6 +169,7 @@ private struct VeterinaryConsultationView: View {
     let noteStore: PhotoMemoryNoteStore
     let store: VeterinaryVisitStore
     let initialRecord: PhotoMemoryNoteRecord?
+    var profiles: [CatProfilePresentation] = []
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var visit: VeterinaryVisit?
@@ -206,8 +196,12 @@ private struct VeterinaryConsultationView: View {
     var body: some View {
         Form {
             if let visit {
+                if let profile = profiles.first(where: { $0.identifier == visit.catID.uuidString }) {
+                    ToolCatProfileInfo(profile: profile, profiles: profiles)
+                }
                 Section {
-                    Label(visit.catName, systemImage: "cat").font(.title3.bold())
+                    Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
+                          systemImage: "cat").font(.headline)
                     if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
                 }
                 if visit.completedAt == nil {
@@ -306,7 +300,7 @@ private struct VeterinaryConsultationView: View {
             }
         }
         .fullScreenCover(isPresented: $showing) {
-            if let visit { VeterinaryReadView(visit: visit, store: store).environment(\.dynamicTypeSize, typeSize) }
+            if let visit { VeterinaryReadView(visit: visit, store: store, displayName: profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName).environment(\.dynamicTypeSize, typeSize) }
         }
         .confirmationDialog("保存せずに閉じますか？", isPresented: $discarding, titleVisibility: .visible) {
             Button("変更を破棄", role: .destructive) { dismiss() }; Button("編集を続ける", role: .cancel) {}
@@ -533,12 +527,13 @@ private struct VeterinaryEntryPhoto: View {
 private struct VeterinaryReadView: View {
     let visit: VeterinaryVisit
     let store: VeterinaryVisitStore
+    var displayName: String? = nil
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text(visit.catName).font(.largeTitle.bold())
+                    Text(displayName ?? visit.catName).font(.largeTitle.bold())
                     if let day = visit.startedOn { Label("気付いた日 \(day)", systemImage: "calendar") }
                     if !visit.observations.isEmpty { VStack(alignment: .leading, spacing: 8) { Text("家で気付いたこと").font(.headline); Text(visit.observations) } }
                     if !visit.questions.isEmpty { VStack(alignment: .leading, spacing: 8) { Text("聞きたいこと").font(.headline); Text(visit.questions) } }
