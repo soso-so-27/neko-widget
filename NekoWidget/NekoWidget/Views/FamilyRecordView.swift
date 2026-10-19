@@ -276,7 +276,9 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     .accessibilityIdentifier("family-collection-unavailable")
             } else if model.error != nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("写真を読み込めませんでした", systemImage: "wifi.exclamationmark")
+                    Label(value.items.isEmpty && value.withdrawn.isEmpty
+                          ? "写真を読み込めませんでした" : "最新の写真を確認できませんでした",
+                          systemImage: "wifi.exclamationmark")
                         .font(.subheadline).foregroundStyle(.secondary)
                         .accessibilityIdentifier("family-collection-load-failed")
                     Button("写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
@@ -354,7 +356,10 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     var body: some View {
         collectionContent(projection)
-        .task(id: canShowRecords) { await reload() }
+        .task(id: canShowRecords) {
+            restoreRememberedTombstones()
+            await reload()
+        }
         .onChange(of: snapshot?.catalog.records) { _, rows in
             // Tombstones are irreversible. Keep only their opaque IDs while
             // reloading, so a delivered copy cannot flash back into this grid.
@@ -427,6 +432,24 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             }.map(\.id))
             catalogResolved = true
         }
+        // Remember the unfiltered, validated catalog's tombstones for the next
+        // open that cannot reach the server.
+        if remembersTombstones, let loaded = model.snapshot, loaded.catalog.spaceID == spaceID {
+            FamilyRecordTombstoneCache().remember(loaded.catalog)
+        }
+    }
+
+    /// Only the real server client confirms withdrawals. Injected fixtures
+    /// reset their catalog on every launch, so they never read or write this.
+    private var remembersTombstones: Bool { model.client is FamilyRecordClient }
+
+    /// Delivered photos already on this iPhone stay visible offline only after
+    /// the server has confirmed this window's withdrawals at least once.
+    private func restoreRememberedTombstones() {
+        guard canShowRecords, !catalogResolved, remembersTombstones,
+              let remembered = FamilyRecordTombstoneCache().load(spaceID: spaceID) else { return }
+        withdrawnIDs.formUnion(remembered)
+        catalogResolved = true
     }
 
     private func invalidateExport() {
