@@ -591,8 +591,9 @@ actor ManagedPreservationClient {
     }
 
     /// Explicit operation boundary. Existing in-flight checkpoints never refresh.
-    func prepareSession(expectedOwner: String? = nil) async throws -> SessionCheckpoint {
+    func prepareSession(expectedOwner: String? = nil, minimumLifetime: TimeInterval = 60) async throws -> SessionCheckpoint {
         try Task.checkCancellation()
+        guard minimumLifetime.isFinite, (60...210).contains(minimumLifetime) else { throw ManagedPreservationError.invalidResponse }
         guard challenge == nil else { throw ManagedPreservationError.staleSession }
         let persisted = try store.load()
         if !loaded || persisted != credential {
@@ -605,11 +606,11 @@ actor ManagedPreservationClient {
         let capturedEpoch = epoch
         if captured.isRenewable {
             let updated: ManagedPreservationSessionStore.Credential
-            if captured.expiresAt.timeIntervalSince(sessionNow()) > 60 {
-                updated = try await prepareDeviceSession(captured, expectedEpoch: capturedEpoch)
+            if captured.expiresAt.timeIntervalSince(sessionNow()) > minimumLifetime {
+                updated = try await prepareDeviceSession(captured, expectedEpoch: capturedEpoch, minimumLifetime: minimumLifetime)
             } else {
                 updated = try await PreservationDeviceRenewals.shared.run(origin: store.origin, previous: captured) {
-                    try await self.prepareDeviceSession(captured, expectedEpoch: capturedEpoch)
+                    try await self.prepareDeviceSession(captured, expectedEpoch: capturedEpoch, minimumLifetime: minimumLifetime)
                 }
             }
             try Task.checkCancellation(); try ensureEpoch(capturedEpoch)
@@ -634,7 +635,8 @@ actor ManagedPreservationClient {
         guard try store.load() == captured, try store.deletionReceipt() == nil else { throw ManagedPreservationError.staleSession }
     }
 
-    private func prepareDeviceSession(_ captured: ManagedPreservationSessionStore.Credential, expectedEpoch: UInt64) async throws -> ManagedPreservationSessionStore.Credential {
+    private func prepareDeviceSession(_ captured: ManagedPreservationSessionStore.Credential, expectedEpoch: UInt64,
+                                      minimumLifetime: TimeInterval = 60) async throws -> ManagedPreservationSessionStore.Credential {
         try requireDeviceItem(captured, epoch: expectedEpoch)
         guard let grant = captured.deviceGrant, let key = captured.devicePrivateKey,
               let user = grant.appleUserID, grant.idleExpiresAt > sessionNow() else {
@@ -646,7 +648,7 @@ actor ManagedPreservationClient {
             if try store.clear(ifMatching: captured) { try? await revokeDeviceGrant(captured) }
             throw ManagedPreservationError.authenticationRequired
         }
-        if captured.expiresAt.timeIntervalSince(sessionNow()) > 60 { return captured }
+        if captured.expiresAt.timeIntervalSince(sessionNow()) > minimumLifetime { return captured }
         do {
             let proof = try await deviceProof(captured, purpose: "renew", path: "/v1/auth/session-renewals")
             try requireDeviceItem(captured, epoch: expectedEpoch)
@@ -799,6 +801,27 @@ actor ManagedPreservationClient {
               try store.load() == checkpoint.credential else {
             throw ManagedPreservationError.staleSession
         }
+    }
+
+    /// A completed restore page is an operation boundary. Only this device's
+    /// existing grant may renew the exact prior credential here; a concurrent
+    /// sign-out/sign-in (even for the same owner) is never adopted.
+    func prepareRestoreBoundary(replacing checkpoint: SessionCheckpoint) async throws -> SessionCheckpoint {
+        try ensureEpoch(checkpoint.epoch)
+        guard credential == checkpoint.credential, try store.load() == checkpoint.credential,
+              try store.deletionReceipt() == nil else { throw ManagedPreservationError.staleSession }
+        if checkpoint.credential.expiresAt.timeIntervalSince(sessionNow()) > 210 {
+            try requireSessionCheckpoint(checkpoint)
+            return checkpoint
+        }
+        guard checkpoint.credential.isRenewable else { throw ManagedPreservationError.authenticationRequired }
+        let replacement = try await prepareSession(expectedOwner: checkpoint.ownerID, minimumLifetime: 210)
+        try requireSessionCheckpoint(replacement)
+        guard replacement.ownerID == checkpoint.ownerID,
+              replacement.credential.token != checkpoint.credential.token,
+              replacement.epoch != checkpoint.epoch,
+              replacement.credential.expiresAt.timeIntervalSince(sessionNow()) > 210 else { throw ManagedPreservationError.staleSession }
+        return replacement
     }
 
     /// Export alone may ask the person to authenticate again at a complete page
@@ -1055,11 +1078,17 @@ actor ManagedPreservationClient {
         return snapshot
     }
 
-    func exportPage(after: String? = nil, generation: Int? = nil) async throws -> ManagedPreservationExportPageFile {
+    func exportPage(after: String? = nil, generation: Int? = nil,
+                    recordIDs: [UUID]? = nil) async throws -> ManagedPreservationExportPageFile {
         if let after, UUID(uuidString: after) == nil || generation == nil { throw ManagedPreservationError.invalidRecord }
         if let generation, generation < 0 { throw ManagedPreservationError.invalidRecord }
+        if let recordIDs {
+            guard after == nil, !recordIDs.isEmpty, recordIDs.count <= 50,
+                  Set(recordIDs).count == recordIDs.count else { throw ManagedPreservationError.invalidRecord }
+        }
         let query = (after.map { [URLQueryItem(name: "after", value: $0)] } ?? [])
             + (generation.map { [URLQueryItem(name: "generation", value: String($0))] } ?? [])
+            + (recordIDs.map { [URLQueryItem(name: "ids", value: $0.map { $0.uuidString.lowercased() }.sorted().joined(separator: ","))] } ?? [])
         let payload = try PhotoMemoryNoteExporter.createServicePageBuffer()
         do {
             _ = try await exportRead(path: "/v1/export-page", query: query,

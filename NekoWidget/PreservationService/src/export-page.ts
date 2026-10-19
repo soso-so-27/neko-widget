@@ -27,8 +27,20 @@ const integer = (n: number, maximum = Number.MAX_SAFE_INTEGER) => Number.isSafeI
 export async function exportPage(d: Dependencies, request: Request, token: string,
   context?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const query = new URL(request.url).searchParams;
-  for (const [key] of query) if (!['after', 'generation'].includes(key) || query.getAll(key).length !== 1) {
+  for (const [key] of query) if (!['after', 'generation', 'ids'].includes(key) || query.getAll(key).length !== 1) {
     throw new ServiceError('INVALID_REQUEST');
+  }
+  const rawIDs = query.get('ids');
+  let selected: string[] | undefined;
+  if (rawIDs !== null) {
+    // Keep the selected read bounded before splitting, and require the caller's
+    // exact canonical order. Never silently drop a duplicate or unavailable ID.
+    if (query.has('after') || rawIDs.length < 36 || rawIDs.length > MAX_RECORDS * 37 - 1) {
+      throw new ServiceError('INVALID_REQUEST');
+    }
+    selected = rawIDs.split(',');
+    if (selected.length > MAX_RECORDS || selected.some((id, index) => recordId(id) !== id
+      || (index > 0 && id <= selected![index - 1]!))) throw new ServiceError('INVALID_REQUEST');
   }
   const after = query.has('after') ? recordId(query.get('after')!) : '';
   const rawGeneration = query.get('generation');
@@ -89,11 +101,15 @@ export async function exportPage(d: Dependencies, request: Request, token: strin
     request.signal.addEventListener('abort', cancel, { once: true });
     deadline = setTimeout(cancel, lease.export_lease_expires_at - lease.now_ms);
     open();
-    const snapshot = await d.db.prepare(`SELECT
+    const snapshot = await (selected ? d.db.prepare(`SELECT
+      COALESCE((SELECT generation FROM pa_inventory WHERE owner_id=?),0) AS generation,
+      ? AS total_records,
+      EXISTS(SELECT 1 FROM pa_inventory WHERE owner_id=?) AS inventory_present`)
+      .bind(session.ownerId, selected.length, session.ownerId) : d.db.prepare(`SELECT
       COALESCE((SELECT generation FROM pa_inventory WHERE owner_id=?),0) AS generation,
       (SELECT COUNT(*) FROM pa_records WHERE owner_id=? AND deleted=0) AS total_records,
       EXISTS(SELECT 1 FROM pa_inventory WHERE owner_id=?) AS inventory_present`)
-      .bind(session.ownerId, session.ownerId, session.ownerId)
+      .bind(session.ownerId, session.ownerId, session.ownerId))
       .first<{ generation: number; total_records: number; inventory_present: number }>();
     if (!snapshot || !integer(snapshot.generation) || !integer(snapshot.total_records, MAX_TOTAL_RECORDS)
       || (snapshot.total_records > 0 && snapshot.inventory_present !== 1)) throw unavailable();
@@ -104,9 +120,13 @@ export async function exportPage(d: Dependencies, request: Request, token: strin
         .bind(session.ownerId, after).first();
       if (!cursor) throw new ServiceError('INVALID_REQUEST');
     }
-    const rows = (await d.db.prepare(`SELECT record_id,quota_bytes,length(metadata) AS metadata_bytes,photo_bytes
+    const rows = (await (selected ? d.db.prepare(`SELECT record_id,quota_bytes,length(metadata) AS metadata_bytes,photo_bytes
+      FROM pa_records WHERE owner_id=? AND deleted=0 AND record_id IN (${selected.map(() => '?').join(',')}) ORDER BY record_id`)
+      .bind(session.ownerId, ...selected) : d.db.prepare(`SELECT record_id,quota_bytes,length(metadata) AS metadata_bytes,photo_bytes
       FROM pa_records WHERE owner_id=? AND deleted=0 AND record_id>? ORDER BY record_id LIMIT ?`)
-      .bind(session.ownerId, after, MAX_RECORDS + 1).all<Item>()).results;
+      .bind(session.ownerId, after, MAX_RECORDS + 1)).all<Item>()).results;
+    if (selected && (rows.length !== selected.length
+      || rows.some((row, index) => row.record_id !== selected[index]))) throw new ServiceError('INVALID_REQUEST');
     const page: Item[] = []; let quotaBytes = 0, previous = after;
     for (const row of rows) {
       recordId(row.record_id);

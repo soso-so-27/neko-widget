@@ -181,6 +181,107 @@ it('streams an actual 20 MiB encrypted photo with Japanese metadata through arch
   expect(await lease(f.session.ownerId)).toEqual({ export_lease_id: null, export_lease_expires_at: 0 });
 }, 20_000);
 
+it('exports only selected live IDs through actual archive reads without counting or opening the remaining inventory', async () => {
+  const f = await fixture(6);
+  const ids = (await db.prepare('SELECT record_id FROM pa_records WHERE owner_id=? ORDER BY record_id')
+    .bind(f.session.ownerId).all<{ record_id: string }>()).results.map(row => row.record_id);
+  const selected = [ids[1]!, ids[4]!], reads = vi.spyOn(f.archive, 'readBinary');
+  f.setBeforeQuery(sql => { if (/COUNT\(\*\).*pa_records/si.test(sql)) throw Error('selected export must not count the owner inventory'); });
+  const output = await frames(await route(f.make(`?ids=${selected.join(',')}`), f.services));
+  expect(output[0]).toMatchObject({ type: 'header', totalRecords: selected.length });
+  expect(output.slice(1, -1).map(row => row.recordId)).toEqual(selected);
+  expect(output.at(-1)).toMatchObject({ type: 'complete', recordCount: selected.length, nextCursor: null });
+  expect(reads.mock.calls.map(call => call[1])).toEqual(selected);
+  expect(await lease(f.session.ownerId)).toEqual({ export_lease_id: null, export_lease_expires_at: 0 });
+});
+
+const selectedID = (value: number) => `${value.toString(16).padStart(8, '0')}-0000-4000-8000-${value.toString(16).padStart(12, '0')}`;
+it.each([
+  '?ids=', '?ids=invalid', `?ids=${selectedID(10).toUpperCase()}`, `?ids=${selectedID(1)},`,
+  `?ids=${selectedID(1)},${selectedID(1)}`, `?ids=${selectedID(2)},${selectedID(1)}`,
+  `?ids=${selectedID(1)}&ids=${selectedID(2)}`, `?ids=${selectedID(1)}&after=`,
+  `?ids=${selectedID(1)}&after=${selectedID(1)}&generation=1`,
+  `?ids=${Array.from({ length: 51 }, (_, index) => selectedID(index + 1)).join(',')}`,
+])('rejects invalid selected IDs before taking a lease: %s', async query => {
+  const f = await fixture(), reads = vi.spyOn(f.archive, 'readBinary');
+  await expect(route(f.make(query), f.services)).rejects.toThrow();
+  expect(reads).not.toHaveBeenCalled();
+  expect(await lease(f.session.ownerId)).toEqual({ export_lease_id: null, export_lease_expires_at: 0 });
+});
+
+it('accepts exactly fifty selected IDs with one HTTP admission and no omitted or duplicate frames', async () => {
+  const f = await fixture(50), ids = Array.from({ length: 50 }, (_, index) => selectedID(index + 1));
+  const reads = vi.spyOn(f.archive, 'readBinary');
+  const output = await frames(await route(f.make(`?ids=${ids.join(',')}`), f.services));
+  expect(output[0]).toMatchObject({ totalRecords: 50 });
+  expect(output.slice(1, -1).map(row => row.recordId)).toEqual(ids);
+  expect(output.at(-1)).toMatchObject({ recordCount: 50, nextCursor: null });
+  expect(reads).toHaveBeenCalledTimes(50);
+  expect(await db.prepare('SELECT http_request_count FROM pa_owners WHERE owner_id=?')
+    .bind(f.session.ownerId).first('http_request_count')).toBe(1);
+});
+
+it.each(['missing', 'deleted', 'other-owner'] as const)(
+  'rejects the entire selection before a payload read when an ID is %s', async kind => {
+    const f = await fixture(2), reads = vi.spyOn(f.archive, 'readBinary');
+    let token = f.session.token, ids = [selectedID(1), selectedID(2)];
+    if (kind === 'missing') ids = [selectedID(1), selectedID(3)];
+    if (kind === 'deleted') await db.prepare('UPDATE pa_records SET deleted=1,metadata=NULL,quota_bytes=0 WHERE owner_id=? AND record_id=?')
+      .bind(f.session.ownerId, selectedID(2)).run();
+    if (kind === 'other-owner') {
+      const other = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+      await db.prepare('INSERT INTO pa_inventory(owner_id) VALUES(?)').bind(other.ownerId).run();
+      token = other.token;
+    }
+    await expect(route(f.make(`?ids=${ids.join(',')}`, token), f.services)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(reads).not.toHaveBeenCalled();
+    expect((await lease((await f.auth.requireSession(token)).ownerId))!.export_lease_id).toBeNull();
+  });
+
+it('splits selected IDs at 64MiB and continues only the remaining IDs with the same generation', async () => {
+  const f = await fixture(6), selected = [1, 2, 4, 5, 6].map(selectedID), reads = vi.spyOn(f.archive, 'readBinary');
+  for (const [index, bytes] of [20, 20, 20, 4, 1].entries()) {
+    await db.prepare('UPDATE pa_records SET quota_bytes=? WHERE owner_id=? AND record_id=?')
+      .bind(bytes * 1024 * 1024, f.session.ownerId, selected[index]).run();
+  }
+  const first = await frames(await route(f.make(`?ids=${selected.join(',')}`), f.services));
+  expect(first[0]).toMatchObject({ totalRecords: 5 });
+  expect(first.at(-1)).toMatchObject({ recordCount: 4, nextCursor: selected[3] });
+  expect(first.slice(1, -1).map(row => row.recordId)).toEqual(selected.slice(0, 4));
+  expect((await lease(f.session.ownerId))!.export_lease_id).toBeNull();
+  const next = await frames(await route(f.make(`?ids=${selected[4]}&generation=${first[0]!.generation}`), f.services));
+  expect(next[0]).toMatchObject({ totalRecords: 1, generation: first[0]!.generation });
+  expect(next.at(-1)).toMatchObject({ recordCount: 1, nextCursor: null });
+  expect(reads.mock.calls.map(call => call[1])).toEqual(selected);
+  await db.prepare('UPDATE pa_inventory SET generation=generation+1 WHERE owner_id=?').bind(f.session.ownerId).run();
+  await expect(route(f.make(`?ids=${selected[4]}&generation=${first[0]!.generation}`), f.services))
+    .rejects.toMatchObject({ code: 'ARCHIVE_CHANGED' });
+  expect(reads).toHaveBeenCalledTimes(5);
+  expect((await lease(f.session.ownerId))!.export_lease_id).toBeNull();
+});
+
+it.each(['generation', 'session', 'deletion', 'abort'] as const)(
+  'does not complete a selected photo frame when %s changes mid-frame', async kind => {
+    const f = await fixture(2), original = f.archive.readBinary.bind(f.archive);
+    const reads = vi.spyOn(f.archive, 'readBinary').mockImplementation(async (token, id) => ({
+      ...await original(token, id), photo: new Uint8Array(2 * 1024 * 1024),
+    }));
+    const abort = new AbortController();
+    const reader = (await route(f.make(`?ids=${selectedID(1)},${selectedID(2)}`, f.session.token, abort.signal), f.services)).body!.getReader();
+    await reader.read();
+    const first = (await reader.read()).value!;
+    expect(first.length).toBeLessThanOrEqual(1024 * 1024); expect(first.includes(10)).toBe(false);
+    if (kind === 'generation') await db.prepare('UPDATE pa_inventory SET generation=generation+1 WHERE owner_id=?').bind(f.session.ownerId).run();
+    if (kind === 'session') await f.auth.revokeSession(f.session.token);
+    if (kind === 'deletion') await f.journal.prepare({ version: 1, ownerId: f.session.ownerId,
+      requestId: crypto.randomUUID(), receiptHash: 'd'.repeat(64), ownerEpoch: 1, requestedAt: Date.now() });
+    if (kind === 'abort') abort.abort();
+    await expect(reader.read()).rejects.toThrow('EXPORT_INTERRUPTED');
+    expect(reads).toHaveBeenCalledTimes(1);
+    await expect(payloadWork.run(async () => 'released')).resolves.toBe('released');
+    expect((await lease(f.session.ownerId))!.export_lease_id).toBeNull();
+  });
+
 it('exports beyond the old 1000-record ceiling with bounded pages and a complete final tail', async () => {
   const f = await fixture(1001); let cursor: string | null = null, generation: number | undefined;
   const identifiers: string[] = [], counts: number[] = [];

@@ -710,8 +710,79 @@ enum ToolBackupFiles {
     }
 }
 
+/// One restore owns its pages and credential. No page is visible to the
+/// consumer until the terminal frame, exact requested IDs and owner are checked.
+private actor ToolBackupRestorePages {
+    let client: ManagedPreservationClient
+    let root: ManagedPreservationRecord
+    var checkpoint: ManagedPreservationClient.SessionCheckpoint
+    var generation: Int?
+    init(client: ManagedPreservationClient, root: ManagedPreservationRecord,
+         checkpoint: ManagedPreservationClient.SessionCheckpoint) {
+        self.client = client; self.root = root; self.checkpoint = checkpoint
+    }
+    func prepare() async throws {
+        try Task.checkCancellation()
+        checkpoint = try await client.prepareRestoreBoundary(replacing: checkpoint)
+        try await client.requireSessionCheckpoint(checkpoint)
+    }
+    func current() async throws -> ManagedPreservationClient.SessionCheckpoint {
+        try await client.requireSessionCheckpoint(checkpoint)
+        return checkpoint
+    }
+    func fetch(_ ids: [UUID]) async throws -> [UUID: ManagedPreservationExportSnapshot] {
+        guard !ids.isEmpty, ids.count <= 50, Set(ids).count == ids.count else { throw ToolBackupError.invalid }
+        var remaining = ids.sorted { $0.uuidString < $1.uuidString }
+        var result: [UUID: ManagedPreservationExportSnapshot] = [:]
+        while !remaining.isEmpty {
+            try await prepare()
+            let page = try await client.exportPage(generation: generation, recordIDs: remaining)
+            do {
+                guard page.totalRecords == remaining.count,
+                      generation == nil || generation == page.generation else { throw ManagedPreservationError.conflict }
+                var completed: [ManagedPreservationExportSnapshot] = []
+                while let data = try page.nextRecordData() {
+                    let record = try await client.decodeExportRecord(data)
+                    guard completed.count < remaining.count,
+                          record.record.id == remaining[completed.count], record.record.revision == 1 else {
+                        throw ToolBackupError.invalid
+                    }
+                    completed.append(record)
+                }
+                let cursor = try page.nextCursor()
+                guard !completed.isEmpty,
+                      (completed.count == remaining.count && cursor == nil)
+                        || (completed.count < remaining.count && cursor == completed.last?.record.id.uuidString.lowercased()) else {
+                    throw ManagedPreservationError.invalidResponse
+                }
+                try await client.requireSessionCheckpoint(checkpoint)
+                generation = page.generation
+                try page.cleanup()
+                for snapshot in completed {
+                    guard result.updateValue(snapshot, forKey: snapshot.record.id) == nil else { throw ToolBackupError.invalid }
+                }
+                remaining.removeFirst(completed.count)
+            } catch {
+                do { try page.cleanup() }
+                catch { throw error }
+                throw error
+            }
+        }
+        return result
+    }
+    func finish() async throws -> ManagedPreservationClient.SessionCheckpoint {
+        let latest = try await fetch([root.id])
+        guard latest[root.id]?.record.document == root.document else { throw ManagedPreservationError.conflict }
+        return try await current()
+    }
+}
+
 enum ToolBackupTransfer {
     static func loadIndex(_ record: ManagedPreservationRecord, client: ManagedPreservationClient) async throws -> ToolBackupIndex {
+        try await loadIndex(record, client: client, pages: nil)
+    }
+    private static func loadIndex(_ record: ManagedPreservationRecord, client: ManagedPreservationClient,
+                                  pages: ToolBackupRestorePages?) async throws -> ToolBackupIndex {
         let checkpoint = try await client.captureSessionCheckpoint()
         guard record.revision == 1, let root = record.document.toolBackup, root.kind == "index",
               root.snapshotId == record.id.uuidString.lowercased(), let data = Data(base64Encoded: root.payload) else { throw ToolBackupError.invalid }
@@ -738,6 +809,47 @@ enum ToolBackupTransfer {
         let binding = try ToolBackupTreeReceipts.binding(owner: checkpoint.ownerID, root: root)
         let useCache = ToolBackupFiles.prepareTreeCache(binding)
         var parts: [ToolBackupPart] = [], visited = Set<UUID>()
+        if let pages {
+            var frontier = [root]
+            while !frontier.isEmpty {
+                var children: [ToolBackupTree.Child] = []
+                for part in frontier {
+                    let node = try ToolBackupTree.decode(part)
+                    guard visited.insert(node.snapshotID).inserted, visited.count <= 8192 else { throw ToolBackupError.invalid }
+                    children.append(contentsOf: node.children ?? [])
+                    parts.append(part)
+                }
+                guard children.count <= 8192, Set(children.map(\.snapshotID)).count == children.count else { throw ToolBackupError.invalid }
+                var next: [ToolBackupPart] = []
+                for offset in stride(from: 0, to: children.count, by: 50) {
+                    let group = Array(children[offset..<min(offset + 50, children.count)])
+                    var available: [UUID: ToolBackupPart] = [:]
+                    for child in group {
+                        if useCache, let part = ToolBackupFiles.cachedTreeNode(child, binding: binding) { available[child.snapshotID] = part }
+                    }
+                    let missing = group.filter { available[$0.snapshotID] == nil }
+                    if !missing.isEmpty {
+                        let records = try await pages.fetch(missing.map(\.snapshotID))
+                        for child in missing {
+                            guard let record = records[child.snapshotID], let part = record.document.toolBackup else { throw ToolBackupError.invalid }
+                            try ToolBackupTree.validateChild(part, expected: child)
+                            available[child.snapshotID] = part
+                            if useCache { ToolBackupFiles.cacheTreeNode(part, child: child, binding: binding) }
+                        }
+                    }
+                    for child in group {
+                        guard let part = available[child.snapshotID] else { throw ToolBackupError.invalid }
+                        next.append(part)
+                    }
+                    try await pages.prepare()
+                }
+                frontier = next
+            }
+            let index = ToolBackupIndex(version: 4, snapshotID: first.snapshotID, createdAt: first.createdAt,
+                files: try ToolBackupTree.flatten(parts, root: first.snapshotID), previousIndexID: first.previousIndexID, nodes: Array(parts.reversed()))
+            try index.validate()
+            return index
+        }
         func collect(_ part: ToolBackupPart) async throws {
             let node = try ToolBackupTree.decode(part)
             guard visited.insert(node.snapshotID).inserted, visited.count <= 8192 else { throw ToolBackupError.invalid }
@@ -1056,21 +1168,36 @@ enum ToolBackupTransfer {
 
     static func restore(_ record: ManagedPreservationRecord, client: ManagedPreservationClient,
                         progress: @escaping @Sendable (Int, Int) async -> Void) async throws -> ToolBackupFiles.Saved {
+        try await restoreWithSession(record, client: client, progress: progress).saved
+    }
+    static func restoreWithSession(_ record: ManagedPreservationRecord, client: ManagedPreservationClient,
+                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws
+        -> (saved: ToolBackupFiles.Saved, checkpoint: ManagedPreservationClient.SessionCheckpoint) {
         let checkpoint = try await client.captureSessionCheckpoint()
         guard let owner = try await client.sessionOwnerID(), record.revision == 1,
               let part = record.document.toolBackup, part.kind == "index",
               part.snapshotId == record.id.uuidString.lowercased() else { throw ToolBackupError.invalid }
         try part.validate(photo: false)
         guard let bytes = Data(base64Encoded: part.payload) else { throw ToolBackupError.invalid }
-        let index = try await loadIndex(record, client: client)
+        struct Header: Decodable { let version: Int }
+        let version = try JSONDecoder().decode(Header.self, from: bytes).version
+        let pages = version == 4 ? ToolBackupRestorePages(client: client, root: record, checkpoint: checkpoint) : nil
+        let index = try await loadIndex(record, client: client, pages: pages)
+        func current() async throws -> ManagedPreservationClient.SessionCheckpoint {
+            if let pages { return try await pages.current() }
+            try await client.requireSessionCheckpoint(checkpoint)
+            return checkpoint
+        }
         guard index.snapshotID == record.id else { throw ToolBackupError.invalid }
         let destination = ToolBackupFiles.directory(index.snapshotID)
         // A second restore must not overwrite edits to a previously restored copy.
         if FileManager.default.fileExists(atPath: destination.appendingPathComponent("contents/restored.json").path) {
             guard let existing = try ToolBackupFiles.saved().first(where: { $0.id == index.snapshotID }),
                   existing.owner == owner, existing.index == index else { throw ToolBackupError.invalid }
-            try await client.requireSessionCheckpoint(checkpoint)
-            return existing
+            let final: ManagedPreservationClient.SessionCheckpoint
+            if let pages { final = try await pages.finish() }
+            else { final = try await current() }
+            return (existing, final)
         }
         let saved = ToolBackupFiles.Saved(owner: owner, index: index)
         // Bind resumable files to the exact owner and immutable index. Only
@@ -1085,22 +1212,50 @@ enum ToolBackupTransfer {
         } else { try ToolBackupFiles.write(JSONEncoder().encode(saved), to: sourceReceipt) }
         var completed = 0
         let total = index.files.reduce(0) { $0 + $1.records.count }
+        // Keep at most one bounded page of decoded data. Already verified
+        // private staging files are excluded, including after process restart.
+        var targets: [(id: UUID, bytes: Int)] = []
+        if pages != nil {
+            for file in index.files where !FileManager.default.fileExists(atPath: staging.appendingPathComponent(file.path).path) {
+                for id in file.records { targets.append((id, file.path.hasSuffix(".jpg") ? file.bytes : ToolBackupIndex.chunkSize)) }
+            }
+        }
+        var targetOffset = 0
+        var buffered: [UUID: ManagedPreservationExportSnapshot] = [:]
         do {
             for file in index.files {
                 let cached = staging.appendingPathComponent(file.path)
                 if FileManager.default.fileExists(atPath: cached.path) {
                     let data = try ToolBackupFiles.read(cached, maximum: 20 * 1024 * 1024)
                     guard data.count == file.bytes, ToolBackupIndex.hash(data) == file.sha256 else { throw ToolBackupError.invalid }
-                    try await client.requireSessionCheckpoint(checkpoint)
+                    if let pages, buffered.isEmpty { try await pages.prepare() }
+                    else { _ = try await current() }
                     completed += file.records.count; await progress(completed, total)
                     continue
                 }
                 var data = Data()
                 for (offset, id) in file.records.enumerated() {
                     try Task.checkCancellation()
-                    try await client.requireSessionCheckpoint(checkpoint)
-                    let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
-                    try await client.requireSessionCheckpoint(checkpoint)
+                    if let pages, buffered.isEmpty { try await pages.prepare() }
+                    else { _ = try await current() }
+                    let snapshot: ManagedPreservationExportSnapshot
+                    if let pages {
+                        if buffered[id] == nil {
+                            guard buffered.isEmpty, targetOffset < targets.count, targets[targetOffset].id == id else { throw ToolBackupError.invalid }
+                            var ids: [UUID] = [], bytes = 0
+                            while targetOffset < targets.count, ids.count < 50 {
+                                let target = targets[targetOffset]
+                                if !ids.isEmpty && bytes + target.bytes > 24 * 1024 * 1024 { break }
+                                ids.append(target.id); bytes += target.bytes; targetOffset += 1
+                            }
+                            buffered = try await pages.fetch(ids)
+                        }
+                        guard let found = buffered.removeValue(forKey: id) else { throw ToolBackupError.invalid }
+                        snapshot = found
+                    } else {
+                        snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
+                    }
+                    _ = try await current()
                     guard snapshot.record.revision == 1, let piece = snapshot.document.toolBackup,
                           piece.snapshotId == (file.sourceSnapshotID ?? index.snapshotID).uuidString.lowercased(), piece.path == file.path,
                           piece.part == offset, piece.count == file.records.count,
@@ -1115,8 +1270,11 @@ enum ToolBackupTransfer {
                 guard data.count == file.bytes, ToolBackupIndex.hash(data) == file.sha256 else { throw ToolBackupError.invalid }
                 try ToolBackupFiles.write(data, to: staging.appendingPathComponent(file.path))
             }
+            guard buffered.isEmpty, pages == nil || targetOffset == targets.count else { throw ToolBackupError.invalid }
             try await ToolBackupValidation.validate(index, at: staging)
-            try await client.requireSessionCheckpoint(checkpoint)
+            let finalCheckpoint: ManagedPreservationClient.SessionCheckpoint
+            if let pages { finalCheckpoint = try await pages.finish() }
+            else { finalCheckpoint = try await current() }
             // Source data and a local pending upload may use the same snapshot ID.
             // Restore to its own child so the source and restored edits stay separate.
             let restored = destination.appendingPathComponent("contents", isDirectory: true)
@@ -1124,7 +1282,7 @@ enum ToolBackupTransfer {
             guard !FileManager.default.fileExists(atPath: restored.path) else { throw ToolBackupError.storage }
             try ToolBackupFiles.write(JSONEncoder().encode(saved), to: staging.appendingPathComponent("restored.json"))
             try FileManager.default.moveItem(at: staging, to: restored)
-            return saved
+            return (saved, finalCheckpoint)
         } catch {
             // Never publish partial contents. Verified files stay private for
             // an explicit retry after the same owner authenticates again.
