@@ -718,7 +718,7 @@ def validate_copy(manifest: dict[str, Any]) -> list[str]:
         for phrase in (
             "端末内で判定",
             "ウィジェット",
-            "思い出に残す",
+            "お気に入りに追加",
             "1〜30枚",
             "写真送信、招待、受信",
             "ありません",
