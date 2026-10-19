@@ -2672,10 +2672,6 @@ struct PhotoBrowserView: View {
                     }
                     .accessibilityIdentifier("photo-memory-note-read-error")
                 }
-                HStack(spacing: dynamicTypeSize.isAccessibilitySize ? 4 : 8) {
-                    photoActions(selectedPhoto)
-                }
-                .frame(maxWidth: .infinity)
                 if canDeliverToWindow {
                     Button {
                         // Opening destination selection never sends the photo.
@@ -2771,65 +2767,32 @@ struct PhotoBrowserView: View {
     }
 
     @ViewBuilder
-    private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
-        if confirmedMemorySavedStates[selectedPhoto.localIdentifier] ?? selectedPhoto.isLiked {
-            Menu {
-                Button("お気に入りから外す", role: .destructive) {
-                    let identifier = selectedPhoto.localIdentifier
-                    // This changes saved membership only; the Photos asset
-                    // and any previously imported copy remain in the library.
-                    setMemorySaved(identifier, false)
-                }
-            } label: {
-                photoActionLabel("お気に入り", systemImage: "bookmark.fill")
+    private func photoActions(_ photo: PhotoPresentation) -> some View {
+        if confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked {
+            Button("お気に入りから外す", systemImage: "bookmark.slash", role: .destructive) {
+                setMemorySaved(photo.localIdentifier, false)
             }
-            .accessibilityLabel("お気に入りに追加済み")
-            .accessibilityHint("お気に入りから外す操作を開きます")
-            .disabled(isExportingMemoryPhoto)
             .accessibilityIdentifier("photo-browser-memory-saved-state")
+            .disabled(isExportingMemoryPhoto)
         } else {
-            Button {
-                setMemorySaved(selectedPhoto.localIdentifier, true)
-            } label: {
-                photoActionLabel("お気に入り", systemImage: "bookmark")
+            Button("お気に入りに追加", systemImage: "bookmark") {
+                setMemorySaved(photo.localIdentifier, true)
             }
-            .accessibilityLabel("お気に入りに追加")
             .accessibilityHint("自分のお気に入りに追加します。相手には共有されません")
             .disabled(isExportingMemoryPhoto)
         }
-
-        Button { personalNotePhoto = selectedPhoto } label: {
-            photoActionLabel(personalNote.state(for: selectedPhoto.localIdentifier).actionTitle(
-                hasNote: personalNote.note(for: selectedPhoto.localIdentifier) != nil), systemImage: "square.and.pencil")
+        Button {
+            personalNotePhoto = photo
+        } label: {
+            Label(personalNote.state(for: photo.localIdentifier).actionTitle(
+                hasNote: personalNote.note(for: photo.localIdentifier) != nil), systemImage: "square.and.pencil")
         }
-        .accessibilityLabel(personalNote.state(for: selectedPhoto.localIdentifier).actionTitle(
-            hasNote: personalNote.note(for: selectedPhoto.localIdentifier) != nil))
         .accessibilityHint("自分だけのメモです。相手には送られません")
         .accessibilityIdentifier("photo-memory-note-open")
-        .disabled(isExportingMemoryPhoto || personalNote.state(for: selectedPhoto.localIdentifier).isLoading)
-
-        Button {
-            showcaseOpenOne?(selectedPhoto.localIdentifier)
-        } label: {
-            photoActionLabel("見せる", systemImage: "eye")
-        }
-        .disabled(showcaseOpenOne == nil)
-        .accessibilityIdentifier("photo-browser-showcase")
-
-
-    }
-
-    private func photoActionLabel(_ title: String, systemImage: String) -> some View {
-        VStack(spacing: 4) {
-            if !dynamicTypeSize.isAccessibilitySize {
-                Image(systemName: systemImage).font(.title3)
-            }
-            Text(title).font(.caption.weight(.medium))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .contentShape(Rectangle())
+        .disabled(isExportingMemoryPhoto || personalNote.state(for: photo.localIdentifier).isLoading)
+        Button("見せる", systemImage: "eye") { showcaseOpenOne?(photo.localIdentifier) }
+            .disabled(showcaseOpenOne == nil)
+            .accessibilityIdentifier("photo-browser-showcase")
     }
 
     private var browserNavigation: some View {
@@ -2841,6 +2804,10 @@ struct PhotoBrowserView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if let photo = selectedPhoto {
+                        photoActions(photo)
+                        Divider()
+                    }
                     if rediscoveryEnabled, let photo = selectedPhoto, let date = photo.creationDate,
                        dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
