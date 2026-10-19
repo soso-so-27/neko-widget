@@ -3234,9 +3234,31 @@ final class SoloMemoriesUITests: XCTestCase {
         capture(screenshot)
         let close = sheet.buttons["header.closeButton"].firstMatch
         XCTAssertTrue(close.waitForExistence(timeout: 5))
+        let beforeScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        beforeScreen.name = screenshot + "-before-close-screen"
+        beforeScreen.lifetime = .keepAlways
+        add(beforeScreen)
+        let beforeCloseExists = close.exists
+        print("RECORD_EXPORT_CLOSE_BEFORE at=\(Date().timeIntervalSince1970) exists=\(beforeCloseExists)")
+        if beforeCloseExists {
+            print("RECORD_EXPORT_CLOSE_READY hittable=\(close.isHittable) frame=\(close.frame)")
+        }
         close.tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: sheet)], timeout: 5), .completed)
+        let dismissed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: sheet)], timeout: 5)
+        let afterScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        afterScreen.name = screenshot + "-after-close-screen"
+        afterScreen.lifetime = .keepAlways
+        add(afterScreen)
+        print("RECORD_EXPORT_CLOSE_AFTER at=\(Date().timeIntervalSince1970) waiter=\(dismissed.rawValue) sheetExists=\(sheet.exists) closeExists=\(close.exists)")
+        if close.exists {
+            print("RECORD_EXPORT_CLOSE_REMAINING hittable=\(close.isHittable) frame=\(close.frame)")
+        }
+        if dismissed != .completed {
+            print("RECORD_EXPORT_CLOSE_APP_AFTER \(app.debugDescription)")
+            print("RECORD_EXPORT_CLOSE_SHEET_AFTER \(sheet.debugDescription)")
+        }
+        XCTAssertEqual(dismissed, .completed)
     }
 
     @MainActor

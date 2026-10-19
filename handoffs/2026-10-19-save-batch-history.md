@@ -43,3 +43,6 @@
 初回の約1〜2時間見込みを超過。元候補・backend fixture失敗・native失敗・診断待機を累積のまま記録し、限定診断約20〜30分＋その後の既存必須検査/配布約1〜2時間を追加計画とした。成功済み15 control検査等は依存入力不変として保持し、同じ確認を再実行しない。新たなCI scope/selector免除を作らない。
 
 その後solo-1も成功、app-ui-otherは53件中skip1/失敗1。失敗した既存family wrapperは、共有ZIPの実ShareSheet containerが出た後、OSのclose button待ちで止まり、後半の共有撤回/権限解除には未到達。元AXはremote subtreeが空で代替のclose/handleを示さず、アプリ録画だけではsystem共有画面の実描画を確定できない。UIHostingControllerのreparenting警告もあるが原因とは断定しない。製品を変えず、同じ5秒waitの結果を固定してからdevice全体の画像と失敗時AXを保存する限定probeを追加した。実cancel・sheet消失・後続assertionは維持。二つの別classの既存失敗操作を確認してから、最終候補の必須CIへ進む。
+
+
+続くed6 / run39228041265は必須native8系統のうち7系統成功、solo-2だけ28件中27件成功・1件失敗。まとめ保存・中断再開・復元の新検査は154.356秒で成功。失敗は未変更の会員接続検査が書き出しShareSheetを閉じた後、5秒以内にremote AX containerの消失を確認できなかった点。対象method/helperと表示・終了・ZIP生成の4製品ファイルは0968/6057/ed6で同一。取得した画像には2KBのZIPとcloseが描画され、合成tap座標も位置に整合するが、tap受理・実画面消失・cleanupの完了は未確認。環境原因・製品原因のどちらとも断定せず、元selector/tap/5秒wait/assertを維持し、終了判定の直後に全画面とAXを記録する最小の限定候補を追加した。成功済みcontrol検査は依存不変として保持。初候補/最初のCIからの累計を継続し、限定診断約20分＋通常必須CI最大実測105.5分＋配布参考12.2分等を追加計画とする。初回120分・後の360分計画は未達となる見込みで、次の計画枠は最初のCIから480分とする。AGENTS.mdの差し替えは本PR完了後に別の1本で行い、現候補では変更しない。
