@@ -11,7 +11,7 @@ permissions:
 jobs:
   protocol-probe:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
@@ -19,6 +19,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run actual CryptoKit HPKE
+        if: inputs.phase == 'probe'
         run: |
           swiftc -parse-as-library -D PROTOTYPE_CLI experiments/group-prototype/HPKE.swift -o "$RUNNER_TEMP/hpke-probe"
           "$RUNNER_TEMP/hpke-probe"
@@ -27,10 +28,44 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup target add --toolchain stable aarch64-apple-ios aarch64-apple-ios-sim
-          cargo +stable run --example run
-          cargo +stable build --target aarch64-apple-ios
+          if [[ "${{ inputs.phase }}" == "probe" ]]; then
+            cargo +stable run --example run
+            cargo +stable build --target aarch64-apple-ios
+          fi
           cargo +stable build --target aarch64-apple-ios-sim
       - name: Check HPKE against the iOS 17 SDK availability boundary
+        if: inputs.phase == 'probe'
         run: |
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
           xcrun swiftc -parse-as-library -emit-object -target arm64-apple-ios17.0-simulator -sdk "$SDK" experiments/group-prototype/HPKE.swift -o "$RUNNER_TEMP/hpke-ios.o"
+      - name: Run isolated app and Widget extension
+        if: inputs.phase == 'widget'
+        working-directory: experiments/group-prototype
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xcodegen || brew install xcodegen
+          xcodegen generate
+          runtime=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; print(next(r["identifier"] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("version")=="26.2"))')
+          device=$(xcrun simctl create IsolatedGroupProbe com.apple.CoreSimulator.SimDeviceType.iPhone-16 "$runtime")
+          trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simctl delete "$device" >/dev/null 2>&1 || true' EXIT
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcodebuild -project NekoGroupPrototype.xcodeproj -scheme Probe -configuration Debug \
+            -destination "platform=iOS Simulator,id=$device" -derivedDataPath "$RUNNER_TEMP/GroupProbeBuild" \
+            -resultBundlePath "$RUNNER_TEMP/GroupProbe.xcresult" -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            ONLY_ACTIVE_ARCH=YES test
+      - name: Export optional Widget screen
+        if: always() && inputs.phase == 'widget'
+        run: |
+          if [[ -d "$RUNNER_TEMP/GroupProbe.xcresult" ]]; then
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/GroupProbe.xcresult" --output-path "$RUNNER_TEMP/group-probe-screens"
+          fi
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always() && inputs.phase == 'widget'
+        with:
+          name: isolated-widget-screen
+          path: ${{ runner.temp }}/group-probe-screens/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
