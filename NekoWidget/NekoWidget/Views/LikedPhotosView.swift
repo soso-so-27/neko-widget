@@ -2476,7 +2476,6 @@ struct PhotoBrowserView: View {
     @StateObject private var photoDeliveryModel = MomentSharingViewModel()
     @State private var stagedDeliveryID: String?
     @State private var showsWidgetInformation = false
-    @State private var showsRediscoveryHistory = false
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
     @State private var managedPreservationPhoto: PhotoPresentation?
@@ -2623,6 +2622,20 @@ struct PhotoBrowserView: View {
                     photoActions(selectedPhoto)
                 }
                 .frame(maxWidth: .infinity)
+                if canDeliverToWindow {
+                    Button {
+                        // Opening destination selection never sends the photo.
+                        deliveryPhoto = selectedPhoto
+                    } label: {
+                        Label("まどに届ける", systemImage: "paperplane.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityHint("届け先を選んでから、写真とメモを確認します")
+                    .accessibilityIdentifier("photo-browser-deliver")
+                    .disabled(isExportingMemoryPhoto)
+                }
             }
 
             if isExportingMemoryPhoto {
@@ -2749,18 +2762,7 @@ struct PhotoBrowserView: View {
         .disabled(showcaseOpenOne == nil)
         .accessibilityIdentifier("photo-browser-showcase")
 
-        if canDeliverToWindow {
-            Button {
-                // Freeze the visible photo before opening destination selection.
-                deliveryPhoto = selectedPhoto
-            } label: {
-                photoActionLabel("まどに追加", systemImage: "paperplane")
-            }
-            .accessibilityLabel("まどに送る")
-            .accessibilityHint("共有先を選んでから、写真とメモを確認します")
-            .accessibilityIdentifier("photo-browser-deliver")
-            .disabled(isExportingMemoryPhoto)
-        }
+
     }
 
     private func photoActionLabel(_ title: String, systemImage: String) -> some View {
@@ -2815,10 +2817,6 @@ struct PhotoBrowserView: View {
                         }
                         .accessibilityIdentifier("photo-browser-managed-preserve")
                     }
-                    Button { showsRediscoveryHistory = true } label: {
-                        Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
-                    }
-                    .accessibilityIdentifier("photo-browser-rediscovery-history")
                     Divider()
                     if showsWidgetTiming {
                         Button {
@@ -2955,16 +2953,6 @@ struct PhotoBrowserView: View {
         .sheet(item: $managedPreservationPhoto) { photo in
             ManagedPreservationPhotoView(photo: photo, context: memoryNoteContext(for: photo),
                                          noteStore: personalNote.store)
-        }
-        .sheet(isPresented: $showsRediscoveryHistory) {
-            NavigationStack {
-                PersonalRediscoveryHistoryView(store: rediscoveryStore ?? .shared)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) {
-                        Button("閉じる") { showsRediscoveryHistory = false }
-                            .accessibilityIdentifier("personal-rediscovery-history-close")
-                    } }
-            }
-            .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .alert("ウィジェットの表示について", isPresented: $showsWidgetInformation) {
             Button("閉じる", role: .cancel) {}

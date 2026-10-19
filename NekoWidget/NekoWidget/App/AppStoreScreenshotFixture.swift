@@ -615,7 +615,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
                 } else {
                     Text("確認完了").accessibilityIdentifier("mainline-fixture-finished")
                 }
-            } else if scenario == "review-photo" {
+            } else if scenario == "review-photo" || scenario == "review-photo-layout" {
                 NavigationStack {
                     PhotoBrowserView(
                         photos: AppStoreScreenshotFixture.photos,
@@ -627,7 +627,11 @@ private struct MainlineAcceptanceFixtureRootView: View {
                         excludedCatCandidateIdentifiers: [],
                         excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
                         profiles: [], assignmentsByPhotoIdentifier: [:],
-                        replaceProfileAssignments: { _ in true }
+                        replaceProfileAssignments: { _ in true },
+                        deliveryActions: scenario == "review-photo-layout" ? PhotoWindowDeliveryActions(
+                            destinations: { [] },
+                            prepare: { _ in throw MemoryPhotoJPEGExportError.photoUnavailable },
+                            send: { _, _, _ in "fixture-no-send" }) : nil
                     )
                     .environment(\.showcaseOpenOne, { _ in })
                     .environment(\.showcaseAddPhoto, { _, _ in
