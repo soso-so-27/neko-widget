@@ -110,6 +110,7 @@ import {
 import { getWindowName, putWindowName } from "./window-name";
 import { familyRecords, runFamilyRecordCleanup } from "./family-records";
 import { groupAPI } from './group-api';
+import { runGroupRelayCleanup } from './group-cleanup';
 
 export async function route(
   request: Request,
@@ -621,6 +622,7 @@ export default {
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
+      ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
       ctx.waitUntil(drainNotificationOutbox(env));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
