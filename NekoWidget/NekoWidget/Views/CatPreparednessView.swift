@@ -105,7 +105,7 @@ struct LostCatEmergencyEntryView: View {
     var body: some View {
         List {
             ToolCatPicker(profiles: profiles, select: { chosenProfile = $0; opensProfile = true }) {
-                Section("プロフィール未登録の猫") {
+                Section("まだ登録していない猫") {
                     ForEach(savedCats) { cat in
                         NavigationLink { editor(cat.id, "") } label: { Label(cat.displayName, systemImage: "cat") }
                             .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
@@ -129,8 +129,8 @@ struct LostCatEmergencyEntryView: View {
     }
 
     private func guestLabel(_ key: String) -> String {
-        guard let draft = draftStore.drafts[key] else { return CatPreparednessStore.shared.record(for: key).name.isEmpty ? "未登録の猫" : CatPreparednessStore.shared.record(for: key).name }
-        let name = draft.name.isEmpty ? "未登録の猫" : draft.name
+        guard let draft = draftStore.drafts[key] else { return CatPreparednessStore.shared.record(for: key).name.isEmpty ? "まだ登録していない猫" : CatPreparednessStore.shared.record(for: key).name }
+        let name = draft.name.isEmpty ? "まだ登録していない猫" : draft.name
         return "\(name)・\(draft.updatedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 }
@@ -160,6 +160,7 @@ struct LostCatDraftView: View {
     @ObservedObject var store = LostCatDraftStore.shared
     @ObservedObject private var catCareStore = CatCareStore.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var key = ""
     @State private var draft = LostCatDraft()
     @State private var loaded = false
@@ -195,17 +196,17 @@ struct LostCatDraftView: View {
             contactSection.disabled(!loaded)
             reportSection
             Section {
-                ToolImportantInformation(text: "連絡先は画像・チラシで公開されます。チラシを貼るときは、場所の管理者に確かめてください。届け出は、いなくなった地域の警察・保健所・動物愛護センターへ。")
+                ToolImportantInformation(text: "連絡先は、画像とチラシに載ります。チラシを貼るときは、場所の管理者に確かめてください。")
             }
             if candidateRefreshError {
                 Section {
-                    Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
+                    Text("前に入れた内容を読み込めませんでした。ここに書いた内容はそのままです。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             if saveError {
                 Section {
-                    Button("保存できませんでした。再試行") {
+                    Button("保存できませんでした。もう一度保存する") {
                         if loaded { saveNow() }
                         else { load(initialKey, name: initialName) }
                     }
@@ -216,13 +217,14 @@ struct LostCatDraftView: View {
         .navigationTitle("迷子のとき")
         .navigationBarTitleDisplayMode(.inline)
         .scrollDismissesKeyboard(.interactively)
+        .announcesWhenShown(photoError)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 4) {
                 if !requiredFields.isEmpty {
                     Text("\(requiredFields.joined(separator: "・"))を入れると作成できます")
                         .font(.caption).foregroundStyle(.secondary)
                 } else if !issues.isEmpty {
-                    Text("仕上がりで調整する項目があります")
+                    Text("直す項目があります。各欄の説明を確かめてください")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Button("プレビュー") { openPreview() }
@@ -319,7 +321,9 @@ struct LostCatDraftView: View {
             }
             fieldIssue("name")
             }
-            HStack(alignment: .top, spacing: 12) {
+            let tiles = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+            tiles {
                 photoTile("顔・毛柄", role: .face, image: faceImage)
                 photoTile("全身（任意）", role: .body, image: bodyImage)
             }
@@ -358,15 +362,16 @@ struct LostCatDraftView: View {
             HStack {
                 Text("猫の写真と特徴")
                 Spacer()
-                Button("猫を変更") { showsCatChooser = true }
+                Button { showsCatChooser = true } label: {
+                    Text("猫を変更").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
                     .disabled(photoBusy)
                     .buttonStyle(.borderless)
-                    .frame(minHeight: 44)
             }
             .textCase(nil)
         } footer: {
             if !(draft.prefilledFields ?? []).isEmpty {
-                Text("入力候補は保存済みの情報です。今の姿に合わせて直せます。")
+                Text("前に入れた内容を入れています。今の姿に合わせて直せます。")
                     .accessibilityIdentifier("lost-cat-prefill-note")
             }
         }
@@ -499,7 +504,8 @@ struct LostCatDraftView: View {
                 .accessibilityLabel(title)
                 .accessibilityIdentifier("lost-cat-\(field)")
                 .focused($focus, equals: field)
-            Text("\(text.wrappedValue.count) / \(limit)文字")
+            Text("\(text.wrappedValue.count) / \(limit)文字"
+                 + (text.wrappedValue.count > limit ? "（\(text.wrappedValue.count - limit)文字多い）" : ""))
                 .font(.caption).monospacedDigit()
                 .foregroundStyle(text.wrappedValue.count > limit ? Color.red : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -550,7 +556,7 @@ struct LostCatDraftView: View {
         NavigationStack {
             List {
                 ToolCatPicker(profiles: profiles, select: { switchTo($0.identifier, name: $0.displayName) }) {
-                    Section("プロフィール未登録の猫") {
+                    Section("まだ登録していない猫") {
                         ForEach(savedCats) { cat in
                             Button(cat.displayName) { switchTo(cat.id, name: "") }
                         }
@@ -587,8 +593,8 @@ struct LostCatDraftView: View {
         })
     }
     private func guestLabel(_ guestKey: String) -> String {
-        guard let saved = store.drafts[guestKey] else { return "登録していない猫" }
-        return saved.name.isEmpty ? "登録していない猫・\(saved.updatedAt.formatted(date: .abbreviated, time: .omitted))" : saved.name
+        guard let saved = store.drafts[guestKey] else { return "まだ登録していない猫" }
+        return saved.name.isEmpty ? "まだ登録していない猫・\(saved.updatedAt.formatted(date: .abbreviated, time: .omitted))" : saved.name
     }
     private var publicDraft: LostCatPublicDraft? {
         guard let faceImage else { return nil }
@@ -631,7 +637,7 @@ struct LostCatDraftView: View {
             .accessibilityIdentifier(role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo")
             .disabled(photoBusy || (role == .body && faceImage == nil))
             HStack {
-                Text(isPrefilled(role == .face ? "face" : "body") ? "\(title)・候補" : title).font(.caption)
+                Text(isPrefilled(role == .face ? "face" : "body") ? "\(title)・前の写真" : title).font(.caption)
                     .foregroundStyle(isPrefilled(role == .face ? "face" : "body") ? Color.secondary : Color.primary)
                 Spacer(minLength: 0)
                 if let image {
@@ -641,10 +647,13 @@ struct LostCatDraftView: View {
                         if role == .body {
                             Button("2枚目を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
                         }
-                    } label: { Image(systemName: "ellipsis").frame(minWidth: 36, minHeight: 36) }
+                    } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityLabel("\(title)の操作")
                     .accessibilityIdentifier(role == .face ? "lost-cat-face-actions" : "lost-cat-body-actions")
                 }
+            }
+            if role == .body && faceImage == nil {
+                Text("先に顔の写真を選ぶと選べます").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -763,7 +772,7 @@ private struct LostCatPhotoChoiceView: View {
             }
             if photos.isEmpty {
                 ContentUnavailableView("猫の写真がありません", systemImage: "photo", description:
-                    Text("右上の「…」から、端末の全写真も選べます。"))
+                    Text("右上の「…」から、iPhoneのすべての写真からも選べます。"))
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 12) {
                     ForEach(photos) { photo in
@@ -795,7 +804,7 @@ private struct LostCatPhotoChoiceView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(busy || loadingPhoto)
-                        .accessibilityLabel("猫の写真")
+                        .accessibilityLabel(ToolPhotoLabel.text("この写真を選ぶ", date: photo.creationDate))
                         .accessibilityIdentifier("lost-cat-candidate-\(photo.localIdentifier)")
                     }
                 }.padding()
@@ -808,7 +817,7 @@ private struct LostCatPhotoChoiceView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("端末の全写真から追加", systemImage: "photo.on.rectangle") { showsSystemPicker = true }
+                    Button("iPhoneのすべての写真から選ぶ", systemImage: "photo.on.rectangle") { showsSystemPicker = true }
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("ほかの写真を選ぶ")
                 .disabled(busy || loadingPhoto)
@@ -830,6 +839,7 @@ private struct LostCatPhotoCropView: View {
     @State private var zoom: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var dragStart: CGSize = .zero
+    @State private var canvas: CGSize = .zero
     @State private var failed = false
 
     var body: some View {
@@ -850,6 +860,15 @@ private struct LostCatPhotoCropView: View {
                         }.onEnded { _ in dragStart = offset })
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .onChange(of: zoom) { _, _ in offset = clamped(offset, size: size); dragStart = offset }
+                        .onAppear { canvas = size }
+                        .onChange(of: size) { _, new in canvas = new }
+                        .accessibilityElement()
+                        .accessibilityLabel("写真の範囲")
+                        .accessibilityHint("拡大してから、上下左右に動かせます")
+                        .accessibilityAction(named: Text("上へ動かす")) { nudge(0, -1) }
+                        .accessibilityAction(named: Text("下へ動かす")) { nudge(0, 1) }
+                        .accessibilityAction(named: Text("左へ動かす")) { nudge(-1, 0) }
+                        .accessibilityAction(named: Text("右へ動かす")) { nudge(1, 0) }
                         .accessibilityIdentifier("lost-cat-crop-canvas")
                         .overlay(alignment: .bottom) {
                             Button("この範囲を使う") { apply(size: size) }
@@ -857,6 +876,13 @@ private struct LostCatPhotoCropView: View {
                         }
                 }
                 Slider(value: $zoom, in: 1...4) { Text("写真の拡大") }
+                HStack(spacing: 12) {
+                    nudgeButton("左へ", "arrow.left") { nudge(-1, 0) }
+                    nudgeButton("上へ", "arrow.up") { nudge(0, -1) }
+                    nudgeButton("下へ", "arrow.down") { nudge(0, 1) }
+                    nudgeButton("右へ", "arrow.right") { nudge(1, 0) }
+                }
+                .disabled(zoom <= 1)
                 if failed { Text("保存できませんでした。もう一度お試しください。").font(.footnote).foregroundStyle(.red) }
             }
             .padding()
@@ -870,6 +896,20 @@ private struct LostCatPhotoCropView: View {
             }
         }
     }
+    private func nudgeButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(title + "動かす")
+    }
+
+    private func nudge(_ dx: CGFloat, _ dy: CGFloat) {
+        let step = max(canvas.width, canvas.height) * 0.08
+        offset = clamped(CGSize(width: offset.width + dx * step, height: offset.height + dy * step), size: canvas)
+        dragStart = offset
+    }
+
     private func clamped(_ proposed: CGSize, size: CGSize) -> CGSize {
         let x = size.width * (zoom - 1) / 2
         let y = size.height * (zoom - 1) / 2
