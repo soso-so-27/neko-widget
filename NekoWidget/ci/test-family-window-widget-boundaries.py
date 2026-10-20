@@ -4686,6 +4686,8 @@ class CareHandoffCatCareTests(unittest.TestCase):
         self.assertIn("var callWhen: String?", plan)
         self.assertIn('("こんな時は連絡を", callWhen)', plan)
         self.assertIn('identifier: "care-call-when"', view)
+        self.assertIn("おしっこが出ていない", view)
+        self.assertIn("!current.contains(choice)".lstrip("!"), view)
         # Age and weight always; medicines and allergy only when health is shared.
         share = section(store, "func shareRecord(", "private static func normalizedJPEG(")
         self.assertIn("CatCareSummary.ageAndWeight(care)", share)

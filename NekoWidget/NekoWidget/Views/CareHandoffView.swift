@@ -179,6 +179,10 @@ private struct CareCatEditor: View {
             }
         })
     }
+    /// Common signs to call about. The owner picks; nothing is judged here.
+    static let callWhenChoices = ["丸1日ごはんを食べない", "何度も吐く", "おしっこが出ていない",
+                                  "隠れて出てこない", "ぐったりしている", "けがをした", "外に出てしまった"]
+
     /// Read-only lines that 「この子のこと」 adds to the handed-over copy.
     @ViewBuilder private func catCareSection(_ cat: CareCat) -> some View {
         let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
@@ -233,6 +237,19 @@ private struct CareCatEditor: View {
                               text: Binding(get: { self.cat?.callWhen ?? "" }, set: { new in
                                   store.editCat(id) { $0.callWhen = new.isEmpty ? nil : new }
                               }))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Self.callWhenChoices, id: \.self) { choice in
+                                let current = cat.callWhen ?? ""
+                                Button(choice) {
+                                    store.editCat(id) { $0.callWhen = current.isEmpty ? choice : current + "、" + choice }
+                                }
+                                .buttonStyle(.bordered).font(.footnote)
+                                .disabled(current.contains(choice))
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("care-call-when-choices")
                 } footer: { Text("「こんな時は連絡を」は、預かる人が迷わないための目安です。") }
                 catCareSection(cat)
                 if cat.usualFood != nil {
