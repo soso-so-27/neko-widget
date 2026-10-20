@@ -12,6 +12,11 @@ enum FamilyWidgetHeartStatus: Equatable, Sendable {
 /// decoded images. WidgetKit may render
 /// every future entry while accepting a timeline, so the provider also bounds
 /// each timeline to two entries instead of relying on lazy view evaluation.
+struct GroupWindowPhotoReference: Equatable, Sendable {
+    let windowID: String
+    let photoID: String
+}
+
 struct NekoWidgetEntry: TimelineEntry {
     let date: Date
     let localIdentifier: String?
@@ -32,6 +37,8 @@ struct NekoWidgetEntry: TimelineEntry {
     var officialPhoto: OfficialCatPhoto? = nil
     var personalRediscoveryAction: PersonalRediscoveryAction = .unavailable
     var personalSelectionPaused: Bool = false
+    /// The group window photo this entry shows, for its heart button.
+    var groupWindowPhoto: GroupWindowPhotoReference? = nil
 
     static func empty(
         at date: Date,

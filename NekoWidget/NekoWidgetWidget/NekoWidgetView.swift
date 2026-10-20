@@ -181,7 +181,9 @@ struct NekoWidgetView: View {
 
     @ViewBuilder
     private var familyHeartShortcut: some View {
-        if let sourceDigest = entry.familySourceDigest,
+        if let groupPhoto = entry.groupWindowPhoto {
+            groupHeartControl(groupPhoto)
+        } else if let sourceDigest = entry.familySourceDigest,
            let localWindowID = WidgetPhotoSource.localWindowID(
                from: entry.photoSourceIdentifier
            ), entry.isBookmarkInteractionEnabled {
@@ -193,6 +195,23 @@ struct NekoWidgetView: View {
             // Inactive or legacy sources retain photo navigation but must not
             // offer a reaction against an unvalidated target.
             unavailableHeartSlot
+        }
+    }
+
+    /// A group window photo's heart: the app sends it in the background.
+    @ViewBuilder
+    private func groupHeartControl(_ photo: GroupWindowPhotoReference) -> some View {
+        if entry.familyHeartStatus == .serverAccepted {
+            heartMark(status: .serverAccepted)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("ハートを送りました")
+        } else {
+            Button(intent: SendGroupWidgetHeartIntent(windowID: photo.windowID, photoID: photo.photoID)) {
+                heartMark(status: .ready)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("ハートを送る")
+            .accessibilityHint("アプリを開かずに送ります")
         }
     }
 

@@ -178,6 +178,8 @@
 		CC2610200000000000000006 /* GroupWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000005 /* GroupWindowView.swift */; };
 		CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */; };
 		100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */; };
+		CC261020000000000000000D /* SendGroupWidgetHeartIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */; };
+		CC261020000000000000000E /* SendGroupWidgetHeartIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */; };
 		10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
 		200000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		200000000000000000000002 /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
@@ -487,6 +489,7 @@
 		F00000000000000000000315 /* WidgetCacheImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheImageLoader.swift; sourceTree = "<group>"; };
 		F00000000000000000000316 /* WidgetManifestReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetManifestReader.swift; sourceTree = "<group>"; };
 		F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToggleWidgetLikeIntent.swift; sourceTree = "<group>"; };
+		CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendGroupWidgetHeartIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetConfigurationIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000350 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		F00000000000000000000352 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -923,6 +926,7 @@
 				F00000000000000000000315 /* WidgetCacheImageLoader.swift */,
 				F00000000000000000000316 /* WidgetManifestReader.swift */,
 				F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */,
+				CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */,
 				A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */,
 				F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */,
 				F00000000000000000000301 /* Info.plist */,
@@ -1319,6 +1323,7 @@
 				CC2610200000000000000006 /* GroupWindowView.swift in Sources */,
 				CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */,
 				100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */,
+				CC261020000000000000000D /* SendGroupWidgetHeartIntent.swift in Sources */,
 				A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */,
 				10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
@@ -1354,6 +1359,7 @@
 				200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */,
 				200000000000000000000016 /* WidgetManifestReader.swift in Sources */,
 				200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */,
+				CC261020000000000000000E /* SendGroupWidgetHeartIntent.swift in Sources */,
 				A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */,
 				E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */,
 				E0260923000000000000000C /* ShowcaseControl.swift in Sources */,
