@@ -115,6 +115,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             try save(operation, "op:" + operationID.uuidString.lowercased(), createOnly: true)
         }
         if let response = operation.response { return response }
+        // Server mutation receipts last 48 hours. Beyond that horizon, blindly
+        // retrying an unknown result could repeat a completed action. Keep the
+        // local body/copy for explicit reconciliation; never invent a new ID.
+        guard Date().timeIntervalSince(operation.createdAt) < 172_800 else { throw GroupClientError.unavailable }
         let id = try await registeredIdentity()
         // Exact original body, fresh timestamp/nonce/signature. A failed request
         // keeps its payload in Keychain for an explicit retry with the same ID.

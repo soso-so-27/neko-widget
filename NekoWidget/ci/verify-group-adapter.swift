@@ -98,7 +98,7 @@ private actor EchoTransport: GroupHTTPTransport {
 }
 
 private struct HTTPVector: Decodable {
-    struct Request: Decodable { let path: String; let method: String; let timestamp: String; let nonce: Data; let bodyUTF8: String; let signature: Data }
+    struct Request: Decodable { let path: String; let method: String; let timestamp: String; let nonce: Data; let bodyUTF8: String; let canonicalBytes: Data; let signature: Data }
     let personID: String; let deviceID: String; let personPublicKey: Data; let signingPublicKey: Data; let hpkePublicKey: Data; let request: Request
 }
 private struct RosterVector: Decodable { let packet: SignedGroupRoster; let anchor: GroupTrustAnchor; let canonicalSHA256: Data }
@@ -114,7 +114,19 @@ private struct GroupAdapterChecks {
         try check(identity.personID == http.personID && identity.deviceID == http.deviceID, "cross-language identity hashes")
         let request = try GroupHTTPRequest.make(endpoint: URL(string: "https://group.invalid")!, path: http.request.path,
             body: Data(http.request.bodyUTF8.utf8), identity: identity, now: Date(timeIntervalSince1970: TimeInterval(http.request.timestamp)!), nonce: http.request.nonce)
-        try check(request.value(forHTTPHeaderField: "Neko-Signature") == GroupWire.base64(http.request.signature), "exact shared HTTP vector")
+        let canonical = try GroupCanonical.fields(["NW3.REQUEST", "3", request.value(forHTTPHeaderField: "Neko-Device-Id")!,
+            request.value(forHTTPHeaderField: "Neko-Timestamp")!, request.value(forHTTPHeaderField: "Neko-Nonce")!,
+            request.httpMethod!, request.url!.path].map(GroupCanonical.text) + [GroupCanonical.hash(request.httpBody!)])
+        try check(canonical == http.request.canonicalBytes, "exact shared HTTP canonical bytes")
+        let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: http.signingPublicKey)
+        let nativeSignature = try GroupWire.bytes(request.value(forHTTPHeaderField: "Neko-Signature")!, count: 64)
+        // CryptoKit randomizes valid Ed25519 signatures (Apple's documented
+        // side-channel protection). Exact SIGNATURE equality is not a contract.
+        // Worker canonical bytes and signature verification are authoritative.
+        try check(publicKey.isValidSignature(http.request.signature, for: canonical), "Worker vector verified by CryptoKit")
+        try check(publicKey.isValidSignature(nativeSignature, for: canonical), "native signature over Worker bytes")
+        try check(!publicKey.isValidSignature(nativeSignature, for: canonical + Data([0])), "altered request rejected")
+        print("GROUP_HTTP_SIGNATURE=" + GroupWire.base64(nativeSignature))
         try check(try GroupWire.encode(GroupAPIModel.ListInput(after: nil)) == Data(http.request.bodyUTF8.utf8), "explicit null and stable JSON bytes")
         try rejects("HTTP target rejected") { _ = try GroupHTTPRequest.make(endpoint: URL(string: "http://group.invalid")!, path: http.request.path, body: nil, identity: identity) }
         try rejects("redirect response rejected") { _ = try GroupHTTPRequest.check(.init(status: 302, data: Data("{}".utf8))) }
@@ -145,6 +157,17 @@ private struct GroupAdapterChecks {
         var client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
         do { _ = try await client.createWindow(name: "うちのまど", operationID: op); throw Failure.check("lost response was not simulated") }
         catch GroupClientError.offline { }
+        let store = try GroupOperationStore(directory: folder.appendingPathComponent("http-operations", isDirectory: true))
+        let account = "op:" + op.uuidString.lowercased(), original = try store.read(account)!
+        let pending = try GroupWire.decode(GroupPendingHTTP.self, original)
+        let expired = GroupPendingHTTP(operationID: pending.operationID, path: pending.path, body: pending.body, intentHash: pending.intentHash,
+            createdAt: Date().addingTimeInterval(-172_801), response: nil)
+        try store.write(GroupWire.encode(expired), account: account, createOnly: false)
+        do { _ = try await client.createWindow(name: "うちのまど", operationID: op); throw Failure.check("expired unknown operation resent") }
+        catch GroupClientError.unavailable { }
+        let expiredStats = await relay.stats()
+        try check(expiredStats.1.count == 1, "no resend after server receipt horizon")
+        try store.write(original, account: account, createOnly: false)
         client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
         let room = try await client.createWindow(name: "うちのまど", operationID: op)
         try check(room.name == "うちのまど" && room.memberCount == 1 && room.deviceCount == 1 && room.members[0].displayName == "自分", "real adapter owner round trip")

@@ -46,7 +46,7 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \
   NekoWidget/Services/ProductionGroupWindowClient.swift ci/verify-group-adapter.swift \
   -o "$RUNNER_TEMP/group-adapter-tests"
-"$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json
+"$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json | node ci/verify-native-group-http.mjs
 xcrun --sdk macosx swiftc -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
   NekoWidget/Services/GroupInvitationLink.swift ci/verify-group-invitation-link.swift \
