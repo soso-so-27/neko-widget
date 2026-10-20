@@ -133,6 +133,11 @@ struct FamilyWindowView: View {
     @State private var showsWidgetGuide = false
     @State private var showsWindowWidgetGuide = false
     @State private var widgetGuideIsFirstPlacement = true
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
+    /// The page shown while swiping through received photos; nil means the
+    /// photo that was opened. Kept apart from `selectedSharedPhoto` so paging
+    /// never re-presents the viewer.
+    @State private var pagedReceivedMomentID: String?
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 20
     @State private var showsSharedPhotoInformation = false
@@ -343,7 +348,24 @@ struct FamilyWindowView: View {
 #endif
         }
         }
+        .sheet(item: receivedInvitationSheetItem) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
+        }
         .appRecordEditing(retainWhileHidden: showsNameEditor || isPreparingNameEditor || preparedDelivery != nil || selectedPhotoItem != nil || isPreparingSelectedPhoto || isDeliveringSelectedPhoto || !deliveryCaption.isEmpty || deliveryPersonalMemo != nil)
+    }
+
+    /// Only the まど tab's own screen presents an opened invitation link, so a
+    /// pushed settings screen or the widget photo viewer never doubles it.
+    private var receivedInvitationSheetItem: Binding<GroupInvitationLink?> {
+        Binding(
+            get: {
+                guard initialPresentation == .content, widgetPhotoRequest == nil else { return nil }
+                return invitationInbox.pending
+            },
+            set: { value in
+                if value == nil { invitationInbox.discard() }
+            }
+        )
     }
 
     private var widgetPhotoContent: some View {
@@ -913,6 +935,7 @@ struct FamilyWindowView: View {
             onDismiss: {
                 notificationAccessibilityFocus = nil
                 pendingDetailMemoryConfirmationID = nil
+                pagedReceivedMomentID = nil
                 widgetMemoryTarget = nil
                 memoryRemovalTarget = nil
                 reportTarget = nil
@@ -943,69 +966,7 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoDetail(_ momentID: String) -> some View {
         NavigationStack {
-            Group {
-                if let item = model.receivedMoments.first(where: { $0.id == momentID }),
-                   !model.isShowingLastKnownState {
-                    FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
-                        source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
-                        caption: model.caption(for: item), captionIsOwn: false,
-                        allowsLegacyCaptionWithoutCatalog: (item.senderPolicyVersion ?? 1) == 1,
-                        captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
-                    MomentPhotoDetailBody(
-                        imageURL: widgetPhotoRequest == nil
-                            ? model.imageURL(for: item) : widgetPhotoTarget?.imageURL,
-                        caption: nil,
-                        captionIdentifier: "family-window-received-caption-full"
-                    ) {
-                        VStack(spacing: 0) {
-                            memo
-                            if !model.isReportOnly {
-                                receivedPhotoActionControls(item)
-                                if memoryResultMomentID == item.id,
-                                   let message = memoryResultMessage {
-                                    Text(message).font(.footnote).foregroundStyle(.secondary)
-                                        .padding(.horizontal, 16).padding(.bottom, 8)
-                                        .accessibilityIdentifier("family-window-bookmark-result")
-                                }
-                                if heartResultMomentID == item.id,
-                                   let message = heartResultMessage {
-                                    Text(message).font(.footnote).foregroundStyle(.secondary)
-                                        .padding(.horizontal, 16).padding(.bottom, 8)
-                                        .accessibilityIdentifier("family-window-paw-result")
-                                }
-                            }
-                            if safetyResultMomentID == item.id, let message = safetyResultMessage {
-                                Label(message, systemImage: "exclamationmark.circle")
-                                    .font(.footnote).foregroundStyle(.orange)
-                                    .padding(16)
-                                    .accessibilityIdentifier("family-window-safety-result")
-                            } else if let status = model.reportStatusText(item) {
-                                Text(status).font(.footnote).foregroundStyle(.secondary)
-                                    .padding(16)
-                            }
-                        }
-                    }
-                    }
-                    .id("\(model.pairingState?.spaceID ?? "")-\(item.id)")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Menu {
-                                Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
-                                receivedReportAction(item)
-                                Button("このiPhoneから削除", role: .destructive) { deleteReceivedTarget = item }
-                                if !model.isReportOnly {
-                                    Button("この相手をブロック", role: .destructive) { blockTarget = item }
-                                }
-                            } label: { Image(systemName: "ellipsis.circle") }
-                            .accessibilityLabel("写真の情報と操作")
-                            .disabled(model.isWorking || model.isShowingLastKnownState)
-                        }
-                    }
-                } else {
-                    ContentUnavailableView("この写真は表示できません", systemImage: "photo",
-                        description: Text(model.errorMessage ?? "写真が削除されたか、表示期間が終了しました。"))
-                }
-            }
+            receivedPhotoPages(momentID)
             .background(.black)
             .navigationTitle(model.windowDisplayName)
             .navigationBarTitleDisplayMode(.inline)
@@ -1022,6 +983,105 @@ struct FamilyWindowView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    /// Received photos page left and right in the list's order (M14). A photo
+    /// opened from the Widget stays single: its image comes from the Widget
+    /// cache, not from the inbox.
+    @ViewBuilder
+    private func receivedPhotoPages(_ momentID: String) -> some View {
+        let pages = widgetPhotoRequest == nil ? orderedReceivedMoments : []
+        if pages.contains(where: { $0.id == momentID }) {
+            TabView(selection: receivedPageSelection(initial: momentID)) {
+                ForEach(pages) { item in
+                    receivedPhotoDetailPage(item.id)
+                        .tag(item.id)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .onChange(of: pages.map(\.id)) { _, ids in
+                // The open page was deleted or expired: close the viewer
+                // instead of silently showing a different photo.
+                if !ids.contains(pagedReceivedMomentID ?? momentID) {
+                    selectedMomentForDetail = nil
+                }
+            }
+        } else {
+            receivedPhotoDetailPage(momentID)
+        }
+    }
+
+    private func receivedPageSelection(initial momentID: String) -> Binding<String> {
+        Binding(
+            get: { pagedReceivedMomentID ?? momentID },
+            set: { pagedReceivedMomentID = $0 }
+        )
+    }
+
+    private func receivedPhotoDetailPage(_ momentID: String) -> some View {
+        Group {
+            if let item = model.receivedMoments.first(where: { $0.id == momentID }),
+               !model.isShowingLastKnownState {
+                FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
+                    source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
+                    caption: model.caption(for: item), captionIsOwn: false,
+                    allowsLegacyCaptionWithoutCatalog: (item.senderPolicyVersion ?? 1) == 1,
+                    captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
+                MomentPhotoDetailBody(
+                    imageURL: widgetPhotoRequest == nil
+                        ? model.imageURL(for: item) : widgetPhotoTarget?.imageURL,
+                    caption: nil,
+                    captionIdentifier: "family-window-received-caption-full"
+                ) {
+                    VStack(spacing: 0) {
+                        memo
+                        if !model.isReportOnly {
+                            receivedPhotoActionControls(item)
+                            if memoryResultMomentID == item.id,
+                               let message = memoryResultMessage {
+                                Text(message).font(.footnote).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 16).padding(.bottom, 8)
+                                    .accessibilityIdentifier("family-window-bookmark-result")
+                            }
+                            if heartResultMomentID == item.id,
+                               let message = heartResultMessage {
+                                Text(message).font(.footnote).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 16).padding(.bottom, 8)
+                                    .accessibilityIdentifier("family-window-paw-result")
+                            }
+                        }
+                        if safetyResultMomentID == item.id, let message = safetyResultMessage {
+                            Label(message, systemImage: "exclamationmark.circle")
+                                .font(.footnote).foregroundStyle(.orange)
+                                .padding(16)
+                                .accessibilityIdentifier("family-window-safety-result")
+                        } else if let status = model.reportStatusText(item) {
+                            Text(status).font(.footnote).foregroundStyle(.secondary)
+                                .padding(16)
+                        }
+                    }
+                }
+                }
+                .id("\(model.pairingState?.spaceID ?? "")-\(item.id)")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Menu {
+                            Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
+                            receivedReportAction(item)
+                            Button("このiPhoneから削除", role: .destructive) { deleteReceivedTarget = item }
+                            if !model.isReportOnly {
+                                Button("この相手をブロック", role: .destructive) { blockTarget = item }
+                            }
+                        } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel("写真の情報と操作")
+                        .disabled(model.isWorking || model.isShowingLastKnownState)
+                    }
+                }
+            } else {
+                ContentUnavailableView("この写真は表示できません", systemImage: "photo",
+                    description: Text(model.errorMessage ?? "写真が削除されたか、表示期間が終了しました。"))
+            }
+        }
     }
 
     private var pairedContent: some View {
