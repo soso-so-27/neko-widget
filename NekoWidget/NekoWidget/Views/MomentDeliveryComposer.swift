@@ -197,7 +197,7 @@ struct MomentDeliveryComposer: View {
             .alert("写真の共有について", isPresented: $showsSharingInformation) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真の位置情報を除き、この画面で添えたメモと一緒に、選んだまどへ届けます。まどのウィジェットにも表示されます。共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に書き出せます。")
+                Text("写真の位置情報を除き、この画面で添えたメモと一緒に、選んだまどへ届けます。ホーム画面の写真（ウィジェット）にも表示されます。共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に書き出せます。")
             }
             .alert("送るメモを破棄しますか？", isPresented: $showsDiscardConfirmation) {
                 Button("破棄してやめる", role: .destructive, action: onCancel)
