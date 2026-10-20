@@ -319,7 +319,7 @@ extension ProductionGroupWindowClient {
         let identity = GroupDeviceIdentity(personPrivateKey: nil, personPublicKey: approval.personPublicKey,
             signingPrivateKey: draft.signingPrivateKey, agreementPrivateKey: draft.agreementPrivateKey, windowCertificates: approval.windowCertificates, registered: false)
         guard try identity.signingKey.publicKey.rawRepresentation == draft.offer.signingPublicKey,
-              identity.agreementKey.publicKey.rawRepresentation == draft.offer.hpkePublicKey else { throw GroupClientError.invalidResponse }
+              try identity.agreementKey.publicKey.rawRepresentation == draft.offer.hpkePublicKey else { throw GroupClientError.invalidResponse }
         for windowID in draft.offer.windowIDs { _ = try identity.certificate(windowID: windowID) }
         if let old = try load(GroupDeviceIdentity.self, "identity") {
             guard old.personPrivateKey == nil, old.signingPrivateKey == identity.signingPrivateKey,
