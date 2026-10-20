@@ -454,7 +454,7 @@ struct ShowcasePreparationView: View {
                     if store.canUndo {
                         Button("取り消す") {
                             do { try store.undo() }
-                            catch { errorMessage = "操作を取り消せませんでした" }
+                            catch { errorMessage = "元に戻せませんでした。もう一度お試しください" }
                         }
                     }
                     if let errorMessage {
@@ -644,7 +644,7 @@ struct ShowcasePreparationView: View {
             try action()
             previewEntry = nil
         } catch {
-            errorMessage = "写真を変更できませんでした"
+            errorMessage = "写真を変更できませんでした。もう一度お試しください"
         }
     }
 
@@ -771,7 +771,7 @@ struct ShowcaseToolCatPicker: View {
                     Section {
                         Button("すべての猫") { select(""); dismiss() }
                     }
-                    Section("プロフィール未登録の猫") {
+                    Section("まだ登録していない猫") {
                         ForEach(storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }, id: \.self) { scope in
                             Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
                         }

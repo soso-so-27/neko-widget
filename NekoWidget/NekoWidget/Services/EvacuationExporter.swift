@@ -58,7 +58,7 @@ enum EvacuationExporter {
             ]))
         }
         append(record.name, size: fontSize + 5, bold: true)
-        if record.photos.isEmpty { append("識別用の写真は未設定", size: fontSize - 2) }
+        if record.photos.isEmpty { append("見分けるための写真はまだありません", size: fontSize - 2) }
         for (label, value) in record.fields {
             append(label, size: fontSize - 3, bold: true)
             append(value, size: fontSize)

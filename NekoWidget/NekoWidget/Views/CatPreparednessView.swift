@@ -105,7 +105,7 @@ struct LostCatEmergencyEntryView: View {
     var body: some View {
         List {
             ToolCatPicker(profiles: profiles, select: { chosenProfile = $0; opensProfile = true }) {
-                Section("プロフィール未登録の猫") {
+                Section("まだ登録していない猫") {
                     ForEach(savedCats) { cat in
                         NavigationLink { editor(cat.id, "") } label: { Label(cat.displayName, systemImage: "cat") }
                             .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
@@ -129,8 +129,8 @@ struct LostCatEmergencyEntryView: View {
     }
 
     private func guestLabel(_ key: String) -> String {
-        guard let draft = draftStore.drafts[key] else { return CatPreparednessStore.shared.record(for: key).name.isEmpty ? "未登録の猫" : CatPreparednessStore.shared.record(for: key).name }
-        let name = draft.name.isEmpty ? "未登録の猫" : draft.name
+        guard let draft = draftStore.drafts[key] else { return CatPreparednessStore.shared.record(for: key).name.isEmpty ? "まだ登録していない猫" : CatPreparednessStore.shared.record(for: key).name }
+        let name = draft.name.isEmpty ? "まだ登録していない猫" : draft.name
         return "\(name)・\(draft.updatedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 }
@@ -195,17 +195,17 @@ struct LostCatDraftView: View {
             contactSection.disabled(!loaded)
             reportSection
             Section {
-                ToolImportantInformation(text: "連絡先は画像・チラシで公開されます。チラシを貼るときは、場所の管理者に確かめてください。届け出は、いなくなった地域の警察・保健所・動物愛護センターへ。")
+                ToolImportantInformation(text: "連絡先は、画像とチラシに載ります。チラシを貼るときは、場所の管理者に確かめてください。")
             }
             if candidateRefreshError {
                 Section {
-                    Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
+                    Text("前に入れた内容を読み込めませんでした。ここに書いた内容はそのままです。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             if saveError {
                 Section {
-                    Button("保存できませんでした。再試行") {
+                    Button("保存できませんでした。もう一度保存する") {
                         if loaded { saveNow() }
                         else { load(initialKey, name: initialName) }
                     }
@@ -222,7 +222,7 @@ struct LostCatDraftView: View {
                     Text("\(requiredFields.joined(separator: "・"))を入れると作成できます")
                         .font(.caption).foregroundStyle(.secondary)
                 } else if !issues.isEmpty {
-                    Text("仕上がりで調整する項目があります")
+                    Text("直す項目があります。各欄の説明を確かめてください")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Button("プレビュー") { openPreview() }
@@ -366,7 +366,7 @@ struct LostCatDraftView: View {
             .textCase(nil)
         } footer: {
             if !(draft.prefilledFields ?? []).isEmpty {
-                Text("入力候補は保存済みの情報です。今の姿に合わせて直せます。")
+                Text("前に入れた内容を入れています。今の姿に合わせて直せます。")
                     .accessibilityIdentifier("lost-cat-prefill-note")
             }
         }
@@ -550,7 +550,7 @@ struct LostCatDraftView: View {
         NavigationStack {
             List {
                 ToolCatPicker(profiles: profiles, select: { switchTo($0.identifier, name: $0.displayName) }) {
-                    Section("プロフィール未登録の猫") {
+                    Section("まだ登録していない猫") {
                         ForEach(savedCats) { cat in
                             Button(cat.displayName) { switchTo(cat.id, name: "") }
                         }
@@ -587,8 +587,8 @@ struct LostCatDraftView: View {
         })
     }
     private func guestLabel(_ guestKey: String) -> String {
-        guard let saved = store.drafts[guestKey] else { return "登録していない猫" }
-        return saved.name.isEmpty ? "登録していない猫・\(saved.updatedAt.formatted(date: .abbreviated, time: .omitted))" : saved.name
+        guard let saved = store.drafts[guestKey] else { return "まだ登録していない猫" }
+        return saved.name.isEmpty ? "まだ登録していない猫・\(saved.updatedAt.formatted(date: .abbreviated, time: .omitted))" : saved.name
     }
     private var publicDraft: LostCatPublicDraft? {
         guard let faceImage else { return nil }
@@ -631,7 +631,7 @@ struct LostCatDraftView: View {
             .accessibilityIdentifier(role == .face ? "lost-cat-face-photo" : "lost-cat-body-photo")
             .disabled(photoBusy || (role == .body && faceImage == nil))
             HStack {
-                Text(isPrefilled(role == .face ? "face" : "body") ? "\(title)・候補" : title).font(.caption)
+                Text(isPrefilled(role == .face ? "face" : "body") ? "\(title)・前の写真" : title).font(.caption)
                     .foregroundStyle(isPrefilled(role == .face ? "face" : "body") ? Color.secondary : Color.primary)
                 Spacer(minLength: 0)
                 if let image {
@@ -763,7 +763,7 @@ private struct LostCatPhotoChoiceView: View {
             }
             if photos.isEmpty {
                 ContentUnavailableView("猫の写真がありません", systemImage: "photo", description:
-                    Text("右上の「…」から、端末の全写真も選べます。"))
+                    Text("右上の「…」から、iPhoneのすべての写真からも選べます。"))
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 12) {
                     ForEach(photos) { photo in
@@ -808,7 +808,7 @@ private struct LostCatPhotoChoiceView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("端末の全写真から追加", systemImage: "photo.on.rectangle") { showsSystemPicker = true }
+                    Button("iPhoneのすべての写真から選ぶ", systemImage: "photo.on.rectangle") { showsSystemPicker = true }
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("ほかの写真を選ぶ")
                 .disabled(busy || loadingPhoto)

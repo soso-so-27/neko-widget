@@ -2476,7 +2476,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
             let guidance = app.staticTexts.matching(NSPredicate(
                 format: "label ENDSWITH %@ OR label == %@",
-                "を入れると作成できます", "仕上がりで調整する項目があります"
+                "を入れると作成できます", "直す項目があります。各欄の説明を確かめてください"
             )).firstMatch
             for _ in 0..<10 {
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
@@ -2658,7 +2658,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let candidates = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "lost-cat-candidate-"))
         XCTAssertTrue(candidates.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(candidates.count, 3)
-        XCTAssertFalse(app.buttons["端末の全写真から追加"].exists)
+        XCTAssertFalse(app.buttons["iPhoneのすべての写真から選ぶ"].exists)
         capture("lost-cat-app-cat-photos")
         app.segmentedControls.buttons["この子"].tap()
         XCTAssertEqual(candidates.count, 1)

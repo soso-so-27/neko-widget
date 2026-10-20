@@ -76,7 +76,7 @@ struct VeterinaryVisitsView: View {
                     guard let id = UUID(uuidString: profile.identifier) else { return }
                     Task { await open(PhotoMemoryNoteCat(id: id, name: profile.displayName)) }
                 }) {
-                    Section("プロフィール未登録の猫") {
+                    Section("まだ登録していない猫") {
                         ForEach(cats.filter { cat in !profiles.contains { $0.identifier == cat.id.uuidString } }, id: \.id) { cat in
                             Button(cat.name) { Task { await open(cat) } }
                                 .accessibilityIdentifier("vet-cat-\(cat.id.uuidString)")
@@ -96,8 +96,8 @@ struct VeterinaryVisitsView: View {
                     }
                 }
             } else if error == nil { ProgressView() }
-            if let error { Section { Text(error); Button("再試行") { Task { await reload() } } } }
-            if cleanupPending { Section { Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote); Button("削除を再試行") { Task { await reload() } } } }
+            if let error { Section { Text(error); Button("もう一度読み込む") { Task { await reload() } } } }
+            if cleanupPending { Section { Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote); Button("もう一度片付ける") { Task { await reload() } } } }
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
@@ -247,7 +247,7 @@ private struct VeterinaryConsultationView: View {
                             .accessibilityIdentifier("vet-pick-records")
                     }
                 } header: { Text("見せる記録 · \(visit.entries.count)件") }
-                  footer: { Text("選んだ時点の控えです。元のメモを編集しても自動では変わりません。外しても元の写真・メモは残ります。") }
+                  footer: { Text("選んだときの内容を残します。外しても、元の写真とメモは消えません。") }
                 Section {
                     ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
                 }
@@ -269,7 +269,7 @@ private struct VeterinaryConsultationView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 6) {
                 if error != nil, changes {
-                    Button("保存を再試行") { Task { await save() } }.accessibilityIdentifier("vet-save")
+                    Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")
                 }
                 Text(observations.count > 500 || questions.count > 500 ? "各項目は500文字以内で入力してください" : changes ? "保存中…" : "自動保存済み").font(.caption).foregroundStyle(.secondary)
                 Button("プレビュー", systemImage: "rectangle.inset.filled") { showing = true }
@@ -454,11 +454,11 @@ private struct VeterinaryRecordConfirmation: View {
                     if let weight = source.note.weight { PhotoMemoWeightLabel(weight: weight.value) }
                     Toggle("この記録は\(visit.catName)のものです", isOn: $confirmed)
                         .accessibilityIdentifier("vet-confirm-target")
-                    if wrongCat { Text("体重の測定対象が別の猫です。元のメモで対象を確認してください。") }
+                    if wrongCat { Text("この体重は別の猫のものです。元のメモで猫を確かめてください。") }
                     Button(visit.entries.contains { $0.sourceNoteID == source.id } ? "選んだ記録を更新" : "診察メモに追加") { Task { await add() } }
                         .disabled(!confirmed || wrongCat || busy).accessibilityIdentifier("vet-add-confirmed")
                     if busy { ProgressView("写真の控えを準備しています…") }
-                } footer: { Text("選んだこの記録だけを追加します。まどへの共有や自動送信はしません。") }
+                } footer: { Text("選んだこの記録だけを追加します。まどに届けることはありません。") }
                 if let error { Text(error).accessibilityIdentifier("vet-add-error") }
             }
             .navigationTitle("内容を確認").navigationBarTitleDisplayMode(.inline)

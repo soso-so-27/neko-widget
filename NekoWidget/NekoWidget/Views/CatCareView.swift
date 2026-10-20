@@ -210,7 +210,7 @@ struct CatCareDetailView: View {
     private var livingSection: some View {
         Section("暮らし") {
             listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
-            TextField("療法食・別々に与えるなど（多頭のとき大事）", text: $draft.specialDiet, axis: .vertical)
+            TextField("療法食・別々に与えるなど（何匹もいるとき大事）", text: $draft.specialDiet, axis: .vertical)
                 .lineLimit(1...3)
             TextField("水", text: $draft.water)
             TextField("トイレ", text: $draft.litter)
@@ -501,7 +501,7 @@ struct CatCareListView: View {
                 pendingDelete = nil
             }
             .accessibilityIdentifier("cat-care-confirm-delete")
-            Button("やめる", role: .cancel) { pendingDelete = nil }
+            Button("キャンセル", role: .cancel) { pendingDelete = nil }
         } message: { Text("削除した記録は、ほかのツールにも載らなくなります。") }
     }
 
@@ -580,7 +580,7 @@ struct CatCareListEntrySheet: View {
             .navigationTitle(CatCareFormat.title(editor.kind) + "を追加")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("追加") { save() } }
             }
             .fullScreenCover(isPresented: $showsCamera) {
@@ -591,7 +591,7 @@ struct CatCareListEntrySheet: View {
                     if let data = image.jpegData(compressionQuality: 0.95), let jpeg = CatCareFormat.cleanJPEG(data) {
                         proof = store.savePhoto(jpeg, sourceAssetID: nil, origin: .camera)
                     } else {
-                        message = "写真を保存できませんでした。"
+                        message = "写真を保存できませんでした。空き容量を確かめて、もう一度お試しください。"
                     }
                 }
                 .ignoresSafeArea()
@@ -603,7 +603,7 @@ struct CatCareListEntrySheet: View {
                        let jpeg = CatCareFormat.cleanJPEG(data) {
                         proof = store.savePhoto(jpeg, sourceAssetID: item.itemIdentifier, origin: .photos)
                     } else {
-                        message = "写真を読み込めませんでした。"
+                        message = "写真を読み込めませんでした。別の写真を選んでください。"
                     }
                 }
             }
