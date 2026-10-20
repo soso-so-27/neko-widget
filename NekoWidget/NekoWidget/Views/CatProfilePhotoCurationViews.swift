@@ -103,6 +103,13 @@ struct CatProfileDetailView: View {
             }
 
             Section {
+                // The cat's health, food and contacts, read by every tool.
+                NavigationLink {
+                    CatCareEntryView(profiles: [profile])
+                } label: {
+                    Label("この子のこと", systemImage: "heart.text.square")
+                }
+                .accessibilityIdentifier("cat-profile-open-cat-care")
                 NavigationLink {
                     CatPreparednessView(
                         identityKey: profile.identifier,
@@ -114,7 +121,7 @@ struct CatProfileDetailView: View {
                     Label("迷子のとき", systemImage: "pawprint")
                 }
             } footer: {
-                Text("この子の写真と特徴を用意しておくと、必要なときに渡す画像を作れます。")
+                Text("「この子のこと」に体や食事のことを書くと、預けるとき・病院・避難の控えに載ります。迷子のときは、写真と特徴から渡す画像を作れます。")
             }
 
             Section {
