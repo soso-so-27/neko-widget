@@ -5006,7 +5006,8 @@ class WidgetSourceOrderTests(unittest.TestCase):
         # New widgets still start on this iPhone's photos.
         self.assertIn("func defaultResult() async -> WidgetPhotoSource? {\n        .personalLibrary", intent)
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn('"このまどは止まっています" : "まだ写真が届いていません"', view)
+        self.assertIn('return "このまどは止まっています"', view)
+        self.assertIn('"アプリを開くと写真が出ます" : "まだ写真が届いていません"', view)
 
 
 class FirstLaunchInvitationTests(unittest.TestCase):
