@@ -78,7 +78,7 @@ final class CareHandoffStore: ObservableObject {
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return true
         } catch {
-            saveError = "プロフィールとの接続を保存できませんでした。保存を再試行してから接続してください。"
+            saveError = "登録した猫とのつながりを保存できませんでした。もう一度保存してから、猫を選び直してください。"
             return false
         }
     }
@@ -130,7 +130,7 @@ final class CareHandoffStore: ObservableObject {
             return cat.id
         } catch {
             if error is MembershipActionDenied { return nil }
-            saveError = "猫の情報を保存できませんでした。元の記録は残っています。保存を再試行してから、もう一度この子を選んでください。"
+            saveError = "猫の情報を保存できませんでした。元の記録は残っています。もう一度保存してから、この子を選び直してください。"
             return nil
         }
     }
