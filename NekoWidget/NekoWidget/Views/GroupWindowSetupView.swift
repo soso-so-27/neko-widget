@@ -1195,6 +1195,23 @@ struct GroupInvitationJoinSheet: View {
                     }
                 }
         }
+        .onDisappear { settleInvitation() }
+    }
+
+    /// A used invitation is not offered again. Joined and closed with 「閉じる」:
+    /// the まど tab still opens the window. Still applying or waiting: it stays.
+    private func settleInvitation() {
+        switch model?.phase {
+        case .approved?:
+            if GroupWindowOpenInbox.shared.pendingWindowID == nil {
+                GroupWindowOpenInbox.shared.open(windowID: invitation.windowID)
+            }
+            GroupInvitationInbox.shared.discard()
+        case .rejected?, .expired?, .cancelled?:
+            GroupInvitationInbox.shared.discard()
+        default:
+            break
+        }
     }
 }
 

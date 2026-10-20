@@ -37,6 +37,9 @@ struct AppRootView: View {
     @State private var showsInvitationJoin = false
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
     @State private var onboardingInvitation: GroupInvitationLink?
+    /// An invitation that arrived while the help sheet was open. It opens
+    /// after that sheet has closed, so two sheets never switch at once.
+    @State private var invitationAfterHelp: GroupInvitationLink?
     @State private var firstRunPhoto: PhotoPresentation?
     @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
@@ -60,6 +63,11 @@ struct AppRootView: View {
             widgetPhotoDestination(opening, close: close)
         }
         .sheet(isPresented: $showsInvitationJoin, onDismiss: {
+            if let next = invitationAfterHelp {
+                invitationAfterHelp = nil
+                onboardingInvitation = next
+                return
+            }
             // Completion follows a successful pairing, never merely a tap.
             if (try? PairingStateStore.load())?.phase == .paired {
                 completeOnboardingWithoutPhotoAccess()
@@ -84,11 +92,17 @@ struct AppRootView: View {
         .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in
             guard OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
                   let invitation = invitationInbox.pending else { return }
-            showsInvitationJoin = false
-            onboardingInvitation = invitation
+            if showsInvitationJoin {
+                invitationAfterHelp = invitation
+                showsInvitationJoin = false
+            } else {
+                onboardingInvitation = invitation
+            }
         }
         .sheet(item: $onboardingInvitation, onDismiss: {
-            guard GroupWindowOpenInbox.shared.pendingWindowID != nil else { return }
+            // Joined, or the invitation was settled (the sheet then cleared it).
+            // Closed before applying: the guide stays, and the invitation waits.
+            guard GroupWindowOpenInbox.shared.pendingWindowID != nil || invitationInbox.pending == nil else { return }
             invitationInbox.discard()
             // The まど tab opens the joined window from GroupWindowOpenInbox.
             completeOnboardingWithoutPhotoAccess()

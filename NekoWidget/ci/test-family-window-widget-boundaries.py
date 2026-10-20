@@ -5147,5 +5147,17 @@ class GroupWindowAuditFixTests(unittest.TestCase):
         self.assertNotIn("catalog.entries.insert(entry, at: 0)", cache)
 
 
+class OnboardingInvitationSequenceTests(unittest.TestCase):
+    def test_join_opens_after_the_help_sheet_and_used_invitations_go(self) -> None:
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        self.assertIn("invitationAfterHelp = invitation\n                showsInvitationJoin = false", root_view)
+        self.assertIn("onboardingInvitation = next", root_view)
+        self.assertIn("GroupWindowOpenInbox.shared.pendingWindowID != nil || invitationInbox.pending == nil", root_view)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        settle = section(setup, "private func settleInvitation()", "// MARK: - DEBUG fixture entry")
+        self.assertIn("case .approved?:", settle)
+        self.assertIn("GroupInvitationInbox.shared.discard()", settle)
+
+
 if __name__ == "__main__":
     unittest.main()
