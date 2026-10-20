@@ -605,20 +605,24 @@ final class GroupJoinModel: ObservableObject {
     @Published private(set) var errorMessage: String?
 
     let invitationID: String
-    private let client: any GroupWindowClient
+    /// Nil until the production adapter exists in this build; the screen
+    /// then explains that applying is not available yet.
+    private let client: (any GroupWindowClient)?
     /// Kept so an offline retry resends the same application, not a second.
     private let applyOperationID = UUID()
 
-    init(client: any GroupWindowClient, invitationID: String) {
+    init(client: (any GroupWindowClient)?, invitationID: String) {
         self.client = client
         self.invitationID = invitationID
     }
+
+    var isAvailable: Bool { client != nil }
 
     var trimmedName: String {
         displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var canApply: Bool { !trimmedName.isEmpty && !isWorking }
+    var canApply: Bool { isAvailable && !trimmedName.isEmpty && !isWorking }
 
     var isPending: Bool {
         if case .pending = phase { return true }
@@ -626,6 +630,10 @@ final class GroupJoinModel: ObservableObject {
     }
 
     func apply() async {
+        guard let client else {
+            errorMessage = GroupWindowPresentation.message(for: GroupClientError.unavailable)
+            return
+        }
         guard canApply else { return }
         isWorking = true
         defer { isWorking = false }
@@ -643,7 +651,7 @@ final class GroupJoinModel: ObservableObject {
     }
 
     func refresh() async {
-        guard case let .pending(request) = phase else { return }
+        guard case let .pending(request) = phase, let client else { return }
         do {
             let latest = try await client.joinStatus(requestID: request.id)
             update(with: latest)
@@ -655,7 +663,7 @@ final class GroupJoinModel: ObservableObject {
     }
 
     func cancel() async {
-        guard case let .pending(request) = phase, !isWorking else { return }
+        guard case let .pending(request) = phase, let client, !isWorking else { return }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -732,7 +740,24 @@ struct GroupJoinView: View {
         .refreshable { await model.refresh() }
     }
 
+    @ViewBuilder
     private var nameSection: some View {
+        if !model.isAvailable {
+            Section {
+                Label("この招待はまだ開けません", systemImage: "hourglass")
+                    .font(.headline)
+                    .accessibilityIdentifier("group-join-unavailable")
+                Text("この版では、招待からの参加を準備中です。アプリを最新にしてから、もう一度リンクを開いてください。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            applySection
+        }
+    }
+
+    private var applySection: some View {
         Section {
             TextField("まどでの名前（例：お父さん）", text: $model.displayName)
                 .accessibilityIdentifier("group-join-name")
@@ -931,6 +956,69 @@ struct LegacyWindowMembersScreen: View {
 
     var body: some View {
         GroupWindowMembersView(model: model, capabilities: .readOnly)
+    }
+}
+
+// MARK: - Opening an invitation link
+
+/// The invitation link that was opened, held in memory only, until the join
+/// sheet consumes or closes it. Nothing here persists or logs the link.
+@MainActor
+final class GroupInvitationInbox: ObservableObject {
+    static let shared = GroupInvitationInbox()
+
+    @Published private(set) var pending: GroupInvitationLink?
+
+    func receive(_ link: GroupInvitationLink) {
+        pending = link
+    }
+
+    func discard() {
+        pending = nil
+    }
+}
+
+/// Where the join screen gets its client. The production adapter (relay,
+/// stored keys, encryption) is not wired yet, so outside the DEBUG fixture
+/// there is none and the screen says that applying is not available yet.
+enum GroupWindowClientProvider {
+    static func client(for invitation: GroupInvitationLink) -> (any GroupWindowClient)? {
+#if DEBUG
+        if GroupWindowUIFixture.isRequested {
+            return GroupWindowFixture(
+                scenario: GroupWindowUIFixture.scenario,
+                now: GroupWindowUIFixture.fixtureNow
+            )
+        }
+#endif
+        return nil
+    }
+}
+
+/// Presented by the まど tab when an invitation link was opened.
+struct GroupInvitationJoinSheet: View {
+    let invitation: GroupInvitationLink
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var model: GroupJoinModel
+
+    init(invitation: GroupInvitationLink) {
+        self.invitation = invitation
+        _model = StateObject(wrappedValue: GroupJoinModel(
+            client: GroupWindowClientProvider.client(for: invitation),
+            invitationID: invitation.invitationID
+        ))
+    }
+
+    var body: some View {
+        NavigationStack {
+            GroupJoinView(model: model, onOpenWindow: { dismiss() })
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { dismiss() }
+                            .accessibilityIdentifier("group-join-close")
+                    }
+                }
+        }
     }
 }
 

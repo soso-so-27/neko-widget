@@ -39,6 +39,12 @@ xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -o "$RUNNER_TEMP/group-window-tests"
 "$RUNNER_TEMP/group-window-tests" ci/fixtures/group-roster-v3.json
 
+xcrun --sdk macosx swiftc -parse-as-library \
+  -target "$(uname -m)-apple-macos14.0" \
+  NekoWidget/Services/GroupInvitationLink.swift ci/verify-group-invitation-link.swift \
+  -o "$RUNNER_TEMP/group-invitation-link-tests"
+"$RUNNER_TEMP/group-invitation-link-tests"
+
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do
   output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"

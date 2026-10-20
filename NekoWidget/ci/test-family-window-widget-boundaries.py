@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import re
 import unittest
 
 
@@ -4274,7 +4275,11 @@ class GroupWindowUITests(unittest.TestCase):
         # The fixture is DEBUG-only and reached by a launch argument.
         debug = section(view, "// MARK: - DEBUG fixture entry", "#endif")
         self.assertIn("#if DEBUG", debug)
-        self.assertEqual(view.count("GroupWindowFixture("), debug.count("GroupWindowFixture("))
+        debug_blocks = re.findall(r"#if DEBUG(.*?)#endif", view, flags=re.S)
+        self.assertEqual(
+            view.count("GroupWindowFixture("),
+            sum(block.count("GroupWindowFixture(") for block in debug_blocks),
+        )
         self.assertIn('"--group-window-ui-fixture"', debug)
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertIn("} else if GroupWindowUIFixture.isRequested {", family)
@@ -4294,6 +4299,52 @@ class GroupWindowUITests(unittest.TestCase):
         self.assertIn("if capabilities.invitations, window.canManage {", view)
         self.assertIn("if capabilities.leave {", view)
         self.assertIn("let canRemove = capabilities.removal", view)
+
+
+class GroupInvitationLinkTests(unittest.TestCase):
+    def test_invitation_link_reaches_the_join_screen_without_leaking_keys(self) -> None:
+        link = source("NekoWidget/Services/GroupInvitationLink.swift")
+        # Foundation only; the parsed keys never reach logs or storage.
+        self.assertEqual(link.count("import "), 1)
+        for forbidden in ("print(", "SharedLog", "UserDefaults", "Keychain", "URLSession"):
+            self.assertNotIn(forbidden, link)
+        self.assertIn('static let host = "nekonomado.com"', link)
+        self.assertIn('static let path = "/join"', link)
+        self.assertIn("components.query == nil", link)
+        self.assertIn("let fragment = components.fragment", link)
+        self.assertIn("keys: redacted", link)
+        self.assertNotIn("inviteSecret.base64", link)
+
+        # The app routes the link to the まど tab without logging it.
+        app = source("NekoWidget/ViewModels/AppViewModel.swift")
+        hook = section(app, "func handleURL(_ url: URL) {", "guard let link = DeepLink(url: url) else {")
+        self.assertIn("GroupInvitationLink.isCandidate(url)", hook)
+        self.assertIn("GroupInvitationInbox.shared.receive(invitation)", hook)
+        self.assertIn("isFamilyWindowPresented = true", hook)
+        for leak in ("url.absoluteString", "\\(url)", "url.fragment", "metadata:"):
+            self.assertNotIn(leak, hook)
+
+        view = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        inbox = section(view, "final class GroupInvitationInbox", "enum GroupWindowClientProvider")
+        self.assertNotIn("UserDefaults", inbox)
+        self.assertNotIn("print(", inbox)
+        # Outside the DEBUG fixture there is no client yet, and the sheet says so.
+        provider = section(view, "enum GroupWindowClientProvider", "struct GroupInvitationJoinSheet: View")
+        self.assertIn("#if DEBUG", provider)
+        self.assertIn("return nil", provider)
+        self.assertIn("client: GroupWindowClientProvider.client(for: invitation)", view)
+        self.assertIn('"group-join-unavailable"', view)
+
+        # Only the tab's own screen presents the sheet.
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        self.assertIn("@ObservedObject private var invitationInbox = GroupInvitationInbox.shared", family)
+        self.assertEqual(family.count(".sheet(item: receivedInvitationSheetItem)"), 1)
+        self.assertIn("guard initialPresentation == .content, widgetPhotoRequest == nil else { return nil }", family)
+
+        checks = source("ci/run-quick-ios-checks.sh")
+        self.assertIn("ci/verify-group-invitation-link.swift", checks)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertIn("GroupInvitationLink.swift in Sources", project)
 
 
 if __name__ == "__main__":
