@@ -2606,6 +2606,7 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
     @State private var deliveryPhoto: PhotoPresentation?
+    @State private var groupDelivery: GroupDeliveryRequest?
     @StateObject private var photoDeliveryModel = MomentSharingViewModel()
     @State private var stagedDeliveryID: String?
     @State private var showsWidgetInformation = false
@@ -2750,6 +2751,20 @@ struct PhotoBrowserView: View {
                         .accessibilityIdentifier("photo-memory-note-read-retry")
                     }
                     .accessibilityIdentifier("photo-memory-note-read-error")
+                }
+                if GroupWindowClientProvider.production != nil, let photo = selectedPhoto {
+                    Button {
+                        // Choosing the window and confirming come first; nothing is sent here.
+                        groupDelivery = GroupDeliveryRequest(localIdentifier: photo.localIdentifier)
+                    } label: {
+                        Label("まどに届ける", systemImage: "paperplane.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityHint("届け先のまどを選んでから、写真とメモを確認します")
+                    .accessibilityIdentifier("photo-browser-deliver-group")
+                    .disabled(isExportingMemoryPhoto)
                 }
                 if canDeliverToWindow {
                     Button {
@@ -3098,6 +3113,11 @@ struct PhotoBrowserView: View {
         browserDialogs
         .task(id: selectedPhotoIdentifier) {
             await personalNote.load(for: selectedPhotoIdentifier)
+        }
+        .sheet(item: $groupDelivery) { request in
+            if let client = GroupWindowClientProvider.production {
+                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
+            }
         }
         .sheet(item: $deliveryPhoto) { photo in
             PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live(model: photoDeliveryModel),
@@ -3751,4 +3771,10 @@ struct DayPhotosView: View {
         )
         .aspectRatio(1, contentMode: .fit)
     }
+}
+
+/// A photo waiting to be delivered to a group window from its detail screen.
+struct GroupDeliveryRequest: Identifiable {
+    let id = UUID()
+    let localIdentifier: String
 }
