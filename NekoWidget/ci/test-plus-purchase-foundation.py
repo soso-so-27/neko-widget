@@ -246,12 +246,22 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         extension_sources = project[project.index("A00000000000000000000025 /* Sources */ = {") :]
         self.assertIn("PlusPurchaseStore.swift in Sources", app_sources)
         self.assertNotIn("PlusPurchaseStore.swift in Sources", extension_sources)
+        # ADR-027: the 14-day trial and its merge with Plus are App-target only too.
+        for name in ("TrialPeriodStore.swift", "MembershipAuthority.swift"):
+            self.assertIn(f"{name} in Sources", app_sources)
+            self.assertNotIn(f"{name} in Sources", extension_sources)
 
+        # The production root references one authority that bundles Plus and the trial.
         app = source("NekoWidget/App/NekoWidgetApp.swift")
-        self.assertIn("@StateObject private var plusPurchases = PlusPurchaseStore.productionShared", app)
-        self.assertIn("await plusPurchases.start()", app)
-        self.assertIn("await plusPurchases.refreshAfterForegroundEntry()", app)
+        self.assertIn("@StateObject private var membership = MembershipAuthority.productionShared", app)
+        self.assertNotIn("PlusPurchaseStore", app)
+        self.assertIn("await membership.start()", app)
+        self.assertIn("await membership.refreshAfterForegroundEntry()", app)
         self.assertIn("guard newPhase == .active", app)
+        authority = source("NekoWidget/Services/MembershipAuthority.swift")
+        self.assertIn("plus: .productionShared", authority)
+        self.assertIn("await plus.start()", authority)
+        self.assertIn("await plus.refreshAfterForegroundEntry()", authority)
 
         self.assertIn("@Published private(set) var pendingProductID", self.store)
         purchase = section(

@@ -26,6 +26,7 @@ struct OnboardingView: View {
     let finish: () -> Void
     let openPhoto: (PhotoPresentation) -> Void
     var joinInvitation: (() -> Void)? = nil
+    @Environment(\.membershipTrial) private var membershipTrial
 
     var body: some View {
         Group {
@@ -43,7 +44,9 @@ struct OnboardingView: View {
             case .widgetGuide:
                 WidgetPlacementGuideView(
                     onComplete: finish,
-                    onSkip: finish
+                    onSkip: finish,
+                    footnote: membershipTrial.remainingDays != nil
+                        ? OnboardingPresentationCopy.trialFootnote : nil
                 )
             }
         }

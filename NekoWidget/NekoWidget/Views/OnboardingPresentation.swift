@@ -127,6 +127,8 @@ enum OnboardingPresentationCopy {
     static let widgetReturnHint = "追加してアプリへ戻ると、自動で確認します。"
     static let widgetAction = "手順を確認した"
     static let widgetLaterAction = "あとで"
+    /// ADR-027：初回案内の最後の1行。体験中（アプリ側の14日開放が有効）のときだけ出す。
+    static let trialFootnote = "14日間、すべての機能を無料で使えます"
 
 }
 

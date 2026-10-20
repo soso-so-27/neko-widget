@@ -5,7 +5,9 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>見せる画面を閉じて自分の写真に戻るとき、本人確認に使用します。</string>
 	<key>MembershipAccessEnforced</key>
-	<false/>
+	<string>$(MEMBERSHIP_ACCESS_ENFORCED)</string>
+	<key>TrialUnlockEnabled</key>
+	<string>$(TRIAL_UNLOCK_ENABLED)</string>
 	<key>PersonalArchiveEnabled</key>
 	<string>$(PERSONAL_ARCHIVE_ENABLED)</string>
 	<key>PersonalArchiveContainerIdentifier</key>

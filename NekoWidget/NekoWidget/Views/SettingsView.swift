@@ -46,6 +46,7 @@ struct PersonalArchiveSettingsLink: View {
 
 struct SettingsView: View {
     @Environment(\.photoMemoStore) private var memoStore
+    @Environment(\.membershipTrial) private var membershipTrial
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
     let highResolutionRecoverySample: DetectionAccuracySamplePresentation
@@ -293,14 +294,21 @@ struct SettingsView: View {
                 Text("プライバシーとサポート")
             }
 
-            if canOpenMembershipOffer {
+            if canOpenMembershipOffer || membershipTrial.remainingDays != nil {
                 Section {
-                    Button {
-                        showsMembershipOffer = true
-                    } label: {
-                        Label("会員プラン", systemImage: "sparkles")
+                    if let remainingDays = membershipTrial.remainingDays {
+                        // ADR-027：体験中の「あと○日」は設定の会員プラン欄だけに出す。
+                        Label("すべての機能を試せます：あと\(remainingDays)日", systemImage: "clock")
+                            .accessibilityIdentifier("settings-trial-remaining-days")
                     }
-                    .accessibilityIdentifier("settings-membership-offer")
+                    if canOpenMembershipOffer {
+                        Button {
+                            showsMembershipOffer = true
+                        } label: {
+                            Label("会員プラン", systemImage: "sparkles")
+                        }
+                        .accessibilityIdentifier("settings-membership-offer")
+                    }
                 }
             }
 

@@ -141,45 +141,39 @@ struct NekoWidgetApp: App {
 struct ProductionAppRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = AppViewModel()
-    @StateObject private var plusPurchases = PlusPurchaseStore.productionShared
-    @State private var membershipNow = Date()
+    /// Plus と14日体験を束ねた1つの権限（ADR-027、実装計画 1-4）。画面はこれだけを参照する。
+    @StateObject private var membership = MembershipAuthority.productionShared
 
     var body: some View {
         AppRootView(viewModel: viewModel)
-            .environment(\.membershipActions, plusPurchases.membershipActions)
-            .environment(\.membershipAccess,
-                MembershipAccessContext(entitlement: plusPurchases.entitlementState, now: membershipNow))
-            .task(id: plusPurchases.entitlementState) {
-                membershipNow = .now
-                let access = MembershipAccessContext(entitlement: plusPurchases.entitlementState)
-                try? PersonalWidgetMembershipStore.publish(access.personal)
-                if let expiration = plusPurchases.entitlementState.lastServerConfirmed?.expirationDate,
-                   expiration > .now {
-                    do { try await Task.sleep(for: .seconds(expiration.timeIntervalSinceNow)) }
-                    catch { return }
-                    guard !Task.isCancelled else { return }
-                    membershipNow = .now
-                    WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-                }
+            .environment(\.membershipActions, membership.membershipActions)
+            .environment(\.membershipAccess, membership.access)
+            .environment(\.membershipTrial, membership.trialPresentation)
+            .task(id: membership.access) {
+                membership.publishWidgetSnapshot()
+                guard let boundary = membership.nextBoundary, boundary > .now else { return }
+                do { try await Task.sleep(for: .seconds(boundary.timeIntervalSinceNow)) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                membership.refresh()
+                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             }
             .onReceive(NotificationCenter.default.publisher(for: .membershipAccessRefreshRequested)) { _ in
-                Task {
-                    await plusPurchases.refreshAfterForegroundEntry()
-                    membershipNow = .now
-                }
+                Task { await membership.refreshAfterForegroundEntry() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .membershipTrialDay14NoticeShown)) { _ in
+                membership.markDay14NoticeShown()
             }
             .task {
-                await plusPurchases.start()
+                await membership.start()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase == .active else { return }
                 Task {
-                    await plusPurchases.refreshAfterForegroundEntry()
+                    await membership.refreshAfterForegroundEntry()
                     // Retry the bounded Widget snapshot even when the server
                     // returns the same entitlement after a prior disk error.
-                    try? PersonalWidgetMembershipStore.publish(
-                        MembershipAccessContext(entitlement: plusPurchases.entitlementState).personal)
-                    membershipNow = .now
+                    membership.publishWidgetSnapshot()
                 }
             }
     }

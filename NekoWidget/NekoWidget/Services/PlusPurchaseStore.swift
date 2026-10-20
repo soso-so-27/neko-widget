@@ -204,10 +204,14 @@ final class PlusPurchaseStore: ObservableObject {
         didSet {
             let access = MembershipAccessContext(entitlement: entitlementState)
             membershipActions.update(enforcementEnabled: access.enforcementEnabled, personal: access.personal)
+            entitlementStateDidChange?(entitlementState)
         }
     }
     /// Updated synchronously with authority, independent of View lifetimes.
     let membershipActions = MembershipActionAccess(enforcementEnabled: MembershipAccessContext.enforcementConfigured)
+    /// `MembershipAuthority` が Plus と14日体験を合流させるための同期通知。
+    /// 画面には `MembershipAuthority.membershipActions` を渡す。
+    var entitlementStateDidChange: ((PlusEntitlementState) -> Void)?
     @Published private(set) var isPurchasing = false
     @Published private(set) var isRestoring = false
     @Published private(set) var pendingProductID: String?
