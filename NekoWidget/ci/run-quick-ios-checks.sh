@@ -31,6 +31,14 @@ xcrun --sdk macosx swiftc -parse-as-library \
 "$RUNNER_TEMP/moment-sharing-presentation-tests"
 python3 ci/test-family-window-widget-boundaries.py
 
+xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
+  -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift \
+  NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowFixture.swift ci/verify-group-windows.swift \
+  -o "$RUNNER_TEMP/group-window-tests"
+"$RUNNER_TEMP/group-window-tests"
+
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do
   output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"
