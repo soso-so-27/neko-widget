@@ -529,9 +529,11 @@ struct NekoWidgetView: View {
             return "写真を待っています"
         }
         if let windowID = GroupWidgetCache.windowID(fromSourceID: entry.photoSourceIdentifier) {
-            // A group window says why it is empty: stopped, or nothing sent yet.
-            return GroupWidgetCache.entry(windowID: windowID)?.isPaused == true
-                ? "このまどは止まっています" : "まだ写真が届いていません"
+            // A group window says why it is empty: stopped, nothing sent yet,
+            // or a photo the app has not drawn here yet.
+            let cached = GroupWidgetCache.entry(windowID: windowID)
+            if cached?.isPaused == true { return "このまどは止まっています" }
+            return cached?.photoID != nil ? "アプリを開くと写真が出ます" : "まだ写真が届いていません"
         }
         return "写真を準備しています"
     }
