@@ -379,7 +379,7 @@ private struct EvacuationCatView: View {
         List {
             if let cat {
                 Section {
-                    HStack(spacing: 14) {
+                    ToolAdaptiveStack {
                         EvacuationPhoto(image: store.image(cat.photos["face"] ?? cat.photos["body"] ?? cat.photos["reference"]), label: "この子の写真")
                             .frame(width: 80, height: 90)
                         VStack(alignment: .leading, spacing: 7) {

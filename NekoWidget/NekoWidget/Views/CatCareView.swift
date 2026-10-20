@@ -691,6 +691,20 @@ extension View {
     }
 }
 
+/// A photo beside its text, stacked when the text is very large.
+struct ToolAdaptiveStack<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    var spacing: CGFloat = 14
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: spacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content() }
+    }
+}
+
 enum ToolPhotoLabel {
     /// 「この写真を使う、2026年10月20日」: photos in a grid are told apart by their day.
     static func text(_ action: String, date: Date?) -> String {

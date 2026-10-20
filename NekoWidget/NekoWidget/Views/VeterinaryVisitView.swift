@@ -417,7 +417,7 @@ private struct VeterinaryRecordPicker: View {
                 }
                 if let error { Text(error) }
             }
-            .navigationTitle("メモを選ぶ").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("写真・メモを選ぶ").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
             .task {
                 access.start(photos: photos)

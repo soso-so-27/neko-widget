@@ -208,7 +208,7 @@ private struct CareCatEditor: View {
                                   isPrefilled: cat.prefilledFields?.contains("name") == true)
                     }
                     Button { showsPhotoPicker = true } label: {
-                        HStack(spacing: 16) {
+                        ToolAdaptiveStack(spacing: 16) {
                             CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
                             Label(cat.photoName == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo")
                             Spacer()
