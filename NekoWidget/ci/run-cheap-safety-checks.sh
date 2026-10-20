@@ -52,6 +52,22 @@ xcrun swiftc -parse-as-library \
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   ci/verify-membership-access.swift -o "$RUNNER_TEMP/verify-membership-access"
 "$RUNNER_TEMP/verify-membership-access"
+xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
+  Shared/PersonalWidgetMembershipStore.swift ci/verify-personal-widget-membership.swift \
+  -o "$RUNNER_TEMP/verify-personal-widget-membership"
+"$RUNNER_TEMP/verify-personal-widget-membership"
+
+# The personal Widget keeps its last photo after the trial/membership stops;
+# this state-machine check guards that journal, its protected cache files,
+# and the daily-photo plan (also run by the opt-in extended workflow).
+xcrun --sdk macosx swiftc \
+  -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
+  Shared/Models/WidgetManifest.swift \
+  Shared/Models/WidgetRenderPlan.swift \
+  Shared/Storage/PersonalRediscoveryStore.swift \
+  ci/verify-personal-rediscovery.swift \
+  -o "$RUNNER_TEMP/verify-personal-rediscovery"
+"$RUNNER_TEMP/verify-personal-rediscovery"
 
 xcrun swiftc \
   -parse-as-library \
