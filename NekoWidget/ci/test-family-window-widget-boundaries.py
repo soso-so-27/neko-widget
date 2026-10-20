@@ -4512,7 +4512,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
         provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
         group = section(provider, "private func groupEntry(", "private func familyEntry(")
         self.assertIn("isBookmarkInteractionEnabled: false", group)
-        self.assertIn("familyHeartStatus: .hidden", group)
+        self.assertIn("familyHeartStatus: cached.myHeartActive == true ? .serverAccepted : .ready", group)
         self.assertIn("emptyStateReason: .sourceUnavailable", group)
         intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
         # A missing group window never becomes the personal-library default.
@@ -4919,6 +4919,61 @@ class GroupWindowSpeedTests(unittest.TestCase):
         listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
         self.assertIn("GroupWidgetCache.entries()", listing)
         self.assertIn("!model.hasLoaded && model.windows.isEmpty", listing)
+
+
+class GroupWidgetOpenTests(unittest.TestCase):
+    def test_home_screen_photo_opens_its_group_window(self) -> None:
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        open_url = section(cache, "static func openURL(windowID: String) -> URL?", "static func windowID(fromOpenURL url: URL)")
+        self.assertIn('components.host = "group-window"', open_url)
+        self.assertIn('URLQueryItem(name: "window", value: windowID)', open_url)
+        parse = section(cache, "static func windowID(fromOpenURL url: URL)", "// MARK: Reading")
+        self.assertIn("items.count == 1", parse)
+        self.assertIn("isValidID(windowID)", parse)
+        entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
+        photo_url = section(entry, "var photoURL: URL? {", "var memoryActionURL: URL?")
+        self.assertLess(photo_url.index("GroupWidgetCache.windowID(fromSourceID:"), photo_url.index("PublicWindowDefinition.windowID"))
+        app = source("NekoWidget/ViewModels/AppViewModel.swift")
+        hook = section(app, "func handleURL(_ url: URL) {", "guard let link = DeepLink(url: url) else {")
+        self.assertIn("GroupWindowOpenInbox.shared.open(windowID: groupWindowID)", hook)
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", screen)
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn(".onChange(of: groupWindowOpenInbox.pendingWindowID)", tab)
+
+
+class GroupWidgetHeartTests(unittest.TestCase):
+    def test_group_heart_runs_in_the_app_for_the_shown_photo_only(self) -> None:
+        intent = source("NekoWidgetWidget/SendGroupWidgetHeartIntent.swift")
+        self.assertIn("static var openAppWhenRun = false", intent)
+        self.assertIn("cached.photoID == photoID", intent)
+        # Only the host app signs and sends; the extension never does.
+        host = section(intent, "#if NEKO_HOST_APP", "#endif")
+        self.assertIn("GroupWindowClientProvider.production", host)
+        self.assertIn("active: true", host)
+        self.assertNotIn("URLSession", intent)
+        self.assertIn("extension SendGroupWidgetHeartIntent: ForegroundContinuableIntent {}", intent)
+        view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        control = section(view, "private func groupHeartControl(", "private func familyHeartControl(")
+        self.assertIn("SendGroupWidgetHeartIntent(windowID: photo.windowID, photoID: photo.photoID)", control)
+        self.assertEqual(control.count("Button("), 1)
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        self.assertIn("var myHeartActive: Bool? = nil", cache)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        widget_sources = section(project, "A00000000000000000000025 /* Sources */ = {", "A00000000000000000000028 /* Sources */")
+        self.assertIn("SendGroupWidgetHeartIntent.swift in Sources", widget_sources)
+        self.assertNotIn("ProductionGroupWindowClient.swift in Sources", widget_sources)
+
+
+class GroupJoinOpensWindowTests(unittest.TestCase):
+    def test_open_window_after_joining_opens_that_window(self) -> None:
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        sheet = section(setup, "struct GroupInvitationJoinSheet: View {", ".task {")
+        self.assertIn("GroupWindowOpenInbox.shared.open(windowID: invitation.windowID)", sheet)
+        self.assertLess(sheet.index("GroupWindowOpenInbox.shared.open"), sheet.index("dismiss()"))
+        # The list opens only a window this iPhone belongs to.
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", window)
 
 
 if __name__ == "__main__":
