@@ -192,9 +192,23 @@ struct AlbumView: View {
         let secondary = AlbumShelfLayoutPolicy.secondaryThemes(in: sections)
         let dates = AlbumShelfLayoutPolicy.dateAlbums(in: sections)
 
+        // 成長 is for each cat (情報設計 4章): the album root lists every cat.
+        let showsCatGrowth = selectedProfileIdentifier == nil && !profiles.isEmpty
         return VStack(alignment: .leading, spacing: 16) {
-            Text(comparisons.isEmpty ? "探す" : "成長")
+            Text(comparisons.isEmpty && !showsCatGrowth ? "探す" : "成長")
                 .font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            if showsCatGrowth {
+                CatProfileNavigationStrip {
+                    ForEach(profiles) { profile in
+                        NavigationLink(value: MemoriesRoute.catAlbums(profile.identifier)) {
+                            CatProfileNavigationLabel(profile: profile)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(profile.displayName)の成長とアルバム")
+                        .accessibilityIdentifier("albums-cat-growth-\(profile.identifier)")
+                    }
+                } more: { EmptyView() }
+            }
             if let periodContent {
                 periodContent
             }
@@ -212,7 +226,7 @@ struct AlbumView: View {
                     .accessibilityValue(GrowthAlbumOverviewCard.dateRange(for: album))
                 }
             }
-            if !comparisons.isEmpty {
+            if !comparisons.isEmpty || showsCatGrowth {
                 Text("探す").font(.title3.bold()).accessibilityAddTraits(.isHeader)
             }
             if !periods.isEmpty || !dates.isEmpty {
@@ -462,7 +476,7 @@ struct AlbumView: View {
             ContentUnavailableView(
                 "アルバムを表示できません",
                 systemImage: "exclamationmark.triangle",
-                description: Text("写真の確認が完了していません。設定から再スキャンしてください。")
+                description: Text("写真を探し終えられませんでした。設定の「最初から再スキャン」で、もう一度探してください。")
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
         } else if scan.isPreparingGroupedAlbums || scan.isScanning {
@@ -1017,6 +1031,12 @@ struct LikedPhotosView: View {
         )
     }
 
+    @Environment(\.membershipAccess) private var membershipAccess
+    /// The monthly summary and movie open with Plus; their cards say so before a tap.
+    private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) != .allowed }
+    private var showsReflectionPlaceholder: Bool {
+        hasPhotoAccess && !isCatDetail && albumScope.wrappedValue == .everyone && !hasPeriodCollections
+    }
     private var months: [MonthlyWindowPresentation] { monthlyWindowCollection?.letters ?? [] }
     private var hasPeriodCollections: Bool {
         hasPhotoAccess && !isCatDetail && albumScope.wrappedValue == .everyone
@@ -1134,7 +1154,7 @@ struct LikedPhotosView: View {
                         ContentUnavailableView {
                             Label("写真の対象を確認してください", systemImage: "photo.on.rectangle")
                         } description: {
-                            Text("選択した写真アルバムを読み込めません。写真ページから対象を選び直してください。")
+                            Text("選んだ写真アプリのアルバムを読み込めません。写真タブで選び直してください。")
                         } actions: {
                             Button(action: recoverPhotoSource) {
                                 Label("写真の対象を確認", systemImage: "arrow.right")
@@ -1145,6 +1165,7 @@ struct LikedPhotosView: View {
                         .accessibilityIdentifier("albums-source-unavailable")
                     } else if hasPhotoAccess {
                         if hasPeriodCollections { reflectionShelf }
+                        else if showsReflectionPlaceholder { reflectionPlaceholder }
                         if let albumScan {
                             AlbumView(
                                 sections: albumSections, scan: albumScan,
@@ -1174,8 +1195,22 @@ struct LikedPhotosView: View {
                             .accessibilityIdentifier("albums-memo-retry")
                         }
                     }
-                    if !isPhotoSourceUnavailable && (!hasPhotoAccess || (months.isEmpty && seasonalMovies.isEmpty
-                        && albumSections.allSatisfy({ $0.id == .all }))) {
+                    if !isPhotoSourceUnavailable && !hasPhotoAccess {
+                        ContentUnavailableView {
+                            Label("猫の写真を自動でまとめます", systemImage: "photo.stack")
+                        } description: {
+                            Text("写真を見られるようにすると、月のまとめや成長がここにできます。猫かどうかは、このiPhoneの中で見分けます。")
+                        } actions: {
+                            Button(action: openPhotos) {
+                                Label("写真の許可を確認", systemImage: "arrow.right")
+                                    .frame(minHeight: 44)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("memories-open-photos")
+                        }
+                        .accessibilityIdentifier("memories-no-photo-access")
+                    } else if !isPhotoSourceUnavailable && months.isEmpty && seasonalMovies.isEmpty
+                        && albumSections.allSatisfy({ $0.id == .all }) {
                         Button(action: openPhotos) {
                             Label("写真を見る", systemImage: "photo.on.rectangle.angled")
                                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -1294,6 +1329,7 @@ struct LikedPhotosView: View {
             Text("ふりかえり").font(.title3.bold()).accessibilityAddTraits(.isHeader)
             if let month = months.first {
                 monthLink(month, isLatest: true, isWide: true)
+                    .overlay(alignment: .topLeading) { if summaryNeedsPlus { plusMark.padding(10) } }
             }
             if let movie = seasonalMovies.first {
                 NavigationLink(value: MemoriesRoute.seasonalMovie(movie.periodID)) {
@@ -1310,8 +1346,9 @@ struct LikedPhotosView: View {
                         .background(Color.secondary.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(movie.effectivePresentation.periodTitle)の季節のムービー").font(.headline)
-                            Text("\(movie.effectivePresentation.scenes.count)場面").font(.caption).foregroundStyle(.secondary)
+                            Text("\(movie.effectivePresentation.scenes.count)枚").font(.caption).foregroundStyle(.secondary)
                         }
+                        if summaryNeedsPlus { plusMark }
                         if latestSeasonalMovieIsNew {
                             Text("新着").font(.caption2.bold()).foregroundStyle(.white)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
@@ -1324,10 +1361,46 @@ struct LikedPhotosView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
                 }.buttonStyle(.plain).accessibilityIdentifier("albums-seasonal-movie")
             }
-            NavigationLink("これまでのまとめとムービー", value: MemoriesRoute.reflectionsArchive)
+            if seasonalMovies.isEmpty {
+                Label("季節のムービーは、いろいろな日の写真が2か月分たまるとできます。", systemImage: "film")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)
                 .font(.subheadline).frame(minHeight: 44)
         }
         .accessibilityIdentifier("memories-summaries-section")
+    }
+
+    /// Before the first summary exists, say what will appear and when, so the
+    /// best part of the album is not a surprise (A2).
+    private var reflectionPlaceholder: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ふりかえり").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 10) {
+                Label("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。", systemImage: "calendar")
+                Label("いろいろな日の写真が2か月分たまると、季節のムービーができます。", systemImage: "film")
+                if summaryNeedsPlus {
+                    HStack(spacing: 6) {
+                        plusMark
+                        Text("月のまとめと季節のムービーは、Plusで見られます。")
+                    }
+                }
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("memories-summaries-upcoming")
+    }
+
+    private var plusMark: some View {
+        Text("Plus").font(.caption2.bold())
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(.thinMaterial, in: Capsule())
+            .accessibilityLabel("Plusで見られます")
+            .accessibilityIdentifier("albums-plus-mark")
     }
     func periodArchive(showsMovies: Bool) -> some View {
         ScrollView {
@@ -1857,11 +1930,11 @@ struct SavedMemoriesGalleryView: View {
                 .accessibilityIdentifier("saved-memories-photo-access-unavailable")
         } else if savedStateReadFailed {
             ContentUnavailableView("お気に入りを確認できませんでした", systemImage: "exclamationmark.triangle",
-                description: Text("保存状態を読み込めませんでした。時間をおいて、もう一度開いてください。"))
+                description: Text("お気に入りを読み込めませんでした。時間をおいて、もう一度開いてください。"))
                 .accessibilityIdentifier("saved-memories-state-read-failed")
         } else if unavailableSavedPhotoCount > 0 {
             ContentUnavailableView("お気に入りの写真を表示できません", systemImage: "photo",
-                description: Text("お気に入りに保存された写真が\(unavailableSavedPhotoCount.formatted())枚ありますが、今は読み込めません。写真許可や元の写真を確認してください。"))
+                description: Text("お気に入りに入れた写真が\(unavailableSavedPhotoCount.formatted())枚ありますが、今は読み込めません。写真許可や元の写真を確認してください。"))
                 .accessibilityIdentifier("saved-memories-photos-unavailable")
         } else if !photos.isEmpty {
             ContentUnavailableView("この範囲にはまだありません", systemImage: "bookmark",

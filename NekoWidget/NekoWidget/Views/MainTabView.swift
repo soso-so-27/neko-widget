@@ -256,6 +256,7 @@ struct MainTabView: View {
     var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
+    @Environment(\.membershipAccess) private var membershipAccess
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
@@ -408,7 +409,7 @@ struct MainTabView: View {
                 Label("アルバム", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
             }
-            .badge(hasUnreadMemoriesSummary ? 1 : 0)
+            .badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)
             .tag(AppTab.memories)
 
             NavigationStack(path: $photosPath) {
@@ -2088,6 +2089,12 @@ struct MainTabView: View {
         latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew
     }
 
+    /// The tab's red mark points to something that opens; without Plus the
+    /// cards stay visible in the album with a 「Plus」 mark instead (案1).
+    private var summaryOpens: Bool {
+        membershipAccess.decision(for: .openGrowingSummary) == .allowed
+    }
+
     private func markMonthlyWindowReadIfLatest(
         _ presentation: MonthlyWindowPresentation
     ) {
@@ -2974,13 +2981,13 @@ private struct WindowListView: View {
             .accessibilityIdentifier("window-list-product-limit")
         } else {
             if let groupClient = GroupWindowClientProvider.production {
-                // One place to start a window: for one person, or for family and friends.
-                setupAction("1人の相手とまどを作る", path: .create, identifier: "window-list-create")
+                // One place to start a window. New windows are group windows,
+                // also for two people; existing two-person windows keep working.
                 NavigationLink { GroupWindowCreateScreen(client: groupClient) } label: {
-                    Text("家族・友だちとまどを作る（\(GroupWindowPresentation.memberLimit)人まで）")
+                    Text("まどを作る（\(GroupWindowPresentation.memberLimit)人まで）")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .disabled(model.isWorking || pausesWindowChanges)
                 .accessibilityIdentifier("window-list-create-group")
             } else {

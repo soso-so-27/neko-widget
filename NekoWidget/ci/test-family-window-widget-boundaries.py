@@ -1298,7 +1298,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"memories-monthly-window"', album_root)
         self.assertIn('"albums-seasonal-movie"', album_root)
         # The album root opens one combined archive of months and movies (#397).
-        self.assertIn('NavigationLink("これまでのまとめとムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
+        self.assertIn('NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
         self.assertIn("ForEach(months)", album_root)
         self.assertIn("ForEach(seasonalMovies)", album_root)
         self.assertIn("sections: albumSections", album_root)
@@ -1337,7 +1337,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
         self.assertNotIn("NavigationLink(value: MemoriesRoute.favorites)", memory_view)
-        self.assertIn('NavigationLink("これまでのまとめとムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
+        self.assertIn('NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
         self.assertIn("albumsView().periodArchive(showsMovies: false)", main_tab)
         self.assertIn("albumsView().periodArchive(showsMovies: true)", main_tab)
         destinations = section(
@@ -1457,7 +1457,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("PHAsset", model)
 
         self.assertIn("@AppStorage(MonthlyWindowReadReceipt.storageKey)", main)
-        self.assertIn(".badge(hasUnreadMemoriesSummary ? 1 : 0)", main)
+        self.assertIn(".badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)", main)
         self.assertIn("markMonthlyWindowReadIfLatest(snapshot)", main)
         self.assertIn("latestMonthlyWindowIsUnread: Bool", memories)
         self.assertNotIn('return "まとめ・未読"', memories)
@@ -1506,7 +1506,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SeasonalMovieView(", main)
         self.assertIn("seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : []", main)
         self.assertIn("latestSeasonalMovieIsNew: scope == .everyone && latestSeasonalMovieIsNew", main)
-        self.assertIn(".badge(hasUnreadMemoriesSummary ? 1 : 0)", main)
+        self.assertIn(".badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)", main)
         self.assertIn(
             "latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew",
             main,
@@ -2966,11 +2966,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
     def test_growth_album_opens_as_a_photo_story_before_editing(self) -> None:
         growth = source("NekoWidget/Views/GrowthAlbumView.swift")
 
-        self.assertIn('.accessibilityLabel("このまとめについて")', growth)
+        self.assertIn('.accessibilityLabel("この比べ方について")', growth)
         self.assertIn('Text(aboutSelectionMessage)', growth)
         self.assertIn('scrapbookTimeline(items: resolvedItems)', growth)
         self.assertIn('Label("選び直す"', growth)
-        self.assertIn('.alert("このまとめについて"', growth)
+        self.assertIn('.alert("この比べ方について"', growth)
         self.assertIn('"\\(firstPeriod.label) → \\(lastPeriod.label)"', growth)
         self.assertNotIn('roleLabel:', growth)
         self.assertNotIn('Text("その間")', growth)
@@ -4446,7 +4446,7 @@ class GroupWindowScreenTests(unittest.TestCase):
             self.assertNotIn(forbidden, screen)
         # Received photos: sensitive-content check, then the durable write,
         # and only inside storeAndAcknowledge (so ACK follows the write).
-        receive = section(screen, "private func receive(", "func send(_ item: PhotosPickerItem) async {")
+        receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
         self.assertIn("guard verdict != .retryLater else { return }", receive)
         self.assertIn("client.storeAndAcknowledge(incoming, outgoingOperationID: outgoingOperationID)", receive)
@@ -4454,7 +4454,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         self.assertIn("try await store.save(", receive)
         self.assertIn("jpeg: verdict == .hidden ? nil : verified.jpeg", receive)
         # Sending: the same canonical JPEG and check as the two-person window.
-        send = section(screen, "func send(_ item: PhotosPickerItem) async {", "func toggleHeart(")
+        send = section(screen, "func prepare(_ item: PhotosPickerItem) async", "func toggleHeart(")
         self.assertIn("guard canSend", send)
         self.assertLess(send.index("GroupPhotoModeration.check(picked.jpeg"), send.index("client.sendPhoto("))
         self.assertIn("outgoingOperationID: operationID", send)
@@ -4851,13 +4851,74 @@ class WindowCreationEntryTests(unittest.TestCase):
     def test_both_kinds_of_window_start_from_the_same_place(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
         add = section(tab, "// One place to start a window", 'setupAction("招待されたまどに参加"')
-        self.assertIn('setupAction("1人の相手とまどを作る"', add)
+        self.assertNotIn('setupAction("1人の相手とまどを作る"', add)
+        self.assertIn('Text("まどを作る（', add)
         self.assertIn("GroupWindowCreateScreen(client: groupClient)", add)
         self.assertIn('setupAction("新しいまどを作る"', add)
         window = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertNotIn("グループのまど", window)
         create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
         self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)", create)
+
+
+class AlbumPurposeTests(unittest.TestCase):
+    def test_album_shows_each_cat_upcoming_summaries_and_plus_honestly(self) -> None:
+        album = source("NekoWidget/Views/LikedPhotosView.swift")
+        main = source("NekoWidget/Views/MainTabView.swift")
+        # 成長 lists every cat on the album root.
+        growth = section(album, "private func timeAlbums(", "var yearArchive: some View {")
+        self.assertIn("MemoriesRoute.catAlbums(profile.identifier)", growth)
+        self.assertIn("selectedProfileIdentifier == nil && !profiles.isEmpty", growth)
+        # ふりかえり is always there; before the first summary it says what will come.
+        self.assertIn("else if showsReflectionPlaceholder { reflectionPlaceholder }", album)
+        self.assertIn("ひと月に5枚ほどたまると", album)
+        # Plus is shown before the tap; the tab mark only points to what opens.
+        self.assertIn("if summaryNeedsPlus { plusMark", album)
+        self.assertIn('membershipAccess.decision(for: .openGrowingSummary) == .allowed', main)
+        # No photo permission explains what the album does.
+        self.assertIn('Label("猫の写真を自動でまとめます"', album)
+        self.assertNotIn("この作品から外す", source("NekoWidget/Views/SeasonalMovieView.swift"))
+
+
+class GroupSendConfirmTests(unittest.TestCase):
+    def test_group_send_confirms_keeps_memo_local_and_shows_progress(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        # Picking only prepares; sending waits for 「届ける」 on the confirmation screen.
+        prepare = section(screen, "func prepare(_ item: PhotosPickerItem) async", "func deliver(")
+        self.assertNotIn("client.sendPhoto(", prepare)
+        self.assertIn("Task { prepared = await model.prepare(item) }", screen)
+        self.assertIn("GroupSendConfirmSheet(photo: photo", screen)
+        self.assertIn('"group-window-send-confirm"', screen)
+        # The memo is the photo's own memo on this iPhone, saved only after sending.
+        deliver = section(screen, "func deliver(", "func toggleHeart(")
+        self.assertLess(deliver.index("client.sendPhoto("), deliver.index("await saveMemo(memo"))
+        self.assertIn("PhotoMemoryNoteStore.shared", deliver)
+        # Progress is visible while checking and sending.
+        self.assertIn('"group-window-send-progress"', screen)
+        # Making a window asks for Plus first, and again if the relay says so.
+        create = section(screen, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
+        self.assertIn("PlusOfferPrompt(context: .createWindow", create)
+        self.assertIn("MembershipOfferSheet(model: .live(), context: .createWindow)", create)
+        self.assertIn("(error as? GroupSubscriptionError) == .ownerPlusRequired", screen)
+        # One way to make a window: the list links to the same screen.
+        listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
+        self.assertIn("GroupWindowCreateScreen(client: model.client)", listing)
+        self.assertNotIn("showsNameEntry", listing)
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        self.assertIn("if GroupWindowClientProvider.production == nil {", pairing)
+
+
+class GroupWindowSpeedTests(unittest.TestCase):
+    def test_kept_photos_and_known_windows_show_before_the_relay_answers(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("await model.showStored()\n            await model.sync()", screen)
+        sync = section(screen, "func sync() async {", "private func updateHomeScreenPhoto()")
+        loop = section(sync, "for photo in photos {", "message = nil")
+        self.assertIn("entries = await store.entries(windowID: windowID)", loop)
+        self.assertIn('"group-window-syncing"', screen)
+        listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
+        self.assertIn("GroupWidgetCache.entries()", listing)
+        self.assertIn("!model.hasLoaded && model.windows.isEmpty", listing)
 
 
 if __name__ == "__main__":
