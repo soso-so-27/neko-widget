@@ -2,7 +2,9 @@ import SwiftUI
 import UIKit
 
 /// Only saved identity and its name are reused. Never infer identity from a
-/// name, or carry health, care, contact or incident information into a visit.
+/// name. Health and care details come only from the owner's 「この子のこと」
+/// for the same saved identity (shown and exported, never copied into the
+/// visit record); contact and incident information never enter a visit.
 @MainActor
 enum SavedToolCatChoices {
     struct Choice {
@@ -184,6 +186,7 @@ private struct VeterinaryConsultationView: View {
     @State private var chosen: PhotoMemoryNoteRecord?
     @State private var pendingSource: PhotoMemoryNoteRecord?
     @State private var autosaveTask: Task<Void, Never>?
+    @ObservedObject private var catCareStore = CatCareStore.shared
 
     private var changes: Bool {
         guard let visit else { return false }
@@ -201,6 +204,16 @@ private struct VeterinaryConsultationView: View {
                           systemImage: "cat").font(.headline)
                     if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
                 }
+                Section {
+                    VeterinaryCatCareFields(fields: CatCareSummary.veterinaryFields(
+                        CatCareSummary.record(profileIdentifier: visit.catID.uuidString),
+                        household: catCareStore.state?.household))
+                    if let profile = profiles.first(where: { $0.identifier == visit.catID.uuidString }) {
+                        NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
+                            .accessibilityIdentifier("vet-open-cat-care")
+                    }
+                } header: { Text("この子のこと（自動で載ります）") }
+                  footer: { Text("薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。医療の判断ではありません。") }
                 if visit.completedAt == nil {
                     Section {
                         TextField("家で気付いたこと", text: $observations, axis: .vertical).lineLimit(3...8)
@@ -210,7 +223,7 @@ private struct VeterinaryConsultationView: View {
                         TextField("先生に聞きたいこと", text: $questions, axis: .vertical).lineLimit(2...8)
                             .accessibilityIdentifier("vet-questions")
                     } header: { Text("今回伝えること") }
-                      footer: { Text("それぞれ500文字まで。以前の薬やお世話情報は自動で入りません。") }
+                      footer: { Text("それぞれ500文字まで。") }
                 } else {
                     Section("伝えたこと") {
                         if !visit.observations.isEmpty { Text(visit.observations) }
@@ -272,6 +285,7 @@ private struct VeterinaryConsultationView: View {
         .disabled(busy)
         .interactiveDismissDisabled(changes || busy)
         .task {
+            catCareStore.importFromTools()
             guard visit == nil else { return }
             visit = initialVisit; observations = initialVisit.observations; questions = initialVisit.questions
             hasStartedDay = initialVisit.startedOn != nil
@@ -526,11 +540,21 @@ private struct VeterinaryReadView: View {
     let store: VeterinaryVisitStore
     var displayName: String? = nil
     @Environment(\.dismiss) private var dismiss
+    @State private var export: CareHandoffExporter.Export?
+    @State private var exportError: String?
+
+    private var catCareFields: [(String, String)] {
+        CatCareSummary.veterinaryFields(CatCareSummary.record(profileIdentifier: visit.catID.uuidString),
+                                        household: CatCareStore.shared.state?.household)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Text(displayName ?? visit.catName).font(.largeTitle.bold())
+                    VeterinaryCatCareFields(fields: catCareFields)
+                    Divider()
                     if let day = visit.startedOn { Label("気付いた日 \(day)", systemImage: "calendar") }
                     if !visit.observations.isEmpty { VStack(alignment: .leading, spacing: 8) { Text("家で気付いたこと").font(.headline); Text(visit.observations) } }
                     if !visit.questions.isEmpty { VStack(alignment: .leading, spacing: 8) { Text("聞きたいこと").font(.headline); Text(visit.questions) } }
@@ -548,7 +572,70 @@ private struct VeterinaryReadView: View {
             }
             .accessibilityIdentifier("vet-reading")
             .navigationTitle("診察で見せる").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button("PDFで書き出す", systemImage: "doc") { Task { await makeExport(pdf: true) } }
+                        Button("画像で書き出す", systemImage: "photo") { Task { await makeExport(pdf: false) } }
+                    } label: { Label("書き出す", systemImage: "square.and.arrow.up") }
+                    .accessibilityIdentifier("vet-export")
+                }
+            }
+            .alert("書き出せませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+                Button("閉じる", role: .cancel) {}
+            } message: { Text(exportError ?? "") }
+            .sheet(item: $export, onDismiss: { if let export { CareHandoffExporter.remove(export.directory) }; export = nil }) { made in
+                VeterinaryActivitySheet(items: made.files)
+            }
         }
     }
+
+    /// One sheet for the reception desk: 「この子のこと」, what was noticed,
+    /// questions, and the chosen notes. The first chosen photo is included.
+    private func makeExport(pdf: Bool) async {
+        var fields = catCareFields
+        if let day = visit.startedOn { fields.append(("気付いた日", day)) }
+        if !visit.observations.isEmpty { fields.append(("家で気付いたこと", visit.observations)) }
+        if !visit.questions.isEmpty { fields.append(("先生に聞きたいこと", visit.questions)) }
+        for entry in visit.orderedEntries {
+            var lines: [String] = []
+            if !entry.text.isEmpty { lines.append(entry.text) }
+            if let weight = entry.weight { lines.append("体重 \(CatCareFormat.weight(weight.grams))") }
+            if let captured = entry.capturedAt { lines.append("撮影日 \(VeterinaryVisit.day(captured))") }
+            if !lines.isEmpty { fields.append(("記録", lines.joined(separator: "\n"))) }
+        }
+        fields.append(("ご注意", "飼い主の記録をまとめたものです。医療の判断ではありません。"))
+        var photo: UIImage?
+        if let first = visit.orderedEntries.first(where: { $0.photoFile != nil }),
+           let data = try? await store.image(for: first, visitID: visit.id) {
+            photo = UIImage(data: data)
+        }
+        let record = CareHandoffShareRecord(
+            cats: [.init(name: displayName ?? visit.catName, photo: photo, fields: fields, updatedAt: Date())],
+            commonFields: [], includesHealth: true, includesContacts: false, createdAt: Date())
+        do { export = try CareHandoffExporter.create(record, pdf: pdf) }
+        catch { exportError = "空き容量やメモの長さを確認してください。元の記録は残っています。" }
+    }
+}
+
+private struct VeterinaryCatCareFields: View {
+    let fields: [(String, String)]
+    var body: some View {
+        ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(field.0).font(.subheadline).foregroundStyle(.secondary)
+                Text(field.1).font(.body).textSelection(.enabled)
+            }
+        }
+        .accessibilityIdentifier("vet-cat-care-fields")
+    }
+}
+
+private struct VeterinaryActivitySheet: UIViewControllerRepresentable {
+    let items: [URL]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

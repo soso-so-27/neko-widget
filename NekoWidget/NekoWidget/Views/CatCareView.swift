@@ -584,3 +584,74 @@ enum CatCareFormat {
         return resized.jpegData(compressionQuality: 0.85)
     }
 }
+
+// MARK: - What tools show from 「この子のこと」
+
+/// Read-only lines a tool shows or exports. Empty items say so instead of
+/// inventing anything; nothing here is a medical judgement.
+enum CatCareSummary {
+    static func record(profileIdentifier: String) -> CatCareRecord? {
+        guard let profileID = UUID(uuidString: profileIdentifier) else { return nil }
+        return CatCareStore.shared.state?.cats.first { $0.profileID == profileID && $0.deletedAt == nil }
+    }
+
+    /// For 「病院で見せる」: what a vet usually asks first.
+    static func veterinaryFields(_ record: CatCareRecord?, household: CatCareHousehold?) -> [(String, String)] {
+        let empty = "未記入・飼い主に確認"
+        func text(_ value: String?) -> String {
+            let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? empty : trimmed
+        }
+        var fields: [(String, String)] = []
+        let sex: String = switch record?.sex?.value ?? .unknown {
+        case .male: "オス"
+        case .female: "メス"
+        case .unknown: "未記入"
+        }
+        let neutered: String = switch record?.neutered?.value ?? .unknown {
+        case .yes: "去勢・避妊 済み"
+        case .no: "去勢・避妊 まだ"
+        case .unknown: "去勢・避妊 未記入"
+        }
+        fields.append(("性別", sex + "・" + neutered))
+        fields.append(("マイクロチップ", text(record?.microchip?.value)))
+        fields.append(("持病", text(record?.conditions?.value)))
+        let allergy: String = switch record?.allergy?.value.status ?? .unknown {
+        case .none: "なし（飼い主の記入）"
+        case .recorded: text(record?.allergy?.value.text)
+        case .unknown: "未確認・飼い主に確認"
+        }
+        fields.append(("アレルギー", allergy))
+        let medications = (record?.activeMedications ?? []).map { medication in
+            [medication.name, medication.dose, medication.schedule].filter { !$0.isEmpty }.joined(separator: "・")
+        }
+        fields.append(("飲んでいる薬", medications.isEmpty ? empty : medications.joined(separator: "\n")))
+        let vaccinations = (record?.activeVaccinations ?? []).prefix(3).map {
+            "\($0.kind)（\(CatCareFormat.day($0.givenOn))）" + ($0.proof != nil ? " 証明あり" : "")
+        }
+        fields.append(("ワクチン", vaccinations.isEmpty ? empty : vaccinations.joined(separator: "\n")))
+        fields.append(("体重の推移", weightTrend(record).map { $0.isEmpty ? empty : $0.joined(separator: "\n") } ?? empty))
+        if let diet = record?.specialDiet?.value, !diet.isEmpty { fields.append(("療法食など", diet)) }
+        let vet = record?.vetOverride?.value ?? household?.vet?.value
+        if let vet, !vet.isEmpty {
+            fields.append(("かかりつけ病院", [vet.name, vet.phone].filter { !$0.isEmpty }.joined(separator: " ")))
+        }
+        return fields
+    }
+
+    /// Newest first, with the change from the previous record:
+    /// 「2026/10/20 4.20kg（前回から −0.10kg）」. Up to six lines.
+    static func weightTrend(_ record: CatCareRecord?) -> [String]? {
+        guard let weights = record?.activeWeights, !weights.isEmpty else { return nil }
+        let recent = Array(weights.prefix(7))
+        return recent.prefix(6).enumerated().map { index, entry in
+            var line = CatCareFormat.day(entry.measuredOn) + " " + CatCareFormat.weight(entry.grams)
+            if index + 1 < recent.count {
+                let diff = entry.grams - recent[index + 1].grams
+                let sign = diff > 0 ? "＋" : diff < 0 ? "−" : "±"
+                line += "（前回から \(sign)\(String(format: "%.2f", Double(abs(diff)) / 1000))kg）"
+            }
+            return line
+        }
+    }
+}

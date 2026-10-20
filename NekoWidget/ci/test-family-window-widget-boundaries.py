@@ -4581,5 +4581,30 @@ class CatCareTests(unittest.TestCase):
             self.assertIn(name + " in Sources", project)
 
 
+class VeterinaryCatCareTests(unittest.TestCase):
+    def test_vet_shows_and_exports_cat_care_without_copying_it(self) -> None:
+        view = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        summary = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn("CatCareSummary.veterinaryFields(", view)
+        self.assertIn('NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }', view)
+        self.assertNotIn("以前の薬やお世話情報は自動で入りません", view)
+        # Matched by the saved identity, never by name.
+        self.assertIn("CatCareSummary.record(profileIdentifier: visit.catID.uuidString)", view)
+        record = section(summary, "static func record(profileIdentifier: String)", "static func veterinaryFields(")
+        self.assertIn("$0.profileID == profileID", record)
+        self.assertNotIn("name", record)
+        # Export: PDF or images through the existing exporter, with a caution line.
+        export = section(view, "private func makeExport(pdf: Bool) async {", "private struct VeterinaryCatCareFields")
+        self.assertIn("CareHandoffExporter.create(record, pdf: pdf)", export)
+        self.assertIn("医療の判断ではありません", export)
+        self.assertIn("CareHandoffExporter.remove(export.directory)", view)
+        # Empty items say so instead of inventing anything.
+        fields = section(summary, "static func veterinaryFields(", "static func weightTrend(")
+        self.assertIn('"未記入・飼い主に確認"', fields)
+        self.assertIn('("マイクロチップ", text(record?.microchip?.value))', fields)
+        trend = summary[summary.index("static func weightTrend("):]
+        self.assertIn("前回から", trend)
+
+
 if __name__ == "__main__":
     unittest.main()
