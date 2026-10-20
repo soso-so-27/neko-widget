@@ -4264,8 +4264,11 @@ class GroupWindowUITests(unittest.TestCase):
             "作った人は退出できません。",
         ):
             self.assertIn(expected, presentation)
+        # People, iPhones and the total are never a paid lever. (Creating and
+        # continuing a window is Plus by the owner's 10/20 decision.)
+        limits = section(presentation, "case .memberLimit:", "case .ownedWindowLimit:")
         for forbidden in ("Plus", "会員", "980", "購入", "課金"):
-            self.assertNotIn(forbidden, presentation)
+            self.assertNotIn(forbidden, limits)
 
         # A failed refresh keeps the last known members and requests.
         load = section(view, "func load() async {", "func createInvitation() async {")
@@ -4381,6 +4384,41 @@ class ReceivedPhotoPagingTests(unittest.TestCase):
         self.assertIn("receivedPhotoActionControls(item)", page)
         self.assertIn('.id("\\(model.pairingState?.spaceID ?? "")-\\(item.id)")', page)
         self.assertNotIn("NavigationStack", page)
+
+
+class GroupWindowPausedTests(unittest.TestCase):
+    def test_paused_window_keeps_everything_and_says_who_can_resume(self) -> None:
+        view = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        presentation = section(view, "enum GroupWindowPresentation {", "// MARK: - Members and invitation")
+        self.assertIn("if let error = error as? GroupSubscriptionError {", presentation)
+        self.assertIn("case .ownerPlusRequired:", presentation)
+        self.assertIn("case .windowPaused:", presentation)
+        self.assertIn("これまでの写真・メンバー・ハートはそのままです。", presentation)
+        self.assertIn("window.deliveryStatus == .paused", presentation)
+        # Never says anything is deleted.
+        for forbidden in ("削除", "消え"):
+            self.assertNotIn(forbidden, section(presentation, "static let pausedDetail", "static func pausedOwnerName"))
+
+        paused = section(view, "private func pausedSection(", "private func statusSection(")
+        self.assertIn('Label("このまどは止まっています"', paused)
+        self.assertIn('Text("このまどを続ける")', paused)
+        self.assertIn("onContinueWithPlus()", paused)
+        self.assertIn("さんがPlusを続けると、また届くようになります。", paused)
+        self.assertIn("自分でまどを作る（14日間無料）", paused)
+        self.assertIn("GroupWindowPresentation.isMyWindow(window)", paused)
+        # Owner sees continue; members see who can resume.
+        self.assertLess(paused.index("if !GroupWindowPresentation.isMyWindow(window)"), paused.index('"group-window-paused"'))
+
+        perform = section(view, "private func perform(", "struct GroupWindowScreenCapabilities")
+        subscription = section(perform, "catch let error as GroupSubscriptionError {", "catch let error as GroupClientError {")
+        self.assertIn("retainedOperations[key] = nil", subscription)
+        self.assertIn("await load()", subscription)
+
+        # The fixture override is DEBUG-only and the transform defaults to identity.
+        self.assertIn("transform: @escaping (GroupWindow) -> GroupWindow = { $0 }", view)
+        debug = section(view, "// MARK: - DEBUG fixture entry", "struct GroupWindowUIFixtureRoot: View")
+        self.assertIn("static func applyDelivery(", debug)
+        self.assertIn('"--group-window-delivery="', debug)
 
 
 if __name__ == "__main__":
