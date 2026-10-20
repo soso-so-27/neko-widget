@@ -3292,11 +3292,18 @@ final class SoloMemoriesUITests: XCTestCase {
         cat.tap()
         XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5), "Existing care memo remains editable")
         app.navigationBars.buttons.element(boundBy: 0).tap()
-        app.buttons["care-add-cat"].tap()
-        XCTAssertTrue(app.buttons["会員プランを見る"].waitForExistence(timeout: 5))
-        capture("membership-care-new-only")
-        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "care-cat-")).count, 1)
+        // ADR-027: ツールは無料。会員が切れていても（inactive）新しい記録を作れる。
+        // 新しい記録は「猫のプロフィール」から作る（プロフィールごとに1件）。
+        let sora = "tool-profile-AB000000-0000-0000-0000-000000000002"
+        let hana = "tool-profile-AB000000-0000-0000-0000-000000000003"
+        let kuro = "tool-profile-AB000000-0000-0000-0000-000000000004"
+        app.buttons[sora].tap()
+        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5),
+            "An expired membership must not block a new care memo")
+        XCTAssertFalse(app.buttons["会員プランを見る"].exists)
+        capture("membership-care-new-free")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["care-disclosure-open"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["care-disclosure-open"].isHittable, "Existing output remains available")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["membership-veterinary"].tap()
@@ -3305,23 +3312,27 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.textFields["vet-questions"].waitForExistence(timeout: 5)
             || app.textViews["vet-questions"].waitForExistence(timeout: 5), "Existing draft remains editable")
         app.navigationBars.buttons["閉じる"].tap()
-        app.buttons["vet-new-cat"].tap()
-        app.alerts.textFields.firstMatch.typeText("新しい猫")
-        app.alerts.buttons["作る"].tap()
-        XCTAssertTrue(app.buttons["会員プランを見る"].waitForExistence(timeout: 5))
-        capture("membership-veterinary-new-only")
-        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
+        app.buttons[sora].tap()
+        XCTAssertTrue(app.textFields["vet-questions"].waitForExistence(timeout: 5)
+            || app.textViews["vet-questions"].waitForExistence(timeout: 5),
+            "An expired membership must not block a new veterinary visit")
+        XCTAssertFalse(app.buttons["会員プランを見る"].exists)
+        capture("membership-veterinary-new-free")
+        app.navigationBars.buttons["閉じる"].tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
+        // 確認不能（checking）でもツールは止まらない。
         app.buttons["membership-unknown"].tap()
         app.buttons["membership-care"].tap()
-        app.buttons["care-add-cat"].tap()
-        XCTAssertTrue(app.buttons["購入を確認する"].waitForExistence(timeout: 5))
+        app.buttons[hana].tap()
+        XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5),
+            "Unknown membership must not block a new care memo")
+        XCTAssertFalse(app.buttons["購入を確認する"].exists)
         XCTAssertFalse(app.buttons["会員プランを見る"].exists)
-        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["membership-beta"].tap()
         app.buttons["membership-care"].tap()
-        app.buttons["care-add-cat"].tap()
+        app.buttons[kuro].tap()
         XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5), "Beta creation remains unrestricted")
         app.terminate()
     }
@@ -3336,10 +3347,16 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(tools.waitForExistence(timeout: 10)); tools.tap()
         let tab = app.buttons["main-tab-tools"]
         XCTAssertTrue(tab.waitForExistence(timeout: 5)); tab.tap()
+        // ADR-027: 「写真を見せる」も無料。会員が切れていても会員案内は出ない。
         app.buttons["tools-showcase-open"].tap()
-        XCTAssertTrue(app.buttons["会員プランを見る"].waitForExistence(timeout: 5))
-        capture("membership-showcase-boundary")
-        app.navigationBars["会員プラン"].buttons["閉じる"].tap()
+        XCTAssertFalse(app.buttons["会員プランを見る"].waitForExistence(timeout: 3),
+            "Presenting cat photos must not ask for a membership")
+        capture("membership-showcase-free")
+        if app.alerts.buttons["閉じる"].exists {
+            app.alerts.buttons["閉じる"].tap()
+        } else if app.buttons["showcase-back"].exists {
+            app.buttons["showcase-back"].tap()
+        }
         let lost = app.buttons["tools-lost-cat-open"]
         for _ in 0..<5 where !lost.isHittable { app.swipeUp() }
         lost.tap()

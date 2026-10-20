@@ -66,7 +66,6 @@ struct VeterinaryVisitsView: View {
     @State private var newName = ""
     @State private var cleanupPending = false
     @Environment(\.membershipActions) private var actionAccess
-    @State private var membershipNotice: MembershipAccessDecision?
 
     var body: some View {
         List {
@@ -99,7 +98,6 @@ struct VeterinaryVisitsView: View {
             if cleanupPending { Section { Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote); Button("削除を再試行") { Task { await reload() } } } }
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
-        .membershipActionNotice($membershipNotice)
         .task { await reload() }
         .alert("猫の名前", isPresented: $addsCat) {
             TextField("名前", text: $newName)
@@ -125,7 +123,6 @@ struct VeterinaryVisitsView: View {
             }
             error = nil
         }
-        catch let denied as MembershipActionDenied { membershipNotice = denied.decision }
         catch { self.error = veterinaryErrorMessage(error) }
     }
     private func reload() async {

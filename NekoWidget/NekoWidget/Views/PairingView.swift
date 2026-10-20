@@ -667,14 +667,22 @@ struct PairingView: View {
 
     private var createSection: some View {
         Section {
-            if membershipAccess.decision(for: .createWindow) != .allowed {
-                MembershipAccessNotice(decision: membershipAccess.decision(for: .createWindow))
+            // 1つ目の自分のまどは会員状態にかかわらず作れる。2つ目以降は会員で、
+            // 自分のまどは5つまで（ADR-027）。招待で入ったまどは数えない。
+            if model.ownWindowLimitReached {
+                Text("自分で作るまどは\(MembershipAccessPolicy.maximumOwnWindowCount)個までです。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("pairing-own-window-limit")
+            } else if membershipAccess.decision(for: model.createWindowOperation) != .allowed {
+                MembershipAccessNotice(decision: membershipAccess.decision(for: model.createWindowOperation))
             } else {
             Button {
                 Task {
-                    guard membershipAccess.decision(for: .createWindow) == .allowed else { return }
+                    guard !model.ownWindowLimitReached,
+                          membershipAccess.decision(for: model.createWindowOperation) == .allowed else { return }
                     guard await saveWindowNameIfPossible() else { return }
-                    guard membershipAccess.decision(for: .createWindow) == .allowed else { return }
+                    guard !model.ownWindowLimitReached,
+                          membershipAccess.decision(for: model.createWindowOperation) == .allowed else { return }
                     if model.isMediaSyncEnabled {
                         guard model.recordMediaSharingConsent() else { return }
                         hasAcceptedPairingTerms = false
