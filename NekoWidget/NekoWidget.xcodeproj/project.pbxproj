@@ -175,6 +175,8 @@
 		100000000000000000000138 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000238 /* LogView.swift */; };
 		100000000000000000000145 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000239 /* PairingView.swift */; };
 		CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000001 /* GroupWindowSetupView.swift */; };
+		CC2610200000000000000006 /* GroupWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000005 /* GroupWindowView.swift */; };
+		CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */; };
 		100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */; };
 		10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
 		200000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
@@ -435,6 +437,8 @@
 		F00000000000000000000238 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		F00000000000000000000239 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000001 /* GroupWindowSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowSetupView.swift; sourceTree = "<group>"; };
+		CC2610200000000000000005 /* GroupWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowView.swift; sourceTree = "<group>"; };
+		CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowLocalPhotoStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000023A /* GrowthAlbumSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthAlbumSelector.swift; sourceTree = "<group>"; };
 		F0000000000000000000023B /* GrowthAlbumView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthAlbumView.swift; sourceTree = "<group>"; };
 		F0000000000000000000022D /* CatCandidateCurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCandidateCurationStore.swift; sourceTree = "<group>"; };
@@ -792,6 +796,7 @@
 				AB2610200000000000000067 /* GroupWindowStorage.swift */,
 				AB2610200000000000000065 /* GroupWindowWire.swift */,
 				CC2610200000000000000003 /* GroupInvitationLink.swift */,
+				CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */,
 				F0000000000000000000024A /* PhotoBookPDFExporter.swift */,
 				E02609230000000000000002 /* ShowcasePhotoStore.swift */,
 				E02609230000000000000006 /* CatPreparednessStore.swift */,
@@ -891,6 +896,7 @@
 				F0000000000000000000024E /* CatIdentityExperimentView.swift */,
 				F00000000000000000000255 /* FamilyWindowView.swift */,
 				CC2610200000000000000001 /* GroupWindowSetupView.swift */,
+				CC2610200000000000000005 /* GroupWindowView.swift */,
 				E02609080000000000000002 /* MomentDeliveryComposer.swift */,
 				E02609090000000000000012 /* PhotoWindowDeliveryView.swift */,
 				E02609090000000000000022 /* MomentPhotoDeliveryProgressView.swift */,
@@ -1305,6 +1311,8 @@
 				100000000000000000000138 /* LogView.swift in Sources */,
 				100000000000000000000145 /* PairingView.swift in Sources */,
 				CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */,
+				CC2610200000000000000006 /* GroupWindowView.swift in Sources */,
+				CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */,
 				100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */,
 				A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */,
 				10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */,

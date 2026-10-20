@@ -63,6 +63,25 @@ struct GroupInvitationLink: Equatable, Sendable, Identifiable {
         self.ownerIdentityPublicKey = ownerIdentityPublicKey
     }
 
+    /// Rebuilt only to hand the opened invitation to the group client, in
+    /// memory. Never logged, shown, or saved by the app.
+    var url: URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = Self.host
+        components.path = Self.path
+        components.fragment = "v=\(Self.version)&w=\(windowID)&i=\(invitationID)"
+            + "&s=\(Self.encodeKey(inviteSecret))&o=\(Self.encodeKey(ownerIdentityPublicKey))"
+        return components.url
+    }
+
+    private static func encodeKey(_ key: Data) -> String {
+        key.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
     private static func isValidID(_ value: String) -> Bool {
         (1...128).contains(value.utf8.count) && value.utf8.allSatisfy {
             (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)

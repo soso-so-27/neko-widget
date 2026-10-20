@@ -2767,6 +2767,10 @@ private struct WindowListView: View {
                     }
                     .accessibilityIdentifier("window-list-receiving")
                 }
+                if let groupClient = GroupWindowClientProvider.production {
+                    // Group windows, only in builds that turn them on.
+                    GroupWindowListSection(client: groupClient)
+                }
                 if isLoading, windows.isEmpty {
                     ProgressView("まどを確認しています…")
                         .frame(maxWidth: .infinity, minHeight: 240)
