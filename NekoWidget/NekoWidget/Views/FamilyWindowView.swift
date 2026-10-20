@@ -319,6 +319,10 @@ struct FamilyWindowView: View {
             pairedContent
         } else if Self.isInternalReportFixture {
             internalReportFixtureContent
+        } else if GroupWindowUIFixture.isRequested {
+            // Group member/invitation screens on the in-memory fixture, without
+            // baseContent's bootstrap. No relay, Keychain, or saved state.
+            GroupWindowUIFixtureRoot()
         } else if Self.isSettingsFixture {
             // The shipping settings view, without baseContent's bootstrap,
             // notification queries, or subscriptions. No account is loaded.
