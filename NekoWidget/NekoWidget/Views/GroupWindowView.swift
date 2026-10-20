@@ -411,6 +411,14 @@ final class GroupWindowScreenModel: ObservableObject {
         if !isFormer { await updateHomeScreenPhoto() }
     }
 
+    /// Stops showing this person's photos here. They are not told.
+    func hideSender(of entry: GroupWindowLocalPhotoStore.Entry) async {
+        await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID)
+        entries = await store.entries(windowID: windowID)
+        if !isFormer { await updateHomeScreenPhoto() }
+        actionMessage = "\(entry.senderDisplayName)さんの写真を表示しないようにしました。設定の「表示しないようにした人」から戻せます。"
+    }
+
     /// For a window this iPhone left: deletes every kept photo.
     func forgetFormerWindow() async {
         await store.forget(windowID: windowID)
@@ -965,6 +973,7 @@ private struct GroupPhotoDetail: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showsFavoriteConfirmation = false
     @State private var showsRemoveConfirmation = false
+    @State private var showsHideConfirmation = false
 
     init(model: GroupWindowScreenModel, startID: String) {
         self.model = model
@@ -1009,8 +1018,16 @@ private struct GroupPhotoDetail: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
+                        if let current, !current.isOwn {
+                            Button("\(current.senderDisplayName)さんの写真を表示しない", systemImage: "eye.slash") {
+                                showsHideConfirmation = true
+                            }
+                        }
                         Button("このiPhoneから消す", systemImage: "trash", role: .destructive) {
                             showsRemoveConfirmation = true
+                        }
+                        if let url = SharingAPIConfiguration.current.supportURL {
+                            Link(destination: url) { Label("問題を問い合わせる", systemImage: "exclamationmark.bubble") }
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -1031,6 +1048,19 @@ private struct GroupPhotoDetail: View {
                 Button("戻る", role: .cancel) {}
             } message: {
                 Text("写真アプリへコピーして、お気に入りに追加します。位置情報は含みません。iCloud写真の設定により、iCloudにも同期される場合があります。届けた人には知らせません。")
+            }
+            .confirmationDialog(current.map { "\($0.senderDisplayName)さんの写真を表示しないようにしますか？" } ?? "",
+                                isPresented: $showsHideConfirmation, titleVisibility: .visible) {
+                Button("表示しない", role: .destructive) {
+                    guard let current else { return }
+                    Task {
+                        await model.hideSender(of: current)
+                        if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
+                    }
+                }
+                Button("戻る", role: .cancel) {}
+            } message: {
+                Text("このまどで、この人から届いた写真がこのiPhoneで見えなくなります。相手には知らせません。設定の「表示しないようにした人」から戻せます。")
             }
             .confirmationDialog("この写真を、このiPhoneから消しますか？",
                                 isPresented: $showsRemoveConfirmation, titleVisibility: .visible) {
@@ -1448,6 +1478,57 @@ struct GroupWindowListSection: View {
         .padding(14)
         .frame(minHeight: 44)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+// MARK: - People hidden on this iPhone (設定)
+
+struct GroupHiddenMembersView: View {
+    @State private var windows: [GroupWindowLocalPhotoStore.KnownWindow] = []
+    @State private var loaded = false
+
+    private struct Row: Identifiable {
+        let window: GroupWindowLocalPhotoStore.KnownWindow
+        let member: GroupWindowLocalPhotoStore.HiddenMember
+        var id: String { window.id + "|" + member.id }
+    }
+
+    private var hidden: [Row] {
+        windows.flatMap { window in (window.hiddenMembers ?? []).map { Row(window: window, member: $0) } }
+    }
+
+    var body: some View {
+        List {
+            ForEach(hidden) { item in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(item.member.name)さん")
+                        Text(item.window.name).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("表示する") {
+                        Task {
+                            await GroupWindowLocalPhotoStore.shared.unhide(memberID: item.member.id, windowID: item.window.id)
+                            windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(minHeight: 44)
+            }
+        }
+        .overlay {
+            if loaded && hidden.isEmpty {
+                ContentUnavailableView("表示しないようにした人はいません", systemImage: "eye.slash",
+                    description: Text("まどの写真の「…」から、その人の写真を表示しないようにできます。"))
+            }
+        }
+        .navigationTitle("表示しないようにした人")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
+            loaded = true
+        }
     }
 }
 

@@ -241,6 +241,17 @@ struct SettingsView: View {
                 }
             }
 
+            if GroupWindowClientProvider.ui != nil {
+                Section {
+                    NavigationLink { GroupHiddenMembersView() } label: {
+                        Label("表示しないようにした人", systemImage: "eye.slash")
+                    }
+                    .accessibilityIdentifier("settings-group-hidden-members")
+                } header: {
+                    Text("まど")
+                }
+            }
+
             Section {
                 if ManagedPreservationConfiguration.current.isEnabled {
                     NavigationLink { AppRecordSettingsView() } label: {

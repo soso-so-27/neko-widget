@@ -35,6 +35,13 @@ actor GroupWindowLocalPhotoStore {
     struct KnownWindow: Codable, Equatable, Sendable, Identifiable {
         let id: String
         var name: String
+        /// People whose photos this iPhone does not show in this window.
+        var hiddenMembers: [HiddenMember]? = nil
+    }
+
+    struct HiddenMember: Codable, Equatable, Sendable, Identifiable {
+        let id: String
+        let name: String
     }
 
     private struct Directory: Codable {
@@ -53,8 +60,11 @@ actor GroupWindowLocalPhotoStore {
             .appendingPathComponent("GroupWindows", isDirectory: true)
     }
 
+    /// Photos to show: not removed here, and not from a person hidden here.
     func entries(windowID: String) -> [Entry] {
-        ((try? loadIndex(windowID: windowID).entries) ?? []).filter { $0.isRemoved != true }
+        let hidden = Set((knownWindows().first { $0.id == windowID }?.hiddenMembers ?? []).map(\.id))
+        return ((try? loadIndex(windowID: windowID).entries) ?? [])
+            .filter { $0.isRemoved != true && !hidden.contains($0.senderParticipantID) }
     }
 
     /// Includes photos removed from this iPhone, which are not downloaded again.
@@ -102,6 +112,24 @@ actor GroupWindowLocalPhotoStore {
         } else {
             windows.append(KnownWindow(id: windowID, name: name))
         }
+        writeDirectory(windows)
+    }
+
+    /// Stops showing one person's photos in a window, on this iPhone only.
+    func hide(memberID: String, name: String, windowID: String) {
+        var windows = knownWindows()
+        guard let index = windows.firstIndex(where: { $0.id == windowID }) else { return }
+        var hidden = windows[index].hiddenMembers ?? []
+        guard !hidden.contains(where: { $0.id == memberID }) else { return }
+        hidden.append(HiddenMember(id: memberID, name: name))
+        windows[index].hiddenMembers = hidden
+        writeDirectory(windows)
+    }
+
+    func unhide(memberID: String, windowID: String) {
+        var windows = knownWindows()
+        guard let index = windows.firstIndex(where: { $0.id == windowID }) else { return }
+        windows[index].hiddenMembers?.removeAll { $0.id == memberID }
         writeDirectory(windows)
     }
 
@@ -186,5 +214,30 @@ actor GroupWindowLocalPhotoStore {
 #else
         try data.write(to: url, options: .atomic)
 #endif
+    }
+}
+
+/// Which invitation this iPhone made for a window, and until when. Never the
+/// link or its secret: those travel only through the share sheet.
+enum GroupInvitationMemory {
+    struct Saved: Equatable {
+        let id: String
+        let expiresAt: Date
+    }
+
+    private static func key(_ windowID: String) -> String { "groupWindow.invitation.v1." + windowID }
+
+    static func remember(id: String, expiresAt: Date, windowID: String) {
+        UserDefaults.standard.set(["id": id, "expiresAt": expiresAt.timeIntervalSince1970], forKey: key(windowID))
+    }
+
+    static func saved(windowID: String) -> Saved? {
+        guard let value = UserDefaults.standard.dictionary(forKey: key(windowID)),
+              let id = value["id"] as? String, let time = value["expiresAt"] as? Double else { return nil }
+        return Saved(id: id, expiresAt: Date(timeIntervalSince1970: time))
+    }
+
+    static func forget(windowID: String) {
+        UserDefaults.standard.removeObject(forKey: key(windowID))
     }
 }
