@@ -92,6 +92,8 @@ describe("group membership additive D1 boundary (not signature verification)", (
   });
   it("does not consume an invitation on the first application", async () => {
     const w = await window();
+    // The HTTP API records applications only for active, not preparing windows.
+    await sql("UPDATE group_windows SET mode='active' WHERE space_id=?",w.windowId).run();
     const invitationId = id();
     await sql("INSERT INTO group_invitations VALUES (?, ?, ?, ?, ?, ?, NULL)",
       invitationId, w.windowId, id(), w.deviceId, now, now + 86400).run();

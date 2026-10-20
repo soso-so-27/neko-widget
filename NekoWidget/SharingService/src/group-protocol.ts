@@ -141,6 +141,11 @@ function freezePacket<T>(value: T): T {
 
 export async function verifyGroupRoster(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
   previous?: VerifiedGroupRoster): Promise<VerifiedGroupRoster> {
+  return verifyRoster(packet,anchor,previous,false);
+}
+
+async function verifyRoster(packet: SignedGroupRoster, anchor: GroupTrustAnchor,
+  previous: VerifiedGroupRoster|undefined, trustedStoredHead:boolean): Promise<VerifiedGroupRoster> {
   exact(packet, ["roster", "signerDeviceId", "signature"]);
   const r = packet.roster;
   const bytes = groupRosterBytes(r);
@@ -160,7 +165,7 @@ export async function verifyGroupRoster(packet: SignedGroupRoster, anchor: Group
     const oldSigner = old.members.find(m => m.role === "owner")?.devices.find(d => d.id === signer.id);
     if (!oldSigner || oldSigner.signingPublicKey !== signer.signingPublicKey || oldSigner.hpkePublicKey !== signer.hpkePublicKey) invalid("invalid_signature");
     if (membershipKeys(old) !== membershipKeys(r) && r.keyEpoch === old.keyEpoch) invalid();
-  } else if (r.revision !== 1 || r.keyEpoch !== 1 || r.previousHash !== base64urlEncode(new Uint8Array(32))) {
+  } else if (!trustedStoredHead && (r.revision !== 1 || r.keyEpoch !== 1 || r.previousHash !== base64urlEncode(new Uint8Array(32)))) {
     invalid("stale_revision");
   }
   if (!await verifyEd25519(signer.signingPublicKey, packet.signature,
@@ -169,6 +174,27 @@ export async function verifyGroupRoster(packet: SignedGroupRoster, anchor: Group
   const copy = freezePacket(structuredClone(packet));
   return Object.freeze({ [verified]: true as const, packet: copy,
     get bytes() { return bytes.slice(); }, hash: await sha256Base64url(bytes) });
+}
+
+/** Only the relay's own atomic write path may create these rows. Client
+ * requests cannot supply the stored hash/revision/root used here. Avoid
+ * re-verifying the whole historical chain on every relay request. iPhones
+ * still verify their pinned chain independently. */
+export async function loadStoredGroupRoster(db:D1Database,windowId:string):Promise<VerifiedGroupRoster> {
+  const row=await db.prepare(`SELECT p.packet_json,r.roster_hash,w.roster_hash AS current_hash,w.revision,w.key_epoch,
+      w.owner_person_id,person.identity_public_key FROM group_windows w
+      JOIN group_rosters r ON r.space_id=w.space_id AND r.revision=w.revision
+      JOIN group_roster_packets p ON p.space_id=r.space_id AND p.revision=r.revision
+      JOIN group_people person ON person.id=w.owner_person_id WHERE w.space_id=? AND w.mode='active'`)
+    .bind(windowId).first<{packet_json:string;roster_hash:string;current_hash:string;revision:number;key_epoch:number;owner_person_id:string;identity_public_key:string}>();
+  if(!row || row.packet_json.length>65536) throw new ApiError(503,"unavailable","The group state is unavailable.");
+  let packet:SignedGroupRoster;
+  try { packet=JSON.parse(row.packet_json) as SignedGroupRoster; }
+  catch { throw new ApiError(503,"unavailable","The group state is unavailable."); }
+  const result=await verifyRoster(packet,{windowId,ownerPersonId:row.owner_person_id,ownerIdentityPublicKey:row.identity_public_key},undefined,true);
+  if(result.hash!==row.roster_hash || result.hash!==row.current_hash || packet.roster.revision!==row.revision || packet.roster.keyEpoch!==row.key_epoch)
+    throw new ApiError(503,"unavailable","The group state is unavailable.");
+  return result;
 }
 
 export async function verifyGroupEnvelopes(envelopes: readonly GroupKeyEnvelope[], roster: VerifiedGroupRoster): Promise<void> {
