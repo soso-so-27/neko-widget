@@ -4597,7 +4597,7 @@ class VeterinaryCatCareTests(unittest.TestCase):
         export = section(view, "private func makeExport(pdf: Bool) async {", "private struct VeterinaryCatCareFields")
         self.assertIn("CareHandoffExporter.create(record, pdf: pdf)", export)
         self.assertIn("医療の判断ではありません", export)
-        self.assertIn("CareHandoffExporter.remove(export.directory)", view)
+        self.assertIn("CareHandoffExporter.remove(retainedDirectory)", view)
         # Empty items say so instead of inventing anything.
         fields = section(summary, "static func veterinaryFields(", "static func weightTrend(")
         self.assertIn('"未記入・飼い主に確認"', fields)
