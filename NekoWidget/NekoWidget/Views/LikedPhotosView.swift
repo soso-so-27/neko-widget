@@ -2757,7 +2757,7 @@ struct PhotoBrowserView: View {
                     }
                     .accessibilityIdentifier("photo-memory-note-read-error")
                 }
-                if GroupWindowClientProvider.production != nil {
+                if GroupWindowClientProvider.ui != nil {
                     Button {
                         // Choosing the window and confirming come first; nothing is sent here.
                         groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)
@@ -3120,7 +3120,7 @@ struct PhotoBrowserView: View {
             await personalNote.load(for: selectedPhotoIdentifier)
         }
         .sheet(item: $groupDelivery) { request in
-            if let client = GroupWindowClientProvider.production {
+            if let client = GroupWindowClientProvider.ui {
                 GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
             }
         }
@@ -3226,7 +3226,7 @@ struct PhotoBrowserView: View {
         // This delivers to two-person windows, which are hidden with group windows on.
         return SharingAPIConfiguration.current.isMediaAvailable
             && SharingAPIConfiguration.current.isShareExtensionHandoffAvailable
-            && GroupWindowClientProvider.production == nil
+            && GroupWindowClientProvider.ui == nil
     }
 
     private func addToShowcase(_ identifier: String, scopeID: String) {

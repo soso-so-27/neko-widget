@@ -1134,6 +1134,23 @@ enum GroupWindowClientProvider {
         return try? ProductionGroupWindowClient(endpoint: endpoint, namespace: namespace)
     }()
 
+    /// What the まど tab and the photo screens use: the production adapter, or
+    /// in DEBUG the screen fixture (`--group-window-screens-fixture`).
+    static var ui: (any GroupWindowMediaClient)? {
+#if DEBUG
+        if GroupWindowUIFixture.showsScreens { return GroupWindowScreenFixture.shared }
+#endif
+        return production
+    }
+
+    /// The on-device sensitive-content check the window screens use.
+    static var moderation: any MomentModerating {
+#if DEBUG
+        if GroupWindowUIFixture.showsScreens { return GroupWindowFixtureModeration() }
+#endif
+        return MomentModerationService()
+    }
+
     /// The client and invitation ID for an opened link. The production path
     /// hands the link to the adapter, which keeps its key out of this file.
     static func joinClient(
@@ -1230,6 +1247,19 @@ enum GroupWindowUIFixture {
 
     static var showsJoin: Bool {
         CommandLine.arguments.contains("--group-window-join")
+    }
+
+    /// The まど tab and window screens on the screen fixture.
+    static var showsScreens: Bool {
+        CommandLine.arguments.contains("--group-window-screens-fixture")
+    }
+
+    static var checkIsOff: Bool {
+        CommandLine.arguments.contains("--group-window-screens-check-off")
+    }
+
+    static var showsFailedDelivery: Bool {
+        CommandLine.arguments.contains("--group-window-screens-failed-send")
     }
 
     /// Same instant the fixture uses, so expiry labels stay deterministic.

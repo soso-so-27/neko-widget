@@ -310,7 +310,7 @@ struct MainTabView: View {
         guard showsMadoTab else { return }
         arrivalRefreshSequence &+= 1
         let sequence = arrivalRefreshSequence
-        let countsPrivateWindows = GroupWindowClientProvider.production == nil
+        let countsPrivateWindows = GroupWindowClientProvider.ui == nil
         let result = await Task.detached(priority: .utility) { () -> [String: [Date]]? in
             try? SharingLifecycleGate.withExclusive {
                 let catalog = try PrivateWindowCatalogStore.load()
@@ -435,7 +435,8 @@ struct MainTabView: View {
             }
             .tag(AppTab.photos)
 
-            if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
+            if SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
+                || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
                 NavigationStack {
                     WindowListView(
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
@@ -2719,7 +2720,7 @@ private struct WindowListView: View {
          pendingFamilyNotificationRoute: Binding<MomentNotificationRoute?>,
          // With group windows on, the two-person window is not shown anywhere (10/21).
          supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible
-             && GroupWindowClientProvider.production == nil,
+             && GroupWindowClientProvider.ui == nil,
          officialStore: OfficialWindowStore = .shared,
          refreshOfficialFeed: (() async throws -> Void)? = nil,
          previewOfficialFeed: (() async throws -> OfficialWindowPreview)? = nil,
@@ -2787,7 +2788,7 @@ private struct WindowListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
-                if let groupClient = GroupWindowClientProvider.production {
+                if let groupClient = GroupWindowClientProvider.ui {
                     // Windows people share come first (1-4); public windows follow.
                     GroupWindowListSection(client: groupClient)
                     if !receivingPublicWindows.isEmpty {
@@ -2821,7 +2822,7 @@ private struct WindowListView: View {
                         cachedWindowWarning(message: message)
                     }
 
-                    if GroupWindowClientProvider.production != nil {
+                    if GroupWindowClientProvider.ui != nil {
                         if receivingPublicWindows.isEmpty { publicWindowEntry }
                     } else if windows.isEmpty, receivingPublicWindows.isEmpty {
                         emptyWindowCard
@@ -2876,7 +2877,7 @@ private struct WindowListView: View {
         }
         // A group invitation link joins here, in the まど tab itself.
         .sheet(item: Binding(
-            get: { GroupWindowClientProvider.production != nil ? invitationInbox.pending : nil },
+            get: { GroupWindowClientProvider.ui != nil ? invitationInbox.pending : nil },
             set: { if $0 == nil { invitationInbox.discard() } }
         )) { invitation in
             GroupInvitationJoinSheet(invitation: invitation)
@@ -3039,7 +3040,7 @@ private struct WindowListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("window-list-product-limit")
         } else {
-            if let groupClient = GroupWindowClientProvider.production {
+            if let groupClient = GroupWindowClientProvider.ui {
                 // One place to start a window. New windows are group windows,
                 // also for two people; existing two-person windows keep working.
                 NavigationLink { GroupWindowCreateScreen(client: groupClient) } label: {

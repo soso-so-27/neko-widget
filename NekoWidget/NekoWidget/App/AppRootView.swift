@@ -76,7 +76,7 @@ struct AppRootView: View {
         }) {
             NavigationStack {
                 Group {
-                    if GroupWindowClientProvider.production != nil {
+                    if GroupWindowClientProvider.ui != nil {
                         OnboardingInvitationHelpView()
                     } else {
                         PairingView(initialSetupPath: .join)

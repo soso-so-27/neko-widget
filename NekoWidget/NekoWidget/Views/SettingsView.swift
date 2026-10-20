@@ -208,7 +208,7 @@ struct SettingsView: View {
 
             // Two-person window settings; group windows keep theirs inside each window.
             if (SharingAPIConfiguration.current.isReviewVisible || SharingAPIConfiguration.current.isAvailable)
-                && GroupWindowClientProvider.production == nil {
+                && GroupWindowClientProvider.ui == nil {
                 Section {
                     if SharingAPIConfiguration.current.isReviewVisible {
                         NavigationLink {

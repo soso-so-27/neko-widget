@@ -4446,14 +4446,14 @@ class GroupWindowScreenTests(unittest.TestCase):
         for forbidden in ("URLSession", "Keychain", "UserDefaults", "print(", "SharedLog", "roomKey"):
             self.assertNotIn(forbidden, screen)
         # Received photos: sensitive-content check, then the durable write,
-        # and only inside storeAndAcknowledge (so ACK follows the write).
+        # and only inside keep(), which the production adapter runs through storeAndAcknowledge (so ACK follows the write).
         receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
         self.assertIn("guard verdict != .retryLater, verdict != .checkOff else { return verdict }", receive)
-        self.assertIn("client.storeAndAcknowledge(incoming, outgoingOperationID: outgoingOperationID)", receive)
-        self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("storeAndAcknowledge"))
+        self.assertIn("client.keep(incoming, outgoingOperationID: outgoingOperationID)", receive)
+        self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("client.keep("))
         self.assertIn("try await store.save(", receive)
-        self.assertIn("jpeg: verdict == .hidden ? nil : verified.jpeg", receive)
+        self.assertIn("jpeg: hidden ? nil : jpeg", receive)
         # Sending: the same canonical JPEG and check as the two-person window.
         send = section(screen, "func prepare(_ item: PhotosPickerItem) async", "func toggleHeart(")
         self.assertIn("guard canSend", send)
@@ -4475,7 +4475,7 @@ class GroupWindowScreenTests(unittest.TestCase):
             self.assertNotIn(forbidden, store)
 
         tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("if let groupClient = GroupWindowClientProvider.production {", tab)
+        self.assertIn("if let groupClient = GroupWindowClientProvider.ui {", tab)
         self.assertIn("GroupWindowListSection(client: groupClient)", tab)
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         self.assertIn("GroupWindowView.swift in Sources", project)
@@ -4906,7 +4906,7 @@ class GroupSendConfirmTests(unittest.TestCase):
         self.assertIn("GroupWindowCreateScreen(client: model.client)", listing)
         self.assertNotIn("showsNameEntry", listing)
         pairing = source("NekoWidget/Views/PairingView.swift")
-        self.assertIn("if GroupWindowClientProvider.production == nil {", pairing)
+        self.assertIn("if GroupWindowClientProvider.ui == nil {", pairing)
 
 
 class GroupWindowSpeedTests(unittest.TestCase):
@@ -5046,7 +5046,7 @@ class Build269FeedbackTests(unittest.TestCase):
 class TwoPersonWindowHiddenTests(unittest.TestCase):
     def test_group_builds_show_no_two_person_window(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible\n             && GroupWindowClientProvider.production == nil", tab)
+        self.assertIn("supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible\n             && GroupWindowClientProvider.ui == nil", tab)
         self.assertIn("get: { supportsPrivateWindows && opensActiveWindow }", tab)
         self.assertIn("GroupInvitationJoinSheet(invitation: invitation)", tab)
         self.assertIn("countsPrivateWindows ? catalog?.windows ?? [] : []", tab)
@@ -5054,10 +5054,10 @@ class TwoPersonWindowHiddenTests(unittest.TestCase):
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
         help_view = section(onboarding, "struct OnboardingInvitationHelpView: View", '.navigationTitle("招待を受け取った")')
         self.assertNotIn("PairingView(initialSetupPath: .join)", help_view)
-        self.assertIn("&& GroupWindowClientProvider.production == nil {", source("NekoWidget/Views/SettingsView.swift"))
+        self.assertIn("&& GroupWindowClientProvider.ui == nil {", source("NekoWidget/Views/SettingsView.swift"))
         browser = source("NekoWidget/Views/LikedPhotosView.swift")
         deliver = section(browser, "private var canDeliverToWindow: Bool {", "private func addToShowcase(")
-        self.assertIn("GroupWindowClientProvider.production == nil", deliver)
+        self.assertIn("GroupWindowClientProvider.ui == nil", deliver)
         root_view = source("NekoWidget/App/AppRootView.swift")
         dismiss = section(root_view, ".sheet(item: $onboardingInvitation, onDismiss: {", "GroupInvitationJoinSheet(invitation: invitation)")
         self.assertNotIn("isFamilyWindowPresented", dismiss)

@@ -8,7 +8,41 @@ import UniformTypeIdentifiers
 // receiving. Signing, keys, and the relay stay inside
 // `ProductionGroupWindowClient`; this file only keeps verified photos on this
 // iPhone and draws them. It is reached only when
-// `GroupWindowClientProvider.production` exists (GroupWindowsEnabled builds).
+// `GroupWindowClientProvider.ui` exists (GroupWindowsEnabled builds).
+
+// MARK: - What the window screens need from a client
+
+/// A photo fetched and verified, waiting to be kept on this iPhone. Only the
+/// production adapter can carry a verified photo; screens see the JPEG.
+struct GroupFetchedPhoto: Sendable {
+    let photo: GroupPhoto
+    let jpeg: Data
+    fileprivate let verified: GroupVerifiedIncomingPhoto?
+}
+
+/// The window screens' needs on top of the members/invitation boundary:
+/// fetch one photo, keep it before the relay is told, and send one.
+protocol GroupWindowMediaClient: GroupWindowClient {
+    func fetchPhoto(photoID: String, windowID: String) async throws -> GroupFetchedPhoto
+    func keep(_ fetched: GroupFetchedPhoto, outgoingOperationID: UUID?,
+              persist: @escaping @Sendable (GroupPhoto, Data) async throws -> Void) async throws
+    func sendPhoto(normalizedJPEG: Data, windowID: String, operationID: UUID) async throws -> GroupPhoto
+}
+
+extension ProductionGroupWindowClient: GroupWindowMediaClient {
+    func fetchPhoto(photoID: String, windowID: String) async throws -> GroupFetchedPhoto {
+        let incoming = try await downloadPhoto(photoID: photoID, windowID: windowID)
+        return GroupFetchedPhoto(photo: incoming.photo, jpeg: incoming.jpeg, verified: incoming)
+    }
+
+    func keep(_ fetched: GroupFetchedPhoto, outgoingOperationID: UUID?,
+              persist: @escaping @Sendable (GroupPhoto, Data) async throws -> Void) async throws {
+        guard let verified = fetched.verified else { throw GroupClientError.invalidResponse }
+        _ = try await storeAndAcknowledge(verified, outgoingOperationID: outgoingOperationID) { kept in
+            try await persist(kept.photo, kept.jpeg)
+        }
+    }
+}
 
 // MARK: - Picking a photo
 
@@ -87,15 +121,15 @@ final class GroupWindowScreenModel: ObservableObject {
     @Published var actionMessage: String?
 
     let windowID: String
-    let client: ProductionGroupWindowClient
+    let client: any GroupWindowMediaClient
     /// Set for a window this iPhone has left: its kept photos only.
     let formerName: String?
     private let store: GroupWindowLocalPhotoStore
     private let moderation: any MomentModerating
 
-    init(client: ProductionGroupWindowClient, windowID: String, formerName: String? = nil,
+    init(client: any GroupWindowMediaClient, windowID: String, formerName: String? = nil,
          store: GroupWindowLocalPhotoStore = .shared,
-         moderation: any MomentModerating = MomentModerationService()) {
+         moderation: any MomentModerating = GroupWindowClientProvider.moderation) {
         self.client = client
         self.windowID = windowID
         self.formerName = formerName
@@ -213,7 +247,7 @@ final class GroupWindowScreenModel: ObservableObject {
     private func receive(_ photo: GroupPhoto, me: String,
                          outgoingOperationID: UUID? = nil) async -> GroupPhotoModeration.Verdict? {
         do {
-            let incoming = try await client.downloadPhoto(photoID: photo.id, windowID: windowID)
+            let incoming = try await client.fetchPhoto(photoID: photo.id, windowID: windowID)
             let isOwn = photo.senderParticipantID == me
             // A photo this iPhone sent was checked before sending.
             let verdict: GroupPhotoModeration.Verdict
@@ -226,17 +260,18 @@ final class GroupWindowScreenModel: ObservableObject {
             guard verdict != .retryLater, verdict != .checkOff else { return verdict }
             let store = self.store
             let windowID = self.windowID
-            _ = try await client.storeAndAcknowledge(incoming, outgoingOperationID: outgoingOperationID) { verified in
+            let hidden = verdict == .hidden
+            try await client.keep(incoming, outgoingOperationID: outgoingOperationID) { kept, jpeg in
                 try await store.save(
                     .init(
-                        id: verified.photo.id,
-                        senderParticipantID: verified.photo.senderParticipantID,
-                        senderDisplayName: verified.photo.senderDisplayName,
-                        createdAt: verified.photo.createdAt,
-                        isHidden: verdict == .hidden,
+                        id: kept.id,
+                        senderParticipantID: kept.senderParticipantID,
+                        senderDisplayName: kept.senderDisplayName,
+                        createdAt: kept.createdAt,
+                        isHidden: hidden,
                         isOwn: isOwn
                     ),
-                    jpeg: verdict == .hidden ? nil : verified.jpeg,
+                    jpeg: hidden ? nil : jpeg,
                     windowID: windowID
                 )
             }
@@ -307,6 +342,16 @@ final class GroupWindowScreenModel: ObservableObject {
         failedDelivery = nil
         message = nil
     }
+
+#if DEBUG
+    /// Screen check only: shows the 「もう一度届ける」 row with a fixture photo.
+    func showFixtureFailedDelivery() {
+        guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
+            .jpegData(compressionQuality: 0.8) else { return }
+        message = GroupWindowPresentation.message(for: GroupClientError.offline)
+        failedDelivery = FailedDelivery(photo: PreparedPhoto(jpeg: jpeg, photoIdentifier: nil), memo: "")
+    }
+#endif
 
     // MARK: Keeping a received photo
 
@@ -440,7 +485,7 @@ struct GroupWindowScreen: View {
     @State private var showsForgetConfirmation = false
     @Environment(\.dismiss) private var dismiss
 
-    init(client: ProductionGroupWindowClient, windowID: String, formerName: String? = nil) {
+    init(client: any GroupWindowMediaClient, windowID: String, formerName: String? = nil) {
         _model = StateObject(wrappedValue: GroupWindowScreenModel(
             client: client, windowID: windowID, formerName: formerName))
     }
@@ -568,6 +613,9 @@ struct GroupWindowScreen: View {
         .task {
             await model.showStored()
             await model.sync()
+#if DEBUG
+            if GroupWindowUIFixture.showsFailedDelivery { model.showFixtureFailedDelivery() }
+#endif
         }
         .refreshable { await model.sync() }
         .onChange(of: pickedItem) { _, item in
@@ -732,13 +780,13 @@ private extension GroupPhotoTile {
 /// 「まどに届ける」 from the 写真 tab or an album: choose a group window (not
 /// asked when there is only one), then the same confirmation as in the window.
 struct GroupLibraryDeliverySheet: View {
-    let client: ProductionGroupWindowClient
+    let client: any GroupWindowMediaClient
     let localIdentifier: String
     @Environment(\.dismiss) private var dismiss
     @StateObject private var list: GroupWindowListModel
     @State private var screen: GroupWindowScreenModel?
 
-    init(client: ProductionGroupWindowClient, localIdentifier: String) {
+    init(client: any GroupWindowMediaClient, localIdentifier: String) {
         self.client = client
         self.localIdentifier = localIdentifier
         _list = StateObject(wrappedValue: GroupWindowListModel(client: client))
@@ -1107,11 +1155,11 @@ struct GroupWindowMembersScreen: View {
         GroupWindowMembersView(
             model: model,
             // A paused window's member can start a window of their own.
-            onCreateOwnWindow: GroupWindowClientProvider.production == nil ? nil : { createsOwnWindow = true },
+            onCreateOwnWindow: GroupWindowClientProvider.ui == nil ? nil : { createsOwnWindow = true },
             onLeft: onLeft
         )
         .navigationDestination(isPresented: $createsOwnWindow) {
-            if let client = GroupWindowClientProvider.production {
+            if let client = GroupWindowClientProvider.ui {
                 GroupWindowCreateScreen(client: client)
             }
         }
@@ -1139,9 +1187,9 @@ final class GroupWindowListModel: ObservableObject {
     @Published private(set) var message: String?
     @Published private(set) var isWorking = false
     @Published private(set) var hasLoaded = false
-    let client: ProductionGroupWindowClient
+    let client: any GroupWindowMediaClient
 
-    init(client: ProductionGroupWindowClient) { self.client = client }
+    init(client: any GroupWindowMediaClient) { self.client = client }
 
     func load() async {
         defer { hasLoaded = true }
@@ -1185,7 +1233,7 @@ struct GroupWindowCreateScreen: View {
     @State private var name = ""
     @State private var createdWindowID: String?
 
-    init(client: ProductionGroupWindowClient) {
+    init(client: any GroupWindowMediaClient) {
         _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
     }
 
@@ -1249,7 +1297,7 @@ struct GroupWindowListSection: View {
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
 
-    init(client: ProductionGroupWindowClient) {
+    init(client: any GroupWindowMediaClient) {
         _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
     }
 
@@ -1402,3 +1450,124 @@ struct GroupWindowListSection: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 }
+
+#if DEBUG
+// MARK: - Screen fixture (simulator screenshots only)
+
+/// `--group-window-screens-fixture`: the まど tab's group windows, one
+/// window's photos, the photo detail and the members screen, on in-memory
+/// data with code-drawn cat pictures. No relay, key, or account is touched.
+actor GroupWindowScreenFixture: GroupWindowMediaClient {
+    static let shared = GroupWindowScreenFixture()
+
+    private let members = GroupWindowFixture(scenario: GroupWindowUIFixture.scenario, now: GroupWindowUIFixture.fixtureNow)
+    private var hearts: [String: [GroupHeart]] = [:]
+    private var sent: [GroupPhoto] = []
+
+    private func photoList(_ window: GroupWindow) -> [GroupPhoto] {
+        let others = window.members.filter { $0.id != window.myParticipantID }
+        let now = GroupWindowUIFixture.fixtureNow
+        let fixed = (1...6).map { index -> GroupPhoto in
+            let sender = index % 3 == 0 || others.isEmpty ? nil : others[(index - 1) % others.count]
+            let id = "fixture-group-photo-\(index)"
+            return GroupPhoto(id: id, windowID: window.id,
+                              senderParticipantID: sender?.id ?? window.myParticipantID,
+                              senderDisplayName: sender?.displayName ?? "自分",
+                              createdAt: now.addingTimeInterval(Double(-index) * 86_400),
+                              fixtureAssetName: "app-store-screenshot-fixture-\(index)",
+                              hearts: hearts[id] ?? (index == 1 ? [GroupHeart(participantID: others.first?.id ?? "",
+                                  displayName: others.first?.displayName ?? "", active: true, updatedAt: now)] : []))
+        }
+        return sent + fixed
+    }
+
+    func windows() async throws -> [GroupWindow] { try await members.windows() }
+    func window(id: String) async throws -> GroupWindow {
+        GroupWindowUIFixture.applyDelivery(try await members.window(id: id))
+    }
+    func createWindow(name: String, operationID: UUID) async throws -> GroupWindow {
+        try await members.createWindow(name: name, operationID: operationID)
+    }
+    func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation {
+        try await members.createInvitation(windowID: windowID, operation: operation)
+    }
+    func revokeInvitation(id: String, windowID: String, operation: GroupOperation) async throws {
+        try await members.revokeInvitation(id: id, windowID: windowID, operation: operation)
+    }
+    func apply(invitationID: String, displayName: String, operationID: UUID) async throws -> GroupJoinRequest {
+        try await members.apply(invitationID: invitationID, displayName: displayName, operationID: operationID)
+    }
+    func joinStatus(requestID: String) async throws -> GroupJoinRequest { try await members.joinStatus(requestID: requestID) }
+    func pendingRequests(windowID: String) async throws -> [GroupJoinRequest] {
+        try await members.pendingRequests(windowID: windowID)
+    }
+    func approve(requestID: String, windowID: String, operation: GroupOperation) async throws -> GroupWindow {
+        try await members.approve(requestID: requestID, windowID: windowID, operation: operation)
+    }
+    func reject(requestID: String, windowID: String, operation: GroupOperation) async throws {
+        try await members.reject(requestID: requestID, windowID: windowID, operation: operation)
+    }
+    func cancel(requestID: String, operationID: UUID) async throws {
+        try await members.cancel(requestID: requestID, operationID: operationID)
+    }
+    func addDevice(participantID: String, windowID: String, displayName: String,
+                   operation: GroupOperation) async throws -> GroupWindow {
+        try await members.addDevice(participantID: participantID, windowID: windowID,
+                                    displayName: displayName, operation: operation)
+    }
+    func removeMember(participantID: String, windowID: String, operation: GroupOperation) async throws -> GroupWindow {
+        try await members.removeMember(participantID: participantID, windowID: windowID, operation: operation)
+    }
+    func leave(windowID: String, operation: GroupOperation) async throws {
+        try await members.leave(windowID: windowID, operation: operation)
+    }
+    func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow {
+        try await members.rotate(windowID: windowID, operation: operation)
+    }
+    func photos(windowID: String) async throws -> [GroupPhoto] {
+        photoList(try await members.window(id: windowID))
+    }
+    func setHeart(photoID: String, windowID: String, active: Bool, operationID: UUID) async throws -> GroupPhoto {
+        let window = try await members.window(id: windowID)
+        guard var photo = photoList(window).first(where: { $0.id == photoID }) else { throw GroupClientError.invalidResponse }
+        photo.hearts.removeAll { $0.participantID == window.myParticipantID }
+        photo.hearts.append(GroupHeart(participantID: window.myParticipantID, displayName: "自分",
+                                       active: active, updatedAt: GroupWindowUIFixture.fixtureNow))
+        hearts[photoID] = photo.hearts
+        return photo
+    }
+
+    func fetchPhoto(photoID: String, windowID: String) async throws -> GroupFetchedPhoto {
+        let window = try await members.window(id: windowID)
+        guard let photo = photoList(window).first(where: { $0.id == photoID }) else { throw GroupClientError.invalidResponse }
+        let asset = photo.fixtureAssetName ?? "app-store-screenshot-fixture-1"
+        let jpeg = await MainActor.run {
+            AppStoreScreenshotFixture.image(for: asset)?.jpegData(compressionQuality: 0.8)
+        }
+        guard let jpeg else { throw GroupClientError.invalidResponse }
+        return GroupFetchedPhoto(photo: photo, jpeg: jpeg, verified: nil)
+    }
+
+    func keep(_ fetched: GroupFetchedPhoto, outgoingOperationID: UUID?,
+              persist: @escaping @Sendable (GroupPhoto, Data) async throws -> Void) async throws {
+        try await persist(fetched.photo, fetched.jpeg)
+    }
+
+    func sendPhoto(normalizedJPEG: Data, windowID: String, operationID: UUID) async throws -> GroupPhoto {
+        let window = try await members.window(id: windowID)
+        let photo = GroupPhoto(id: "fixture-sent-" + operationID.uuidString.lowercased(), windowID: windowID,
+                               senderParticipantID: window.myParticipantID, senderDisplayName: "自分",
+                               createdAt: Date(), fixtureAssetName: "app-store-screenshot-fixture-7", hearts: [])
+        sent.insert(photo, at: 0)
+        return photo
+    }
+}
+
+/// The fixture's on-device check: always safe, or "turned off" to show why
+/// photos wait (`--group-window-screens-check-off`).
+struct GroupWindowFixtureModeration: MomentModerating {
+    func requireSafeImage(at url: URL) async throws {
+        if GroupWindowUIFixture.checkIsOff { throw MomentSharingError.moderationDisabled }
+    }
+}
+#endif
