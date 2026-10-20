@@ -7,6 +7,7 @@ import { leaveGroupWindow,transitionGroupMembership } from './group-members';
 import { getGroupKey,listGroupJoinRequests,listGroupMembers,listGroupRosters } from './group-reads';
 import { createGroupInvitation,createGroupWindow,getGroupWindow,listGroupWindows,revokeGroupInvitation } from './group-windows';
 import { parseJsonBody,requireEmptyBody } from './http';
+import { connectGroupBilling } from './group-owner-plus';
 
 export async function groupAPI(request:Request,env:Env):Promise<Response> {
   try { return await dispatchGroup(request,env); }
@@ -28,6 +29,9 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
       ['group_owner_required',403,'owner_required'],['group_request_nonces.device_id',401,'replay'],
       ['group_mutations.actor_device_id',409,'idempotency_conflict'],['group_one_pending_request',409,'request_not_pending'],
       ['group_join_requests.invitation_id',409,'request_not_pending'],
+      ['group_owner_plus_required',403,'owner_plus_required'],['group_window_paused',403,'window_paused'],
+      ['group_billing_connection_invalid',401,'invalid_billing_authentication'],
+      ['group_billing_connections.',409,'billing_connection_conflict'],['billing_request_nonces.',401,'replayed_billing_request'],
       ['group_rosters.space_id',409,'stale_revision'],['group_epoch_transitions.id',409,'idempotency_conflict'],
     ];
     for(const [marker,status,code] of codes) if(message.includes(marker)) throw new ApiError(status,code,'The group operation could not be completed.');
@@ -43,6 +47,7 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(request.method==='GET') requireEmptyBody(bytes);
   else if(request.method!=='POST') throw new ApiError(405,'method_not_allowed','The method is not supported.');
   const body=request.method==='POST'?parseJsonBody(request,bytes):undefined;
+  if(path==='/v3/group-windows/billing-connection' && body)return connectGroupBilling(request,env,actor,bytes,body);
   if(path==='/v3/group-windows' && body) return createGroupWindow(env,actor,body);
   if(path==='/v3/group-windows/list' && body) return listGroupWindows(env,actor,body);
   const match=path.match(/^\/v3\/group-windows\/([A-Za-z0-9_-]{1,128})(?:\/(.*))?$/u);
