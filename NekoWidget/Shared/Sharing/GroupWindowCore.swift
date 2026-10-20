@@ -74,7 +74,7 @@ struct GroupRoster: Codable, Equatable, Sendable {
 
     func canonicalBytes() throws -> Data {
         guard GroupCanonical.validID(windowID), GroupCanonical.validID(ownerPersonID),
-              revision > 0, keyEpoch > 0, previousHash.count == 32,
+              (1...9_007_199_254_740_991).contains(revision), (1...9_007_199_254_740_991).contains(keyEpoch), previousHash.count == 32,
               (1...6).contains(members.count),
               Set(members.map(\.participantID)).count == members.count,
               Set(members.map(\.personID)).count == members.count,
@@ -111,7 +111,7 @@ struct GroupRoster: Codable, Equatable, Sendable {
     }
 }
 
-struct GroupTrustAnchor: Sendable {
+struct GroupTrustAnchor: Codable, Equatable, Sendable {
     /// Obtained from local creation or the invitation, never replaced by relay JSON.
     let windowID: String
     let ownerPersonID: String
@@ -146,6 +146,23 @@ struct VerifiedGroupRoster: Sendable {
 enum GroupRosterVerifier {
     static func verify(_ packet: SignedGroupRoster, anchor: GroupTrustAnchor,
                        previous: VerifiedGroupRoster? = nil) throws -> VerifiedGroupRoster {
+        try verifyPacket(packet, anchor: anchor, previous: previous, restoredPin: nil)
+    }
+
+    /// These pins MUST come from this iPhone's Keychain record written after
+    /// verification, never from relay JSON. Restoring the saved head avoids
+    /// retaining/replaying an ever-growing roster chain on every app launch.
+    static func restoreLocalCheckpoint(_ packet: SignedGroupRoster, anchor: GroupTrustAnchor,
+                                       pinnedRevision: Int, pinnedHash: Data) throws -> VerifiedGroupRoster {
+        guard pinnedRevision > 0, pinnedHash.count == 32,
+              packet.roster.revision == pinnedRevision,
+              GroupCanonical.hash(try packet.roster.canonicalBytes()) == pinnedHash
+        else { throw GroupProtocolError.staleRevision }
+        return try verifyPacket(packet, anchor: anchor, previous: nil, restoredPin: pinnedHash)
+    }
+
+    private static func verifyPacket(_ packet: SignedGroupRoster, anchor: GroupTrustAnchor,
+                                     previous: VerifiedGroupRoster?, restoredPin: Data?) throws -> VerifiedGroupRoster {
         let roster = packet.roster
         let bytes = try roster.canonicalBytes()
         guard roster.windowID == anchor.windowID, roster.ownerPersonID == anchor.ownerPersonID,
@@ -168,7 +185,7 @@ enum GroupRosterVerifier {
             let oldKeys = try old.membershipKeyBytes()
             let newKeys = try roster.membershipKeyBytes()
             if oldKeys != newKeys && roster.keyEpoch == old.keyEpoch { throw GroupProtocolError.invalidRoster }
-        } else {
+        } else if restoredPin == nil {
             guard roster.revision == 1, roster.keyEpoch == 1,
                   roster.previousHash == Data(repeating: 0, count: 32) else { throw GroupProtocolError.staleRevision }
         }

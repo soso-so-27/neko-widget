@@ -10,6 +10,12 @@ enum GroupRequestState: String, Codable, Sendable {
     case pending, approved, rejected, cancelled, expired
 }
 enum GroupConnectionState: String, Codable, Sendable { case active, rotationRequired, closed }
+// Server-derived delivery policy is separate from membership. A paused window
+// still supports reading, hearts and member management. nil means unconfirmed,
+// never a locally calculated trial or an assertion of paid access.
+enum GroupDeliveryStatus: String, Codable, Sendable { case active, paused }
+enum GroupDeliveryReason: String, Codable, Sendable { case ownerPlus = "owner_plus", ownerPlusRequired = "owner_plus_required" }
+enum GroupSubscriptionError: Error, Equatable, Sendable { case ownerPlusRequired, windowPaused }
 
 struct GroupDevice: Identifiable, Codable, Equatable, Sendable {
     let id: String
@@ -35,6 +41,9 @@ struct GroupWindow: Identifiable, Codable, Equatable, Sendable {
     let myRole: GroupRole
     var state: GroupConnectionState
     var members: [GroupMember]
+    var deliveryStatus: GroupDeliveryStatus? = nil
+    var deliveryReason: GroupDeliveryReason? = nil
+    var ownerParticipantID: String? = nil
 
     var activeMembers: [GroupMember] { members.filter { $0.state == .active } }
     var memberCount: Int { activeMembers.count }

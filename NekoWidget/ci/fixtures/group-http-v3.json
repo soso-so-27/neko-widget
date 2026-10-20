@@ -1,0 +1,17 @@
+{
+  "purpose": "synthetic public HTTP interoperability vector; no real identity or secrets",
+  "personId": "Vkdap1RjR0wChd9dvyvKtz2mUTWIOem3dIGy6rEHcIw",
+  "deviceId": "uhDS3t6yMBf1sRFLYhBJE5ZWjpbR-4zg9iezIZTNhyw",
+  "personPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "signingPublicKey": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc",
+  "hpkePublicKey": "eaYx7t4b-cmPEgMs3q3Q56B5OY_HhriMyEbsia-FpRo",
+  "request": {
+    "method": "POST",
+    "path": "/v3/group-windows/list",
+    "timestamp": "1792454400",
+    "nonce": "YGFiY2RlZmdoaWprbG1ubw",
+    "bodyUTF8": "{\"after\":null,\"limit\":50}",
+    "canonicalBytes": "AAtOVzMuUkVRVUVTVAABMwArdWhEUzN0NnlNQmYxc1JGTFloQkpFNVpXanBiUi00emc5aWV6SVpUTmh5dwAKMTc5MjQ1NDQwMAAWWUdGaVkyUmxabWRvYVdwcmJHMXVidwAEUE9TVAAWL3YzL2dyb3VwLXdpbmRvd3MvbGlzdAAgpA_GloUda_rrr22o1526boXXc52HbXr3XN2tsMaVJxo",
+    "signature": "aJNh3ury6cZ6aGsjMFEEipIfmPJKMx-LBsxipqyJ4R5ZJJhhkpyYvr-66Gcj2xhZGFDi9fEV-LLBJT3V8hI5CQ"
+  }
+}
