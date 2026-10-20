@@ -151,6 +151,10 @@ struct FamilyWindowView: View {
     @State private var clearsWidgetFocusAfterMemorySave = false
     @State private var notificationRouteResolutionFailed = false
     @State private var showsStaleWidgetPhotoAlert = false
+    // Per-viewer convenience only: "あとで" hides the prompt; settings still
+    // offer the same switch.
+    @AppStorage("familyWindow.notificationPromptDismissed.v1")
+    private var notificationPromptDismissed = false
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -864,7 +868,7 @@ struct FamilyWindowView: View {
         .alert("この写真は更新されました", isPresented: $showsStaleWidgetPhotoAlert) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ウィジェットの新しい写真で、もう一度お試しください。")
+            Text("ホーム画面の新しい写真で、もう一度お試しください。")
         }
         .sheet(item: $preparedDelivery, onDismiss: {
             deliveryCaption = ""
@@ -1050,6 +1054,9 @@ struct FamilyWindowView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
+                    if showsNotificationPrompt {
+                        notificationPromptCard
+                    }
                     outgoingStatusSection
                 }
 
@@ -1170,7 +1177,7 @@ struct FamilyWindowView: View {
                     Text("＋から写真を1枚選び、確認して相手と共有します。写真や自分だけのメモが自動で共有されることはありません。")
                 }
                 Section("追加した写真") {
-                    Text("新しい写真とメモはこのまどに残り、二人で見返せます。Widgetにも届きます。")
+                    Text("新しい写真とメモはこのまどに残り、まどのメンバーで見返せます。ホーム画面の写真（ウィジェット）にも届きます。")
                 }
                 Section("以前に送った写真") {
                     Text("「表示期限あり」の写真は以前の期限のままです。写真を開いてメモを追加すると、このまどに残せます。期限のある写真は書き出しに含まれません。")
@@ -1660,10 +1667,10 @@ struct FamilyWindowView: View {
         } message: {
             Text("名前は相手のまどにも表示されます。")
         }
-        .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
+        .alert("ホーム画面に置く", isPresented: $showsWidgetGuide) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「表示する写真」で「\(model.windowDisplayName)」を選びます。")
+            Text("ホーム画面の何もないところを長押しし、「編集」→「ウィジェットを追加」で「ねこのまど」を置きます。置いた写真を長押しし、「ウィジェットを編集」→「表示する写真」で「\(model.windowDisplayName)」を選びます。")
         }
     }
 
@@ -1732,7 +1739,7 @@ struct FamilyWindowView: View {
             HStack(spacing: 12) {
                 settingsSymbol("rectangle.on.rectangle")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("ウィジェットの表示")
+                    Text("ホーム画面に置く")
                         .font(.subheadline.weight(.semibold))
                     if model.isReportOnly {
                         Text("共有が終了したため、写真は表示されません")
@@ -1817,6 +1824,42 @@ struct FamilyWindowView: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.tertiary)
             .accessibilityHidden(true)
+    }
+
+    /// Without this, notifications stay "quiet" (provisional) and an arriving
+    /// photo is easy to miss (M20). Ask once, in the window, in plain words.
+    private var showsNotificationPrompt: Bool {
+        !notificationPromptDismissed
+            && (notificationAuthorizationState == .notRequested
+                || notificationAuthorizationState == .quiet)
+    }
+
+    private var notificationPromptCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("写真が届いたら知らせる", systemImage: "bell.badge")
+                .font(.headline)
+            Text("まどに写真やハートが届いたとき、ロック画面に知らせます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button {
+                    Task { await requestVisibleNotificationAuthorization() }
+                } label: {
+                    Text("通知をオンにする").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("family-window-notification-prompt-enable")
+                Button("あとで") { notificationPromptDismissed = true }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("family-window-notification-prompt-later")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-notification-prompt")
     }
 
     @ViewBuilder

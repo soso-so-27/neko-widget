@@ -1200,11 +1200,12 @@ actor MomentBackgroundRefreshService {
 
             if emitLocalNotifications && newVisibleCount > 0 {
                 await postPrivacyMinimizedNewMomentNotification(
-                    count: newVisibleCount
+                    count: newVisibleCount,
+                    windowName: afterDisplayName
                 )
             }
             if emitLocalNotifications && newPawCount > 0 {
-                await postPrivacyMinimizedPawNotification()
+                await postPrivacyMinimizedPawNotification(windowName: afterDisplayName)
             }
             SharedLog.app.info(
                 "moment-background-refresh",
@@ -1266,7 +1267,9 @@ actor MomentBackgroundRefreshService {
         await MomentPushSubscriptionService.shared.reconcileRegistration()
     }
 
-    private func postPrivacyMinimizedNewMomentNotification(count: Int) async {
+    /// The window name is added on this iPhone only (owner decision, 2026-10-20).
+    /// It is local text and is never sent to the relay or APNs.
+    private func postPrivacyMinimizedNewMomentNotification(count: Int, windowName: String) async {
         guard count > 0 else { return }
         let settings = await notificationCenter.notificationSettings()
         guard settings.authorizationStatus == .authorized
@@ -1275,12 +1278,13 @@ actor MomentBackgroundRefreshService {
         else { return }
         let content = UNMutableNotificationContent()
         content.title = "ねこのまど"
+        let place = Self.notificationWindowPhrase(windowName)
         content.body = count == 1
-            ? "新しい一枚が届きました。アプリを開いて確認できます。"
-            : "新しい写真が\(count)枚届きました。アプリを開いて確認できます。"
+            ? "\(place)新しい一枚が届きました。"
+            : "\(place)新しい写真が\(count)枚届きました。"
         content.userInfo = MomentNotificationRoutePayload.userInfo(for: .newMoment)
-        // Keep the request text-only and generic. It carries no identifier-
-        // bearing route, media, sender/window label, counter, or audible signal.
+        // Text only. It carries no identifier-bearing route, media, sender,
+        // counter, or audible signal; only the local window name is shown.
         // The bounded kind only selects a section after authenticated local sync.
         let request = UNNotificationRequest(
             identifier: "moment-arrival-\(UUID().uuidString.lowercased())",
@@ -1290,7 +1294,7 @@ actor MomentBackgroundRefreshService {
         try? await notificationCenter.add(request)
     }
 
-    private func postPrivacyMinimizedPawNotification() async {
+    private func postPrivacyMinimizedPawNotification(windowName: String) async {
         let settings = await notificationCenter.notificationSettings()
         guard settings.authorizationStatus == .authorized
                 || settings.authorizationStatus == .provisional
@@ -1298,16 +1302,22 @@ actor MomentBackgroundRefreshService {
         else { return }
         let content = UNMutableNotificationContent()
         content.title = "ねこのまど"
-        content.body = "届けた写真にハートが届きました。"
+        content.body = "\(Self.notificationWindowPhrase(windowName))届けた写真にハートが届きました。"
         content.userInfo = MomentNotificationRoutePayload.userInfo(for: .heart)
-        // No photo, sender/window label, moment identifier, sound, or badge is
-        // attached. Opening the app performs the authenticated state lookup.
+        // No photo, sender, moment identifier, sound, or badge is attached;
+        // only the local window name. Opening the app performs the lookup.
         let request = UNNotificationRequest(
             identifier: "moment-paw-\(UUID().uuidString.lowercased())",
             content: content,
             trigger: nil
         )
         try? await notificationCenter.add(request)
+    }
+
+    /// "「実家のまど」に" — or nothing when the name is blank, so the text stays natural.
+    static func notificationWindowPhrase(_ windowName: String) -> String {
+        let trimmed = windowName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "" : "「\(trimmed)」に"
     }
 
     private static func familyWidgetManifest() -> FamilyWidgetManifest? {

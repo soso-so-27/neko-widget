@@ -838,7 +838,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("selectedMomentForDetail?.id == item.id", family_view)
         self.assertIn("if !model.isSavedMemory(current) { widgetMemoryTarget = current }", family_view)
         self.assertIn('alert("この写真は更新されました"', family_view)
-        self.assertIn("ウィジェットの新しい写真で、もう一度お試しください。", family_view)
+        self.assertIn("ホーム画面の新しい写真で、もう一度お試しください。", family_view)
         self.assertIn("memorySaveDialogTitle", family_view)
         self.assertIn('"自分のお気に入りに追加しますか？"', family_view)
         self.assertIn('"自分のお気に入りに追加"', family_view)
@@ -3548,7 +3548,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("family-window-send-guide", family)
         self.assertNotIn('Text("ほかの送り方")', paired)
         self.assertIn("family-window-widget-guide", family)
-        self.assertIn("ウィジェットの表示", family)
+        self.assertIn('Text("ホーム画面に置く")', family)  # owner decision 2026-10-20: say "ホーム画面"
         self.assertIn("ウィジェットを編集", family)
         privacy = section(
             family,
