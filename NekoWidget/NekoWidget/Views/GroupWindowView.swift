@@ -127,7 +127,8 @@ final class GroupWindowScreenModel: ObservableObject {
                 windowID: windowID, windowName: window.name, photoID: newest?.id, jpeg: jpeg,
                 // No "さんから" line under a photo this iPhone sent.
                 senderDisplayName: newest.flatMap { $0.isOwn ? nil : $0.senderDisplayName },
-                capturedAt: newest?.createdAt, isPaused: isPaused
+                capturedAt: newest?.createdAt, isPaused: isPaused,
+                myHeartActive: newest.map { myHeartIsActive($0.id) } ?? false
             )
         } catch {
             return
