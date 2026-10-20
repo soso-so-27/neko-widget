@@ -179,6 +179,27 @@ private struct CareCatEditor: View {
             }
         })
     }
+    /// Read-only lines that 「この子のこと」 adds to the handed-over copy.
+    @ViewBuilder private func catCareSection(_ cat: CareCat) -> some View {
+        let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+        let lines = (CatCareSummary.ageAndWeight(care).map { [("年齢・体重", $0)] } ?? [])
+            + CatCareSummary.careHandoffHealthFields(care)
+        let profile = profiles.first(where: { $0.identifier == cat.profileID })
+        if !lines.isEmpty || profile != nil {
+            Section {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    LabeledContent(line.0) { Text(line.1).multilineTextAlignment(.trailing) }
+                }
+                if lines.isEmpty { Text("年齢・体重・薬を「この子のこと」に書くと、ここに載ります。").foregroundStyle(.secondary) }
+                if let profile {
+                    NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
+                        .accessibilityIdentifier("care-open-cat-care")
+                }
+            } header: { Text("「この子のこと」から載ること") }
+              footer: { Text("年齢・体重はいつも載ります。薬とアレルギーは「薬・アレルギーを含める」を選んだときだけ載ります。") }
+        }
+    }
+
     var body: some View {
         Form {
             if let cat {
@@ -207,7 +228,13 @@ private struct CareCatEditor: View {
                 }
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
-                }
+                    CareField(label: "こんな時は連絡を", example: "例：丸1日ごはんを食べない、何度も吐く、トイレに行くのに出ていない",
+                              identifier: "care-call-when",
+                              text: Binding(get: { self.cat?.callWhen ?? "" }, set: { new in
+                                  store.editCat(id) { $0.callWhen = new.isEmpty ? nil : new }
+                              }))
+                } footer: { Text("「こんな時は連絡を」は、預かる人が迷わないための目安です。") }
+                catCareSection(cat)
                 if cat.usualFood != nil {
                     Section {
                         CareField(label: "いつものごはん", example: "フード名・普段の量など", identifier: "care-usual-food",
@@ -258,6 +285,7 @@ private struct CareCatEditor: View {
         }
         .navigationTitle("お世話メモを編集").navigationBarTitleDisplayMode(.inline)
         .task {
+            CatCareStore.shared.importFromTools()
             guard !refreshedCandidates else { return }
             refreshedCandidates = true
             do { try store.refreshCandidates(id, using: reuseStore) }

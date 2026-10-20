@@ -198,8 +198,12 @@ final class CareHandoffStore: ObservableObject {
                 guard let loaded = image(name) else { throw CareHandoffError.photoUnavailable }
                 photo = loaded
             }
+            var fields = disclosure.fields(cat: cat)
+            let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+            if let about = CatCareSummary.ageAndWeight(care) { fields.insert(("年齢・体重", about), at: min(1, fields.count)) }
+            if disclosure.health { fields += CatCareSummary.careHandoffHealthFields(care) }
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
-                fields: disclosure.fields(cat: cat), updatedAt: cat.updatedAt)
+                fields: fields, updatedAt: cat.updatedAt)
         }
         return CareHandoffShareRecord(cats: cats, commonFields: disclosure.commonFields(plan: plan),
             includesHealth: disclosure.health, includesContacts: disclosure.contacts, createdAt: Date())

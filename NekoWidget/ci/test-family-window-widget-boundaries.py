@@ -4676,5 +4676,27 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertNotIn("UNUserNotificationCenter", view)
 
 
+class CareHandoffCatCareTests(unittest.TestCase):
+    def test_care_handoff_reads_cat_care_and_asks_when_to_call(self) -> None:
+        plan = source("NekoWidget/Services/CareHandoffPlan.swift")
+        store = source("NekoWidget/Services/CareHandoffStore.swift")
+        view = source("NekoWidget/Views/CareHandoffView.swift")
+        summary = source("NekoWidget/Views/CatCareView.swift")
+        # Older saved memos still decode: the new field is optional.
+        self.assertIn("var callWhen: String?", plan)
+        self.assertIn('("こんな時は連絡を", callWhen)', plan)
+        self.assertIn('identifier: "care-call-when"', view)
+        # Age and weight always; medicines and allergy only when health is shared.
+        share = section(store, "func shareRecord(", "private static func normalizedJPEG(")
+        self.assertIn("CatCareSummary.ageAndWeight(care)", share)
+        self.assertIn("if disclosure.health { fields += CatCareSummary.careHandoffHealthFields(care) }", share)
+        health = section(summary, "static func careHandoffHealthFields(", "/// For 「避難に備える」")
+        self.assertIn("medicine.dose, medicine.schedule", health)
+        # The editor only shows them; 「この子のこと」 stays the one place to change them.
+        editor = section(view, "@ViewBuilder private func catCareSection(", "var body: some View {")
+        self.assertIn("CatCareEntryView(profiles: [profile])", editor)
+        self.assertNotIn("CatCareStore.shared.update", view)
+
+
 if __name__ == "__main__":
     unittest.main()

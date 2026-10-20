@@ -647,6 +647,36 @@ enum CatCareSummary {
         return profileIdentifier.flatMap { record(profileIdentifier: $0) }
     }
 
+    /// For 「預けるとき」: 「3歳・4.20kg（2026/10/20）」. Nil when neither is recorded.
+    static func ageAndWeight(_ record: CatCareRecord?, today: CatCareDay? = CatCareDay(date: Date())) -> String? {
+        var parts: [String] = []
+        if let age = CatCareLostCat.age(record?.birthday?.value, today: today) { parts.append(age) }
+        if let latest = record?.activeWeights.first {
+            parts.append(CatCareFormat.weight(latest.grams) + "（\(CatCareFormat.day(latest.measuredOn))）")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "・")
+    }
+
+    /// For 「預けるとき」 when health is shared: each medicine on its own line with
+    /// dose and timing, and the allergy record. Only what the owner wrote.
+    static func careHandoffHealthFields(_ record: CatCareRecord?) -> [(String, String)] {
+        var fields: [(String, String)] = []
+        let medicines = (record?.activeMedications ?? []).map { medicine in
+            [medicine.name, medicine.dose, medicine.schedule, medicine.note]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }.joined(separator: "・")
+        }.filter { !$0.isEmpty }
+        if !medicines.isEmpty { fields.append(("飲んでいる薬（量・時間）", medicines.joined(separator: "\n"))) }
+        switch record?.allergy?.value.status ?? .unknown {
+        case .none: fields.append(("アレルギー", "なし（飼い主の記入）"))
+        case .recorded:
+            let text = (record?.allergy?.value.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            fields.append(("アレルギー", text.isEmpty ? "あり・飼い主に確認" : text))
+        case .unknown: break
+        }
+        return fields
+    }
+
     /// For 「避難に備える」: what a shelter asks to see.
     static func evacuationFields(_ record: CatCareRecord?,
                                  today: CatCareDay? = CatCareDay(date: Date())) -> [(String, String)] {
