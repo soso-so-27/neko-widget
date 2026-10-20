@@ -12,6 +12,7 @@ export interface Env {
   /// Report ingestion is controlled separately; blocks and cleanup remain
   /// available when this is disabled.
   MOMENT_RUNTIME_ENABLED?: string;
+  GROUP_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side switch for accepting new moderation
   /// report reservations, ciphertext uploads and commits. Report cleanup,
   /// retention and deletion remain available when this is disabled.

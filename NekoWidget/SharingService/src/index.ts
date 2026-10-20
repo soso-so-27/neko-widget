@@ -109,6 +109,7 @@ import {
 } from "./sharing";
 import { getWindowName, putWindowName } from "./window-name";
 import { familyRecords, runFamilyRecordCleanup } from "./family-records";
+import { groupAPI } from './group-api';
 
 export async function route(
   request: Request,
@@ -130,6 +131,14 @@ export async function route(
     billingRuntimeGatePromise ??= loadBillingRuntimeGate(env);
     return billingRuntimeGatePromise;
   };
+
+  if (pathname === '/v3/group-identities' || pathname.startsWith('/v3/group-identities/')
+      || pathname === '/v3/group-windows' || pathname.startsWith('/v3/group-windows/')) {
+    if (env.GROUP_RUNTIME_ENABLED !== 'YES' || !momentRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate())) {
+      throw new ApiError(503, 'group_runtime_disabled', 'Group windows are unavailable.');
+    }
+    return groupAPI(request, env);
+  }
 
   if (pathname === "/v2/family-records" || pathname.startsWith("/v2/family-records/")) {
     if (env.FAMILY_RECORD_RUNTIME_ENABLED !== "YES" || !momentRuntimeEnabled(env)
