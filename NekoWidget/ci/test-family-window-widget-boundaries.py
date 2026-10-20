@@ -4335,7 +4335,13 @@ class GroupInvitationLinkTests(unittest.TestCase):
         provider = section(view, "enum GroupWindowClientProvider", "struct GroupInvitationJoinSheet: View")
         self.assertIn("#if DEBUG", provider)
         self.assertIn("return nil", provider)
-        self.assertIn("client: GroupWindowClientProvider.client(for: invitation)", view)
+        # The production client exists only in builds that turn groups on.
+        self.assertIn('(Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String) == "YES"', provider)
+        self.assertIn('configuration.releaseMode == "media-staging"', provider)
+        self.assertIn("let endpoint = configuration.baseURL", provider)
+        self.assertIn("production.stageInvitation(url: url)", provider)
+        self.assertIn("GroupWindowClientProvider.joinClient(for: invitation)", view)
+        self.assertIn("model = GroupJoinModel(client: nil, invitationID: invitation.invitationID)", view)
         self.assertIn('"group-join-unavailable"', view)
 
         # Only the tab's own screen presents the sheet.
@@ -4428,6 +4434,48 @@ class GroupWindowPausedTests(unittest.TestCase):
         debug = section(view, "// MARK: - DEBUG fixture entry", "struct GroupWindowUIFixtureRoot: View")
         self.assertIn("static func applyDelivery(", debug)
         self.assertIn('"--group-window-delivery="', debug)
+
+
+class GroupWindowScreenTests(unittest.TestCase):
+    def test_group_photos_are_checked_kept_then_acknowledged(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        for forbidden in ("URLSession", "Keychain", "UserDefaults", "print(", "SharedLog", "roomKey"):
+            self.assertNotIn(forbidden, screen)
+        # Received photos: sensitive-content check, then the durable write,
+        # and only inside storeAndAcknowledge (so ACK follows the write).
+        receive = section(screen, "private func receive(", "func send(_ item: PhotosPickerItem) async {")
+        self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
+        self.assertIn("guard verdict != .retryLater else { return }", receive)
+        self.assertIn("client.storeAndAcknowledge(incoming, outgoingOperationID: outgoingOperationID)", receive)
+        self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("storeAndAcknowledge"))
+        self.assertIn("try await store.save(", receive)
+        self.assertIn("jpeg: verdict == .hidden ? nil : verified.jpeg", receive)
+        # Sending: the same canonical JPEG and check as the two-person window.
+        send = section(screen, "func send(_ item: PhotosPickerItem) async {", "func toggleHeart(")
+        self.assertIn("guard canSend", send)
+        self.assertLess(send.index("GroupPhotoModeration.check(picked.jpeg"), send.index("client.sendPhoto("))
+        self.assertIn("outgoingOperationID: operationID", send)
+        self.assertIn("MomentShareIngressService().prepare(fromFileURL: received.file).canonicalJPEG", screen)
+        # Paused windows cannot send; the card points to who can resume.
+        self.assertIn("guard let window, window.state == .active, !isPaused else { return false }", screen)
+        self.assertIn('"group-window-screen-paused"', screen)
+
+        store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
+        self.assertIn('appendingPathComponent("GroupWindows", isDirectory: true)', store)
+        self.assertIn(".completeFileProtectionUntilFirstUserAuthentication", store)
+        save = section(store, "func save(", "// MARK: - Files")
+        # The image is written before the index lists it.
+        self.assertLess(save.index("photoURL(photoID: entry.id"), save.index("indexURL(windowID: windowID)"))
+        self.assertIn('SHA256.hash(data: Data("group-window|', store)
+        for forbidden in ("MomentSharingStateStore", "SharedContainer", "PairingStateStore"):
+            self.assertNotIn(forbidden, store)
+
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn("if let groupClient = GroupWindowClientProvider.production {", tab)
+        self.assertIn("GroupWindowListSection(client: groupClient)", tab)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertIn("GroupWindowView.swift in Sources", project)
+        self.assertIn("GroupWindowLocalPhotoStore.swift in Sources", project)
 
 
 if __name__ == "__main__":

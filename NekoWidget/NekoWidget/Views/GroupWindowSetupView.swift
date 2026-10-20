@@ -1084,20 +1084,44 @@ final class GroupInvitationInbox: ObservableObject {
     }
 }
 
-/// Where the join screen gets its client. The production adapter (relay,
-/// stored keys, encryption) is not wired yet, so outside the DEBUG fixture
-/// there is none and the screen says that applying is not available yet.
+/// Where the group screens get their client. The production adapter exists
+/// only in builds that turn group windows on (`GroupWindowsEnabled` = YES, the
+/// media-staging release mode, and a reviewed sharing endpoint); every other
+/// build has none, and the join screen says applying is not available yet.
 enum GroupWindowClientProvider {
-    static func client(for invitation: GroupInvitationLink) -> (any GroupWindowClient)? {
+    /// Agreed with the adapter's owner; changing it starts a new identity.
+    static let namespace = "group-v3"
+
+    static let production: ProductionGroupWindowClient? = {
+        let configuration = SharingAPIConfiguration.current
+        guard (Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String) == "YES",
+              configuration.releaseMode == "media-staging",
+              configuration.isMediaEnabled,
+              let endpoint = configuration.baseURL
+        else { return nil }
+        return try? ProductionGroupWindowClient(endpoint: endpoint, namespace: namespace)
+    }()
+
+    /// The client and invitation ID for an opened link. The production path
+    /// hands the link to the adapter, which keeps its key out of this file.
+    static func joinClient(
+        for invitation: GroupInvitationLink
+    ) async -> (client: any GroupWindowClient, invitationID: String)? {
 #if DEBUG
         if GroupWindowUIFixture.isRequested {
-            return GroupWindowFixture(
-                scenario: GroupWindowUIFixture.scenario,
-                now: GroupWindowUIFixture.fixtureNow
+            return (
+                GroupWindowFixture(
+                    scenario: GroupWindowUIFixture.scenario,
+                    now: GroupWindowUIFixture.fixtureNow
+                ),
+                invitation.invitationID
             )
         }
 #endif
-        return nil
+        guard let production, let url = invitation.url,
+              let invitationID = try? await production.stageInvitation(url: url)
+        else { return nil }
+        return (production, invitationID)
     }
 }
 
@@ -1105,19 +1129,29 @@ enum GroupWindowClientProvider {
 struct GroupInvitationJoinSheet: View {
     let invitation: GroupInvitationLink
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var model: GroupJoinModel
+    @State private var model: GroupJoinModel?
 
     init(invitation: GroupInvitationLink) {
         self.invitation = invitation
-        _model = StateObject(wrappedValue: GroupJoinModel(
-            client: GroupWindowClientProvider.client(for: invitation),
-            invitationID: invitation.invitationID
-        ))
     }
 
     var body: some View {
         NavigationStack {
-            GroupJoinView(model: model, onOpenWindow: { dismiss() })
+            Group {
+                if let model {
+                    GroupJoinView(model: model, onOpenWindow: { dismiss() })
+                } else {
+                    ProgressView("招待を確認しています…")
+                }
+            }
+                .task {
+                    guard model == nil else { return }
+                    if let joined = await GroupWindowClientProvider.joinClient(for: invitation) {
+                        model = GroupJoinModel(client: joined.client, invitationID: joined.invitationID)
+                    } else {
+                        model = GroupJoinModel(client: nil, invitationID: invitation.invitationID)
+                    }
+                }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("閉じる") { dismiss() }

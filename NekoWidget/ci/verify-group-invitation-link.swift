@@ -42,6 +42,8 @@ struct VerifyGroupInvitationLink {
         for text in [parsed.description, parsed.debugDescription, "\(parsed)", String(reflecting: parsed)] {
             try check(!text.contains(inviteKey) && !text.contains(ownerKey), "descriptions leave the keys out")
         }
+        try check(parsed.url.flatMap(GroupInvitationLink.init(url:)) == parsed, "rebuilt link round-trips")
+        try check(parsed.url?.query == nil && parsed.url?.fragment != nil, "rebuilt link keeps keys in the fragment")
         try check(GroupInvitationLink.isCandidate(good), "valid link is a candidate")
         try check(GroupInvitationLink.isCandidate(link("garbage")), "malformed join link is still a candidate")
         try check(!GroupInvitationLink.isCandidate(link(goodFragment, scheme: "http")), "http is not a candidate")
