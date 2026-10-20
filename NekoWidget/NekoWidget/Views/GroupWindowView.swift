@@ -318,6 +318,11 @@ struct GroupWindowScreen: View {
                         .foregroundStyle(.orange)
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-screen-message")
+                    if model.canSend {
+                        Text("下の「写真を届ける」から、別の写真を選べます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                    }
                 }
                 if model.isSyncing {
                     HStack(spacing: 8) {

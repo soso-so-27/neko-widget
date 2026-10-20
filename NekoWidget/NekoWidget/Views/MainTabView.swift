@@ -2787,6 +2787,17 @@ private struct WindowListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
+                if let groupClient = GroupWindowClientProvider.production {
+                    // Windows people share come first (1-4); public windows follow.
+                    GroupWindowListSection(client: groupClient)
+                    if !receivingPublicWindows.isEmpty {
+                        Text("公式のまど")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                }
                 if !connectedWindows.isEmpty || !receivingPublicWindows.isEmpty || !setupWindows.isEmpty {
                     LazyVGrid(columns: cardColumns, spacing: 22) {
                         ForEach(connectedWindows) { window in
@@ -2796,10 +2807,6 @@ private struct WindowListView: View {
                         ForEach(setupWindows) { window in windowCard(window) }
                     }
                     .accessibilityIdentifier("window-list-receiving")
-                }
-                if let groupClient = GroupWindowClientProvider.production {
-                    // Group windows, only in builds that turn them on.
-                    GroupWindowListSection(client: groupClient)
                 }
                 if isLoading, windows.isEmpty {
                     ProgressView("まどを確認しています…")
@@ -2814,7 +2821,9 @@ private struct WindowListView: View {
                         cachedWindowWarning(message: message)
                     }
 
-                    if windows.isEmpty, receivingPublicWindows.isEmpty {
+                    if GroupWindowClientProvider.production != nil {
+                        if receivingPublicWindows.isEmpty { publicWindowEntry }
+                    } else if windows.isEmpty, receivingPublicWindows.isEmpty {
                         emptyWindowCard
                     }
 
@@ -2842,9 +2851,10 @@ private struct WindowListView: View {
                     connectionEntry
                 }
                 NavigationLink { discovery } label: {
-                    Image(systemName: "safari")
+                    Label("公式のまど", systemImage: "safari")
+                        .labelStyle(.titleAndIcon)
                 }
-                .accessibilityLabel("まどを探す")
+                .accessibilityLabel("公式のまどを探す")
                 .accessibilityIdentifier("window-list-discover")
             }
         }
@@ -2954,6 +2964,25 @@ private struct WindowListView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    /// With group windows on, public windows are a small second entry below them.
+    private var publicWindowEntry: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("公式のまど")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+            NavigationLink { discovery } label: {
+                Label("公式の写真を受け取る", systemImage: "photo")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("window-list-start")
+            Text("猫カフェや保護猫などの写真を、見るだけで受け取れます。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var emptyWindowCard: some View {

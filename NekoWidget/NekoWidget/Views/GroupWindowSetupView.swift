@@ -405,16 +405,16 @@ struct GroupWindowMembersView: View {
             Text("取り消すと、このリンクからは申し込めなくなります。まだ承認していない申し込みも無効になります。")
         }
         .confirmationDialog(
-            "このまどから退出しますか？",
+            "このまどから抜けますか？",
             isPresented: $showsLeaveConfirmation,
             titleVisibility: .visible
         ) {
-            Button("退出する", role: .destructive) {
+            Button("抜ける", role: .destructive) {
                 Task { if await model.leave() { dismiss() } }
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("退出すると、これから届く写真は見られません。すでに届いた写真とお気に入りは、このiPhoneに残ります。")
+            Text("抜けると、これから届く写真は見られません。すでに届いた写真とお気に入りは、このiPhoneに残ります。")
         }
     }
 
@@ -686,7 +686,7 @@ struct GroupWindowMembersView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                Button("このまどから退出", role: .destructive) {
+                Button("このまどから抜ける", role: .destructive) {
                     showsLeaveConfirmation = true
                 }
                 .disabled(model.isWorking || window.state == .closed)
