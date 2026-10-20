@@ -4585,5 +4585,16 @@ class GroupWidgetHeartTests(unittest.TestCase):
         self.assertNotIn("ProductionGroupWindowClient.swift in Sources", widget_sources)
 
 
+class GroupJoinOpensWindowTests(unittest.TestCase):
+    def test_open_window_after_joining_opens_that_window(self) -> None:
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        sheet = section(setup, "struct GroupInvitationJoinSheet: View {", ".task {")
+        self.assertIn("GroupWindowOpenInbox.shared.open(windowID: invitation.windowID)", sheet)
+        self.assertLess(sheet.index("GroupWindowOpenInbox.shared.open"), sheet.index("dismiss()"))
+        # The list opens only a window this iPhone belongs to.
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", window)
+
+
 if __name__ == "__main__":
     unittest.main()
