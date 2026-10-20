@@ -47,6 +47,177 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// The 10/21 audit: group windows on the screen fixture, the tools that
+    /// read 「この子のこと」, settings and albums. Steps that cannot be reached
+    /// attach the screen and the hierarchy instead of stopping the run.
+    @MainActor
+    func testReviewAuditScreens() {
+        executionTimeAllowance = 600
+        continueAfterFailure = true
+        let app = XCUIApplication()
+
+        // 1. Photos that wait for the safety check, and a delivery to retry.
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture", "--group-window-screens-fixture",
+                                                         "--group-window-screens-check-off", "--group-window-screens-failed-send"]
+        app.launch()
+        if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
+            openGroupWindow(app)
+            settle(3)
+            captureScreenshot(named: "audit-01-waiting-and-failed-send")
+        } else { auditMissing("windows-tab", app: app) }
+        app.terminate()
+
+        // 2. The list, a window, a photo, the members.
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture", "--group-window-screens-fixture"]
+        app.launch()
+        settle(2)
+        captureScreenshot(named: "audit-02-albums-root")
+        if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
+            settle(2)
+            captureScreenshot(named: "audit-03-window-list")
+            openGroupWindow(app)
+            let tile = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "届いた写真")).firstMatch
+            if tile.waitForExistence(timeout: 20) {
+                settle(2)
+                captureScreenshot(named: "audit-04-window-photos")
+                tile.tap()
+                settle(2)
+                captureScreenshot(named: "audit-05-photo-detail")
+                app.swipeLeft()
+                settle(1)
+                captureScreenshot(named: "audit-06-photo-detail-next")
+                app.swipeRight()
+                settle(1)
+                let favorite = app.buttons["group-photo-favorite"]
+                if favorite.waitForExistence(timeout: 3) {
+                    favorite.tap(); settle(1)
+                    captureScreenshot(named: "audit-07-favorite-confirm")
+                    let back = app.buttons["戻る"]
+                    if back.exists { back.tap(); settle(1) }
+                }
+                let menu = app.buttons["group-photo-menu"]
+                if menu.waitForExistence(timeout: 3) {
+                    menu.tap(); settle(1)
+                    captureScreenshot(named: "audit-08-photo-menu")
+                    app.swipeDown(); settle(1)
+                }
+                let close = app.buttons["閉じる"].firstMatch
+                if close.waitForExistence(timeout: 3) { close.tap(); settle(1) }
+            } else { auditMissing("group-photos", app: app) }
+            let members = app.buttons["group-window-open-members"]
+            if members.waitForExistence(timeout: 5) {
+                members.tap(); settle(2)
+                captureScreenshot(named: "audit-09-members")
+                app.swipeUp(); settle(1)
+                captureScreenshot(named: "audit-10-members-lower")
+            } else { auditMissing("members", app: app) }
+        } else { auditMissing("windows-tab-2", app: app) }
+        app.terminate()
+
+        // 3. Tools with a cat profile: 預けるとき, 「この子のこと」, 病院, 避難, settings.
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        let profileID = "tool-profile-11111111-1111-4111-8111-111111111111"
+
+        app.launch()
+        if openTool("tools-care-open", profile: profileID, app: app) {
+            settle(2)
+            captureScreenshot(named: "audit-11-care-top")
+            app.swipeUp(); settle(1)
+            captureScreenshot(named: "audit-12-care-cat-care")
+            let edit = app.buttons["care-open-cat-care"]
+            if scrollUpUntilHittable(edit, application: app) {
+                edit.tap(); settle(2)
+                captureScreenshot(named: "audit-13-cat-care-page")
+                app.swipeUp(); settle(1)
+                captureScreenshot(named: "audit-14-cat-care-page-lower")
+                app.swipeUp(); settle(1)
+                captureScreenshot(named: "audit-15-cat-care-page-bottom")
+            } else { auditMissing("care-open-cat-care", app: app) }
+        }
+        app.terminate()
+
+        app.launch()
+        if openTool("tools-vet-open", profile: profileID, app: app) {
+            settle(2)
+            captureScreenshot(named: "audit-16-vet")
+            app.swipeUp(); settle(1)
+            captureScreenshot(named: "audit-17-vet-lower")
+        }
+        app.terminate()
+
+        app.launch()
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") {
+            let evacuation = app.buttons["tools-evacuation-open"]
+            if scrollUpUntilHittable(evacuation, application: app) {
+                evacuation.tap(); settle(2)
+                captureScreenshot(named: "audit-18-evacuation")
+                let cats = app.buttons["evacuation-cats-open"]
+                if scrollUpUntilHittable(cats, application: app) {
+                    cats.tap(); settle(2)
+                    captureScreenshot(named: "audit-19-evacuation-cats")
+                    let profile = app.buttons[profileID]
+                    if profile.waitForExistence(timeout: 5) {
+                        profile.tap(); settle(2)
+                        captureScreenshot(named: "audit-20-evacuation-cat")
+                        app.swipeUp(); settle(1)
+                        captureScreenshot(named: "audit-21-evacuation-cat-lower")
+                    }
+                }
+            } else { auditMissing("evacuation", app: app) }
+        }
+        app.terminate()
+
+        app.launch()
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") {
+            let settings = app.buttons["tools-settings-button"]
+            if settings.waitForExistence(timeout: 5) {
+                settings.tap(); settle(2)
+                captureScreenshot(named: "audit-22-settings")
+                app.swipeUp(); settle(1)
+                captureScreenshot(named: "audit-23-settings-lower")
+                app.swipeUp(); settle(1)
+                captureScreenshot(named: "audit-24-settings-bottom")
+            } else { auditMissing("settings", app: app) }
+        }
+        app.terminate()
+    }
+
+    @MainActor
+    private func openGroupWindow(_ app: XCUIApplication) {
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
+        if row.waitForExistence(timeout: 15) { row.tap() } else { auditMissing("group-row", app: app) }
+    }
+
+    @MainActor
+    private func openTool(_ identifier: String, profile: String, app: XCUIApplication) -> Bool {
+        guard tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") else {
+            auditMissing("tools-tab", app: app); return false
+        }
+        let tool = app.buttons[identifier]
+        guard tool.waitForExistence(timeout: 10), scrollUpUntilHittable(tool, application: app) else {
+            auditMissing(identifier, app: app); return false
+        }
+        tool.tap()
+        let cat = app.buttons[profile]
+        guard cat.waitForExistence(timeout: 10) else { auditMissing(identifier + "-profile", app: app); return false }
+        cat.tap()
+        return true
+    }
+
+    private func settle(_ seconds: Double) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    @MainActor
+    private func auditMissing(_ step: String, app: XCUIApplication) {
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "missing-" + step + "-hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        captureScreenshot(named: "missing-" + step)
+    }
+
     @MainActor
     func testReviewOctoberLayoutBatch() {
         executionTimeAllowance = 360
