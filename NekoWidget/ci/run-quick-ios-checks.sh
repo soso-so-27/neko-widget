@@ -37,7 +37,7 @@ xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowFixture.swift ci/verify-group-windows.swift \
   -o "$RUNNER_TEMP/group-window-tests"
-"$RUNNER_TEMP/group-window-tests"
+"$RUNNER_TEMP/group-window-tests" ci/fixtures/group-roster-v3.json
 
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do

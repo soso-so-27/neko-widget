@@ -26,9 +26,41 @@ private struct Device {
     }
 }
 
+private func checkWireVector(path: String) throws {
+    func bytes(_ value: Any?) throws -> Data {
+        guard let text = value as? String else { throw Failure.check("wire vector binary field") }
+        let raw = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        guard let result = Data(base64Encoded: raw + String(repeating: "=", count: (4 - raw.count % 4) % 4))
+        else { throw Failure.check("wire vector base64url") }
+        return result
+    }
+    let value = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as! [String: Any]
+    let packet = value["packet"] as! [String: Any]
+    let r = packet["roster"] as! [String: Any]
+    let members = try (r["members"] as! [[String: Any]]).map { member in
+        GroupRosterMember(participantID: member["participantId"] as! String, personID: member["personId"] as! String,
+            identityPublicKey: try bytes(member["identityPublicKey"]), role: GroupRosterMember.Role(rawValue: member["role"] as! String)!,
+            devices: try (member["devices"] as! [[String: Any]]).map { d in
+                GroupRosterDevice(id: d["id"] as! String, signingPublicKey: try bytes(d["signingPublicKey"]),
+                    hpkePublicKey: try bytes(d["hpkePublicKey"]), personAuthorization: try bytes(d["personAuthorization"]))
+            })
+    }
+    let roster = GroupRoster(windowID: r["windowId"] as! String, revision: r["revision"] as! Int,
+        keyEpoch: r["keyEpoch"] as! Int, previousHash: try bytes(r["previousHash"]),
+        ownerPersonID: r["ownerPersonId"] as! String, members: members)
+    let signed = SignedGroupRoster(roster: roster, signerDeviceID: packet["signerDeviceId"] as! String, signature: try bytes(packet["signature"]))
+    let a = value["anchor"] as! [String: Any]
+    let anchor = GroupTrustAnchor(windowID: a["windowId"] as! String, ownerPersonID: a["ownerPersonId"] as! String,
+        ownerIdentityPublicKey: try bytes(a["ownerIdentityPublicKey"]))
+    let verified = try GroupRosterVerifier.verify(signed, anchor: anchor)
+    try check(verified.hash == bytes(value["canonicalSHA256"]), "native and relay canonical bytes agree")
+    print("GROUP public wire vector signature and canonical bytes passed")
+}
+
 @main
 private enum GroupWindowChecks {
     static func main() async throws {
+        if CommandLine.arguments.count > 1 { try checkWireVector(path: CommandLine.arguments[1]) }
         let a = Person(id: "person-a"), b = Person(id: "person-b"), c = Person(id: "person-c")
         let a1 = Device(id: "a1"), b1 = Device(id: "b1"), b2 = Device(id: "b2"), c1 = Device(id: "c1")
         func member(_ person: Person, _ devices: [Device], owner: Bool = false) throws -> GroupRosterMember {
