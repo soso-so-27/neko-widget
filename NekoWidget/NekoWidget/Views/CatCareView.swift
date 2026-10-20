@@ -724,17 +724,30 @@ struct ToolCatCareSection<Extra: View>: View {
         self.identifier = identifier; self.editIdentifier = editIdentifier; self.extra = extra
     }
 
+    /// A line whose value only says it is not written yet.
+    private static func isEmptyLine(_ line: (String, String)) -> Bool {
+        line.1.hasPrefix("未記入") || line.1.hasPrefix("未確認")
+    }
+
     var body: some View {
+        let filled = lines.filter { !Self.isEmptyLine($0) }
+        let missing = lines.filter(Self.isEmptyLine).map(\.0)
         Section {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+            ForEach(Array(filled.enumerated()), id: \.offset) { _, line in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(line.0).font(.subheadline).foregroundStyle(.secondary)
                     Text(line.1).font(.body).textSelection(.enabled)
                 }
             }
             .accessibilityIdentifier(identifier)
-            if lines.isEmpty {
-                Text("「この子のこと」に書くと、ここに載ります。").foregroundStyle(.secondary)
+            if filled.isEmpty {
+                Text("まだ何も書いていません。「この子のことを直す」から書くと、ここと渡す控えに載ります。")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(identifier + "-empty")
+            }
+            if !missing.isEmpty && !filled.isEmpty {
+                Text("まだ書いていないこと：" + missing.joined(separator: "・"))
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             extra()
             if let subject {
