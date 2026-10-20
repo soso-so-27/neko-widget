@@ -12,14 +12,18 @@ enum OnboardingPartialScanRecovery {
     }
 }
 
-/// The onboarding is deliberately limited to these four moments. Adding a
-/// case changes the product flow, so the standalone verifier locks the count
-/// and order.
+/// The onboarding is deliberately limited to these moments. Adding a case
+/// changes the product flow, so the standalone verifier locks the count and
+/// order. `plusOffer` (ADR-027) is appended so persisted indices keep their
+/// meaning, and it is reachable only when the caller says Plus is offered.
 enum OnboardingPresentationPage: Int, CaseIterable, Identifiable, Sendable {
     case purpose
     case photoPermission
     case scanResult
     case widgetGuide
+    /// The last, skippable page introducing Plus. It follows the Widget guide
+    /// only; skipping Photos access or finishing without a photo never shows it.
+    case plusOffer
 
     var id: Int { rawValue }
 }
@@ -142,17 +146,24 @@ struct OnboardingPresentationState: Equatable, Sendable {
     }
 
     let mode: Mode
+    /// Whether the skippable Plus page ends the first run. The caller passes
+    /// the product configuration; while Plus is not offered the flow is the
+    /// original four pages.
+    let offersPlus: Bool
     private(set) var currentPage: OnboardingPresentationPage?
     private(set) var resumePageIndex: Int
     private(set) var completedVersion: Int
 
     init(
         persistedResumePageIndex: Int = 0,
-        persistedCompletedVersion: Int = 0
+        persistedCompletedVersion: Int = 0,
+        offersPlus: Bool = false
     ) {
         mode = .firstRun
+        self.offersPlus = offersPlus
         completedVersion = max(0, persistedCompletedVersion)
-        resumePageIndex = Self.clampedPageIndex(persistedResumePageIndex)
+        resumePageIndex = Self.clampedPageIndex(persistedResumePageIndex,
+            lastPage: offersPlus ? .plusOffer : .widgetGuide)
         if completedVersion >= OnboardingPresentationPersistence.currentCompletedVersion {
             currentPage = nil
         } else {
@@ -165,8 +176,9 @@ struct OnboardingPresentationState: Equatable, Sendable {
         persistedCompletedVersion completedVersion: Int
     ) {
         mode = .widgetGuideReplay
+        offersPlus = false
         currentPage = .widgetGuide
-        self.resumePageIndex = Self.clampedPageIndex(resumePageIndex)
+        self.resumePageIndex = Self.clampedPageIndex(resumePageIndex, lastPage: .plusOffer)
         self.completedVersion = max(0, completedVersion)
     }
 
@@ -204,9 +216,24 @@ struct OnboardingPresentationState: Equatable, Sendable {
         case .scanResult:
             routeFirstRun(to: .widgetGuide)
         case .widgetGuide:
+            if offersPlus {
+                routeFirstRun(to: .plusOffer)
+            } else {
+                completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+                self.currentPage = nil
+            }
+        case .plusOffer:
             completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
             self.currentPage = nil
         }
+    }
+
+    /// "あとで" on the Plus page: one tap enters the app. Nothing is bought,
+    /// and nothing about Photos access or the scan depends on this choice.
+    mutating func skipPlusOffer() {
+        guard mode == .firstRun, currentPage == .plusOffer else { return }
+        completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+        currentPage = nil
     }
 
     /// "あとで" enters the app without Photos access. Widget placement depends
@@ -238,12 +265,15 @@ struct OnboardingPresentationState: Equatable, Sendable {
         routeFirstRun(to: .photoPermission)
     }
 
-    /// "あとで" completes the first-run handoff. In a Settings replay it
+    /// "あとで" completes the Widget handoff: the first run ends, or moves to
+    /// the optional Plus page when it is offered. In a Settings replay it
     /// simply dismisses the guide without touching saved first-run progress.
     mutating func skipWidgetGuide() {
         guard currentPage == .widgetGuide else { return }
         if mode == .widgetGuideReplay {
             currentPage = nil
+        } else if offersPlus {
+            routeFirstRun(to: .plusOffer)
         } else {
             completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
             currentPage = nil
@@ -255,9 +285,8 @@ struct OnboardingPresentationState: Equatable, Sendable {
         resumePageIndex = page.rawValue
     }
 
-    private static func clampedPageIndex(_ value: Int) -> Int {
-        let lastPageIndex = max(0, OnboardingPresentationPage.allCases.count - 1)
-        return min(max(0, value), lastPageIndex)
+    private static func clampedPageIndex(_ value: Int, lastPage: OnboardingPresentationPage) -> Int {
+        min(max(0, value), lastPage.rawValue)
     }
 }
 

@@ -30,7 +30,10 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("980", live)
         self.assertNotIn("7日", live)
         self.assertIn("case .pending, .awaitingServerConfirmation: return .waiting", live)
-        self.assertIn("if model.isPreview && (result == .completed || result == .cancelled)", model)
+        # A completed purchase closes the sheet without a completion page.
+        self.assertIn("if result == .completed || (model.isPreview && result == .cancelled)", model)
+        self.assertIn("init(model: MembershipOfferModel, context: PlusOfferContext", model)
+        self.assertNotIn("検討中", model)
         self.assertIn("onClose: { onFinish(model.isMember ? .completed : .cancelled) }", model)
         self.assertIn("!isWorking && !isWaiting", model)
 
@@ -291,7 +294,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("restorePurchases", refresh)
         self.assertNotIn("purchaseAction", refresh)
         self.assertIn("if isMember {", view)
-        self.assertLess(view.index("if isMember {"), view.index("Text(offer.priceText)"))
+        self.assertLess(view.index("if isMember {"), view.index("Text(offer.afterTrialText ?? offer.priceText)"))
         self.assertIn(".disabled(isWorking || !canPurchase || offer == nil)", view)
 
     def test_new_purchase_presentation_never_uses_network_failure_or_incomplete_identity_as_fresh(self) -> None:

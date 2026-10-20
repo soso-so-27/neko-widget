@@ -96,50 +96,49 @@ extension EnvironmentValues {
     }
 }
 
-/// Shows an offer only for a confirmed membership boundary. Unknown state has
-/// its own refresh/restore route, without telling an existing member to buy again.
+/// A status notice, never a purchase route (ADR-027 5章). The one Plus
+/// screen opens only from a `PlusOfferContext` entry (`PlusOfferPrompt`,
+/// Settings, onboarding); this notice is for "確認できません" and offers only
+/// the restore check, so an existing member is never told to buy again.
 struct MembershipAccessNotice: View {
     let decision: MembershipAccessDecision
-    @State private var showsOffer = false
+    @State private var showsRestore = false
 
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: decision == .verificationRequired ? "arrow.clockwise" : "cat")
                 .font(.title).foregroundStyle(.tint).accessibilityHidden(true)
             Text(title).font(.headline)
-            if decision == .verificationRequired {
+            switch decision {
+            case .verificationRequired:
                 Text("写真やメモはそのままです。接続を確認して、購入を復元できます。")
                     .font(.subheadline).foregroundStyle(.secondary)
-            }
-            if decision == .windowSupportRequired {
+                Button("購入を確認する") { showsRestore = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("membership-access-restore")
+            case .windowSupportRequired:
                 Text("届いている写真は引き続き見られます。")
                     .font(.subheadline).foregroundStyle(.secondary)
-            } else {
-                Button(decision == .verificationRequired ? "購入を確認する" : "会員プランを見る") {
-                    showsOffer = true
-                }.buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("membership-access-offer")
+            case .membershipRequired, .allowed:
+                Text("写真やメモはそのままです。")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
         }
         .multilineTextAlignment(.center).padding(24)
         .frame(maxWidth: .infinity)
         .accessibilityIdentifier("membership-access-notice")
-        .sheet(isPresented: $showsOffer, onDismiss: {
+        .sheet(isPresented: $showsRestore, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
         }) {
-            if decision == .verificationRequired {
-                MembershipRestoreSheet()
-            } else {
-                MembershipOfferSheet(model: .live()) { _ in showsOffer = false }
-            }
+            MembershipRestoreSheet()
         }
     }
 
     private var title: String {
         switch decision {
         case .allowed: ""
-        case .membershipRequired: "会員プランで、うちの子との時間を楽しむ"
-        case .verificationRequired: "会員情報を確認できません"
+        case .membershipRequired: "Plusの機能です"
+        case .verificationRequired: "購入状況を確認できません"
         case .windowSupportRequired: "このまどへの送信はお休み中です"
         }
     }
@@ -152,7 +151,7 @@ struct MembershipRestoreSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                Text("購入済みの会員プランを確認します。")
+                Text("購入済みのPlusを確認します。")
                 Button("購入を復元") {
                     Task {
                         if await model.restore() == .completed { dismiss() }
