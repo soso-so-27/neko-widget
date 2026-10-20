@@ -4700,5 +4700,24 @@ class CareHandoffCatCareTests(unittest.TestCase):
         self.assertNotIn("CatCareStore.shared.update", view)
 
 
+class ShowcaseCatCareTests(unittest.TestCase):
+    def test_showcase_caption_ios17_score_and_cat_care_face(self) -> None:
+        store = source("NekoWidget/Services/ShowcasePhotoStore.swift")
+        view = source("NekoWidget/Views/ShowcasePhotoView.swift")
+        # iOS 17 falls back to a local look score; iOS 18 keeps Vision's score.
+        self.assertIn("thumbnail.flatMap(aestheticScore)\n                    ?? thumbnail.flatMap { lookScore(", store)
+        self.assertIn("if #available(iOS 18.0, *)", store)
+        score = section(store, "static func lookScore(gray", "private static func imageHash(")
+        for part in ("variance / 400", "abs(mean - 128)", "catArea ?? 0"):
+            self.assertIn(part, score)
+        # The caption only names a chosen cat, and can be turned off.
+        caption = section(view, "private var caption: String?", "private var storedScopeIDs")
+        self.assertIn("!scopeID.isEmpty", caption)
+        self.assertIn('@AppStorage("showcase-shows-name-and-age")', view)
+        self.assertIn('"showcase-caption-toggle"', view)
+        # The 「この子のこと」 face photo leads only if it is already a candidate.
+        self.assertIn("identifiers.firstIndex(of: face)", view)
+
+
 if __name__ == "__main__":
     unittest.main()
