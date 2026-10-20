@@ -201,7 +201,9 @@ struct NekoWidgetView: View {
     /// A group window photo's heart: the app sends it in the background.
     @ViewBuilder
     private func groupHeartControl(_ photo: GroupWindowPhotoReference) -> some View {
-        if entry.familyHeartStatus == .serverAccepted {
+        if photo.isOwn {
+            unavailableHeartSlot
+        } else if entry.familyHeartStatus == .serverAccepted {
             heartMark(status: .serverAccepted)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("ハートを送りました")

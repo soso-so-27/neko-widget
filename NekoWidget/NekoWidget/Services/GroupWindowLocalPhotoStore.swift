@@ -15,11 +15,31 @@ actor GroupWindowLocalPhotoStore {
         /// True when the system flagged the photo; no image is kept.
         let isHidden: Bool
         let isOwn: Bool
+        /// Set before copying to the Photos app, so an interrupted copy is
+        /// found again instead of made twice.
+        var favoriteImportToken: UUID? = nil
+        /// The Photos item made by 「お気に入りに追加」.
+        var favoriteLocalIdentifier: String? = nil
+        /// Removed from this iPhone by the person. Kept in the index so the
+        /// next sync does not download it again.
+        var isRemoved: Bool? = nil
     }
 
     private struct Index: Codable {
         var schemaVersion = 1
         var entries: [Entry] = []
+    }
+
+    /// Windows this iPhone has kept photos for, with the last name seen, so
+    /// photos stay reachable after leaving (「前のまど」).
+    struct KnownWindow: Codable, Equatable, Sendable, Identifiable {
+        let id: String
+        var name: String
+    }
+
+    private struct Directory: Codable {
+        var schemaVersion = 1
+        var windows: [KnownWindow] = []
     }
 
     static let shared = GroupWindowLocalPhotoStore()
@@ -34,11 +54,74 @@ actor GroupWindowLocalPhotoStore {
     }
 
     func entries(windowID: String) -> [Entry] {
-        (try? loadIndex(windowID: windowID).entries) ?? []
+        ((try? loadIndex(windowID: windowID).entries) ?? []).filter { $0.isRemoved != true }
     }
 
+    /// Includes photos removed from this iPhone, which are not downloaded again.
     func contains(photoID: String, windowID: String) -> Bool {
-        entries(windowID: windowID).contains { $0.id == photoID }
+        ((try? loadIndex(windowID: windowID).entries) ?? []).contains { $0.id == photoID }
+    }
+
+    func entry(photoID: String, windowID: String) -> Entry? {
+        entries(windowID: windowID).first { $0.id == photoID }
+    }
+
+    /// Removes the image from this iPhone only. The window and the other
+    /// members' iPhones are not changed.
+    func remove(photoID: String, windowID: String) throws {
+        var index = try loadIndex(windowID: windowID)
+        guard let position = index.entries.firstIndex(where: { $0.id == photoID }) else { return }
+        index.entries[position].isRemoved = true
+        try? FileManager.default.removeItem(at: photoURL(photoID: photoID, windowID: windowID))
+        try write(JSONEncoder().encode(index), to: indexURL(windowID: windowID))
+    }
+
+    func setFavoriteImport(photoID: String, windowID: String, token: UUID?, localIdentifier: String?) throws {
+        var index = try loadIndex(windowID: windowID)
+        guard let position = index.entries.firstIndex(where: { $0.id == photoID }) else { return }
+        index.entries[position].favoriteImportToken = token
+        index.entries[position].favoriteLocalIdentifier = localIdentifier
+        try write(JSONEncoder().encode(index), to: indexURL(windowID: windowID))
+    }
+
+    // MARK: - Windows kept on this iPhone
+
+    func knownWindows() -> [KnownWindow] {
+        guard let url = directoryURL(), FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let directory = try? JSONDecoder().decode(Directory.self, from: data)
+        else { return [] }
+        return directory.windows
+    }
+
+    func remember(windowID: String, name: String) {
+        var windows = knownWindows()
+        if let index = windows.firstIndex(where: { $0.id == windowID }) {
+            guard windows[index].name != name else { return }
+            windows[index].name = name
+        } else {
+            windows.append(KnownWindow(id: windowID, name: name))
+        }
+        writeDirectory(windows)
+    }
+
+    /// Deletes every photo of a window this iPhone is no longer in.
+    func forget(windowID: String) {
+        writeDirectory(knownWindows().filter { $0.id != windowID })
+        if let folder = try? directory(windowID: windowID) {
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    private func directoryURL() -> URL? {
+        root?.appendingPathComponent("windows.json")
+    }
+
+    private func writeDirectory(_ windows: [KnownWindow]) {
+        guard let root, let url = directoryURL() else { return }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        guard let data = try? JSONEncoder().encode(Directory(windows: windows)) else { return }
+        try? write(data, to: url)
     }
 
     func imageURL(photoID: String, windowID: String) -> URL? {

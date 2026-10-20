@@ -128,6 +128,9 @@ protocol GroupWindowClient: Sendable {
     func removeMember(participantID: String, windowID: String,
                       operation: GroupOperation) async throws -> GroupWindow
     func leave(windowID: String, operation: GroupOperation) async throws
+    /// Renews the window's key after someone left or was removed. Only the
+    /// creator can; until then the relay refuses new photos and hearts.
+    func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow
     func photos(windowID: String) async throws -> [GroupPhoto]
     func setHeart(photoID: String, windowID: String, active: Bool,
                   operationID: UUID) async throws -> GroupPhoto

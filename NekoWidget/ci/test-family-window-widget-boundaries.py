@@ -4298,7 +4298,7 @@ class GroupWindowUITests(unittest.TestCase):
         # Today's two-person window is read-only through the same boundary:
         # every change is refused, and the screen hides what it cannot do.
         legacy = section(view, "struct LegacyPairingGroupWindowClient: GroupWindowClient", "struct LegacyWindowMembersScreen: View")
-        self.assertEqual(legacy.count("throw GroupClientError.unavailable"), 12)
+        self.assertEqual(legacy.count("throw GroupClientError.unavailable"), 13)
         self.assertNotIn("URLSession", legacy)
         self.assertIn('displayName: "自分"', legacy)
         self.assertIn('displayName: "相手"', legacy)
@@ -4449,7 +4449,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         # and only inside storeAndAcknowledge (so ACK follows the write).
         receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
-        self.assertIn("guard verdict != .retryLater else { return }", receive)
+        self.assertIn("guard verdict != .retryLater, verdict != .checkOff else { return verdict }", receive)
         self.assertIn("client.storeAndAcknowledge(incoming, outgoingOperationID: outgoingOperationID)", receive)
         self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("storeAndAcknowledge"))
         self.assertIn("try await store.save(", receive)
@@ -4461,7 +4461,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         self.assertIn("outgoingOperationID: operationID", send)
         self.assertIn("MomentShareIngressService().prepare(fromFileURL: received.file).canonicalJPEG", screen)
         # Paused windows cannot send; the card points to who can resume.
-        self.assertIn("guard let window, window.state == .active, !isPaused else { return false }", screen)
+        self.assertIn("guard !isFormer, let window, window.state == .active, !isPaused else { return false }", screen)
         self.assertIn('"group-window-screen-paused"', screen)
 
         store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
@@ -5088,6 +5088,63 @@ class WindowListOrderTests(unittest.TestCase):
         self.assertIn('Label("公式のまど", systemImage: "safari")', tab)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertNotIn("退出", setup)
+
+
+class GroupWindowAuditFixTests(unittest.TestCase):
+    def test_window_goes_on_after_a_member_leaves(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        sync = section(window, "    func sync() async {", "private func updateHomeScreenPhoto()")
+        self.assertIn("latest.state == .rotationRequired, latest.canManage", sync)
+        self.assertIn("client.rotate(", sync)
+        members = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("try? await client.rotate(", section(members, "    func load() async {", "func createInvitation()"))
+        self.assertIn("func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow",
+                      source("NekoWidget/Services/GroupWindowContract.swift"))
+
+    def test_waiting_photos_and_failed_sends_are_explained(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("catch MomentSharingError.moderationDisabled {\n            return .checkOff", window)
+        self.assertIn("receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)", window)
+        deliver = section(window, "    func deliver(_ prepared: PreparedPhoto", "func retryFailedDelivery()")
+        self.assertIn("let operationID = prepared.operationID", deliver)
+        self.assertNotIn("UUID()\n            let sent", deliver)
+        self.assertIn("failedDelivery = FailedDelivery(photo: retry, memo: memo)", deliver)
+        self.assertIn('"group-window-send-retry"', window)
+
+    def test_left_windows_keep_their_photos(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("GroupWindowScreen(client: model.client, windowID: former.id, formerName: former.name)", window)
+        self.assertIn("guard model.hasLoaded, model.message == nil else { return }", window)
+        self.assertIn("onLeft: closeAfterLeaving", window)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("if let onLeft { onLeft() } else { dismiss() }", setup)
+        self.assertNotIn("届いた写真とお気に入りは", setup)
+        self.assertNotIn("相手のiPhoneに残ります", setup)
+        store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
+        self.assertIn("func knownWindows()", store)
+        # A photo removed here is not downloaded again.
+        contains = section(store, "func contains(photoID: String", "func entry(photoID:")
+        self.assertNotIn("isRemoved", contains)
+
+    def test_received_photo_can_be_kept_like_the_two_person_window(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        favorite = section(window, "func addToFavorites(", "func remove(_ entry:")
+        self.assertIn("ReceivedPhotoMemoryImportService()", favorite)
+        self.assertIn('source: "received-memory"', favorite)
+        self.assertIn(".receivedMemoryImportNeedsRefresh", favorite)
+        self.assertLess(favorite.index("token: token, localIdentifier: nil"), favorite.index("service.importMemory("))
+        detail = section(window, "private struct GroupPhotoDetail: View {", "private struct GroupPhotoPage: View {")
+        self.assertIn(".tabViewStyle(.page(indexDisplayMode: .never))", detail)
+        self.assertIn("に届きました", detail)
+        self.assertIn('"group-photo-favorite"', detail)
+
+    def test_widget_matches_the_app(self) -> None:
+        view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        self.assertIn("if photo.isOwn {\n            unavailableHeartSlot", view)
+        intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
+        self.assertIn("familyWindowSourceIsEnabled && !GroupWidgetCache.groupWindowsAreOn", intent)
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        self.assertNotIn("catalog.entries.insert(entry, at: 0)", cache)
 
 
 if __name__ == "__main__":

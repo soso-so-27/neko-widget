@@ -487,8 +487,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     }
 
     /// A group window's newest kept photo, with the sender as the one line.
-    /// No heart or bookmark yet: those actions need the window's keys, which
-    /// stay in the app.
+    /// The heart is sent by the app in the background; there is no bookmark.
     private func groupEntry(now: Date, variant: WidgetImageVariant, sourceID: String,
                             windowID: String) -> NekoWidgetEntry {
         guard let cached = GroupWidgetCache.entry(windowID: windowID) else {
@@ -518,7 +517,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
         entry.familyCaption = cached.senderDisplayName.map { "\($0)さんから" }
         if let photoID = cached.photoID {
-            entry.groupWindowPhoto = GroupWindowPhotoReference(windowID: windowID, photoID: photoID)
+            // The app writes no sender for a photo this iPhone sent.
+            entry.groupWindowPhoto = GroupWindowPhotoReference(
+                windowID: windowID, photoID: photoID, isOwn: cached.senderDisplayName == nil)
         }
         return entry
     }

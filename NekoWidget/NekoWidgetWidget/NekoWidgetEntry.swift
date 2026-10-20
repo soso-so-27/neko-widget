@@ -15,6 +15,8 @@ enum FamilyWidgetHeartStatus: Equatable, Sendable {
 struct GroupWindowPhotoReference: Equatable, Sendable {
     let windowID: String
     let photoID: String
+    /// A photo this iPhone sent: no heart to send, as in the app.
+    var isOwn = false
 }
 
 struct NekoWidgetEntry: TimelineEntry {

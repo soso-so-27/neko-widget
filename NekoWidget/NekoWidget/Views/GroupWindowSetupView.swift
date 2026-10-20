@@ -161,7 +161,13 @@ final class GroupWindowMembersModel: ObservableObject {
 
     func load() async {
         do {
-            let latest = transform(try await client.window(id: windowID))
+            var latest = transform(try await client.window(id: windowID))
+            if latest.state == .rotationRequired, latest.canManage,
+               let renewed = try? await client.rotate(
+                   windowID: windowID, operation: GroupOperation(expectedRevision: latest.revision)) {
+                // Someone left: renewing the key here lets the window go on.
+                latest = transform(renewed)
+            }
             var requests: [GroupJoinRequest] = []
             if latest.canManage {
                 requests = try await client.pendingRequests(windowID: windowID)
@@ -305,6 +311,8 @@ struct GroupWindowMembersView: View {
     var plusOfferModel: (@MainActor () -> MembershipOfferModel)? = { .live() }
     /// Starts creating this person's own window.
     var onCreateOwnWindow: (() -> Void)? = nil
+    /// After leaving: closes the window the members screen was opened from.
+    var onLeft: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var approvalTarget: GroupJoinRequest?
     @State private var showsApproval = false
@@ -392,7 +400,7 @@ struct GroupWindowMembersView: View {
             Button("外す", role: .destructive) { Task { await model.remove(member) } }
             Button("戻る", role: .cancel) {}
         } message: { _ in
-            Text("この人には、これから届く写真が見えなくなります。すでに届いた写真は、相手のiPhoneに残ります。")
+            Text("この人には、これから届く写真が見えなくなります。すでに届いた写真は、その人のiPhoneに残ります。")
         }
         .confirmationDialog(
             "招待を取り消しますか？",
@@ -410,11 +418,14 @@ struct GroupWindowMembersView: View {
             titleVisibility: .visible
         ) {
             Button("抜ける", role: .destructive) {
-                Task { if await model.leave() { dismiss() } }
+                Task {
+                    guard await model.leave() else { return }
+                    if let onLeft { onLeft() } else { dismiss() }
+                }
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("抜けると、これから届く写真は見られません。すでに届いた写真とお気に入りは、このiPhoneに残ります。")
+            Text("抜けると、これから届く写真は見られません。すでに届いた写真はこのiPhoneに残り、まどタブの「前のまど」から見られます。")
         }
     }
 
@@ -1053,6 +1064,9 @@ struct LegacyPairingGroupWindowClient: GroupWindowClient {
         throw GroupClientError.unavailable
     }
     func leave(windowID: String, operation: GroupOperation) async throws {
+        throw GroupClientError.unavailable
+    }
+    func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow {
         throw GroupClientError.unavailable
     }
     func photos(windowID: String) async throws -> [GroupPhoto] {
