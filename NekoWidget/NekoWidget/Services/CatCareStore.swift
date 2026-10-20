@@ -107,6 +107,18 @@ final class CatCareStore: ObservableObject {
         }
     }
 
+    /// Adds weights written in photo memos. Each memo adds at most one weight,
+    /// ever; a weight the owner deleted here is not brought back.
+    func importWeights(_ weights: [CatCareMemoWeight]) {
+        guard let cats = state?.cats else { return }
+        let sources = CatCareMemoWeights.sources(weights, cats: cats)
+        guard !sources.isEmpty else { return }
+        update { state in
+            let now = Date()
+            for source in sources { CatCareImport.apply(source, to: &state, now: now) }
+        }
+    }
+
     nonisolated static func sources(
         care: CareHandoffPlan,
         evacuation: EvacuationPlan,

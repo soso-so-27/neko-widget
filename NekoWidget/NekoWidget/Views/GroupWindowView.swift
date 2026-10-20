@@ -56,6 +56,7 @@ final class GroupWindowScreenModel: ObservableObject {
     @Published private(set) var hearts: [String: [GroupHeart]] = [:]
     @Published private(set) var isSyncing = false
     @Published private(set) var isSending = false
+    @Published private(set) var isPreparing = false
     @Published private(set) var message: String?
     @Published private(set) var sendCompleted = false
 
@@ -77,7 +78,15 @@ final class GroupWindowScreenModel: ObservableObject {
 
     var canSend: Bool {
         guard let window, window.state == .active, !isPaused else { return false }
-        return !isSending
+        return !isSending && !isPreparing
+    }
+
+    /// A checked photo waiting on the confirmation screen.
+    struct PreparedPhoto: Identifiable {
+        let id = UUID()
+        let jpeg: Data
+        /// The Photos item, for the owner's own memo. Nil when unknown.
+        let photoIdentifier: String?
     }
 
     func imageURL(for entry: GroupWindowLocalPhotoStore.Entry) async -> URL? {
@@ -87,6 +96,11 @@ final class GroupWindowScreenModel: ObservableObject {
     func myHeartIsActive(_ photoID: String) -> Bool {
         guard let me = window?.myParticipantID else { return false }
         return hearts[photoID]?.contains { $0.participantID == me && $0.active } ?? false
+    }
+
+    /// Photos already kept on this iPhone appear at once, before the relay answers.
+    func showStored() async {
+        if entries.isEmpty { entries = await store.entries(windowID: windowID) }
     }
 
     /// Reads the window, keeps every new photo on this iPhone, then tells the
@@ -103,6 +117,8 @@ final class GroupWindowScreenModel: ObservableObject {
             for photo in photos {
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
                 await receive(photo, me: latest.myParticipantID)
+                // Each photo shows as soon as it is kept, not after all of them.
+                entries = await store.entries(windowID: windowID)
             }
             message = nil
         } catch {
@@ -169,28 +185,41 @@ final class GroupWindowScreenModel: ObservableObject {
         }
     }
 
-    func send(_ item: PhotosPickerItem) async {
+    /// Reads and checks a picked photo, before the confirmation screen.
+    /// Nothing is sent here.
+    func prepare(_ item: PhotosPickerItem) async -> PreparedPhoto? {
+        guard canSend else { return nil }
+        isPreparing = true
+        sendCompleted = false
+        defer { isPreparing = false }
+        guard let picked = try? await item.loadTransferable(type: PickedGroupPhoto.self) else {
+            message = "写真を読み込めませんでした。別の写真でお試しください。"
+            return nil
+        }
+        switch await GroupPhotoModeration.check(picked.jpeg, with: moderation) {
+        case .safe: break
+        case .hidden:
+            message = "この写真は届けられません。iPhoneがセンシティブな内容と判断しました。"
+            return nil
+        case .retryLater:
+            message = "写真を確認できませんでした。iPhoneの設定で「センシティブな内容の警告」がオンか確かめてください。"
+            return nil
+        }
+        message = nil
+        return PreparedPhoto(jpeg: picked.jpeg, photoIdentifier: item.itemIdentifier)
+    }
+
+    /// Sends the confirmed photo. The memo stays on this iPhone, on the photo's own memo.
+    func deliver(_ prepared: PreparedPhoto, memo: String) async {
         guard canSend, let me = window?.myParticipantID else { return }
         isSending = true
         sendCompleted = false
         defer { isSending = false }
         do {
-            guard let picked = try await item.loadTransferable(type: PickedGroupPhoto.self) else {
-                message = "写真を読み込めませんでした。別の写真でお試しください。"
-                return
-            }
-            switch await GroupPhotoModeration.check(picked.jpeg, with: moderation) {
-            case .safe: break
-            case .hidden:
-                message = "この写真は届けられません。iPhoneがセンシティブな内容と判断しました。"
-                return
-            case .retryLater:
-                message = "写真を確認できませんでした。iPhoneの設定で「センシティブな内容の警告」がオンか確かめてください。"
-                return
-            }
             let operationID = UUID()
-            let sent = try await client.sendPhoto(normalizedJPEG: picked.jpeg, windowID: windowID, operationID: operationID)
+            let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, windowID: windowID, operationID: operationID)
             await receive(sent, me: me, outgoingOperationID: operationID)
+            await saveMemo(memo, for: prepared.photoIdentifier)
             sendCompleted = true
             message = nil
             await sync()
@@ -198,6 +227,15 @@ final class GroupWindowScreenModel: ObservableObject {
             message = GroupWindowPresentation.message(for: error)
             await sync()
         }
+    }
+
+    private func saveMemo(_ memo: String, for identifier: String?) async {
+        let text = memo.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let identifier else { return }
+        let notes = PhotoMemoryNoteStore.shared
+        let existing: PhotoMemoryNote? = (try? await notes.note(for: identifier)) ?? nil
+        let combined = existing.map { $0.text + "\n" + text } ?? text
+        _ = try? await notes.save(text: combined, for: identifier, expectedRevision: existing?.revision)
     }
 
     func toggleHeart(_ photoID: String) async {
@@ -216,6 +254,7 @@ final class GroupWindowScreenModel: ObservableObject {
 struct GroupWindowScreen: View {
     @StateObject private var model: GroupWindowScreenModel
     @State private var pickedItem: PhotosPickerItem?
+    @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var openedEntry: GroupWindowLocalPhotoStore.Entry?
 
     init(client: ProductionGroupWindowClient, windowID: String) {
@@ -237,7 +276,19 @@ struct GroupWindowScreen: View {
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-screen-message")
                 }
-                if model.entries.isEmpty {
+                if model.isSyncing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(model.entries.isEmpty ? "写真を読み込んでいます…" : "新しい写真を確かめています…")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("group-window-syncing")
+                }
+                if model.entries.isEmpty && model.isSyncing {
+                    Color.clear.frame(height: 120)
+                } else if model.entries.isEmpty {
                     ContentUnavailableView(
                         "まだ写真はありません",
                         systemImage: "photo.on.rectangle",
@@ -247,8 +298,10 @@ struct GroupWindowScreen: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 2) {
                         ForEach(model.entries) { entry in
-                            GroupPhotoTile(model: model, entry: entry)
-                                .onTapGesture { openedEntry = entry }
+                            Button { openedEntry = entry } label: {
+                                GroupPhotoTile(model: model, entry: entry)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -270,13 +323,23 @@ struct GroupWindowScreen: View {
             }
         }
         .safeAreaInset(edge: .bottom) { sendBar }
-        .task { await model.sync() }
+        .task {
+            await model.showStored()
+            await model.sync()
+        }
         .refreshable { await model.sync() }
         .onChange(of: pickedItem) { _, item in
             guard let item else { return }
             pickedItem = nil
-            Task { await model.send(item) }
+            Task { prepared = await model.prepare(item) }
         }
+        .sheet(item: $prepared) { photo in
+            GroupSendConfirmSheet(photo: photo, windowName: model.window?.name ?? "まど") { memo in
+                prepared = nil
+                Task { await model.deliver(photo, memo: memo) }
+            }
+        }
+        .announcesWhenShown(model.message)
         .sheet(item: $openedEntry) { entry in
             GroupPhotoDetail(model: model, entry: entry)
         }
@@ -308,7 +371,15 @@ struct GroupWindowScreen: View {
 
     private var sendBar: some View {
         VStack(spacing: 6) {
-            if model.sendCompleted {
+            if model.isPreparing || model.isSending {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(model.isPreparing ? "写真を確かめています…" : "届けています…")
+                        .font(.footnote.weight(.semibold))
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("group-window-send-progress")
+            } else if model.sendCompleted {
                 Label("届けました", systemImage: "checkmark.circle.fill")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.green)
@@ -359,13 +430,69 @@ private struct GroupPhotoTile: View {
                     Image(systemName: "heart.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
-                        .padding(6)
+                        .padding(4)
+                        .background(.white.opacity(0.85), in: Circle())
+                        .padding(4)
                 }
             }
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから届いた写真")
+            .accessibilityLabel(tileLabel)
+            .accessibilityHint("押すと大きく見て、ハートを送れます")
             .task { url = await model.imageURL(for: entry) }
+    }
+}
+
+private extension GroupPhotoTile {
+    var tileLabel: String {
+        var parts = [entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから届いた写真"]
+        if entry.isHidden { parts.append("表示していない写真") }
+        if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
+        return parts.joined(separator: "、")
+    }
+}
+
+/// Shown after a photo is picked: the photo, where it goes, and a memo for
+/// this iPhone only. Nothing is sent until 「届ける」.
+private struct GroupSendConfirmSheet: View {
+    let photo: GroupWindowScreenModel.PreparedPhoto
+    let windowName: String
+    let deliver: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var memo = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if let image = UIImage(data: photo.jpeg) {
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: 320)
+                            .accessibilityLabel("届ける写真")
+                    }
+                }
+                Section {
+                    TextField("例：おなかを見せて寝ていた", text: $memo, axis: .vertical)
+                        .lineLimit(2...5)
+                        .accessibilityIdentifier("group-window-send-memo")
+                } header: { Text("メモ（自分だけ）") }
+                  footer: { Text("メモはこのiPhoneにだけ残り、まどには届きません。写真タブで見返せます。") }
+            }
+            .navigationTitle("「\(windowName)」に届ける")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Button { deliver(String(memo.prefix(500))) } label: {
+                    Label("届ける", systemImage: "paperplane").font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("group-window-send-confirm")
+                .padding().background(.regularMaterial)
+            }
+        }
     }
 }
 
@@ -454,11 +581,13 @@ final class GroupWindowListModel: ObservableObject {
     @Published private(set) var windows: [GroupWindow] = []
     @Published private(set) var message: String?
     @Published private(set) var isWorking = false
+    @Published private(set) var hasLoaded = false
     let client: ProductionGroupWindowClient
 
     init(client: ProductionGroupWindowClient) { self.client = client }
 
     func load() async {
+        defer { hasLoaded = true }
         do {
             windows = try await client.windows()
             message = nil
@@ -466,6 +595,9 @@ final class GroupWindowListModel: ObservableObject {
             message = GroupWindowPresentation.message(for: error)
         }
     }
+
+    /// Set when the relay answers that making a window needs Plus.
+    @Published var needsPlus = false
 
     func create(name: String) async -> GroupWindow? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -477,8 +609,78 @@ final class GroupWindowListModel: ObservableObject {
             await load()
             return window
         } catch {
-            message = GroupWindowPresentation.message(for: error)
+            if (error as? GroupSubscriptionError) == .ownerPlusRequired {
+                message = nil
+                needsPlus = true
+            } else {
+                message = GroupWindowPresentation.message(for: error)
+            }
             return nil
+        }
+    }
+}
+
+/// Creating a window for several people. Reached from 「相手とつなぐ」, next to
+/// the one-person window, so both start from the same place.
+struct GroupWindowCreateScreen: View {
+    @StateObject private var model: GroupWindowListModel
+    @Environment(\.membershipAccess) private var membershipAccess
+    @State private var name = ""
+    @State private var createdWindowID: String?
+
+    init(client: ProductionGroupWindowClient) {
+        _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
+    }
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("例：実家のまど", text: $name)
+                    .accessibilityIdentifier("group-window-create-name")
+            } header: { Text("まどの名前") }
+              footer: { Text("名前はメンバー全員に表示されます。作ったら、招待リンクを送りましょう。") }
+            if let message = model.message {
+                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+            }
+        }
+        .navigationTitle("家族・友だちとまどを作る")
+        .navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(model.message)
+        .safeAreaInset(edge: .bottom) {
+            Group {
+                if membershipAccess.decision(for: .createOwnWindow) != .allowed {
+                    // まどを作るのは Plus（App Store の14日間無料を含む）。押したときだけ開く。
+                    PlusOfferPrompt(context: .createWindow,
+                                    decision: membershipAccess.decision(for: .createOwnWindow),
+                                    presentsImmediately: false)
+                } else {
+                    Button {
+                        Task { createdWindowID = await model.create(name: trimmed)?.id }
+                    } label: {
+                        Text("作る").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(trimmed.isEmpty || model.isWorking)
+                    .accessibilityIdentifier("group-window-create-confirm")
+                }
+            }
+            .padding().background(.regularMaterial)
+        }
+        .sheet(isPresented: $model.needsPlus, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+        }) {
+            // The relay said Plus is needed (for example, the trial ended on another iPhone).
+            MembershipOfferSheet(model: .live(), context: .createWindow) { _ in model.needsPlus = false }
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { createdWindowID != nil },
+            set: { if !$0 { createdWindowID = nil } }
+        )) {
+            if let createdWindowID {
+                GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
+            }
         }
     }
 }
@@ -486,9 +688,6 @@ final class GroupWindowListModel: ObservableObject {
 /// Shown in the まど tab only in builds with group windows turned on.
 struct GroupWindowListSection: View {
     @StateObject private var model: GroupWindowListModel
-    @State private var showsNameEntry = false
-    @State private var nameDraft = ""
-    @State private var createdWindowID: String?
 
     init(client: ProductionGroupWindowClient) {
         _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
@@ -496,7 +695,7 @@ struct GroupWindowListSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("グループのまど")
+            Text("家族・友だちのまど")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
@@ -508,14 +707,30 @@ struct GroupWindowListSection: View {
                 }
                 .buttonStyle(.plain)
             }
+            if !model.hasLoaded && model.windows.isEmpty {
+                // Names kept on this iPhone from the last visit, so the list is not empty while it loads.
+                ForEach(GroupWidgetCache.entries(), id: \.windowID) { known in
+                    NavigationLink {
+                        GroupWindowScreen(client: model.client, windowID: known.windowID)
+                    } label: {
+                        knownRow(known.windowName)
+                    }
+                    .buttonStyle(.plain)
+                }
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("まどを読み込んでいます…").font(.footnote).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("group-window-list-loading")
+            }
             if let message = model.message {
                 Text(message).font(.footnote).foregroundStyle(.orange)
             }
-            Button {
-                nameDraft = ""
-                showsNameEntry = true
+            NavigationLink {
+                GroupWindowCreateScreen(client: model.client)
             } label: {
-                Label("グループのまどを作る", systemImage: "plus")
+                Label("まどを作る（\(GroupWindowPresentation.memberLimit)人まで）", systemImage: "plus")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
@@ -523,26 +738,21 @@ struct GroupWindowListSection: View {
             .accessibilityIdentifier("group-window-create")
         }
         .task { await model.load() }
-        .alert("まどの名前", isPresented: $showsNameEntry) {
-            TextField("例：実家のまど", text: $nameDraft)
-            Button("作る") {
-                Task { createdWindowID = await model.create(name: nameDraft)?.id }
-            }
-            .disabled(nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("名前はメンバー全員に表示されます。作ったら、招待リンクを送りましょう。")
-        }
-        .navigationDestination(isPresented: Binding(
-            get: { createdWindowID != nil },
-            set: { if !$0 { createdWindowID = nil } }
-        )) {
-            if let createdWindowID {
-                // Straight to members and the invitation link (M4).
-                GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
-            }
-        }
         .accessibilityIdentifier("group-window-list")
+    }
+
+    private func knownRow(_ name: String) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.body.weight(.semibold))
+                Text("読み込み中").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .frame(minHeight: 44)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func row(_ window: GroupWindow) -> some View {

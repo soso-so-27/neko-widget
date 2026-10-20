@@ -90,8 +90,18 @@ struct ShowcasePhotoView: View {
     @State private var showsPreparation = false
     @State private var showsCatPicker = false
     @State private var accessRevision = 0
+    @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
+
+    /// 「むぎ・3歳」 for one chosen cat. 「すべての猫」 has no caption: a photo's cat is not guessed.
+    private var caption: String? {
+        guard initialScopeID != nil, !scopeID.isEmpty,
+              let name = profiles.first(where: { $0.identifier == scopeID })?.displayName else { return nil }
+        let age = CatCareLostCat.age(CatCareSummary.record(profileIdentifier: scopeID)?.birthday?.value,
+                                     today: CatCareDay(date: Date()))
+        return [name, age].compactMap { $0 }.joined(separator: "・")
+    }
     private var storedScopeIDs: [String] { Array(Set(store.entries.map(\.scopeID))).sorted() }
 
     private var visibleItems: [Item] {
@@ -157,6 +167,14 @@ struct ShowcasePhotoView: View {
                             .background(.ultraThinMaterial, in: Circle())
                     }
                     .accessibilityLabel("見せる写真を編集")
+                } else if detailIndex != nil, caption != nil {
+                    Button { showsCaption.toggle() } label: {
+                        Image(systemName: showsCaption ? "text.bubble.fill" : "text.bubble")
+                            .frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel(showsCaption ? "名前と年齢を隠す" : "名前と年齢を表示")
+                    .accessibilityIdentifier("showcase-caption-toggle")
                 } else {
                     Color.clear.frame(width: 44, height: 44)
                 }
@@ -211,11 +229,36 @@ struct ShowcasePhotoView: View {
                                 .accessibilityAction(named: Text("前の写真")) {
                                     selectedIndex = max(index - 1, 0)
                                 }
+                                .accessibilityLabel(caption.map { "\($0)の写真" } ?? "写真\(index + 1)枚目")
                                 .accessibilityIdentifier("showcase-detail-photo")
+                                .overlay(alignment: .bottomLeading) {
+                                    if showsCaption, let caption {
+                                        Text(caption).font(.subheadline.bold())
+                                            .padding(.horizontal, 10).padding(.vertical, 6)
+                                            .background(.black.opacity(0.5), in: Capsule())
+                                            .padding(12)
+                                            .accessibilityIdentifier("showcase-caption")
+                                    }
+                                }
                             if displayedItems.count > 1 {
-                                Text("\(index + 1) / \(displayedItems.count)")
-                                    .font(.footnote.monospacedDigit())
-                                    .padding(16)
+                                HStack(spacing: 16) {
+                                    Button { selectedIndex = max(index - 1, 0) } label: {
+                                        Image(systemName: "chevron.left").frame(width: 44, height: 44)
+                                            .background(.ultraThinMaterial, in: Circle())
+                                    }
+                                    .disabled(index == 0)
+                                    .accessibilityLabel("前の写真")
+                                    Text("\(index + 1) / \(displayedItems.count)")
+                                        .font(.footnote.monospacedDigit())
+                                        .accessibilityLabel("\(displayedItems.count)枚中\(index + 1)枚目")
+                                    Button { selectedIndex = min(index + 1, displayedItems.count - 1) } label: {
+                                        Image(systemName: "chevron.right").frame(width: 44, height: 44)
+                                            .background(.ultraThinMaterial, in: Circle())
+                                    }
+                                    .disabled(index == displayedItems.count - 1)
+                                    .accessibilityLabel("次の写真")
+                                }
+                                .padding(16)
                             }
                         }
                     }
@@ -427,7 +470,7 @@ struct ShowcasePreparationView: View {
                     if store.canUndo {
                         Button("取り消す") {
                             do { try store.undo() }
-                            catch { errorMessage = "操作を取り消せませんでした" }
+                            catch { errorMessage = "元に戻せませんでした。もう一度お試しください" }
                         }
                     }
                     if let errorMessage {
@@ -607,6 +650,7 @@ struct ShowcasePreparationView: View {
                     } label: {
                         Image(systemName: "ellipsis").frame(width: 44, height: 44)
                     }
+                    .accessibilityLabel("この写真の操作")
                 }
             }
         }
@@ -617,7 +661,7 @@ struct ShowcasePreparationView: View {
             try action()
             previewEntry = nil
         } catch {
-            errorMessage = "写真を変更できませんでした"
+            errorMessage = "写真を変更できませんでした。もう一度お試しください"
         }
     }
 
@@ -626,10 +670,15 @@ struct ShowcasePreparationView: View {
         let targetScope = scopeID
         isPreparing = true
         defer { isPreparing = false }
-        let identifiers = await ShowcaseRecommender.identifiers(
+        var identifiers = await ShowcaseRecommender.identifiers(
             from: recommendationCandidates,
             excluding: store.excludedIdentifiers(in: targetScope)
         )
+        // The face the owner chose in 「この子のこと」 leads, if it is one of this cat's photos.
+        if let face = CatCareSummary.record(profileIdentifier: targetScope)?.facePhoto?.value?.sourceAssetID,
+           let index = identifiers.firstIndex(of: face) {
+            identifiers.insert(identifiers.remove(at: index), at: 0)
+        }
         do { try await store.applyRecommendations(identifiers, to: targetScope) }
         catch { errorMessage = "写真を準備できませんでした。もう一度お試しください" }
     }
@@ -739,7 +788,7 @@ struct ShowcaseToolCatPicker: View {
                     Section {
                         Button("すべての猫") { select(""); dismiss() }
                     }
-                    Section("プロフィール未登録の猫") {
+                    Section("まだ登録していない猫") {
                         ForEach(storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }, id: \.self) { scope in
                             Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
                         }

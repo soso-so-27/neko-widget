@@ -38,6 +38,17 @@ struct CatCareEntryView: View {
         .onChange(of: selectedProfileID) { _, value in
             if let value { lastProfileID = value }
         }
+        .task {
+            // Weights written in photo memos join the weight list (read only; memos are not changed).
+            guard let records = try? await PhotoMemoryNoteStore.shared.records() else { return }
+            store.importWeights(records.compactMap { record in
+                record.note.weight.map { weight in
+                    CatCareMemoWeight(noteID: record.note.id.uuidString, catID: weight.catID,
+                                      grams: weight.value.grams, measuredOn: weight.value.measuredOn,
+                                      fallbackDate: record.note.context?.capturedAt ?? record.note.writtenAt)
+                }
+            })
+        }
     }
 
     private var selectedProfile: CatProfilePresentation? {
@@ -66,8 +77,11 @@ struct CatCareDetailView: View {
     @Binding var selectedProfileID: String?
     @ObservedObject private var store = CatCareStore.shared
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var draft = CatCareDraft()
+    @State private var savedDraft = CatCareDraft()
     @State private var catID: UUID?
+    @State private var autosave: Task<Void, Never>?
     @State private var saveFailed = false
     @State private var editing: CatCareListEditor?
     @State private var microchipInvalid = false
@@ -98,29 +112,41 @@ struct CatCareDetailView: View {
             livingSection
             householdSection
             Section {
-                Text("この情報はこのiPhoneの中にだけ保存します。開発者には送りません。ツールで書き出したときだけ、渡した相手に届きます。医療の判断はしません。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Text("書いた内容は自動で保存します。")
+                Text("このiPhoneの中だけに保存し、外には送りません。")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("cat-care-autosave-note")
+        }
+        .onChange(of: draft) { _, _ in
+            autosave?.cancel()
+            autosave = Task {
+                try? await Task.sleep(for: .milliseconds(600))
+                guard !Task.isCancelled else { return }
+                save()
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("保存") { save() }
-                    .disabled(!store.canSave || catID == nil)
-                    .accessibilityIdentifier("cat-care-save")
-            }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { autosave?.cancel(); save() }
         }
+        .onDisappear { autosave?.cancel(); save() }
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ほかの画面で同時に変更された可能性があります。もう一度開き直してください。")
+            Text("この画面を閉じて開き直し、もう一度入れてください。")
         }
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor) { result in
                 apply(result)
             }
         }
-        .task(id: profile.identifier) { load() }
+        .task(id: profile.identifier) {
+            // Save the cat shown before; the draft still belongs to it here.
+            autosave?.cancel()
+            save()
+            load()
+        }
     }
 
     // MARK: Sections
@@ -152,7 +178,8 @@ struct CatCareDetailView: View {
                     .font(.body.monospacedDigit())
                     .accessibilityIdentifier("cat-care-microchip")
                 if microchipInvalid {
-                    Text("15桁の数字で入れてください。").font(.caption).foregroundStyle(.orange)
+                    Label("15桁の数字で入れると保存します。", systemImage: "exclamationmark.circle")
+                        .font(.caption).foregroundStyle(.orange)
                 }
             }
         }
@@ -183,7 +210,7 @@ struct CatCareDetailView: View {
     private var livingSection: some View {
         Section("暮らし") {
             listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
-            TextField("療法食・別々に与えるなど（多頭のとき大事）", text: $draft.specialDiet, axis: .vertical)
+            TextField("療法食・別々に与えるなど（何匹もいるとき大事）", text: $draft.specialDiet, axis: .vertical)
                 .lineLimit(1...3)
             TextField("水", text: $draft.water)
             TextField("トイレ", text: $draft.litter)
@@ -238,23 +265,28 @@ struct CatCareDetailView: View {
         else { catID = nil; return }
         catID = record.catID
         draft = CatCareDraft(record: record, household: store.state?.household ?? CatCareHousehold())
+        savedDraft = draft
         microchipInvalid = false
     }
 
+    /// Saves what changed. A microchip number that is not 15 digits yet is
+    /// kept on screen and not saved; everything else is saved.
     private func save() {
-        guard let catID else { return }
-        guard let chip = CatCareLimits.normalizedMicrochip(draft.microchip) else {
+        guard let catID, draft != savedDraft, store.canSave else { return }
+        var value = draft
+        if let chip = CatCareLimits.normalizedMicrochip(draft.microchip) {
+            value.microchip = chip
+            microchipInvalid = false
+        } else {
+            value.microchip = savedDraft.microchip
             microchipInvalid = true
-            return
         }
-        microchipInvalid = false
-        draft.microchip = chip
         let saved = store.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-            draft.write(to: &state.cats[index], household: &state.household,
+            value.write(to: &state.cats[index], household: &state.household,
                         by: state.deviceID, now: Date())
         }
-        if !saved { saveFailed = true }
+        if saved { savedDraft = draft } else { saveFailed = true }
     }
 
     private func apply(_ result: CatCareListEditor.Result) {
@@ -391,42 +423,57 @@ struct CatCareListView: View {
     let catID: UUID?
     @Binding var editing: CatCareListEditor?
     @ObservedObject private var store = CatCareStore.shared
+    @State private var pendingDelete: UUID?
 
     private var record: CatCareRecord? { catID.flatMap { store.state?.record(catID: $0) } }
+
+    /// Every record is a button that asks before deleting, so a swipe is never the only way.
+    private func row<Content: View>(_ id: UUID, @ViewBuilder _ content: () -> Content) -> some View {
+        Button { pendingDelete = id } label: {
+            content().frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("押すと削除できます")
+        .swipeActions { Button("削除", role: .destructive) { pendingDelete = id } }
+    }
 
     var body: some View {
         List {
             switch kind {
             case .weight:
                 ForEach(record?.activeWeights ?? []) { entry in
-                    LabeledContent(CatCareFormat.day(entry.measuredOn), value: CatCareFormat.weight(entry.grams))
-                        .swipeActions { deleteButton(entry.id) }
+                    row(entry.id) {
+                        LabeledContent(CatCareFormat.day(entry.measuredOn), value: CatCareFormat.weight(entry.grams))
+                    }
                 }
             case .medication:
                 ForEach(record?.activeMedications ?? []) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.name).font(.body.weight(.semibold))
-                        Text([entry.dose, entry.schedule].filter { !$0.isEmpty }.joined(separator: "・"))
-                            .font(.caption).foregroundStyle(.secondary)
+                    row(entry.id) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.name).font(.body.weight(.semibold))
+                            Text([entry.dose, entry.schedule].filter { !$0.isEmpty }.joined(separator: "・"))
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
                     }
-                    .swipeActions { deleteButton(entry.id) }
                 }
             case .vaccination:
                 ForEach(record?.activeVaccinations ?? []) { entry in
-                    HStack {
-                        LabeledContent(entry.kind, value: CatCareFormat.day(entry.givenOn))
-                        if entry.proof != nil {
-                            Image(systemName: "doc.text.image").foregroundStyle(.secondary)
-                                .accessibilityLabel("証明の写真あり")
+                    row(entry.id) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            LabeledContent(entry.kind, value: CatCareFormat.day(entry.givenOn))
+                            if entry.proof != nil {
+                                Label("証明の写真あり", systemImage: "doc.text.image")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    .swipeActions { deleteButton(entry.id) }
                 }
             case .meal:
                 ForEach(record?.activeMeals ?? []) { entry in
-                    LabeledContent(entry.time.isEmpty ? "時間未記入" : entry.time,
-                                   value: [entry.food, entry.amount].filter { !$0.isEmpty }.joined(separator: " "))
-                        .swipeActions { deleteButton(entry.id) }
+                    row(entry.id) {
+                        LabeledContent(entry.time.isEmpty ? "時間は未記入" : entry.time,
+                                       value: [entry.food, entry.amount].filter { !$0.isEmpty }.joined(separator: " "))
+                    }
                 }
             }
         }
@@ -435,15 +482,27 @@ struct CatCareListView: View {
                 ContentUnavailableView("まだ記録がありません", systemImage: "square.and.pencil")
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            Button { editing = CatCareListEditor(kind: kind) } label: {
+                Label(CatCareFormat.title(kind) + "を追加", systemImage: "plus")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!store.canSave)
+            .accessibilityIdentifier("cat-care-add-\(kind.rawValue)")
+            .padding().background(.regularMaterial)
+        }
         .navigationTitle(CatCareFormat.title(kind))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("追加", systemImage: "plus") { editing = CatCareListEditor(kind: kind) }
-                    .disabled(!store.canSave)
-                    .accessibilityIdentifier("cat-care-add-\(kind.rawValue)")
+        .confirmationDialog("この記録を削除しますか？", isPresented: Binding(
+            get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
+            Button("削除", role: .destructive) {
+                if let id = pendingDelete { delete(id) }
+                pendingDelete = nil
             }
-        }
+            .accessibilityIdentifier("cat-care-confirm-delete")
+            Button("キャンセル", role: .cancel) { pendingDelete = nil }
+        } message: { Text("削除した記録は、ほかのツールにも載らなくなります。") }
     }
 
     private var isEmpty: Bool {
@@ -455,14 +514,12 @@ struct CatCareListView: View {
         }
     }
 
-    private func deleteButton(_ id: UUID) -> some View {
-        Button("削除", role: .destructive) {
-            guard let catID else { return }
-            store.update { state in
-                guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-                CatCareListEditor.Result.delete(kind: kind, entryID: id)
-                    .apply(to: &state.cats[index], by: state.deviceID, now: Date())
-            }
+    private func delete(_ id: UUID) {
+        guard let catID else { return }
+        store.update { state in
+            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+            CatCareListEditor.Result.delete(kind: kind, entryID: id)
+                .apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }
     }
 }
@@ -481,6 +538,7 @@ struct CatCareListEntrySheet: View {
     @State private var food = ""
     @State private var amount = ""
     @State private var proofItem: PhotosPickerItem?
+    @State private var showsCamera = false
     @State private var proof: CatCarePhotoRef?
     @State private var message: String?
 
@@ -501,6 +559,12 @@ struct CatCareListEntrySheet: View {
                     PhotosPicker(selection: $proofItem, matching: .images) {
                         Label(proof == nil ? "証明の写真を写真から選ぶ" : "証明の写真を選び直す", systemImage: "photo")
                     }
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        Button { showsCamera = true } label: {
+                            Label(proof == nil ? "証明をカメラで撮る" : "カメラで撮り直す", systemImage: "camera")
+                        }
+                        .accessibilityIdentifier("cat-care-proof-camera")
+                    }
                     if proof != nil {
                         Label("証明の写真を付けました", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     }
@@ -514,10 +578,24 @@ struct CatCareListEntrySheet: View {
                 }
             }
             .navigationTitle(CatCareFormat.title(editor.kind) + "を追加")
+            .announcesWhenShown(message)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("追加") { save() } }
+            }
+            .fullScreenCover(isPresented: $showsCamera) {
+                CatCareCameraView { image in
+                    showsCamera = false
+                    guard let image else { return }
+                    // Re-encoding drops metadata. The shot stays in this app, not in Photos.
+                    if let data = image.jpegData(compressionQuality: 0.95), let jpeg = CatCareFormat.cleanJPEG(data) {
+                        proof = store.savePhoto(jpeg, sourceAssetID: nil, origin: .camera)
+                    } else {
+                        message = "写真を保存できませんでした。空き容量を確かめて、もう一度お試しください。"
+                    }
+                }
+                .ignoresSafeArea()
             }
             .onChange(of: proofItem) { _, item in
                 guard let item else { return }
@@ -526,7 +604,7 @@ struct CatCareListEntrySheet: View {
                        let jpeg = CatCareFormat.cleanJPEG(data) {
                         proof = store.savePhoto(jpeg, sourceAssetID: item.itemIdentifier, origin: .photos)
                     } else {
-                        message = "写真を読み込めませんでした。"
+                        message = "写真を読み込めませんでした。別の写真を選んでください。"
                     }
                 }
             }
@@ -552,6 +630,115 @@ struct CatCareListEntrySheet: View {
             onSave(.meal(time: name, food: food, amount: amount))
         }
         dismiss()
+    }
+}
+
+/// ② of every tool: what 「この子のこと」 fills in, read only, and one way to
+/// change it there. Tools never write these values themselves.
+struct ToolCatCareSection<Extra: View>: View {
+    let title: String
+    let lines: [(String, String)]
+    let profile: CatProfilePresentation?
+    let footer: String?
+    let identifier: String
+    let editIdentifier: String
+    let extra: () -> Extra
+
+    init(title: String, lines: [(String, String)], profile: CatProfilePresentation?, footer: String? = nil,
+         identifier: String, editIdentifier: String, @ViewBuilder extra: @escaping () -> Extra) {
+        self.title = title; self.lines = lines; self.profile = profile; self.footer = footer
+        self.identifier = identifier; self.editIdentifier = editIdentifier; self.extra = extra
+    }
+
+    var body: some View {
+        Section {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(line.0).font(.subheadline).foregroundStyle(.secondary)
+                    Text(line.1).font(.body).textSelection(.enabled)
+                }
+            }
+            .accessibilityIdentifier(identifier)
+            if lines.isEmpty {
+                Text("「この子のこと」に書くと、ここに載ります。").foregroundStyle(.secondary)
+            }
+            extra()
+            if let profile {
+                NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
+                    .accessibilityIdentifier(editIdentifier)
+            }
+        } header: { Text(title) }
+          footer: { if let footer { Text(footer) } }
+    }
+}
+
+extension ToolCatCareSection where Extra == EmptyView {
+    init(title: String, lines: [(String, String)], profile: CatProfilePresentation?, footer: String? = nil,
+         identifier: String, editIdentifier: String) {
+        self.init(title: title, lines: lines, profile: profile, footer: footer,
+                  identifier: identifier, editIdentifier: editIdentifier) { EmptyView() }
+    }
+}
+
+extension View {
+    /// Reads a new message aloud with VoiceOver, so an error or a "done" is
+    /// not only shown in color on the screen.
+    func announcesWhenShown(_ message: String?) -> some View {
+        onChange(of: message) { _, new in
+            guard let new, !new.isEmpty else { return }
+            AccessibilityNotification.Announcement(new).post()
+        }
+    }
+}
+
+/// A photo beside its text, stacked when the text is very large.
+struct ToolAdaptiveStack<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    var spacing: CGFloat = 14
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: spacing))
+            : AnyLayout(HStackLayout(spacing: spacing))
+        layout { content() }
+    }
+}
+
+enum ToolPhotoLabel {
+    /// 「この写真を使う、2026年10月20日」: photos in a grid are told apart by their day.
+    static func text(_ action: String, date: Date?) -> String {
+        guard let date else { return action }
+        return action + "、" + date.formatted(date: .long, time: .omitted)
+    }
+}
+
+/// The system camera. Nothing is written to the Photos library.
+private struct CatCareCameraView: UIViewControllerRepresentable {
+    let done: (UIImage?) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(done: done) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let done: (UIImage?) -> Void
+        init(done: @escaping (UIImage?) -> Void) { self.done = done }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            done(info[.originalImage] as? UIImage)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { done(nil) }
     }
 }
 
@@ -637,6 +824,73 @@ enum CatCareSummary {
         if let vet, !vet.isEmpty {
             fields.append(("かかりつけ病院", [vet.name, vet.phone].filter { !$0.isEmpty }.joined(separator: " ")))
         }
+        return fields
+    }
+
+    /// The record for a tool's cat: the shared tool ID first, then the profile.
+    static func record(toolCatID: UUID, profileIdentifier: String?) -> CatCareRecord? {
+        let cats = CatCareStore.shared.state?.cats.filter { $0.deletedAt == nil } ?? []
+        if let match = cats.first(where: { $0.catID == toolCatID }) { return match }
+        return profileIdentifier.flatMap { record(profileIdentifier: $0) }
+    }
+
+    /// For 「預けるとき」: 「3歳・4.20kg（2026/10/20）」. Nil when neither is recorded.
+    static func ageAndWeight(_ record: CatCareRecord?, today: CatCareDay? = CatCareDay(date: Date())) -> String? {
+        var parts: [String] = []
+        if let age = CatCareLostCat.age(record?.birthday?.value, today: today) { parts.append(age) }
+        if let latest = record?.activeWeights.first {
+            parts.append(CatCareFormat.weight(latest.grams) + "（\(CatCareFormat.day(latest.measuredOn))）")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "・")
+    }
+
+    /// For 「預けるとき」 when health is shared: each medicine on its own line with
+    /// dose and timing, and the allergy record. Only what the owner wrote.
+    static func careHandoffHealthFields(_ record: CatCareRecord?) -> [(String, String)] {
+        var fields: [(String, String)] = []
+        let medicines = (record?.activeMedications ?? []).map { medicine in
+            [medicine.name, medicine.dose, medicine.schedule, medicine.note]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }.joined(separator: "・")
+        }.filter { !$0.isEmpty }
+        if !medicines.isEmpty { fields.append(("飲んでいる薬（量・時間）", medicines.joined(separator: "\n"))) }
+        switch record?.allergy?.value.status ?? .unknown {
+        case .none: fields.append(("アレルギー", "なし（飼い主の記入）"))
+        case .recorded:
+            let text = (record?.allergy?.value.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            fields.append(("アレルギー", text.isEmpty ? "あり・飼い主に確認" : text))
+        case .unknown: break
+        }
+        return fields
+    }
+
+    /// For 「避難に備える」: what a shelter asks to see.
+    static func evacuationFields(_ record: CatCareRecord?,
+                                 today: CatCareDay? = CatCareDay(date: Date())) -> [(String, String)] {
+        let empty = "未記入"
+        var about: [String] = []
+        switch record?.sex?.value ?? .unknown {
+        case .male: about.append("オス")
+        case .female: about.append("メス")
+        case .unknown: break
+        }
+        switch record?.neutered?.value ?? .unknown {
+        case .yes: about.append("去勢・避妊 済み")
+        case .no: about.append("去勢・避妊 まだ")
+        case .unknown: break
+        }
+        if let age = CatCareLostCat.age(record?.birthday?.value, today: today) { about.append(age) }
+        if let latest = record?.activeWeights.first { about.append(CatCareFormat.weight(latest.grams)) }
+        var fields: [(String, String)] = [("性別・年齢・体重", about.isEmpty ? empty : about.joined(separator: "・"))]
+        let chip = (record?.microchip?.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        fields.append(("マイクロチップ番号", chip.isEmpty ? empty : chip))
+        let vaccinations = (record?.activeVaccinations ?? []).prefix(4).map { entry in
+            var line = "\(entry.kind)（\(CatCareFormat.day(entry.givenOn))）"
+            if let next = entry.nextDueOn { line += " 次回 \(CatCareFormat.day(next))" }
+            if entry.proof != nil { line += " 証明あり" }
+            return line
+        }
+        fields.append(("ワクチン", vaccinations.isEmpty ? empty : vaccinations.joined(separator: "\n")))
         return fields
     }
 
