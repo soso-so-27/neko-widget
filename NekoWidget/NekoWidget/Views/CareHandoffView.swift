@@ -316,7 +316,7 @@ private struct CareCatEditor: View {
             VStack(spacing: 6) {
                 CareSaveNotice(store: store)
                 NavigationLink { CareDisclosureView(store: store) } label: {
-                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    Label("渡す内容を選ぶ", systemImage: "checklist").frame(maxWidth: .infinity, minHeight: 44)
                 }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
             }.padding().background(.regularMaterial)
         }
@@ -453,15 +453,8 @@ private struct CareDisclosureView: View {
                 Toggle("連絡先・動物病院を含める", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
             } header: { Text("必要な相手に渡す情報")
             } footer: { Text("写真・名前・お世話・今回のお願いは載せます。薬や連絡先は、渡す相手に合わせて選んでください。") }
-            Section {
-                Button("プレビュー", systemImage: "doc.text.magnifyingglass") {
-                    do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
-                    catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "控えを開けません。元の記録は残っています。" }
-                }.font(.headline).disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
-                    .accessibilityIdentifier("care-preview-open")
-                if let error { Text(error).foregroundStyle(.red) }
-            }
-        }.navigationTitle("渡す内容を確認").navigationBarTitleDisplayMode(.inline)
+            if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
+        }.navigationTitle("渡す内容を選ぶ").navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 if !initialized {
                     if store.plan.cats.count == 1, let cat = store.plan.cats.first { disclosure.catIDs = [cat.id] }
@@ -469,7 +462,20 @@ private struct CareDisclosureView: View {
                 }
             }
             .navigationDestination(item: $preview) { CareDisplayView(record: $0.record) }
-            .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 6) {
+                    CareSaveNotice(store: store)
+                    Button {
+                        do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
+                        catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "控えを開けませんでした。もう一度お試しください。元の記録は残っています。" }
+                    } label: {
+                        Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
+                    .accessibilityIdentifier("care-preview-open")
+                }.padding().background(.regularMaterial)
+            }
     }
 }
 
@@ -503,11 +509,11 @@ private struct CareDisplayView: View {
         }.background(Color(.systemGroupedBackground))
             .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
-                Menu {
-                    shareButton("画像", pdf: false)
-                    shareButton("PDF", pdf: true)
-                } label: { Label("書き出す", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
-                .buttonStyle(.borderedProminent).padding().background(.regularMaterial)
+                ViewThatFits {
+                    HStack(spacing: 12) { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
+                    VStack(spacing: 8) { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
+                }
+                .padding().background(.regularMaterial)
             }
             .confirmationDialog("表示中の内容を控えにします", isPresented: $confirmShare, titleVisibility: .visible) {
                 Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
@@ -529,7 +535,7 @@ private struct CareDisplayView: View {
     }
     private func shareButton(_ title: String, pdf: Bool) -> some View {
         Button { self.pdf = pdf; confirmShare = true } label: {
-            Label(title, systemImage: pdf ? "doc" : "photo").frame(maxWidth: .infinity).padding(.vertical, 4)
+            Label(title, systemImage: pdf ? "doc" : "photo").frame(maxWidth: .infinity, minHeight: 44)
         }.buttonStyle(.borderedProminent).accessibilityIdentifier(pdf ? "care-share-pdf" : "care-share-images")
     }
     private func createExport() {

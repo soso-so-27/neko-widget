@@ -2048,7 +2048,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["食べる量が少なかった。"].exists)
         XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
         capture("vet-selected-record-in-person-display")
-        app.navigationBars["診察で見せる"].buttons["閉じる"].tap()
+        app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
         let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
         for _ in 0..<8 where !remove.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(remove.isHittable); remove.tap()
@@ -2745,7 +2745,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let lost = app.buttons["tools-lost-cat-open"]
             XCTAssertTrue(showcase.waitForExistence(timeout: 5))
             XCTAssertTrue(showcase.isHittable)
-            XCTAssertTrue(showcase.label.contains("うちの子を見せる"))
+            XCTAssertTrue(showcase.label.contains("写真を見せる"))
             XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
             let care = app.buttons["tools-care-open"]
             XCTAssertEqual(showcase.frame.width, care.frame.width, accuracy: 1)

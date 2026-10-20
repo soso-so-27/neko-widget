@@ -4783,5 +4783,26 @@ class CatCareUsabilityTests(unittest.TestCase):
         self.assertNotIn("deleteButton(entry.id)", view)
 
 
+class ToolFlowTests(unittest.TestCase):
+    def test_export_buttons_are_visible_and_names_match(self) -> None:
+        care = source("NekoWidget/Views/CareHandoffView.swift")
+        evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        # Image and PDF are two buttons, not hidden in a menu.
+        for text in (care, evacuation, vet):
+            self.assertNotIn('Label("書き出す", systemImage: "square.and.arrow.up")', text)
+        self.assertIn('shareButton("PDFで渡す", pdf: true)', care)
+        self.assertIn('"evacuation-share-pdf"', evacuation)
+        self.assertIn('"vet-export-pdf"', vet)
+        # The button says where it goes.
+        self.assertIn('Label("渡す内容を選ぶ", systemImage: "checklist")', care)
+        self.assertIn('.navigationTitle("病院で見せる")', vet)
+        # Closing the vet memo saves; it asks only when it could not.
+        close = section(vet, "private func close() {", "private func save(completing:")
+        self.assertLess(close.index("await save()"), close.index("discarding = true"))
+        self.assertNotIn("変更を破棄", vet)
+        self.assertNotIn("迷子への備え", source("NekoWidget/Views/CatProfilePhotoCurationViews.swift"))
+
+
 if __name__ == "__main__":
     unittest.main()

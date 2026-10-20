@@ -263,7 +263,7 @@ private struct VeterinaryConsultationView: View {
         }
         .navigationTitle("診察メモ").navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("閉じる") { if changes { discarding = true } else { dismiss() } }.disabled(busy) }
+            ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
 
         }
         .safeAreaInset(edge: .bottom) {
@@ -313,9 +313,9 @@ private struct VeterinaryConsultationView: View {
         .fullScreenCover(isPresented: $showing) {
             if let visit { VeterinaryReadView(visit: visit, store: store, displayName: profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName).environment(\.dynamicTypeSize, typeSize) }
         }
-        .confirmationDialog("保存せずに閉じますか？", isPresented: $discarding, titleVisibility: .visible) {
-            Button("変更を破棄", role: .destructive) { dismiss() }; Button("編集を続ける", role: .cancel) {}
-        }
+        .confirmationDialog("まだ保存できていません", isPresented: $discarding, titleVisibility: .visible) {
+            Button("書いた内容を消して閉じる", role: .destructive) { dismiss() }; Button("画面に戻る", role: .cancel) {}
+        } message: { Text("500文字を超えた欄があると保存できません。短くしてから閉じてください。") }
         .confirmationDialog("診察済みの控えとして残しますか？", isPresented: $finishing, titleVisibility: .visible) {
             Button("残す") { Task { await save(completing: true) } }; Button("キャンセル", role: .cancel) {}
         } message: { Text("次の診察は空のメモから作れます。この控えは自分だけの記録として残ります。") }
@@ -336,6 +336,16 @@ private struct VeterinaryConsultationView: View {
             await save()
         }
     }
+    /// Closing saves first; it asks only when the memo could not be saved.
+    private func close() {
+        guard changes else { dismiss(); return }
+        autosaveTask?.cancel()
+        Task {
+            await save()
+            if changes { discarding = true } else { dismiss() }
+        }
+    }
+
     private func save(completing: Bool = false) async {
         guard var draft = visit, !busy, completing || changes,
               observations.count <= 500, questions.count <= 500 else { return }
@@ -572,16 +582,16 @@ private struct VeterinaryReadView: View {
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier("vet-reading")
-            .navigationTitle("診察で見せる").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button("PDFで書き出す", systemImage: "doc") { Task { await makeExport(pdf: true) } }
-                        Button("画像で書き出す", systemImage: "photo") { Task { await makeExport(pdf: false) } }
-                    } label: { Label("書き出す", systemImage: "square.and.arrow.up") }
-                    .accessibilityIdentifier("vet-export")
+            }
+            .safeAreaInset(edge: .bottom) {
+                ViewThatFits {
+                    HStack(spacing: 12) { exportButtons }
+                    VStack(spacing: 8) { exportButtons }
                 }
+                .padding().background(.regularMaterial)
             }
             .alert("書き出せませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("閉じる", role: .cancel) {}
@@ -594,6 +604,17 @@ private struct VeterinaryReadView: View {
                 VeterinaryActivitySheet(items: made.files)
             }
         }
+    }
+
+    @ViewBuilder private var exportButtons: some View {
+        Button { Task { await makeExport(pdf: false) } } label: {
+            Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-images")
+        Button { Task { await makeExport(pdf: true) } } label: {
+            Label("PDFで渡す", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-pdf")
     }
 
     /// One sheet for the reception desk: 「この子のこと」, what was noticed,

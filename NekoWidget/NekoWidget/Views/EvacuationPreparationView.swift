@@ -315,7 +315,7 @@ private struct EvacuationCatsView: View {
                 }
             }
         }
-        .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("猫を選ぶ").navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $opensNewCat) {
             if let openedID { destination(openedID) }
         }
@@ -683,11 +683,11 @@ private struct EvacuationDisplayView: View {
         }
         .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
-            Menu {
-                Button("画像") { wantsPrint = false; confirmShare = true }.accessibilityIdentifier("evacuation-share-images")
-                Button("PDF") { wantsPrint = true; confirmShare = true }.accessibilityIdentifier("evacuation-share-pdf")
-            } label: { Label("書き出す", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
-            .buttonStyle(.borderedProminent).padding().background(.regularMaterial)
+            ViewThatFits {
+                HStack(spacing: 12) { exportButtons }
+                VStack(spacing: 8) { exportButtons }
+            }
+            .padding().background(.regularMaterial)
         }
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
@@ -702,6 +702,17 @@ private struct EvacuationDisplayView: View {
             retainedDirectory = nil
         }) { EvacuationActivitySheet(items: $0.files) }
     }
+    @ViewBuilder private var exportButtons: some View {
+        Button { wantsPrint = false; confirmShare = true } label: {
+            Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-images")
+        Button { wantsPrint = true; confirmShare = true } label: {
+            Label("PDFで保存・印刷", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-pdf")
+    }
+
     private func createExport() {
         busy = true
         do {
