@@ -4422,7 +4422,7 @@ class GroupWindowPausedTests(unittest.TestCase):
         self.assertIn("presentsImmediately: false", pairing)
         checks = source("ci/run-cheap-safety-checks.sh")
         self.assertIn("NekoWidget/Views/GroupWindowSetupView.swift", checks)
-        self.assertIn("さんがPlusを続けると、また届くようになります。", paused)
+        self.assertIn("がPlusを続けると、また届くようになります。", paused)
         self.assertIn("自分でまどを作る（14日間無料）", paused)
         self.assertIn("GroupWindowPresentation.isMyWindow(window)", paused)
         # Owner sees continue; members see who can resume.

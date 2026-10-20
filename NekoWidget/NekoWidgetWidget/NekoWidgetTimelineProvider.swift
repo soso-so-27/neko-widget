@@ -515,7 +515,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             familyActionsRequireApp: false,
             emptyStateReason: .none
         )
-        entry.familyCaption = cached.senderDisplayName.map { "\($0)さんから" }
+        entry.familyCaption = cached.senderDisplayName.map { "\(GroupDisplayName.withSan($0))から" }
         if let photoID = cached.photoID {
             // The app writes no sender for a photo this iPhone sent.
             entry.groupWindowPhoto = GroupWindowPhotoReference(

@@ -209,3 +209,15 @@ enum GroupWidgetCache {
 #endif
     }
 }
+
+/// A person's name as other people see it: 「ゆいさん」, but 「お母さん」
+/// stays 「お母さん」 (no 「お母さんさん」). Shared by the app and the Widget.
+enum GroupDisplayName {
+    private static let endings = ["さん", "ちゃん", "くん", "君", "さま", "様", "先生", "氏"]
+
+    static func withSan(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "名前のない人" }
+        return endings.contains(where: { trimmed.hasSuffix($0) }) ? trimmed : trimmed + "さん"
+    }
+}

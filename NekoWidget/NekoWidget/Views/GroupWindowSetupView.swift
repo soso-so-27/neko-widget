@@ -76,6 +76,13 @@ enum GroupWindowPresentation {
             ?? "作った人"
     }
 
+    /// 「作ったお母さん」, or 「まどを作った人」 when the name is not known.
+    static func pausedOwnerPhrase(_ window: GroupWindow) -> String {
+        let name = window.members.first { $0.id == window.ownerParticipantID }?.displayName
+            ?? window.members.first { $0.role == .owner }?.displayName
+        return name.map { "作った" + GroupDisplayName.withSan($0) } ?? "まどを作った人"
+    }
+
     static func isPaused(_ window: GroupWindow) -> Bool {
         window.deliveryStatus == .paused
     }
@@ -223,7 +230,7 @@ final class GroupWindowMembersModel: ObservableObject {
             )
         }
         if actionErrorMessage == nil {
-            actionCompletionMessage = "\(request.displayName)さんが参加しました。"
+            actionCompletionMessage = "\(GroupDisplayName.withSan(request.displayName))が参加しました。"
         }
     }
 
@@ -246,7 +253,7 @@ final class GroupWindowMembersModel: ObservableObject {
             )
         }
         if actionErrorMessage == nil {
-            actionCompletionMessage = "\(member.displayName)さんを外しました。これから届く写真は、この人には見えません。"
+            actionCompletionMessage = "\(GroupDisplayName.withSan(member.displayName))を外しました。これから届く写真は、この人には見えません。"
         }
     }
 
@@ -404,7 +411,7 @@ struct GroupWindowMembersView: View {
             Text("本人に確認の言葉を聞いて、「\(request.verificationPhrase)」と答えたら承認してください。")
         }
         .confirmationDialog(
-            removalTarget.map { "\($0.displayName)さんをこのまどから外しますか？" } ?? "外しますか？",
+            removalTarget.map { "\(GroupDisplayName.withSan($0.displayName))をこのまどから外しますか？" } ?? "外しますか？",
             isPresented: $showsRemoval,
             titleVisibility: .visible,
             presenting: removalTarget
@@ -471,7 +478,7 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !GroupWindowPresentation.isMyWindow(window) {
-                    Text("作った\(GroupWindowPresentation.pausedOwnerName(window))さんがPlusを続けると、また届くようになります。")
+                    Text("\(GroupWindowPresentation.pausedOwnerPhrase(window))がPlusを続けると、また届くようになります。")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("group-window-paused-member")

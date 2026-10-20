@@ -317,7 +317,7 @@ final class GroupWindowScreenModel: ObservableObject {
             message = nil
             await sync()
         } catch {
-            message = GroupWindowPresentation.message(for: error)
+            message = Self.deliveryMessage(for: error)
             if !(error is GroupSubscriptionError) {
                 // The same operation resends safely, unless the window's key changed.
                 let keepsOperation: Bool
@@ -330,6 +330,18 @@ final class GroupWindowScreenModel: ObservableObject {
                 failedDelivery = FailedDelivery(photo: retry, memo: memo)
             }
             await sync()
+        }
+    }
+
+    /// After a failed send: what happened to that photo, and what to do next.
+    static func deliveryMessage(for error: Error) -> String {
+        switch error as? GroupClientError {
+        case .some(.offline):
+            return "接続できないため、届けられませんでした。電波のあるところで「もう一度届ける」を押してください。"
+        case .some(.unavailable):
+            return "いま届けられませんでした。少し待ってから「もう一度届ける」を押してください。"
+        default:
+            return GroupWindowPresentation.message(for: error)
         }
     }
 
@@ -348,7 +360,7 @@ final class GroupWindowScreenModel: ObservableObject {
     func showFixtureFailedDelivery() {
         guard let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-4")?
             .jpegData(compressionQuality: 0.8) else { return }
-        message = GroupWindowPresentation.message(for: GroupClientError.offline)
+        message = Self.deliveryMessage(for: GroupClientError.offline)
         failedDelivery = FailedDelivery(photo: PreparedPhoto(jpeg: jpeg, photoIdentifier: nil), memo: "")
     }
 #endif
@@ -416,7 +428,7 @@ final class GroupWindowScreenModel: ObservableObject {
         await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID)
         entries = await store.entries(windowID: windowID)
         if !isFormer { await updateHomeScreenPhoto() }
-        actionMessage = "\(entry.senderDisplayName)さんの写真を表示しないようにしました。設定の「表示しないようにした人」から戻せます。"
+        actionMessage = "\(GroupDisplayName.withSan(entry.senderDisplayName))の写真を表示しないようにしました。設定の「表示しないようにした人」から戻せます。"
     }
 
     /// For a window this iPhone left: deletes every kept photo.
@@ -654,7 +666,7 @@ struct GroupWindowScreen: View {
             NavigationLink { membersScreen } label: {
                 Text(GroupWindowPresentation.isMyWindow(window)
                      ? "このまどを続ける"
-                     : "作った\(GroupWindowPresentation.pausedOwnerName(window))さんがPlusを続けると再開します")
+                     : "\(GroupWindowPresentation.pausedOwnerPhrase(window))がPlusを続けると再開します")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
@@ -776,7 +788,7 @@ private struct GroupPhotoTile: View {
 
 private extension GroupPhotoTile {
     var tileLabel: String {
-        var parts = [entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから届いた写真"]
+        var parts = [entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から届いた写真"]
         if entry.isHidden { parts.append("表示していない写真") }
         if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
         return parts.joined(separator: "、")
@@ -1019,7 +1031,7 @@ private struct GroupPhotoDetail: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         if let current, !current.isOwn {
-                            Button("\(current.senderDisplayName)さんの写真を表示しない", systemImage: "eye.slash") {
+                            Button("\(GroupDisplayName.withSan(current.senderDisplayName))の写真を表示しない", systemImage: "eye.slash") {
                                 showsHideConfirmation = true
                             }
                         }
@@ -1049,7 +1061,7 @@ private struct GroupPhotoDetail: View {
             } message: {
                 Text("写真アプリへコピーして、お気に入りに追加します。位置情報は含みません。iCloud写真の設定により、iCloudにも同期される場合があります。届けた人には知らせません。")
             }
-            .confirmationDialog(current.map { "\($0.senderDisplayName)さんの写真を表示しないようにしますか？" } ?? "",
+            .confirmationDialog(current.map { "\(GroupDisplayName.withSan($0.senderDisplayName))の写真を表示しないようにしますか？" } ?? "",
                                 isPresented: $showsHideConfirmation, titleVisibility: .visible) {
                 Button("表示しない", role: .destructive) {
                     guard let current else { return }
@@ -1092,7 +1104,7 @@ private struct GroupPhotoDetail: View {
         let day = entry.createdAt.formatted(.dateTime.month().day())
         let names = reactors(entry)
         return VStack(spacing: 6) {
-            Text(entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから")
+            Text(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から")
                 .font(.subheadline.weight(.semibold))
             Text(entry.isOwn ? "\(day)に届けました" : "\(day)に届きました")
                 .font(.footnote)
@@ -1159,7 +1171,7 @@ private struct GroupPhotoPage: View {
                     description: Text("iPhoneがセンシティブな内容と判断しました。右上の「…」から、このiPhoneから消せます。"))
             } else if let url, let image = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: image).resizable().scaledToFit()
-                    .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから届いた写真")
+                    .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から届いた写真")
             } else {
                 ProgressView()
             }
@@ -1502,7 +1514,7 @@ struct GroupHiddenMembersView: View {
             ForEach(hidden) { item in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(item.member.name)さん")
+                        Text("\(GroupDisplayName.withSan(item.member.name))")
                         Text(item.window.name).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
