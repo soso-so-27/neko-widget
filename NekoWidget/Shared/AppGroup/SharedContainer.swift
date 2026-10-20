@@ -43,10 +43,12 @@ struct PrivateWindowCatalogEntry: Codable, Equatable, Identifiable, Sendable {
 struct PrivateWindowCatalogState: Codable, Equatable, Sendable {
     static let schemaVersion = 1
     /// The catalog remains able to decode and preserve up to 20 windows for
-    /// rolling-upgrade and recovery compatibility. The initial product keeps
-    /// creation deliberately smaller while multi-window sync is still in beta.
+    /// rolling-upgrade and recovery compatibility. The product limit is the
+    /// total of own and joined windows (ADR-027: 10, the same on every plan).
+    /// Own windows are limited separately by
+    /// `MembershipAccessPolicy.maximumOwnWindowCount`.
     static let maximumWindowCount = 20
-    static let maximumProductWindowCount = 3
+    static let maximumProductWindowCount = 10
 
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int = 0

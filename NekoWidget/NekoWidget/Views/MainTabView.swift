@@ -352,8 +352,6 @@ struct MainTabView: View {
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
     @State private var showcaseSession: ShowcaseSession?
-    @Environment(\.membershipActions) private var showcaseAccess
-    @State private var showcaseMembershipNotice: MembershipAccessDecision?
     @State private var showsShowcasePreparation = false
     @State private var preparingShowcaseScopes = Set<String>()
     @State private var showcaseWaitingToOpen: String?
@@ -467,10 +465,8 @@ struct MainTabView: View {
         .environment(\.toolProfileActions, catProfilesActions)
         .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
-            guard allowShowcaseOpening() else { return }
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
         })
-        .membershipActionNotice($showcaseMembershipNotice)
         .environment(\.showcaseAddPhoto, { identifier, scope in
             guard showcaseCandidates.contains(where: { $0.localIdentifier == identifier }) else {
                 throw ShowcasePhotoStore.Error.unavailable
@@ -876,7 +872,6 @@ struct MainTabView: View {
     }
 
     private func openPreparedShowcase(scopeID: String? = nil) {
-        guard allowShowcaseOpening() else { return }
         let targetScopeID = scopeID ?? effectiveShowcaseScopeID
 #if DEBUG && targetEnvironment(simulator)
         if ShowcasePhotoView.layoutFixtureItems != nil {
@@ -898,7 +893,6 @@ struct MainTabView: View {
     }
 
     private func prepareShowcaseIfNeeded(openAfter: Bool, scopeID: String? = nil) {
-        guard allowShowcaseOpening() else { return }
         let scopeID = scopeID ?? effectiveShowcaseScopeID
         // A saved set opens as-is; recommendation runs only before this scope's first set.
         if !showcaseStore.availableEntries(in: scopeID).isEmpty {
@@ -926,16 +920,11 @@ struct MainTabView: View {
                 excluding: showcaseStore.excludedIdentifiers(in: scopeID)
             )
             do {
-                guard allowShowcaseOpening() else {
-                    preparingShowcaseScopes.remove(scopeID); showcaseWaitingToOpen = nil
-                    return
-                }
                 try await showcaseStore.applyRecommendations(identifiers, to: scopeID)
                 preparingShowcaseScopes.remove(scopeID)
                 guard showcaseWaitingToOpen == scopeID,
                       selectedTab == .tools else { return }
                 showcaseWaitingToOpen = nil
-                guard allowShowcaseOpening() else { return }
                 showcaseSession = ShowcaseSession(currentPhotoIdentifier: nil, scopeID: scopeID)
             } catch {
                 preparingShowcaseScopes.remove(scopeID)
@@ -944,15 +933,6 @@ struct MainTabView: View {
                 showcasePreparationError = true
             }
         }
-    }
-
-    private func allowShowcaseOpening() -> Bool {
-        let decision = showcaseAccess.decision(for: .presentCatPhotos)
-        guard decision == .allowed else {
-            showcaseMembershipNotice = decision
-            return false
-        }
-        return true
     }
 
     private func showcaseCandidatesForScope(_ scopeID: String) -> [PhotoPresentation] {
@@ -1598,13 +1578,13 @@ struct MainTabView: View {
         switch route {
         case .months:
             albumsView().periodArchive(showsMovies: false)
-                .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
+                .membershipFeature(.browseAlbums, hasContent: hasAutomaticAlbumContent)
         case .movies:
             albumsView().periodArchive(showsMovies: true)
-                .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
+                .membershipFeature(.browseAlbums, hasContent: hasAutomaticAlbumContent)
         case .cats:
             albumsView().catArchive
-                .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
+                .membershipFeature(.browseAlbums, hasContent: hasAutomaticAlbumContent)
         case let .years(profileIdentifier):
             AlbumScopedContent(
                 profiles: catProfilesPresentation.profiles,
@@ -1620,7 +1600,7 @@ struct MainTabView: View {
                     showsAllPhotos: false, isEmbedded: true, showsProfilePicker: false
                 ).yearArchive
             }
-            .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
+            .membershipFeature(.browseAlbums, hasContent: hasAutomaticAlbumContent)
         }
     }
 
@@ -1688,7 +1668,7 @@ struct MainTabView: View {
                     markMonthlyWindowReadIfLatest(snapshot)
                 }
             }
-            .membershipFeature(.automaticAlbums, hasContent: !refreshedMonthlyWindow(snapshot).photos.isEmpty)
+            .membershipFeature(.openGrowingSummary, hasContent: !refreshedMonthlyWindow(snapshot).photos.isEmpty)
         }
     }
 
@@ -1770,7 +1750,7 @@ struct MainTabView: View {
                 }
             )
             .id(seasonalMovieArchiveAccessKey)
-            .membershipFeature(.automaticAlbums, hasContent: !presentation.scenes.isEmpty)
+            .membershipFeature(.openGrowingSummary, hasContent: !presentation.scenes.isEmpty)
         } else {
             ContentUnavailableView(
                 "この季節のムービーを開けません",
@@ -1797,7 +1777,7 @@ struct MainTabView: View {
             showsProfilePicker: false
         )
         .navigationTitle("アルバム")
-        .membershipFeature(.automaticAlbums, hasContent: hasAutomaticAlbumContent)
+        .membershipFeature(.browseAlbums, hasContent: hasAutomaticAlbumContent)
     }
 
     @ViewBuilder
@@ -1826,7 +1806,7 @@ struct MainTabView: View {
                 for: comparisonAlbumID(albumID, scope: selectedScope), scope: selectedScope
             )
             .environment(\.photoRediscoveryScope, selectedScope)
-            .membershipFeature(.automaticAlbums,
+            .membershipFeature(.browseAlbums,
                 hasContent: curatedAlbum(for: comparisonAlbumID(albumID, scope: selectedScope), scope: selectedScope)?.photos.isEmpty == false)
         }
     }
@@ -2973,7 +2953,7 @@ private struct WindowListView: View {
             Label(
                 windows.count > PrivateWindowCatalogState.maximumProductWindowCount
                     ? "現在は新しいまどを追加できません。既存のまどはそのまま使えます"
-                    : "身近な人とのまどは、合計3個までです",
+                    : "まどは、合計\(PrivateWindowCatalogState.maximumProductWindowCount)個までです",
                 systemImage: "rectangle.stack"
             )
             .font(.footnote)

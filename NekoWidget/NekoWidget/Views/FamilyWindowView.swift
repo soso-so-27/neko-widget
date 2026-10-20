@@ -130,6 +130,7 @@ struct FamilyWindowView: View {
     @State private var showsReplacementPhotoPicker = false
     @State private var showsBlockCompleted = false
     @Environment(\.dismiss) private var dismissWindow
+    @Environment(\.membershipAccess) private var membershipAccess
     @State private var showsWidgetGuide = false
     @State private var showsWindowWidgetGuide = false
     @State private var widgetGuideIsFirstPlacement = true
@@ -1487,8 +1488,20 @@ struct FamilyWindowView: View {
         return "選んだ写真を確認しています。"
     }
 
+    /// ADR-027: まどは作った人がPlusで続ける。作った人（`inviter`。追加した
+    /// iPhone も同じ人）の送信は `addContentToOwnWindow`、招待された人の送信は
+    /// 常に許可の `addSharedContent`。止まっているまどの案内と「このまどを
+    /// 続ける」の入口は、まどの画面を担当するセッションが足す。
+    private var deliveryMembershipOperation: MembershipOperation {
+        model.pairingState?.role == .inviter ? .addContentToOwnWindow : .addSharedContent
+    }
+
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
         guard let item else { return }
+        guard membershipAccess.decision(for: deliveryMembershipOperation) == .allowed else {
+            selectedPhotoItem = nil
+            return
+        }
         let generation = UUID()
         deliverySelectionGeneration = generation
         photoSelectionMessage = nil
