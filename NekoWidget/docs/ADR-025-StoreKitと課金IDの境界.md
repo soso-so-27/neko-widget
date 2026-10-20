@@ -1,5 +1,7 @@
 # ADR-025：StoreKitと課金IDの境界
 
+2026-10-20追記：[ADR-027](ADR-027-14日間の体験とPlusの境界.md)で、`FAMILY_SHARED` の取引を受け入れること（決定4・5の改訂）と、まどの sponsorship をゲートに使わないことを決めた。
+
 作成：2026-08-31  
 状態：クライアント通信、Server記録、Notifications V2／Subscription Status監査、無効状態の実効権限状態機械、AppTransaction二重JWSによる課金鍵復旧foundation、購入者から最大3まどへのsponsorship、所有者解除、iOS署名clientと有界offline状態を採用。全runtime OFF。販売・通常UI接続・課金UIは未実装
 
