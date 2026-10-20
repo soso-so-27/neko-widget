@@ -256,6 +256,7 @@ struct MainTabView: View {
     var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
+    @Environment(\.membershipAccess) private var membershipAccess
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
@@ -408,7 +409,7 @@ struct MainTabView: View {
                 Label("アルバム", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
             }
-            .badge(hasUnreadMemoriesSummary ? 1 : 0)
+            .badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)
             .tag(AppTab.memories)
 
             NavigationStack(path: $photosPath) {
@@ -2086,6 +2087,12 @@ struct MainTabView: View {
 
     private var hasUnreadMemoriesSummary: Bool {
         latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew
+    }
+
+    /// The tab's red mark points to something that opens; without Plus the
+    /// cards stay visible in the album with a 「Plus」 mark instead (案1).
+    private var summaryOpens: Bool {
+        membershipAccess.decision(for: .openGrowingSummary) == .allowed
     }
 
     private func markMonthlyWindowReadIfLatest(

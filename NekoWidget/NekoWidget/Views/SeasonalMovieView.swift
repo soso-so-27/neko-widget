@@ -457,7 +457,7 @@ struct SeasonalMovieView: View {
             isPresented: $showsExcludeConfirmation,
             titleVisibility: .visible
         ) {
-            Button("この作品から外す", role: .destructive) {
+            Button("このムービーから外す", role: .destructive) {
                 excludeCurrentScene()
             }
             Button("キャンセル", role: .cancel) {
@@ -582,7 +582,7 @@ struct SeasonalMovieView: View {
                         Button(role: .destructive) {
                             pauseForSceneAction()
                         } label: {
-                            Label("この作品から外す", systemImage: "rectangle.badge.minus")
+                            Label("このムービーから外す", systemImage: "rectangle.badge.minus")
                         }
                     } label: {
                         Image(systemName: "ellipsis")

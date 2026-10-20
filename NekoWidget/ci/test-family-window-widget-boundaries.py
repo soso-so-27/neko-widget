@@ -1298,7 +1298,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"memories-monthly-window"', album_root)
         self.assertIn('"albums-seasonal-movie"', album_root)
         # The album root opens one combined archive of months and movies (#397).
-        self.assertIn('NavigationLink("これまでのまとめとムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
+        self.assertIn('NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)', album_root)
         self.assertIn("ForEach(months)", album_root)
         self.assertIn("ForEach(seasonalMovies)", album_root)
         self.assertIn("sections: albumSections", album_root)
@@ -1337,7 +1337,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("memories-section-jump-bar", memory_view)
         self.assertNotIn("Array(photos.prefix(6))", memory_view)
         self.assertNotIn("NavigationLink(value: MemoriesRoute.favorites)", memory_view)
-        self.assertIn('NavigationLink("これまでのまとめとムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
+        self.assertIn('NavigationLink("これまでの月のまとめ・季節のムービー", value: MemoriesRoute.reflectionsArchive)', memory_view)
         self.assertIn("albumsView().periodArchive(showsMovies: false)", main_tab)
         self.assertIn("albumsView().periodArchive(showsMovies: true)", main_tab)
         destinations = section(
@@ -1457,7 +1457,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("PHAsset", model)
 
         self.assertIn("@AppStorage(MonthlyWindowReadReceipt.storageKey)", main)
-        self.assertIn(".badge(hasUnreadMemoriesSummary ? 1 : 0)", main)
+        self.assertIn(".badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)", main)
         self.assertIn("markMonthlyWindowReadIfLatest(snapshot)", main)
         self.assertIn("latestMonthlyWindowIsUnread: Bool", memories)
         self.assertNotIn('return "まとめ・未読"', memories)
@@ -1506,7 +1506,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SeasonalMovieView(", main)
         self.assertIn("seasonalMovies: scope == .everyone ? currentSeasonalMovieRecords : []", main)
         self.assertIn("latestSeasonalMovieIsNew: scope == .everyone && latestSeasonalMovieIsNew", main)
-        self.assertIn(".badge(hasUnreadMemoriesSummary ? 1 : 0)", main)
+        self.assertIn(".badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)", main)
         self.assertIn(
             "latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew",
             main,
@@ -2966,11 +2966,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
     def test_growth_album_opens_as_a_photo_story_before_editing(self) -> None:
         growth = source("NekoWidget/Views/GrowthAlbumView.swift")
 
-        self.assertIn('.accessibilityLabel("このまとめについて")', growth)
+        self.assertIn('.accessibilityLabel("この比べ方について")', growth)
         self.assertIn('Text(aboutSelectionMessage)', growth)
         self.assertIn('scrapbookTimeline(items: resolvedItems)', growth)
         self.assertIn('Label("選び直す"', growth)
-        self.assertIn('.alert("このまとめについて"', growth)
+        self.assertIn('.alert("この比べ方について"', growth)
         self.assertIn('"\\(firstPeriod.label) → \\(lastPeriod.label)"', growth)
         self.assertNotIn('roleLabel:', growth)
         self.assertNotIn('Text("その間")', growth)
@@ -4858,6 +4858,25 @@ class WindowCreationEntryTests(unittest.TestCase):
         self.assertNotIn("グループのまど", window)
         create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
         self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)", create)
+
+
+class AlbumPurposeTests(unittest.TestCase):
+    def test_album_shows_each_cat_upcoming_summaries_and_plus_honestly(self) -> None:
+        album = source("NekoWidget/Views/LikedPhotosView.swift")
+        main = source("NekoWidget/Views/MainTabView.swift")
+        # 成長 lists every cat on the album root.
+        growth = section(album, "private func timeAlbums(", "var yearArchive: some View {")
+        self.assertIn("MemoriesRoute.catAlbums(profile.identifier)", growth)
+        self.assertIn("selectedProfileIdentifier == nil && !profiles.isEmpty", growth)
+        # ふりかえり is always there; before the first summary it says what will come.
+        self.assertIn("else if showsReflectionPlaceholder { reflectionPlaceholder }", album)
+        self.assertIn("ひと月に5枚ほどたまると", album)
+        # Plus is shown before the tap; the tab mark only points to what opens.
+        self.assertIn("if summaryNeedsPlus { plusMark", album)
+        self.assertIn('membershipAccess.decision(for: .openGrowingSummary) == .allowed', main)
+        # No photo permission explains what the album does.
+        self.assertIn('Label("猫の写真を自動でまとめます"', album)
+        self.assertNotIn("この作品から外す", source("NekoWidget/Views/SeasonalMovieView.swift"))
 
 
 if __name__ == "__main__":

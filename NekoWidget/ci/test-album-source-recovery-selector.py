@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # 0BA6D349-7EF4-415D-B9BB-19054A23E9CF.txt. No addresses, paths or user data.
 AX = [
     ("StaticText", "albums-source-unavailable", "写真の対象を確認してください"),
-    ("StaticText", "albums-source-unavailable", "選択した写真アルバムを読み込めません。写真ページから対象を選び直してください。"),
+    ("StaticText", "albums-source-unavailable", "選んだ写真アプリのアルバムを読み込めません。写真タブで選び直してください。"),
     ("Button", "albums-source-unavailable", "写真の対象を確認"),
 ]
 
