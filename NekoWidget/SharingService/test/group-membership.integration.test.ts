@@ -52,6 +52,10 @@ async function statements(w: Awaited<ReturnType<typeof window>>, expected = 0, o
 }
 
 describe("group membership additive D1 boundary (not signature verification)", () => {
+  it("has no plaintext notification-label table", async () => {
+    const table = await sql("SELECT name FROM sqlite_master WHERE type='table' AND name='group_notification_labels'").first();
+    expect(table).toBeNull();
+  });
   it("accepts six people; seventh insert and pending activation fail", async () => {
     const w = await window();
     for (let i = 0; i < 5; i++) await member(w.windowId, await person());
@@ -77,14 +81,14 @@ describe("group membership additive D1 boundary (not signature verification)", (
     await expect(sql("INSERT INTO group_window_devices VALUES (?, ?, ?, 'active', 1, NULL)",
       w.windowId, otherDevice, w.participantId).run()).rejects.toThrow("group_device_wrong_person");
   });
-  it("limits total joined and owned windows together to five", async () => {
+  it("allows ten total joined and owned windows; the eleventh is not a paid upgrade", async () => {
     const p = await person();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 10; i++) {
       const w = await window();
       await member(w.windowId, p);
     }
-    const sixth = await window();
-    await expect(member(sixth.windowId, p)).rejects.toThrow("group_total_window_limit");
+    const eleventh = await window();
+    await expect(member(eleventh.windowId, p)).rejects.toThrow("group_total_window_limit");
   });
   it("does not consume an invitation on the first application", async () => {
     const w = await window();

@@ -67,7 +67,7 @@ CREATE TRIGGER group_members_limit_insert BEFORE INSERT ON group_members WHEN NE
 BEGIN
     SELECT (CASE WHEN (SELECT COUNT(*) FROM group_members WHERE space_id = NEW.space_id AND state = 'active') >= 6
         THEN RAISE(ABORT, 'group_member_limit') END);
-    SELECT (CASE WHEN (SELECT COUNT(*) FROM group_members WHERE person_id = NEW.person_id AND state = 'active') >= 5
+    SELECT (CASE WHEN (SELECT COUNT(*) FROM group_members WHERE person_id = NEW.person_id AND state = 'active') >= 10
         THEN RAISE(ABORT, 'group_total_window_limit') END);
     SELECT (CASE WHEN NEW.role = 'owner' AND NOT EXISTS (
         SELECT 1 FROM group_windows WHERE space_id = NEW.space_id AND owner_person_id = NEW.person_id)
@@ -82,7 +82,7 @@ BEGIN
         (SELECT COUNT(*) FROM group_members WHERE space_id = NEW.space_id AND state = 'active') >= 6)
         THEN RAISE(ABORT, 'group_member_limit') END);
     SELECT (CASE WHEN NEW.state = 'active' AND OLD.state <> 'active' AND (
-        (SELECT COUNT(*) FROM group_members WHERE person_id = NEW.person_id AND state = 'active') >= 5)
+        (SELECT COUNT(*) FROM group_members WHERE person_id = NEW.person_id AND state = 'active') >= 10)
         THEN RAISE(ABORT, 'group_total_window_limit') END);
     SELECT (CASE WHEN OLD.role = 'owner' AND OLD.state = 'active' AND NEW.state <> 'active'
         AND EXISTS (SELECT 1 FROM group_windows WHERE space_id = OLD.space_id AND mode <> 'closed')
@@ -254,13 +254,6 @@ CREATE TABLE group_request_nonces (
     PRIMARY KEY(device_id, nonce)
 ) STRICT;
 CREATE INDEX group_request_nonces_expiry ON group_request_nonces(expires_at);
-CREATE TABLE group_notification_labels (
-    space_id TEXT PRIMARY KEY REFERENCES group_windows(space_id),
-    label TEXT NOT NULL CHECK (length(CAST(label AS BLOB)) BETWEEN 1 AND 80),
-    revision INTEGER NOT NULL,
-    accepted_by_device_id TEXT NOT NULL REFERENCES group_person_devices(id),
-    updated_at INTEGER NOT NULL
-) STRICT;
 CREATE TABLE group_legacy_bindings (
     space_id TEXT NOT NULL REFERENCES group_windows(space_id),
     legacy_member_id TEXT NOT NULL UNIQUE,
