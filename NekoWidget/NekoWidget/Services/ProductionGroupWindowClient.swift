@@ -532,7 +532,7 @@ extension ProductionGroupWindowClient {
             try save(saved, "window:" + windowID); return
         }
         let identity = try await registeredIdentity(), record = try local(windowID)
-        guard let current = try record.verified(), let me = current.device(id: identity.deviceID), me.member.role != .owner else { throw GroupClientError.ownerCannotLeave }
+        guard let current = try record.verified(), let me = current.device(id: try identity.deviceID), me.member.role != .owner else { throw GroupClientError.ownerCannotLeave }
         let transcript = try GroupCanonical.fields(["NW3.LEAVE", windowID, me.member.participantID, String(operation.expectedRevision), operation.id.uuidString.lowercased()].map(GroupCanonical.text))
         let payload = try GroupAPIModel.LeaveInput(operationID: operation.id.uuidString.lowercased(), expectedRevision: operation.expectedRevision,
             selfSignature: identity.signingKey.signature(for: transcript))
