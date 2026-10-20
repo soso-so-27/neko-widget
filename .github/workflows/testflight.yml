@@ -742,7 +742,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
-          if [[ "$INTERNAL_REPORTS_REQUESTED" == "true" ]]; then
+          if [[ "$INTERNAL_REPORTS_REQUESTED" == "true" && "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected internal-purchase-sandbox-report-ui-continuation
+          elif [[ "$INTERNAL_REPORTS_REQUESTED" == "true" ]]; then
             NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
               node scripts/check-staging-runtime.mjs --expected internal-report-first-connection
           elif [[ "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then

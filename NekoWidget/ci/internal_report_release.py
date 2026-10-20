@@ -16,8 +16,10 @@ SCOPE_KEY = "SharingInternalEncryptedReportScope"
 def settings(requested, mode, approval, scope, billing_requested=False):
     if type(requested) is not bool or type(billing_requested) is not bool:
         raise ValueError("Report requests must be explicit booleans.")
-    if requested and (mode != "media-staging" or approval != "YES" or scope != SCOPE or billing_requested):
-        raise ValueError("Reports require separate protected internal approval, media-staging, and billing OFF.")
+    # Combined builds also pass the workflow's signed UI-continuation runtime preflight.
+    # Billing approval is checked separately; it never grants report permission.
+    if requested and (mode != "media-staging" or approval != "YES" or scope != SCOPE):
+        raise ValueError("Reports require separate protected internal approval, media-staging, and owner scope.")
     return {ENABLED: requested, SCOPE_KEY: SCOPE if requested else ""}
 
 

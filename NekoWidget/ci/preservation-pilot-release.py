@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import plistlib
+import re
 from pathlib import Path
 
+CONFIG_XCCONFIG = Path(__file__).resolve().parents[1] / "Config.xcconfig"
 PRESERVATION_ORIGIN = "https://neko-preservation-staging-disabled.nakanishisoya.workers.dev"
 BILLING_ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
 AUDIENCE = "neko-preservation-staging"
@@ -61,7 +63,14 @@ def billing_enabled(expected: dict[str, str]) -> bool:
 def prepare_membership_info(info: dict, expected: dict[str, str]) -> dict:
     # Change only archive inputs in the protected internal build. Repository
     # defaults and ordinary beta users never become members-only by accident.
-    if info.get("MembershipAccessEnforced") is not False:
+    value = info.get("MembershipAccessEnforced")
+    if value == "$(MEMBERSHIP_ACCESS_ENFORCED)":
+        defaults = re.findall(r"(?m)^\s*(MEMBERSHIP_ACCESS_ENFORCED(?:\[[^\r\n]*\])?)\s*=\s*([^\r\n]*)",
+                              CONFIG_XCCONFIG.read_text(encoding="utf-8"))
+        defaults = [(key, setting.split("//", 1)[0].strip()) for key, setting in defaults]
+        if defaults != [("MEMBERSHIP_ACCESS_ENFORCED", "NO")]:
+            raise ValueError("Source membership xcconfig default must remain NO.")
+    elif value is not False:
         raise ValueError("Source membership default must remain disabled.")
     return {**info, "MembershipAccessEnforced": billing_enabled(expected)}
 
