@@ -2752,10 +2752,10 @@ struct PhotoBrowserView: View {
                     }
                     .accessibilityIdentifier("photo-memory-note-read-error")
                 }
-                if GroupWindowClientProvider.production != nil, let photo = selectedPhoto {
+                if GroupWindowClientProvider.production != nil {
                     Button {
                         // Choosing the window and confirming come first; nothing is sent here.
-                        groupDelivery = GroupDeliveryRequest(localIdentifier: photo.localIdentifier)
+                        groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)
                     } label: {
                         Label("まどに届ける", systemImage: "paperplane.fill")
                             .font(.headline)
