@@ -47,6 +47,11 @@ PLUS_BILLING_RECOVERY_ENABLED = NO
 // become reachable merely because billing transport or StoreKit is enabled.
 PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED = NO
 
+// 会員制限（ADR-027）。App と Widget の両 Info.plist が同じ変数を読むので、
+// Widget だけ止まる／止まらないが起きない。Release／MediaStaging とも NO のまま
+// （制限は未有効）。有効化は 980円の階段 の最後の PR で行う。
+MEMBERSHIP_ACCESS_ENFORCED = NO
+
 // Empty by default. The manual, erased-Simulator App Store screenshot workflow
 // alone injects a compiler condition into the Widget extension's Debug target.
 WIDGET_SCREENSHOT_FIXTURE_CONDITION =

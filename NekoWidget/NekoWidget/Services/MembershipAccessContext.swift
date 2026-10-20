@@ -13,8 +13,10 @@ struct MembershipAccessContext: Equatable {
 
     static let beta = MembershipAccessContext()
 
+    /// Info.plist `MembershipAccessEnforced`（xcconfig `MEMBERSHIP_ACCESS_ENFORCED`）。
+    /// App と Widget の両 Info.plist が同じ変数を参照する。
     static var enforcementConfigured: Bool {
-        Bundle.main.object(forInfoDictionaryKey: "MembershipAccessEnforced") as? Bool == true
+        MembershipAccessFlag.isOn(Bundle.main.object(forInfoDictionaryKey: "MembershipAccessEnforced"))
     }
 
     init(enforcementEnabled: Bool = false,

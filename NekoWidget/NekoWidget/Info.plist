@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>MembershipAccessEnforced</key>
-	<false/>
+	<string>$(MEMBERSHIP_ACCESS_ENFORCED)</string>
 	<key>PersonalArchiveEnabled</key>
 	<string>$(PERSONAL_ARCHIVE_ENABLED)</string>
 	<key>PersonalArchiveContainerIdentifier</key>
