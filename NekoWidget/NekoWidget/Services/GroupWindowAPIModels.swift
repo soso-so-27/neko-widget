@@ -15,6 +15,7 @@ enum GroupAPIModel {
         struct Metadata: Decodable {
             let windowID: String; let revision: Int; let keyEpoch: Int; let rotationRequired: Bool
             let encryptedName: Data; let nameKeyEpoch: Int; let nameRosterRevision: Int
+            let deliveryStatus: GroupDeliveryStatus?; let deliveryReason: GroupDeliveryReason?; let ownerParticipantID: String?
         }
         let window: Metadata; let roster: SignedGroupRoster; let rosterHash: Data
     }

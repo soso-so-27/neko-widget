@@ -189,6 +189,15 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         guard let head, let packet, head.roster.revision == reply.window.revision, head.hash == reply.rosterHash,
               head.hash == GroupCanonical.hash(try reply.roster.roster.canonicalBytes()),
               let me = head.device(id: try identity.deviceID), me.member.personID == identity.personID else { throw GroupClientError.notMember }
+        // Billing status is delivered by the authenticated server, not inferred
+        // from room age or the membership state. Bind its displayed owner to the
+        // verified roster; legacy responses without all three fields stay unknown.
+        switch (reply.window.deliveryStatus, reply.window.deliveryReason, reply.window.ownerParticipantID) {
+        case (nil, nil, nil): break
+        case (.active?, .ownerPlus?, let owner?), (.paused?, .ownerPlusRequired?, let owner?):
+            guard head.roster.members.contains(where: { $0.participantID == owner && $0.role == .owner }) else { throw GroupClientError.invalidResponse }
+        default: throw GroupClientError.invalidResponse
+        }
         var record = try local(windowID)
         let key: SymmetricKey
         if let saved = record.keys[String(head.roster.keyEpoch)] {
@@ -217,7 +226,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         let name = try GroupNameCrypto.open(reply.window.encryptedName, slot: "window", key: key, roster: head)
         return .init(id: windowID, name: name, revision: head.roster.revision, keyEpoch: head.roster.keyEpoch,
             myParticipantID: me.member.participantID, myRole: GroupRole(rawValue: me.member.role.rawValue)!,
-            state: reply.window.rotationRequired ? .rotationRequired : .active, members: members)
+            state: reply.window.rotationRequired ? .rotationRequired : .active, members: members,
+            deliveryStatus: reply.window.deliveryStatus, deliveryReason: reply.window.deliveryReason,
+            ownerParticipantID: reply.window.ownerParticipantID)
     }
 
     private func material(roster: GroupRoster, names: [String: String], windowName: String, identity: GroupDeviceIdentity,

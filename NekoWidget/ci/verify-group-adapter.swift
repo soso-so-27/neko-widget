@@ -28,6 +28,8 @@ private actor EchoTransport: GroupHTTPTransport {
     private var dropped = false
     private var createBodies: [Data] = []
     private var publicRegistrations = 0
+    private var delivery = "active"
+    func setDelivery(_ value: String) { delivery = value }
     func stats() -> (Int, [Data]) { (publicRegistrations, createBodies) }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         let path = request.url!.path, body = request.httpBody ?? Data()
@@ -79,8 +81,14 @@ private actor EchoTransport: GroupHTTPTransport {
         if path == root {
             let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
             let hash = try GroupCanonical.hash(signed.packet.roster.canonicalBytes())
-            return try reply(["window": ["windowId": windowID, "revision": 1, "keyEpoch": 1, "rotationRequired": false,
-                                        "encryptedName": creation["encryptedName"]!, "nameKeyEpoch": 1, "nameRosterRevision": 1],
+            var metadata: [String: Any] = ["windowId": windowID, "revision": 1, "keyEpoch": 1, "rotationRequired": false,
+                                          "encryptedName": creation["encryptedName"]!, "nameKeyEpoch": 1, "nameRosterRevision": 1]
+            if delivery != "legacy" {
+                metadata["deliveryStatus"] = delivery == "active" ? "active" : "paused"
+                metadata["deliveryReason"] = delivery == "active" ? "owner_plus" : "owner_plus_required"
+                metadata["ownerParticipantId"] = delivery == "wrong-owner" ? "unrelated" : owner["participantId"]!
+            }
+            return try reply(["window": metadata,
                               "roster": packet, "rosterHash": GroupWire.base64(hash)])
         }
         if path == root + "/rosters/list" { return try reply(["items": [packet], "nextRevision": NSNull(), "revision": 1]) }
@@ -131,6 +139,10 @@ private struct GroupAdapterChecks {
         try rejects("HTTP target rejected") { _ = try GroupHTTPRequest.make(endpoint: URL(string: "http://group.invalid")!, path: http.request.path, body: nil, identity: identity) }
         try rejects("redirect response rejected") { _ = try GroupHTTPRequest.check(.init(status: 302, data: Data("{}".utf8))) }
         try rejects("noncanonical binary rejected") { _ = try GroupWire.bytes("AA==") }
+        for (code, expected) in [("owner_plus_required", GroupSubscriptionError.ownerPlusRequired), ("window_paused", .windowPaused)] {
+            do { _ = try GroupHTTPRequest.check(.init(status: 403, data: Data("{\"error\":{\"code\":\"\(code)\"}}".utf8))); throw Failure.check("subscription error preserved") }
+            catch let error as GroupSubscriptionError { try check(error == expected, "typed subscription refusal") }
+        }
 
         let vector = try GroupWire.decode(RosterVector.self, Data(contentsOf: URL(fileURLWithPath: paths[2])))
         let roster = try GroupRosterVerifier.verify(vector.packet, anchor: vector.anchor)
@@ -171,6 +183,18 @@ private struct GroupAdapterChecks {
         client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
         let room = try await client.createWindow(name: "うちのまど", operationID: op)
         try check(room.name == "うちのまど" && room.memberCount == 1 && room.deviceCount == 1 && room.members[0].displayName == "自分", "real adapter owner round trip")
+        try check(room.deliveryStatus == .active && room.deliveryReason == .ownerPlus && room.ownerParticipantID == room.myParticipantID, "verified server policy reaches UI contract")
+        await relay.setDelivery("paused")
+        let paused = try await client.window(id: room.id)
+        try check(paused.deliveryStatus == .paused && paused.deliveryReason == .ownerPlusRequired && paused.state == .active && paused.canManage,
+                  "paused delivery preserves membership and management")
+        await relay.setDelivery("legacy")
+        let legacy = try await client.window(id: room.id)
+        try check(legacy.deliveryStatus == nil && legacy.deliveryReason == nil && legacy.ownerParticipantID == nil, "missing policy never invents Plus")
+        await relay.setDelivery("wrong-owner")
+        do { _ = try await client.window(id: room.id); throw Failure.check("unverified billing owner accepted") }
+        catch GroupClientError.invalidResponse { }
+        await relay.setDelivery("active")
         let stats = await relay.stats()
         try check(stats.0 == 1 && stats.1.count == 2 && stats.1[0] == stats.1[1], "durable exact-body retry across instances")
         let firstIdentity = try GroupWire.decode(GroupDeviceIdentity.self, memory.read("identity")!)

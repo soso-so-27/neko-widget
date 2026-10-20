@@ -81,6 +81,8 @@ enum GroupHTTPRequest {
             case "invalid_authentication", "invalid_proof", "replay", "stale_request": throw GroupClientError.authenticationRequired
             case "not_found", "not_member", "epoch_not_authorized": throw GroupClientError.notMember
             case "owner_required": throw GroupClientError.ownerRequired
+            case "owner_plus_required": throw GroupSubscriptionError.ownerPlusRequired
+            case "window_paused": throw GroupSubscriptionError.windowPaused
             case "stale_revision": throw GroupClientError.staleRevision(current: error.currentRevision ?? 0)
             case "stale_epoch": throw GroupClientError.staleEpoch
             case "rotation_pending": throw GroupClientError.rotationPending
