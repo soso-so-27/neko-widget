@@ -4639,5 +4639,42 @@ class LostCatCatCareTests(unittest.TestCase):
         self.assertLess(load.index("try store.hasPreparedRecord(for: identity)"), load.index("fillFromCatCare"))
 
 
+class EvacuationCatCareTests(unittest.TestCase):
+    def test_evacuation_reads_cat_care_and_makes_one_paper_copy(self) -> None:
+        plan = source("NekoWidget/Services/EvacuationPlan.swift")
+        store = source("NekoWidget/Services/EvacuationStore.swift")
+        view = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        exporter = source("NekoWidget/Services/EvacuationExporter.swift")
+        summary = source("NekoWidget/Views/CatCareView.swift")
+        # A fuller starter list; adding never edits what the owner already has.
+        for item in ("ワクチン証明の控え", "首輪・迷子札", "洗濯ネット", "ハーネス・リード"):
+            self.assertIn(item, plan)
+        add = section(plan, "mutating func addRecommendedSupplies()", "mutating func removeCat(")
+        self.assertIn("!titles.contains(title)", add)
+        self.assertNotIn("supplies[", add)
+        self.assertIn('"\\(cats)個（1匹に1つ）"', plan)
+        # Vaccinations, proofs and the chip come from 「この子のこと」; the tool ID is matched first.
+        share = section(store, "func shareRecord(", "func bookRecords()")
+        self.assertIn("if disclosure.catCare {", share)
+        self.assertIn("CatCareSummary.evacuationFields(care)", share)
+        self.assertIn("attachments.append", share)
+        matching = section(summary, "static func record(toolCatID:", "static func evacuationFields(")
+        self.assertLess(matching.index("$0.catID == toolCatID"), matching.index("record(profileIdentifier:"))
+        self.assertIn('("マイクロチップ番号", chip.isEmpty ? empty : chip)', summary)
+        # One PDF: supplies, destinations and every cat, after a confirmation.
+        book = section(store, "func bookRecords()", "private static func normalizedJPEG(")
+        self.assertIn("for cat in plan.cats { records.append(try shareRecord(", book)
+        self.assertIn("disclosure.medical = true", book)
+        self.assertIn("static func createBook(", exporter)
+        self.assertIn("all.count <= 120", exporter)
+        self.assertIn("record.attachments", exporter)
+        self.assertIn("EvacuationExporter.createBook(store.bookRecords())", view)
+        self.assertIn("EvacuationExporter.remove(retainedBookDirectory)", view)
+        self.assertIn('confirmationDialog("1冊のPDFを作ります"', view)
+        # The half-year review is a quiet in-app note, not a notification.
+        self.assertIn("halfYear", view)
+        self.assertNotIn("UNUserNotificationCenter", view)
+
+
 if __name__ == "__main__":
     unittest.main()

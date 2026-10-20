@@ -214,9 +214,64 @@ final class EvacuationStore: ObservableObject {
             guard let image = image(name) else { throw EvacuationStorageError.photoUnavailable }
             return image
         }
+        var fields = disclosure.fields(cat: cat, plan: plan)
+        var attachments: [(String, UIImage)] = []
+        if disclosure.catCare {
+            let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+            fields += CatCareSummary.evacuationFields(care)
+            for vaccination in care?.activeVaccinations ?? [] {
+                guard let proof = vaccination.proof, let url = CatCareStore.shared.photoURL(proof),
+                      let image = UIImage(contentsOfFile: url.path) else { continue }
+                attachments.append(("\(vaccination.kind)の証明", image))
+            }
+        }
         return EvacuationShareRecord(name: cat.displayName, photos: photos,
-            fields: disclosure.fields(cat: cat, plan: plan), reviewedAt: cat.reviewedAt,
-            includesPrivateInformation: disclosure.medical || disclosure.contact || disclosure.withOwnerPhoto)
+            fields: fields, reviewedAt: cat.reviewedAt,
+            includesPrivateInformation: disclosure.medical || disclosure.contact || disclosure.withOwnerPhoto,
+            attachments: attachments)
+    }
+
+    /// One paper copy: what to carry and where it is, where to go, and every cat.
+    /// For the owner to keep, so medical notes and contacts are included.
+    func bookRecords() throws -> [EvacuationShareRecord] {
+        guard loadError == nil, saveError == nil else { throw EvacuationStorageError.unreadable }
+        func trimmed(_ value: String?) -> String { (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let needed = plan.supplies.filter(\.isNeeded)
+        let supplies = needed.map { item -> (String, String) in
+            let owner = plan.cats.first { $0.id == item.catID }.map { "（\($0.displayName)）" } ?? ""
+            let title = (trimmed(item.title).isEmpty ? "名前未設定の持ち物" : item.title) + owner
+            let detail = [item.quantity, item.location.isEmpty ? "置き場所は未設定" : item.location]
+                .filter { !$0.isEmpty }.joined(separator: "・")
+            return ("□ " + title, detail)
+        }
+        var places: [(String, String)] = plan.destinations.map { place in
+            let lines = [
+                trimmed(place.conditions).isEmpty ? nil : "受入条件：" + place.conditions,
+                trimmed(place.telephone).isEmpty ? nil : "電話：" + place.telephone,
+                "確認日：" + (place.checkedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認")
+            ].compactMap { $0 }
+            return (trimmed(place.name).isEmpty ? "行き先の候補" : place.name, lines.joined(separator: "\n"))
+        }
+        if !trimmed(plan.familyMeetingMemo).isEmpty { places.append(("家族の集合メモ", plan.familyMeetingMemo)) }
+        let household = CatCareStore.shared.state?.household
+        let contact = trimmed(plan.contact).isEmpty ? trimmed(household?.ownerContact?.value) : plan.contact
+        if !contact.isEmpty { places.append(("飼い主の連絡先", contact)) }
+        if !trimmed(household?.backupContact?.value).isEmpty { places.append(("予備の連絡先", trimmed(household?.backupContact?.value))) }
+        if let vet = household?.vet?.value, !vet.isEmpty {
+            places.append(("かかりつけ病院", [vet.name, vet.phone].filter { !$0.isEmpty }.joined(separator: " ")))
+        }
+        var records = [
+            EvacuationShareRecord(name: "持ち出すもの（\(needed.count)）", photos: [],
+                fields: supplies.isEmpty ? [("持ち物", "未設定")] : supplies, reviewedAt: nil,
+                includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false),
+            EvacuationShareRecord(name: "行き先と連絡先", photos: [],
+                fields: places.isEmpty ? [("行き先", "未設定")] : places, reviewedAt: nil,
+                includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false)
+        ]
+        var disclosure = EvacuationDisclosure()
+        disclosure.medical = true
+        for cat in plan.cats { records.append(try shareRecord(catID: cat.id, disclosure: disclosure)) }
+        return records
     }
 
     private static func normalizedJPEG(_ data: Data) throws -> Data {

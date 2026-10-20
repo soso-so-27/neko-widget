@@ -640,6 +640,43 @@ enum CatCareSummary {
         return fields
     }
 
+    /// The record for a tool's cat: the shared tool ID first, then the profile.
+    static func record(toolCatID: UUID, profileIdentifier: String?) -> CatCareRecord? {
+        let cats = CatCareStore.shared.state?.cats.filter { $0.deletedAt == nil } ?? []
+        if let match = cats.first(where: { $0.catID == toolCatID }) { return match }
+        return profileIdentifier.flatMap { record(profileIdentifier: $0) }
+    }
+
+    /// For 「避難に備える」: what a shelter asks to see.
+    static func evacuationFields(_ record: CatCareRecord?,
+                                 today: CatCareDay? = CatCareDay(date: Date())) -> [(String, String)] {
+        let empty = "未記入"
+        var about: [String] = []
+        switch record?.sex?.value ?? .unknown {
+        case .male: about.append("オス")
+        case .female: about.append("メス")
+        case .unknown: break
+        }
+        switch record?.neutered?.value ?? .unknown {
+        case .yes: about.append("去勢・避妊 済み")
+        case .no: about.append("去勢・避妊 まだ")
+        case .unknown: break
+        }
+        if let age = CatCareLostCat.age(record?.birthday?.value, today: today) { about.append(age) }
+        if let latest = record?.activeWeights.first { about.append(CatCareFormat.weight(latest.grams)) }
+        var fields: [(String, String)] = [("性別・年齢・体重", about.isEmpty ? empty : about.joined(separator: "・"))]
+        let chip = (record?.microchip?.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        fields.append(("マイクロチップ番号", chip.isEmpty ? empty : chip))
+        let vaccinations = (record?.activeVaccinations ?? []).prefix(4).map { entry in
+            var line = "\(entry.kind)（\(CatCareFormat.day(entry.givenOn))）"
+            if let next = entry.nextDueOn { line += " 次回 \(CatCareFormat.day(next))" }
+            if entry.proof != nil { line += " 証明あり" }
+            return line
+        }
+        fields.append(("ワクチン", vaccinations.isEmpty ? empty : vaccinations.joined(separator: "\n")))
+        return fields
+    }
+
     /// For 「迷子のとき」: what the police, the health center and shelters ask.
     /// Shown in the app for reporting; none of it goes on the flyer by itself.
     static func lostCatReportFields(_ record: CatCareRecord?,

@@ -7,6 +7,11 @@ struct EvacuationPreparationView: View {
     var unregisteredPhotos: [PhotoPresentation]
     @ObservedObject var store: EvacuationStore = .shared
     @ObservedObject var reuseStore: CareHandoffStore = .shared
+    @AppStorage("evacuation-review-reminder-dismissed") private var reminderDismissedAt: Double = 0
+    @State private var confirmBook = false
+    @State private var book: EvacuationExporter.Export?
+    @State private var retainedBookDirectory: URL?
+    @State private var bookError: String?
 
     var body: some View {
         Group {
@@ -16,6 +21,17 @@ struct EvacuationPreparationView: View {
                 } description: { Text(error) } actions: { Button("再試行") { store.reload() } }
             } else {
                 List {
+                    if showsReviewReminder {
+                        Section {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("半年ごとの見直し").font(.headline)
+                                Text("前の確認から半年以上たちました。フードや薬の期限、猫の写真、行き先の受入条件を確かめましょう。")
+                                    .font(.subheadline)
+                            }
+                            Button("閉じる") { reminderDismissedAt = Date().timeIntervalSince1970 }
+                        }
+                        .accessibilityIdentifier("evacuation-review-reminder")
+                    }
                     Section {
                         NavigationLink { EvacuationPackingView(store: store) } label: {
                             entry("持ち出すものを見る", detail: "何を持つか、どこにあるか", icon: "backpack")
@@ -35,6 +51,15 @@ struct EvacuationPreparationView: View {
                         .accessibilityIdentifier("evacuation-destinations-open")
                     }
                     Section {
+                        Button { confirmBook = true } label: {
+                            entry("1冊のPDFにまとめる", detail: "持ち物・行き先・猫の情報を紙で持つ", icon: "book.closed")
+                        }
+                        .foregroundStyle(.primary)
+                        .disabled(store.saveError != nil)
+                        .accessibilityIdentifier("evacuation-book-open")
+                        if let bookError { Text(bookError).foregroundStyle(.red) }
+                    }
+                    Section {
                         ToolImportantInformation(text: "災害時は自身と家族の安全を優先し、避難先の受入条件を事前に確認してください。保存済みの入力・写真は通信なしで開けます。")
                     }
                 }
@@ -42,6 +67,37 @@ struct EvacuationPreparationView: View {
         }
         .navigationTitle("避難に備える").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
+        .task { CatCareStore.shared.importFromTools() }
+        .confirmationDialog("1冊のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
+            Button("PDFを作って保存・印刷") { makeBook() }
+        } message: {
+            Text("病歴・薬、連絡先、ワクチン・マイクロチップを含みます。紙で持つための控えで、あとから編集しても更新されません。")
+        }
+        .sheet(item: $book, onDismiss: {
+            // The item is already cleared here; remove the copy this screen made.
+            if let retainedBookDirectory { EvacuationExporter.remove(retainedBookDirectory) }
+            retainedBookDirectory = nil
+        }) { EvacuationActivitySheet(items: $0.files) }
+    }
+
+    private func makeBook() {
+        do {
+            let made = try EvacuationExporter.createBook(store.bookRecords())
+            retainedBookDirectory = made.directory; book = made
+            bookError = nil
+        } catch {
+            bookError = (error as? EvacuationStorageError)?.errorDescription
+                ?? "PDFを作れませんでした。空き容量や記録の長さを確認してください。元の記録は残っています。"
+        }
+    }
+
+    /// Shown once each half year after the last time the owner checked something.
+    private var showsReviewReminder: Bool {
+        let checked = store.plan.cats.compactMap(\.reviewedAt) + store.plan.destinations.compactMap(\.checkedAt)
+        guard let last = checked.max() else { return false }
+        let halfYear: TimeInterval = 182 * 24 * 60 * 60
+        return Date().timeIntervalSince(last) > halfYear
+            && Date().timeIntervalSince1970 - reminderDismissedAt > halfYear
     }
 
     private func entry(_ title: String, detail: String, icon: String) -> some View {
@@ -159,6 +215,9 @@ private struct EvacuationSuppliesEditor: View {
                 Button("持ち物を追加", systemImage: "plus") {
                     store.update { $0.supplies.append(EvacuationSupply(title: "新しい持ち物")) }
                 }.disabled(store.plan.supplies.count >= 200)
+                Button("おすすめの持ち物を足す", systemImage: "checklist") { addRecommended() }
+                    .disabled(store.plan.supplies.count >= 200)
+                    .accessibilityIdentifier("evacuation-add-recommended")
             } footer: { Text("共通の持ち物は1項目にまとめ、猫ごとの薬やフードは対象の猫を指定できます。") }
             Section("備蓄の目安") {
                 Text("フード・水は最低5日分、できれば7日分が目安です。実際の量や持ち出し方は、この子とご家庭に合わせて確認してください。")
@@ -167,6 +226,23 @@ private struct EvacuationSuppliesEditor: View {
             }
         }.navigationTitle("リストを編集").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
+    }
+
+    /// Adds what is missing; nothing already on the list is changed. A cat with
+    /// medicine in 「この子のこと」 gets its own medicine item.
+    private func addRecommended() {
+        let medicines = store.plan.cats.map { cat in
+            (cat.id, (CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)?
+                .activeMedications ?? []).map(\.name).filter { !$0.isEmpty })
+        }
+        store.update { plan in
+            plan.addRecommendedSupplies()
+            for (catID, names) in medicines where !names.isEmpty && plan.supplies.count < 200
+                && !plan.supplies.contains(where: { $0.catID == catID && $0.title.hasPrefix("薬") }) {
+                plan.supplies.append(EvacuationSupply(title: "薬：" + names.joined(separator: "・"),
+                                                      quantity: "5日分以上", catID: catID))
+            }
+        }
     }
 }
 
@@ -324,6 +400,8 @@ private struct EvacuationCatView: View {
                     Toggle("病歴・薬", isOn: $disclosure.medical).accessibilityIdentifier("evacuation-disclose-medical")
                     Toggle("飼い主の連絡先", isOn: $disclosure.contact).accessibilityIdentifier("evacuation-disclose-contact")
                     if cat.photos["withOwner"] != nil { Toggle("飼い主と一緒の写真", isOn: $disclosure.withOwnerPhoto) }
+                    Toggle("ワクチン・マイクロチップ（この子のこと）", isOn: $disclosure.catCare)
+                        .accessibilityIdentifier("evacuation-disclose-cat-care")
                 }
                 Section {
                     Button("この内容を大きく見せる") {
@@ -574,6 +652,12 @@ private struct EvacuationDisplayView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(field.0).font(.subheadline).foregroundStyle(.secondary)
                         Text(field.1).font(.title3).textSelection(.enabled)
+                    }
+                }
+                ForEach(Array(record.attachments.enumerated()), id: \.offset) { _, attachment in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(attachment.0).font(.subheadline).foregroundStyle(.secondary)
+                        Image(uiImage: attachment.1).resizable().scaledToFit().accessibilityLabel(attachment.0)
                     }
                 }
                 Text("内容確認日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
