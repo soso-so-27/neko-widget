@@ -2,7 +2,7 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-report-ui-continuation",
-    "issuedAtMs": 1792502321701,
+    "issuedAtMs": 1792513029690,
     "expiresAtMs": 1792579251569,
     "policyRevision": 2,
     "keyID": "moderation-v2",
@@ -43,10 +43,10 @@
     "recipientReadVerified": false,
     "realUserPhotoVerified": false,
     "evidenceSHA256": {
-      "cloudObservation": "304fbda0c39f1a8e7dd1d027622af55878fc53c68f17c695b97586160c367ad2",
+      "cloudObservation": "cd7a0233850561ae1c8b262f94a5f002296ece8a65a2308315842ff37200ae96",
       "photoScreenshot": "378510a831b9cdc58c2b8ed6378e20039fcc6b9836ed797c0a75ff03c1b58c0a",
       "decisionScreenshot": "ee261fe6e83fc00dbc18633ac3392fae92e95c0e9382832f0c40e20bf67e0d0c",
-      "custodyProbe": "1184a5feefc826a915d30ddc9cc45529cb15977b75e9a44b03dbbf6508c98663",
+      "custodyProbe": "47b3314623c069d065908ea887480af94a04a132683ebc386839ebb495c5d82b",
       "scopeApply": "f2b88cecb32530411da8cc86e2a457cd7209e407d193ddf89fa730175035b024",
       "keyPolicyApply": "5e32b9a21bcbd4add53d2fa42f114556b29fdbbba0fcd68ea01c6c79050a7e9d"
     },
@@ -61,7 +61,7 @@
       "NekoWidget/ci/verify-signed-artifact-contents.py": "db15bfbd307acdc691aa739089131ff52e64e47d84899299307d607bf252c9bc",
       "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "0366ead5852907345c0d22f35c7cc4e7e228dcb586cdc7d38f8f882f055fdebf",
       "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": "f9dfa5d042ad348a7094b294761f656ffcefd82a82fa46a6d6c6ea67b2133054",
-      "NekoWidget/NekoWidget/Info.plist": "39c578e56dfcda25e69cd123c6eeab8faf90c7e7491d1611e4107cb021f709a9",
+      "NekoWidget/NekoWidget/Info.plist": "b7a3b646b7d2bbf891b734fc6e44c934cc707d01f0ee4e49a85ac91a5fc8fdfb",
       "NekoWidget/NekoWidgetShareExtension/Info.plist": "6aaf8d0b7e21456642a54b8a92864cd77838cfcf9ae85ac169c98c88033d01aa",
       "NekoWidget/NekoWidgetWidget/Info.plist": "d474f29788b924d3219c3af67c3cf8bb67837b89f3588903e78ad0c94bdf6f57",
       "NekoWidget/SharingService/scripts/check-staging-runtime.mjs": "25999ee100e8f1b5d3e8e6b82ff864f91c7c61554bc7e6fd340915c7c1f83162",
@@ -86,12 +86,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "WIUvyvd7h0rriAu1xwXzVx25ITTAOKgY8wCQI3yBqe9wVATxFGBfxTEbm_Ekmnjqnh47RsIKMWAw1LkZC3HYCg"
+      "signatureBase64url": "tRlXf4pO09hBGi6_xcuVKrAMVNdyjQ3mzuRZ6-QnQMeeCsEMyCoXqBR5h-1WsZIkKFkEsZppnxxfIjOnw8evAA"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "c0ZxPorQ74dTXWNy3EK8iks1fqppzTmpg8uFPfqSosPu_Cwo4nwNFhOB3-f2jbzioW4tXZherkYjU8BModWgAA"
+      "signatureBase64url": "1Kw3no5PjJobSy6D-q1BNTh7F6GJsmMkpowjOXJXDbHtYptGBpwHWsWRH2APz8a_PP-dgQ_OKKprh3I0SkY5Cw"
     }
   ]
 }
