@@ -22,9 +22,13 @@ struct GroupInvitationLink: Equatable, Sendable, Identifiable {
     /// True for anything addressed to the join page, so a malformed link is
     /// reported as a bad invitation rather than an unknown deep link.
     static func isCandidate(_ url: URL) -> Bool {
-        url.scheme?.lowercased() == "https"
-            && url.host?.lowercased() == host
-            && url.path == path
+        // URLComponents keeps a trailing slash that URL.path would drop.
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        return components.scheme?.lowercased() == "https"
+            && components.host?.lowercased() == host
+            && components.path == path
     }
 
     init?(url: URL) {
