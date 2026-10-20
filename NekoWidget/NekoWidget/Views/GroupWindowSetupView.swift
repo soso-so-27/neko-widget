@@ -15,6 +15,14 @@ enum GroupWindowPresentation {
     static let totalWindowLimit = 10
 
     static func message(for error: Error) -> String {
+        if let error = error as? GroupSubscriptionError {
+            switch error {
+            case .ownerPlusRequired:
+                return "まどを作るには、Plus（14日間無料で試せます）が必要です。"
+            case .windowPaused:
+                return "このまどは止まっています。作った人がPlusを続けると、また写真を届けられます。"
+            }
+        }
         guard let error = error as? GroupClientError else {
             return "まどの情報を確認できませんでした。時間をおいてもう一度お試しください。"
         }
@@ -58,6 +66,25 @@ enum GroupWindowPresentation {
         }
     }
 
+    /// The window keeps everything; only new photos stop. Never says
+    /// "deleted", never blames the members.
+    static let pausedDetail = "新しい写真は届きません。これまでの写真・メンバー・ハートはそのままです。"
+
+    static func pausedOwnerName(_ window: GroupWindow) -> String {
+        window.members.first { $0.id == window.ownerParticipantID }?.displayName
+            ?? window.members.first { $0.role == .owner }?.displayName
+            ?? "作った人"
+    }
+
+    static func isPaused(_ window: GroupWindow) -> Bool {
+        window.deliveryStatus == .paused
+    }
+
+    static func isMyWindow(_ window: GroupWindow) -> Bool {
+        window.myRole == .owner
+            || (window.ownerParticipantID != nil && window.ownerParticipantID == window.myParticipantID)
+    }
+
     static func inviteMessage(windowName: String) -> String {
         "ねこのまどの「\(windowName)」で、うちの猫の写真を届け合おう。このリンクから参加してね。"
     }
@@ -97,6 +124,7 @@ final class GroupWindowMembersModel: ObservableObject {
     let windowID: String
     private let client: any GroupWindowClient
     private let now: () -> Date
+    private let transform: (GroupWindow) -> GroupWindow
     /// One operation per action, kept while a retry must resend the same
     /// operation ID and body (offline, stale revision). Dropped on success
     /// or on a final rejection.
@@ -105,11 +133,13 @@ final class GroupWindowMembersModel: ObservableObject {
     init(
         client: any GroupWindowClient,
         windowID: String,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        transform: @escaping (GroupWindow) -> GroupWindow = { $0 }
     ) {
         self.client = client
         self.windowID = windowID
         self.now = now
+        self.transform = transform
     }
 
     var activeInvitation: GroupInvitation? {
@@ -131,7 +161,7 @@ final class GroupWindowMembersModel: ObservableObject {
 
     func load() async {
         do {
-            let latest = try await client.window(id: windowID)
+            let latest = transform(try await client.window(id: windowID))
             var requests: [GroupJoinRequest] = []
             if latest.canManage {
                 requests = try await client.pendingRequests(windowID: windowID)
@@ -232,6 +262,11 @@ final class GroupWindowMembersModel: ObservableObject {
             try await body(operation)
             retainedOperations[key] = nil
             if reloadsAfterSuccess { await load() }
+        } catch let error as GroupSubscriptionError {
+            // Paused or not yet Plus: nothing to retry; show the latest state.
+            retainedOperations[key] = nil
+            actionErrorMessage = GroupWindowPresentation.message(for: error)
+            await load()
         } catch let error as GroupClientError {
             switch error {
             case .offline:
@@ -265,6 +300,10 @@ struct GroupWindowScreenCapabilities: Equatable, Sendable {
 struct GroupWindowMembersView: View {
     @ObservedObject var model: GroupWindowMembersModel
     var capabilities: GroupWindowScreenCapabilities = .full
+    /// Opens the Plus sheet (the same single subscription as every entry).
+    var onContinueWithPlus: (() -> Void)? = nil
+    /// Starts creating this person's own window.
+    var onCreateOwnWindow: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var approvalTarget: GroupJoinRequest?
     @State private var showsApproval = false
@@ -276,6 +315,9 @@ struct GroupWindowMembersView: View {
     var body: some View {
         Form {
             if let window = model.window {
+                if GroupWindowPresentation.isPaused(window) {
+                    pausedSection(window)
+                }
                 statusSection(window)
                 windowSection(window)
                 membersSection(window)
@@ -360,6 +402,57 @@ struct GroupWindowMembersView: View {
             Button("戻る", role: .cancel) {}
         } message: {
             Text("退出すると、これから届く写真は見られません。すでに届いた写真とお気に入りは、このiPhoneに残ります。")
+        }
+    }
+
+    /// Shown while the creator's Plus is not active. Everything stays; only
+    /// new photos stop. Members are told who can resume it, and how to start
+    /// their own window instead.
+    private func pausedSection(_ window: GroupWindow) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("このまどは止まっています", systemImage: "pause.circle")
+                    .font(.headline)
+                Text(GroupWindowPresentation.pausedDetail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !GroupWindowPresentation.isMyWindow(window) {
+                    Text("作った\(GroupWindowPresentation.pausedOwnerName(window))さんがPlusを続けると、また届くようになります。")
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("group-window-paused-member")
+                }
+            }
+            .padding(.vertical, 4)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("group-window-paused")
+            if GroupWindowPresentation.isMyWindow(window) {
+                if let onContinueWithPlus {
+                    Button {
+                        onContinueWithPlus()
+                    } label: {
+                        Text("このまどを続ける")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("group-window-continue-plus")
+                } else {
+                    Text("設定のPlusから続けられます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let onCreateOwnWindow {
+                Button {
+                    onCreateOwnWindow()
+                } label: {
+                    Text("自分でまどを作る（14日間無料）")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("group-window-create-own")
+            }
         }
     }
 
@@ -1042,6 +1135,32 @@ enum GroupWindowUIFixture {
     /// Same instant the fixture uses, so expiry labels stay deterministic.
     static let fixtureNow = Date(timeIntervalSince1970: 1_792_454_400)
 
+    /// `--group-window-delivery=paused` (creator's view) or `pausedMember`.
+    static func applyDelivery(_ window: GroupWindow) -> GroupWindow {
+        let prefix = "--group-window-delivery="
+        let raw = CommandLine.arguments
+            .first { $0.hasPrefix(prefix) }
+            .map { String($0.dropFirst(prefix.count)) }
+        guard raw == "paused" || raw == "pausedMember" else { return window }
+        let owner = window.members.first { $0.role == .owner }
+        let viewer = raw == "pausedMember"
+            ? window.members.first { $0.role != .owner } ?? owner
+            : owner
+        return GroupWindow(
+            id: window.id,
+            name: window.name,
+            revision: window.revision,
+            keyEpoch: window.keyEpoch,
+            myParticipantID: viewer?.id ?? window.myParticipantID,
+            myRole: viewer?.role ?? window.myRole,
+            state: window.state,
+            members: window.members,
+            deliveryStatus: .paused,
+            deliveryReason: .ownerPlusRequired,
+            ownerParticipantID: owner?.id
+        )
+    }
+
     static var scenario: GroupWindowFixture.Scenario {
         let prefix = "--group-window-scenario="
         let raw = CommandLine.arguments
@@ -1066,7 +1185,8 @@ struct GroupWindowUIFixtureRoot: View {
             now: GroupWindowUIFixture.fixtureNow
         ),
         windowID: "fixture-window",
-        now: { GroupWindowUIFixture.fixtureNow }
+        now: { GroupWindowUIFixture.fixtureNow },
+        transform: GroupWindowUIFixture.applyDelivery
     )
     @StateObject private var joinModel = GroupJoinModel(
         client: GroupWindowFixture(
@@ -1080,7 +1200,11 @@ struct GroupWindowUIFixtureRoot: View {
         if GroupWindowUIFixture.showsJoin {
             GroupJoinView(model: joinModel, onOpenWindow: {})
         } else {
-            GroupWindowMembersView(model: membersModel)
+            GroupWindowMembersView(
+                model: membersModel,
+                onContinueWithPlus: {},
+                onCreateOwnWindow: {}
+            )
         }
     }
 }
