@@ -1,16 +1,16 @@
+import {plusOwner,pauseOwner} from './group-billing-fixture';
 import {describe,expect,it} from 'vitest';
 import {base64urlDecode,randomBase64url,sha256Base64url} from '../src/encoding';
 import {groupFields} from '../src/group-protocol';
 import {groupHeartTranscript} from '../src/group-hearts';
 import {route} from '../src/index';
 import {errorResponse} from '../src/errors';
-import {GROUP_TRIAL_SECONDS} from '../src/group-owner-plus';
 import {cleanLateGroupUpload,runGroupRelayCleanup} from '../src/group-cleanup';
 import {apply,call,create,db,invitation,ok,person,send,sign,signed,testEnv,transition,type Person} from './group-fixture';
 
 type Window=Awaited<ReturnType<typeof create>>;
 async function family() {
-  const owner=await person(),bob=await person();let w=await create(owner);
+  const owner=await plusOwner(),bob=await person();let w=await create(owner);
   const invite=await invitation(owner,w),b=await apply(bob,w,invite);ok(b.response,201);
   const approved=await transition(owner,w,'admit',b.id,[...w.roster.members,b.member]);ok(approved.response);w=approved.next;
   return {owner,bob,w};
@@ -70,7 +70,7 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
   it('pauses NEW commits from every participant while reads, hearts, membership and prior commit receipts survive',async()=>{
     const {owner,bob,w}=await family(),old=await delivered(owner,w),ownerPhoto=await reserve(owner,w),guestPhoto=await reserve(bob,w);
     ok(ownerPhoto.result,201);ok(guestPhoto.result,201);ok(await upload(owner,w,ownerPhoto));ok(await upload(bob,w,guestPhoto));
-    await db.prepare('UPDATE group_windows SET created_at=unixepoch()-? WHERE space_id=?').bind(GROUP_TRIAL_SECONDS,w.windowId).run();
+    await pauseOwner(owner);
     for(const [sender,p] of [[owner,ownerPhoto],[bob,guestPhoto]] as const)expect((await commit(sender,w,p)).data.error.code).toBe('window_paused');
     expect((await db.prepare("SELECT COUNT(*) n FROM group_moments WHERE space_id=? AND state='committed'").bind(w.windowId).first<{n:number}>())?.n).toBe(1);
     expect((await binary(bob,`/v3/group-windows/${w.windowId}/moments/${old.id}/ciphertext`)).status).toBe(200);
@@ -107,7 +107,7 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     const pid=w.roster.members[1]!.participantId;
     expect((await db.prepare('SELECT used FROM group_heart_usage WHERE space_id=? AND participant_id=?').bind(w.windowId,pid).first<{used:number}>())?.used).toBe(1);
     expect((await db.prepare("SELECT COUNT(*) n FROM group_notification_events WHERE moment_id=? AND kind='heart'").bind(p.id).first<{n:number}>())?.n).toBe(1);
-    await db.prepare('UPDATE group_windows SET created_at=unixepoch()-? WHERE space_id=?').bind(GROUP_TRIAL_SECONDS,w.windowId).run();
+    await pauseOwner(owner);
     ok(await call(bob,path,await heart(bob,w,p.id,false)));
     expect(ok(await call(bob,`${path}/list`,{after:null,limit:50})).items[0].active).toBe(false);
     ok(await call(bob,path,await heart(bob,w,p.id)));
@@ -116,7 +116,7 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     const request=await signed(bob,path,await heart(bob,w,p.id));expect((await send(request,{...testEnv,REACTION_RUNTIME_ENABLED:'NO'})).status).toBe(503);
   });
   it('commits concurrent retries once and enforces five photos per person per day',async()=>{
-    const owner=await person(),w=await create(owner),p=await reserve(owner,w);ok(p.result,201);ok(await upload(owner,w,p));
+    const owner=await plusOwner(),w=await create(owner),p=await reserve(owner,w);ok(p.result,201);ok(await upload(owner,w,p));
     const results=await Promise.all([commit(owner,w,p),commit(owner,w,p)]);for(const r of results)ok(r);
     expect((await db.prepare('SELECT COUNT(*) n FROM group_moment_deliveries WHERE moment_id=?').bind(p.id).first<{n:number}>())?.n).toBe(1);
     for(let i=0;i<4;i++)ok((await reserve(owner,w)).result,201);
@@ -135,7 +135,7 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     const row=await db.prepare('SELECT object_key,cleanup_at FROM group_moments WHERE id=?').bind(p.id).first<{object_key:string;cleanup_at:number}>();
     await cleanLateGroupUpload(testEnv,p.id,row!.object_key);
     expect(await testEnv.MEDIA!.head(row!.object_key)).not.toBeNull();
-    await db.prepare('UPDATE group_windows SET created_at=unixepoch()-? WHERE space_id=?').bind(GROUP_TRIAL_SECONDS,w.windowId).run();
+    await pauseOwner(owner);
     await runGroupRelayCleanup({...testEnv,GROUP_RUNTIME_ENABLED:'NO'});
     expect((await binary(bob,`${path}/ciphertext`)).status).toBe(200);
     // Both main-app durable receipts shorten relay retention, without extending

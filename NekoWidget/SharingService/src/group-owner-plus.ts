@@ -4,15 +4,14 @@ import { ApiError,jsonResponse } from './errors';
 import { groupMutationStatement,groupNonceStatements,type GroupActor } from './group-auth';
 import { exactKeys,uuidField,type JsonRecord } from './validation';
 
-export const GROUP_TRIAL_SECONDS=14*86400;
 export interface GroupDeliveryPolicy {
   deliveryStatus:'active'|'paused';
-  deliveryReason:'trial'|'owner_plus'|'owner_plus_required';
-  trialEndsAt:number;
+  deliveryReason:'owner_plus'|'owner_plus_required';
   ownerParticipantId:string;
 }
-// An absent/misconfigured upper gate is NOT paid access. Trial access remains
-// independent; the whole group API still requires its own default-OFF gate.
+// Apple introductory-offer transactions qualify through the same verified
+// subscription authority. No local day counter, room-age trial or extra grace.
+// An absent/misconfigured upper gate is NOT paid access.
 function storeEnvironment(env:Env):'Production'|'Sandbox'|null {
   if(!billingEffectiveEntitlementRuntimeEnabled(env))return null;
   if(env.BILLING_STORE_ENVIRONMENT==='Production')return 'Production';
@@ -30,14 +29,14 @@ export function groupDeliveryPolicyStatements(env:Env,windowId:string):D1Prepare
 }
 export async function groupDeliveryPolicies(env:Env,windowIds:readonly string[]):Promise<Map<string,GroupDeliveryPolicy>> {
   if(windowIds.length===0)return new Map();
-  const rows=await env.DB.prepare(`SELECT w.space_id,w.trial_ends_at,w.owner_participant_id,
-      (CASE WHEN w.trial_ends_at>unixepoch() THEN 'trial' WHEN EXISTS (
+  const rows=await env.DB.prepare(`SELECT w.space_id,w.owner_participant_id,
+      (CASE WHEN EXISTS (
         SELECT 1 FROM group_verified_plus_people p WHERE p.person_id=w.owner_person_id AND p.environment=?)
         THEN 'owner_plus' ELSE 'owner_plus_required' END) AS reason
       FROM group_window_owner_policy w WHERE w.space_id IN (${windowIds.map(()=>'?').join(',')})`)
-    .bind(storeEnvironment(env),...windowIds).all<{space_id:string;trial_ends_at:number;owner_participant_id:string;reason:GroupDeliveryPolicy['deliveryReason']}>();
+    .bind(storeEnvironment(env),...windowIds).all<{space_id:string;owner_participant_id:string;reason:GroupDeliveryPolicy['deliveryReason']}>();
   return new Map(rows.results.map(r=>[r.space_id,{deliveryStatus:r.reason==='owner_plus_required'?'paused':'active',
-    deliveryReason:r.reason,trialEndsAt:r.trial_ends_at,ownerParticipantId:r.owner_participant_id}]));
+    deliveryReason:r.reason,ownerParticipantId:r.owner_participant_id}]));
 }
 
 export async function connectGroupBilling(request:Request,env:Env,actor:GroupActor,bytes:Uint8Array,body:JsonRecord):Promise<Response> {

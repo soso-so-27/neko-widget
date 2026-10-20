@@ -63,6 +63,7 @@ const expectedMigrationNames = [
   "0041_group_api_records.sql",
   "0042_group_owner_plus.sql",
   "0043_group_media.sql",
+  "0044_group_appstore_subscription.sql",
 ];
 
 const databaseGateColumns = [
