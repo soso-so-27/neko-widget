@@ -1,9 +1,12 @@
 import SwiftUI
 import UIKit
 
-/// Presentation only. The host owns product eligibility, purchases, restoration,
-/// and navigation; opening this view never starts a trial or a network request.
+/// The one Plus screen (ADR-027 5章). Presentation only: the host owns product
+/// eligibility, purchases, restoration, and navigation. Opening this view never
+/// starts a trial or a network request, and every price or trial string comes
+/// from `MembershipOfferPresentation`, which is built from StoreKit's values.
 struct MembershipOfferView: View {
+    let context: PlusOfferContext
     let photo: UIImage?
     let offer: MembershipOfferPresentation?
     let isWorking: Bool
@@ -19,7 +22,22 @@ struct MembershipOfferView: View {
     let onRestore: () -> Void
     let onClose: () -> Void
 
+    static let heading = "うちの子との毎日を、続ける"
+    static let values = [
+        ("毎日、新しい1枚がホーム画面に", "photo"),
+        ("自動でたまるアルバムと月のまとめ", "rectangle.stack"),
+        ("まどを作って家族と続ける", "person.2"),
+    ]
+    static let reassurances = [
+        "いつでもやめられます",
+        "やめても写真・まど・メモは消えません",
+        "招待した家族はずっと無料です",
+    ]
+    /// Apple's own instructions; the app never cancels on the person's behalf.
+    static let cancellationHelpURL = URL(string: "https://support.apple.com/ja-jp/118428")
+
     init(
+        context: PlusOfferContext,
         photo: UIImage? = nil,
         offer: MembershipOfferPresentation?,
         isWorking: Bool,
@@ -35,6 +53,7 @@ struct MembershipOfferView: View {
         onRestore: @escaping () -> Void,
         onClose: @escaping () -> Void
     ) {
+        self.context = context
         self.photo = photo
         self.offer = offer
         self.isWorking = isWorking
@@ -53,32 +72,27 @@ struct MembershipOfferView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 20) {
                 photoHeader
 
                 VStack(alignment: .leading, spacing: 14) {
-                    benefit("毎日の一枚", detail: "自分の猫写真を、ホーム画面に日替わりで。", symbol: "photo")
-                    benefit("猫だけのアルバム", detail: "ほかの写真に埋もれた猫写真も、まとめて見返す。", symbol: "rectangle.stack")
-                    benefit("写真に添えるメモ", detail: "出来事や体重を残して、病院で見せる控えにも。", symbol: "square.and.pencil")
+                    ForEach(Self.values, id: \.0) { value in
+                        Label {
+                            Text(value.0).font(.headline)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: value.1).foregroundStyle(.tint)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text("まどは最大3つ。招待相手の会員加入は不要です。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("membership-offer-invitation")
-
-                Text("迷子・避難のツールは、会員でなくても使えます。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("membership-offer-free-tools")
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("membership-offer-values")
 
                 offerDetails
                 actions
-                membershipDetails
-                legalLinks
+                reassurance
+                footerLinks
             }
             .frame(maxWidth: 440)
             .padding(.horizontal, 24)
@@ -87,7 +101,7 @@ struct MembershipOfferView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(uiColor: .systemBackground))
-        .navigationTitle("ねこのまど")
+        .navigationTitle("ねこのまど Plus")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -101,7 +115,7 @@ struct MembershipOfferView: View {
     }
 
     private var photoHeader: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             if let photo {
                 Image(uiImage: photo)
                     .resizable()
@@ -116,42 +130,36 @@ struct MembershipOfferView: View {
                 Image(systemName: "cat")
                     .font(.system(size: 48, weight: .light))
                     .foregroundStyle(.tint)
-                    .frame(height: 72)
+                    .frame(height: 64)
                     .accessibilityHidden(true)
             }
 
-            Text("撮った猫写真を、\n毎日の楽しみと記録に。")
+            if let reason = context.reason {
+                Text(reason)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("membership-offer-reason")
+            }
+
+            Text(Self.heading)
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("membership-offer-heading")
         }
     }
 
-    private func benefit(_ title: String, detail: String, symbol: String) -> some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 30)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.headline)
-                Text(detail).font(.subheadline).foregroundStyle(.secondary)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
     private var offerDetails: some View {
-        VStack(spacing: 7) {
+        VStack(spacing: 6) {
             if isMember {
-                Label("会員プランに加入中です", systemImage: "checkmark.circle.fill")
+                Label("Plusを利用中です", systemImage: "checkmark.circle.fill")
                     .font(.headline)
                     .foregroundStyle(.tint)
                     .accessibilityIdentifier("membership-offer-active")
-                Text("会員機能を利用できます。新しく申し込む必要はありません。")
+                Text("新しく申し込む必要はありません。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else if let offer {
@@ -160,22 +168,19 @@ struct MembershipOfferView: View {
                         .font(.footnote.weight(.semibold))
                         .accessibilityIdentifier("membership-offer-preview-notice")
                 }
-                Text(offer.priceText)
-                    .font(.title3.weight(.bold))
-                    .accessibilityIdentifier("membership-offer-price")
                 if let trial = offer.trialText {
-                    Text(trial).font(.subheadline.weight(.semibold))
+                    Text(trial)
+                        .font(.subheadline.weight(.semibold))
                         .accessibilityIdentifier("membership-offer-trial")
                 }
-                Text(offer.renewalText)
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("membership-offer-renewal")
             } else {
                 Text(isWorking ? "料金を確認中…" : "料金を確認できません")
                     .font(.headline)
                     .accessibilityIdentifier("membership-offer-unavailable")
-                Text(isWorking ? "" : "時間をおいて、もう一度開いてください。")
-                    .font(.footnote).foregroundStyle(.secondary)
+                if !isWorking {
+                    Text("時間をおいて、もう一度開いてください。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }
         .multilineTextAlignment(.center)
@@ -198,6 +203,19 @@ struct MembershipOfferView: View {
             .disabled(isWorking || !canPurchase || offer == nil)
             .accessibilityIdentifier("membership-offer-purchase")
 
+            // The billed amount stays as prominent as the trial: it is the
+            // headline directly under the button, never a footnote.
+            if !isMember, let offer {
+                Text(offer.afterTrialText ?? offer.priceText)
+                    .font(.headline)
+                    .accessibilityIdentifier("membership-offer-price")
+                Text(offer.renewalText)
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("membership-offer-renewal")
+            }
+
             if let message, !message.isEmpty {
                 Text(message)
                     .font(.footnote)
@@ -206,21 +224,15 @@ struct MembershipOfferView: View {
                     .accessibilityIdentifier("membership-offer-message")
             }
 
-            if let onRefresh {
-                Button("会員情報を再確認", action: onRefresh)
+            if let onRefresh, canRefresh {
+                Button("購入状況を再確認", action: onRefresh)
                     .frame(minHeight: 44)
                     .disabled(isWorking || !canRefresh)
                     .accessibilityIdentifier("membership-offer-refresh")
             }
 
-            Button("購入を復元", action: onRestore)
-                .font(.footnote)
-                .frame(minHeight: 44)
-                .disabled(isWorking || !canRestore)
-                .accessibilityIdentifier("membership-offer-restore")
-
-            if let onManageSubscription {
-                Button("契約を管理・解約", action: onManageSubscription)
+            if let onManageSubscription, isMember || canRefresh {
+                Button("サブスクリプションを管理", action: onManageSubscription)
                     .frame(minHeight: 44)
                     .disabled(isWorking)
                     .accessibilityIdentifier("membership-offer-manage")
@@ -228,42 +240,39 @@ struct MembershipOfferView: View {
         }
     }
 
-    private var legalLinks: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 20) { legalLinkContent }
-            VStack(spacing: 12) { legalLinkContent }
-        }
-        .font(.footnote)
-    }
-
-    private var membershipDetails: some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("無料で使えること").fontWeight(.semibold)
-                    Text("迷子・避難のツール、写真・お気に入りの閲覧、保存済みメモの閲覧・編集・書き出しは、会員でなくても利用できます。")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("会員の有効期間が終わると").fontWeight(.semibold)
-                    Text("自動アルバム、ウィジェットの写真更新、新しいメモ・まどの作成は利用できなくなります。会員期間が終わっても、保存済みのメモは削除されません。")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("招待相手への影響").fontWeight(.semibold)
-                    Text("まどを支える会員が有効な間は、招待相手も無料で写真を送り返せます。期間が終わると、新しい写真の送信は停止します。受信済みの写真は、通常の保存期間内で引き続き見られます。")
-                }
+    private var reassurance: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Self.reassurances, id: \.self) { line in
+                Label(line, systemImage: "checkmark")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 8)
-        } label: {
-            Text("無料で使えること・会員期間の終了後")
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.footnote)
-        .accessibilityIdentifier("membership-offer-details")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color(uiColor: .secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("membership-offer-reassurance")
     }
 
-    @ViewBuilder private var legalLinkContent: some View {
+    private var footerLinks: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) { footerLinkContent }
+            VStack(spacing: 12) { footerLinkContent }
+        }
+        .font(.footnote)
+    }
+
+    @ViewBuilder private var footerLinkContent: some View {
+        Button("購入を復元", action: onRestore)
+            .frame(minHeight: 44)
+            .disabled(isWorking || !canRestore)
+            .accessibilityIdentifier("membership-offer-restore")
+        if let cancellationHelpURL = Self.cancellationHelpURL {
+            Link("解約のしかた", destination: cancellationHelpURL)
+                .accessibilityIdentifier("membership-offer-cancel-help")
+        }
         if let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") {
             Link("利用規約", destination: termsURL)
                 .accessibilityIdentifier("membership-offer-terms")

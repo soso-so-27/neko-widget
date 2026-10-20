@@ -317,6 +317,7 @@ struct AppRootView: View {
             },
             finishWithoutWidgetPhoto: completeOnboardingWithoutWidgetPhoto,
             finish: completeOnboarding,
+            skipPlusOffer: skipOnboardingPlusOffer,
             openPhoto: { photo in
                 // Ignore queued taps after completion or a Widget-guide choice.
                 // A repeated tap must not replace the photo already presented.
@@ -1176,7 +1177,8 @@ struct AppRootView: View {
     private var onboardingState: OnboardingPresentationState {
         OnboardingPresentationState(
             persistedResumePageIndex: onboardingResumePageIndex,
-            persistedCompletedVersion: onboardingCompletedVersion
+            persistedCompletedVersion: onboardingCompletedVersion,
+            offersPlus: PlusOfferAvailability.isConfigured
         )
     }
 
@@ -1193,7 +1195,8 @@ struct AppRootView: View {
                 switch (currentPage, page) {
                 case (.purpose, .photoPermission),
                      (.photoPermission, .scanResult),
-                     (.scanResult, .widgetGuide):
+                     (.scanResult, .widgetGuide),
+                     (.widgetGuide, .plusOffer):
                     state.advance()
                 case (.photoPermission, .widgetGuide):
                     state.skipPhotoPermission()
@@ -1219,6 +1222,13 @@ struct AppRootView: View {
         // legacy scan-result gate after the four-page flow has completed.
         hasSeenInitialScanResult = true
         widgetInstallationChecker.refresh()
+    }
+
+    /// One tap past the last, optional Plus page. Nothing is purchased.
+    private func skipOnboardingPlusOffer() {
+        var state = onboardingState
+        state.skipPlusOffer()
+        persistOnboardingState(state)
     }
 
     private func completeOnboardingWithoutPhotoAccess() {

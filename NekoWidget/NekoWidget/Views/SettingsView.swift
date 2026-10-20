@@ -88,13 +88,11 @@ struct SettingsView: View {
     @State private var isRescanning = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
-    @State private var showsMembershipOffer = false
     @State private var showsMembershipPreview = false
     @State private var showsWindowSupportPreview = false
 
     private var canOpenMembershipOffer: Bool {
-        PlusPurchaseConfiguration.current.isConfigured
-            && BillingClientConfiguration.current.isConfigured
+        PlusOfferAvailability.isConfigured
     }
 
     init(
@@ -294,14 +292,7 @@ struct SettingsView: View {
             }
 
             if canOpenMembershipOffer {
-                Section {
-                    Button {
-                        showsMembershipOffer = true
-                    } label: {
-                        Label("会員プラン", systemImage: "sparkles")
-                    }
-                    .accessibilityIdentifier("settings-membership-offer")
-                }
+                PlusSettingsSection()
             }
 
             if BillingSandboxOwnerEnrollmentAvailability.isAvailable {
@@ -318,7 +309,7 @@ struct SettingsView: View {
                         Button {
                             showsMembershipPreview = true
                         } label: {
-                            Label("会員プランのプレビュー", systemImage: "sparkles")
+                            Label("Plusの画面のプレビュー", systemImage: "sparkles")
                         }
                         .accessibilityIdentifier("settings-membership-preview")
                     }
@@ -360,15 +351,8 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("設定")
-        .sheet(isPresented: $showsMembershipOffer, onDismiss: {
-            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-        }) {
-            MembershipOfferSheet(model: .live()) { _ in
-                showsMembershipOffer = false
-            }
-        }
         .sheet(isPresented: $showsMembershipPreview) {
-            MembershipOfferSheet(model: .preview()) { _ in
+            MembershipOfferSheet(model: .preview(), context: .settings) { _ in
                 showsMembershipPreview = false
             }
         }

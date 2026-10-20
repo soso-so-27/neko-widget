@@ -69,6 +69,28 @@ xcrun --sdk macosx swiftc \
   -o "$RUNNER_TEMP/verify-personal-rediscovery"
 "$RUNNER_TEMP/verify-personal-rediscovery"
 
+# ADR-027 5章: the one Plus screen opens only from its entry places. A new
+# caller of the sheet (or of the prompt that opens it) must be added here on
+# purpose; photo access, invitations, receiving, hearts, and favorites never are.
+# PairingView and AppRootView are reserved for the window and Widget entries.
+plus_offer_allowed="NekoWidget/App/AppRootView.swift
+NekoWidget/Services/MembershipOfferModel.swift
+NekoWidget/Views/MainTabView.swift
+NekoWidget/Views/ManagedPreservationView.swift
+NekoWidget/Views/OnboardingView.swift
+NekoWidget/Views/PairingView.swift
+NekoWidget/Views/PhotoMemoryNoteView.swift
+NekoWidget/Views/SettingsView.swift
+NekoWidget/Views/WindowSupportResumeView.swift"
+plus_offer_found=$(grep -rlE --include='*.swift' 'MembershipOfferSheet\(|PlusOfferPrompt\(' \
+  NekoWidget Shared NekoWidgetWidget NekoWidgetShareExtension | sort)
+printf '%s\n' "$plus_offer_found" | grep -qx 'NekoWidget/Views/SettingsView.swift' \
+  || { echo "Plus offer check found no Settings entry; the search is broken" >&2; exit 1; }
+for file in $plus_offer_found; do
+  printf '%s\n' "$plus_offer_allowed" | grep -qx "$file" \
+    || { echo "The Plus screen is opened outside its entry places: $file" >&2; exit 1; }
+done
+
 xcrun swiftc \
   -parse-as-library \
   Shared/Sharing/PairingCore.swift \

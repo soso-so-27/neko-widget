@@ -24,6 +24,8 @@ struct OnboardingView: View {
     let rescan: () -> Void
     let finishWithoutWidgetPhoto: () -> Void
     let finish: () -> Void
+    /// "あとで" on the optional Plus page. Defaults to `finish`.
+    var skipPlusOffer: (() -> Void)? = nil
     let openPhoto: (PhotoPresentation) -> Void
     var joinInvitation: (() -> Void)? = nil
 
@@ -44,6 +46,12 @@ struct OnboardingView: View {
                 WidgetPlacementGuideView(
                     onComplete: finish,
                     onSkip: finish
+                )
+
+            case .plusOffer:
+                OnboardingPlusOfferPage(
+                    finishAfterPurchase: finish,
+                    skip: skipPlusOffer ?? finish
                 )
             }
         }
@@ -386,6 +394,85 @@ private struct OnboardingScanInProgressPage: View {
             .padding(.vertical, 12)
             .background(.bar)
             .accessibilityIdentifier("onboarding-scan-continue")
+        }
+    }
+}
+
+/// The last, optional page of the first run (ADR-027 1章). It comes after
+/// Photos access, the scan, and the Widget guide, so it never stands between
+/// a person and their photos. "あとで" is one tap; the button opens the one
+/// Plus screen, whose price and trial come from StoreKit.
+private struct OnboardingPlusOfferPage: View {
+    let finishAfterPurchase: () -> Void
+    let skip: () -> Void
+    @State private var showsOffer = false
+    @State private var purchased = false
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 26) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+                    .padding(.top, 54)
+
+                Text(MembershipOfferView.heading)
+                    .font(.title2.bold())
+                    .multilineTextAlignment(.center)
+                    .accessibilityAddTraits(.isHeader)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(MembershipOfferView.values, id: \.0) { value in
+                        Label(value.0, systemImage: value.1)
+                    }
+                }
+                .font(.body)
+                .frame(maxWidth: 440, alignment: .leading)
+
+                Text("Plusにしなくても、見つけた写真の一覧・お気に入り・招待されたまどは、このまま無料で使えます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 440)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 28)
+            .padding(.bottom, 30)
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 14) {
+                Button {
+                    showsOffer = true
+                } label: {
+                    Text(PlusOfferContext.onboarding.entryTitle)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("onboarding-plus-offer-open")
+
+                Button("あとで", action: skip)
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("onboarding-plus-offer-skip")
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 12)
+            .background(.bar)
+        }
+        .accessibilityIdentifier("onboarding-plus-offer")
+        .sheet(isPresented: $showsOffer, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            // A purchase closes the sheet and enters the app; closing without
+            // buying leaves this page so "あとで" stays the person's choice.
+            if purchased { finishAfterPurchase() }
+        }) {
+            MembershipOfferSheet(model: .live(), context: .onboarding) { result in
+                purchased = result == .completed
+                showsOffer = false
+            }
         }
     }
 }
