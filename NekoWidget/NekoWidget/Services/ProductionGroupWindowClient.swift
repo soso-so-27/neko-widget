@@ -322,8 +322,9 @@ extension ProductionGroupWindowClient {
               identity.agreementKey.publicKey.rawRepresentation == draft.offer.hpkePublicKey else { throw GroupClientError.invalidResponse }
         for windowID in draft.offer.windowIDs { _ = try identity.certificate(windowID: windowID) }
         if let old = try load(GroupDeviceIdentity.self, "identity") {
-            guard old.personPrivateKey == nil, !old.registered, old.signingPrivateKey == identity.signingPrivateKey,
+            guard old.personPrivateKey == nil, old.signingPrivateKey == identity.signingPrivateKey,
                   old.agreementPrivateKey == identity.agreementPrivateKey, old.personPublicKey == identity.personPublicKey else { throw GroupClientError.idempotencyConflict }
+            if old.registered { try secrets.remove("device-link"); return }
         }
         let input = GroupAPIModel.IdentityInput(operationID: draft.offer.operationID, challengeID: draft.offer.challengeID,
             personPublicKey: approval.personPublicKey, signingPublicKey: draft.offer.signingPublicKey, hpkePublicKey: draft.offer.hpkePublicKey,
@@ -554,8 +555,11 @@ struct GroupVerifiedIncomingPhoto: Sendable {
 private struct GroupPreparedPhoto: Codable {
     let operationID: UUID; let commitOperationID: UUID; let windowID: String
     let sourceHash: Data; let keyEpoch: Int; let rosterRevision: Int; let rosterHash: Data
+    let packet: SignedGroupRoster
     let photo: GroupEncryptedPhoto
 }
+
+enum GroupPhotoAcknowledgement: Sendable { case acknowledged, awaitingConnection, authenticationRequired, accessEnded }
 
 @available(iOS 17.0, macOS 14.0, *)
 extension ProductionGroupWindowClient {
@@ -657,13 +661,47 @@ extension ProductionGroupWindowClient {
     }
     /// ACK follows the caller's successful DURABLE app-store write. Decrypting
     /// bytes or drawing a screen alone never shortens the server's retention.
-    func storeAndAcknowledge(_ incoming: GroupVerifiedIncomingPhoto,
-                             persist: @Sendable (GroupVerifiedIncomingPhoto) async throws -> Void) async throws {
+    func storeAndAcknowledge(_ incoming: GroupVerifiedIncomingPhoto, outgoingOperationID: UUID? = nil,
+                             persist: @Sendable (GroupVerifiedIncomingPhoto) async throws -> Void) async throws -> GroupPhotoAcknowledgement {
         let identity = try await registeredIdentity()
         guard incoming.recipientDeviceID == (try identity.deviceID) else { throw GroupClientError.invalidResponse }
         try await persist(incoming)
-        _ = try await signed("/v3/group-windows/\(incoming.photo.windowID)/moments/\(incoming.photo.id)/ack",
-            GroupAPIModel.AckPhoto(operationID: UUID().uuidString.lowercased(), ciphertextSHA256: incoming.ciphertextSHA256))
+        // Local success stays success even if the receipt cannot be sent now.
+        // This deletes only a matched temporary encrypted outbox copy AFTER
+        // the app repository has durably stored the received/sent photo.
+        if let outgoingOperationID {
+            let file = outboxDirectory.appendingPathComponent(outgoingOperationID.uuidString.lowercased() + ".json")
+            if let bytes = try? Data(contentsOf: file), let prepared = try? GroupWire.decode(GroupPreparedPhoto.self, bytes),
+               prepared.operationID == outgoingOperationID, prepared.windowID == incoming.photo.windowID,
+               GroupCanonical.hash(prepared.photo.ciphertext) == incoming.ciphertextSHA256 {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+        do {
+            _ = try await signed("/v3/group-windows/\(incoming.photo.windowID)/moments/\(incoming.photo.id)/ack",
+                GroupAPIModel.AckPhoto(operationID: UUID().uuidString.lowercased(), ciphertextSHA256: incoming.ciphertextSHA256))
+            return .acknowledged
+        } catch GroupClientError.notMember { return .accessEnded }
+        catch GroupClientError.authenticationRequired { return .authenticationRequired }
+        catch { return .awaitingConnection }
+    }
+
+    /// A sender's interrupted encrypted outbox remains recoverable locally,
+    /// even after server expiry or leaving the window. It never grants access
+    /// to another sender or fetches a newly unauthorized server key.
+    func recoverPendingPhoto(operationID: UUID) throws -> Data {
+        let file = outboxDirectory.appendingPathComponent(operationID.uuidString.lowercased() + ".json")
+        let prepared = try GroupWire.decode(GroupPreparedPhoto.self, Data(contentsOf: file)), identity = try identity()
+        guard prepared.operationID == operationID,
+              let record = try load(GroupLocalWindow.self, "window:" + prepared.windowID),
+              record.rosterHashes[String(prepared.rosterRevision)] == prepared.rosterHash,
+              let raw = record.keys[String(prepared.keyEpoch)], raw.count == 32,
+              prepared.photo.senderDeviceID == (try identity.deviceID) else { throw GroupClientError.invalidResponse }
+        let roster = try GroupRosterVerifier.restoreLocalCheckpoint(prepared.packet, anchor: record.anchor,
+            pinnedRevision: prepared.rosterRevision, pinnedHash: prepared.rosterHash)
+        let jpeg = try GroupPhotoCrypto.open(prepared.photo, roomKey: SymmetricKey(data: raw), roster: roster)
+        guard GroupCanonical.hash(jpeg) == prepared.sourceHash else { throw GroupProtocolError.invalidPhoto }
+        try GroupJPEG.validate(jpeg); return jpeg
     }
 
     /// Caller supplies a copy from the existing JPEG normalization pipeline.
@@ -682,7 +720,8 @@ extension ProductionGroupWindowClient {
             let photo = try GroupPhotoCrypto.seal(normalizedJPEG, clientMomentID: GroupWire.randomID(), senderDeviceID: identity.deviceID,
                 roomKey: SymmetricKey(data: rawKey), signingKey: identity.signingKey, roster: roster)
             prepared = .init(operationID: operationID, commitOperationID: UUID(), windowID: windowID, sourceHash: GroupCanonical.hash(normalizedJPEG),
-                keyEpoch: current.keyEpoch, rosterRevision: current.revision, rosterHash: roster.hash, photo: photo)
+                keyEpoch: current.keyEpoch, rosterRevision: current.revision, rosterHash: roster.hash,
+                packet: record.packet!, photo: photo)
             try FileManager.default.createDirectory(at: outboxDirectory, withIntermediateDirectories: true)
 #if os(iOS)
             try GroupWire.encode(prepared).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
