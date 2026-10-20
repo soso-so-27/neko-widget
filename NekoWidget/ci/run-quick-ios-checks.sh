@@ -39,6 +39,15 @@ xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
   -o "$RUNNER_TEMP/group-window-tests"
 "$RUNNER_TEMP/group-window-tests" ci/fixtures/group-roster-v3.json
 
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \
+  NekoWidget/Services/ProductionGroupWindowClient.swift ci/verify-group-adapter.swift \
+  -o "$RUNNER_TEMP/group-adapter-tests"
+"$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json
+
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do
   output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"
