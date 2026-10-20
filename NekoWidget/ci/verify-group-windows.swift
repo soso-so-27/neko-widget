@@ -44,6 +44,11 @@ private enum GroupWindowChecks {
         let packet = try GroupRosterVerifier.sign(initial, deviceID: a1.id, privateKey: a1.signing)
         let one = try GroupRosterVerifier.verify(packet, anchor: anchor)
         print("GROUP stage initial roster verified")
+        let reordered = GroupRoster(windowID: "room-one", revision: 2, keyEpoch: 1,
+            previousHash: one.hash, ownerPersonID: a.id, members: Array(firstMembers.reversed()))
+        let reorderedVerified = try GroupRosterVerifier.verify(
+            GroupRosterVerifier.sign(reordered, deviceID: a1.id, privateKey: a1.signing), anchor: anchor, previous: one)
+        try check(reorderedVerified.roster.keyEpoch == 1, "array order does not rotate keys")
         let key1 = SymmetricKey(size: .bits256)
         let payload = Data("synthetic-group-photo".utf8)
         let photo = try GroupPhotoCrypto.seal(payload, clientMomentID: "photo-one", senderDeviceID: b1.id,

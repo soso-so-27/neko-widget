@@ -57,6 +57,21 @@ struct GroupRoster: Codable, Equatable, Sendable {
     let ownerPersonID: String
     let members: [GroupRosterMember]
 
+    /// Certificates are validated separately. Ordering or re-signing the same
+    /// device authorization is not a membership/key change.
+    fileprivate func membershipKeyBytes() throws -> Data {
+        var fields = [GroupCanonical.text(ownerPersonID)]
+        for member in members.sorted(by: { $0.participantID < $1.participantID }) {
+            fields += [GroupCanonical.text(member.participantID), GroupCanonical.text(member.personID),
+                       member.identityPublicKey, GroupCanonical.text(member.role.rawValue),
+                       GroupCanonical.text(String(member.devices.count))]
+            for device in member.devices.sorted(by: { $0.id < $1.id }) {
+                fields += [GroupCanonical.text(device.id), device.signingPublicKey, device.hpkePublicKey]
+            }
+        }
+        return try GroupCanonical.fields(fields)
+    }
+
     func canonicalBytes() throws -> Data {
         guard GroupCanonical.validID(windowID), GroupCanonical.validID(ownerPersonID),
               revision > 0, keyEpoch > 0, previousHash.count == 32,
@@ -150,7 +165,9 @@ enum GroupRosterVerifier {
                   oldSigner.device.id == signingDevice.id,
                   oldSigner.device.signingPublicKey == signingDevice.signingPublicKey,
                   oldSigner.device.hpkePublicKey == signingDevice.hpkePublicKey else { throw GroupProtocolError.invalidSignature }
-            if old.members != roster.members && roster.keyEpoch == old.keyEpoch { throw GroupProtocolError.invalidRoster }
+            let oldKeys = try old.membershipKeyBytes()
+            let newKeys = try roster.membershipKeyBytes()
+            if oldKeys != newKeys && roster.keyEpoch == old.keyEpoch { throw GroupProtocolError.invalidRoster }
         } else {
             guard roster.revision == 1, roster.keyEpoch == 1,
                   roster.previousHash == Data(repeating: 0, count: 32) else { throw GroupProtocolError.staleRevision }
