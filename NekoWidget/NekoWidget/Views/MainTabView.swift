@@ -256,6 +256,7 @@ struct MainTabView: View {
     var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
+    @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
@@ -573,6 +574,13 @@ struct MainTabView: View {
             guard isPresented else { return }
             relatedPhotoUsesLibraryScope = false
             relatedPhotoRoute = nil
+            showsSettings = false
+            selectedTab = .windows
+        }
+        .onChange(of: groupWindowOpenInbox.pendingWindowID) { _, windowID in
+            // A group window's home-screen photo: show the まど tab, where
+            // the group list opens that window.
+            guard windowID != nil else { return }
             showsSettings = false
             selectedTab = .windows
         }

@@ -4541,5 +4541,26 @@ class GroupInvitationAssociatedDomainTests(unittest.TestCase):
                 self.assertNotIn("com.apple.developer.associated-domains", plistlib.load(handle))
 
 
+class GroupWidgetOpenTests(unittest.TestCase):
+    def test_home_screen_photo_opens_its_group_window(self) -> None:
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        open_url = section(cache, "static func openURL(windowID: String) -> URL?", "static func windowID(fromOpenURL url: URL)")
+        self.assertIn('components.host = "group-window"', open_url)
+        self.assertIn('URLQueryItem(name: "window", value: windowID)', open_url)
+        parse = section(cache, "static func windowID(fromOpenURL url: URL)", "// MARK: Reading")
+        self.assertIn("items.count == 1", parse)
+        self.assertIn("isValidID(windowID)", parse)
+        entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
+        photo_url = section(entry, "var photoURL: URL? {", "var memoryActionURL: URL?")
+        self.assertLess(photo_url.index("GroupWidgetCache.windowID(fromSourceID:"), photo_url.index("PublicWindowDefinition.windowID"))
+        app = source("NekoWidget/ViewModels/AppViewModel.swift")
+        hook = section(app, "func handleURL(_ url: URL) {", "guard let link = DeepLink(url: url) else {")
+        self.assertIn("GroupWindowOpenInbox.shared.open(windowID: groupWindowID)", hook)
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", screen)
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn(".onChange(of: groupWindowOpenInbox.pendingWindowID)", tab)
+
+
 if __name__ == "__main__":
     unittest.main()

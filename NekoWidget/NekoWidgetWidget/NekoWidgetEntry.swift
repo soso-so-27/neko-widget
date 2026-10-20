@@ -60,6 +60,9 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     var photoURL: URL? {
+        if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {
+            return GroupWidgetCache.openURL(windowID: groupWindowID)
+        }
         if let windowID = PublicWindowDefinition.windowID(from: photoSourceIdentifier) {
             return OfficialWindowRoute(windowID: windowID, photoID: officialPhoto?.id).url
         }

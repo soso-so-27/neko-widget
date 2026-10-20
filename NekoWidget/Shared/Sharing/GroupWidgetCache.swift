@@ -37,6 +37,29 @@ enum GroupWidgetCache {
 
     static func isGroupSourceID(_ id: String) -> Bool { windowID(fromSourceID: id) != nil }
 
+    /// Tapping a group window's home-screen photo opens that window. The URL
+    /// carries only the window ID, never a photo, name, or key.
+    static func openURL(windowID: String) -> URL? {
+        guard isValidID(windowID) else { return nil }
+        var components = URLComponents()
+        components.scheme = "nekowidget"
+        components.host = "group-window"
+        components.queryItems = [URLQueryItem(name: "window", value: windowID)]
+        return components.url
+    }
+
+    static func windowID(fromOpenURL url: URL) -> String? {
+        guard url.scheme?.lowercased() == "nekowidget",
+              url.host?.lowercased() == "group-window",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.path.isEmpty, components.fragment == nil,
+              let items = components.queryItems, items.count == 1,
+              items[0].name == "window", let windowID = items[0].value,
+              isValidID(windowID)
+        else { return nil }
+        return windowID
+    }
+
     // MARK: Reading (Widget and app)
 
     static func entries() -> [Entry] {
