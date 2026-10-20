@@ -251,8 +251,20 @@ final class GroupWindowMembersModel: ObservableObject {
     }
 }
 
+/// Which changes a window's members screen may offer. Today's two-person
+/// window is read-only here; its pairing flow still owns every change.
+struct GroupWindowScreenCapabilities: Equatable, Sendable {
+    var invitations: Bool
+    var leave: Bool
+    var removal: Bool
+
+    static let full = GroupWindowScreenCapabilities(invitations: true, leave: true, removal: true)
+    static let readOnly = GroupWindowScreenCapabilities(invitations: false, leave: false, removal: false)
+}
+
 struct GroupWindowMembersView: View {
     @ObservedObject var model: GroupWindowMembersModel
+    var capabilities: GroupWindowScreenCapabilities = .full
     @Environment(\.dismiss) private var dismiss
     @State private var approvalTarget: GroupJoinRequest?
     @State private var showsApproval = false
@@ -267,10 +279,12 @@ struct GroupWindowMembersView: View {
                 statusSection(window)
                 windowSection(window)
                 membersSection(window)
-                if window.canManage {
+                if capabilities.invitations, window.canManage {
                     invitationSection(window)
                 }
-                leaveSection(window)
+                if capabilities.leave {
+                    leaveSection(window)
+                }
             } else if let message = model.loadFailureMessage {
                 Section {
                     Label(message, systemImage: "exclamationmark.triangle")
@@ -286,7 +300,9 @@ struct GroupWindowMembersView: View {
                 }
             }
         }
-        .navigationTitle(model.window?.canManage == true ? "メンバーと招待" : "メンバー")
+        .navigationTitle(
+            capabilities.invitations && model.window?.canManage == true ? "メンバーと招待" : "メンバー"
+        )
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load() }
         .task(id: model.shouldAutoRefresh) {
@@ -417,7 +433,8 @@ struct GroupWindowMembersView: View {
     }
 
     private func memberRow(_ member: GroupMember, window: GroupWindow) -> some View {
-        let canRemove = window.canManage
+        let canRemove = capabilities.removal
+            && window.canManage
             && member.role != .owner
             && member.id != window.myParticipantID
         return HStack(spacing: 12) {
@@ -791,6 +808,129 @@ struct GroupJoinView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+// MARK: - Today's two-person window through the same boundary
+
+/// Read-only view of the current two-person window as a group, so the
+/// members screen exists before the relay does (1-5). Every change is
+/// refused as unavailable; the pairing flow still owns connection changes.
+/// Names are placeholders until the group roster carries display names.
+struct LegacyPairingGroupWindowClient: GroupWindowClient {
+    struct Snapshot: Equatable, Sendable {
+        let windowID: String
+        let name: String
+        let myParticipantID: String
+        let peerParticipantID: String?
+        let isOwner: Bool
+        let isClosed: Bool
+    }
+
+    let snapshot: Snapshot
+
+    private var window: GroupWindow {
+        var members = [
+            GroupMember(
+                id: snapshot.myParticipantID,
+                personID: snapshot.myParticipantID,
+                displayName: "自分",
+                role: snapshot.isOwner ? .owner : .member,
+                state: .active,
+                devices: [GroupDevice(id: "this-iphone", displayName: "このiPhone", isThisDevice: true)]
+            ),
+        ]
+        if let peer = snapshot.peerParticipantID {
+            members.append(GroupMember(
+                id: peer,
+                personID: peer,
+                displayName: "相手",
+                role: snapshot.isOwner ? .member : .owner,
+                state: .active,
+                devices: [GroupDevice(id: "peer-iphone", displayName: "iPhone", isThisDevice: false)]
+            ))
+        }
+        return GroupWindow(
+            id: snapshot.windowID,
+            name: snapshot.name,
+            revision: 0,
+            keyEpoch: 0,
+            myParticipantID: snapshot.myParticipantID,
+            myRole: snapshot.isOwner ? .owner : .member,
+            state: snapshot.isClosed ? .closed : .active,
+            members: members
+        )
+    }
+
+    private func validate(_ id: String) throws {
+        guard id == snapshot.windowID else { throw GroupClientError.notMember }
+    }
+
+    func windows() async throws -> [GroupWindow] { [window] }
+    func window(id: String) async throws -> GroupWindow { try validate(id); return window }
+    func createWindow(name: String, operationID: UUID) async throws -> GroupWindow {
+        throw GroupClientError.unavailable
+    }
+    func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation {
+        throw GroupClientError.unavailable
+    }
+    func revokeInvitation(id: String, windowID: String, operation: GroupOperation) async throws {
+        throw GroupClientError.unavailable
+    }
+    func apply(invitationID: String, displayName: String, operationID: UUID) async throws -> GroupJoinRequest {
+        throw GroupClientError.unavailable
+    }
+    func joinStatus(requestID: String) async throws -> GroupJoinRequest {
+        throw GroupClientError.unavailable
+    }
+    func pendingRequests(windowID: String) async throws -> [GroupJoinRequest] {
+        try validate(windowID)
+        return []
+    }
+    func approve(requestID: String, windowID: String, operation: GroupOperation) async throws -> GroupWindow {
+        throw GroupClientError.unavailable
+    }
+    func reject(requestID: String, windowID: String, operation: GroupOperation) async throws {
+        throw GroupClientError.unavailable
+    }
+    func cancel(requestID: String, operationID: UUID) async throws {
+        throw GroupClientError.unavailable
+    }
+    func addDevice(participantID: String, windowID: String, displayName: String,
+                   operation: GroupOperation) async throws -> GroupWindow {
+        throw GroupClientError.unavailable
+    }
+    func removeMember(participantID: String, windowID: String,
+                      operation: GroupOperation) async throws -> GroupWindow {
+        throw GroupClientError.unavailable
+    }
+    func leave(windowID: String, operation: GroupOperation) async throws {
+        throw GroupClientError.unavailable
+    }
+    func photos(windowID: String) async throws -> [GroupPhoto] {
+        try validate(windowID)
+        return []
+    }
+    func setHeart(photoID: String, windowID: String, active: Bool,
+                  operationID: UUID) async throws -> GroupPhoto {
+        throw GroupClientError.unavailable
+    }
+}
+
+/// The settings entry for today's window. Owns the model so the list is not
+/// rebuilt while the parent settings screen re-renders.
+struct LegacyWindowMembersScreen: View {
+    @StateObject private var model: GroupWindowMembersModel
+
+    init(snapshot: LegacyPairingGroupWindowClient.Snapshot) {
+        _model = StateObject(wrappedValue: GroupWindowMembersModel(
+            client: LegacyPairingGroupWindowClient(snapshot: snapshot),
+            windowID: snapshot.windowID
+        ))
+    }
+
+    var body: some View {
+        GroupWindowMembersView(model: model, capabilities: .readOnly)
     }
 }
 

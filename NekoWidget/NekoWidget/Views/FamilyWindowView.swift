@@ -1647,6 +1647,7 @@ struct FamilyWindowView: View {
                     Text("まどの管理")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
+                    windowMembersLink
                     sharingManagementLink
                     if WindowSupportResumeAvailability.isEnabled {
                         Button(action: openWindowSupport) {
@@ -2068,6 +2069,49 @@ struct FamilyWindowView: View {
 #endif
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+
+    /// Today's two people, shown through the group members screen (1-5) so
+    /// the same place lists everyone once windows hold more than two.
+    private var legacyMembersSnapshot: LegacyPairingGroupWindowClient.Snapshot {
+        let state = model.pairingState
+        return LegacyPairingGroupWindowClient.Snapshot(
+            windowID: state?.spaceID ?? "legacy-window",
+            name: model.windowDisplayName,
+            myParticipantID: state?.participantID ?? "this-iphone",
+            peerParticipantID: state?.peerParticipantID,
+            isOwner: state?.role == .inviter,
+            isClosed: model.isReportOnly
+        )
+    }
+
+    private var windowMembersLink: some View {
+        NavigationLink {
+            LegacyWindowMembersScreen(snapshot: legacyMembersSnapshot)
+        } label: {
+            HStack(spacing: 12) {
+                settingsSymbol("person.2")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("メンバー")
+                        .font(.subheadline.weight(.semibold))
+                    Text(legacyMembersSnapshot.peerParticipantID == nil ? "あなただけ" : "2人")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                settingsChevron
+            }
+            .frame(minHeight: 44)
+            .padding(14)
+            .background(
+                Color(uiColor: .secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 16)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("このまどに参加している人を確認します")
+        .accessibilityIdentifier("family-window-members")
     }
 
     private var sharingManagementLink: some View {

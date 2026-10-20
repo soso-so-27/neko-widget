@@ -3555,6 +3555,17 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("notificationSettingsCard", settings)
         self.assertIn("privacyDisclosure", settings)
         self.assertLess(settings.index("widgetDisplaySettingsButton"), settings.index("notificationSettingsCard"))
+        # 1-5: the member list lives in the window settings, ahead of the
+        # connection screen, and reads today's pair through the group boundary.
+        self.assertLess(settings.index("windowMembersLink"), settings.index("sharingManagementLink"))
+        members_link = section(family, "private var windowMembersLink: some View", "private var sharingManagementLink: some View")
+        self.assertIn('Text("メンバー")', members_link)
+        self.assertIn("LegacyWindowMembersScreen(snapshot: legacyMembersSnapshot)", members_link)
+        self.assertIn('"family-window-members"', members_link)
+        snapshot = section(family, "private var legacyMembersSnapshot:", "private var windowMembersLink: some View")
+        self.assertIn("state?.peerParticipantID", snapshot)
+        self.assertIn("isOwner: state?.role == .inviter", snapshot)
+        self.assertIn("isClosed: model.isReportOnly", snapshot)
         self.assertLess(settings.index("notificationSettingsCard"), settings.index("sharingManagementLink"))
         self.assertLess(settings.index("sharingManagementLink"), settings.index("privacyDisclosure"))
         self.assertIn('Text("表示と通知")', settings)
@@ -4271,6 +4282,18 @@ class GroupWindowUITests(unittest.TestCase):
         self.assertEqual(family.count("GroupWindowUIFixture"), 2)
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         self.assertIn("GroupWindowSetupView.swift in Sources", project)
+
+        # Today's two-person window is read-only through the same boundary:
+        # every change is refused, and the screen hides what it cannot do.
+        legacy = section(view, "struct LegacyPairingGroupWindowClient: GroupWindowClient", "struct LegacyWindowMembersScreen: View")
+        self.assertEqual(legacy.count("throw GroupClientError.unavailable"), 12)
+        self.assertNotIn("URLSession", legacy)
+        self.assertIn('displayName: "自分"', legacy)
+        self.assertIn('displayName: "相手"', legacy)
+        self.assertIn("GroupWindowMembersView(model: model, capabilities: .readOnly)", view)
+        self.assertIn("if capabilities.invitations, window.canManage {", view)
+        self.assertIn("if capabilities.leave {", view)
+        self.assertIn("let canRemove = capabilities.removal", view)
 
 
 if __name__ == "__main__":
