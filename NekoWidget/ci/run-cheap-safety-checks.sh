@@ -73,8 +73,10 @@ xcrun --sdk macosx swiftc \
 # caller of the sheet (or of the prompt that opens it) must be added here on
 # purpose; photo access, invitations, receiving, hearts, and favorites never are.
 # PairingView and AppRootView are reserved for the window and Widget entries.
+# GroupWindowSetupView opens it only for "このまどを続ける" (continueWindow).
 plus_offer_allowed="NekoWidget/App/AppRootView.swift
 NekoWidget/Services/MembershipOfferModel.swift
+NekoWidget/Views/GroupWindowSetupView.swift
 NekoWidget/Views/MainTabView.swift
 NekoWidget/Views/ManagedPreservationView.swift
 NekoWidget/Views/OnboardingView.swift
