@@ -497,6 +497,55 @@ final class GroupWindowListModel: ObservableObject {
     }
 }
 
+/// Creating a window for several people. Reached from 「相手とつなぐ」, next to
+/// the one-person window, so both start from the same place.
+struct GroupWindowCreateScreen: View {
+    @StateObject private var model: GroupWindowListModel
+    @State private var name = ""
+    @State private var createdWindowID: String?
+
+    init(client: ProductionGroupWindowClient) {
+        _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
+    }
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("例：実家のまど", text: $name)
+                    .accessibilityIdentifier("group-window-create-name")
+            } header: { Text("まどの名前") }
+              footer: { Text("名前はメンバー全員に表示されます。作ったら、招待リンクを送りましょう。") }
+            if let message = model.message {
+                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+            }
+        }
+        .navigationTitle("家族・友だちとまどを作る")
+        .navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(model.message)
+        .safeAreaInset(edge: .bottom) {
+            Button {
+                Task { createdWindowID = await model.create(name: trimmed)?.id }
+            } label: {
+                Text("作る").frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(trimmed.isEmpty || model.isWorking)
+            .accessibilityIdentifier("group-window-create-confirm")
+            .padding().background(.regularMaterial)
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { createdWindowID != nil },
+            set: { if !$0 { createdWindowID = nil } }
+        )) {
+            if let createdWindowID {
+                GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
+            }
+        }
+    }
+}
+
 /// Shown in the まど tab only in builds with group windows turned on.
 struct GroupWindowListSection: View {
     @StateObject private var model: GroupWindowListModel
@@ -510,7 +559,7 @@ struct GroupWindowListSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("グループのまど")
+            Text("家族・友だちのまど")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
@@ -529,7 +578,7 @@ struct GroupWindowListSection: View {
                 nameDraft = ""
                 showsNameEntry = true
             } label: {
-                Label("グループのまどを作る", systemImage: "plus")
+                Label("家族・友だちとまどを作る", systemImage: "plus")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)

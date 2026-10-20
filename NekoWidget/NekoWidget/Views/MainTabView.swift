@@ -2973,7 +2973,19 @@ private struct WindowListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("window-list-product-limit")
         } else {
-            setupAction("新しいまどを作る", path: .create, identifier: "window-list-create")
+            if let groupClient = GroupWindowClientProvider.production {
+                // One place to start a window: for one person, or for family and friends.
+                setupAction("1人の相手とまどを作る", path: .create, identifier: "window-list-create")
+                NavigationLink { GroupWindowCreateScreen(client: groupClient) } label: {
+                    Text("家族・友だちとまどを作る（\(GroupWindowPresentation.memberLimit)人まで）")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.isWorking || pausesWindowChanges)
+                .accessibilityIdentifier("window-list-create-group")
+            } else {
+                setupAction("新しいまどを作る", path: .create, identifier: "window-list-create")
+            }
             setupAction("招待されたまどに参加", path: .join, identifier: "window-list-join")
             setupAction("以前のまどにこのiPhoneを追加", path: .recover, identifier: "window-list-recover")
         }

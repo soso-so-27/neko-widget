@@ -4847,5 +4847,18 @@ class GroupWindowUsabilityTests(unittest.TestCase):
         self.assertIn('parts.append("ハートあり")', window)
 
 
+class WindowCreationEntryTests(unittest.TestCase):
+    def test_both_kinds_of_window_start_from_the_same_place(self) -> None:
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        add = section(tab, "// One place to start a window", 'setupAction("招待されたまどに参加"')
+        self.assertIn('setupAction("1人の相手とまどを作る"', add)
+        self.assertIn("GroupWindowCreateScreen(client: groupClient)", add)
+        self.assertIn('setupAction("新しいまどを作る"', add)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertNotIn("グループのまど", window)
+        create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
+        self.assertIn("GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)", create)
+
+
 if __name__ == "__main__":
     unittest.main()
