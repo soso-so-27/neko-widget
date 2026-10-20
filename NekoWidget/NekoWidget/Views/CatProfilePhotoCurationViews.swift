@@ -111,7 +111,7 @@ struct CatProfileDetailView: View {
                         profiles: allProfiles
                     )
                 } label: {
-                    Label("迷子への備え", systemImage: "pawprint")
+                    Label("迷子のとき", systemImage: "pawprint")
                 }
             } footer: {
                 Text("この子の写真と特徴を用意しておくと、必要なときに渡す画像を作れます。")
