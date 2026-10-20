@@ -247,8 +247,10 @@ struct GroupWindowScreen: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 2) {
                         ForEach(model.entries) { entry in
-                            GroupPhotoTile(model: model, entry: entry)
-                                .onTapGesture { openedEntry = entry }
+                            Button { openedEntry = entry } label: {
+                                GroupPhotoTile(model: model, entry: entry)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -359,13 +361,25 @@ private struct GroupPhotoTile: View {
                     Image(systemName: "heart.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
-                        .padding(6)
+                        .padding(4)
+                        .background(.white.opacity(0.85), in: Circle())
+                        .padding(4)
                 }
             }
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから届いた写真")
+            .accessibilityLabel(tileLabel)
+            .accessibilityHint("押すと大きく見て、ハートを送れます")
             .task { url = await model.imageURL(for: entry) }
+    }
+}
+
+private extension GroupPhotoTile {
+    var tileLabel: String {
+        var parts = [entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから届いた写真"]
+        if entry.isHidden { parts.append("表示していない写真") }
+        if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
+        return parts.joined(separator: "、")
     }
 }
 

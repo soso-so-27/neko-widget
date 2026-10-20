@@ -3086,14 +3086,15 @@ private struct WindowListView: View {
                             if isSwitching {
                                 ProgressView().padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             } else if windowErrors.contains(window.localWindowID) {
-                                Image(systemName: "exclamationmark.circle.fill")
+                                Label("開けませんでした", systemImage: "exclamationmark.circle.fill")
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(.orange)
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }
                         }
                         .overlay(alignment: .bottomLeading) {
                             if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
-                                Label("\(pendingCount.formatted())", systemImage: "clock")
+                                Label("\(pendingCount.formatted())枚 準備中", systemImage: "clock")
                                     .font(.caption.weight(.semibold))
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }

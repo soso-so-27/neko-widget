@@ -373,7 +373,7 @@ struct PairingView: View {
             refreshSection(state)
             cancelSection
         case .approvalRequired:
-            phraseSection(state, title: "確認フレーズを照合")
+            phraseSection(state, title: "確認の言葉を照らし合わせる")
             Section {
                 Toggle("相手の画面と同じフレーズです", isOn: $model.hasConfirmedPhrase)
                 Button {
@@ -396,7 +396,7 @@ struct PairingView: View {
                 Label("相手と接続済み", systemImage: "checkmark.seal.fill")
                     .foregroundStyle(.green)
                 if let phrase = state.verificationPhrase {
-                    DisclosureGroup("確認フレーズ") {
+                    DisclosureGroup("確認の言葉") {
                         Text(phrase)
                             .font(.caption)
                             .lineLimit(nil)

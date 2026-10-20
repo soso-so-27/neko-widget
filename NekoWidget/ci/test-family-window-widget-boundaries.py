@@ -4260,11 +4260,11 @@ class GroupWindowUITests(unittest.TestCase):
         for expected in (
             "このまどは\\(memberLimit)人までです。",
             "1人が使えるiPhoneは\\(deviceLimitPerPerson)台までです。",
-            "まどは合計\\(totalWindowLimit)までです。使っていないまどを整理してください。",
-            "鍵を更新するため、作った人の接続を待っています。",
+            "まどは全部で\\(totalWindowLimit)個までです。",
+            "まどを作った人がアプリを開くと、続けられます。",
             "招待の期限が切れました。新しい招待を受け取ってください。",
             "接続できません。申し込みは残っています。",
-            "作った人は退出できません。",
+            "まどを作った人は抜けられません。",
         ):
             self.assertIn(expected, presentation)
         # People, iPhones and the total are never a paid lever. (Creating and
@@ -4829,6 +4829,22 @@ class ToolAccessibilityTests(unittest.TestCase):
         # Showcase has previous and next buttons as well as swiping.
         self.assertIn('.accessibilityLabel("前の写真")', showcase)
         self.assertIn('.accessibilityLabel("次の写真")', showcase)
+
+
+class GroupWindowUsabilityTests(unittest.TestCase):
+    def test_group_window_plain_words_buttons_and_labels(self) -> None:
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        # Plain words: no keys, no "却下", one name for the phrase.
+        for word in ("鍵を", "却下", "確認語", "今後の版"):
+            self.assertNotIn(word, setup)
+        self.assertIn('Text("断る")', setup)
+        # Removing a member has a visible button and a VoiceOver action, not only a swipe.
+        self.assertIn('"group-window-remove-member"', setup)
+        self.assertIn('.accessibilityAction(named: Text("外す"))', setup)
+        # Photo tiles are buttons and say whether they have a heart.
+        self.assertNotIn(".onTapGesture { openedEntry = entry }", window)
+        self.assertIn('parts.append("ハートあり")', window)
 
 
 if __name__ == "__main__":
