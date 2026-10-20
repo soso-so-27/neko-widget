@@ -204,16 +204,14 @@ private struct VeterinaryConsultationView: View {
                           systemImage: "cat").font(.headline)
                     if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
                 }
-                Section {
-                    VeterinaryCatCareFields(fields: CatCareSummary.veterinaryFields(
+                ToolCatCareSection(
+                    title: "この子のこと（自動で載ります）",
+                    lines: CatCareSummary.veterinaryFields(
                         CatCareSummary.record(profileIdentifier: visit.catID.uuidString),
-                        household: catCareStore.state?.household))
-                    if let profile = profiles.first(where: { $0.identifier == visit.catID.uuidString }) {
-                        NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
-                            .accessibilityIdentifier("vet-open-cat-care")
-                    }
-                } header: { Text("この子のこと（自動で載ります）") }
-                  footer: { Text("薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。医療の判断ではありません。") }
+                        household: catCareStore.state?.household),
+                    profile: profiles.first(where: { $0.identifier == visit.catID.uuidString }),
+                    footer: "薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。医療の判断ではありません。",
+                    identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care")
                 if visit.completedAt == nil {
                     Section {
                         TextField("家で気付いたこと", text: $observations, axis: .vertical).lineLimit(3...8)
@@ -251,7 +249,9 @@ private struct VeterinaryConsultationView: View {
                 } header: { Text("見せる記録 · \(visit.entries.count)件") }
                   footer: { Text("選んだ時点の控えです。元のメモを編集しても自動では変わりません。外しても元の写真・メモは残ります。") }
                 Section {
-
+                    ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
+                }
+                Section {
                     if visit.completedAt == nil {
                         Button("診察済みとして残す", systemImage: "checkmark") { finishing = true }.disabled(changes)
                     }

@@ -586,6 +586,53 @@ struct CatCareListEntrySheet: View {
     }
 }
 
+/// ② of every tool: what 「この子のこと」 fills in, read only, and one way to
+/// change it there. Tools never write these values themselves.
+struct ToolCatCareSection<Extra: View>: View {
+    let title: String
+    let lines: [(String, String)]
+    let profile: CatProfilePresentation?
+    let footer: String?
+    let identifier: String
+    let editIdentifier: String
+    let extra: () -> Extra
+
+    init(title: String, lines: [(String, String)], profile: CatProfilePresentation?, footer: String? = nil,
+         identifier: String, editIdentifier: String, @ViewBuilder extra: @escaping () -> Extra) {
+        self.title = title; self.lines = lines; self.profile = profile; self.footer = footer
+        self.identifier = identifier; self.editIdentifier = editIdentifier; self.extra = extra
+    }
+
+    var body: some View {
+        Section {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(line.0).font(.subheadline).foregroundStyle(.secondary)
+                    Text(line.1).font(.body).textSelection(.enabled)
+                }
+            }
+            .accessibilityIdentifier(identifier)
+            if lines.isEmpty {
+                Text("「この子のこと」に書くと、ここに載ります。").foregroundStyle(.secondary)
+            }
+            extra()
+            if let profile {
+                NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
+                    .accessibilityIdentifier(editIdentifier)
+            }
+        } header: { Text(title) }
+          footer: { if let footer { Text(footer) } }
+    }
+}
+
+extension ToolCatCareSection where Extra == EmptyView {
+    init(title: String, lines: [(String, String)], profile: CatProfilePresentation?, footer: String? = nil,
+         identifier: String, editIdentifier: String) {
+        self.init(title: title, lines: lines, profile: profile, footer: footer,
+                  identifier: identifier, editIdentifier: editIdentifier) { EmptyView() }
+    }
+}
+
 /// The system camera. Nothing is written to the Photos library.
 private struct CatCareCameraView: UIViewControllerRepresentable {
     let done: (UIImage?) -> Void

@@ -394,6 +394,13 @@ private struct EvacuationCatView: View {
                     } label: { Label("写真やこの子の情報を編集", systemImage: "pencil") }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 }
+                ToolCatCareSection(
+                    title: "この子のこと",
+                    lines: CatCareSummary.evacuationFields(
+                        CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)),
+                    profile: profiles.first(where: { $0.identifier == cat.profileID }),
+                    footer: "「見せる内容」で「ワクチン・マイクロチップ」を選ぶと、証明の写真と一緒に載ります。",
+                    identifier: "evacuation-cat-care-fields", editIdentifier: "evacuation-open-cat-care")
                 Section("見せる内容") {
                     Toggle("いつものごはん", isOn: $disclosure.food)
                     Toggle("接し方・苦手なこと", isOn: $disclosure.handling)
@@ -404,16 +411,9 @@ private struct EvacuationCatView: View {
                         .accessibilityIdentifier("evacuation-disclose-cat-care")
                 }
                 Section {
-                    Button("この内容を大きく見せる") {
-                        do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure)); error = nil }
-                        catch {
-                            self.error = (error as? EvacuationStorageError)?.errorDescription
-                                ?? "表示する記録を開けませんでした。元の記録は変更していません。"
-                        }
-                    }.accessibilityIdentifier("evacuation-preview-open")
-                        .disabled(store.saveError != nil)
                     if let error { Text(error).foregroundStyle(.red) }
-                } footer: { Text("写真・名前・特徴は表示します。病歴や連絡先は、必要な相手にだけ見せてください。") }
+                    ToolImportantInformation(text: "写真・名前・特徴は表示します。病歴や連絡先は、必要な相手にだけ見せてください。避難先の受入条件は、自治体や施設に確かめてください。")
+                }
                 Section {
                     Text("内容確認日：" + (cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
                         .font(.footnote).foregroundStyle(.secondary)
@@ -429,6 +429,21 @@ private struct EvacuationCatView: View {
                 }
             }
         }.navigationTitle("猫の情報を見せる").navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure)); error = nil }
+                    catch {
+                        self.error = (error as? EvacuationStorageError)?.errorDescription
+                            ?? "表示する記録を開けませんでした。元の記録は変更していません。"
+                    }
+                } label: {
+                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(store.saveError != nil || cat == nil)
+                .accessibilityIdentifier("evacuation-preview-open")
+                .padding().background(.regularMaterial)
+            }
             .navigationDestination(item: $preview) { EvacuationDisplayView(record: $0.record) }
             .confirmationDialog("この子の避難用の記録を削除しますか？", isPresented: $deleteRequested, titleVisibility: .visible) {
                 Button("避難用の記録を削除", role: .destructive) {

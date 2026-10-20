@@ -4586,7 +4586,7 @@ class VeterinaryCatCareTests(unittest.TestCase):
         view = source("NekoWidget/Views/VeterinaryVisitView.swift")
         summary = source("NekoWidget/Views/CatCareView.swift")
         self.assertIn("CatCareSummary.veterinaryFields(", view)
-        self.assertIn('NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }', view)
+        self.assertIn('editIdentifier: "vet-open-cat-care"', view)
         self.assertNotIn("以前の薬やお世話情報は自動で入りません", view)
         # Matched by the saved identity, never by name.
         self.assertIn("CatCareSummary.record(profileIdentifier: visit.catID.uuidString)", view)
@@ -4619,7 +4619,7 @@ class LostCatCatCareTests(unittest.TestCase):
         report = section(view, "@ViewBuilder private var reportSection", "private var catCareRecord")
         self.assertIn("CatCareSummary.lostCatReportFields(catCareRecord)", report)
         self.assertIn("チラシ・画像には載りません", report)
-        self.assertIn("CatCareEntryView(profiles: [profile])", report)
+        self.assertIn('editIdentifier: "lost-cat-open-cat-care"', report)
         fields = section(summary, "static func lostCatReportFields(", "/// Newest first")
         self.assertIn('("マイクロチップ番号", text(record?.microchip?.value))', fields)
         # The flyer line says only that there is a chip.
@@ -4696,7 +4696,7 @@ class CareHandoffCatCareTests(unittest.TestCase):
         self.assertIn("medicine.dose, medicine.schedule", health)
         # The editor only shows them; 「この子のこと」 stays the one place to change them.
         editor = section(view, "@ViewBuilder private func catCareSection(", "var body: some View {")
-        self.assertIn("CatCareEntryView(profiles: [profile])", editor)
+        self.assertIn('editIdentifier: "care-open-cat-care"', editor)
         self.assertNotIn("CatCareStore.shared.update", view)
 
 
@@ -4745,6 +4745,25 @@ class CatCareProofCameraTests(unittest.TestCase):
             self.assertNotIn(forbidden, view)
         self.assertIn('origin: .camera', view)
         self.assertIn("UIImagePickerController.isSourceTypeAvailable(.camera)", view)
+
+
+class ToolTemplateTests(unittest.TestCase):
+    def test_tools_share_the_cat_care_section_and_a_bottom_preview(self) -> None:
+        shared = section(source("NekoWidget/Views/CatCareView.swift"), "struct ToolCatCareSection<Extra: View>", "/// The system camera.")
+        self.assertIn('NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }', shared)
+        self.assertNotIn("CatCareStore.shared.update", shared)
+        for path in ("NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
+                     "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
+            text = source(path)
+            self.assertIn("ToolCatCareSection(", text, path)
+            self.assertIn("ToolImportantInformation(", text, path)
+        care = source("NekoWidget/Views/CareHandoffView.swift")
+        # ② comes before ③ in 預けるとき.
+        self.assertLess(care.index("catCareSection(cat)"), care.index('CareField(label: "まず伝えたいこと"'))
+        evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        bottom = section(evacuation, '.navigationTitle("猫の情報を見せる")', ".navigationDestination(item: $preview)")
+        self.assertIn('"evacuation-preview-open"', bottom)
+        self.assertIn(".safeAreaInset(edge: .bottom)", bottom)
 
 
 if __name__ == "__main__":

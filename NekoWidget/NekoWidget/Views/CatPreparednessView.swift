@@ -194,6 +194,9 @@ struct LostCatDraftView: View {
             incidentSection.disabled(!loaded)
             contactSection.disabled(!loaded)
             reportSection
+            Section {
+                ToolImportantInformation(text: "連絡先は画像・チラシで公開されます。チラシを貼るときは、場所の管理者に確かめてください。届け出は、いなくなった地域の警察・保健所・動物愛護センターへ。")
+            }
             if candidateRefreshError {
                 Section {
                     Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
@@ -427,22 +430,15 @@ struct LostCatDraftView: View {
     @ViewBuilder private var reportSection: some View {
         if let profile = profiles.first(where: { $0.identifier == key }) {
             let fields = CatCareSummary.lostCatReportFields(catCareRecord)
-            Section {
-                ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
-                    LabeledContent(field.0) {
-                        Text(field.1).multilineTextAlignment(.trailing).textSelection(.enabled)
-                    }
-                }
+            ToolCatCareSection(title: "届け出に使う情報", lines: fields, profile: profile,
+                               footer: "チラシ・画像には載りません。警察・保健所・動物愛護センターに伝えるときに使えます。",
+                               identifier: "lost-cat-report", editIdentifier: "lost-cat-open-cat-care") {
                 Button("まとめてコピー", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = ([profile.displayName] + fields.map { "\($0.0)：\($0.1)" })
                         .joined(separator: "\n")
                 }
                 .accessibilityIdentifier("lost-cat-copy-report")
-                NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
-                    .accessibilityIdentifier("lost-cat-open-cat-care")
-            } header: { Text("届け出に使う情報") }
-              footer: { Text("チラシ・画像には載りません。警察・保健所・動物愛護センターに伝えるときに使えます。") }
-            .accessibilityIdentifier("lost-cat-report")
+            }
         }
     }
 

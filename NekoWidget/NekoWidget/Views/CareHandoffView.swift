@@ -190,17 +190,9 @@ private struct CareCatEditor: View {
             + CatCareSummary.careHandoffHealthFields(care)
         let profile = profiles.first(where: { $0.identifier == cat.profileID })
         if !lines.isEmpty || profile != nil {
-            Section {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    LabeledContent(line.0) { Text(line.1).multilineTextAlignment(.trailing) }
-                }
-                if lines.isEmpty { Text("年齢・体重・薬を「この子のこと」に書くと、ここに載ります。").foregroundStyle(.secondary) }
-                if let profile {
-                    NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
-                        .accessibilityIdentifier("care-open-cat-care")
-                }
-            } header: { Text("「この子のこと」から載ること") }
-              footer: { Text("年齢・体重はいつも載ります。薬とアレルギーは「薬・アレルギーを含める」を選んだときだけ載ります。") }
+            ToolCatCareSection(title: "「この子のこと」から載ること", lines: lines, profile: profile,
+                               footer: "年齢・体重はいつも載ります。薬とアレルギーは「薬・アレルギーを含める」を選んだときだけ載ります。",
+                               identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care")
         }
     }
 
@@ -230,6 +222,7 @@ private struct CareCatEditor: View {
                     Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                catCareSection(cat)
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
                     CareField(label: "こんな時は連絡を", example: "例：丸1日ごはんを食べない、何度も吐く、トイレに行くのに出ていない",
@@ -251,7 +244,6 @@ private struct CareCatEditor: View {
                     }
                     .accessibilityIdentifier("care-call-when-choices")
                 } footer: { Text("「こんな時は連絡を」は、預かる人が迷わないための目安です。") }
-                catCareSection(cat)
                 if cat.usualFood != nil {
                     Section {
                         CareField(label: "いつものごはん", example: "フード名・普段の量など", identifier: "care-usual-food",
