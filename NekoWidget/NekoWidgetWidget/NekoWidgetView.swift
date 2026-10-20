@@ -526,6 +526,11 @@ struct NekoWidgetView: View {
             // Waiting also follows the expiry of a previously displayed photo.
             return "写真を待っています"
         }
+        if let windowID = GroupWidgetCache.windowID(fromSourceID: entry.photoSourceIdentifier) {
+            // A group window says why it is empty: stopped, or nothing sent yet.
+            return GroupWidgetCache.entry(windowID: windowID)?.isPaused == true
+                ? "このまどは止まっています" : "まだ写真が届いていません"
+        }
         return "写真を準備しています"
     }
 
@@ -537,7 +542,8 @@ struct NekoWidgetView: View {
         if effectiveEmptyStateReason == .needsApp {
             return "アプリを開いて更新"
         }
-        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
+            || GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier) {
             return entry.windowDisplayName
         }
         return "タップしてアプリを開く"

@@ -4996,5 +4996,18 @@ class SettingsLayoutTests(unittest.TestCase):
             self.assertNotIn(old, settings)
 
 
+class WidgetSourceOrderTests(unittest.TestCase):
+    def test_shared_windows_first_and_group_empty_states_say_why(self) -> None:
+        intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
+        sources = section(intent, "static var availableSources: [WidgetPhotoSource] {", "static func groupWindow(")
+        self.assertLess(sources.index("GroupWidgetCache.entries()"), sources.index("sources.append(.personalLibrary)"))
+        self.assertLess(sources.index("sources.append(.personalLibrary)"), sources.index("OfficialWindowConfiguration.definitions"))
+        self.assertIn(".filter { $0.endpoint != nil }", sources)
+        # New widgets still start on this iPhone's photos.
+        self.assertIn("func defaultResult() async -> WidgetPhotoSource? {\n        .personalLibrary", intent)
+        view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        self.assertIn('"このまどは止まっています" : "まだ写真が届いていません"', view)
+
+
 if __name__ == "__main__":
     unittest.main()
