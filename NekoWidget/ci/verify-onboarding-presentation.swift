@@ -3,7 +3,8 @@ import Foundation
 @main
 enum OnboardingPresentationVerifier {
     static func main() throws {
-        try verifiesExactlyFourPagesInTheApprovedOrder()
+        try verifiesPagesInTheApprovedOrder()
+        try verifiesPlusOfferIsTheLastSkippablePage()
         try verifiesApprovedJapaneseCopy()
         try verifiesOrdinaryFirstRunTransitions()
         try verifiesPermissionSkipEntersTheApp()
@@ -36,16 +37,71 @@ enum OnboardingPresentationVerifier {
                     "the no-result failure became a partial-result screen")
     }
 
-    private static func verifiesExactlyFourPagesInTheApprovedOrder() throws {
+    private static func verifiesPagesInTheApprovedOrder() throws {
         try require(
             OnboardingPresentationPage.allCases == [
                 .purpose,
                 .photoPermission,
                 .scanResult,
-                .widgetGuide
+                .widgetGuide,
+                .plusOffer
             ],
-            "onboarding stopped being the approved four-page flow"
+            "onboarding stopped being the approved flow (four pages and the optional Plus page)"
         )
+        try require(OnboardingPresentationPage.widgetGuide.rawValue == 3,
+                    "persisted Widget-guide progress changed meaning")
+    }
+
+    /// ADR-027: the Plus page is last, optional, and never in the way of
+    /// Photos access or the scan. Without Plus configured the flow is unchanged.
+    private static func verifiesPlusOfferIsTheLastSkippablePage() throws {
+        var state = OnboardingPresentationState(offersPlus: true)
+        state.advance()
+        state.advance()
+        state.advance()
+        try require(state.currentPage == .widgetGuide, "Plus moved ahead of the Widget guide")
+        state.advance()
+        try require(state.currentPage == .plusOffer, "Widget guide did not lead to the Plus page")
+        try require(!state.isFirstRunComplete, "the Plus page completed onboarding before it was seen")
+        try require(state.resumePageIndex == OnboardingPresentationPage.plusOffer.rawValue,
+                    "the Plus page was not resumable")
+        state.skipPlusOffer()
+        try require(!state.isPresented && state.isFirstRunComplete, "one tap on later did not enter the app")
+
+        var afterPurchase = OnboardingPresentationState(persistedResumePageIndex: 4, offersPlus: true)
+        try require(afterPurchase.currentPage == .plusOffer, "Plus page progress was discarded")
+        afterPurchase.advance()
+        try require(!afterPurchase.isPresented && afterPurchase.isFirstRunComplete,
+                    "finishing the Plus page did not enter the app")
+
+        var widgetLater = OnboardingPresentationState(persistedResumePageIndex: 3, offersPlus: true)
+        widgetLater.skipWidgetGuide()
+        try require(widgetLater.currentPage == .plusOffer, "Widget later skipped the optional Plus page")
+
+        var permissionSkip = OnboardingPresentationState(persistedResumePageIndex: 1, offersPlus: true)
+        permissionSkip.skipPhotoPermission()
+        try require(!permissionSkip.isPresented && permissionSkip.isFirstRunComplete,
+                    "skipping Photos access was followed by a Plus page")
+
+        var noPhoto = OnboardingPresentationState(persistedResumePageIndex: 2, offersPlus: true)
+        noPhoto.completeWithoutWidgetPhoto()
+        try require(!noPhoto.isPresented && noPhoto.isFirstRunComplete,
+                    "a scan without photos was followed by a Plus page")
+
+        let unconfigured = OnboardingPresentationState(persistedResumePageIndex: 4)
+        try require(unconfigured.currentPage == .widgetGuide && unconfigured.resumePageIndex == 3,
+                    "an unconfigured build resumed on the Plus page")
+
+        var plusSkipElsewhere = OnboardingPresentationState(persistedResumePageIndex: 3, offersPlus: true)
+        plusSkipElsewhere.skipPlusOffer()
+        try require(plusSkipElsewhere.currentPage == .widgetGuide && !plusSkipElsewhere.isFirstRunComplete,
+                    "the Plus skip acted outside its own page")
+
+        var replay = OnboardingPresentationState.widgetGuideReplay(
+            persistedResumePageIndex: 4, persistedCompletedVersion: 1)
+        replay.skipWidgetGuide()
+        try require(!replay.isPresented && replay.resumePageIndex == 4 && replay.completedVersion == 1,
+                    "a Settings replay showed the Plus page or changed progress")
     }
 
     private static func verifiesApprovedJapaneseCopy() throws {

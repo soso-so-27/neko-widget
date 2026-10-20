@@ -16,6 +16,7 @@ struct ManagedPreservationView: View {
     @State private var confirmsMembershipLink = false
     @State private var confirmsDraftDiscard = false
     @State private var confirmsToolDiscard = false
+    @State private var showsPlusOffer = false
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
     private let allowsManualSaving: Bool
@@ -312,6 +313,23 @@ struct ManagedPreservationView: View {
         }
     }
 
+    /// The "保存" entry of the one Plus screen (ADR-027 5章). Shown only
+    /// while saving is unavailable, Plus is configured, and this device has
+    /// no Plus purchase, so an existing member is never asked to buy again.
+    @ViewBuilder private var plusOfferEntry: some View {
+        if coordinator.membership?.access != .pilot, PlusOfferAvailability.isConfigured,
+           !PlusPurchaseStore.productionShared.entitlementState.grantsPlus {
+            Button(PlusOfferContext.preservation.entryTitle) { showsPlusOffer = true }
+                .accessibilityIdentifier("plus-offer-entry-preservation")
+                .sheet(isPresented: $showsPlusOffer, onDismiss: {
+                    NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+                    coordinator.checkMembership()
+                }) {
+                    MembershipOfferSheet(model: .live(), context: .preservation) { _ in showsPlusOffer = false }
+                }
+        }
+    }
+
     private var membershipSection: some View {
         Section {
             if coordinator.membershipLoading { ProgressView("保管できるか確認しています…") }
@@ -340,6 +358,7 @@ struct ManagedPreservationView: View {
                 Text("新しく保管する前に、会員情報を確認します。")
                     .font(.subheadline)
             }
+            plusOfferEntry
             Button(coordinator.membership?.access == .pilot ? "保管枠を確認"
                    : coordinator.membershipMessage == nil ? "会員情報を確認" : "接続状況を確認") {
                 coordinator.checkMembership()
@@ -521,6 +540,7 @@ struct ManagedPreservationView: View {
             Button("もう一度確認") { coordinator.checkMembership() }
                 .accessibilityIdentifier("preservation-eligibility-retry")
         } else if coordinator.membership?.canSave != true {
+            plusOfferEntry
             if coordinator.membership?.linked == false {
                 Text("新しく保管するには、会員情報の接続が必要です。")
                     .font(.footnote).foregroundStyle(.secondary)

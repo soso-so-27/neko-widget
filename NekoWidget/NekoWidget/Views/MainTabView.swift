@@ -1668,7 +1668,8 @@ struct MainTabView: View {
                     markMonthlyWindowReadIfLatest(snapshot)
                 }
             }
-            .membershipFeature(.openGrowingSummary, hasContent: !refreshedMonthlyWindow(snapshot).photos.isEmpty)
+            .growingSummaryFeature(.monthlySummary(month: snapshot.monthNumber),
+                                   hasContent: !refreshedMonthlyWindow(snapshot).photos.isEmpty)
         }
     }
 
@@ -1750,7 +1751,7 @@ struct MainTabView: View {
                 }
             )
             .id(seasonalMovieArchiveAccessKey)
-            .membershipFeature(.openGrowingSummary, hasContent: !presentation.scenes.isEmpty)
+            .growingSummaryFeature(.monthlySummary(month: nil), hasContent: !presentation.scenes.isEmpty)
         } else {
             ContentUnavailableView(
                 "この季節のムービーを開けません",
@@ -3516,4 +3517,28 @@ struct WindowListNavigationFixture: View {
 private struct DeepLinkSelection: Equatable {
     let identifier: String?
     let shownAt: Date?
+}
+
+/// A monthly summary or seasonal movie that needs Plus is replaced by the one
+/// Plus screen for that month (ADR-027 5章). Album lists stay free and never
+/// use this gate; an unknown purchase state shows the restore-only notice.
+private struct GrowingSummaryGate: ViewModifier {
+    @Environment(\.membershipAccess) private var access
+    let context: PlusOfferContext
+    let hasContent: Bool
+
+    func body(content: Content) -> some View {
+        let decision = access.decision(for: .openGrowingSummary)
+        if !hasContent || decision == .allowed {
+            content
+        } else {
+            PlusOfferPrompt(context: context, decision: decision)
+        }
+    }
+}
+
+private extension View {
+    func growingSummaryFeature(_ context: PlusOfferContext, hasContent: Bool) -> some View {
+        modifier(GrowingSummaryGate(context: context, hasContent: hasContent))
+    }
 }

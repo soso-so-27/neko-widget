@@ -3697,6 +3697,8 @@ REVIEWED_PHOTO_ACTIONS_TESTS = tuple("NekoWidgetUITests/" + identifier for ident
 REVIEWED_MEMBERSHIP_OFFER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + method for method in (
     "testMembershipOfferPreviewReturnsToPurpose",
     "testMembershipOfferPreviewWaitingAndRestore",
+    # ADR-027: the one Plus screen's copy and its entry contexts.
+    "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
 ))
 REVIEWED_MEMBERSHIP_ACCESS_TESTS = (
     "NekoWidgetUITests/SoloMemoriesUITests/testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
