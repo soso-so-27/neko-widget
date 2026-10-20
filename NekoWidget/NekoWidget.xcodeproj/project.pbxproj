@@ -174,6 +174,9 @@
 		100000000000000000000137 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000237 /* SettingsView.swift */; };
 		100000000000000000000138 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000238 /* LogView.swift */; };
 		100000000000000000000145 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000239 /* PairingView.swift */; };
+		CC2610200000000000000012 /* CatCareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000011 /* CatCareCore.swift */; };
+		CC2610200000000000000014 /* CatCareStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000013 /* CatCareStore.swift */; };
+		CC2610200000000000000016 /* CatCareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000015 /* CatCareView.swift */; };
 		CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000001 /* GroupWindowSetupView.swift */; };
 		CC2610200000000000000006 /* GroupWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000005 /* GroupWindowView.swift */; };
 		CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */; };
@@ -440,6 +443,9 @@
 		F00000000000000000000237 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000238 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		F00000000000000000000239 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		CC2610200000000000000011 /* CatCareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareCore.swift; sourceTree = "<group>"; };
+		CC2610200000000000000013 /* CatCareStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareStore.swift; sourceTree = "<group>"; };
+		CC2610200000000000000015 /* CatCareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000001 /* GroupWindowSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowSetupView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000005 /* GroupWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowLocalPhotoStore.swift; sourceTree = "<group>"; };
@@ -795,6 +801,8 @@
 				F00000000000000000000249 /* PhotoBookPolicy.swift */,
 				AA2610200000000000000005 /* GroupWindowFixture.swift */,
 				AA2610200000000000000003 /* GroupWindowContract.swift */,
+				CC2610200000000000000011 /* CatCareCore.swift */,
+				CC2610200000000000000013 /* CatCareStore.swift */,
 				AB2610200000000000000071 /* GroupWindowOperationStore.swift */,
 				AB261020000000000000006F /* GroupWindowPhotoValidation.swift */,
 				AB261020000000000000006D /* ProductionGroupWindowClient.swift */,
@@ -902,6 +910,7 @@
 				F00000000000000000000248 /* CatSimilarityReviewCoordinatorView.swift */,
 				F0000000000000000000024E /* CatIdentityExperimentView.swift */,
 				F00000000000000000000255 /* FamilyWindowView.swift */,
+				CC2610200000000000000015 /* CatCareView.swift */,
 				CC2610200000000000000001 /* GroupWindowSetupView.swift */,
 				CC2610200000000000000005 /* GroupWindowView.swift */,
 				E02609080000000000000002 /* MomentDeliveryComposer.swift */,
@@ -1319,6 +1328,9 @@
 				100000000000000000000137 /* SettingsView.swift in Sources */,
 				100000000000000000000138 /* LogView.swift in Sources */,
 				100000000000000000000145 /* PairingView.swift in Sources */,
+				CC2610200000000000000012 /* CatCareCore.swift in Sources */,
+				CC2610200000000000000014 /* CatCareStore.swift in Sources */,
+				CC2610200000000000000016 /* CatCareView.swift in Sources */,
 				CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */,
 				CC2610200000000000000006 /* GroupWindowView.swift in Sources */,
 				CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */,

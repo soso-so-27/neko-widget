@@ -75,9 +75,11 @@ xcrun --sdk macosx swiftc \
 # purpose; photo access, invitations, receiving, hearts, and favorites never are.
 # PairingView and AppRootView are reserved for the window and Widget entries.
 # GroupWindowSetupView opens it only for "このまどを続ける" (continueWindow).
+# GroupWindowView opens it only for "まどを作る" (createWindow), in GroupWindowCreateScreen.
 plus_offer_allowed="NekoWidget/App/AppRootView.swift
 NekoWidget/Services/MembershipOfferModel.swift
 NekoWidget/Views/GroupWindowSetupView.swift
+NekoWidget/Views/GroupWindowView.swift
 NekoWidget/Views/MainTabView.swift
 NekoWidget/Views/ManagedPreservationView.swift
 NekoWidget/Views/OnboardingView.swift

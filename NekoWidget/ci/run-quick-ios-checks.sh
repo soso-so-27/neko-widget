@@ -53,6 +53,12 @@ xcrun --sdk macosx swiftc -parse-as-library \
   -o "$RUNNER_TEMP/group-invitation-link-tests"
 "$RUNNER_TEMP/group-invitation-link-tests"
 
+xcrun --sdk macosx swiftc -parse-as-library \
+  -target "$(uname -m)-apple-macos14.0" \
+  NekoWidget/Services/CatCareCore.swift ci/verify-cat-care.swift \
+  -o "$RUNNER_TEMP/cat-care-tests"
+"$RUNNER_TEMP/cat-care-tests"
+
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do
   output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"

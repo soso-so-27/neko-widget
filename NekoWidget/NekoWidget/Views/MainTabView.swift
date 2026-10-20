@@ -256,6 +256,7 @@ struct MainTabView: View {
     var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
+    @Environment(\.membershipAccess) private var membershipAccess
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
@@ -409,7 +410,7 @@ struct MainTabView: View {
                 Label("アルバム", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
             }
-            .badge(hasUnreadMemoriesSummary ? 1 : 0)
+            .badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)
             .tag(AppTab.memories)
 
             NavigationStack(path: $photosPath) {
@@ -761,6 +762,13 @@ struct MainTabView: View {
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
                 .accessibilityIdentifier("tools-cat-profiles")
+                NavigationLink {
+                    CatCareEntryView(profiles: catProfilesPresentation.profiles)
+                } label: {
+                    Label("この子のこと（体重・薬・ワクチン・連絡先）", systemImage: "heart.text.square")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .accessibilityIdentifier("tools-cat-care")
                 showcaseToolCard
                 if !preparingShowcaseScopes.isEmpty {
                     ProgressView("見せる写真を準備中")
@@ -2089,6 +2097,12 @@ struct MainTabView: View {
         latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew
     }
 
+    /// The tab's red mark points to something that opens; without Plus the
+    /// cards stay visible in the album with a 「Plus」 mark instead (案1).
+    private var summaryOpens: Bool {
+        membershipAccess.decision(for: .openGrowingSummary) == .allowed
+    }
+
     private func markMonthlyWindowReadIfLatest(
         _ presentation: MonthlyWindowPresentation
     ) {
@@ -2974,7 +2988,19 @@ private struct WindowListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("window-list-product-limit")
         } else {
-            setupAction("新しいまどを作る", path: .create, identifier: "window-list-create")
+            if let groupClient = GroupWindowClientProvider.production {
+                // One place to start a window. New windows are group windows,
+                // also for two people; existing two-person windows keep working.
+                NavigationLink { GroupWindowCreateScreen(client: groupClient) } label: {
+                    Text("まどを作る（\(GroupWindowPresentation.memberLimit)人まで）")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isWorking || pausesWindowChanges)
+                .accessibilityIdentifier("window-list-create-group")
+            } else {
+                setupAction("新しいまどを作る", path: .create, identifier: "window-list-create")
+            }
             setupAction("招待されたまどに参加", path: .join, identifier: "window-list-join")
             setupAction("以前のまどにこのiPhoneを追加", path: .recover, identifier: "window-list-recover")
         }
@@ -3087,14 +3113,15 @@ private struct WindowListView: View {
                             if isSwitching {
                                 ProgressView().padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             } else if windowErrors.contains(window.localWindowID) {
-                                Image(systemName: "exclamationmark.circle.fill")
+                                Label("開けませんでした", systemImage: "exclamationmark.circle.fill")
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(.orange)
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }
                         }
                         .overlay(alignment: .bottomLeading) {
                             if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
-                                Label("\(pendingCount.formatted())", systemImage: "clock")
+                                Label("\(pendingCount.formatted())枚 準備中", systemImage: "clock")
                                     .font(.caption.weight(.semibold))
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }
