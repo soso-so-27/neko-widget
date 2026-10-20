@@ -489,15 +489,22 @@ struct MembershipOfferSheet: View {
     }
 }
 
-/// Read-only, no-charge entry for the current internal builds. App Store
-/// production receipts never expose it; no authority is derived from this flag.
-enum MembershipOfferPreviewAvailability {
+/// Distribution intent, not receipt environment, controls internal-only UI.
+/// TestFlight and App Review both use sandbox receipts in public builds.
+enum InternalBuildPresentationAvailability {
     static var isAvailable: Bool {
 #if DEBUG
-        true
+        !CommandLine.arguments.contains("--review-public-presentation")
 #else
-        Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
 #endif
+    }
+}
+
+/// Read-only, no-charge entry. This flag never grants purchase authority.
+enum MembershipOfferPreviewAvailability {
+    static var isAvailable: Bool {
+        InternalBuildPresentationAvailability.isAvailable
     }
 }
 
