@@ -4446,7 +4446,7 @@ class GroupWindowScreenTests(unittest.TestCase):
             self.assertNotIn(forbidden, screen)
         # Received photos: sensitive-content check, then the durable write,
         # and only inside storeAndAcknowledge (so ACK follows the write).
-        receive = section(screen, "private func receive(", "func send(_ item: PhotosPickerItem) async {")
+        receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
         self.assertIn("guard verdict != .retryLater else { return }", receive)
         self.assertIn("client.storeAndAcknowledge(incoming, outgoingOperationID: outgoingOperationID)", receive)
@@ -4454,7 +4454,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         self.assertIn("try await store.save(", receive)
         self.assertIn("jpeg: verdict == .hidden ? nil : verified.jpeg", receive)
         # Sending: the same canonical JPEG and check as the two-person window.
-        send = section(screen, "func send(_ item: PhotosPickerItem) async {", "func toggleHeart(")
+        send = section(screen, "func prepare(_ item: PhotosPickerItem) async", "func toggleHeart(")
         self.assertIn("guard canSend", send)
         self.assertLess(send.index("GroupPhotoModeration.check(picked.jpeg"), send.index("client.sendPhoto("))
         self.assertIn("outgoingOperationID: operationID", send)
@@ -4851,7 +4851,8 @@ class WindowCreationEntryTests(unittest.TestCase):
     def test_both_kinds_of_window_start_from_the_same_place(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
         add = section(tab, "// One place to start a window", 'setupAction("招待されたまどに参加"')
-        self.assertIn('setupAction("1人の相手とまどを作る"', add)
+        self.assertNotIn('setupAction("1人の相手とまどを作る"', add)
+        self.assertIn('Text("まどを作る（', add)
         self.assertIn("GroupWindowCreateScreen(client: groupClient)", add)
         self.assertIn('setupAction("新しいまどを作る"', add)
         window = source("NekoWidget/Views/GroupWindowView.swift")
@@ -4877,6 +4878,34 @@ class AlbumPurposeTests(unittest.TestCase):
         # No photo permission explains what the album does.
         self.assertIn('Label("猫の写真を自動でまとめます"', album)
         self.assertNotIn("この作品から外す", source("NekoWidget/Views/SeasonalMovieView.swift"))
+
+
+class GroupSendConfirmTests(unittest.TestCase):
+    def test_group_send_confirms_keeps_memo_local_and_shows_progress(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        # Picking only prepares; sending waits for 「届ける」 on the confirmation screen.
+        prepare = section(screen, "func prepare(_ item: PhotosPickerItem) async", "func deliver(")
+        self.assertNotIn("client.sendPhoto(", prepare)
+        self.assertIn("Task { prepared = await model.prepare(item) }", screen)
+        self.assertIn("GroupSendConfirmSheet(photo: photo", screen)
+        self.assertIn('"group-window-send-confirm"', screen)
+        # The memo is the photo's own memo on this iPhone, saved only after sending.
+        deliver = section(screen, "func deliver(", "func toggleHeart(")
+        self.assertLess(deliver.index("client.sendPhoto("), deliver.index("await saveMemo(memo"))
+        self.assertIn("PhotoMemoryNoteStore.shared", deliver)
+        # Progress is visible while checking and sending.
+        self.assertIn('"group-window-send-progress"', screen)
+        # Making a window asks for Plus first, and again if the relay says so.
+        create = section(screen, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
+        self.assertIn("PlusOfferPrompt(context: .createWindow", create)
+        self.assertIn("MembershipOfferSheet(model: .live(), context: .createWindow)", create)
+        self.assertIn("(error as? GroupSubscriptionError) == .ownerPlusRequired", screen)
+        # One way to make a window: the list links to the same screen.
+        listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
+        self.assertIn("GroupWindowCreateScreen(client: model.client)", listing)
+        self.assertNotIn("showsNameEntry", listing)
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        self.assertIn("if GroupWindowClientProvider.production == nil {", pairing)
 
 
 if __name__ == "__main__":

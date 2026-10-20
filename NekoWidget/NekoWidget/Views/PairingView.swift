@@ -535,13 +535,17 @@ struct PairingView: View {
 
     private var setupChoiceSection: some View {
         Section {
-            Button {
-                setupPath = .create
-            } label: {
-                Label("新しいまどを作る", systemImage: "rectangle.badge.plus")
-                    .font(.headline)
+            // With group windows on, new windows are made there; this screen
+            // keeps joining and adding an iPhone for existing two-person windows.
+            if GroupWindowClientProvider.production == nil {
+                Button {
+                    setupPath = .create
+                } label: {
+                    Label("新しいまどを作る", systemImage: "rectangle.badge.plus")
+                        .font(.headline)
+                }
+                .accessibilityHint("このiPhoneが、まどの名前と招待を管理します")
             }
-            .accessibilityHint("このiPhoneが、まどの名前と招待を管理します")
 
             Button {
                 setupPath = .join

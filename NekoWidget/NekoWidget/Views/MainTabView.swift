@@ -2981,13 +2981,13 @@ private struct WindowListView: View {
             .accessibilityIdentifier("window-list-product-limit")
         } else {
             if let groupClient = GroupWindowClientProvider.production {
-                // One place to start a window: for one person, or for family and friends.
-                setupAction("1人の相手とまどを作る", path: .create, identifier: "window-list-create")
+                // One place to start a window. New windows are group windows,
+                // also for two people; existing two-person windows keep working.
                 NavigationLink { GroupWindowCreateScreen(client: groupClient) } label: {
-                    Text("家族・友だちとまどを作る（\(GroupWindowPresentation.memberLimit)人まで）")
+                    Text("まどを作る（\(GroupWindowPresentation.memberLimit)人まで）")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .disabled(model.isWorking || pausesWindowChanges)
                 .accessibilityIdentifier("window-list-create-group")
             } else {
