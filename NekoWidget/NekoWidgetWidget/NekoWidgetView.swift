@@ -106,7 +106,8 @@ struct NekoWidgetView: View {
 #endif
         // A photo is always navigation, never an implicit memory action.
         // The photo opens its detail; only the separate heart sends a reaction.
-        // Shared save stays in detail. Personal-library memory stays explicit.
+        // A received photo's bookmark only opens the app's save confirmation.
+        // Personal-library memory stays explicit.
         .widgetURL(entry.photoURL)
     }
 
@@ -129,8 +130,12 @@ struct NekoWidgetView: View {
 
     /// One quiet footer for shared photos. Its background covers the full
     /// width and fades into the image, without adding separate text panels.
+    /// The heart sits bottom-left and the bookmark bottom-right, where the
+    /// personal Widget keeps its own bookmark.
     private var familyPhotoFooter: some View {
         HStack(alignment: .bottom, spacing: 6) {
+            familyHeartShortcut
+
             VStack(spacing: 4) {
                 if let caption = familyCaption {
                     familyCaptionPreview(caption)
@@ -139,11 +144,11 @@ struct NekoWidgetView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
             // Only the text is decorative. Hiding or disabling the entire
-            // footer would also hide the heart from touch and VoiceOver.
+            // footer would also hide the controls from touch and VoiceOver.
             .allowsHitTesting(false)
             .accessibilityHidden(true)
 
-            familyHeartShortcut
+            familyMemoryShortcut
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
@@ -256,6 +261,32 @@ struct NekoWidgetView: View {
         }
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
+    }
+
+    /// A received photo is copied to Photos when it becomes a favorite, so
+    /// the Widget never saves it directly. The bookmark opens the exact
+    /// window/photo pair, and the app asks before copying. A Small Widget has
+    /// no Link targets; its whole surface keeps opening the photo instead.
+    @ViewBuilder
+    private var familyMemoryShortcut: some View {
+        if family != .systemSmall {
+            if entry.isBookmarkInteractionEnabled, entry.isBookmarked {
+                memoryMark(isSelected: true)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("お気に入りの写真")
+                    .accessibilityHint("外すときはアプリのお気に入りから行えます")
+            } else if entry.isBookmarkInteractionEnabled,
+                      let memoryActionURL = entry.memoryActionURL {
+                Link(destination: memoryActionURL) {
+                    memoryMark(isSelected: false)
+                }
+                .accessibilityLabel("お気に入りに追加")
+                .accessibilityHint("アプリを開いて、写真アプリへの保存を確認します")
+            } else {
+                // Keep the caption centered when the target cannot be checked.
+                unavailableHeartSlot
+            }
+        }
     }
 
     private func familyCaptionPreview(_ caption: String) -> some View {
