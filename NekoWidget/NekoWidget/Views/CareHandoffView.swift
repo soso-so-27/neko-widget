@@ -17,7 +17,7 @@ struct CareHandoffView: View {
             if let error = store.loadError {
                 ContentUnavailableView {
                     Label("お世話メモを開けません", systemImage: "exclamationmark.folder")
-                } description: { Text(error) } actions: { Button("再試行") { store.reload() } }
+                } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
             } else {
                 List {
                     Section {
@@ -28,7 +28,7 @@ struct CareHandoffView: View {
                         }.padding(.vertical, 8)
                     }
                     ToolCatPicker(profiles: profiles, select: selectProfile) {
-                        Section("プロフィール未登録の猫") {
+                        Section("まだ登録していない猫") {
                             ForEach(store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }) { cat in
                                 NavigationLink { editor(cat.id) } label: { Label(cat.displayName, systemImage: "cat") }
                                     .accessibilityIdentifier("care-cat-\(cat.id.uuidString)")
@@ -123,13 +123,13 @@ private struct CareSaveNotice: View {
         if let error = store.saveError {
             VStack(spacing: 8) {
                 Text(error).font(.footnote).foregroundStyle(.red)
-                Button("保存を再試行") { store.retrySave() }
+                Button("もう一度保存する") { store.retrySave() }
             }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
                 .accessibilityIdentifier("care-save-error")
         } else if store.pendingPhotoCleanup {
             VStack(spacing: 8) {
                 Text("使わなくなった写真の削除が完了していません。").font(.footnote)
-                Button("写真の削除を再試行") { store.retrySave() }
+                Button("使わない写真をもう一度片付ける") { store.retrySave() }
             }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
         }
     }
@@ -146,7 +146,7 @@ private struct CareField: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(label).font(.subheadline.weight(.medium))
-                if isPrefilled { Text("普段の情報").font(.caption).foregroundStyle(.secondary) }
+                if isPrefilled { Text("前に入れた内容").font(.caption).foregroundStyle(.secondary) }
             }
             TextField(example, text: Binding(get: { text }, set: { text = String($0.prefix(limit)) }), axis: .vertical)
                 .lineLimit(1...8).frame(minHeight: 36)
@@ -179,6 +179,23 @@ private struct CareCatEditor: View {
             }
         })
     }
+    /// Common signs to call about. The owner picks; nothing is judged here.
+    static let callWhenChoices = ["丸1日ごはんを食べない", "何度も吐く", "おしっこが出ていない",
+                                  "隠れて出てこない", "ぐったりしている", "けがをした", "外に出てしまった"]
+
+    /// Read-only lines that 「この子のこと」 adds to the handed-over copy.
+    @ViewBuilder private func catCareSection(_ cat: CareCat) -> some View {
+        let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+        let lines = (CatCareSummary.ageAndWeight(care).map { [("年齢・体重", $0)] } ?? [])
+            + CatCareSummary.careHandoffHealthFields(care)
+        let profile = profiles.first(where: { $0.identifier == cat.profileID })
+        if !lines.isEmpty || profile != nil {
+            ToolCatCareSection(title: "「この子のこと」から載ること", lines: lines, profile: profile,
+                               footer: "年齢・体重はいつも載ります。薬とアレルギーは「薬・アレルギーを含める」を選んだときだけ載ります。",
+                               identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care")
+        }
+    }
+
     var body: some View {
         Form {
             if let cat {
@@ -191,7 +208,7 @@ private struct CareCatEditor: View {
                                   isPrefilled: cat.prefilledFields?.contains("name") == true)
                     }
                     Button { showsPhotoPicker = true } label: {
-                        HStack(spacing: 16) {
+                        ToolAdaptiveStack(spacing: 16) {
                             CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
                             Label(cat.photoName == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo")
                             Spacer()
@@ -202,12 +219,31 @@ private struct CareCatEditor: View {
                     }
                 }
                 if candidateRefreshError {
-                    Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
+                    Text("前に入れた内容を読み込めませんでした。ここに書いた内容はそのままです。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                catCareSection(cat)
                 Section {
                     CareField(label: "まず伝えたいこと", example: "例：玄関を開ける前に、猫が別の部屋にいるか確認", identifier: "care-important", text: text(\.important))
-                }
+                    CareField(label: "こんな時は連絡を", example: "例：丸1日ごはんを食べない、何度も吐く、トイレに行くのに出ていない",
+                              identifier: "care-call-when",
+                              text: Binding(get: { self.cat?.callWhen ?? "" }, set: { new in
+                                  store.editCat(id) { $0.callWhen = new.isEmpty ? nil : new }
+                              }))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Self.callWhenChoices, id: \.self) { choice in
+                                let current = cat.callWhen ?? ""
+                                Button(choice) {
+                                    store.editCat(id) { $0.callWhen = current.isEmpty ? choice : current + "、" + choice }
+                                }
+                                .buttonStyle(.bordered).font(.footnote)
+                                .disabled(current.contains(choice))
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("care-call-when-choices")
+                } footer: { Text("「こんな時は連絡を」は、預かる人が迷わないための目安です。") }
                 if cat.usualFood != nil {
                     Section {
                         CareField(label: "いつものごはん", example: "フード名・普段の量など", identifier: "care-usual-food",
@@ -238,7 +274,7 @@ private struct CareCatEditor: View {
                 }
                 Section {
                     DisclosureGroup("薬・アレルギー") {
-                        Picker("記録の状態", selection: Binding(get: { cat.healthStatus }, set: { new in
+                        Picker("記録はありますか", selection: Binding(get: { cat.healthStatus }, set: { new in
                             store.editCat(id) { $0.healthStatus = new }
                         })) {
                             ForEach(CareCat.HealthStatus.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -249,22 +285,23 @@ private struct CareCatEditor: View {
                     }
                 }
                 Section {
-                    ToolImportantInformation(text: "空欄でも自動保存されます。薬は獣医師の指示を記入してください。薬や連絡先を渡すかはプレビュー前に選べます。")
+                    ToolImportantInformation(text: "書いた内容は自動で保存します。薬は、獣医師に言われたとおりに書いてください。")
                 }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
-                } footer: { Text("入力した内容はこの端末に自動保存します。") }
+                } footer: { Text("書いた内容はこのiPhoneに自動で保存します。") }
             }
         }
         .navigationTitle("お世話メモを編集").navigationBarTitleDisplayMode(.inline)
         .task {
+            CatCareStore.shared.importFromTools()
             guard !refreshedCandidates else { return }
             refreshedCandidates = true
             do { try store.refreshCandidates(id, using: reuseStore) }
             catch { candidateRefreshError = true }
         }
         .scrollDismissesKeyboard(.interactively)
-        .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("入力を閉じる") {
+        .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("キーボードを閉じる") {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         } } }
         .sheet(isPresented: $showsPhotoPicker) {
@@ -279,7 +316,7 @@ private struct CareCatEditor: View {
             VStack(spacing: 6) {
                 CareSaveNotice(store: store)
                 NavigationLink { CareDisclosureView(store: store) } label: {
-                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    Label("渡す内容を選ぶ", systemImage: "checklist").frame(maxWidth: .infinity, minHeight: 44)
                 }.buttonStyle(.borderedProminent).disabled(store.saveError != nil)
             }.padding().background(.regularMaterial)
         }
@@ -335,7 +372,7 @@ private struct CarePhotoPicker: View {
             Section {
                 PhotosPicker(selection: $item, matching: .images) { Label("写真アプリから選ぶ", systemImage: "photo.badge.plus") }
                     .disabled(busy)
-            } footer: { Text("預かる人が見分けやすい写真を選びます。この端末にコピーを保存するので、通信がなくても開けます。") }
+            } footer: { Text("預かる人が見分けやすい写真を選びます。このiPhoneにコピーを保存するので、通信がなくても開けます。") }
             if !ownPhotos.isEmpty { grid("この子の写真", ownPhotos) }
             let own = Set(ownPhotos.map(\.localIdentifier))
             let remaining = otherPhotos.filter { !own.contains($0.localIdentifier) }
@@ -372,7 +409,8 @@ private struct CarePhotoPicker: View {
                         PhotoAssetImageView(localIdentifier: photo.localIdentifier,
                             targetPixelSize: CGSize(width: 300, height: 300), targetAspectRatio: 1, showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit)
-                    }.buttonStyle(.plain).disabled(busy).accessibilityLabel("この写真を使う")
+                    }.buttonStyle(.plain).disabled(busy)
+                        .accessibilityLabel(ToolPhotoLabel.text("この写真を使う", date: photo.creationDate))
                 }
             }
         }
@@ -416,15 +454,9 @@ private struct CareDisclosureView: View {
                 Toggle("連絡先・動物病院を含める", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
             } header: { Text("必要な相手に渡す情報")
             } footer: { Text("写真・名前・お世話・今回のお願いは載せます。薬や連絡先は、渡す相手に合わせて選んでください。") }
-            Section {
-                Button("プレビュー", systemImage: "doc.text.magnifyingglass") {
-                    do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
-                    catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "控えを開けません。元の記録は残っています。" }
-                }.font(.headline).disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
-                    .accessibilityIdentifier("care-preview-open")
-                if let error { Text(error).foregroundStyle(.red) }
-            }
-        }.navigationTitle("渡す内容を確認").navigationBarTitleDisplayMode(.inline)
+            if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
+        }.navigationTitle("渡す内容を選ぶ").navigationBarTitleDisplayMode(.inline)
+            .announcesWhenShown(error)
             .onAppear {
                 if !initialized {
                     if store.plan.cats.count == 1, let cat = store.plan.cats.first { disclosure.catIDs = [cat.id] }
@@ -432,7 +464,20 @@ private struct CareDisclosureView: View {
                 }
             }
             .navigationDestination(item: $preview) { CareDisplayView(record: $0.record) }
-            .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 6) {
+                    CareSaveNotice(store: store)
+                    Button {
+                        do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
+                        catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "控えを開けませんでした。もう一度お試しください。元の記録は残っています。" }
+                    } label: {
+                        Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(disclosure.catIDs.isEmpty || store.saveError != nil)
+                    .accessibilityIdentifier("care-preview-open")
+                }.padding().background(.regularMaterial)
+            }
     }
 }
 
@@ -466,16 +511,16 @@ private struct CareDisplayView: View {
         }.background(Color(.systemGroupedBackground))
             .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
-                Menu {
-                    shareButton("画像", pdf: false)
-                    shareButton("PDF", pdf: true)
-                } label: { Label("書き出す", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
-                .buttonStyle(.borderedProminent).padding().background(.regularMaterial)
+                ViewThatFits {
+                    HStack(spacing: 12) { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
+                    VStack(spacing: 8) { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
+                }
+                .padding().background(.regularMaterial)
             }
             .confirmationDialog("表示中の内容を控えにします", isPresented: $confirmShare, titleVisibility: .visible) {
                 Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
             } message: {
-                Text("次の画面で送信先を選びます。渡す相手を確認してください。長い内容や複数の猫は複数ページになります。")
+                Text("次の画面で渡す相手を選びます。渡す相手を確認してください。長い内容や複数の猫は複数ページになります。")
             }
             .sheet(item: $export, onDismiss: {
                 if let retainedDirectory { CareHandoffExporter.remove(retainedDirectory) }
@@ -492,7 +537,7 @@ private struct CareDisplayView: View {
     }
     private func shareButton(_ title: String, pdf: Bool) -> some View {
         Button { self.pdf = pdf; confirmShare = true } label: {
-            Label(title, systemImage: pdf ? "doc" : "photo").frame(maxWidth: .infinity).padding(.vertical, 4)
+            Label(title, systemImage: pdf ? "doc" : "photo").frame(maxWidth: .infinity, minHeight: 44)
         }.buttonStyle(.borderedProminent).accessibilityIdentifier(pdf ? "care-share-pdf" : "care-share-images")
     }
     private func createExport() {

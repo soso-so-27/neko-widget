@@ -47,14 +47,14 @@ enum VeterinaryVisitError: Error, LocalizedError {
     case storage, corrupted, changed, wrongCat, confirmationRequired, invalidName, visitLimit, tooLarge
     var errorDescription: String? {
         switch self {
-        case .storage: "診察メモを保存できません。保存済みの内容は変更していません。"
-        case .corrupted: "診察メモを読み込めません。保存済みの内容は変更していません。"
+        case .storage: "保存できませんでした。空き容量を確かめて、もう一度お試しください。前に保存した内容は残っています。"
+        case .corrupted: "読み込めませんでした。アプリを開き直して、もう一度お試しください。前に保存した内容は残っています。"
         case .changed: "診察メモが変更されました。開き直して確認してください。"
         case .wrongCat: "この体重は別の猫の記録です。測定した猫を確認してください。"
         case .confirmationRequired: "この記録を見せる猫を確認してください。"
         case .invalidName: "猫の名前を1〜200文字で入力してください。"
-        case .visitLimit: "診察メモの保存量を確認できませんでした。記録はそのまま残っています。"
-        case .tooLarge: "一度の診察メモには20件まで追加できます。写真は6MB以下で用意してください。"
+        case .visitLimit: "空き容量を確かめられませんでした。もう一度お試しください。記録は残っています。"
+        case .tooLarge: "1回の診察で見せる記録は20件までです。写真が大きすぎるときは、別の写真を選んでください。"
         }
     }
 }
