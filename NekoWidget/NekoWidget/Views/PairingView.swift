@@ -312,7 +312,7 @@ struct PairingView: View {
                     NavigationLink {
                         BlockedSharingView()
                     } label: {
-                        Label("ブロックした共有を確認", systemImage: "hand.raised")
+                        Label("ブロックした相手を確認", systemImage: "hand.raised")
                     }
                 }
             }

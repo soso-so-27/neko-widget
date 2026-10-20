@@ -101,14 +101,6 @@ struct VeterinaryVisitsView: View {
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
-        .alert("猫の名前", isPresented: $addsCat) {
-            TextField("名前", text: $newName)
-            Button("作る") { Task { await open(PhotoMemoryNoteCat(id: UUID(), name: newName.trimmingCharacters(in: .whitespacesAndNewlines))) } }
-                .disabled(!VeterinaryVisitStore.isValidCatName(newName.trimmingCharacters(in: .whitespacesAndNewlines)))
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("猫の名前を1〜200文字で入力してください。")
-        }
         .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
             NavigationStack {
                 VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
@@ -152,7 +144,7 @@ struct VeterinaryVisitsView: View {
             cats = candidates.filter { seen.insert($0.id).inserted }
             toolSources = Dictionary(uniqueKeysWithValues: savedTools.map { ($0.id, $0.source) })
             if careStore.loadError != nil || careStore.saveError != nil || evacuationStore.loadError != nil || evacuationStore.saveError != nil {
-                let message = "入力済みの猫を一部読み込めません。既存の診察メモや、名前を入力して作る操作は使えます。"
+                let message = "入力済みの猫を一部読み込めません。これまでの診察メモは使えます。"
                 sourceError = sourceError.map { $0 + "\n" + message } ?? message
             }
             visits = loaded; ready = true; error = sourceError

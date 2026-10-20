@@ -213,8 +213,9 @@ private struct CareCatEditor: View {
                         ToolAdaptiveStack(spacing: 16) {
                             CarePhoto(image: store.image(cat.photoName)).frame(width: 88, height: 88)
                             Label(cat.photoName == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo")
-                            Spacer()
-                        }.contentShape(Rectangle())
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("care-photo-open")
                     if cat.photoName != nil {
                         Button("このメモの写真を外す", role: .destructive) { store.editCat(id) { $0.photoName = nil } }

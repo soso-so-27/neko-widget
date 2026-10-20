@@ -57,7 +57,7 @@ struct CatProfileTransferView: View {
                 Text("適用前に内容を確認できます。登録済みのプロフィールや写真設定は上書きしません。")
             }
         }
-        .navigationTitle("猫と写真の引き継ぎ")
+        .navigationTitle("機種変更のときの引き継ぎ")
         .fileExporter(isPresented: $showsExporter, document: document,
                       contentType: .json, defaultFilename: "ねこのプロフィール") { result in
             document = nil

@@ -1865,7 +1865,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         self.assertIn('Label("写真の表示と整理"', settings)
         self.assertIn("private var photoSettingsView: some View", settings)
-        self.assertIn('.navigationTitle("写真")', settings)
+        self.assertIn('.navigationTitle("写真の表示と整理")', settings)
         self.assertIn('Label("ウィジェットの置き方"', settings)
         self.assertIn('"settings-widget-placement-guide"', settings)
         self.assertIn('"settings-sharing-review"', settings)

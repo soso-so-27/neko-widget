@@ -2186,10 +2186,11 @@ final class SoloMemoriesUITests: XCTestCase {
         let saved = app.buttons["care-saved-cat-C0260929-0000-0000-0000-000000000001"]
         XCTAssertTrue(saved.waitForExistence(timeout: 5))
         saved.tap()
-        let food = app.textFields["care-usual-food"]
+        // Everyday care is shown from 「この子のこと」; the older tool entry fills
+        // it until 「この子のこと」 has meals of its own.
+        let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "いつものフード 20g")).firstMatch
         for _ in 0..<5 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(food.isHittable)
-        XCTAssertEqual(food.value as? String, "いつものフード 20g")
         capture("care-autofill-visible-real-value")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let disclosure = app.buttons["care-disclosure-open"]
@@ -2258,13 +2259,14 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["evacuation-cat-edit"].tap()
         XCTAssertTrue(app.buttons["evacuation-photo-reference"].waitForExistence(timeout: 5))
         capture("evacuation-autofill-general-photo-large-text")
-        let food = app.textFields["evacuation-cat-food"]
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // The meal is shown from 「この子のこと」's section on the cat's page.
+        let food = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
         for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(food.isHittable)
-        let value = food.value as? String ?? ""
-        XCTAssertTrue(value.contains("朝8時") && value.contains("むぎ専用フード") && value.contains("20g"))
+        let value = food.label
+        XCTAssertTrue(value.contains("朝8時") && value.contains("20g"))
         capture("evacuation-autofill-visible-values-large-text")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
         let preview = app.buttons["evacuation-preview-open"]
         for _ in 0..<8 where !preview.isHittable { app.swipeUp(velocity: .slow) }
         preview.tap()
@@ -2277,10 +2279,12 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(restored.waitForExistence(timeout: 5)); restored.tap()
         app.buttons["evacuation-cat-edit"].tap()
         XCTAssertTrue(app.buttons["evacuation-photo-reference"].exists)
-        for _ in 0..<9 where !food.isHittable { app.swipeUp(velocity: .slow) }
-        let refreshed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "30g"), object: food)
-        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 5), .completed)
-        XCTAssertTrue((food.value as? String ?? "").contains("朝8時") && (food.value as? String ?? "").contains("むぎ専用フード"))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // After a restart the meal is still there. Later edits happen in
+        // 「この子のこと」, which every tool reads, so nothing is copied again.
+        let restoredFood = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "むぎ専用フード")).firstMatch
+        for _ in 0..<9 where !restoredFood.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(restoredFood.waitForExistence(timeout: 5))
         capture("evacuation-refreshed-candidate-large-text")
         app.terminate()
     }

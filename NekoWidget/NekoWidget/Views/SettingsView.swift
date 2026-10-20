@@ -38,7 +38,7 @@ struct PersonalArchiveSettingsLink: View {
 
     var body: some View {
         NavigationLink { PersonalArchiveView(store: store, noteStore: noteStore) } label: {
-            Label("以前のiCloud保管", systemImage: "icloud")
+            Label("iCloudの保管と復元", systemImage: "icloud")
         }
         .accessibilityIdentifier("settings-personal-archive")
     }
@@ -199,7 +199,7 @@ struct SettingsView: View {
                 NavigationLink {
                     PersonalRediscoveryHistoryView()
                 } label: {
-                    Label("ホーム画面に出た写真", systemImage: "clock.arrow.circlepath")
+                    Label("今日の一枚を選び直す", systemImage: "clock.arrow.circlepath")
                 }
                 .accessibilityIdentifier("settings-personal-rediscovery")
             } header: {
@@ -570,7 +570,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .navigationTitle("写真")
+        .navigationTitle("写真の表示と整理")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -628,7 +628,7 @@ struct SettingsView: View {
             } header: {
                 Text("検出の調整")
             } footer: {
-                Text("初期値は信頼度70%、ウィジェットの最小面積8%です。信頼度の変更だけ再スキャンが必要です。")
+                Text("初期値は信頼度70%、ウィジェットの最小面積8%です。信頼度を変えたときだけ、最初から探し直す必要があります。")
             }
 
             Section {
