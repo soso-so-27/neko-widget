@@ -589,6 +589,7 @@ enum CatCareFormat {
 
 /// Read-only lines a tool shows or exports. Empty items say so instead of
 /// inventing anything; nothing here is a medical judgement.
+@MainActor
 enum CatCareSummary {
     static func record(profileIdentifier: String) -> CatCareRecord? {
         guard let profileID = UUID(uuidString: profileIdentifier) else { return nil }
