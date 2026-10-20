@@ -17,6 +17,7 @@ struct VerifyCatCare {
         try importing()
         try decoding()
         try lostCat()
+        try memoWeights()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
     }
 
@@ -117,6 +118,27 @@ struct VerifyCatCare {
         try check(household.household.ownerContact?.value == "090-0000-0000", "household contact kept")
         try check(household.household.backupContact?.value == "母 080-2222-2222", "backup contact filled")
         try check(household.household.vet?.value.name == "ねこ動物病院", "vet filled")
+    }
+
+    static func memoWeights() throws {
+        let profile = UUID(), tool = UUID(), other = UUID()
+        var state = CatCareState(deviceID: "d", now: t0)
+        state.cats = [CatCareRecord(catID: tool, profileID: profile), CatCareRecord(catID: other)]
+        let weights = [
+            CatCareMemoWeight(noteID: "a", catID: profile, grams: 4200, measuredOn: "2026-10-20"),
+            CatCareMemoWeight(noteID: "b", catID: tool, grams: 4250, measuredOn: nil, fallbackDate: t0),
+            CatCareMemoWeight(noteID: "c", catID: nil, grams: 5000, measuredOn: "2026-10-20"),
+            CatCareMemoWeight(noteID: "d", catID: profile, grams: 4300, measuredOn: nil, fallbackDate: nil)
+        ]
+        let sources = CatCareMemoWeights.sources(weights, cats: state.cats)
+        try check(sources.count == 1 && sources[0].weights.map(\.noteID) == ["a", "b"],
+                  "by profile or tool ID; no cat or no day is skipped")
+        for source in sources { CatCareImport.apply(source, to: &state, now: t1) }
+        try check(state.cats[0].activeWeights.count == 2 && state.cats[1].weights.isEmpty, "only the chosen cat")
+        let first = state.cats[0].weights.first { $0.source == .photoMemo(noteID: "a") }!
+        state.cats[0].weights.markDeleted(first.id, at: t1, by: "d")
+        for source in CatCareMemoWeights.sources(weights, cats: state.cats) { CatCareImport.apply(source, to: &state, now: t1) }
+        try check(state.cats[0].weights.count == 2 && state.cats[0].activeWeights.count == 1, "deleted weight stays deleted")
     }
 
     static func lostCat() throws {

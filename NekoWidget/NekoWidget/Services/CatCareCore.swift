@@ -477,6 +477,38 @@ enum CatCareImport {
     }
 }
 
+// MARK: - Weights from photo memos
+
+/// A weight the owner wrote in a photo memo. `catID` is the cat chosen in the
+/// memo (a profile ID or a tool's shared cat ID); nil after a portable restore.
+struct CatCareMemoWeight: Equatable, Sendable {
+    var noteID: String
+    var catID: UUID?
+    var grams: Int
+    /// "2026-10-20" when the owner gave the day.
+    var measuredOn: String?
+    /// When the photo was taken, else when the memo was written.
+    var fallbackDate: Date?
+}
+
+enum CatCareMemoWeights {
+    /// One source per cat that has memo weights. A memo without a chosen cat is
+    /// skipped; a name never decides the cat. Deleted cats get nothing.
+    static func sources(_ weights: [CatCareMemoWeight], cats: [CatCareRecord],
+                        calendar: Calendar = .current) -> [CatCareImportSource] {
+        cats.filter { $0.deletedAt == nil }.compactMap { cat in
+            let mine = weights.compactMap { weight -> (noteID: String, day: CatCareDay, grams: Int)? in
+                guard let id = weight.catID, id == cat.catID || id == cat.profileID else { return nil }
+                guard let day = weight.measuredOn.flatMap(CatCareDay.init(isoDay:))
+                    ?? weight.fallbackDate.flatMap({ CatCareDay(date: $0, calendar: calendar) }) else { return nil }
+                return (weight.noteID, day, weight.grams)
+            }
+            guard !mine.isEmpty else { return nil }
+            return CatCareImportSource(tool: "PhotoMemo", catID: cat.catID, profileID: cat.profileID, weights: mine)
+        }
+    }
+}
+
 // MARK: - 迷子のとき
 
 enum CatCareLostCat {
