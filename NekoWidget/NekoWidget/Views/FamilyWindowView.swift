@@ -126,6 +126,9 @@ struct FamilyWindowView: View {
     @State private var showsTerminalResultDismissConfirmation = false
     @State private var showsOutgoingDetails = false
     @State private var pendingOutgoingConfirmation: OutgoingConfirmation?
+    @State private var showsReplacementPhotoPicker = false
+    @State private var showsBlockCompleted = false
+    @Environment(\.dismiss) private var dismissWindow
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 20
@@ -225,7 +228,9 @@ struct FamilyWindowView: View {
     }
 #endif
 
-    private enum OutgoingConfirmation { case preparations, deliveries, terminalResults }
+    /// `.choosePhoto` is not a confirmation: it reopens the photo picker after
+    /// the status sheet closes, so an unsent photo always has a next step.
+    private enum OutgoingConfirmation { case preparations, deliveries, terminalResults, choosePhoto }
 
     // One presentation owns both photo kinds. A notification can replace the
     // current target without competing received/sent full-screen covers.
@@ -512,6 +517,11 @@ struct FamilyWindowView: View {
                 : model.windowDisplayName
         )
         .navigationBarTitleDisplayMode(.inline)
+        .alert("ブロックしました", isPresented: $showsBlockCompleted) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("この相手との写真共有を終了しました。ブロックは、設定の「ブロックした共有」から解除できます。")
+        }
         .task {
             await model.bootstrap()
             consumePendingMemoryTargetIfReady()
@@ -733,6 +743,8 @@ struct FamilyWindowView: View {
                     safetyResultMessage = model.errorMessage
                     if model.errorMessage == nil, !model.isPaired {
                         selectedMomentForDetail = nil
+                        // The window switches to setup; say what just happened.
+                        showsBlockCompleted = true
                     }
                 }
             }
@@ -864,6 +876,15 @@ struct FamilyWindowView: View {
         .sheet(isPresented: $showsOutgoingDetails, onDismiss: presentPendingOutgoingConfirmation) {
             outgoingDetails
         }
+        // Same selection as the fixed "写真を届ける" button, so the existing
+        // preparation path handles the replacement photo.
+        .photosPicker(
+            isPresented: $showsReplacementPhotoPicker,
+            selection: $selectedPhotoItem,
+            matching: .images,
+            preferredItemEncoding: .compatible,
+            photoLibrary: .shared()
+        )
         .sheet(item: $windowSupportTarget) { target in
             WindowSupportResumeView(windowName: target.name,
                 model: WindowSupportResumeModel(client: LiveWindowSupportResumeClient(expectedSpaceID: target.id)),
@@ -1929,7 +1950,7 @@ struct FamilyWindowView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Text("新しい送受信は行いません。安全上の問題は、写真や招待秘密を添付せずTestFlightのベータ版フィードバックから連絡してください。")
+                Text("新しい送受信は行いません。安全上の問題は、写真や招待のリンクを添付せずに、サポートから連絡してください。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if let url = SharingAPIConfiguration.current.supportURL {
@@ -1937,6 +1958,12 @@ struct FamilyWindowView: View {
                         .font(.subheadline.weight(.semibold))
                 }
             }
+            // A finished window still has a next step: back to the list,
+            // where another window can be opened or a new one created.
+            Button("まどの一覧に戻る", systemImage: "chevron.left") { dismissWindow() }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("family-window-report-only-back")
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2028,6 +2055,9 @@ struct FamilyWindowView: View {
         case .terminalResults:
             guard model.outgoingPresentation.terminalDeliveryResultCount > 0 else { return }
             showsTerminalResultDismissConfirmation = true
+        case .choosePhoto:
+            guard canShowSendPhotoAction else { return }
+            showsReplacementPhotoPicker = true
         case nil:
             break
         }
@@ -2240,6 +2270,15 @@ struct FamilyWindowView: View {
                 Text(outcome.latestCreatedAt.formatted(.dateTime.month().day().hour().minute()))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if canShowSendPhotoAction {
+                    Button("別の写真を選ぶ", systemImage: "photo.on.rectangle") {
+                        requestOutgoingConfirmation(.choosePhoto)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .disabled(model.isPerformingAction || model.isShowingLastKnownState)
+                    .accessibilityIdentifier("family-window-outgoing-outcome-choose-photo")
+                }
             }
             Spacer(minLength: 0)
         }
