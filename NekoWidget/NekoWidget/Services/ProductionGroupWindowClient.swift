@@ -10,6 +10,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private let secrets: any GroupSecretStore
     private let operations: any GroupSecretStore
     private let transport: any GroupHTTPTransport
+    private let billingSigner: any GroupBillingSigner
     private let ownerDisplayName: String
     private let outboxDirectory: URL
     private var registering = false
@@ -20,14 +21,16 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
         self.endpoint = endpoint; self.secrets = try GroupKeychainStore(namespace: namespace)
         self.transport = GroupURLSessionTransport(); self.ownerDisplayName = try GroupWire.name(ownerDisplayName)
+        self.billingSigner = GroupHostBillingSigner()
         self.outboxDirectory = try Self.outboxURL(outboxDirectory, context: namespace + "|" + endpoint.absoluteString)
         self.operations = try GroupOperationStore(directory: self.outboxDirectory.appendingPathComponent("http-operations", isDirectory: true))
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }
     // Test injection uses the same production signing/verification state machine.
-    init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, ownerDisplayName: String = "自分", outboxDirectory: URL) throws {
+    init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport, ownerDisplayName: String = "自分", outboxDirectory: URL, billingSigner: any GroupBillingSigner = GroupHostBillingSigner()) throws {
         self.endpoint = endpoint; self.secrets = secrets; self.transport = transport
         self.ownerDisplayName = try GroupWire.name(ownerDisplayName)
+        self.billingSigner = billingSigner
         self.outboxDirectory = try Self.outboxURL(outboxDirectory, context: endpoint.absoluteString)
         self.operations = try GroupOperationStore(directory: self.outboxDirectory.appendingPathComponent("http-operations", isDirectory: true))
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
@@ -58,8 +61,17 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             return winner
         }
     }
-    private func raw(_ path: String, body: Data?, identity: GroupDeviceIdentity?) async throws -> Data {
-        let request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: body, identity: identity)
+    private func raw(_ path: String, body: Data?, identity: GroupDeviceIdentity?, billingAccountID: String? = nil) async throws -> Data {
+        var request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: body, identity: identity)
+        if let billingAccountID {
+            guard path == GroupHostBillingSigner.path, let body, identity != nil else { throw GroupClientError.invalidResponse }
+            let headers = try billingSigner.headers(endpoint: endpoint, accountID: billingAccountID, body: body)
+            let names: Set<String> = ["Neko-Billing-Protocol-Version", "Neko-Billing-Account-ID", "Neko-Billing-Key-ID",
+                "Neko-Billing-Timestamp", "Neko-Billing-Nonce", "Neko-Billing-Signature"]
+            guard Set(headers.keys) == names, headers["Neko-Billing-Account-ID"] == billingAccountID,
+                  headers["Neko-Billing-Protocol-Version"] == "1" else { throw GroupClientError.invalidResponse }
+            for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        }
         return try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 1_048_576))
     }
     private func registeredIdentity() async throws -> GroupDeviceIdentity {
@@ -103,7 +115,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         guard stored.intentHash == GroupCanonical.hash(Data(intent.utf8)), stored.operationID == operationID else { throw GroupClientError.idempotencyConflict }
         return stored
     }
-    private func mutation(operationID: UUID, intent: String, path: String, body: Data) async throws -> Data {
+    private func mutation(operationID: UUID, intent: String, path: String, body: Data, billingAccountID: String? = nil) async throws -> Data {
         guard !inFlight.contains(operationID) else { throw GroupClientError.unavailable }
         inFlight.insert(operationID); defer { inFlight.remove(operationID) }
         var operation: GroupPendingHTTP
@@ -122,7 +134,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         let id = try await registeredIdentity()
         // Exact original body, fresh timestamp/nonce/signature. A failed request
         // keeps its payload in Keychain for an explicit retry with the same ID.
-        let response = try await raw(path, body: operation.body, identity: id)
+        let response = try await raw(path, body: operation.body, identity: id, billingAccountID: billingAccountID)
         guard let object = try JSONSerialization.jsonObject(with: response) as? [String: Any],
               object["operationId"] as? String == operationID.uuidString.lowercased() else { throw GroupClientError.invalidResponse }
         operation.response = response; operation.body = Data()
@@ -250,6 +262,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
 
     func createWindow(name: String, operationID: UUID) async throws -> GroupWindow {
+        try await connectExistingBillingAccount()
         let text = try GroupWire.name(name), intent = "create:" + GroupWire.base64(GroupCanonical.hash(Data(text.utf8)))
         let path = "/v3/group-windows", identity = try await registeredIdentity()
         let body: Data
@@ -273,6 +286,30 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         let result = try GroupWire.decode(GroupAPIModel.MutationReply.self, await mutation(operationID: operationID, intent: intent, path: path, body: body))
         guard result.operationID == operationID.uuidString.lowercased(), let id = result.windowID else { throw GroupClientError.invalidResponse }
         return try await window(id: id)
+    }
+
+    // Only the explicit create action invokes this; joining/reading/hearts stay
+    // free. The server verifies both independent signatures and current Plus.
+    func connectExistingBillingAccount() async throws {
+        let account = try billingSigner.accountID(endpoint: endpoint)
+        guard let id = UUID(uuidString: account), id.uuidString.lowercased() == account else { throw GroupClientError.invalidResponse }
+        let identity = try await registeredIdentity(), device = try identity.deviceID
+        var connection: GroupLocalBillingConnection
+        if let saved = try load(GroupLocalBillingConnection.self, "billing-connection") {
+            guard saved.accountID == account, saved.personID == identity.personID, saved.deviceID == device else { throw GroupClientError.authenticationRequired }
+            if saved.connected { return }
+            connection = saved
+        } else {
+            connection = .init(operationID: UUID(), accountID: account, personID: identity.personID, deviceID: device, connected: false)
+            try save(connection, "billing-connection", createOnly: true)
+        }
+        let body = try GroupWire.encode(GroupAPIModel.BillingConnection(operationID: connection.operationID.uuidString.lowercased(),
+            billingAccountID: account, personID: identity.personID, deviceID: device))
+        let response = try GroupWire.decode(GroupAPIModel.BillingConnectionReply.self,
+            await mutation(operationID: connection.operationID, intent: "billing:\(account):\(identity.personID):\(device)",
+                path: GroupHostBillingSigner.path, body: body, billingAccountID: account))
+        guard response.personID == identity.personID, response.state == "connected" else { throw GroupClientError.invalidResponse }
+        connection.connected = true; try save(connection, "billing-connection")
     }
 }
 

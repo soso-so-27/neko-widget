@@ -20,7 +20,7 @@ enum BillingProtocolV1 {
         method: String,
         pathname: String
     ) -> Bool {
-        (method == "POST" && (pathname == transactionPath || pathname == preservationMembershipLinkPath || pathname == windowSupportRequestsPath
+        (method == "POST" && (pathname == transactionPath || pathname == preservationMembershipLinkPath || pathname == "/v3/group-windows/billing-connection" || pathname == windowSupportRequestsPath
             || isWindowSupportAction(pathname, action: "commit")))
             || (method == "GET" && pathname == entitlementPath)
             || (["PUT", "DELETE"].contains(method)

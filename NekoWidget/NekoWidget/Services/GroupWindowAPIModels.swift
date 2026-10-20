@@ -39,6 +39,8 @@ enum GroupAPIModel {
     }
     struct Mutation: Codable { let operationID: String; let expectedRevision: Int }
     struct MutationReply: Decodable { let operationID: String; let windowID: String?; let revision: Int?; let keyEpoch: Int? }
+    struct BillingConnection: Codable { let operationID: String; let billingAccountID: String; let personID: String; let deviceID: String }
+    struct BillingConnectionReply: Decodable { let operationID: String; let personID: String; let state: String }
     struct InviteInput: Codable { let operationID: String; let expectedRevision: Int; let proofPublicKey: Data }
     struct InviteReply: Decodable { let operationID: String; let invitationID: String; let expiresAt: Int; let revision: Int }
     struct InvitationInput: Encodable { let invitationID: String }
@@ -91,6 +93,9 @@ enum GroupAPIModel {
 }
 
 struct GroupLocalJoin: Codable, Sendable { let windowID: String; var request: GroupJoinRequest }
+struct GroupLocalBillingConnection: Codable, Sendable {
+    let operationID: UUID; let accountID: String; let personID: String; let deviceID: String; var connected: Bool
+}
 struct GroupLocalInvitation: Codable, Sendable {
     let windowID: String; let operationID: UUID; let privateKey: Data
     var invitationID: String?; var expiresAt: Date?
