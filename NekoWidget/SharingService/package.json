@@ -85,7 +85,7 @@
     "moderation:keygen:staging": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-keygen-windows.ps1",
     "moderation:drill:staging": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-drill-windows.ps1",
     "moderation:drill:review:staging": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-drill-review-windows.ps1",
-    "check:private-billing-gateway": "node --test gateway/family-router.test.mjs gateway/family-runtime.test.mjs gateway/render-live-config.test.mjs test/billing-gateway.node-tests.mjs test/billing-sandbox-owner-policy.node-tests.mjs",
+    "check:private-billing-gateway": "node --test gateway/family-router.test.mjs gateway/family-runtime.test.mjs gateway/render-live-config.test.mjs gateway/group-staging.test.mjs test/billing-gateway.node-tests.mjs test/billing-sandbox-owner-policy.node-tests.mjs",
     "check:moderation-operator-startup": "node --test test/moderation-operator-local-start.node-tests.mjs test/moderation-operator-enrollment-console.node-tests.mjs test/moderation-owner-file-transport.node-tests.mjs"
   },
   "devDependencies": {

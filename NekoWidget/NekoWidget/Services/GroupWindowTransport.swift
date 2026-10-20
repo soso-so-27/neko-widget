@@ -6,6 +6,55 @@ protocol GroupHTTPTransport: Sendable {
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply
 }
 
+// Existing host billing identity only. Never bootstrap, buy, recover or copy a
+// billing key into group storage. Each request rechecks the current credential.
+protocol GroupBillingSigner: Sendable {
+    func accountID(endpoint: URL) throws -> String
+    func headers(endpoint: URL, accountID: String, body: Data) throws -> [String: String]
+}
+
+struct GroupHostBillingSigner: GroupBillingSigner {
+    static let path = "/v3/group-windows/billing-connection"
+#if os(iOS)
+    private func credential(endpoint: URL) throws -> BillingCredential {
+        let config = BillingClientConfiguration.current
+        guard config.isConfigured, endpoint.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
+                "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+              config.baseURL?.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
+                "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+              let saved = try BillingKeychainStore.load() else { throw GroupClientError.authenticationRequired }
+        let value = try saved.validated()
+        guard value.phase == .registered,
+              let marker = try BillingInstallationMarkerStore.loadExisting(),
+              value.installationMarker == marker.uuidString.lowercased()
+        else { throw GroupClientError.authenticationRequired }
+        return value
+    }
+#endif
+    func accountID(endpoint: URL) throws -> String {
+#if os(iOS)
+        guard let account = try credential(endpoint: endpoint).billingAccountID else { throw GroupClientError.authenticationRequired }
+        return account
+#else
+        throw GroupClientError.authenticationRequired
+#endif
+    }
+    func headers(endpoint: URL, accountID: String, body: Data) throws -> [String: String] {
+#if os(iOS)
+        let value = try credential(endpoint: endpoint)
+        guard value.billingAccountID == accountID, let key = value.billingKeyID else { throw GroupClientError.authenticationRequired }
+        let timestamp = Int(Date().timeIntervalSince1970), nonce = BillingProtocolCodec.randomNonce()
+        let transcript = try BillingProtocolCodec.signedRequestTranscript(billingAccountID: accountID, billingKeyID: key,
+            timestamp: timestamp, nonce: nonce, method: "POST", pathname: Self.path, bodySHA256: BillingProtocolCodec.sha256(body))
+        return ["Neko-Billing-Protocol-Version": "1", "Neko-Billing-Account-ID": accountID, "Neko-Billing-Key-ID": key,
+                "Neko-Billing-Timestamp": String(timestamp), "Neko-Billing-Nonce": nonce,
+                "Neko-Billing-Signature": try BillingProtocolCodec.sign(transcript, credential: value)]
+#else
+        throw GroupClientError.authenticationRequired
+#endif
+    }
+}
+
 private final class GroupNoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -78,7 +127,7 @@ enum GroupHTTPRequest {
         guard (200...299).contains(reply.status) else {
             guard let error = try? GroupWire.decode(ErrorBody.self, reply.data).error else { throw GroupClientError.unavailable }
             switch error.code {
-            case "invalid_authentication", "invalid_proof", "replay", "stale_request": throw GroupClientError.authenticationRequired
+            case "invalid_authentication", "invalid_proof", "replay", "stale_request", "invalid_billing_authentication", "stale_billing_request", "replayed_billing_request": throw GroupClientError.authenticationRequired
             case "not_found", "not_member", "epoch_not_authorized": throw GroupClientError.notMember
             case "owner_required": throw GroupClientError.ownerRequired
             case "owner_plus_required": throw GroupSubscriptionError.ownerPlusRequired

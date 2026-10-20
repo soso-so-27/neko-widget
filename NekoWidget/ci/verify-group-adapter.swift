@@ -17,6 +17,22 @@ private final class MemorySecrets: GroupSecretStore, @unchecked Sendable {
     func remove(_ account: String) throws { lock.lock(); defer { lock.unlock() }; values.removeValue(forKey: account) }
 }
 
+private struct SyntheticBillingSigner: GroupBillingSigner {
+    var account = "11111111-1111-4111-8111-111111111111"
+    static let keyID = GroupWire.base64(Data(repeating: 7, count: 16))
+    static var privateKey: Curve25519.Signing.PrivateKey { try! .init(rawRepresentation: Data((192..<224).map(UInt8.init))) }
+    func accountID(endpoint: URL) throws -> String { account }
+    func headers(endpoint: URL, accountID: String, body: Data) throws -> [String: String] {
+        guard accountID == account else { throw GroupClientError.authenticationRequired }
+        let timestamp = String(Int(Date().timeIntervalSince1970)), nonce = GroupWire.randomID()
+        let fields = ["NWB1.REQUEST", "1", account, Self.keyID, timestamp, nonce, "POST", GroupHostBillingSigner.path,
+                      GroupWire.base64(GroupCanonical.hash(body))]
+        let signature = try Self.privateKey.signature(for: GroupCanonical.fields(fields.map(GroupCanonical.text)))
+        return ["Neko-Billing-Protocol-Version": "1", "Neko-Billing-Account-ID": account, "Neko-Billing-Key-ID": Self.keyID,
+                "Neko-Billing-Timestamp": timestamp, "Neko-Billing-Nonce": nonce, "Neko-Billing-Signature": GroupWire.base64(signature)]
+    }
+}
+
 /// Request/response echo, not a second relay implementation. Real permissions,
 /// DB races and quotas are checked by Worker integration tests. This fixture
 /// exercises native persistence ordering, request bytes and HPKE round trips.
@@ -29,6 +45,11 @@ private actor EchoTransport: GroupHTTPTransport {
     private var createBodies: [Data] = []
     private var publicRegistrations = 0
     private var delivery = "active"
+    private var billingBodies: [Data] = []
+    private var billingNonces = Set<String>()
+    private var dropBillingOnce: Bool
+    init(dropBillingOnce: Bool = false) { self.dropBillingOnce = dropBillingOnce }
+    func billingStats() -> [Data] { billingBodies }
     func setDelivery(_ value: String) { delivery = value }
     func stats() -> (Int, [Data]) { (publicRegistrations, createBodies) }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
@@ -64,6 +85,22 @@ private actor EchoTransport: GroupHTTPTransport {
         let transcript = try GroupCanonical.fields(["NW3.REQUEST", "3", device, timestamp, nonce, request.httpMethod!, path].map(GroupCanonical.text) + [GroupCanonical.hash(body)])
         try check(Curve25519.Signing.PublicKey(rawRepresentation: signing).isValidSignature(GroupWire.bytes(signature, count: 64), for: transcript), "native request proof")
         try check(nonceSet.insert(device + ":" + nonce).inserted, "fresh native nonce")
+        if path == GroupHostBillingSigner.path {
+            let account = try text("billingAccountId")
+            let billingNonce = request.value(forHTTPHeaderField: "Neko-Billing-Nonce")!
+            let fields = ["NWB1.REQUEST", "1", account, SyntheticBillingSigner.keyID,
+                request.value(forHTTPHeaderField: "Neko-Billing-Timestamp")!, billingNonce, "POST", path,
+                GroupWire.base64(GroupCanonical.hash(body))]
+            try check(request.value(forHTTPHeaderField: "Neko-Billing-Account-ID") == account && object["deviceId"] as? String == device,
+                      "both identities bind the exact request")
+            try check(SyntheticBillingSigner.privateKey.publicKey.isValidSignature(
+                GroupWire.bytes(request.value(forHTTPHeaderField: "Neko-Billing-Signature")!, count: 64),
+                for: GroupCanonical.fields(fields.map(GroupCanonical.text))), "independent billing proof")
+            try check(billingNonces.insert(billingNonce).inserted, "fresh billing nonce")
+            billingBodies.append(body)
+            if dropBillingOnce { dropBillingOnce = false; throw GroupClientError.offline }
+            return try reply(["operationId": try text("operationId"), "personId": try text("personId"), "state": "connected"])
+        }
         if path == "/v3/group-windows/list" {
             guard let creation, let packet = creation["packet"] as? [String: Any], let roster = packet["roster"] as? [String: Any] else { return try reply(["items": [], "next": NSNull()]) }
             return try reply(["items": [["windowId": roster["windowId"]!]], "next": NSNull()])
@@ -166,7 +203,7 @@ private struct GroupAdapterChecks {
 
         let memory = MemorySecrets(), relay = EchoTransport(), folder = FileManager.default.temporaryDirectory.appendingPathComponent("group-adapter-" + UUID().uuidString, isDirectory: true)
         let endpoint = URL(string: "https://group.invalid")!, op = UUID()
-        var client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
+        var client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder, billingSigner: SyntheticBillingSigner())
         do { _ = try await client.createWindow(name: "うちのまど", operationID: op); throw Failure.check("lost response was not simulated") }
         catch GroupClientError.offline { }
         let store = try GroupOperationStore(directory: folder.appendingPathComponent("http-operations", isDirectory: true))
@@ -180,7 +217,7 @@ private struct GroupAdapterChecks {
         let expiredStats = await relay.stats()
         try check(expiredStats.1.count == 1, "no resend after server receipt horizon")
         try store.write(original, account: account, createOnly: false)
-        client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
+        client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder, billingSigner: SyntheticBillingSigner())
         let room = try await client.createWindow(name: "うちのまど", operationID: op)
         try check(room.name == "うちのまど" && room.memberCount == 1 && room.deviceCount == 1 && room.members[0].displayName == "自分", "real adapter owner round trip")
         try check(room.deliveryStatus == .active && room.deliveryReason == .ownerPlus && room.ownerParticipantID == room.myParticipantID, "verified server policy reaches UI contract")
@@ -197,6 +234,30 @@ private struct GroupAdapterChecks {
         await relay.setDelivery("active")
         let stats = await relay.stats()
         try check(stats.0 == 1 && stats.1.count == 2 && stats.1[0] == stats.1[1], "durable exact-body retry across instances")
+        let billingCopies = await relay.billingStats()
+        try check(billingCopies.count == 1, "paid creation connects once; retry keeps connection")
+        let retryMemory = MemorySecrets(), retryRelay = EchoTransport(dropBillingOnce: true), retryFolder = folder.appendingPathComponent("billing-retry")
+        let billingClient = try ProductionGroupWindowClient(endpoint: endpoint, secrets: retryMemory, transport: retryRelay,
+            outboxDirectory: retryFolder, billingSigner: SyntheticBillingSigner())
+        do { try await billingClient.connectExistingBillingAccount(); throw Failure.check("billing response was not dropped") }
+        catch GroupClientError.offline { }
+        let resumedBilling = try ProductionGroupWindowClient(endpoint: endpoint, secrets: retryMemory, transport: retryRelay,
+            outboxDirectory: retryFolder, billingSigner: SyntheticBillingSigner())
+        try await resumedBilling.connectExistingBillingAccount()
+        try await resumedBilling.connectExistingBillingAccount()
+        let retriedBodies = await retryRelay.billingStats()
+        try check(retriedBodies.count == 2 && retriedBodies[0] == retriedBodies[1], "billing exact-body retry survives adapter restart")
+        let otherAccount = try ProductionGroupWindowClient(endpoint: endpoint, secrets: retryMemory, transport: retryRelay, outboxDirectory: retryFolder,
+            billingSigner: SyntheticBillingSigner(account: "22222222-2222-4222-8222-222222222222"))
+        do { try await otherAccount.connectExistingBillingAccount(); throw Failure.check("billing account silently replaced") }
+        catch GroupClientError.authenticationRequired { }
+        let unpaidRelay = EchoTransport()
+        let unpaid = try ProductionGroupWindowClient(endpoint: endpoint, secrets: MemorySecrets(), transport: unpaidRelay,
+            outboxDirectory: folder.appendingPathComponent("no-billing"))
+        do { _ = try await unpaid.createWindow(name: "未接続", operationID: UUID()); throw Failure.check("missing billing identity accepted") }
+        catch GroupClientError.authenticationRequired { }
+        let unpaidStats = await unpaidRelay.stats()
+        try check(unpaidStats.0 == 0 && unpaidStats.1.isEmpty, "no purchase or registration inferred from local Plus")
         let firstIdentity = try GroupWire.decode(GroupDeviceIdentity.self, memory.read("identity")!)
         let secondMemory = MemorySecrets(), secondFolder = folder.appendingPathComponent("second", isDirectory: true)
         let second = try ProductionGroupWindowClient(endpoint: endpoint, secrets: secondMemory, transport: relay, outboxDirectory: secondFolder)
