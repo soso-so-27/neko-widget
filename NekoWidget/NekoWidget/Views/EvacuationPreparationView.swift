@@ -414,7 +414,7 @@ private struct EvacuationCatView: View {
                         ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name),
                     footer: "特徴・ごはん・接し方・病歴・連絡先は「この子のこと」で書きます。下の「見せる内容」で選んだものだけ載ります。",
                     identifier: "evacuation-cat-care-fields", editIdentifier: "evacuation-open-cat-care")
-                Section("見せる内容") {
+                Section {
                     Toggle("いつものごはん", isOn: $disclosure.food)
                     Toggle("接し方・苦手なこと", isOn: $disclosure.handling)
                     Toggle("病歴・薬・アレルギー", isOn: $disclosure.medical).accessibilityIdentifier("evacuation-disclose-medical")
@@ -422,6 +422,8 @@ private struct EvacuationCatView: View {
                     if cat.photos["withOwner"] != nil { Toggle("飼い主と一緒の写真", isOn: $disclosure.withOwnerPhoto) }
                     Toggle("ワクチン・マイクロチップ番号", isOn: $disclosure.catCare)
                         .accessibilityIdentifier("evacuation-disclose-cat-care")
+                } header: {
+                    Text("見せる内容")
                 } footer: {
                     Text("ワクチンの証明の写真には、住所や名前が写っていることがあります。見せる相手を確かめてから選んでください。")
                 }
