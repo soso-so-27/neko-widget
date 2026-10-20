@@ -4606,5 +4606,38 @@ class VeterinaryCatCareTests(unittest.TestCase):
         self.assertIn("前回から", trend)
 
 
+class LostCatCatCareTests(unittest.TestCase):
+    def test_lost_cat_reads_cat_care_without_publishing_private_details(self) -> None:
+        view = source("NekoWidget/Views/CatPreparednessView.swift")
+        summary = source("NekoWidget/Views/CatCareView.swift")
+        store = source("NekoWidget/Services/CatPreparednessStore.swift")
+        # The public flyer value is unchanged: no chip number, medicine or report field.
+        public = section(store, "struct LostCatPublicDraft {", "enum LostCatFlyerRenderer {")
+        for forbidden in ("microchip", "CatCare", "medication", "report"):
+            self.assertNotIn(forbidden, public)
+        # Reporting details are shown in the app only.
+        report = section(view, "@ViewBuilder private var reportSection", "private var catCareRecord")
+        self.assertIn("CatCareSummary.lostCatReportFields(catCareRecord)", report)
+        self.assertIn("チラシ・画像には載りません", report)
+        self.assertIn("CatCareEntryView(profiles: [profile])", report)
+        fields = section(summary, "static func lostCatReportFields(", "/// Newest first")
+        self.assertIn('("マイクロチップ番号", text(record?.microchip?.value))', fields)
+        # The flyer line says only that there is a chip.
+        core = source("NekoWidget/Services/CatCareCore.swift")
+        line = section(core, "static func publicLine(", "static func age(")
+        self.assertIn('.isEmpty { parts.append("マイクロチップあり") }', line)
+        self.assertNotIn("parts.append(record?.microchip", line)
+        # The published contact is added by a tap, never filled on its own.
+        fill = section(view, "private func fillFromCatCare(", "@ViewBuilder private func fieldIssue(")
+        self.assertNotIn("contact", fill)
+        self.assertIn("「この子のこと」の連絡先を入れる", view)
+        # A new draft starts from 「この子のこと」; owner text is never replaced.
+        self.assertIn("if !alreadyPrepared { saved = fillFromCatCare(saved, key: identity) }", view)
+        self.assertIn("next.features.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty", fill)
+        self.assertIn("== nil", fill)
+        load = section(view, "private func load(_ identity:", "private func switchTo(")
+        self.assertLess(load.index("try store.hasPreparedRecord(for: identity)"), load.index("fillFromCatCare"))
+
+
 if __name__ == "__main__":
     unittest.main()

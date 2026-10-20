@@ -477,6 +477,34 @@ enum CatCareImport {
     }
 }
 
+// MARK: - 迷子のとき
+
+enum CatCareLostCat {
+    /// One short line the owner may add to the flyer with a tap, such as
+    /// 「オス・3歳・室内飼い・マイクロチップあり」. The chip number stays off it.
+    static func publicLine(_ record: CatCareRecord?,
+                           today: CatCareDay? = CatCareDay(date: Date())) -> String? {
+        var parts: [String] = []
+        switch record?.sex?.value ?? .unknown {
+        case .male: parts.append("オス")
+        case .female: parts.append("メス")
+        case .unknown: break
+        }
+        if let age = age(record?.birthday?.value, today: today) { parts.append(age) }
+        if record?.indoorOnly?.value == .yes { parts.append("室内飼い") }
+        if !(record?.microchip?.value ?? "").isEmpty { parts.append("マイクロチップあり") }
+        return parts.isEmpty ? nil : parts.joined(separator: "・")
+    }
+
+    /// 「3歳」, or 「5か月」 under one year. Nil for an unknown or future birthday.
+    static func age(_ birthday: CatCareDay?, today: CatCareDay?) -> String? {
+        guard let birthday, let today, birthday <= today else { return nil }
+        var months = (today.year - birthday.year) * 12 + (today.month - birthday.month)
+        if today.day < birthday.day { months -= 1 }
+        return months < 12 ? "\(max(months, 0))か月" : "\(months / 12)歳"
+    }
+}
+
 // MARK: - Reading a file where one broken cat must not hide the others
 
 enum CatCareDecoding {

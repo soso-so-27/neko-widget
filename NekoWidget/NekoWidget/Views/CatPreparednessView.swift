@@ -158,6 +158,7 @@ struct LostCatDraftView: View {
     @ObservedObject var careStore = CareHandoffStore.shared
 
     @ObservedObject var store = LostCatDraftStore.shared
+    @ObservedObject private var catCareStore = CatCareStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var key = ""
     @State private var draft = LostCatDraft()
@@ -192,6 +193,7 @@ struct LostCatDraftView: View {
             catSection.disabled(!loaded)
             incidentSection.disabled(!loaded)
             contactSection.disabled(!loaded)
+            reportSection
             if candidateRefreshError {
                 Section {
                     Text("普段の情報を更新できませんでした。保存済みの内容はそのままです。")
@@ -278,7 +280,10 @@ struct LostCatDraftView: View {
                 } catch { return false }
             }
         }
-        .task { if !loaded { load(initialKey, name: initialName) } }
+        .task {
+            catCareStore.importFromTools()
+            if !loaded { load(initialKey, name: initialName) }
+        }
         .onChange(of: draft) { _, _ in
             guard loaded else { return }
             saveTask?.cancel()
@@ -322,9 +327,21 @@ struct LostCatDraftView: View {
                     Button("今表示している写真を使う") { self.photoError = nil }
                 }
             }
+            if faceImage == nil, catCarePhoto(.face) != nil {
+                Button("「この子のこと」の写真を使う", systemImage: "photo") { useCatCarePhotos() }
+                    .disabled(photoBusy)
+                    .accessibilityIdentifier("lost-cat-use-cat-care-photos")
+            }
             textEntry("見分ける特徴（任意）", text: textBinding(\.features, field: "features"), field: .features,
                       limit: LostCatFlyerRenderer.featuresLimit,
                       example: "例：茶白。胸と足先が白く、しっぽは長い。左耳の先に切れ込み。")
+            if let line = CatCareLostCat.publicLine(catCareRecord), !draft.features.contains(line) {
+                Button("「\(line)」を特徴に足す", systemImage: "plus.circle") {
+                    let current = draft.features.trimmingCharacters(in: .whitespacesAndNewlines)
+                    textBinding(\.features, field: "features").wrappedValue = current.isEmpty ? line : line + "。" + current
+                }
+                .accessibilityIdentifier("lost-cat-add-cat-care-line")
+            }
             Picker("首輪", selection: collarChoice) {
                 ForEach(Collar.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -389,6 +406,13 @@ struct LostCatDraftView: View {
                         .focused($focus, equals: .contact)
                 }
                 fieldIssue("contact")
+                if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let owner = catCareStore.state?.household.ownerContact?.value
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty {
+                    Button("「この子のこと」の連絡先を入れる", systemImage: "person.crop.circle") { draft.contact = owner }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("lost-cat-use-cat-care-contact")
+                }
             }
             textEntry("見かけた方へ（任意）", text: $draft.approachAdvice, field: .advice,
                       limit: LostCatFlyerRenderer.adviceLimit,
@@ -397,6 +421,71 @@ struct LostCatDraftView: View {
           footer: {
             Text("この連絡先は画像・チラシに公開されます。")
         }
+    }
+
+    /// Reporting details from 「この子のこと」. In the app only; the flyer never reads them.
+    @ViewBuilder private var reportSection: some View {
+        if let profile = profiles.first(where: { $0.identifier == key }) {
+            let fields = CatCareSummary.lostCatReportFields(catCareRecord)
+            Section {
+                ForEach(Array(fields.enumerated()), id: \.offset) { _, field in
+                    LabeledContent(field.0) {
+                        Text(field.1).multilineTextAlignment(.trailing).textSelection(.enabled)
+                    }
+                }
+                Button("まとめてコピー", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = ([profile.displayName] + fields.map { "\($0.0)：\($0.1)" })
+                        .joined(separator: "\n")
+                }
+                .accessibilityIdentifier("lost-cat-copy-report")
+                NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
+                    .accessibilityIdentifier("lost-cat-open-cat-care")
+            } header: { Text("届け出に使う情報") }
+              footer: { Text("チラシ・画像には載りません。警察・保健所・動物愛護センターに伝えるときに使えます。") }
+            .accessibilityIdentifier("lost-cat-report")
+        }
+    }
+
+    private var catCareRecord: CatCareRecord? {
+        _ = catCareStore.state
+        return CatCareSummary.record(profileIdentifier: key)
+    }
+
+    private func catCarePhoto(_ role: CatPreparednessStore.PhotoRole) -> Data? {
+        guard let ref = (role == .face ? catCareRecord?.facePhoto?.value : catCareRecord?.bodyPhoto?.value) ?? nil,
+              let url = catCareStore.photoURL(ref) else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    private func useCatCarePhotos() {
+        do {
+            if faceImage == nil, let face = catCarePhoto(.face) { try commitPhoto(face, role: .face) }
+            if bodyImage == nil, let body = catCarePhoto(.body) { try commitPhoto(body, role: .body) }
+        } catch { photoError = "読み込めませんでした。別の写真を選ぶか、もう一度お試しください。" }
+    }
+
+    /// A new draft starts from 「この子のこと」: coat, marks and photos, so a
+    /// worried owner does not have to look for them. Owner text is never replaced.
+    private func fillFromCatCare(_ draft: LostCatDraft, key identity: String) -> LostCatDraft {
+        guard let record = CatCareSummary.record(profileIdentifier: identity) else { return draft }
+        var next = draft
+        if next.features.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let features = [record.coat?.value, record.marks?.value]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }.joined(separator: "。")
+            if !features.isEmpty {
+                next.features = features
+                do { try store.save(next, for: identity) } catch { return draft }
+            }
+        }
+        for role in [CatPreparednessStore.PhotoRole.face, .body] {
+            guard (role == .face ? next.faceFileName : next.bodyFileName) == nil,
+                  let ref = (role == .face ? record.facePhoto?.value : record.bodyPhoto?.value) ?? nil,
+                  let url = catCareStore.photoURL(ref), let data = try? Data(contentsOf: url),
+                  let updated = try? store.replacePhoto(data, role: role, draft: next, for: identity) else { continue }
+            next = updated
+        }
+        return next
     }
 
     @ViewBuilder private func fieldIssue(_ field: String) -> some View {
@@ -580,6 +669,7 @@ struct LostCatDraftView: View {
             let information = !alreadyPrepared && candidates.count == 1
                 ? try candidates[0].information(evacuation: evacuationStore, care: careStore) : nil
             var saved = try store.draft(for: identity, profileName: name, savedInformation: information)
+            if !alreadyPrepared { saved = fillFromCatCare(saved, key: identity) }
             if alreadyPrepared, candidates.count == 1 {
                 // Failure must not block an already saved emergency draft.
                 do { saved = try store.refreshCandidateText(for: identity, information: candidates[0].textForCandidateRefresh()) }

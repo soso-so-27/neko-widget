@@ -639,6 +639,45 @@ enum CatCareSummary {
         return fields
     }
 
+    /// For 「迷子のとき」: what the police, the health center and shelters ask.
+    /// Shown in the app for reporting; none of it goes on the flyer by itself.
+    static func lostCatReportFields(_ record: CatCareRecord?,
+                                    today: CatCareDay? = CatCareDay(date: Date())) -> [(String, String)] {
+        let empty = "未記入"
+        func text(_ value: String?) -> String {
+            let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? empty : trimmed
+        }
+        var fields: [(String, String)] = []
+        let sex: String = switch record?.sex?.value ?? .unknown {
+        case .male: "オス"
+        case .female: "メス"
+        case .unknown: empty
+        }
+        let neutered: String = switch record?.neutered?.value ?? .unknown {
+        case .yes: "・去勢・避妊 済み"
+        case .no: "・去勢・避妊 まだ"
+        case .unknown: ""
+        }
+        fields.append(("性別", sex + neutered))
+        fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: today) ?? empty))
+        if let latest = record?.activeWeights.first {
+            fields.append(("体重", CatCareFormat.weight(latest.grams) + "（\(CatCareFormat.day(latest.measuredOn))）"))
+        }
+        fields.append(("毛色", text(record?.coat?.value)))
+        fields.append(("見分ける特徴", text(record?.marks?.value)))
+        fields.append(("マイクロチップ番号", text(record?.microchip?.value)))
+        let indoor: String = switch record?.indoorOnly?.value ?? .unknown {
+        case .yes: "室内飼い（外に慣れていない）"
+        case .no: "外にも出る"
+        case .unknown: empty
+        }
+        fields.append(("暮らし", indoor))
+        let medications = (record?.activeMedications ?? []).map(\.name).filter { !$0.isEmpty }
+        if !medications.isEmpty { fields.append(("飲んでいる薬", medications.joined(separator: "・"))) }
+        return fields
+    }
+
     /// Newest first, with the change from the previous record:
     /// 「2026/10/20 4.20kg（前回から −0.10kg）」. Up to six lines.
     static func weightTrend(_ record: CatCareRecord?) -> [String]? {
