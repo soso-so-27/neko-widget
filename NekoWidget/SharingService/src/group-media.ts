@@ -4,6 +4,8 @@ import type { Env } from './env';
 import { groupAuthorizationStatements,groupId,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
 import { groupFields,loadStoredGroupRoster } from './group-protocol';
 import { groupCursor,groupPage } from './group-reads';
+import { groupDeliveryPolicyStatements } from './group-owner-plus';
+import { cleanLateGroupUpload } from './group-cleanup';
 import { binaryField,exactKeys,integerField,opaqueId,stringField,uuidField,type JsonRecord } from './validation';
 
 export const GROUP_MAX_CIPHERTEXT=1048576;
@@ -58,9 +60,9 @@ export async function reserveGroupPhoto(env:Env,actor:GroupActor,windowId:string
   const id=randomBase64url(16),hash=binaryField(body,'ciphertextSHA256',32),expires=actor.now+GROUP_UPLOAD_SECONDS;
   const response={operationId,momentId:id,uploadExpiresAt:expires,serverNow:actor.now};
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:revision}),
-    env.DB.prepare(`INSERT INTO group_moments VALUES (?,?,?,?,?,?,?,?,?,?,?,'photo','reserved',?,?,?,NULL,?,NULL)`)
+    env.DB.prepare(`INSERT INTO group_moments VALUES (?,?,?,?,?,?,?,?,?,?,?,'photo','reserved',?,?,?,NULL,?,?,NULL)`)
       .bind(id,windowId,body.clientMomentId,access.participantId,actor.deviceId,epoch,revision,roster.hash,body.ciphertextSize,hash,body.senderSignature,
-        `groups/v3/${windowId}/${id}/${hash}`,actor.now,expires,actor.now+GROUP_UNRECEIVED_SECONDS),
+        `groups/v3/${windowId}/${id}/${hash}`,actor.now,expires,actor.now+GROUP_UNRECEIVED_SECONDS,expires+600),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response,201);
 }
@@ -84,8 +86,10 @@ export async function uploadGroupPhoto(env:Env,actor:GroupActor,windowId:string,
     const existing=await storage.get(row.object_key);
     if(!existing || existing.size!==row.ciphertext_size || await sha256Base64url(new Uint8Array(await existing.arrayBuffer()))!==row.ciphertext_sha256) unavailable('hash_mismatch',400);
   }
-  await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'upload'),
-    env.DB.prepare("UPDATE group_moments SET state='uploaded' WHERE id=? AND state='reserved'").bind(momentId)]);
+  try {
+    await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'upload'),
+      env.DB.prepare("UPDATE group_moments SET state='uploaded' WHERE id=? AND state='reserved'").bind(momentId)]);
+  } catch(error) {await cleanLateGroupUpload(env,momentId,row.object_key);throw error;}
   return jsonResponse({momentId,state:'uploaded',serverNow:Math.floor(Date.now()/1000)});
 }
 
@@ -108,14 +112,15 @@ export async function commitGroupPhoto(env:Env,actor:GroupActor,windowId:string,
   const object=await bucket(env).head(row.object_key);
   if(!object || object.size!==row.ciphertext_size || object.customMetadata?.digest!==row.ciphertext_sha256) unavailable('upload_required');
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'commit'),
-    env.DB.prepare("UPDATE group_moments SET state='committed',committed_at=? WHERE id=? AND state='uploaded'").bind(actor.now,momentId),
+    ...groupDeliveryPolicyStatements(env,windowId),
+    env.DB.prepare("UPDATE group_moments SET state='committed',committed_at=?,unreceived_expires_at=?,cleanup_at=? WHERE id=? AND state='uploaded'").bind(actor.now,actor.now+GROUP_UNRECEIVED_SECONDS,actor.now+GROUP_UNRECEIVED_SECONDS,momentId),
     env.DB.prepare(`INSERT INTO group_moment_deliveries SELECT ?,d.device_id,m.participant_id,?,'pending',?,NULL
       FROM group_window_devices d JOIN group_members m ON m.participant_id=d.participant_id
       JOIN group_person_devices p ON p.id=d.device_id JOIN group_people person ON person.id=p.person_id
       WHERE d.space_id=? AND d.state='active' AND m.state='active' AND p.state='active' AND person.state='active'
         AND NOT EXISTS (SELECT 1 FROM group_participant_blocks b WHERE b.space_id=d.space_id AND b.active=1
           AND ((b.blocker_id=m.participant_id AND b.blocked_id=?) OR (b.blocked_id=m.participant_id AND b.blocker_id=?)))
-      ON CONFLICT(moment_id,device_id) DO NOTHING`).bind(momentId,row.roster_revision,row.unreceived_expires_at,windowId,row.sender_participant_id,row.sender_participant_id),
+      ON CONFLICT(moment_id,device_id) DO NOTHING`).bind(momentId,row.roster_revision,actor.now+GROUP_UNRECEIVED_SECONDS,windowId,row.sender_participant_id,row.sender_participant_id),
     ...groupNotificationStatements(env,actor,row,'new_moment',momentId),
     env.DB.prepare(`INSERT INTO group_notification_deliveries SELECT ?,d.device_id,s.token_digest,s.generation,'pending',0,?,NULL,NULL
       FROM group_moment_deliveries d JOIN group_push_subscriptions s ON s.space_id=? AND s.device_id=d.device_id
@@ -179,6 +184,7 @@ export async function acknowledgeGroupPhoto(env:Env,actor:GroupActor,windowId:st
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}),...groupMediaChecks(env,actor,momentId,'read'),
     env.DB.prepare(`UPDATE group_moment_deliveries SET state='acknowledged',acknowledged_at=?,access_expires_at=MIN(access_expires_at,?)
       WHERE moment_id=? AND device_id=? AND state='pending'`).bind(actor.now,actor.now+GROUP_ACK_SECONDS,momentId,actor.deviceId),
+    env.DB.prepare(`UPDATE group_moments SET cleanup_at=(SELECT MAX(access_expires_at) FROM group_moment_deliveries WHERE moment_id=?) WHERE id=? AND state='committed'`).bind(momentId,momentId),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response);
 }

@@ -8,6 +8,8 @@ import { getGroupKey,listGroupJoinRequests,listGroupMembers,listGroupRosters } f
 import { createGroupInvitation,createGroupWindow,getGroupWindow,listGroupWindows,revokeGroupInvitation } from './group-windows';
 import { parseJsonBody,requireEmptyBody } from './http';
 import { connectGroupBilling } from './group-owner-plus';
+import { acknowledgeGroupPhoto,commitGroupPhoto,getGroupPhoto,GROUP_MAX_CIPHERTEXT,listGroupPhotos,reserveGroupPhoto,uploadGroupPhoto } from './group-media';
+import { listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
 
 export async function groupAPI(request:Request,env:Env):Promise<Response> {
   try { return await dispatchGroup(request,env); }
@@ -32,6 +34,10 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
       ['group_owner_plus_required',403,'owner_plus_required'],['group_window_paused',403,'window_paused'],
       ['group_billing_connection_invalid',401,'invalid_billing_authentication'],
       ['group_billing_connections.',409,'billing_connection_conflict'],['billing_request_nonces.',401,'replayed_billing_request'],
+      ['group_photo_daily_limit',409,'daily_limit'],['group_heart_daily_limit',409,'daily_limit'],
+      ['group_stale_epoch_or_membership',409,'stale_epoch'],['group_reservation_expired_or_stale',409,'reservation_expired'],
+      ['group_reservation_expired',410,'reservation_expired'],
+      ['group_delivery_unavailable',410,'delivery_expired'],['group_moments.space_id',409,'idempotency_conflict'],
       ['group_rosters.space_id',409,'stale_revision'],['group_epoch_transitions.id',409,'idempotency_conflict'],
     ];
     for(const [marker,status,code] of codes) if(message.includes(marker)) throw new ApiError(status,code,'The group operation could not be completed.');
@@ -43,9 +49,10 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(request.method==='POST' && path==='/v3/group-identities/challenges') return createGroupIdentityChallenge(request,env);
   if(request.method==='POST' && path==='/v3/group-identities') return registerGroupIdentity(request,env);
   if(!path.startsWith('/v3/group-windows')) throw new ApiError(404,'not_found','The endpoint was not found.');
-  const {actor,body:bytes}=await authenticateGroupRequest(request,env);
+  const upload=request.method==='PUT' && /^\/v3\/group-windows\/[A-Za-z0-9_-]{22}\/moments\/[A-Za-z0-9_-]{22}\/ciphertext$/u.test(path);
+  const {actor,body:bytes}=await authenticateGroupRequest(request,env,upload?GROUP_MAX_CIPHERTEXT:128*1024);
   if(request.method==='GET') requireEmptyBody(bytes);
-  else if(request.method!=='POST') throw new ApiError(405,'method_not_allowed','The method is not supported.');
+  else if(request.method!=='POST' && !upload) throw new ApiError(405,'method_not_allowed','The method is not supported.');
   const body=request.method==='POST'?parseJsonBody(request,bytes):undefined;
   if(path==='/v3/group-windows/billing-connection' && body)return connectGroupBilling(request,env,actor,bytes,body);
   if(path==='/v3/group-windows' && body) return createGroupWindow(env,actor,body);
@@ -54,9 +61,26 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(!match) throw new ApiError(404,'not_found','The endpoint was not found.');
   const windowId=groupId(match[1]!),suffix=match[2]??'';
   if(suffix==='' && request.method==='GET') return getGroupWindow(env,actor,windowId);
+  const photo=suffix.match(/^moments\/([A-Za-z0-9_-]{22})(?:\/(ciphertext|commit|ack|hearts|hearts\/list))?$/u);
+  if(photo && upload) {
+    if(request.headers.get('content-type')!=='application/octet-stream')throw new ApiError(415,'invalid_content_type','The photo must be encrypted bytes.');
+    return uploadGroupPhoto(env,actor,windowId,photo[1]!,bytes);
+  }
+  if(photo && request.method==='GET' && (!photo[2] || photo[2]==='ciphertext'))return getGroupPhoto(env,actor,windowId,photo[1]!,photo[2]==='ciphertext');
   const key=suffix.match(/^keys\/([1-9][0-9]{0,14})$/u);
   if(key && request.method==='GET') return getGroupKey(env,actor,windowId,Number(key[1]));
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');
+  if(suffix==='moments/reserve')return reserveGroupPhoto(env,actor,windowId,body);
+  if(suffix==='moments/list')return listGroupPhotos(env,actor,windowId,body);
+  if(photo && photo[2]==='commit')return commitGroupPhoto(env,actor,windowId,photo[1]!,body);
+  if(photo && photo[2]==='ack')return acknowledgeGroupPhoto(env,actor,windowId,photo[1]!,body);
+  if(photo && photo[2]==='hearts') {
+    if(env.REACTION_RUNTIME_ENABLED!=='YES')throw new ApiError(503,'reactions_disabled','Hearts are unavailable.');
+    return recordGroupHeart(env,actor,windowId,photo[1]!,body);
+  }
+  if(photo && photo[2]==='hearts/list')return listGroupHearts(env,actor,windowId,photo[1]!,body);
+  const block=suffix.match(/^blocks\/([A-Za-z0-9_-]{22})$/u);
+  if(block)return setGroupBlock(env,actor,windowId,block[1]!,body);
   if(suffix==='invitations') return createGroupInvitation(env,actor,windowId,body);
   const revoke=suffix.match(/^invitations\/([A-Za-z0-9_-]{1,128})\/revoke$/u);
   if(revoke) return revokeGroupInvitation(env,actor,windowId,revoke[1]!,body);

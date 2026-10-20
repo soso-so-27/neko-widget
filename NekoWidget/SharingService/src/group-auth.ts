@@ -18,9 +18,9 @@ export function groupId(value: string): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) throw new ApiError(404,"not_found","The group record was not found.");
   return value;
 }
-export async function authenticateGroupRequest(request: Request, env: Env): Promise<{actor:GroupActor;body:Uint8Array}> {
+export async function authenticateGroupRequest(request: Request, env: Env,maximumBody=128*1024): Promise<{actor:GroupActor;body:Uint8Array}> {
   await enforceRateLimit(env,env.MEMBER_RATE_LIMITER,transientNetworkKey(request,"group-member"));
-  const body = await readBody(request,128*1024);
+  const body = await readBody(request,maximumBody);
   const now = Math.floor(Date.now()/1000);
   const deviceId = request.headers.get("neko-device-id") ?? "";
   const timestamp = request.headers.get("neko-timestamp") ?? "";

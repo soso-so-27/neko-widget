@@ -21,12 +21,14 @@ CREATE TABLE group_moments (
     upload_expires_at INTEGER NOT NULL,
     committed_at INTEGER,
     unreceived_expires_at INTEGER NOT NULL,
+    cleanup_at INTEGER NOT NULL,
     expired_at INTEGER,
     UNIQUE(space_id,sender_device_id,client_moment_id),
     FOREIGN KEY(space_id,roster_revision) REFERENCES group_rosters(space_id,revision)
 ) STRICT;
 CREATE INDEX group_moments_daily ON group_moments(space_id,sender_participant_id,created_at,state);
-CREATE INDEX group_moments_expiry ON group_moments(state,unreceived_expires_at,id);
+CREATE INDEX group_moments_commit_day ON group_moments(space_id,sender_participant_id,committed_at,state);
+CREATE INDEX group_moments_expiry ON group_moments(state,cleanup_at,id);
 CREATE TRIGGER group_reservation_authority BEFORE INSERT ON group_moments
 BEGIN
     SELECT (CASE WHEN NOT EXISTS (
@@ -39,8 +41,8 @@ BEGIN
         THEN RAISE(ABORT,'group_stale_epoch_or_membership') END);
     SELECT (CASE WHEN (SELECT COUNT(*) FROM group_moments
         WHERE space_id=NEW.space_id AND sender_participant_id=NEW.sender_participant_id
-            AND created_at >= CAST(NEW.created_at / 86400 AS INTEGER) * 86400
-            AND (state='committed' OR (state IN ('reserved','uploaded') AND upload_expires_at>NEW.created_at))) >= 5
+            AND ((state='committed' AND committed_at>=CAST(NEW.created_at / 86400 AS INTEGER)*86400)
+                OR (state IN ('reserved','uploaded') AND created_at>=CAST(NEW.created_at / 86400 AS INTEGER)*86400 AND upload_expires_at>NEW.created_at))) >= 5
         THEN RAISE(ABORT,'group_photo_daily_limit') END);
 END;
 CREATE TRIGGER group_moment_commit BEFORE UPDATE OF state ON group_moments
@@ -58,7 +60,7 @@ BEGIN
         THEN RAISE(ABORT,'group_stale_epoch_or_membership') END);
     SELECT (CASE WHEN NEW.state='committed' AND (SELECT COUNT(*) FROM group_moments
         WHERE space_id=NEW.space_id AND sender_participant_id=NEW.sender_participant_id AND state='committed'
-            AND created_at >= CAST(NEW.created_at / 86400 AS INTEGER)*86400) >= 5
+            AND committed_at>=CAST(NEW.committed_at / 86400 AS INTEGER)*86400) >= 5
         THEN RAISE(ABORT,'group_photo_daily_limit') END);
 END;
 CREATE TABLE group_moment_deliveries (
@@ -171,6 +173,7 @@ CREATE TABLE group_notification_events (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
 ) STRICT;
+CREATE INDEX group_notification_expiry ON group_notification_events(expires_at,id);
 CREATE TABLE group_notification_deliveries (
     event_id TEXT NOT NULL REFERENCES group_notification_events(id) ON DELETE CASCADE,
     device_id TEXT NOT NULL REFERENCES group_person_devices(id),
@@ -185,9 +188,11 @@ CREATE TABLE group_notification_deliveries (
 ) STRICT;
 CREATE INDEX group_notification_queue ON group_notification_deliveries(state,available_at,event_id,device_id);
 CREATE TABLE group_object_deletions (
-    moment_id TEXT PRIMARY KEY REFERENCES group_moments(id) ON DELETE CASCADE,
+    -- Keep deletion work even if a very late upload outlives relay metadata.
+    moment_id TEXT PRIMARY KEY,
     object_key TEXT NOT NULL UNIQUE,
     attempts INTEGER NOT NULL DEFAULT 0,
     available_at INTEGER NOT NULL,
     state TEXT NOT NULL CHECK(state IN ('pending','completed'))
 ) STRICT;
+CREATE INDEX group_object_deletion_queue ON group_object_deletions(state,available_at,moment_id);

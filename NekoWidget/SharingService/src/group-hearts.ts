@@ -3,7 +3,7 @@ import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
 import { groupId,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
 import { groupFields,loadStoredGroupRoster } from './group-protocol';
-import { groupMediaChecks,groupMoment,groupNotificationStatements,groupPhotoMetadata,requireGroupDelivery } from './group-media';
+import { groupMediaChecks,groupMoment,groupPhotoMetadata,requireGroupDelivery } from './group-media';
 import { groupCursor,groupPage } from './group-reads';
 import { binaryField,exactKeys,integerField,uuidField,type JsonRecord } from './validation';
 
@@ -23,28 +23,31 @@ export async function recordGroupHeart(env:Env,actor:GroupActor,windowId:string,
   if(roster.packet.roster.revision!==revision || !await verifyEd25519(actor.signingPublicKey,signature,groupHeartTranscript({windowId,momentId,
     participantId:access.participantId,deviceId:actor.deviceId,active:body.active,operationId,keyEpoch:epoch,rosterHash:roster.hash})))
     throw new ApiError(400,'invalid_signature','The heart signature could not be verified.');
-  const old=await env.DB.prepare('SELECT active FROM group_moment_hearts WHERE moment_id=? AND participant_id=?')
-    .bind(momentId,access.participantId).first<{active:number}>();
   const response={operationId,momentId,reactorParticipantId:access.participantId,active:body.active,updatedAt:actor.now,serverNow:actor.now};
   const statements=[...groupNonceStatements(env,actor,{windowId,expectedRevision:revision}),...groupMediaChecks(env,actor,momentId,'heart')];
-  // New operation IDs with the same desired state do not generate another
-  // heart, quota charge or notification. Signature still authenticates intent.
-  if((old?.active===1)!==body.active) {
-    if(body.active)statements.push(env.DB.prepare(`INSERT INTO group_heart_usage VALUES (?,?,?,1)
-      ON CONFLICT(space_id,participant_id,day_key) DO UPDATE SET used=used+1`).bind(windowId,access.participantId,Math.floor(actor.now/86400)));
-    statements.push(env.DB.prepare(`INSERT INTO group_moment_hearts VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(moment_id,participant_id)
-      DO UPDATE SET device_id=excluded.device_id,active=excluded.active,key_epoch=excluded.key_epoch,roster_revision=excluded.roster_revision,
-      roster_hash=excluded.roster_hash,operation_id=excluded.operation_id,signature=excluded.signature,updated_at=excluded.updated_at`)
-      .bind(momentId,access.participantId,actor.deviceId,body.active?1:0,epoch,revision,roster.hash,operationId,signature,actor.now));
-    if(body.active && access.participantId!==row.sender_participant_id) {
-      const eventId=randomBase64url(16);
-      statements.push(...groupNotificationStatements(env,actor,row,'heart',eventId,access.participantId),
-        env.DB.prepare(`INSERT INTO group_notification_deliveries SELECT ?,d.device_id,s.token_digest,s.generation,'pending',0,?,NULL,NULL
-          FROM group_moment_deliveries d JOIN group_push_subscriptions s ON s.space_id=? AND s.device_id=d.device_id
-          WHERE d.moment_id=? AND d.participant_id=? AND d.device_id<>? AND d.state IN ('pending','acknowledged')
-            AND d.access_expires_at>? AND s.expires_at>? ON CONFLICT(event_id,device_id) DO NOTHING`)
-          .bind(eventId,actor.now,windowId,momentId,row.sender_participant_id,actor.deviceId,actor.now,actor.now));
-    }
+  // State, quota and notification are one serialized transition. A read before
+  // the batch would double-charge concurrent identical hearts or miss a cancel.
+  statements.push(env.DB.prepare(`INSERT INTO group_moment_hearts VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(moment_id,participant_id)
+    DO UPDATE SET device_id=excluded.device_id,active=excluded.active,key_epoch=excluded.key_epoch,roster_revision=excluded.roster_revision,
+    roster_hash=excluded.roster_hash,operation_id=excluded.operation_id,signature=excluded.signature,updated_at=excluded.updated_at
+    WHERE group_moment_hearts.active<>excluded.active`)
+    .bind(momentId,access.participantId,actor.deviceId,body.active?1:0,epoch,revision,roster.hash,operationId,signature,actor.now));
+  if(body.active)statements.push(env.DB.prepare(`INSERT INTO group_heart_usage
+    SELECT ?,?,?,1 FROM group_moment_hearts WHERE moment_id=? AND participant_id=? AND operation_id=? AND active=1
+    ON CONFLICT(space_id,participant_id,day_key) DO UPDATE SET used=used+1`)
+    .bind(windowId,access.participantId,Math.floor(actor.now/86400),momentId,access.participantId,operationId));
+  if(body.active && access.participantId!==row.sender_participant_id) {
+    const eventId=randomBase64url(16);
+    statements.push(env.DB.prepare(`INSERT INTO group_notification_events
+      SELECT ?,?,?,'heart',?,?,?,? FROM group_moment_hearts WHERE moment_id=? AND participant_id=? AND operation_id=? AND active=1`)
+      .bind(eventId,windowId,momentId,access.participantId,actor.deviceId,actor.now,actor.now+86400,momentId,access.participantId,operationId),
+      env.DB.prepare(`INSERT INTO group_notification_deliveries
+        SELECT ?,d.device_id,s.token_digest,s.generation,'pending',0,?,NULL,NULL
+        FROM group_notification_events e JOIN group_moment_deliveries d ON d.moment_id=e.moment_id
+        JOIN group_push_subscriptions s ON s.space_id=e.space_id AND s.device_id=d.device_id
+        WHERE e.id=? AND d.participant_id=? AND d.device_id<>? AND d.state IN ('pending','acknowledged')
+          AND d.access_expires_at>? AND s.expires_at>? ON CONFLICT(event_id,device_id) DO NOTHING`)
+        .bind(eventId,actor.now,eventId,row.sender_participant_id,actor.deviceId,actor.now,actor.now));
   }
   statements.push(groupMutationStatement(env,actor,operationId,response));
   await env.DB.batch(statements);return jsonResponse(response);
