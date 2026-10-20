@@ -206,7 +206,9 @@ struct SettingsView: View {
                 Text("ホーム画面")
             }
 
-            if SharingAPIConfiguration.current.isReviewVisible || SharingAPIConfiguration.current.isAvailable {
+            // Two-person window settings; group windows keep theirs inside each window.
+            if (SharingAPIConfiguration.current.isReviewVisible || SharingAPIConfiguration.current.isAvailable)
+                && GroupWindowClientProvider.production == nil {
                 Section {
                     if SharingAPIConfiguration.current.isReviewVisible {
                         NavigationLink {

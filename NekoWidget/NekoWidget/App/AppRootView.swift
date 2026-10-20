@@ -90,8 +90,8 @@ struct AppRootView: View {
         .sheet(item: $onboardingInvitation, onDismiss: {
             guard GroupWindowOpenInbox.shared.pendingWindowID != nil else { return }
             invitationInbox.discard()
+            // The まど tab opens the joined window from GroupWindowOpenInbox.
             completeOnboardingWithoutPhotoAccess()
-            viewModel.isFamilyWindowPresented = true
         }) { invitation in
             GroupInvitationJoinSheet(invitation: invitation)
         }

@@ -4940,7 +4940,7 @@ class GroupWidgetOpenTests(unittest.TestCase):
         screen = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", screen)
         tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn(".onChange(of: groupWindowOpenInbox.pendingWindowID)", tab)
+        self.assertIn(".onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true)", tab)
 
 
 class GroupWidgetHeartTests(unittest.TestCase):
@@ -5041,6 +5041,26 @@ class Build269FeedbackTests(unittest.TestCase):
             self.assertIn("importBirthdays(profiles)", source(path), path)
         window = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertIn("if !entry.isHidden && !entry.isOwn {", window)
+
+
+class TwoPersonWindowHiddenTests(unittest.TestCase):
+    def test_group_builds_show_no_two_person_window(self) -> None:
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn("supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible\n             && GroupWindowClientProvider.production == nil", tab)
+        self.assertIn("get: { supportsPrivateWindows && opensActiveWindow }", tab)
+        self.assertIn("GroupInvitationJoinSheet(invitation: invitation)", tab)
+        self.assertIn("countsPrivateWindows ? catalog?.windows ?? [] : []", tab)
+        self.assertIn(".onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true)", tab)
+        onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        help_view = section(onboarding, "struct OnboardingInvitationHelpView: View", '.navigationTitle("招待を受け取った")')
+        self.assertNotIn("PairingView(initialSetupPath: .join)", help_view)
+        self.assertIn("&& GroupWindowClientProvider.production == nil {", source("NekoWidget/Views/SettingsView.swift"))
+        browser = source("NekoWidget/Views/LikedPhotosView.swift")
+        deliver = section(browser, "private var canDeliverToWindow: Bool {", "private func addToShowcase(")
+        self.assertIn("GroupWindowClientProvider.production == nil", deliver)
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        dismiss = section(root_view, ".sheet(item: $onboardingInvitation, onDismiss: {", "GroupInvitationJoinSheet(invitation: invitation)")
+        self.assertNotIn("isFamilyWindowPresented", dismiss)
 
 
 if __name__ == "__main__":
