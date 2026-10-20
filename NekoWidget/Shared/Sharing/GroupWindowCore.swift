@@ -146,7 +146,10 @@ enum GroupRosterVerifier {
             else { throw GroupProtocolError.staleRevision }
             // Previously authorized owner devices are the only transition signers.
             guard let oldSigner = previous.device(id: packet.signerDeviceID),
-                  oldSigner.member.role == .owner, oldSigner.device == signingDevice else { throw GroupProtocolError.invalidSignature }
+                  oldSigner.member.role == .owner,
+                  oldSigner.device.id == signingDevice.id,
+                  oldSigner.device.signingPublicKey == signingDevice.signingPublicKey,
+                  oldSigner.device.hpkePublicKey == signingDevice.hpkePublicKey else { throw GroupProtocolError.invalidSignature }
             if old.members != roster.members && roster.keyEpoch == old.keyEpoch { throw GroupProtocolError.invalidRoster }
         } else {
             guard roster.revision == 1, roster.keyEpoch == 1,

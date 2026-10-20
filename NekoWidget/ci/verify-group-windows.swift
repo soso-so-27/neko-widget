@@ -43,6 +43,7 @@ private enum GroupWindowChecks {
             ownerIdentityPublicKey: a.identity.publicKey.rawRepresentation)
         let packet = try GroupRosterVerifier.sign(initial, deviceID: a1.id, privateKey: a1.signing)
         let one = try GroupRosterVerifier.verify(packet, anchor: anchor)
+        print("GROUP stage initial roster verified")
         let key1 = SymmetricKey(size: .bits256)
         let payload = Data("synthetic-group-photo".utf8)
         let photo = try GroupPhotoCrypto.seal(payload, clientMomentID: "photo-one", senderDeviceID: b1.id,
@@ -78,9 +79,11 @@ private enum GroupWindowChecks {
             ciphertext: photo.ciphertext, signature: photo.signature)
         try rejects("photo ID replay") { _ = try GroupPhotoCrypto.open(renamed, roomKey: key1, roster: one) }
         let membersTwo = try [member(a, [a1], owner: true), member(b, [b1, b2]), member(c, [c1])]
+        print("GROUP stage envelope and photo integrity checks passed")
         let second = GroupRoster(windowID: "room-one", revision: 2, keyEpoch: 2,
             previousHash: one.hash, ownerPersonID: a.id, members: membersTwo)
         let two = try GroupRosterVerifier.verify(GroupRosterVerifier.sign(second, deviceID: a1.id, privateKey: a1.signing), anchor: anchor, previous: one)
+        print("GROUP stage additional device roster verified")
         try check(two.roster.members.count == 3 && two.roster.members.flatMap(\.devices).count == 4, "people and devices separate")
         let noRotation = GroupRoster(windowID: "room-one", revision: 2, keyEpoch: 1,
             previousHash: one.hash, ownerPersonID: a.id, members: membersTwo)
@@ -90,6 +93,7 @@ private enum GroupWindowChecks {
         let third = GroupRoster(windowID: "room-one", revision: 3, keyEpoch: 3,
             previousHash: two.hash, ownerPersonID: a.id, members: try [member(a, [a1], owner: true), member(c, [c1])])
         let three = try GroupRosterVerifier.verify(GroupRosterVerifier.sign(third, deviceID: a1.id, privateKey: a1.signing), anchor: anchor, previous: two)
+        print("GROUP stage removal roster verified")
         try check(three.device(id: b1.id) == nil && three.device(id: b2.id) == nil, "remove all devices of one person")
         let key3 = SymmetricKey(size: .bits256)
         try rejects("excluded device cannot receive new envelope") {
