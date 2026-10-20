@@ -2471,6 +2471,11 @@ struct FamilyWindowView: View {
         } else {
             canSendHeart ? .ready : nil
         }
+        // Only older deliveries without a shared record leave this window.
+        // Saying when, next to the way to keep it, removes the surprise.
+        let expiryNotice: String? = item.senderPolicyVersion == 1 && !model.isSavedMemory(item)
+            ? "\(item.receivedAt.addingTimeInterval(FamilyWidgetManifestItem.maximumDisplayDuration).formatted(.dateTime.month().day()))まで表示されます。お気に入りに入れると、期限後も残ります。"
+            : nil
         return MomentReceivedPhotoActions(
             isSaved: model.isSavedMemory(item),
             hasImportedMemory: model.hasImportedMemory(item),
@@ -2497,7 +2502,8 @@ struct FamilyWindowView: View {
                     heartResultFailed = model.heartActionMessage == nil
                     heartResultMomentID = item.id
                 }
-            }
+            },
+            expiryNotice: expiryNotice
         )
     }
 
@@ -2975,8 +2981,23 @@ struct MomentReceivedPhotoActions: View {
     let requestMemorySave: () -> Void
     let requestMemoryRemoval: () -> Void
     let sendHeart: () -> Void
+    /// When this photo will leave the window, and how to keep it (M15).
+    var expiryNotice: String? = nil
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let expiryNotice {
+                Label(expiryNotice, systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("family-window-received-expiry")
+            }
+            actionControls
+        }
+    }
+
+    private var actionControls: some View {
         MomentPhotoActionsLayout {
             // The heart is the reaction this photo is for, so it comes first,
             // always shows its words and uses the strongest style while ready.

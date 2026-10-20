@@ -407,7 +407,13 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     case .sent: Text("自分")
                     }
                     if !retained && photo.senderPolicyVersion == 1 {
-                        Text("· 表示期限あり")
+                        switch photo {
+                        case let .received(item):
+                            // Same absolute 90-day boundary as the Widget and the inbox.
+                            Text("· \(item.receivedAt.addingTimeInterval(FamilyWidgetManifestItem.maximumDisplayDuration).formatted(.dateTime.month().day()))まで")
+                        case .sent:
+                            Text("· 表示期限あり")
+                        }
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)
