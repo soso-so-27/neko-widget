@@ -209,6 +209,12 @@ const REPORT_UI_CONTINUATION_EXPECTATIONS = Object.freeze([
   ...EXPECTATIONS['internal-report-first-connection'].slice(1),
 ]);
 
+const PURCHASE_SANDBOX_REPORT_UI_CONTINUATION_EXPECTATIONS = Object.freeze([
+  Object.freeze({ ...EXPECTATIONS['internal-purchase-sandbox'][0],
+    runtime: Object.freeze({ ...EXPECTATIONS['internal-purchase-sandbox'][0].runtime, report: 'ON' }) }),
+  ...EXPECTATIONS['internal-purchase-sandbox'].slice(1),
+]);
+
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -361,10 +367,12 @@ export async function checkStagingRuntime({
 }) {
   const normalizedOrigin = normalizePublicHttpsOrigin(origin);
   const expectations = expected === 'internal-report-ui-continuation'
-    ? REPORT_UI_CONTINUATION_EXPECTATIONS : EXPECTATIONS[expected];
+    ? REPORT_UI_CONTINUATION_EXPECTATIONS
+    : expected === 'internal-purchase-sandbox-report-ui-continuation'
+      ? PURCHASE_SANDBOX_REPORT_UI_CONTINUATION_EXPECTATIONS : EXPECTATIONS[expected];
   if (expectations === undefined) {
     throw new Error(
-      "expected runtime state must be 'on', 'limited-external-beta', 'internal-purchase-sandbox', 'internal-report-first-connection', 'internal-report-ui-continuation', 'moment-on-window-name-off', or 'off'",
+      "expected runtime state must be 'on', 'limited-external-beta', 'internal-purchase-sandbox', 'internal-purchase-sandbox-report-ui-continuation', 'internal-report-first-connection', 'internal-report-ui-continuation', 'moment-on-window-name-off', or 'off'",
     );
   }
   if (typeof fetchImpl !== "function") {

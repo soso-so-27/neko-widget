@@ -12,13 +12,19 @@ import internal_report_release as release
 
 class InternalReportReleaseTests(unittest.TestCase):
     def test_preparation_archive_and_internal_export_use_same_reviewed_settings(self):
+        for billing in ("false", "true"):
+            with self.subTest(billing=billing):
+                self.check_preparation_archive_and_export(billing)
+
+    def check_preparation_archive_and_export(self, billing):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); app = root/"app.plist"; share = root/"share.plist"; widget = root/"widget.plist"
             app.write_bytes(plistlib.dumps({**self.info(), release.ENABLED: False, release.SCOPE_KEY: ""}))
             for path in (share, widget): path.write_bytes(plistlib.dumps({release.ENABLED: False, release.SCOPE_KEY: ""}))
             options = root/"export.plist"; options.write_bytes(plistlib.dumps({"method":"app-store-connect", "testFlightInternalTestingOnly":False}))
             command = [sys.executable, str(Path(release.__file__)), "--requested", "true", "--mode", "media-staging",
-                "--approval", "YES", "--scope", release.SCOPE, "--settings-file", str(root/"settings.json")]
+                "--approval", "YES", "--scope", release.SCOPE, "--billing-requested", billing,
+                "--settings-file", str(root/"settings.json")]
             def run(extra): return subprocess.run(command+extra, capture_output=True, text=True)
             prepared = run(["--app-source-info-plist",str(app),"--env-file",str(root/"env")])
             self.assertEqual(prepared.returncode,0,prepared.stderr)
@@ -41,10 +47,18 @@ class InternalReportReleaseTests(unittest.TestCase):
     def test_explicit_approval_and_billing_boundary(self):
         self.assertEqual(release.settings(False, "disabled", "", ""), {release.ENABLED: False, release.SCOPE_KEY: ""})
         self.assertEqual(release.settings(True, "media-staging", "YES", release.SCOPE), {release.ENABLED: True, release.SCOPE_KEY: release.SCOPE})
-        for mode, approval, scope, billing in [("disabled", "YES", release.SCOPE, False), ("media-staging", "", release.SCOPE, False),
-                                               ("media-staging", "YES", "external", False), ("media-staging", "YES", release.SCOPE, True)]:
-            with self.subTest(mode=mode, approval=approval, scope=scope, billing=billing), self.assertRaises(ValueError):
-                release.settings(True, mode, approval, scope, billing)
+        for billing in (False, True):
+            self.assertEqual(release.settings(True, "media-staging", "YES", release.SCOPE, billing),
+                             {release.ENABLED: True, release.SCOPE_KEY: release.SCOPE})
+            self.assertEqual(release.settings(False, "media-staging", "YES", release.SCOPE, billing),
+                             {release.ENABLED: False, release.SCOPE_KEY: ""})
+            for mode, approval, scope in [("disabled", "YES", release.SCOPE), ("media-staging", "", release.SCOPE),
+                                           ("media-staging", "YES", "external")]:
+                with self.subTest(mode=mode, approval=approval, scope=scope, billing=billing), self.assertRaises(ValueError):
+                    release.settings(True, mode, approval, scope, billing)
+        for requested, billing in [(1, True), (True, 1), ("true", False), (True, "true")]:
+            with self.subTest(requested=requested, billing=billing), self.assertRaises(ValueError):
+                release.settings(requested, "media-staging", "YES", release.SCOPE, billing)
 
     def test_compiled_flags_scope_target_and_extensions_fail_closed(self):
         expected = {release.ENABLED: True, release.SCOPE_KEY: release.SCOPE}

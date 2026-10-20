@@ -8,7 +8,7 @@ import { verifyReadiness } from '../../ci/verify-moderation-readiness.mjs';
 import { checkStagingRuntime } from "./staging-runtime-check-lib.mjs";
 
 function usage() {
-  return "Usage: node scripts/check-staging-runtime.mjs --expected on|limited-external-beta|internal-purchase-sandbox|internal-report-first-connection|internal-report-ui-continuation|moment-on-window-name-off|off [--origin https://example.com]";
+  return "Usage: node scripts/check-staging-runtime.mjs --expected on|limited-external-beta|internal-purchase-sandbox|internal-purchase-sandbox-report-ui-continuation|internal-report-first-connection|internal-report-ui-continuation|moment-on-window-name-off|off [--origin https://example.com]";
 }
 
 function parseArguments(argv) {
@@ -35,11 +35,12 @@ function parseArguments(argv) {
 }
 
 export async function resolveReportRuntimeExpected(expected, { evidence, policy, verify = verifyReadiness } = {}) {
-  if (!['internal-report-first-connection', 'internal-report-ui-continuation'].includes(expected)) return expected;
+  const combined = expected === 'internal-purchase-sandbox-report-ui-continuation';
+  if (!combined && !['internal-report-first-connection', 'internal-report-ui-continuation'].includes(expected)) return expected;
   evidence ??= JSON.parse(await readFile(new URL('../../ci/moderation-v2-readiness.json', import.meta.url), 'utf8'));
   policy ??= JSON.parse(await readFile(new URL('../../ci/moderation-client-rollout-policy.json', import.meta.url), 'utf8'));
   const checked = await verify(evidence, policy);
-  if (checked.purpose === 'testflight-owner-report-ui-continuation') return 'internal-report-ui-continuation';
+  if (checked.purpose === 'testflight-owner-report-ui-continuation') return combined ? expected : 'internal-report-ui-continuation';
   if (expected === 'internal-report-first-connection' && checked.purpose === 'testflight-owner-first-connection') return expected;
   throw new Error('Signed readiness purpose does not authorize this internal runtime phase');
 }
