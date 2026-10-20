@@ -229,6 +229,7 @@ struct ShowcasePhotoView: View {
                                 .accessibilityAction(named: Text("前の写真")) {
                                     selectedIndex = max(index - 1, 0)
                                 }
+                                .accessibilityLabel(caption.map { "\($0)の写真" } ?? "写真\(index + 1)枚目")
                                 .accessibilityIdentifier("showcase-detail-photo")
                                 .overlay(alignment: .bottomLeading) {
                                     if showsCaption, let caption {
@@ -240,9 +241,24 @@ struct ShowcasePhotoView: View {
                                     }
                                 }
                             if displayedItems.count > 1 {
-                                Text("\(index + 1) / \(displayedItems.count)")
-                                    .font(.footnote.monospacedDigit())
-                                    .padding(16)
+                                HStack(spacing: 16) {
+                                    Button { selectedIndex = max(index - 1, 0) } label: {
+                                        Image(systemName: "chevron.left").frame(width: 44, height: 44)
+                                            .background(.ultraThinMaterial, in: Circle())
+                                    }
+                                    .disabled(index == 0)
+                                    .accessibilityLabel("前の写真")
+                                    Text("\(index + 1) / \(displayedItems.count)")
+                                        .font(.footnote.monospacedDigit())
+                                        .accessibilityLabel("\(displayedItems.count)枚中\(index + 1)枚目")
+                                    Button { selectedIndex = min(index + 1, displayedItems.count - 1) } label: {
+                                        Image(systemName: "chevron.right").frame(width: 44, height: 44)
+                                            .background(.ultraThinMaterial, in: Circle())
+                                    }
+                                    .disabled(index == displayedItems.count - 1)
+                                    .accessibilityLabel("次の写真")
+                                }
+                                .padding(16)
                             }
                         }
                     }
@@ -634,6 +650,7 @@ struct ShowcasePreparationView: View {
                     } label: {
                         Image(systemName: "ellipsis").frame(width: 44, height: 44)
                     }
+                    .accessibilityLabel("この写真の操作")
                 }
             }
         }

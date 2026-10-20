@@ -409,7 +409,8 @@ private struct CarePhotoPicker: View {
                         PhotoAssetImageView(localIdentifier: photo.localIdentifier,
                             targetPixelSize: CGSize(width: 300, height: 300), targetAspectRatio: 1, showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit)
-                    }.buttonStyle(.plain).disabled(busy).accessibilityLabel("この写真を使う")
+                    }.buttonStyle(.plain).disabled(busy)
+                        .accessibilityLabel(ToolPhotoLabel.text("この写真を使う", date: photo.creationDate))
                 }
             }
         }
@@ -455,6 +456,7 @@ private struct CareDisclosureView: View {
             } footer: { Text("写真・名前・お世話・今回のお願いは載せます。薬や連絡先は、渡す相手に合わせて選んでください。") }
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
         }.navigationTitle("渡す内容を選ぶ").navigationBarTitleDisplayMode(.inline)
+            .announcesWhenShown(error)
             .onAppear {
                 if !initialized {
                     if store.plan.cats.count == 1, let cat = store.plan.cats.first { disclosure.catIDs = [cat.id] }

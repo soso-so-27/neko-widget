@@ -262,6 +262,7 @@ private struct VeterinaryConsultationView: View {
             if let error { Section { Text(error).foregroundStyle(.secondary).accessibilityIdentifier("vet-error") } }
         }
         .navigationTitle("診察メモ").navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(error)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
 

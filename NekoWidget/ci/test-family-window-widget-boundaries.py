@@ -4804,5 +4804,32 @@ class ToolFlowTests(unittest.TestCase):
         self.assertNotIn("迷子への備え", source("NekoWidget/Views/CatProfilePhotoCurationViews.swift"))
 
 
+class ToolAccessibilityTests(unittest.TestCase):
+    def test_tools_work_without_precise_gestures_and_speak_errors(self) -> None:
+        lost = source("NekoWidget/Views/CatPreparednessView.swift")
+        showcase = source("NekoWidget/Views/ShowcasePhotoView.swift")
+        # Cropping works with buttons and VoiceOver, not only dragging.
+        crop = section(lost, "private struct LostCatPhotoCropView", "private func clamped(")
+        for name in ("上へ動かす", "下へ動かす", "左へ動かす", "右へ動かす"):
+            self.assertIn(name, crop)
+        self.assertIn('nudgeButton("左へ"', crop)
+        # Large text stacks the two photo tiles.
+        self.assertIn("AnyLayout(VStackLayout(spacing: 12))", lost)
+        self.assertNotIn("frame(minWidth: 36, minHeight: 36)", lost)
+        # Photos in a grid are told apart by their day.
+        for path in ("NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/CareHandoffView.swift",
+                     "NekoWidget/Views/EvacuationPreparationView.swift"):
+            self.assertIn("ToolPhotoLabel.text(", source(path), path)
+        # Errors are read aloud.
+        for path in ("NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/CareHandoffView.swift",
+                     "NekoWidget/Views/EvacuationPreparationView.swift", "NekoWidget/Views/VeterinaryVisitView.swift",
+                     "NekoWidget/Views/CatCareView.swift"):
+            self.assertIn(".announcesWhenShown(", source(path), path)
+        self.assertIn("AccessibilityNotification.Announcement(new).post()", source("NekoWidget/Views/CatCareView.swift"))
+        # Showcase has previous and next buttons as well as swiping.
+        self.assertIn('.accessibilityLabel("前の写真")', showcase)
+        self.assertIn('.accessibilityLabel("次の写真")', showcase)
+
+
 if __name__ == "__main__":
     unittest.main()

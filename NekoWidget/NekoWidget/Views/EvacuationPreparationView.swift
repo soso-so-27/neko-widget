@@ -66,6 +66,7 @@ struct EvacuationPreparationView: View {
             }
         }
         .navigationTitle("避難に備える").navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(bookError)
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
         .task { CatCareStore.shared.importFromTools() }
         .confirmationDialog("1冊のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
@@ -429,6 +430,7 @@ private struct EvacuationCatView: View {
                 }
             }
         }.navigationTitle("猫の情報を見せる").navigationBarTitleDisplayMode(.inline)
+            .announcesWhenShown(error)
             .safeAreaInset(edge: .bottom) {
                 Button {
                     do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure)); error = nil }
@@ -631,7 +633,7 @@ private struct EvacuationPhotoPicker: View {
                             targetPixelSize: CGSize(width: 300, height: 300), targetAspectRatio: 1, showsFullImage: true)
                             .aspectRatio(1, contentMode: .fit)
                     }.buttonStyle(.plain).disabled(busy)
-                        .accessibilityLabel("この写真を使う")
+                        .accessibilityLabel(ToolPhotoLabel.text("この写真を使う", date: photo.creationDate))
                         .accessibilityIdentifier("evacuation-candidate-\(photo.localIdentifier)")
                 }
             }

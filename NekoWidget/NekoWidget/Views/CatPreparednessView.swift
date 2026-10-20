@@ -160,6 +160,7 @@ struct LostCatDraftView: View {
     @ObservedObject var store = LostCatDraftStore.shared
     @ObservedObject private var catCareStore = CatCareStore.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var key = ""
     @State private var draft = LostCatDraft()
     @State private var loaded = false
@@ -216,6 +217,7 @@ struct LostCatDraftView: View {
         .navigationTitle("迷子のとき")
         .navigationBarTitleDisplayMode(.inline)
         .scrollDismissesKeyboard(.interactively)
+        .announcesWhenShown(photoError)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 4) {
                 if !requiredFields.isEmpty {
@@ -319,7 +321,9 @@ struct LostCatDraftView: View {
             }
             fieldIssue("name")
             }
-            HStack(alignment: .top, spacing: 12) {
+            let tiles = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+            tiles {
                 photoTile("顔・毛柄", role: .face, image: faceImage)
                 photoTile("全身（任意）", role: .body, image: bodyImage)
             }
@@ -358,10 +362,11 @@ struct LostCatDraftView: View {
             HStack {
                 Text("猫の写真と特徴")
                 Spacer()
-                Button("猫を変更") { showsCatChooser = true }
+                Button { showsCatChooser = true } label: {
+                    Text("猫を変更").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
                     .disabled(photoBusy)
                     .buttonStyle(.borderless)
-                    .frame(minHeight: 44)
             }
             .textCase(nil)
         } footer: {
@@ -499,7 +504,8 @@ struct LostCatDraftView: View {
                 .accessibilityLabel(title)
                 .accessibilityIdentifier("lost-cat-\(field)")
                 .focused($focus, equals: field)
-            Text("\(text.wrappedValue.count) / \(limit)文字")
+            Text("\(text.wrappedValue.count) / \(limit)文字"
+                 + (text.wrappedValue.count > limit ? "（\(text.wrappedValue.count - limit)文字多い）" : ""))
                 .font(.caption).monospacedDigit()
                 .foregroundStyle(text.wrappedValue.count > limit ? Color.red : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -641,10 +647,13 @@ struct LostCatDraftView: View {
                         if role == .body {
                             Button("2枚目を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
                         }
-                    } label: { Image(systemName: "ellipsis").frame(minWidth: 36, minHeight: 36) }
+                    } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityLabel("\(title)の操作")
                     .accessibilityIdentifier(role == .face ? "lost-cat-face-actions" : "lost-cat-body-actions")
                 }
+            }
+            if role == .body && faceImage == nil {
+                Text("先に顔の写真を選ぶと選べます").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -795,7 +804,7 @@ private struct LostCatPhotoChoiceView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(busy || loadingPhoto)
-                        .accessibilityLabel("猫の写真")
+                        .accessibilityLabel(ToolPhotoLabel.text("この写真を選ぶ", date: photo.creationDate))
                         .accessibilityIdentifier("lost-cat-candidate-\(photo.localIdentifier)")
                     }
                 }.padding()
@@ -830,6 +839,7 @@ private struct LostCatPhotoCropView: View {
     @State private var zoom: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var dragStart: CGSize = .zero
+    @State private var canvas: CGSize = .zero
     @State private var failed = false
 
     var body: some View {
@@ -850,6 +860,15 @@ private struct LostCatPhotoCropView: View {
                         }.onEnded { _ in dragStart = offset })
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .onChange(of: zoom) { _, _ in offset = clamped(offset, size: size); dragStart = offset }
+                        .onAppear { canvas = size }
+                        .onChange(of: size) { _, new in canvas = new }
+                        .accessibilityElement()
+                        .accessibilityLabel("写真の範囲")
+                        .accessibilityHint("拡大してから、上下左右に動かせます")
+                        .accessibilityAction(named: Text("上へ動かす")) { nudge(0, -1) }
+                        .accessibilityAction(named: Text("下へ動かす")) { nudge(0, 1) }
+                        .accessibilityAction(named: Text("左へ動かす")) { nudge(-1, 0) }
+                        .accessibilityAction(named: Text("右へ動かす")) { nudge(1, 0) }
                         .accessibilityIdentifier("lost-cat-crop-canvas")
                         .overlay(alignment: .bottom) {
                             Button("この範囲を使う") { apply(size: size) }
@@ -857,6 +876,13 @@ private struct LostCatPhotoCropView: View {
                         }
                 }
                 Slider(value: $zoom, in: 1...4) { Text("写真の拡大") }
+                HStack(spacing: 12) {
+                    nudgeButton("左へ", "arrow.left") { nudge(-1, 0) }
+                    nudgeButton("上へ", "arrow.up") { nudge(0, -1) }
+                    nudgeButton("下へ", "arrow.down") { nudge(0, 1) }
+                    nudgeButton("右へ", "arrow.right") { nudge(1, 0) }
+                }
+                .disabled(zoom <= 1)
                 if failed { Text("保存できませんでした。もう一度お試しください。").font(.footnote).foregroundStyle(.red) }
             }
             .padding()
@@ -870,6 +896,20 @@ private struct LostCatPhotoCropView: View {
             }
         }
     }
+    private func nudgeButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(title + "動かす")
+    }
+
+    private func nudge(_ dx: CGFloat, _ dy: CGFloat) {
+        let step = max(canvas.width, canvas.height) * 0.08
+        offset = clamped(CGSize(width: offset.width + dx * step, height: offset.height + dy * step), size: canvas)
+        dragStart = offset
+    }
+
     private func clamped(_ proposed: CGSize, size: CGSize) -> CGSize {
         let x = size.width * (zoom - 1) / 2
         let y = size.height * (zoom - 1) / 2

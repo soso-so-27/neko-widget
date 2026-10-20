@@ -578,6 +578,7 @@ struct CatCareListEntrySheet: View {
                 }
             }
             .navigationTitle(CatCareFormat.title(editor.kind) + "を追加")
+            .announcesWhenShown(message)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
@@ -676,6 +677,25 @@ extension ToolCatCareSection where Extra == EmptyView {
          identifier: String, editIdentifier: String) {
         self.init(title: title, lines: lines, profile: profile, footer: footer,
                   identifier: identifier, editIdentifier: editIdentifier) { EmptyView() }
+    }
+}
+
+extension View {
+    /// Reads a new message aloud with VoiceOver, so an error or a "done" is
+    /// not only shown in color on the screen.
+    func announcesWhenShown(_ message: String?) -> some View {
+        onChange(of: message) { _, new in
+            guard let new, !new.isEmpty else { return }
+            AccessibilityNotification.Announcement(new).post()
+        }
+    }
+}
+
+enum ToolPhotoLabel {
+    /// 「この写真を使う、2026年10月20日」: photos in a grid are told apart by their day.
+    static func text(_ action: String, date: Date?) -> String {
+        guard let date else { return action }
+        return action + "、" + date.formatted(date: .long, time: .omitted)
     }
 }
 
