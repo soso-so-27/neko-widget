@@ -85,9 +85,11 @@ CREATE TABLE group_media_access_checks (
     id TEXT PRIMARY KEY,
     device_id TEXT NOT NULL,
     moment_id TEXT NOT NULL REFERENCES group_moments(id),
-    now INTEGER NOT NULL
+    now INTEGER NOT NULL,
+    purpose TEXT NOT NULL CHECK(purpose IN ('read','heart','upload','commit'))
 ) STRICT;
 CREATE TRIGGER group_media_access BEFORE INSERT ON group_media_access_checks
+WHEN NEW.purpose IN ('read','heart')
 BEGIN
     SELECT (CASE WHEN NOT EXISTS (
         SELECT 1 FROM group_moments p JOIN group_windows w ON w.space_id=p.space_id
@@ -97,13 +99,28 @@ BEGIN
         JOIN group_person_devices global_device ON global_device.id=d.device_id
         JOIN group_people person ON person.id=global_device.person_id
         WHERE p.id=NEW.moment_id AND p.state='committed' AND p.unreceived_expires_at>NEW.now
-            AND w.mode='active' AND d.state='active' AND m.state='active' AND global_device.state='active' AND person.state='active'
+            AND w.mode='active' AND (NEW.purpose='read' OR w.rotation_required=0)
+            AND d.state='active' AND m.state='active' AND global_device.state='active' AND person.state='active'
             AND delivery.state IN ('pending','acknowledged') AND delivery.access_expires_at>NEW.now
             AND delivery.roster_revision>=d.added_revision AND delivery.roster_revision>=m.joined_revision
             AND NOT EXISTS (SELECT 1 FROM group_participant_blocks b WHERE b.space_id=w.space_id AND b.active=1
                 AND ((b.blocker_id=m.participant_id AND b.blocked_id=p.sender_participant_id)
                     OR (b.blocked_id=m.participant_id AND b.blocker_id=p.sender_participant_id))))
         THEN RAISE(ABORT,'group_delivery_unavailable') END);
+END;
+CREATE TRIGGER group_upload_access BEFORE INSERT ON group_media_access_checks
+WHEN NEW.purpose IN ('upload','commit')
+BEGIN
+    SELECT (CASE WHEN NOT EXISTS (
+        SELECT 1 FROM group_moments p JOIN group_windows w ON w.space_id=p.space_id
+        JOIN group_window_devices d ON d.space_id=w.space_id AND d.device_id=NEW.device_id
+        JOIN group_members m ON m.participant_id=d.participant_id
+        WHERE p.id=NEW.moment_id AND p.sender_device_id=NEW.device_id AND p.sender_participant_id=m.participant_id
+            AND p.state IN ('reserved','uploaded','committed') AND (p.upload_expires_at>NEW.now OR p.state='committed')
+            AND (NEW.purpose<>'commit' OR p.state IN ('uploaded','committed'))
+            AND w.mode='active' AND w.rotation_required=0 AND w.revision=p.roster_revision AND w.key_epoch=p.key_epoch
+            AND w.roster_hash=p.roster_hash AND d.state='active' AND m.state='active')
+        THEN RAISE(ABORT,'group_reservation_expired_or_stale') END);
 END;
 CREATE TABLE group_moment_hearts (
     moment_id TEXT NOT NULL REFERENCES group_moments(id) ON DELETE CASCADE,
@@ -125,6 +142,11 @@ CREATE TABLE group_heart_usage (
     used INTEGER NOT NULL CHECK(used BETWEEN 0 AND 30),
     PRIMARY KEY(space_id,participant_id,day_key)
 ) STRICT;
+CREATE TRIGGER group_heart_quota BEFORE UPDATE OF used ON group_heart_usage
+WHEN NEW.used>30
+BEGIN
+    SELECT RAISE(ABORT,'group_heart_daily_limit');
+END;
 CREATE TABLE group_push_subscriptions (
     space_id TEXT NOT NULL,
     device_id TEXT NOT NULL,
@@ -132,7 +154,7 @@ CREATE TABLE group_push_subscriptions (
     token_nonce TEXT NOT NULL,
     token_digest TEXT NOT NULL,
     encryption_key_id TEXT NOT NULL,
-    environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+    environment TEXT NOT NULL CHECK(environment IN ('development','production')),
     generation INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     PRIMARY KEY(space_id,device_id),
@@ -143,8 +165,9 @@ CREATE TABLE group_notification_events (
     id TEXT PRIMARY KEY,
     space_id TEXT NOT NULL REFERENCES group_windows(space_id),
     moment_id TEXT NOT NULL REFERENCES group_moments(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK(kind IN ('new_moment','paw')),
+    kind TEXT NOT NULL CHECK(kind IN ('new_moment','heart')),
     actor_participant_id TEXT NOT NULL REFERENCES group_members(participant_id),
+    actor_device_id TEXT NOT NULL REFERENCES group_person_devices(id),
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
 ) STRICT;
