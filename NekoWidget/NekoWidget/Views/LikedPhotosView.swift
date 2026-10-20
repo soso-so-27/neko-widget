@@ -1929,9 +1929,10 @@ struct SavedMemoriesGalleryView: View {
                 }
                 .accessibilityIdentifier("saved-memories-create-pdf")
 
-                Button {
-                    beginCreation(.bookPreview)
-                } label: {
+                if InternalBuildPresentationAvailability.isAvailable {
+                    Button {
+                        beginCreation(.bookPreview)
+                    } label: {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("本のイメージ", systemImage: "book.closed")
                             .font(.headline)
@@ -1941,7 +1942,8 @@ struct SavedMemoriesGalleryView: View {
                     }
                     .padding(.vertical, 8)
                 }
-                .accessibilityIdentifier("saved-memories-create-book-preview")
+                    .accessibilityIdentifier("saved-memories-create-book-preview")
+                }
             }
             .navigationTitle("作るものを選ぶ")
             .navigationBarTitleDisplayMode(.inline)
@@ -2057,6 +2059,7 @@ struct SavedMemoriesGalleryView: View {
     }
 
     private func openBookDemandPreview() {
+        guard InternalBuildPresentationAvailability.isAvailable else { return }
         guard !isExportingPhotoBook else { return }
         guard creationOutput == .bookPreview else { return }
         let selectedPhotos = photos.filter {
@@ -2215,7 +2218,7 @@ private struct BookDemandPreviewView: View {
                         Label("このiPhoneにだけ購入希望を記録しました", systemImage: "checkmark.circle.fill")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.green)
-                        Text("運営者へ伝えるには、TestFlightの「ベータ版フィードバックを送信」へ、次の一文だけを送ってください。写真や住所は添付しないでください。")
+                        Text("運営者へ伝えるには、設定のサポートから次の一文だけを送ってください。写真や住所は添付しないでください。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button {
@@ -2250,7 +2253,7 @@ private struct BookDemandPreviewView: View {
         .alert("購入希望を端末内に記録しました", isPresented: $showsInterestConfirmation) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("注文や決済は行われていません。検証に協力する場合は、画面下の案内からTestFlight用の文をコピーしてください。")
+            Text("注文や決済は行われていません。確認に協力する場合は、画面下の案内から連絡用の文をコピーしてください。")
         }
     }
 

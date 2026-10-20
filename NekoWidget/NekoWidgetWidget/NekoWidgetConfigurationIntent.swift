@@ -113,7 +113,7 @@ struct WidgetPhotoSource: AppEntity {
     static var availableSources: [WidgetPhotoSource] {
         var sources: [WidgetPhotoSource] = [.personalLibrary]
             + OfficialWindowConfiguration.definitions
-                .filter { $0.id == OfficialWindowCatalog.sourceID || $0.endpoint != nil }
+                .filter { $0.endpoint != nil }
                 .map(publicWindow)
         if familyWindowSourceIsEnabled {
             let windows = PrivateWindowCatalogStore.widgetEntries()
@@ -172,7 +172,7 @@ struct WidgetPhotoSourceQuery: EntityQuery {
 struct NekoWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "表示する写真を選ぶ"
     static var description = IntentDescription(
-        "このiPhoneの猫写真、公式まど、またはまどに届いた一枚を選びます。"
+        "このiPhoneの猫写真、または利用できるまどに届いた一枚を選びます。"
     )
     // This intent belongs to WidgetKit's edit UI, not Siri or Shortcuts.
     static var isDiscoverable = false

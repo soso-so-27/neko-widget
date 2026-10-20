@@ -290,14 +290,15 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("familyActionsRequireApp: familyWindowIsInactive", family_entry)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        # Photo navigation and the explicit heart remain separate. Shared save
-        # and a redundant open control are still confined to the app detail.
+        # Photo navigation and the explicit heart remain separate. A received
+        # photo's bookmark only opens the app, which confirms the Photos copy.
         self.assertEqual(view.count(".widgetURL(entry.photoURL)"), 1)
         for removed_control in (
             "familyMemoryControl", "openInAppLabel",
-            "ToggleFamilyWidgetBookmarkIntent", "Link(destination:",
+            "ToggleFamilyWidgetBookmarkIntent",
         ):
             self.assertNotIn(removed_control, view)
+        self.assertEqual(view.count("Link(destination:"), 1)
 
         shortcut = section(view, "private var familyHeartShortcut: some View", "private func familyHeartControl(")
         self.assertIn("let sourceDigest = entry.familySourceDigest", shortcut)
@@ -323,7 +324,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn(".frame(width: 44, height: 44)", unavailable)
         self.assertIn(".allowsHitTesting(false)", unavailable)
         self.assertIn(".accessibilityHidden(true)", unavailable)
-        heart_mark = section(view, "private func heartMark(", "private func familyCaptionPreview(")
+        heart_mark = section(view, "private func heartMark(", "private var familyMemoryShortcut: some View")
         self.assertIn('status == .serverAccepted ? "heart.fill" : "heart"', heart_mark)
         self.assertIn('Image(systemName: "clock.fill")', heart_mark)
         self.assertIn(".frame(width: 44, height: 44)", heart_mark)
@@ -407,10 +408,26 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn(".allowsHitTesting(false)", footer)
         self.assertIn(".accessibilityHidden(true)", footer)
         self.assertIn("HStack(alignment: .bottom, spacing: 6)", footer)
-        self.assertLess(footer.index(".accessibilityHidden(true)"), footer.index("            familyHeartShortcut"))
+        # Heart bottom-left, bookmark bottom-right, decorative text between.
+        self.assertLess(footer.index("            familyHeartShortcut"), footer.index("VStack(spacing: 4)"))
+        self.assertLess(footer.index(".accessibilityHidden(true)"), footer.index("            familyMemoryShortcut"))
         # Hit testing and AX exclusion must end at the decorative text or
         # background, never at the footer that contains the heart Button.
         self.assertTrue(footer.rstrip().endswith("}\n    }\n\n    @ViewBuilder"))
+        memory_shortcut = section(view, "private var familyMemoryShortcut: some View", "private func familyCaptionPreview(")
+        self.assertIn("if family != .systemSmall {", memory_shortcut)
+        self.assertEqual(memory_shortcut.count("entry.isBookmarkInteractionEnabled"), 2)
+        self.assertIn("entry.isBookmarked", memory_shortcut)
+        self.assertIn("memoryMark(isSelected: true)", memory_shortcut)
+        self.assertIn("Link(destination: memoryActionURL)", memory_shortcut)
+        self.assertIn("let memoryActionURL = entry.memoryActionURL", memory_shortcut)
+        self.assertIn("memoryMark(isSelected: false)", memory_shortcut)
+        self.assertIn('"お気に入りに追加"', memory_shortcut)
+        self.assertIn('"アプリを開いて、写真アプリへの保存を確認します"', memory_shortcut)
+        self.assertIn("unavailableHeartSlot", memory_shortcut)
+        # The Widget never saves a received photo or sends anything itself.
+        self.assertNotIn("Button(", memory_shortcut)
+        self.assertNotIn("intent:", memory_shortcut)
         self.assertNotIn("Button(", footer)
         self.assertNotIn("Link(", footer)
 
@@ -678,7 +695,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
 
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertNotIn("Link(destination: memoryActionURL)", widget_view)
+        self.assertEqual(widget_view.count("Link(destination: memoryActionURL)"), 1)
+        self.assertNotIn("Link(destination: entry.photoURL", widget_view)
         self.assertIn(".widgetURL(entry.photoURL)", widget_view)
         self.assertNotIn(".widgetURL(entry.memoryActionURL)", widget_view)
         self.assertNotIn("photoDestinationURL", widget_view)
@@ -838,7 +856,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("selectedMomentForDetail?.id == item.id", family_view)
         self.assertIn("if !model.isSavedMemory(current) { widgetMemoryTarget = current }", family_view)
         self.assertIn('alert("この写真は更新されました"', family_view)
-        self.assertIn("ウィジェットの新しい写真で、もう一度お試しください。", family_view)
+        self.assertIn("ホーム画面の新しい写真で、もう一度お試しください。", family_view)
         self.assertIn("memorySaveDialogTitle", family_view)
         self.assertIn('"自分のお気に入りに追加しますか？"', family_view)
         self.assertIn('"自分のお気に入りに追加"', family_view)
@@ -3548,8 +3566,29 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("family-window-send-guide", family)
         self.assertNotIn('Text("ほかの送り方")', paired)
         self.assertIn("family-window-widget-guide", family)
-        self.assertIn("ウィジェットの表示", family)
+        self.assertIn('Text("ホーム画面に置く")', family)  # owner decision 2026-10-20: say "ホーム画面"
         self.assertIn("ウィジェットを編集", family)
+        # M22: one guide sheet, opened from settings or the window's card.
+        guide = section(family, "private var familyWidgetGuide: some View", "private var widgetGuidePlacementPicker: some View")
+        self.assertIn('.navigationTitle("ホーム画面に置く")', guide)
+        self.assertIn("ホーム画面の写真（ウィジェット）", guide)
+        self.assertIn("「表示する写真」で、次のまどを選びます。", guide)
+        self.assertIn("Label(model.windowDisplayName", guide)
+        self.assertEqual(family.count(".sheet(isPresented: $showsWidgetGuide)"), 1)
+        self.assertEqual(family.count(".sheet(isPresented: $showsWindowWidgetGuide)"), 1)
+        self.assertNotIn('.alert("ホーム画面に置く"', family)
+        self.assertIn("} else if showsHomeScreenPrompt {", family)
+        prompt = section(family, "private var showsHomeScreenPrompt: Bool", "private var homeScreenPromptCard: some View")
+        self.assertIn("model.isPaired", prompt)
+        self.assertIn("notificationAuthorizationState != .checking", prompt)
+        # Only a short digest of the space is stored on this iPhone.
+        self.assertIn('SHA256.hash(data: Data("home-screen-guide|', prompt)
+        self.assertIn("digest.prefix(8)", prompt)
+        self.assertIn("keys.suffix(20)", prompt)
+        card = section(family, "private var homeScreenPromptCard: some View", "@ViewBuilder\n    private var notificationAction: some View")
+        self.assertIn('Label("ホーム画面にこのまどを置く"', card)
+        self.assertIn("showsWindowWidgetGuide = true", card)
+        self.assertEqual(card.count("markHomeScreenGuideSeen()"), 2)
         privacy = section(
             family,
             "private var privacyDisclosure: some View",

@@ -1,4 +1,5 @@
 import CoreTransferable
+import CryptoKit
 import SwiftUI
 import ImageIO
 import PhotosUI
@@ -130,6 +131,8 @@ struct FamilyWindowView: View {
     @State private var showsBlockCompleted = false
     @Environment(\.dismiss) private var dismissWindow
     @State private var showsWidgetGuide = false
+    @State private var showsWindowWidgetGuide = false
+    @State private var widgetGuideIsFirstPlacement = true
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 20
     @State private var showsSharedPhotoInformation = false
@@ -151,6 +154,14 @@ struct FamilyWindowView: View {
     @State private var clearsWidgetFocusAfterMemorySave = false
     @State private var notificationRouteResolutionFailed = false
     @State private var showsStaleWidgetPhotoAlert = false
+    // Per-viewer convenience only: "あとで" hides the prompt; settings still
+    // offer the same switch.
+    @AppStorage("familyWindow.notificationPromptDismissed.v1")
+    private var notificationPromptDismissed = false
+    // Per-viewer convenience only: short digests of windows whose
+    // home-screen card was opened or dismissed (M22). Never a space ID.
+    @AppStorage("familyWindow.homeScreenGuideSeen.v1")
+    private var homeScreenGuideSeenKeys = ""
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -864,7 +875,7 @@ struct FamilyWindowView: View {
         .alert("この写真は更新されました", isPresented: $showsStaleWidgetPhotoAlert) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ウィジェットの新しい写真で、もう一度お試しください。")
+            Text("ホーム画面の新しい写真で、もう一度お試しください。")
         }
         .sheet(item: $preparedDelivery, onDismiss: {
             deliveryCaption = ""
@@ -1050,6 +1061,11 @@ struct FamilyWindowView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
+                    if showsNotificationPrompt {
+                        notificationPromptCard
+                    } else if showsHomeScreenPrompt {
+                        homeScreenPromptCard
+                    }
                     outgoingStatusSection
                 }
 
@@ -1077,6 +1093,9 @@ struct FamilyWindowView: View {
         .refreshable { await model.synchronize() }
         .sheet(isPresented: $showsSharedPhotoInformation) {
             sharedPhotoInformation
+        }
+        .sheet(isPresented: $showsWindowWidgetGuide) {
+            familyWidgetGuide
         }
         .sheet(isPresented: $showsReportResponses) {
             MomentReportResponsesView(model: model)
@@ -1170,7 +1189,7 @@ struct FamilyWindowView: View {
                     Text("＋から写真を1枚選び、確認して相手と共有します。写真や自分だけのメモが自動で共有されることはありません。")
                 }
                 Section("追加した写真") {
-                    Text("新しい写真とメモはこのまどに残り、二人で見返せます。Widgetにも届きます。")
+                    Text("新しい写真とメモはこのまどに残り、まどのメンバーで見返せます。ホーム画面の写真（ウィジェット）にも届きます。")
                 }
                 Section("以前に送った写真") {
                     Text("「表示期限あり」の写真は以前の期限のままです。写真を開いてメモを追加すると、このまどに残せます。期限のある写真は書き出しに含まれません。")
@@ -1660,10 +1679,72 @@ struct FamilyWindowView: View {
         } message: {
             Text("名前は相手のまどにも表示されます。")
         }
-        .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「表示する写真」で「\(model.windowDisplayName)」を選びます。")
+        .sheet(isPresented: $showsWidgetGuide) {
+            familyWidgetGuide
+        }
+    }
+
+    /// The same four steps as the official window guide, naming this window
+    /// as the source to pick. Shown from settings and from the window card.
+    private var familyWidgetGuide: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Label("ホーム画面にも、このまどを。", systemImage: "rectangle.on.rectangle")
+                        .font(.title2)
+                    Text("ホーム画面の写真（ウィジェット）に、このまどに届いた写真が出ます。アプリを開かなくても、写真の下からハートを送れます。")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    widgetGuidePlacementPicker
+                    VStack(alignment: .leading, spacing: 16) {
+                        if widgetGuideIsFirstPlacement {
+                            Text("1. ホーム画面の何もないところを長押しします。")
+                            Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
+                            Text("3. 置いた写真を長押しして、「ウィジェットを編集」を開きます。")
+                            Text("4. 「表示する写真」で、次のまどを選びます。")
+                        } else {
+                            Text("1. ホーム画面にある「ねこのまど」の写真を長押しして、「ウィジェットを編集」を開きます。")
+                            Text("2. 「表示する写真」で、次のまどを選びます。")
+                        }
+                        Label(model.windowDisplayName, systemImage: "person.2.fill")
+                            .font(.headline)
+                            .accessibilityIdentifier("family-window-widget-guide-source")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    Text("中・大のサイズなら、写真の右下のしおりから、お気に入りにも入れられます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("ホーム画面に置く")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("閉じる") {
+                        showsWidgetGuide = false
+                        showsWindowWidgetGuide = false
+                    }
+                }
+            }
+        }
+    }
+
+    /// Segments truncate at accessibility sizes; a menu keeps both choices.
+    @ViewBuilder
+    private var widgetGuidePlacementPicker: some View {
+        let picker = Picker("ホーム画面の写真", selection: $widgetGuideIsFirstPlacement) {
+            Text("初めて置く").tag(true)
+            Text("すでに置いている").tag(false)
+        }
+        if dynamicTypeSize.isAccessibilitySize {
+            picker.pickerStyle(.menu)
+                .accessibilityIdentifier("family-window-widget-guide-placement")
+        } else {
+            picker.pickerStyle(.segmented)
+                .accessibilityIdentifier("family-window-widget-guide-placement")
         }
     }
 
@@ -1732,7 +1813,7 @@ struct FamilyWindowView: View {
             HStack(spacing: 12) {
                 settingsSymbol("rectangle.on.rectangle")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("ウィジェットの表示")
+                    Text("ホーム画面に置く")
                         .font(.subheadline.weight(.semibold))
                     if model.isReportOnly {
                         Text("共有が終了したため、写真は表示されません")
@@ -1817,6 +1898,94 @@ struct FamilyWindowView: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.tertiary)
             .accessibilityHidden(true)
+    }
+
+    /// Without this, notifications stay "quiet" (provisional) and an arriving
+    /// photo is easy to miss (M20). Ask once, in the window, in plain words.
+    private var showsNotificationPrompt: Bool {
+        !notificationPromptDismissed
+            && (notificationAuthorizationState == .notRequested
+                || notificationAuthorizationState == .quiet)
+    }
+
+    private var notificationPromptCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("写真が届いたら知らせる", systemImage: "bell.badge")
+                .font(.headline)
+            Text("まどに写真やハートが届いたとき、ロック画面に知らせます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button {
+                    Task { await requestVisibleNotificationAuthorization() }
+                } label: {
+                    Text("通知をオンにする").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("family-window-notification-prompt-enable")
+                Button("あとで") { notificationPromptDismissed = true }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("family-window-notification-prompt-later")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-notification-prompt")
+    }
+
+    /// A paired window's photos reach the home screen only after the person
+    /// picks this window in the Widget's settings (M22). Offer the guide once
+    /// per window, after the notification prompt has been handled.
+    private var showsHomeScreenPrompt: Bool {
+        guard model.isPaired, notificationAuthorizationState != .checking,
+              let key = homeScreenGuideKey else { return false }
+        return !homeScreenGuideSeenKeys.split(separator: "\n").contains(Substring(key))
+    }
+
+    private var homeScreenGuideKey: String? {
+        guard let spaceID = model.pairingState?.spaceID else { return nil }
+        let digest = SHA256.hash(data: Data("home-screen-guide|\(spaceID)".utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func markHomeScreenGuideSeen() {
+        guard let key = homeScreenGuideKey else { return }
+        var keys = homeScreenGuideSeenKeys.split(separator: "\n").map(String.init)
+        guard !keys.contains(key) else { return }
+        keys.append(key)
+        homeScreenGuideSeenKeys = keys.suffix(20).joined(separator: "\n")
+    }
+
+    private var homeScreenPromptCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("ホーム画面にこのまどを置く", systemImage: "rectangle.on.rectangle")
+                .font(.headline)
+            Text("届いた写真が、アプリを開かなくてもホーム画面に出ます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button {
+                    markHomeScreenGuideSeen()
+                    showsWindowWidgetGuide = true
+                } label: {
+                    Text("置き方を見る").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("family-window-home-screen-prompt-open")
+                Button("あとで") { markHomeScreenGuideSeen() }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("family-window-home-screen-prompt-later")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-home-screen-prompt")
     }
 
     @ViewBuilder

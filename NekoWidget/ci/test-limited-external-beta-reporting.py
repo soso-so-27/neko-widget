@@ -98,7 +98,7 @@ class LimitedExternalBetaReportingTests(unittest.TestCase):
             "if SharingAPIConfiguration.current.isEncryptedReportAvailable",
             settings,
         )
-        self.assertIn("TestFlightから問題を連絡", settings)
+        self.assertIn("サポートへ連絡", settings)
 
     def test_app_store_pack_limits_the_only_exception_to_one_report_off_tester(self) -> None:
         pack = self.source("docs/App-Store-提出パック.md")
