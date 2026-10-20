@@ -210,7 +210,6 @@ struct HomeView: View {
     let readingPositionKey: String?
     let showsCatProfileNavigation: Bool
 
-    @Environment(\.membershipTrial) private var membershipTrial
     @State private var visibleDetectedPhotoCount = 24
     @State private var openedCatProfileIdentifier: String?
     @State private var initialReadingIdentifier: String?
@@ -282,10 +281,6 @@ struct HomeView: View {
 
                         if shouldOfferWidgetPlacementGuide, !catPhotos.isEmpty {
                             widgetPlacementCard
-                        }
-
-                        if membershipTrial.showsDay14Notice {
-                            trialDay14NoticeCard
                         }
                     }
                     .padding(.bottom, 16)
@@ -376,19 +371,6 @@ struct HomeView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("home-widget-placement-guide")
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
-    }
-
-    /// ADR-027：14日目にアプリを開いたとき1回だけ出す1行。ウィジェット案内と同じ形で、
-    /// 通知・全画面・カウントダウンは出さない。表示したことは `MembershipAuthority` が記録する。
-    private var trialDay14NoticeCard: some View {
-        Label("あすから、新しい写真の更新と自動アルバム、作ったまどの続きはPlusの機能になります。写真・まど・メモは残ります",
-              systemImage: "sparkles")
-            .font(.subheadline)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .accessibilityIdentifier("home-trial-day14-notice")
-            .onAppear {
-                NotificationCenter.default.post(name: .membershipTrialDay14NoticeShown, object: nil)
-            }
     }
 
     private var partialScanStatus: some View {

@@ -35,8 +35,6 @@
 		E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
 		E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
 		E02609220000000000000008 /* MembershipAccessContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000007 /* MembershipAccessContext.swift */; };
-		E02710200000000000000002 /* TrialPeriodStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02710200000000000000001 /* TrialPeriodStore.swift */; };
-		E02710200000000000000004 /* MembershipAuthority.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02710200000000000000003 /* MembershipAuthority.swift */; };
 		33E6ECF92D02440DB45F7A97 /* WindowSupportResumeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F72EFC6FCCF44BA89D8E53B /* WindowSupportResumeView.swift */; };
 		E02609210000000000000003 /* MembershipOfferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000004 /* MembershipOfferView.swift */; };
 		C09D345411BC400BBB805EB4 /* WindowSupportResumeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */; };
@@ -315,8 +313,6 @@
 		E02609220000000000000001 /* MembershipAccessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessPolicy.swift; sourceTree = "<group>"; };
 		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
 		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
-		E02710200000000000000001 /* TrialPeriodStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrialPeriodStore.swift; sourceTree = "<group>"; };
-		E02710200000000000000003 /* MembershipAuthority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAuthority.swift; sourceTree = "<group>"; };
 		5F72EFC6FCCF44BA89D8E53B /* WindowSupportResumeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeView.swift; sourceTree = "<group>"; };
 		E02609210000000000000004 /* MembershipOfferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferView.swift; sourceTree = "<group>"; };
 		D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeClient.swift; sourceTree = "<group>"; };
@@ -725,8 +721,6 @@
 				C02610140000000000000002 /* ToolPreservation.swift */,
                 C02610150000000000000002 /* AppRecordPersistence.swift */,
 				E02609220000000000000007 /* MembershipAccessContext.swift */,
-				E02710200000000000000001 /* TrialPeriodStore.swift */,
-				E02710200000000000000003 /* MembershipAuthority.swift */,
 				F00000000000000000000210 /* JSONExporter.swift */,
 				F00000000000000000000211 /* LibraryStore.swift */,
 				A19300000000000000000011 /* PhotoMemoCoordinator.swift */,
@@ -1117,8 +1111,6 @@
 				E02609220000000000000002 /* MembershipAccessPolicy.swift in Sources */,
 				E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */,
 				E02609220000000000000008 /* MembershipAccessContext.swift in Sources */,
-				E02710200000000000000002 /* TrialPeriodStore.swift in Sources */,
-				E02710200000000000000004 /* MembershipAuthority.swift in Sources */,
 				A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */,
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
 				100000000000000000000140 /* PairingCore.swift in Sources */,

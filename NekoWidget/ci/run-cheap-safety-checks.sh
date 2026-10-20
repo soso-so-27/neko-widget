@@ -52,12 +52,6 @@ xcrun swiftc -parse-as-library \
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   ci/verify-membership-access.swift -o "$RUNNER_TEMP/verify-membership-access"
 "$RUNNER_TEMP/verify-membership-access"
-# 14日体験（ADR-027）：時刻の戻し・進め、14日の境界、読めない記録、記録なしで開始、
-# 14日目の1回限り、Plus との合流。Keychain には触れない（記憶上の記録で検査）。
-xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
-  NekoWidget/Services/TrialPeriodStore.swift \
-  ci/verify-trial-period.swift -o "$RUNNER_TEMP/verify-trial-period"
-"$RUNNER_TEMP/verify-trial-period"
 
 xcrun swiftc \
   -parse-as-library \

@@ -7,8 +7,6 @@ import SwiftUI
 struct WidgetPlacementGuideView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
-    /// 初回案内の最後の1行（ADR-027）。設定からの再表示では渡さない。
-    var footnote: String? = nil
     @State private var showsRediscoveryHistory = false
 
     private var placementSteps: [String] {
@@ -96,15 +94,6 @@ struct WidgetPlacementGuideView: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("widget-placement-skip")
-                }
-
-                if let footnote {
-                    Text(footnote)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .accessibilityIdentifier("widget-placement-trial-footnote")
                 }
             }
             .padding(.horizontal, 20)
