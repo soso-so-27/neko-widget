@@ -68,7 +68,10 @@ struct EvacuationPreparationView: View {
         .navigationTitle("避難に備える").navigationBarTitleDisplayMode(.inline)
         .announcesWhenShown(bookError)
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
-        .task { CatCareStore.shared.importFromTools() }
+        .task {
+            CatCareStore.shared.importFromTools()
+            CatCareStore.shared.importBirthdays(profiles)
+        }
         .confirmationDialog("1冊のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
             Button("PDFを作って保存・印刷") { makeBook() }
         } message: {

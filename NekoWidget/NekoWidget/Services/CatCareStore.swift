@@ -193,6 +193,37 @@ final class CatCareStore: ObservableObject {
     }
 
     /// The record for a recognized cat, created on first use.
+    /// Birthdays set in the cat profiles fill an empty birthday here, so ages
+    /// appear in every tool. A birthday already in 「この子のこと」 is kept.
+    func importBirthdays(_ profiles: [CatProfilePresentation]) {
+        let items = profiles.compactMap { profile -> (UUID, String, CatCareDay)? in
+            guard let id = UUID(uuidString: profile.identifier),
+                  let date = profile.lifeDates.birthday?.date,
+                  let day = CatCareDay(date: date) else { return nil }
+            return (id, profile.displayName, day)
+        }
+        guard !items.isEmpty, let current = state else { return }
+        let needed = items.filter { id, _, _ in
+            (current.cats.first { $0.profileID == id && $0.deletedAt == nil }?.birthday?.value ?? nil) == nil
+        }
+        guard !needed.isEmpty else { return }
+        update { state in
+            let now = Date()
+            for (id, name, day) in needed {
+                if let index = state.cats.firstIndex(where: { $0.profileID == id && $0.deletedAt == nil }) {
+                    if (state.cats[index].birthday?.value ?? nil) == nil {
+                        state.cats[index].birthday = .init(value: day, editedAt: now, editedBy: "import:Profile")
+                    }
+                } else {
+                    var record = CatCareRecord(catID: UUID(), profileID: id)
+                    record.name = .init(value: name, editedAt: now, editedBy: "import:Profile")
+                    record.birthday = .init(value: day, editedAt: now, editedBy: "import:Profile")
+                    state.cats.append(record)
+                }
+            }
+        }
+    }
+
     func ensureRecord(profileID: UUID, name: String?) -> CatCareRecord? {
         if let found = state?.cats.first(where: { $0.profileID == profileID && $0.deletedAt == nil }) {
             return found

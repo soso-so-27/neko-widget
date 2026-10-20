@@ -775,7 +775,7 @@ struct ToolCatProfileInfo: View {
     let profiles: [CatProfilePresentation]
     @Environment(\.toolProfileActions) private var actions
     var body: some View {
-        Section("この子のこと") {
+        Section("猫のプロフィール") {
             LabeledContent("名前", value: profile.displayName)
             if let birthday = profile.lifeDates.birthday {
                 LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))

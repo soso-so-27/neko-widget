@@ -295,6 +295,7 @@ private struct CareCatEditor: View {
         .navigationTitle("お世話メモを編集").navigationBarTitleDisplayMode(.inline)
         .task {
             CatCareStore.shared.importFromTools()
+            CatCareStore.shared.importBirthdays(profiles)
             guard !refreshedCandidates else { return }
             refreshedCandidates = true
             do { try store.refreshCandidates(id, using: reuseStore) }

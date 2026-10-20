@@ -5026,5 +5026,22 @@ class FirstLaunchInvitationTests(unittest.TestCase):
         self.assertIn("selectedTab = .photos\n            photoLibrarySelection.select(.all)", tab)
 
 
+class Build269FeedbackTests(unittest.TestCase):
+    def test_one_cat_care_title_profile_birthday_and_own_photo_heart(self) -> None:
+        profiles = source("NekoWidget/Views/CatProfilesView.swift")
+        info = section(profiles, "struct ToolCatProfileInfo: View {", "struct ToolPromoteCatButton")
+        self.assertIn('Section("猫のプロフィール")', info)
+        store = source("NekoWidget/Services/CatCareStore.swift")
+        birthdays = section(store, "func importBirthdays(", "func ensureRecord(")
+        self.assertIn('editedBy: "import:Profile"', birthdays)
+        self.assertIn("(state.cats[index].birthday?.value ?? nil) == nil", birthdays)
+        for path in ("NekoWidget/Views/CareHandoffView.swift", "NekoWidget/Views/CatCareView.swift",
+                     "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/VeterinaryVisitView.swift",
+                     "NekoWidget/Views/EvacuationPreparationView.swift"):
+            self.assertIn("importBirthdays(profiles)", source(path), path)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("if !entry.isHidden && !entry.isOwn {", window)
+
+
 if __name__ == "__main__":
     unittest.main()

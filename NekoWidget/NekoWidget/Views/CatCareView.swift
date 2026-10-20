@@ -30,6 +30,7 @@ struct CatCareEntryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             store.importFromTools()
+            store.importBirthdays(profiles)
             if selectedProfileID == nil {
                 selectedProfileID = profiles.first { $0.identifier == lastProfileID }?.identifier
                     ?? profiles.first?.identifier
@@ -154,6 +155,10 @@ struct CatCareDetailView: View {
     private var basicsSection: some View {
         Section("基本") {
             LabeledContent("名前", value: profile.displayName)
+            if let birthday = currentRecord?.birthday?.value ?? nil {
+                LabeledContent("誕生日", value: CatCareFormat.day(birthday)
+                    + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? ""))
+            }
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)
                 Text("オス").tag(CatCareSex.male)
