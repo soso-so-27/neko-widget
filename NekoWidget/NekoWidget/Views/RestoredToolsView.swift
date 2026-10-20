@@ -106,7 +106,7 @@ private struct RestoredToolWorkspace: View {
                 }
             }
             if has("ShowcasePhotos") {
-                Section("うちの子を見せる") {
+                Section("写真を見せる") {
                     ForEach(Array(Set(photos.map(\.group))).sorted(), id: \.self) { group in
                         NavigationLink {
                             ScrollView {
@@ -117,7 +117,7 @@ private struct RestoredToolWorkspace: View {
                                         } else { Text("写真を読み込めませんでした。") }
                                     }
                                 }
-                            }.navigationTitle("うちの子を見せる")
+                            }.navigationTitle("写真を見せる")
                         } label: {
                             Text(group.isEmpty ? "みんなの写真" : "保存した写真の組み合わせ")
                         }

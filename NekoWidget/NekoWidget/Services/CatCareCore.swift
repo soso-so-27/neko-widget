@@ -477,6 +477,66 @@ enum CatCareImport {
     }
 }
 
+// MARK: - Weights from photo memos
+
+/// A weight the owner wrote in a photo memo. `catID` is the cat chosen in the
+/// memo (a profile ID or a tool's shared cat ID); nil after a portable restore.
+struct CatCareMemoWeight: Equatable, Sendable {
+    var noteID: String
+    var catID: UUID?
+    var grams: Int
+    /// "2026-10-20" when the owner gave the day.
+    var measuredOn: String?
+    /// When the photo was taken, else when the memo was written.
+    var fallbackDate: Date?
+}
+
+enum CatCareMemoWeights {
+    /// One source per cat that has memo weights. A memo without a chosen cat is
+    /// skipped; a name never decides the cat. Deleted cats get nothing.
+    static func sources(_ weights: [CatCareMemoWeight], cats: [CatCareRecord],
+                        calendar: Calendar = .current) -> [CatCareImportSource] {
+        cats.filter { $0.deletedAt == nil }.compactMap { cat in
+            let mine = weights.compactMap { weight -> (noteID: String, day: CatCareDay, grams: Int)? in
+                guard let id = weight.catID, id == cat.catID || id == cat.profileID else { return nil }
+                guard let day = weight.measuredOn.flatMap(CatCareDay.init(isoDay:))
+                    ?? weight.fallbackDate.flatMap({ CatCareDay(date: $0, calendar: calendar) }) else { return nil }
+                return (weight.noteID, day, weight.grams)
+            }
+            guard !mine.isEmpty else { return nil }
+            return CatCareImportSource(tool: "PhotoMemo", catID: cat.catID, profileID: cat.profileID, weights: mine)
+        }
+    }
+}
+
+// MARK: - 迷子のとき
+
+enum CatCareLostCat {
+    /// One short line the owner may add to the flyer with a tap, such as
+    /// 「オス・3歳・室内飼い・マイクロチップあり」. The chip number stays off it.
+    static func publicLine(_ record: CatCareRecord?,
+                           today: CatCareDay? = CatCareDay(date: Date())) -> String? {
+        var parts: [String] = []
+        switch record?.sex?.value ?? .unknown {
+        case .male: parts.append("オス")
+        case .female: parts.append("メス")
+        case .unknown: break
+        }
+        if let age = age(record?.birthday?.value, today: today) { parts.append(age) }
+        if record?.indoorOnly?.value == .yes { parts.append("室内飼い") }
+        if !(record?.microchip?.value ?? "").isEmpty { parts.append("マイクロチップあり") }
+        return parts.isEmpty ? nil : parts.joined(separator: "・")
+    }
+
+    /// 「3歳」, or 「5か月」 under one year. Nil for an unknown or future birthday.
+    static func age(_ birthday: CatCareDay?, today: CatCareDay?) -> String? {
+        guard let birthday, let today, birthday <= today else { return nil }
+        var months = (today.year - birthday.year) * 12 + (today.month - birthday.month)
+        if today.day < birthday.day { months -= 1 }
+        return months < 12 ? "\(max(months, 0))か月" : "\(months / 12)歳"
+    }
+}
+
 // MARK: - Reading a file where one broken cat must not hide the others
 
 enum CatCareDecoding {
