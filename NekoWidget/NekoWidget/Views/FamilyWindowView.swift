@@ -133,6 +133,7 @@ struct FamilyWindowView: View {
     @State private var showsWidgetGuide = false
     @State private var showsWindowWidgetGuide = false
     @State private var widgetGuideIsFirstPlacement = true
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 20
     @State private var showsSharedPhotoInformation = false
@@ -343,7 +344,24 @@ struct FamilyWindowView: View {
 #endif
         }
         }
+        .sheet(item: receivedInvitationSheetItem) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
+        }
         .appRecordEditing(retainWhileHidden: showsNameEditor || isPreparingNameEditor || preparedDelivery != nil || selectedPhotoItem != nil || isPreparingSelectedPhoto || isDeliveringSelectedPhoto || !deliveryCaption.isEmpty || deliveryPersonalMemo != nil)
+    }
+
+    /// Only the まど tab's own screen presents an opened invitation link, so a
+    /// pushed settings screen or the widget photo viewer never doubles it.
+    private var receivedInvitationSheetItem: Binding<GroupInvitationLink?> {
+        Binding(
+            get: {
+                guard initialPresentation == .content, widgetPhotoRequest == nil else { return nil }
+                return invitationInbox.pending
+            },
+            set: { value in
+                if value == nil { invitationInbox.discard() }
+            }
+        )
     }
 
     private var widgetPhotoContent: some View {

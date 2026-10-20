@@ -2377,6 +2377,19 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleURL(_ url: URL) {
+        // An invitation link carries its keys in the fragment. Keep the link
+        // out of logs and messages; only the parsed value goes to the まど tab.
+        if GroupInvitationLink.isCandidate(url) {
+            guard let invitation = GroupInvitationLink(url: url) else {
+                SharedLog.app.warning("deeplink", "Rejected malformed group invitation link")
+                errorMessage = "招待リンクを読み取れませんでした。新しい招待を受け取ってください。"
+                return
+            }
+            GroupInvitationInbox.shared.receive(invitation)
+            isFamilyWindowPresented = true
+            SharedLog.app.info("deeplink", "Opened group invitation link")
+            return
+        }
         guard let link = DeepLink(url: url) else {
             SharedLog.app.warning(
                 "deeplink",

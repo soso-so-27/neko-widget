@@ -249,6 +249,7 @@
 		A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
 		AA2610200000000000000002 /* GroupWindowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000001 /* GroupWindowCore.swift */; };
 		AA2610200000000000000004 /* GroupWindowContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000003 /* GroupWindowContract.swift */; };
+		CC2610200000000000000004 /* GroupInvitationLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000003 /* GroupInvitationLink.swift */; };
 		AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000005 /* GroupWindowFixture.swift */; };
 /* End PBXBuildFile section */
 
@@ -505,6 +506,7 @@
 		A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyPersonalPhotoIntent.swift; sourceTree = "<group>"; };
 		AA2610200000000000000001 /* GroupWindowCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowCore.swift; sourceTree = "<group>"; };
 		AA2610200000000000000003 /* GroupWindowContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowContract.swift; sourceTree = "<group>"; };
+		CC2610200000000000000003 /* GroupInvitationLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupInvitationLink.swift; sourceTree = "<group>"; };
 		AA2610200000000000000005 /* GroupWindowFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowFixture.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -768,6 +770,7 @@
 				F00000000000000000000249 /* PhotoBookPolicy.swift */,
 				AA2610200000000000000005 /* GroupWindowFixture.swift */,
 				AA2610200000000000000003 /* GroupWindowContract.swift */,
+				CC2610200000000000000003 /* GroupInvitationLink.swift */,
 				F0000000000000000000024A /* PhotoBookPDFExporter.swift */,
 				E02609230000000000000002 /* ShowcasePhotoStore.swift */,
 				E02609230000000000000006 /* CatPreparednessStore.swift */,
@@ -1235,6 +1238,7 @@
 				100000000000000000000168 /* MomentSharingCore.swift in Sources */,
 				AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */,
 				AA2610200000000000000004 /* GroupWindowContract.swift in Sources */,
+				CC2610200000000000000004 /* GroupInvitationLink.swift in Sources */,
 				AA2610200000000000000002 /* GroupWindowCore.swift in Sources */,
 				100000000000000000000169 /* MomentSharingStore.swift in Sources */,
 				100000000000000000000170 /* MomentShareHandoffStore.swift in Sources */,
