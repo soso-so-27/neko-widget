@@ -15,18 +15,19 @@ private struct MembershipAccessVerifier {
         let past = now.addingTimeInterval(-1)
         let invalid = Date(timeIntervalSinceReferenceDate: .nan)
         let unbounded = Date(timeIntervalSinceReferenceDate: .infinity)
-        // ADR-027: ツール5つ、アルバム一覧、1つ目の自分のまど、招待されたまどでの
-        // 送信は無料。「育つもの」だけが個人の会員操作。まどの支援は停止。
+        // ADR-027: ツール5つ、アルバム一覧、招待されたまどでの送信は無料。
+        // 「育つもの」（まどを作る・作ったまどを続けるを含む）だけが個人の会員操作。
+        // まどの支援（window 状態）は判定に使わない。
         let free: [MembershipOperation] = [
             .browsePhotos, .manageFavorites, .readExistingMemo,
             .editExistingMemo, .deleteOwnedContent, .exportExistingContent,
             .receivePhotos, .reactToPhoto, .browseOfficialWindow, .browseAlbums,
-            .createFirstOwnWindow, .presentCatPhotos, .createCareMemo,
-            .createVeterinaryVisit, .addSharedContent, .continueAcceptedDelivery
+            .presentCatPhotos, .createCareMemo, .createVeterinaryVisit,
+            .addSharedContent, .continueAcceptedDelivery
         ]
         let personalOperations: [MembershipOperation] = [
             .openGrowingSummary, .refreshPersonalWidget, .createPersonalMemo,
-            .createAdditionalOwnWindow
+            .createOwnWindow, .addContentToOwnWindow
         ]
         require(
             Set(free + personalOperations) == Set(MembershipOperation.allCases)
@@ -34,9 +35,8 @@ private struct MembershipAccessVerifier {
             "Every operation must have exactly one explicit membership contract"
         )
         require(
-            MembershipAccessPolicy.freeOwnWindowCount == 1
-                && MembershipAccessPolicy.maximumOwnWindowCount == 5,
-            "Own window counts must stay at free 1 / Plus 5 (ADR-027)"
+            MembershipAccessPolicy.maximumOwnWindowCount == 5,
+            "Own windows must stay at 5 (ADR-027)"
         )
 
         func decision(
@@ -120,7 +120,7 @@ private struct MembershipAccessVerifier {
         require(live.decision(for: .createPersonalMemo) == .allowed, "Live grant not observed")
         live.update(enforcementEnabled: true, personal: .inactive)
         var commits = 0
-        for operation in [MembershipOperation.createPersonalMemo, .createAdditionalOwnWindow] {
+        for operation in [MembershipOperation.createPersonalMemo, .createOwnWindow, .addContentToOwnWindow] {
             do {
                 try live.perform(for: operation) { commits += 1 }
                 fatalError("Revocation admitted \(operation)")
@@ -140,8 +140,8 @@ private struct MembershipAccessVerifier {
         try! live.perform(for: .createPersonalMemo) { commits += 1 }
         require(commits == 5, "Beta commit blocked")
 
-        // 1つ目の自分のまどと、招待されたまどでの送信は、個人・まどのどの
-        // 状態でも許可。まどの支援（sponsorship）はゲートとして停止した。
+        // 招待されたまどでの送信は、個人・まどのどの状態でも許可（入る人は
+        // ずっと無料）。まどの支援（sponsorship）の状態は判定に使わない。
         let windowStates: [(String, MembershipWindowState)] = [
             ("unsupported", .inactive),
             ("checking", .checking),
@@ -158,24 +158,29 @@ private struct MembershipAccessVerifier {
         ]
         for (label, window) in windowStates {
             for personal in participants {
-                for operation in [MembershipOperation.createFirstOwnWindow, .addSharedContent] {
-                    require(
-                        decision(operation, personal: personal, window: window) == .allowed,
-                        "\(operation.rawValue) was gated: \(label)"
-                    )
-                    require(
-                        decision(operation, personal: personal, window: window, at: invalid) == .allowed,
-                        "\(operation.rawValue) was gated by the clock: \(label)"
-                    )
-                }
+                require(
+                    decision(.addSharedContent, personal: personal, window: window) == .allowed,
+                    "addSharedContent was gated: \(label)"
+                )
+                require(
+                    decision(.addSharedContent, personal: personal, window: window, at: invalid) == .allowed,
+                    "addSharedContent was gated by the clock: \(label)"
+                )
             }
         }
+        // まどを作る・作ったまどへ届けるのは作った人のPlus（体験中は verified）。
+        // まどの状態では開かず、体験後（inactive）は会員要。
         for (label, window) in windowStates {
-            require(
-                decision(.createAdditionalOwnWindow, personal: .inactive, window: window)
-                    == .membershipRequired,
-                "Window state unlocked an additional own window: \(label)"
-            )
+            for operation in [MembershipOperation.createOwnWindow, .addContentToOwnWindow] {
+                require(
+                    decision(operation, personal: .verified(validUntil: future), window: window) == .allowed,
+                    "\(operation.rawValue) blocked during a valid trial/membership: \(label)"
+                )
+                require(
+                    decision(operation, personal: .inactive, window: window) == .membershipRequired,
+                    "Window state unlocked \(operation.rawValue): \(label)"
+                )
+            }
         }
 
         // 月のまとめ・季節のムービーを開くのは「育つもの」。体験中（verified）だけ開く。
@@ -202,6 +207,6 @@ private struct MembershipAccessVerifier {
                 == .verificationRequired,
             "An invalid clock must not authorize opening a growing summary"
         )
-        print("PASS membership access: beta, existing content, free tools, first own window, shared content, personal expiry, offline authority, invalid dates")
+        print("PASS membership access: beta, existing content, free tools, own window creation and delivery, shared content, personal expiry, offline authority, invalid dates")
     }
 }

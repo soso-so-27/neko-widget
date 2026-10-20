@@ -667,22 +667,22 @@ struct PairingView: View {
 
     private var createSection: some View {
         Section {
-            // 1つ目の自分のまどは会員状態にかかわらず作れる。2つ目以降は会員で、
-            // 自分のまどは5つまで（ADR-027）。招待で入ったまどは数えない。
+            // まどを作るのは会員（14日間の体験中は無料）。自分のまどは5つまで
+            // （ADR-027）。招待で入ったまどは数えない。
             if model.ownWindowLimitReached {
                 Text("自分で作るまどは\(MembershipAccessPolicy.maximumOwnWindowCount)個までです。")
                     .font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("pairing-own-window-limit")
-            } else if membershipAccess.decision(for: model.createWindowOperation) != .allowed {
-                MembershipAccessNotice(decision: membershipAccess.decision(for: model.createWindowOperation))
+            } else if membershipAccess.decision(for: .createOwnWindow) != .allowed {
+                MembershipAccessNotice(decision: membershipAccess.decision(for: .createOwnWindow))
             } else {
             Button {
                 Task {
                     guard !model.ownWindowLimitReached,
-                          membershipAccess.decision(for: model.createWindowOperation) == .allowed else { return }
+                          membershipAccess.decision(for: .createOwnWindow) == .allowed else { return }
                     guard await saveWindowNameIfPossible() else { return }
                     guard !model.ownWindowLimitReached,
-                          membershipAccess.decision(for: model.createWindowOperation) == .allowed else { return }
+                          membershipAccess.decision(for: .createOwnWindow) == .allowed else { return }
                     if model.isMediaSyncEnabled {
                         guard model.recordMediaSharingConsent() else { return }
                         hasAcceptedPairingTerms = false

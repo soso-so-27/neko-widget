@@ -16,15 +16,16 @@ enum MembershipOperation: String, CaseIterable, Sendable {
     case openGrowingSummary
     case refreshPersonalWidget
     case createPersonalMemo
-    /// 1つ目の自分のまど。会員状態にかかわらず作れる。
-    case createFirstOwnWindow
-    /// 2つ目以降の自分のまど（`maximumOwnWindowCount` まで）。会員。
-    case createAdditionalOwnWindow
+    /// 自分のまどを作る（`maximumOwnWindowCount` まで）。会員。14日間の体験中は
+    /// `verified(体験終了)` で開く（ADR-027 改訂：1つ目も体験後はPlus）。
+    case createOwnWindow
+    /// 作った人として、自分のまどへ届ける。会員。まどは作った人のPlusで続く。
+    case addContentToOwnWindow
     /// ツール5つ（見せる・預ける・病院・迷子・避難）は無料。
     case presentCatPhotos
     case createCareMemo
     case createVeterinaryVisit
-    /// 招待されたまどでの送信。会員状態やまどの支援に関係なく常に許可。
+    /// 招待されたまどでの送信。入る人はずっと無料なので常に許可。
     case addSharedContent
     case continueAcceptedDelivery
 }
@@ -66,10 +67,9 @@ enum MembershipWindowState: Equatable, Sendable {
 /// was accepted before choosing the corresponding operation. This policy neither
 /// accepts a delivery nor permits an unaccepted attempt to be labeled a retry.
 enum MembershipAccessPolicy {
-    /// 自分で作れるまどの数（ADR-027）。1つ目は無料、2つ目から5つ目までは会員。
+    /// 自分で作れるまどの数（ADR-027）。作るのは会員（体験中は無料）で5つまで。
     /// 招待で入ったまどは数えない。まどの合計上限は
     /// `PrivateWindowCatalogState.maximumProductWindowCount`。
-    static let freeOwnWindowCount = 1
     static let maximumOwnWindowCount = 5
 
     static func decision(
@@ -86,11 +86,11 @@ enum MembershipAccessPolicy {
         case .browsePhotos, .manageFavorites, .readExistingMemo,
              .editExistingMemo, .deleteOwnedContent, .exportExistingContent,
              .receivePhotos, .reactToPhoto, .browseOfficialWindow, .browseAlbums,
-             .createFirstOwnWindow, .presentCatPhotos, .createCareMemo,
-             .createVeterinaryVisit, .addSharedContent, .continueAcceptedDelivery:
+             .presentCatPhotos, .createCareMemo, .createVeterinaryVisit,
+             .addSharedContent, .continueAcceptedDelivery:
             return .allowed
         case .openGrowingSummary, .refreshPersonalWidget, .createPersonalMemo,
-             .createAdditionalOwnWindow:
+             .createOwnWindow, .addContentToOwnWindow:
             guard now.timeIntervalSinceReferenceDate.isFinite else {
                 return .verificationRequired
             }

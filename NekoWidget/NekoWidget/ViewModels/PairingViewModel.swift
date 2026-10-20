@@ -150,7 +150,7 @@ final class PairingViewModel: ObservableObject {
     }
     /// 作成経路でこのまどを作ると、自分のまどが何個になるか。ほかのまどは
     /// 保存された役割で数え、設定中で役割が未定のこのまどは1つに数える。
-    /// 1なら `createFirstOwnWindow`、2以上なら `createAdditionalOwnWindow`。
+    /// `maximumOwnWindowCount` を超えるときは `createOwnWindow` の判定の前に止める。
     var ownWindowCountWhenCreatingThisWindow: Int {
         let others = privateWindows.filter { $0.localWindowID != activePrivateWindowID }
         let ownOthers = others.filter { window in
@@ -161,10 +161,6 @@ final class PairingViewModel: ObservableObject {
         }.count
         let countsThisWindow = state.map { Self.isOwnWindow($0) || $0.role == nil } ?? true
         return ownOthers + (countsThisWindow ? 1 : 0)
-    }
-    var createWindowOperation: MembershipOperation {
-        ownWindowCountWhenCreatingThisWindow <= MembershipAccessPolicy.freeOwnWindowCount
-            ? .createFirstOwnWindow : .createAdditionalOwnWindow
     }
     var ownWindowLimitReached: Bool {
         ownWindowCountWhenCreatingThisWindow > MembershipAccessPolicy.maximumOwnWindowCount
