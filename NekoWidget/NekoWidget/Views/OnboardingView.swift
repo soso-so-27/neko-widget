@@ -476,3 +476,35 @@ private struct OnboardingPlusOfferPage: View {
         }
     }
 }
+
+/// 「招待を受け取った」 on the first screen. Group invitations arrive as a link,
+/// so the help says to open it; an older two-person code can still be used.
+struct OnboardingInvitationHelpView: View {
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("届いた招待リンクを開いてください", systemImage: "link")
+                        .font(.headline)
+                    Text("メッセージやLINEで届いた「nekonomado.com/join」から始まるリンクを押すと、このアプリでまどに参加する画面が開きます。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 6)
+            }
+            Section {
+                NavigationLink {
+                    PairingView(initialSetupPath: .join)
+                } label: {
+                    Label("招待コードで参加する（前からのまど）", systemImage: "number")
+                }
+                .accessibilityIdentifier("onboarding-invitation-code")
+            } footer: {
+                Text("「NW1.」から始まるコードが届いたときだけ使います。")
+            }
+        }
+        .navigationTitle("招待を受け取った")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("onboarding-invitation-help")
+    }
+}

@@ -5009,5 +5009,22 @@ class WidgetSourceOrderTests(unittest.TestCase):
         self.assertIn('"このまどは止まっています" : "まだ写真が届いていません"', view)
 
 
+class FirstLaunchInvitationTests(unittest.TestCase):
+    def test_invitation_during_first_launch_joins_and_photos_tab_opens_on_all(self) -> None:
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        self.assertIn(".onChange(of: invitationInbox.pending?.id, initial: true)", root_view)
+        self.assertIn("GroupInvitationJoinSheet(invitation: invitation)", root_view)
+        # The guide ends only after a window was joined and opened.
+        dismiss = section(root_view, ".sheet(item: $onboardingInvitation, onDismiss: {", "GroupInvitationJoinSheet(invitation: invitation)")
+        self.assertLess(dismiss.index("GroupWindowOpenInbox.shared.pendingWindowID != nil"), dismiss.index("completeOnboardingWithoutPhotoAccess()"))
+        self.assertIn("OnboardingInvitationHelpView()", root_view)
+        onboarding = source("NekoWidget/Views/OnboardingView.swift")
+        self.assertIn("struct OnboardingInvitationHelpView: View", onboarding)
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        # Widget and showcase entries to the 写真 tab start on すべて, not the last segment.
+        self.assertGreaterEqual(tab.count("selectedTab = .photos\n                photoLibrarySelection.select(.all)"), 2)
+        self.assertIn("selectedTab = .photos\n            photoLibrarySelection.select(.all)", tab)
+
+
 if __name__ == "__main__":
     unittest.main()
