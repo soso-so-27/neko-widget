@@ -658,7 +658,7 @@ struct ManagedPreservationView: View {
                         .accessibilityIdentifier("preservation-resume-tool-deletion")
                 }
             }
-            Text("うちの子を見せる・預けるとき・病院で見せる・迷子のとき・避難に備える、の入力内容と添付写真をまとめて保管します。")
+            Text("写真を見せる・預けるとき・病院で見せる・迷子のとき・避難に備える、の入力内容と添付写真をまとめて保管します。")
             Text("連絡先や健康の情報を含みます。共有相手には送られません。端末に保存済みの内容が対象です。")
                 .font(.footnote).foregroundStyle(.secondary)
             Text("変わっていない添付写真は前の保管コピーと共用し、重複して送信しません。コピーを削除しても、ほかのコピーに必要な写真は残ります。")

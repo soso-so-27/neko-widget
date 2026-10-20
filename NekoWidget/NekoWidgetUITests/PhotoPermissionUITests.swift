@@ -2048,7 +2048,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["食べる量が少なかった。"].exists)
         XCTAssertFalse(app.staticTexts["選んでいない別の猫の記録"].exists)
         capture("vet-selected-record-in-person-display")
-        app.navigationBars["診察で見せる"].buttons["閉じる"].tap()
+        app.navigationBars["病院で見せる"].buttons["閉じる"].tap()
         let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
         for _ in 0..<8 where !remove.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(remove.isHittable); remove.tap()
@@ -2476,7 +2476,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
             let guidance = app.staticTexts.matching(NSPredicate(
                 format: "label ENDSWITH %@ OR label == %@",
-                "を入れると作成できます", "仕上がりで調整する項目があります"
+                "を入れると作成できます", "直す項目があります。各欄の説明を確かめてください"
             )).firstMatch
             for _ in 0..<10 {
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
@@ -2658,7 +2658,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let candidates = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "lost-cat-candidate-"))
         XCTAssertTrue(candidates.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(candidates.count, 3)
-        XCTAssertFalse(app.buttons["端末の全写真から追加"].exists)
+        XCTAssertFalse(app.buttons["iPhoneのすべての写真から選ぶ"].exists)
         capture("lost-cat-app-cat-photos")
         app.segmentedControls.buttons["この子"].tap()
         XCTAssertEqual(candidates.count, 1)
@@ -2745,7 +2745,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let lost = app.buttons["tools-lost-cat-open"]
             XCTAssertTrue(showcase.waitForExistence(timeout: 5))
             XCTAssertTrue(showcase.isHittable)
-            XCTAssertTrue(showcase.label.contains("うちの子を見せる"))
+            XCTAssertTrue(showcase.label.contains("写真を見せる"))
             XCTAssertFalse(app.buttons["tools-showcase-edit"].exists)
             let care = app.buttons["tools-care-open"]
             XCTAssertEqual(showcase.frame.width, care.frame.width, accuracy: 1)

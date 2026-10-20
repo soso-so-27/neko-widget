@@ -62,6 +62,8 @@
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>ワクチン証明などの書類を撮って「この子のこと」に付けるために使います。撮った写真はこのiPhoneの中に保存し、写真アプリには追加しません。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>写真アプリの「うちの子」アルバムを更新し、あなたが「自分のお気に入りに追加」を選んだ届いた写真を保存するため、写真ライブラリへの追加を許可してください。写真を自動で追加することはありません。</string>
 	<key>NSPhotoLibraryUsageDescription</key>

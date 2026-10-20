@@ -40,13 +40,13 @@ enum GroupWindowPresentation {
         case .staleRevision:
             return "まどの情報が変わりました。最新の一覧を確認して、もう一度お試しください。"
         case .staleEpoch, .rotationPending:
-            return "鍵を更新するため、作った人の接続を待っています。"
+            return "まどを作った人がアプリを開くと、続けられます。少し待ってから、もう一度お試しください。"
         case .memberLimit:
             return "このまどは\(memberLimit)人までです。"
         case .deviceLimit:
             return "1人が使えるiPhoneは\(deviceLimitPerPerson)台までです。"
         case .totalWindowLimit:
-            return "まどは合計\(totalWindowLimit)までです。使っていないまどを整理してください。"
+            return "まどは全部で\(totalWindowLimit)個までです。使っていないまどから抜けると、新しく作ったり入ったりできます。"
         case .ownedWindowLimit:
             return "これ以上、自分でまどを作れません。"
         case .invitationExpired:
@@ -54,15 +54,15 @@ enum GroupWindowPresentation {
         case .invitationRevoked:
             return "この招待は取り消されました。新しい招待を受け取ってください。"
         case .requestNotPending:
-            return "この申し込みはすでに処理されています。"
+            return "この申し込みは、もう承認か取り消しが済んでいます。"
         case .cannotRemoveOwner:
             return "まどを作った人は外せません。"
         case .ownerCannotLeave:
-            return "作った人は退出できません。まどを閉じる操作は、今後の版で用意します。"
+            return "まどを作った人は抜けられません。"
         case .invalidResponse:
             return "まどの情報を読み取れませんでした。もう一度お試しください。"
         case .idempotencyConflict:
-            return "前の操作と内容が違うため、やり直せませんでした。最新の一覧を確認してください。"
+            return "うまく続けられませんでした。画面を開き直して、もう一度お試しください。"
         }
     }
 
@@ -229,7 +229,7 @@ final class GroupWindowMembersModel: ObservableObject {
             )
         }
         if actionErrorMessage == nil {
-            actionCompletionMessage = "\(member.displayName)さんを外しました。鍵を取り替えます。"
+            actionCompletionMessage = "\(member.displayName)さんを外しました。これから届く写真は、この人には見えません。"
         }
     }
 
@@ -381,7 +381,7 @@ struct GroupWindowMembersView: View {
                 .accessibilityIdentifier("group-window-approve-confirm")
             Button("戻る", role: .cancel) {}
         } message: { request in
-            Text("本人に確認語を聞いてください。「\(request.verificationPhrase)」と答えたら承認します。承認すると、これから届く写真をこの人も見られます。")
+            Text("本人に確認の言葉を聞いて、「\(request.verificationPhrase)」と答えたら承認してください。")
         }
         .confirmationDialog(
             removalTarget.map { "\($0.displayName)さんをこのまどから外しますか？" } ?? "外しますか？",
@@ -392,7 +392,7 @@ struct GroupWindowMembersView: View {
             Button("外す", role: .destructive) { Task { await model.remove(member) } }
             Button("戻る", role: .cancel) {}
         } message: { _ in
-            Text("外すと、この人にはこれから届く写真が見られなくなり、鍵を取り替えます。すでに届いた写真を相手のiPhoneから消すことはできません。")
+            Text("この人には、これから届く写真が見えなくなります。すでに届いた写真は、相手のiPhoneに残ります。")
         }
         .confirmationDialog(
             "招待を取り消しますか？",
@@ -553,9 +553,25 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            if canRemove {
+                Button("外す") {
+                    removalTarget = member
+                    showsRemoval = true
+                }
+                .buttonStyle(.bordered)
+                .frame(minHeight: 44)
+                .disabled(model.isWorking)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("group-window-remove-member")
+            }
         }
         .frame(minHeight: 44)
         .accessibilityElement(children: .combine)
+        .accessibilityAction(named: Text("外す")) {
+            guard canRemove, !model.isWorking else { return }
+            removalTarget = member
+            showsRemoval = true
+        }
         .accessibilityIdentifier("group-window-member")
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if canRemove {
@@ -595,11 +611,12 @@ struct GroupWindowMembersView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isWorking || window.state != .active)
                     .accessibilityIdentifier("group-window-approve")
-                    Button("却下") {
+                    Button {
                         Task { await model.reject(request) }
+                    } label: {
+                        Text("断る").frame(minWidth: 64, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
-                    .frame(minHeight: 44)
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("group-window-reject")
                 }
@@ -893,7 +910,7 @@ struct GroupJoinView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            LabeledContent("確認語", value: request.verificationPhrase)
+            LabeledContent("確認の言葉", value: request.verificationPhrase)
                 .accessibilityIdentifier("group-join-verification-phrase")
             Text("作った人に聞かれたら、この言葉を伝えてください。")
                 .font(.footnote)
