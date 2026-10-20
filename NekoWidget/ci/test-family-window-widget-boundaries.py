@@ -4719,5 +4719,19 @@ class ShowcaseCatCareTests(unittest.TestCase):
         self.assertIn("identifiers.firstIndex(of: face)", view)
 
 
+class CatCareMemoWeightTests(unittest.TestCase):
+    def test_memo_weights_join_by_id_and_memos_are_not_changed(self) -> None:
+        core = source("NekoWidget/Services/CatCareCore.swift")
+        view = source("NekoWidget/Views/CatCareView.swift")
+        rule = section(core, "enum CatCareMemoWeights {", "// MARK: - 迷子のとき")
+        self.assertIn("guard let id = weight.catID, id == cat.catID || id == cat.profileID", rule)
+        self.assertNotIn("catName", rule)
+        entry = section(view, "try? await PhotoMemoryNoteStore.shared.records()", "private var selectedProfile")
+        self.assertIn("store.importWeights(", entry)
+        for forbidden in ("noteStore.save", ".save(text:", "delete(id:"):
+            self.assertNotIn(forbidden, view)
+        self.assertIn("try memoWeights()", source("ci/verify-cat-care.swift"))
+
+
 if __name__ == "__main__":
     unittest.main()

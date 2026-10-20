@@ -38,6 +38,17 @@ struct CatCareEntryView: View {
         .onChange(of: selectedProfileID) { _, value in
             if let value { lastProfileID = value }
         }
+        .task {
+            // Weights written in photo memos join the weight list (read only; memos are not changed).
+            guard let records = try? await PhotoMemoryNoteStore.shared.records() else { return }
+            store.importWeights(records.compactMap { record in
+                record.note.weight.map { weight in
+                    CatCareMemoWeight(noteID: record.note.id.uuidString, catID: weight.catID,
+                                      grams: weight.value.grams, measuredOn: weight.value.measuredOn,
+                                      fallbackDate: record.note.context?.capturedAt ?? record.note.writtenAt)
+                }
+            })
+        }
     }
 
     private var selectedProfile: CatProfilePresentation? {
