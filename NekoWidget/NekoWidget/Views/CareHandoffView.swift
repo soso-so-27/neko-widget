@@ -11,7 +11,6 @@ struct CareHandoffView: View {
     @State private var opensNewCat = false
     @State private var duplicateProfile: CatProfilePresentation?
     @Environment(\.membershipActions) private var actionAccess
-    @State private var membershipNotice: MembershipAccessDecision?
 
     var body: some View {
         Group {
@@ -65,7 +64,6 @@ struct CareHandoffView: View {
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $opensNewCat) { if let newCatID { editor(newCatID) } }
         .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
-        .membershipActionNotice($membershipNotice)
         .confirmationDialog("この子の記録が複数あります", isPresented: Binding(
             get: { duplicateProfile != nil }, set: { if !$0 { duplicateProfile = nil } }
         ), titleVisibility: .visible) {
@@ -91,12 +89,11 @@ struct CareHandoffView: View {
         newCatID = id; opensNewCat = true
     }
     private func addCat(profileID: String? = nil, name: String = "", sourceCatID: UUID? = nil) {
+        // 預けるときは無料のツール（ADR-027）。nil は重複や保存エラーで、
+        // そのときは store の案内がそのまま表示される。
         if let id = store.addCat(profileID: profileID, name: name, using: reuseStore,
             sourceCatID: sourceCatID, access: actionAccess) {
             newCatID = id; opensNewCat = true
-        } else {
-            let decision = actionAccess.decision(for: .createCareMemo)
-            if decision != .allowed { membershipNotice = decision }
         }
     }
     private var availableSavedCats: [EvacuationCat] {

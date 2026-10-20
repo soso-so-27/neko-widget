@@ -3366,7 +3366,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         installation = source("NekoWidget/Services/PairingInstallationGuard.swift")
 
         self.assertIn("maximumWindowCount = 20", container)
-        self.assertIn("maximumProductWindowCount = 3", container)
+        self.assertIn("maximumProductWindowCount = 10", container)
         self.assertIn("updateActiveDraftDisplayNameWhileLifecycleLocked", container)
         self.assertIn("case setupWindowAlreadyExists", container)
         self.assertIn("validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked", container)

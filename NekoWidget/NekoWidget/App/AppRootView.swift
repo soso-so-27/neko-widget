@@ -42,8 +42,6 @@ struct AppRootView: View {
     @State private var onboardingScanErrorMessage: String?
     @StateObject private var widgetShowcaseStore = ShowcasePhotoStore.shared
     @State private var widgetShowcasePhoto: WidgetShowcasePhoto?
-    @Environment(\.membershipActions) private var showcaseAccess
-    @State private var showcaseMembershipNotice: MembershipAccessDecision?
 
     var body: some View {
         WidgetPhotoPresentationHost(onOtherURL: handleNonPhotoURL) {
@@ -262,11 +260,6 @@ struct AppRootView: View {
     private func personalPhotoActions<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
             .environment(\.showcaseOpenOne, { identifier in
-                let decision = showcaseAccess.decision(for: .presentCatPhotos)
-                guard decision == .allowed else {
-                    showcaseMembershipNotice = decision
-                    return
-                }
                 widgetShowcasePhoto = WidgetShowcasePhoto(photoIdentifier: identifier)
             })
             .environment(\.showcaseAddPhoto, { identifier, scope in
@@ -280,7 +273,6 @@ struct AppRootView: View {
                 + (viewModel.catHouseholdIdentity?.profiles ?? []).map {
                     ShowcaseAddTarget(id: $0.id.uuidString, title: $0.displayName)
                 })
-            .membershipActionNotice($showcaseMembershipNotice)
             .fullScreenCover(item: $widgetShowcasePhoto) { selected in
                 ShowcasePhotoView(
                     store: widgetShowcaseStore,

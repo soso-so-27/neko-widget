@@ -143,6 +143,28 @@ final class PairingViewModel: ObservableObject {
         privateWindows.count < PrivateWindowCatalogState.maximumProductWindowCount
             && !hasPrivateWindowSetupInProgress
     }
+    /// 「自分で作ったまど」: 役割が `inviter` で、追加端末ではないもの。
+    /// 招待で入ったまど（`invitee`）は数えない（ADR-027）。
+    nonisolated static func isOwnWindow(_ state: PairingState) -> Bool {
+        state.role == .inviter && state.localDeviceIsAdditional != true
+    }
+    /// 作成経路でこのまどを作ると、自分のまどが何個になるか。ほかのまどは
+    /// 保存された役割で数え、設定中で役割が未定のこのまどは1つに数える。
+    /// `maximumOwnWindowCount` を超えるときは `createOwnWindow` の判定の前に止める。
+    var ownWindowCountWhenCreatingThisWindow: Int {
+        let others = privateWindows.filter { $0.localWindowID != activePrivateWindowID }
+        let ownOthers = others.filter { window in
+            guard let pairing = try? PairingStateStore.load(
+                localWindowID: window.localWindowID
+            ) else { return false }
+            return Self.isOwnWindow(pairing)
+        }.count
+        let countsThisWindow = state.map { Self.isOwnWindow($0) || $0.role == nil } ?? true
+        return ownOthers + (countsThisWindow ? 1 : 0)
+    }
+    var ownWindowLimitReached: Bool {
+        ownWindowCountWhenCreatingThisWindow > MembershipAccessPolicy.maximumOwnWindowCount
+    }
     var canCreateDeviceRecoveryInvitation: Bool {
         guard let state, state.phase == .paired else { return false }
         return state.role != .inviter || state.localDeviceIsAdditional != true
@@ -405,7 +427,7 @@ final class PairingViewModel: ObservableObject {
         guard canCreateAnotherPrivateWindow else {
             operationErrorMessage = hasPrivateWindowSetupInProgress
                 ? "先に、設定中のまどを完了してください。"
-                : "初期版では、まどは合計3個までです。"
+                : "まどは合計\(PrivateWindowCatalogState.maximumProductWindowCount)個までです。"
             return
         }
         isWorking = true

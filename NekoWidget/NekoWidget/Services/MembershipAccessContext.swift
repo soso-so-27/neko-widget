@@ -52,6 +52,8 @@ struct MembershipAccessContext: Equatable {
 
     /// Call only with this window's participant-scoped, validated state.
     /// A personal subscription never authorizes someone else's window.
+    /// ADR-027: まどの支援（sponsorship）はゲートとして停止した。`addSharedContent`
+    /// は常に許可で、この状態は判定に使われない。呼出との互換のために残す。
     func withWindow(_ access: BillingWindowPlusAccessState, now: Date = .now) -> Self {
         var result = self
         switch access {
@@ -179,21 +181,6 @@ private struct MembershipFeatureGate: ViewModifier {
 }
 
 extension View {
-    func membershipActionNotice(_ decision: Binding<MembershipAccessDecision?>) -> some View {
-        sheet(isPresented: Binding(get: { decision.wrappedValue != nil },
-            set: { if !$0 { decision.wrappedValue = nil } })) {
-            NavigationStack {
-                if let value = decision.wrappedValue {
-                    MembershipAccessNotice(decision: value)
-                        .navigationTitle("会員プラン").navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .cancellationAction) {
-                            Button("閉じる") { decision.wrappedValue = nil }
-                        } }
-                }
-            }
-        }
-    }
-
     func membershipFeature(_ operation: MembershipOperation, hasContent: Bool = true) -> some View {
         modifier(MembershipFeatureGate(operation: operation, hasContent: hasContent))
     }
@@ -202,6 +189,8 @@ extension View {
 #if DEBUG
 /// Exercises the real editor against an isolated local store. No purchase,
 /// CloudKit enrollment, or photo-library mutation is part of this fixture.
+/// ADR-027: ツール（預ける・病院・見せる）は無料なので、`inactive` でも
+/// 新しい記録を作れることをこの fixture で確認する。新しいメモは会員。
 @MainActor
 struct MembershipAccessFixture: View {
     private let store = PhotoMemoryNoteStore(fileURL: FileManager.default.temporaryDirectory
@@ -219,6 +208,14 @@ struct MembershipAccessFixture: View {
     private let veterinary = VeterinaryVisitStore(directory: FileManager.default.temporaryDirectory
         .appendingPathComponent("membership-veterinary-\(UUID().uuidString)"))
     private let catID = UUID(uuidString: "AB000000-0000-0000-0000-000000000001")!
+    /// ツールの「猫のプロフィール」から新しい記録を作る経路。既存の記録
+    /// （ミケ）はプロフィール未登録のままにして、既存と新規を分けて確認する。
+    private let toolProfiles: [CatProfilePresentation] = [
+        ("AB000000-0000-0000-0000-000000000002", "ソラ"),
+        ("AB000000-0000-0000-0000-000000000003", "ハナ"),
+        ("AB000000-0000-0000-0000-000000000004", "クロ")
+    ].map { CatProfilePresentation(identifier: $0.0, name: $0.1, coverPhoto: nil,
+        confirmedPhotos: [], lifeReference: nil) }
     private var context: MembershipAccessContext {
         .init(enforcementEnabled: !beta, personal: state)
     }
@@ -227,10 +224,10 @@ struct MembershipAccessFixture: View {
         NavigationStack {
             List {
                 NavigationLink("お世話メモの確認") {
-                    CareHandoffView(profiles: [], unregisteredPhotos: [], store: care, reuseStore: evacuation)
+                    CareHandoffView(profiles: toolProfiles, unregisteredPhotos: [], store: care, reuseStore: evacuation)
                 }.accessibilityIdentifier("membership-care")
                 NavigationLink("診察メモの確認") {
-                    VeterinaryVisitsView(photos: [], noteStore: store, store: veterinary,
+                    VeterinaryVisitsView(profiles: toolProfiles, photos: [], noteStore: store, store: veterinary,
                         careStore: care, evacuationStore: evacuation)
                 }.accessibilityIdentifier("membership-veterinary")
                 NavigationLink("ツール一覧の確認") { AppStoreScreenshotFixtureRootView() }
