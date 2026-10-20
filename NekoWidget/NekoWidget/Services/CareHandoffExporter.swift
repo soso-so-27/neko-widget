@@ -14,6 +14,9 @@ struct CareHandoffShareRecord {
     let includesHealth: Bool
     let includesContacts: Bool
     let createdAt: Date
+    /// The page heading. 「病院で見せる」 uses its own, without the care notes.
+    var heading = "お世話メモ"
+    var isCareMemo = true
 }
 
 @MainActor
@@ -58,9 +61,11 @@ enum CareHandoffExporter {
             for (title, text) in record.commonFields + cat.fields {
                 append(title, size: font - 2, bold: true); append(text, size: font)
             }
-            if !record.includesHealth { append("薬・アレルギーの情報はこの控えに含めていません。飼い主に確認してください。", size: font - 2) }
-            if !record.includesContacts { append("連絡先はこの控えに含めていません。別途確認してください。", size: font - 2) }
-            append("お世話の更新：" + cat.updatedAt.formatted(date: .numeric, time: .omitted), size: font - 2)
+            if record.isCareMemo {
+                if !record.includesHealth { append("薬・アレルギーの情報はこの控えに含めていません。飼い主に確認してください。", size: font - 2) }
+                if !record.includesContacts { append("連絡先はこの控えに含めていません。別途確認してください。", size: font - 2) }
+                append("お世話の更新：" + cat.updatedAt.formatted(date: .numeric, time: .omitted), size: font - 2)
+            }
             append("作成：" + record.createdAt.formatted(date: .numeric, time: .shortened), size: font - 2)
             append("控えは自動更新されません。変更があれば新しい控えを受け取ってください。", size: font - 2)
             let framesetter = CTFramesetterCreateWithAttributedString(body)
@@ -80,7 +85,7 @@ enum CareHandoffExporter {
             let page = pages[index]; let cat = record.cats[page.catIndex]
             UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
             let headingStyle = NSMutableParagraphStyle(); headingStyle.lineBreakMode = .byTruncatingTail
-            ("お世話メモ · \(cat.name)" as NSString).draw(in:
+            ("\(record.heading) · \(cat.name)" as NSString).draw(in:
                 CGRect(x: margin, y: margin, width: size.width - margin * 2, height: 26), withAttributes: [
                     .font: UIFont.boldSystemFont(ofSize: 16), .foregroundColor: UIColor.black,
                     .paragraphStyle: headingStyle

@@ -436,7 +436,7 @@ struct LostCatDraftView: View {
     @ViewBuilder private var reportSection: some View {
         if let profile = profiles.first(where: { $0.identifier == key }) {
             let fields = CatCareSummary.lostCatReportFields(catCareRecord)
-            ToolCatCareSection(title: "届け出に使う情報", lines: fields, profile: profile,
+            ToolCatCareSection(title: "届け出に使う情報（「この子のこと」から）", lines: fields, subject: .profile(profile),
                                footer: "チラシ・画像には載りません。警察・保健所・動物愛護センターに伝えるときに使えます。",
                                identifier: "lost-cat-report", editIdentifier: "lost-cat-open-cat-care") {
                 Button("まとめてコピー", systemImage: "doc.on.doc") {

@@ -4590,7 +4590,7 @@ class VeterinaryCatCareTests(unittest.TestCase):
         self.assertIn('editIdentifier: "vet-open-cat-care"', view)
         self.assertNotIn("以前の薬やお世話情報は自動で入りません", view)
         # Matched by the saved identity, never by name.
-        self.assertIn("CatCareSummary.record(profileIdentifier: visit.catID.uuidString)", view)
+        self.assertIn("CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)", view)
         record = section(summary, "static func record(profileIdentifier: String)", "static func veterinaryFields(")
         self.assertIn("$0.profileID == profileID", record)
         self.assertNotIn("name", record)
@@ -4657,7 +4657,7 @@ class EvacuationCatCareTests(unittest.TestCase):
         # Vaccinations, proofs and the chip come from 「この子のこと」; the tool ID is matched first.
         share = section(store, "func shareRecord(", "func bookRecords()")
         self.assertIn("if disclosure.catCare {", share)
-        self.assertIn("CatCareSummary.evacuationFields(care)", share)
+        self.assertIn("CatCareSummary.evacuationShareFields(care, legacy: cat,", share)
         self.assertIn("attachments.append", share)
         matching = section(summary, "static func record(toolCatID:", "static func evacuationFields(")
         self.assertLess(matching.index("$0.catID == toolCatID"), matching.index("record(profileIdentifier:"))
@@ -4691,8 +4691,8 @@ class CareHandoffCatCareTests(unittest.TestCase):
         self.assertIn("!current.contains(choice)".lstrip("!"), view)
         # Age and weight always; medicines and allergy only when health is shared.
         share = section(store, "func shareRecord(", "private static func normalizedJPEG(")
-        self.assertIn("CatCareSummary.ageAndWeight(care)", share)
-        self.assertIn("if disclosure.health { fields += CatCareSummary.careHandoffHealthFields(care) }", share)
+        self.assertIn("CatCareSummary.careHandoffLines(care, legacy: cat)", share)
+        self.assertIn("health: CatCareSummary.careHandoffHealthLines(care, legacy: cat)", share)
         health = section(summary, "static func careHandoffHealthFields(", "/// For 「避難に備える」")
         self.assertIn("medicine.dose, medicine.schedule", health)
         # The editor only shows them; 「この子のこと」 stays the one place to change them.
@@ -4751,7 +4751,7 @@ class CatCareProofCameraTests(unittest.TestCase):
 class ToolTemplateTests(unittest.TestCase):
     def test_tools_share_the_cat_care_section_and_a_bottom_preview(self) -> None:
         shared = section(source("NekoWidget/Views/CatCareView.swift"), "struct ToolCatCareSection<Extra: View>", "/// The system camera.")
-        self.assertIn('NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }', shared)
+        self.assertIn('NavigationLink("この子のことを直す") { CatCareSubjectView(subject: subject) }', shared)
         self.assertNotIn("CatCareStore.shared.update", shared)
         for path in ("NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
                      "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
@@ -4773,7 +4773,7 @@ class CatCareUsabilityTests(unittest.TestCase):
         # No save button to forget; leaving or switching cats saves.
         self.assertNotIn('Button("保存") { save() }', view)
         self.assertIn(".onDisappear { autosave?.cancel(); save() }", view)
-        switching = section(view, ".task(id: profile.identifier) {", "// MARK: Sections")
+        switching = section(view, ".task(id: subject.key) {", "// MARK: Sections")
         self.assertLess(switching.index("save()"), switching.index("load()"))
         save = section(view, "private func save() {", "private func apply(")
         self.assertIn("draft != savedDraft", save)
@@ -5034,7 +5034,7 @@ class Build269FeedbackTests(unittest.TestCase):
         store = source("NekoWidget/Services/CatCareStore.swift")
         birthdays = section(store, "func importBirthdays(", "func ensureRecord(")
         self.assertIn('editedBy: "import:Profile"', birthdays)
-        self.assertIn("(state.cats[index].birthday?.value ?? nil) == nil", birthdays)
+        self.assertIn("return stored != day", birthdays)
         for path in ("NekoWidget/Views/CareHandoffView.swift", "NekoWidget/Views/CatCareView.swift",
                      "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/VeterinaryVisitView.swift",
                      "NekoWidget/Views/EvacuationPreparationView.swift"):
@@ -5157,6 +5157,55 @@ class OnboardingInvitationSequenceTests(unittest.TestCase):
         settle = section(setup, "private func settleInvitation()", "// MARK: - DEBUG fixture entry")
         self.assertIn("case .approved?:", settle)
         self.assertIn("GroupInvitationInbox.shared.discard()", settle)
+
+
+class CatCareOnePlaceTests(unittest.TestCase):
+    def test_tools_read_everyday_care_from_cat_care_only(self) -> None:
+        care = source("NekoWidget/Views/CareHandoffView.swift")
+        for removed in ('identifier: "care-water"', 'identifier: "care-toilet"', 'identifier: "care-health"',
+                        '"care-meal-time-', 'identifier: "care-usual-food"'):
+            self.assertNotIn(removed, care)
+        store = source("NekoWidget/Services/CareHandoffStore.swift")
+        self.assertIn("everyday: CatCareSummary.careHandoffLines(care, legacy: cat)", store)
+        self.assertIn("commonFields(plan: plan, household: CatCareStore.shared.state?.household)", store)
+        evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        for removed in ('"evacuation-cat-food"', '"evacuation-cat-handling"', '"evacuation-contact"'):
+            self.assertNotIn(removed, evacuation)
+        plan = source("NekoWidget/Services/EvacuationPlan.swift")
+        self.assertIn("var catCare = false", plan)
+        evac_store = source("NekoWidget/Services/EvacuationStore.swift")
+        self.assertIn("|| disclosure.catCare,", evac_store)
+
+    def test_imports_never_refill_or_misfile(self) -> None:
+        core = source("NekoWidget/Services/CatCareCore.swift")
+        fill = section(core, "private static func fill(", "// MARK: - Weights from photo memos")
+        self.assertIn("guard field == nil,", fill)
+        self.assertIn("if r.meals.isEmpty {", core)
+        store = source("NekoWidget/Services/CatCareStore.swift")
+        sources = section(store, "nonisolated static func sources(", "// MARK: - Photos")
+        self.assertNotIn("healthDetails", sources)
+        self.assertNotIn("approachAdvice", sources)
+        self.assertIn('allergy?.editedBy == "import:CareHandoff"', store)
+
+    def test_cat_care_page_keeps_what_is_typed(self) -> None:
+        view = source("NekoWidget/Views/CatCareView.swift")
+        save = section(view, "private func save() {", "private func apply(")
+        self.assertIn("if saved { savedDraft = value }", save)
+        self.assertIn("guard loadedKey != subject.key else { return }", view)
+        self.assertIn('TextField("体重（kg）例：4.2"', view)
+        self.assertIn("case let .toolCat(id, name):", view)
+        self.assertNotIn("enum CatCareCompleteness", view)
+        self.assertNotIn("写真タブで「うちの子」を登録", view)
+
+    def test_vet_sheet_has_its_own_heading_and_asks_first(self) -> None:
+        vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        self.assertIn('heading: "病院で見せるメモ", isCareMemo: false', vet)
+        self.assertIn('confirmationDialog("病院に渡す控えを作ります"', vet)
+        self.assertIn('.navigationTitle("病院で見せるメモ")', vet)
+        exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
+        self.assertIn("record.heading", exporter)
+        summary = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn('fields.append(("年齢", CatCareLostCat.age(', summary)
 
 
 if __name__ == "__main__":

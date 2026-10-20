@@ -214,11 +214,12 @@ final class EvacuationStore: ObservableObject {
             guard let image = image(name) else { throw EvacuationStorageError.photoUnavailable }
             return image
         }
-        var fields = disclosure.fields(cat: cat, plan: plan)
+        // Everything per cat comes from 「この子のこと」; the toggles choose what shows.
+        let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+        let fields = CatCareSummary.evacuationShareFields(care, legacy: cat,
+            household: CatCareStore.shared.state?.household, planContact: plan.contact, disclosure: disclosure)
         var attachments: [(String, UIImage)] = []
         if disclosure.catCare {
-            let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
-            fields += CatCareSummary.evacuationFields(care)
             for vaccination in care?.activeVaccinations ?? [] {
                 guard let proof = vaccination.proof, let url = CatCareStore.shared.photoURL(proof),
                       let image = UIImage(contentsOfFile: url.path) else { continue }
@@ -227,7 +228,8 @@ final class EvacuationStore: ObservableObject {
         }
         return EvacuationShareRecord(name: cat.displayName, photos: photos,
             fields: fields, reviewedAt: cat.reviewedAt,
-            includesPrivateInformation: disclosure.medical || disclosure.contact || disclosure.withOwnerPhoto,
+            includesPrivateInformation: disclosure.medical || disclosure.contact || disclosure.withOwnerPhoto
+                || disclosure.catCare,
             attachments: attachments)
     }
 
@@ -252,8 +254,9 @@ final class EvacuationStore: ObservableObject {
             ].compactMap { $0 }
             return (trimmed(place.name).isEmpty ? "行き先の候補" : place.name, lines.joined(separator: "\n"))
         }
-        if !trimmed(plan.familyMeetingMemo).isEmpty { places.append(("家族の集合メモ", plan.familyMeetingMemo)) }
         let household = CatCareStore.shared.state?.household
+        let meeting = household?.meetingPlace == nil ? trimmed(plan.familyMeetingMemo) : trimmed(household?.meetingPlace?.value)
+        if !meeting.isEmpty { places.append(("家族の集合メモ", meeting)) }
         let contact = trimmed(plan.contact).isEmpty ? trimmed(household?.ownerContact?.value) : plan.contact
         if !contact.isEmpty { places.append(("飼い主の連絡先", contact)) }
         if !trimmed(household?.backupContact?.value).isEmpty { places.append(("予備の連絡先", trimmed(household?.backupContact?.value))) }
@@ -268,8 +271,10 @@ final class EvacuationStore: ObservableObject {
                 fields: places.isEmpty ? [("行き先", "未設定")] : places, reviewedAt: nil,
                 includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false)
         ]
+        // The owner's own copy: everything, chip and proofs included.
         var disclosure = EvacuationDisclosure()
         disclosure.medical = true
+        disclosure.catCare = true
         for cat in plan.cats { records.append(try shareRecord(catID: cat.id, disclosure: disclosure)) }
         return records
     }
