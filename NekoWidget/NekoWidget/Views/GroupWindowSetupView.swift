@@ -1140,7 +1140,11 @@ struct GroupInvitationJoinSheet: View {
         NavigationStack {
             Group {
                 if let model {
-                    GroupJoinView(model: model, onOpenWindow: { dismiss() })
+                    GroupJoinView(model: model, onOpenWindow: {
+                        // The group list in the まど tab opens it once this iPhone is a member.
+                        GroupWindowOpenInbox.shared.open(windowID: invitation.windowID)
+                        dismiss()
+                    })
                 } else {
                     ProgressView("招待を確認しています…")
                 }
