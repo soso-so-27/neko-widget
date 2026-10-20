@@ -753,6 +753,13 @@ struct MainTabView: View {
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
                 .accessibilityIdentifier("tools-cat-profiles")
+                NavigationLink {
+                    CatCareEntryView(profiles: catProfilesPresentation.profiles)
+                } label: {
+                    Label("この子のこと（体重・薬・ワクチン・連絡先）", systemImage: "heart.text.square")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .accessibilityIdentifier("tools-cat-care")
                 showcaseToolCard
                 if !preparingShowcaseScopes.isEmpty {
                     ProgressView("見せる写真を準備中")

@@ -4541,5 +4541,45 @@ class GroupInvitationAssociatedDomainTests(unittest.TestCase):
                 self.assertNotIn("com.apple.developer.associated-domains", plistlib.load(handle))
 
 
+class CatCareTests(unittest.TestCase):
+    def test_cat_care_stays_on_this_iphone_and_never_overwrites(self) -> None:
+        core = source("NekoWidget/Services/CatCareCore.swift")
+        store = source("NekoWidget/Services/CatCareStore.swift")
+        view = source("NekoWidget/Views/CatCareView.swift")
+        # Health information is never sent, logged, or put in widgets or notifications.
+        for text in (core, store, view):
+            for forbidden in ("URLSession", "SharedLog", "print(", "UNUserNotificationCenter",
+                              "WidgetCenter", "GroupWindowClient", "MomentSharing"):
+                self.assertNotIn(forbidden, text)
+        self.assertEqual(core.count("import "), 1)  # Foundation only; runs in CI
+        # A new file; the recognition state and tool records are not rewritten.
+        self.assertIn('appendingPathComponent("CatCare", isDirectory: true)', store)
+        for forbidden in ("CatHouseholdIdentityStore", "AppRecordDataset", "CareHandoffStore.shared.update",
+                          "EvacuationStore.shared.update"):
+            self.assertNotIn(forbidden, store)
+        self.assertIn("guard canSave", store)
+        self.assertIn("unreadableCatCount == 0", store)
+        self.assertIn("onDisk.state.mutationRevision == expected", store)
+        # Import fills empty fields only.
+        fill = section(core, "private static func fill(", "// MARK: - Reading a file")
+        self.assertIn("field == nil", fill)
+        # Microchip shown in full (owner decision 10/20).
+        self.assertIn("Shown in full on screen and on paper", core)
+        self.assertNotIn("suffix(4)", view)
+        self.assertIn('TextField("マイクロチップ番号（15桁）"', view)
+        # Vaccination proof can come from Photos.
+        self.assertIn("証明の写真を写真から選ぶ", view)
+        # Deleting marks, never removes.
+        self.assertIn("markDeleted", view)
+        self.assertNotIn(".remove(at:", view)
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn("CatCareEntryView(profiles: catProfilesPresentation.profiles)", tab)
+        checks = source("ci/run-quick-ios-checks.sh")
+        self.assertIn("ci/verify-cat-care.swift", checks)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        for name in ("CatCareCore.swift", "CatCareStore.swift", "CatCareView.swift"):
+            self.assertIn(name + " in Sources", project)
+
+
 if __name__ == "__main__":
     unittest.main()
