@@ -77,8 +77,11 @@ struct CatCareDetailView: View {
     @Binding var selectedProfileID: String?
     @ObservedObject private var store = CatCareStore.shared
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var draft = CatCareDraft()
+    @State private var savedDraft = CatCareDraft()
     @State private var catID: UUID?
+    @State private var autosave: Task<Void, Never>?
     @State private var saveFailed = false
     @State private var editing: CatCareListEditor?
     @State private var microchipInvalid = false
@@ -109,29 +112,41 @@ struct CatCareDetailView: View {
             livingSection
             householdSection
             Section {
-                Text("この情報はこのiPhoneの中にだけ保存します。開発者には送りません。ツールで書き出したときだけ、渡した相手に届きます。医療の判断はしません。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Text("書いた内容は自動で保存します。")
+                Text("このiPhoneの中だけに保存し、外には送りません。")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("cat-care-autosave-note")
+        }
+        .onChange(of: draft) { _, _ in
+            autosave?.cancel()
+            autosave = Task {
+                try? await Task.sleep(for: .milliseconds(600))
+                guard !Task.isCancelled else { return }
+                save()
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("保存") { save() }
-                    .disabled(!store.canSave || catID == nil)
-                    .accessibilityIdentifier("cat-care-save")
-            }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { autosave?.cancel(); save() }
         }
+        .onDisappear { autosave?.cancel(); save() }
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ほかの画面で同時に変更された可能性があります。もう一度開き直してください。")
+            Text("この画面を閉じて開き直し、もう一度入れてください。")
         }
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor) { result in
                 apply(result)
             }
         }
-        .task(id: profile.identifier) { load() }
+        .task(id: profile.identifier) {
+            // Save the cat shown before; the draft still belongs to it here.
+            autosave?.cancel()
+            save()
+            load()
+        }
     }
 
     // MARK: Sections
@@ -163,7 +178,8 @@ struct CatCareDetailView: View {
                     .font(.body.monospacedDigit())
                     .accessibilityIdentifier("cat-care-microchip")
                 if microchipInvalid {
-                    Text("15桁の数字で入れてください。").font(.caption).foregroundStyle(.orange)
+                    Label("15桁の数字で入れると保存します。", systemImage: "exclamationmark.circle")
+                        .font(.caption).foregroundStyle(.orange)
                 }
             }
         }
@@ -249,23 +265,28 @@ struct CatCareDetailView: View {
         else { catID = nil; return }
         catID = record.catID
         draft = CatCareDraft(record: record, household: store.state?.household ?? CatCareHousehold())
+        savedDraft = draft
         microchipInvalid = false
     }
 
+    /// Saves what changed. A microchip number that is not 15 digits yet is
+    /// kept on screen and not saved; everything else is saved.
     private func save() {
-        guard let catID else { return }
-        guard let chip = CatCareLimits.normalizedMicrochip(draft.microchip) else {
+        guard let catID, draft != savedDraft, store.canSave else { return }
+        var value = draft
+        if let chip = CatCareLimits.normalizedMicrochip(draft.microchip) {
+            value.microchip = chip
+            microchipInvalid = false
+        } else {
+            value.microchip = savedDraft.microchip
             microchipInvalid = true
-            return
         }
-        microchipInvalid = false
-        draft.microchip = chip
         let saved = store.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-            draft.write(to: &state.cats[index], household: &state.household,
+            value.write(to: &state.cats[index], household: &state.household,
                         by: state.deviceID, now: Date())
         }
-        if !saved { saveFailed = true }
+        if saved { savedDraft = draft } else { saveFailed = true }
     }
 
     private func apply(_ result: CatCareListEditor.Result) {
@@ -402,42 +423,57 @@ struct CatCareListView: View {
     let catID: UUID?
     @Binding var editing: CatCareListEditor?
     @ObservedObject private var store = CatCareStore.shared
+    @State private var pendingDelete: UUID?
 
     private var record: CatCareRecord? { catID.flatMap { store.state?.record(catID: $0) } }
+
+    /// Every record is a button that asks before deleting, so a swipe is never the only way.
+    private func row<Content: View>(_ id: UUID, @ViewBuilder _ content: () -> Content) -> some View {
+        Button { pendingDelete = id } label: {
+            content().frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("押すと削除できます")
+        .swipeActions { Button("削除", role: .destructive) { pendingDelete = id } }
+    }
 
     var body: some View {
         List {
             switch kind {
             case .weight:
                 ForEach(record?.activeWeights ?? []) { entry in
-                    LabeledContent(CatCareFormat.day(entry.measuredOn), value: CatCareFormat.weight(entry.grams))
-                        .swipeActions { deleteButton(entry.id) }
+                    row(entry.id) {
+                        LabeledContent(CatCareFormat.day(entry.measuredOn), value: CatCareFormat.weight(entry.grams))
+                    }
                 }
             case .medication:
                 ForEach(record?.activeMedications ?? []) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.name).font(.body.weight(.semibold))
-                        Text([entry.dose, entry.schedule].filter { !$0.isEmpty }.joined(separator: "・"))
-                            .font(.caption).foregroundStyle(.secondary)
+                    row(entry.id) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.name).font(.body.weight(.semibold))
+                            Text([entry.dose, entry.schedule].filter { !$0.isEmpty }.joined(separator: "・"))
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
                     }
-                    .swipeActions { deleteButton(entry.id) }
                 }
             case .vaccination:
                 ForEach(record?.activeVaccinations ?? []) { entry in
-                    HStack {
-                        LabeledContent(entry.kind, value: CatCareFormat.day(entry.givenOn))
-                        if entry.proof != nil {
-                            Image(systemName: "doc.text.image").foregroundStyle(.secondary)
-                                .accessibilityLabel("証明の写真あり")
+                    row(entry.id) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            LabeledContent(entry.kind, value: CatCareFormat.day(entry.givenOn))
+                            if entry.proof != nil {
+                                Label("証明の写真あり", systemImage: "doc.text.image")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    .swipeActions { deleteButton(entry.id) }
                 }
             case .meal:
                 ForEach(record?.activeMeals ?? []) { entry in
-                    LabeledContent(entry.time.isEmpty ? "時間未記入" : entry.time,
-                                   value: [entry.food, entry.amount].filter { !$0.isEmpty }.joined(separator: " "))
-                        .swipeActions { deleteButton(entry.id) }
+                    row(entry.id) {
+                        LabeledContent(entry.time.isEmpty ? "時間は未記入" : entry.time,
+                                       value: [entry.food, entry.amount].filter { !$0.isEmpty }.joined(separator: " "))
+                    }
                 }
             }
         }
@@ -446,15 +482,27 @@ struct CatCareListView: View {
                 ContentUnavailableView("まだ記録がありません", systemImage: "square.and.pencil")
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            Button { editing = CatCareListEditor(kind: kind) } label: {
+                Label(CatCareFormat.title(kind) + "を追加", systemImage: "plus")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!store.canSave)
+            .accessibilityIdentifier("cat-care-add-\(kind.rawValue)")
+            .padding().background(.regularMaterial)
+        }
         .navigationTitle(CatCareFormat.title(kind))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("追加", systemImage: "plus") { editing = CatCareListEditor(kind: kind) }
-                    .disabled(!store.canSave)
-                    .accessibilityIdentifier("cat-care-add-\(kind.rawValue)")
+        .confirmationDialog("この記録を削除しますか？", isPresented: Binding(
+            get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
+            Button("削除", role: .destructive) {
+                if let id = pendingDelete { delete(id) }
+                pendingDelete = nil
             }
-        }
+            .accessibilityIdentifier("cat-care-confirm-delete")
+            Button("やめる", role: .cancel) { pendingDelete = nil }
+        } message: { Text("削除した記録は、ほかのツールにも載らなくなります。") }
     }
 
     private var isEmpty: Bool {
@@ -466,14 +514,12 @@ struct CatCareListView: View {
         }
     }
 
-    private func deleteButton(_ id: UUID) -> some View {
-        Button("削除", role: .destructive) {
-            guard let catID else { return }
-            store.update { state in
-                guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
-                CatCareListEditor.Result.delete(kind: kind, entryID: id)
-                    .apply(to: &state.cats[index], by: state.deviceID, now: Date())
-            }
+    private func delete(_ id: UUID) {
+        guard let catID else { return }
+        store.update { state in
+            guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
+            CatCareListEditor.Result.delete(kind: kind, entryID: id)
+                .apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }
     }
 }

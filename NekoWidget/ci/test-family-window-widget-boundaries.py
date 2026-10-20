@@ -4766,5 +4766,22 @@ class ToolTemplateTests(unittest.TestCase):
         self.assertIn(".safeAreaInset(edge: .bottom)", bottom)
 
 
+class CatCareUsabilityTests(unittest.TestCase):
+    def test_cat_care_saves_by_itself_and_asks_before_deleting(self) -> None:
+        view = source("NekoWidget/Views/CatCareView.swift")
+        # No save button to forget; leaving or switching cats saves.
+        self.assertNotIn('Button("保存") { save() }', view)
+        self.assertIn(".onDisappear { autosave?.cancel(); save() }", view)
+        switching = section(view, ".task(id: profile.identifier) {", "// MARK: Sections")
+        self.assertLess(switching.index("save()"), switching.index("load()"))
+        save = section(view, "private func save() {", "private func apply(")
+        self.assertIn("draft != savedDraft", save)
+        self.assertIn("value.microchip = savedDraft.microchip", save)
+        # Deleting is a button with a confirmation; a swipe is not the only way.
+        self.assertIn('confirmationDialog("この記録を削除しますか？"', view)
+        self.assertIn('.accessibilityHint("押すと削除できます")', view)
+        self.assertNotIn("deleteButton(entry.id)", view)
+
+
 if __name__ == "__main__":
     unittest.main()
