@@ -541,6 +541,7 @@ private struct VeterinaryReadView: View {
     var displayName: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var export: CareHandoffExporter.Export?
+    @State private var retainedDirectory: URL?
     @State private var exportError: String?
 
     private var catCareFields: [(String, String)] {
@@ -585,7 +586,11 @@ private struct VeterinaryReadView: View {
             .alert("書き出せませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("閉じる", role: .cancel) {}
             } message: { Text(exportError ?? "") }
-            .sheet(item: $export, onDismiss: { if let export { CareHandoffExporter.remove(export.directory) }; export = nil }) { made in
+            .sheet(item: $export, onDismiss: {
+                // The item is already cleared here; remove the copy this screen made.
+                if let retainedDirectory { CareHandoffExporter.remove(retainedDirectory) }
+                retainedDirectory = nil
+            }) { made in
                 VeterinaryActivitySheet(items: made.files)
             }
         }
@@ -614,7 +619,10 @@ private struct VeterinaryReadView: View {
         let record = CareHandoffShareRecord(
             cats: [.init(name: displayName ?? visit.catName, photo: photo, fields: fields, updatedAt: Date())],
             commonFields: [], includesHealth: true, includesContacts: false, createdAt: Date())
-        do { export = try CareHandoffExporter.create(record, pdf: pdf) }
+        do {
+            let made = try CareHandoffExporter.create(record, pdf: pdf)
+            retainedDirectory = made.directory; export = made
+        }
         catch { exportError = "空き容量やメモの長さを確認してください。元の記録は残っています。" }
     }
 }
