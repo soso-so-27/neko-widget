@@ -250,6 +250,8 @@
 		A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
 		A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
 		AA2610200000000000000002 /* GroupWindowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000001 /* GroupWindowCore.swift */; };
+		CC261020000000000000000A /* GroupWidgetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000009 /* GroupWidgetCache.swift */; };
+		CC261020000000000000000B /* GroupWidgetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000009 /* GroupWidgetCache.swift */; };
 		AA2610200000000000000004 /* GroupWindowContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000003 /* GroupWindowContract.swift */; };
 		CC2610200000000000000004 /* GroupInvitationLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000003 /* GroupInvitationLink.swift */; };
 		AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000005 /* GroupWindowFixture.swift */; };
@@ -516,6 +518,7 @@
 		A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalRediscoveryHistoryView.swift; sourceTree = "<group>"; };
 		A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyPersonalPhotoIntent.swift; sourceTree = "<group>"; };
 		AA2610200000000000000001 /* GroupWindowCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowCore.swift; sourceTree = "<group>"; };
+		CC2610200000000000000009 /* GroupWidgetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWidgetCache.swift; sourceTree = "<group>"; };
 		AA2610200000000000000003 /* GroupWindowContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowContract.swift; sourceTree = "<group>"; };
 		CC2610200000000000000003 /* GroupInvitationLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupInvitationLink.swift; sourceTree = "<group>"; };
 		AA2610200000000000000005 /* GroupWindowFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowFixture.swift; sourceTree = "<group>"; };
@@ -709,6 +712,7 @@
 				F000000000000000000001A2 /* DailySharingCore.swift */,
 				F000000000000000000001A3 /* MomentSharingCore.swift */,
 				AA2610200000000000000001 /* GroupWindowCore.swift */,
+				CC2610200000000000000009 /* GroupWidgetCache.swift */,
 				F000000000000000000001A4 /* MomentSharingStore.swift */,
 				F000000000000000000001A5 /* MomentShareHandoffStore.swift */,
 				F000000000000000000001A6 /* SharingAPIConfiguration.swift */,
@@ -1274,6 +1278,7 @@
 				AB2610200000000000000066 /* GroupWindowWire.swift in Sources */,
 				CC2610200000000000000004 /* GroupInvitationLink.swift in Sources */,
 				AA2610200000000000000002 /* GroupWindowCore.swift in Sources */,
+				CC261020000000000000000A /* GroupWidgetCache.swift in Sources */,
 				100000000000000000000169 /* MomentSharingStore.swift in Sources */,
 				100000000000000000000170 /* MomentShareHandoffStore.swift in Sources */,
 				100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */,
@@ -1324,6 +1329,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D02609100000000000000202 /* OfficialWindowStore.swift in Sources */,
+				CC261020000000000000000B /* GroupWidgetCache.swift in Sources */,
 				D02609100000000000000102 /* OfficialWindowCatalog.swift in Sources */,
 				200000000000000000000001 /* SharedContainer.swift in Sources */,
 				200000000000000000000002 /* WidgetManifest.swift in Sources */,

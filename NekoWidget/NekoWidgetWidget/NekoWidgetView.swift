@@ -84,7 +84,7 @@ struct NekoWidgetView: View {
                                 .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
-                        } else if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+                        } else if isWindowPhoto {
                             familyPhotoFooter
                         } else {
                             photoActionButtons()
@@ -113,8 +113,14 @@ struct NekoWidgetView: View {
 
     /// Used only inside the successfully decoded photo branch above. The
     /// optional text never gives an empty or personal-library Widget a caption.
+    /// A two-person or group window photo; both use the window footer.
+    private var isWindowPhoto: Bool {
+        WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
+            || GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier)
+    }
+
     private var familyCaption: String? {
-        guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
+        guard isWindowPhoto,
               let text = entry.familyCaption?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else { return nil }
         return text
@@ -122,7 +128,7 @@ struct NekoWidgetView: View {
 
     private var loadedPhotoAccessibilityLabel: String {
         if let photo = entry.officialPhoto { return "\(entry.windowDisplayName)。\(photo.catName)の写真。タップして開く" }
-        guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
+        guard isWindowPhoto
         else { return "このiPhoneで見つけた猫写真" }
         let photo = "\(entry.windowDisplayName)に届いた写真"
         return familyCaption.map { "\(photo)。ひとこと。\($0)" } ?? photo

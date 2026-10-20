@@ -383,7 +383,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # Supplementary text belongs only to a successfully decoded shared
         # photo; the image alone owns navigation and full-text accessibility.
         loaded = section(view, "let image = WidgetCacheImageLoader.image(", "                emptyState")
-        self.assertIn("if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)", loaded)
+        self.assertIn("} else if isWindowPhoto {", loaded)
+        window_photo = section(view, "private var isWindowPhoto: Bool", "private var familyCaption: String?")
+        self.assertIn("WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)", window_photo)
+        self.assertIn("GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier)", window_photo)
         self.assertIn("familyPhotoFooter", loaded)
         self.assertIn("} else {\n                            photoActionButtons()", loaded)
         self.assertEqual(view.count("                            familyPhotoFooter"), 1)
@@ -4476,6 +4479,51 @@ class GroupWindowScreenTests(unittest.TestCase):
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         self.assertIn("GroupWindowView.swift in Sources", project)
         self.assertIn("GroupWindowLocalPhotoStore.swift in Sources", project)
+
+
+class GroupWidgetCacheTests(unittest.TestCase):
+    def test_widget_reads_only_the_apps_verified_copy(self) -> None:
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        for forbidden in ("Keychain", "URLSession", "roomKey", "SymmetricKey", "ProductionGroupWindowClient", "print("):
+            self.assertNotIn(forbidden, cache)
+        self.assertIn('appendingPathComponent("GroupWidget", isDirectory: true)', cache)
+        update = section(cache, "static func update(", "// MARK: Files")
+        # The image is written before the catalog that points to it.
+        self.assertLess(update.index("try write(small"), update.index('appendingPathComponent("catalog.json")'))
+        self.assertIn("kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize", cache)
+        self.assertIn("static let maximumPixelSize = 1_000", cache)
+
+        # Only the app writes; the Widget never calls update.
+        for widget_file in (
+            "NekoWidgetWidget/NekoWidgetTimelineProvider.swift",
+            "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift",
+            "NekoWidgetWidget/WidgetCacheImageLoader.swift",
+            "NekoWidgetWidget/NekoWidgetView.swift",
+            "NekoWidgetWidget/ToggleWidgetLikeIntent.swift",
+        ):
+            self.assertNotIn("GroupWidgetCache.update(", source(widget_file))
+
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        home = section(screen, "private func updateHomeScreenPhoto() async {", "private func receive(")
+        self.assertIn("entries.first { !$0.isHidden }", home)
+        self.assertIn("GroupWidgetCache.update(", home)
+        self.assertIn('WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")', home)
+
+        provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
+        group = section(provider, "private func groupEntry(", "private func familyEntry(")
+        self.assertIn("isBookmarkInteractionEnabled: false", group)
+        self.assertIn("familyHeartStatus: .hidden", group)
+        self.assertIn("emptyStateReason: .sourceUnavailable", group)
+        intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
+        # A missing group window never becomes the personal-library default.
+        resolve = section(intent, "if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: id) {", "guard let localWindowID")
+        self.assertIn('"利用できないまど"', resolve)
+
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        widget_sources = section(project, "A00000000000000000000025 /* Sources */ = {", "A00000000000000000000028 /* Sources */")
+        self.assertIn("GroupWidgetCache.swift in Sources", widget_sources)
+        self.assertNotIn("ProductionGroupWindowClient.swift in Sources", widget_sources)
+        self.assertNotIn("GroupWindowStorage.swift in Sources", widget_sources)
 
 
 if __name__ == "__main__":

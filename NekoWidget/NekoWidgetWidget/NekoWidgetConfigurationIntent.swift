@@ -77,6 +77,14 @@ struct WidgetPhotoSource: AppEntity {
         }
         if id == personalLibraryID { return .personalLibrary }
         if id == familyWindowID { return .familyWindow }
+        if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: id) {
+            // Same rule as a removed two-person window: never fall back to
+            // this iPhone's personal photos.
+            guard let entry = GroupWidgetCache.entry(windowID: groupWindowID) else {
+                return WidgetPhotoSource(id: id, name: "利用できないまど", detail: "ウィジェットを編集してください")
+            }
+            return groupWindow(entry)
+        }
         guard let localWindowID = localWindowID(from: id) else { return nil }
         if let entry = PrivateWindowCatalogStore.widgetEntries().first(where: {
             $0.localWindowID == localWindowID
@@ -123,7 +131,17 @@ struct WidgetPhotoSource: AppEntity {
                 sources.append(contentsOf: windows.map(familyWindow))
             }
         }
+        // Group windows the app has verified and kept on this iPhone.
+        sources.append(contentsOf: GroupWidgetCache.entries().map(groupWindow))
         return sources
+    }
+
+    static func groupWindow(_ entry: GroupWidgetCache.Entry) -> WidgetPhotoSource {
+        WidgetPhotoSource(
+            id: GroupWidgetCache.sourceID(windowID: entry.windowID),
+            name: entry.windowName,
+            detail: "このまどに届いた最新の一枚"
+        )
     }
 
     static var familyWindowSourceIsEnabled: Bool {

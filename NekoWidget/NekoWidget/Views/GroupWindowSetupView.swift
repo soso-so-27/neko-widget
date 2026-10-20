@@ -1089,8 +1089,9 @@ final class GroupInvitationInbox: ObservableObject {
 /// media-staging release mode, and a reviewed sharing endpoint); every other
 /// build has none, and the join screen says applying is not available yet.
 enum GroupWindowClientProvider {
-    /// Agreed with the adapter's owner; changing it starts a new identity.
-    static let namespace = "group-v3"
+    /// Fixed in the staging rollout plan (10/20). Changing it starts a new
+    /// identity, so it never follows build numbers; production uses another.
+    static let namespace = "jp.nekowidget.app.group-v3.staging"
 
     static let production: ProductionGroupWindowClient? = {
         let configuration = SharingAPIConfiguration.current

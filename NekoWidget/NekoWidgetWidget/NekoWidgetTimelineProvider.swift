@@ -32,6 +32,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         if PublicWindowDefinition.windowID(from: source.id) != nil {
             return officialEntry(now: now, variant: variant, sourceID: source.id)
         }
+        if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: source.id) {
+            return groupEntry(now: now, variant: variant, sourceID: source.id, windowID: groupWindowID)
+        }
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled,
                   WidgetPhotoSource.familyWindowExists(for: source.id) else {
@@ -128,6 +131,13 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
 #endif
         let source = configuration.photoSource ?? .personalLibrary
+        if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: source.id) {
+            // The app reloads timelines whenever it keeps a new photo.
+            return Timeline(
+                entries: [groupEntry(now: now, variant: variant, sourceID: source.id, windowID: groupWindowID)],
+                policy: .after(now.addingTimeInterval(6 * 60 * 60))
+            )
+        }
         if let windowID = PublicWindowDefinition.windowID(from: source.id) {
             guard let definition = OfficialWindowConfiguration.definition(for: windowID) else {
                 return Timeline(entries: [officialEntry(now: now, variant: variant, sourceID: source.id)], policy: .never)
@@ -474,6 +484,40 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             metadata: ["entries": "\(entries.count)", "preview": "\(preview)"]
         )
         return Timeline(entries: entries, policy: policy)
+    }
+
+    /// A group window's newest kept photo, with the sender as the one line.
+    /// No heart or bookmark yet: those actions need the window's keys, which
+    /// stay in the app.
+    private func groupEntry(now: Date, variant: WidgetImageVariant, sourceID: String,
+                            windowID: String) -> NekoWidgetEntry {
+        guard let cached = GroupWidgetCache.entry(windowID: windowID) else {
+            return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
+                          windowDisplayName: "利用できないまど", emptyStateReason: .sourceUnavailable)
+        }
+        guard let fileName = cached.imageFileName, GroupWidgetCache.imageURL(for: cached) != nil else {
+            return .empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
+                          windowDisplayName: cached.windowName, emptyStateReason: .waiting)
+        }
+        var entry = NekoWidgetEntry(
+            date: now,
+            localIdentifier: nil,
+            cacheFilename: fileName,
+            imageVariant: variant,
+            photoSourceIdentifier: sourceID,
+            familySourceDigest: nil,
+            usesFamilySpecificImage: false,
+            windowDisplayName: cached.windowName,
+            isLiked: false,
+            isLikeInteractionEnabled: false,
+            isBookmarked: false,
+            isBookmarkInteractionEnabled: false,
+            familyHeartStatus: .hidden,
+            familyActionsRequireApp: false,
+            emptyStateReason: .none
+        )
+        entry.familyCaption = cached.senderDisplayName.map { "\($0)さんから" }
+        return entry
     }
 
     private func familyEntry(
