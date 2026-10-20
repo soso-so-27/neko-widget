@@ -64,7 +64,8 @@ enum TrialPeriodVerifier {
         verifyDay14NoticeOnce()
         verifyCodec()
         verifyMerge()
-        print("PASS trial period: start without record, clock rollback/forward, 14-day boundary, unreadable record, reinstall, day-14 notice once, merge with Plus")
+        verifyWindowsDuringTrial()
+        print("PASS trial period: start without record, clock rollback/forward, 14-day boundary, unreadable record, reinstall, day-14 notice once, merge with Plus, windows during the trial")
     }
 
     static func makeStore(_ persistence: MemoryTrialPersistence, clock: FakeClock) -> TrialPeriodStore {
@@ -267,6 +268,64 @@ enum TrialPeriodVerifier {
         tooLarge.maxObservedNow = Date(timeIntervalSince1970: .infinity)
         do { _ = try TrialPeriodRecordCodec.encode(tooLarge); preconditionFailure("non-finite date encoded") }
         catch TrialPeriodStoreError.unreadable {} catch { preconditionFailure("unexpected \(error)") }
+    }
+
+    /// 追加決定（2026-10-20昼）：まどは作った人が Plus で続ける。入る人はずっと無料。
+    /// 体験中に公開する状態は `verified(体験終了)` なので、まどの作成と作ったまどへの
+    /// 送信は会員扱いで allowed になり、体験後は会員が要る。体験後の判定そのもの
+    /// （`createFirstOwnWindow` と作った人の送信を会員にする）は #416 の続きで Policy に入る。
+    /// ここでは体験状態の公開だけを確かめる。招待されたまどでの送信は常に allowed。
+    static func verifyWindowsDuringTrial() {
+        let persistence = MemoryTrialPersistence()
+        let clock = FakeClock(start)
+        let store = makeStore(persistence, clock: clock)
+        store.refresh()
+        func personal(plus: MembershipPersonalState = .inactive, disabled: Bool = false) -> MembershipPersonalState {
+            TrialMembershipMerge.personalState(plus: plus, plusIsDisabled: disabled, trial: store.state)
+        }
+        func decision(_ operation: MembershipOperation, _ state: MembershipPersonalState) -> MembershipAccessDecision {
+            MembershipAccessPolicy.decision(for: operation, enforcementEnabled: true,
+                personal: state, window: .inactive, now: clock.now)
+        }
+        let windowOperations: [MembershipOperation] = [
+            .createFirstOwnWindow, .createAdditionalOwnWindow, .addSharedContent
+        ]
+
+        // 体験中（1日目・14日目）：Plus なし・storefront 無効でも、まどを作る・送る・入るは allowed。
+        for elapsed in [0, 13 * day + 3600] {
+            clock.now = start.addingTimeInterval(elapsed)
+            store.refresh()
+            precondition(personal() == .verified(validUntil: end))
+            precondition(personal(plus: .checking, disabled: true) == .verified(validUntil: end))
+            for operation in windowOperations {
+                precondition(decision(operation, personal()) == .allowed,
+                             "\(operation) must be allowed during the trial")
+                precondition(decision(operation, personal(plus: .checking, disabled: true)) == .allowed)
+            }
+        }
+
+        // 体験後：公開する状態は inactive。会員が要る操作は membershipRequired になり、
+        // 「確認できません」にはならない。招待されたまどでの送信は常に allowed。
+        clock.now = end
+        store.refresh()
+        precondition(store.state == .ended(at: end))
+        precondition(personal() == .inactive && personal(plus: .checking, disabled: true) == .inactive)
+        precondition(decision(.createAdditionalOwnWindow, personal()) == .membershipRequired)
+        precondition(decision(.addSharedContent, personal()) == .allowed,
+                     "joining and delivering to an invited window stay free after the trial")
+        // Plus に戻れば再開する（作ったまどの続き）。
+        let plusAgain = personal(plus: .verified(validUntil: end.addingTimeInterval(30 * day)))
+        precondition(decision(.createAdditionalOwnWindow, plusAgain) == .allowed)
+
+        // 体験中の Widget 用スナップショットと同じ `validUntil` を Policy も使う：終了の瞬間に止まる。
+        clock.now = end.addingTimeInterval(-1)
+        let fresh = makeStore(MemoryTrialPersistence(stored: try! TrialPeriodRecordCodec.encode(
+            TrialPeriodRecord(startedAt: start))), clock: clock)
+        fresh.refresh()
+        let lastSecond = TrialMembershipMerge.personalState(plus: .inactive, plusIsDisabled: false, trial: fresh.state)
+        precondition(decision(.createAdditionalOwnWindow, lastSecond) == .allowed)
+        precondition(MembershipAccessPolicy.decision(for: .createAdditionalOwnWindow, enforcementEnabled: true,
+            personal: lastSecond, window: .inactive, now: end) == .membershipRequired)
     }
 
     /// 実装計画 1-4 の合流順。

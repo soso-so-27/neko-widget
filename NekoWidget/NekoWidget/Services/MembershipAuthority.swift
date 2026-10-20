@@ -39,6 +39,11 @@ extension EnvironmentValues {
 /// `PlusPurchaseStore`（Plus）と `TrialPeriodStore`（14日体験）を束ねる1つの権限。
 /// `membershipActions`・環境値 `membershipAccess`・Widget スナップショットの3つを
 /// ここだけが更新し、`ProductionAppRootView` はこの1つだけを参照する（実装計画 1-4）。
+///
+/// 体験中は `personal = .verified(validUntil: 体験終了)` を出すので、ウィジェットの
+/// 新しい1枚・月のまとめ・新しいメモに加えて、**まどを作る・作ったまどを続ける**
+/// （追加決定 2026-10-20昼：まどは作った人が Plus で続ける。入る人はずっと無料）も
+/// 体験の対象になる。体験後にそれらを会員に求める Policy の判定は #416 の続きで入る。
 @MainActor
 final class MembershipAuthority: ObservableObject {
     static let productionShared = MembershipAuthority(

@@ -381,7 +381,7 @@ struct HomeView: View {
     /// ADR-027：14日目にアプリを開いたとき1回だけ出す1行。ウィジェット案内と同じ形で、
     /// 通知・全画面・カウントダウンは出さない。表示したことは `MembershipAuthority` が記録する。
     private var trialDay14NoticeCard: some View {
-        Label("あすから、新しい写真の更新と自動アルバムはPlusの機能になります。写真・まど・メモは残ります",
+        Label("あすから、新しい写真の更新と自動アルバム、作ったまどの続きはPlusの機能になります。写真・まど・メモは残ります",
               systemImage: "sparkles")
             .font(.subheadline)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
