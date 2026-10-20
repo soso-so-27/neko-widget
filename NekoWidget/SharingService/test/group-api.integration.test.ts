@@ -1,3 +1,4 @@
+import {plusOwner} from './group-billing-fixture';
 import {describe,expect,it} from 'vitest';
 import {randomBase64url,base64urlEncode} from '../src/encoding';
 import {groupFields} from '../src/group-protocol';
@@ -24,7 +25,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect((await db.prepare('SELECT COUNT(*) n FROM group_person_devices WHERE person_id=?').bind(p.id).first<{n:number}>())?.n).toBe(3);
   });
   it('signs method/path/raw-body, rejects nonce replay and unknown plaintext-name fields',async()=>{
-    const owner=await person(),w=await create(owner),path=`/v3/group-windows/${w.windowId}`;
+    const owner=await plusOwner(),w=await create(owner),path=`/v3/group-windows/${w.windowId}`;
     const request=await signed(owner,path);
     ok(await send(request.clone() as Request));
     expect((await send(request.clone() as Request)).data.error.code).toBe('replay');
@@ -34,7 +35,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect((await call(owner,'/v3/group-windows',{})).status).toBe(400);
   });
   it('admits three people, preserves idempotency, and never gives pre-join keys or other device envelopes',async()=>{
-    const owner=await person(),bob=await person(),cat=await person();let w=await create(owner);
+    const owner=await plusOwner(),bob=await person(),cat=await person();let w=await create(owner);
     const invite=await invitation(owner,w),b=await apply(bob,w,invite),c=await apply(cat,w,invite);
     ok(b.response,201);ok(c.response,201);
     expect((await call(bob,`/v3/group-windows/${w.windowId}`)).status).toBe(404);
@@ -52,7 +53,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect((await call(bob,`/v3/group-windows/${w.windowId}/invitations`,{operationId:crypto.randomUUID(),expectedRevision:3,proofPublicKey:(await key()).publicKey})).status).toBe(403);
   });
   it('cancels reusable invitations without unsigned roster revisions; rejects pending approval after cancellation',async()=>{
-    const owner=await person(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
+    const owner=await plusOwner(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
     const b=await apply(bob,w,invite),c=await apply(cat,w,invite);ok(b.response,201);ok(c.response,201);
     const revoked=ok(await call(owner,`/v3/group-windows/${w.windowId}/invitations/${invite.id}/revoke`,{operationId:crypto.randomUUID(),expectedRevision:1}));
     expect(revoked.revision).toBe(1);
@@ -60,7 +61,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect(ok(await call(bob,`/v3/group-windows/${w.windowId}/join-status`,{requestId:b.id})).state).toBe('cancelled');
   });
   it('rejects or withdraws only pending requests; a member cannot reject another candidate',async()=>{
-    const owner=await person(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
+    const owner=await plusOwner(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
     const b=await apply(bob,w,invite),c=await apply(cat,w,invite);ok(b.response,201);ok(c.response,201);
     const base=`/v3/group-windows/${w.windowId}/join-requests`;
     expect((await call(cat,`${base}/${b.id}/cancel`,{operationId:crypto.randomUUID()})).status).toBe(404);
@@ -69,7 +70,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect((await call(owner,`${base}/${c.id}/reject`,{operationId:crypto.randomUUID(),expectedRevision:1})).data.error.code).toBe('request_not_pending');
   });
   it('rolls back an incomplete key set and rejects an outdated approval',async()=>{
-    const owner=await person(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
+    const owner=await plusOwner(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
     const b=await apply(bob,w,invite),c=await apply(cat,w,invite);ok(b.response,201);ok(c.response,201);
     const trial=await transition(owner,w,'admit',b.id,[...w.roster.members,b.member]);ok(trial.response);
     const competing=await transition(owner,w,'admit',c.id,[...w.roster.members,c.member]);
@@ -82,7 +83,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect(ok(await call(cat,`/v3/group-windows/${w.windowId}/join-status`,{requestId:c.id})).state).toBe('pending');
   });
   it('has one winner for simultaneous approvals and leaves the other request pending',async()=>{
-    const owner=await person(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
+    const owner=await plusOwner(),bob=await person(),cat=await person(),w=await create(owner),invite=await invitation(owner,w);
     const b=await apply(bob,w,invite),c=await apply(cat,w,invite);ok(b.response,201);ok(c.response,201);
     const results=await Promise.all([transition(owner,w,'admit',b.id,[...w.roster.members,b.member]),
       transition(owner,w,'admit',c.id,[...w.roster.members,c.member])]);
@@ -93,7 +94,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect((await db.prepare('SELECT COUNT(*) n FROM group_members WHERE space_id=?').bind(w.windowId).first<{n:number}>())?.n).toBe(2);
   });
   it('binds another phone to the same person and revokes both phones on removal',async()=>{
-    const owner=await person(),bob=await person(),phone2=await person(bob.identity);let w=await create(owner);
+    const owner=await plusOwner(),bob=await person(),phone2=await person(bob.identity);let w=await create(owner);
     const invite=await invitation(owner,w),b=await apply(bob,w,invite);ok(b.response,201);
     let a=await transition(owner,w,'admit',b.id,[...w.roster.members,b.member]);ok(a.response);w=a.next;
     const other=await apply(phone2,w,invite);ok(other.response,201);
@@ -106,7 +107,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect((await call(bob,`/v3/group-windows/${w.windowId}`)).status).toBe(404);
   });
   it('keeps creation in its verified allowance and paginates only this phone’s joined windows',async()=>{
-    const firstOwner=await person(),secondOwner=await person(),bob=await person(),w1=await create(firstOwner),w2=await create(secondOwner);
+    const firstOwner=await plusOwner(),secondOwner=await plusOwner(),bob=await person(),w1=await create(firstOwner),w2=await create(secondOwner);
     for(let i=0;i<4;i++)await create(firstOwner);
     await create(firstOwner,409);
     expect((await db.prepare('SELECT COUNT(*) n FROM group_windows WHERE owner_person_id=?').bind(firstOwner.id).first<{n:number}>())?.n).toBe(5);
@@ -123,7 +124,7 @@ describe('gated group HTTP identity, invitation and membership',()=>{
     expect(ok(await call(secondOwner,'/v3/group-windows/list',{after:null,limit:50})).items).toHaveLength(1);
   });
   it('revokes all phones on removal, immediately blocks leavers, and rotates before future writes',async()=>{
-    const owner=await person(),bob=await person();let w=await create(owner);let invite=await invitation(owner,w);
+    const owner=await plusOwner(),bob=await person();let w=await create(owner);let invite=await invitation(owner,w);
     let b=await apply(bob,w,invite);ok(b.response,201);
     let a=await transition(owner,w,'admit',b.id,[...w.roster.members,b.member]);ok(a.response);w=a.next;
     const signature=await sign(bob.signing.privateKey,groupFields(['NW3.LEAVE',w.windowId,b.member.participantId,'2','00000000-0000-4000-8000-000000000001']));

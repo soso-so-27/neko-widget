@@ -55,8 +55,8 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
   const envelopes=groupEnvelopes(body); await verifyGroupEnvelopes(envelopes,roster);
   const encryptedName=groupCipher(body,"encryptedName"),memberNames=groupNames(body,roster);
   const response={operationId,windowId:r.windowId,participantId:member.participantId,revision:1,keyEpoch:1,serverNow:actor.now};
-  // The first window also needs Plus after the server-observed creation trial.
-  // Both trial and verified Plus have five owned windows; total ten is separate.
+  // The first window already needs verified Plus, including Apple's active
+  // introductory offer. Owned five and total ten are independent limits.
   const ownedLimit=5;
   await env.DB.batch([...groupNonceStatements(env,actor),
     env.DB.prepare("INSERT INTO group_windows(space_id,owner_person_id,mode,created_at,updated_at) VALUES (?,?,'preparing',?,?)")

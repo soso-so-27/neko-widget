@@ -69,6 +69,16 @@ test("preserves upgrade and revocation facts for non-entitling audit", () => {
   assert.equal(result.revocationReason, 1);
 });
 
+test("normalizes Apple's introductory monthly offer as the same subscription with Apple's expiry", () => {
+  const expires=now+14*86400000;
+  const result=normalizeVerifiedTransaction(transaction({offerType:1,offerIdentifier:'14-day-introductory',expiresDate:expires}),config,now);
+  assert.equal(result.productId,'jp.nekowidget.plus.monthly');
+  assert.equal(result.ownershipType,'PURCHASED');
+  assert.equal(result.expiresDateMs,expires);
+  // No app/room-created trial is added. Entitlement still needs current Apple
+  // status and these exact signed dates, like any other monthly transaction.
+});
+
 test("rejects missing account token and every product identity mismatch", () => {
   const missingAccountToken = transaction();
   delete missingAccountToken.appAccountToken;

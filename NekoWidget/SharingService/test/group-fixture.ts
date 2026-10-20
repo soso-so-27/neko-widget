@@ -8,7 +8,8 @@ import { groupIdentityTranscript } from '../src/group-identities';
 import { groupJoinTranscript } from '../src/group-joins';
 import { groupDeviceAuthorization,groupFields,groupRosterBytes,type GroupRoster,type GroupRosterMember,type SignedGroupRoster,type GroupKeyEnvelope } from '../src/group-protocol';
 
-export const testEnv={...env as unknown as Env,GROUP_RUNTIME_ENABLED:'YES'};
+export const testEnv={...env as unknown as Env,GROUP_RUNTIME_ENABLED:'YES',BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED:'YES',
+  BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED:'YES',BILLING_STORE_ENVIRONMENT:'Sandbox',ENVIRONMENT:'local',BILLING_SANDBOX_OWNER_ONLY_REQUIRED:'NO'};
 export const db=testEnv.DB;
 export async function key() {
   const pair=await crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']) as CryptoKeyPair;
