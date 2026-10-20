@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftUI
 import UIKit
+import WidgetKit
 import UniformTypeIdentifiers
 
 // Group windows in the まど tab: the list, one window's photos, sending, and
@@ -108,6 +109,31 @@ final class GroupWindowScreenModel: ObservableObject {
             message = GroupWindowPresentation.message(for: error)
         }
         entries = await store.entries(windowID: windowID)
+        await updateHomeScreenPhoto()
+    }
+
+    /// The Widget reads only this copy, written after verification and the
+    /// on-device check. Hidden photos are never handed over.
+    private func updateHomeScreenPhoto() async {
+        guard let window else { return }
+        let newest = entries.first { !$0.isHidden }
+        var jpeg: Data?
+        if let newest, let url = await store.imageURL(photoID: newest.id, windowID: windowID) {
+            jpeg = try? Data(contentsOf: url)
+        }
+        let previous = GroupWidgetCache.entry(windowID: windowID)
+        do {
+            try GroupWidgetCache.update(
+                windowID: windowID, windowName: window.name, photoID: newest?.id, jpeg: jpeg,
+                senderDisplayName: newest.map { $0.isOwn ? "自分" : $0.senderDisplayName },
+                capturedAt: newest?.createdAt, isPaused: isPaused
+            )
+        } catch {
+            return
+        }
+        if previous != GroupWidgetCache.entry(windowID: windowID) {
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        }
     }
 
     private func receive(_ photo: GroupPhoto, me: String, outgoingOperationID: UUID? = nil) async {

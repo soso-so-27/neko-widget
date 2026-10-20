@@ -23,6 +23,14 @@ enum WidgetCacheImageLoader {
         }
 #endif
         let fileHash = SharedLog.shortHash(cacheFilename)
+        if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {
+            guard let cached = GroupWidgetCache.entry(windowID: groupWindowID),
+                  cached.imageFileName == cacheFilename,
+                  let url = GroupWidgetCache.imageURL(for: cached),
+                  let data = try? Data(contentsOf: url, options: .mappedIfSafe)
+            else { return nil }
+            return decodedImage(data: data, maximumPixelSize: maximumPixelSize, fileHash: fileHash)
+        }
         guard let fileURL = WidgetManifestReader.cacheURL(
             for: cacheFilename,
             photoSourceIdentifier: photoSourceIdentifier
