@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import plistlib
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("pilot", Path(__file__).with_name("preservation-pilot-release.py"))
 pilot = importlib.util.module_from_spec(spec)
@@ -124,6 +126,42 @@ class PreservationReleaseTests(unittest.TestCase):
             for bad in ({}, {"MembershipAccessEnforced": True}, {"MembershipAccessEnforced": "NO"}):
                 with self.subTest(source=bad), self.assertRaises(ValueError):
                     pilot.prepare_membership_info(bad, values)
+
+    def test_membership_placeholder_uses_disabled_xcconfig_and_writes_booleans(self):
+        project = Path(__file__).resolve().parents[1]
+        originals = [plistlib.loads((project / target / "Info.plist").read_bytes())
+                     for target in ("NekoWidget", "NekoWidgetWidget")]
+        for requested, billing in ((False, False), (True, False), (True, True)):
+            values = pilot.settings(requested, "media-staging", "YES", "internal",
+                                    billing_requested=billing, billing_approval="YES", billing_scope="internal")
+            for original in originals:
+                with self.subTest(preservation=requested, billing=billing):
+                    self.assertEqual(original["MembershipAccessEnforced"], "$(MEMBERSHIP_ACCESS_ENFORCED)")
+                    prepared = pilot.prepare_membership_info(original, values)
+                    self.assertIs(prepared["MembershipAccessEnforced"], billing)
+                    self.assertEqual(original["MembershipAccessEnforced"], "$(MEMBERSHIP_ACCESS_ENFORCED)")
+                    self.assertEqual({**prepared, "MembershipAccessEnforced": original["MembershipAccessEnforced"]}, original)
+                    self.assertIs(plistlib.loads(plistlib.dumps(prepared))["MembershipAccessEnforced"], billing)
+
+    def test_membership_placeholder_rejects_enabled_missing_or_ambiguous_xcconfig(self):
+        values, _, _ = self.ready()
+        original = {"MembershipAccessEnforced": "$(MEMBERSHIP_ACCESS_ENFORCED)"}
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "Config.xcconfig"
+            with patch.object(pilot, "CONFIG_XCCONFIG", config):
+                for source in ("MEMBERSHIP_ACCESS_ENFORCED = YES\n", "// MEMBERSHIP_ACCESS_ENFORCED = NO\n",
+                               "MEMBERSHIP_ACCESS_ENFORCED = NO\nMEMBERSHIP_ACCESS_ENFORCED = YES\n",
+                               "MEMBERSHIP_ACCESS_ENFORCED[sdk=iphoneos*] = NO\n"):
+                    config.write_text(source, encoding="utf-8")
+                    with self.subTest(source=source), self.assertRaises(ValueError):
+                        pilot.prepare_membership_info(original, values)
+                config.write_text("MEMBERSHIP_ACCESS_ENFORCED = NO\n", encoding="utf-8")
+                for invalid in ("NO", "YES", True, None, 0, "$(OTHER)", "${MEMBERSHIP_ACCESS_ENFORCED}",
+                                " $(MEMBERSHIP_ACCESS_ENFORCED)", "$(MEMBERSHIP_ACCESS_ENFORCED) "):
+                    with self.subTest(value=invalid), self.assertRaises(ValueError):
+                        pilot.prepare_membership_info({"MembershipAccessEnforced": invalid}, values)
+                with self.assertRaises(ValueError):
+                    pilot.prepare_membership_info({}, values)
 
     def test_window_sponsorship_is_explicitly_off_in_every_release_mode(self):
         project = Path(__file__).resolve().parents[1]
