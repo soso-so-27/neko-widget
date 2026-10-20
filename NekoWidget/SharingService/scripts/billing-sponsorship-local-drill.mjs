@@ -61,6 +61,7 @@ const expectedMigrationNames = [
   "0039_moderation_retired_decision_receipt.sql",
   "0040_group_membership.sql",
   "0041_group_api_records.sql",
+  "0042_group_owner_plus.sql",
 ];
 
 const databaseGateColumns = [

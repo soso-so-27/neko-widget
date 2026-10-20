@@ -1,7 +1,8 @@
 import {describe,expect,it} from 'vitest';
 import {randomBase64url,base64urlEncode} from '../src/encoding';
 import {groupFields} from '../src/group-protocol';
-import {testEnv,db,key,sign,send,post,person,signed,call,ok,create,invitation,apply,transition} from './group-fixture';
+import type {Env} from '../src/env';
+import {testEnv,db,key,sign,send,post,person,signed,call,ok,create,invitation,apply,transition,packet} from './group-fixture';
 
 describe('gated group HTTP identity, invitation and membership',()=>{
   it('defaults closed, including registration, and respects the lower media gate',async()=>{
@@ -106,8 +107,9 @@ describe('gated group HTTP identity, invitation and membership',()=>{
   });
   it('keeps creation in its verified allowance and paginates only this phone’s joined windows',async()=>{
     const firstOwner=await person(),secondOwner=await person(),bob=await person(),w1=await create(firstOwner),w2=await create(secondOwner);
+    for(let i=0;i<4;i++)await create(firstOwner);
     await create(firstOwner,409);
-    expect((await db.prepare('SELECT COUNT(*) n FROM group_windows WHERE owner_person_id=?').bind(firstOwner.id).first<{n:number}>())?.n).toBe(1);
+    expect((await db.prepare('SELECT COUNT(*) n FROM group_windows WHERE owner_person_id=?').bind(firstOwner.id).first<{n:number}>())?.n).toBe(5);
     for(const [owner,w] of [[firstOwner,w1],[secondOwner,w2]] as const) {
       const invite=await invitation(owner,w),request=await apply(bob,w,invite);ok(request.response,201);
       ok((await transition(owner,w,'admit',request.id,[...w.roster.members,request.member])).response);

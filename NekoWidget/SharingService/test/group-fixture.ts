@@ -48,7 +48,7 @@ export async function signed(p:Person,path:string,body?:unknown,nonce=randomBase
   return new Request(`https://group.invalid${path}`,{method,headers:{'content-type':body instanceof Uint8Array?'application/octet-stream':'application/json','neko-protocol-version':'3',
     'neko-device-id':p.deviceId,'neko-timestamp':timestamp,'neko-nonce':nonce,
     'neko-signature':await sign(p.signing.privateKey,groupFields(['NW3.REQUEST','3',p.deviceId,timestamp,nonce,method,path,hash]))},
-    ...(body===undefined?{}:{body:raw})});
+    ...(body===undefined?{}:{body:raw.slice().buffer})});
 }
 export async function call(p:Person,path:string,body?:unknown) { return send(await signed(p,path,body)); }
 export function ok(result:Reply,status=200) { expect({status:result.status,error:result.data.error?.code}).toEqual({status,error:undefined});return result.data; }
@@ -71,13 +71,13 @@ export async function packet(owner:Person,roster:GroupRoster) {
   }
   return {packet:signed,envelopes,encryptedName:cipher(),encryptedMemberNames:Object.fromEntries(roster.members.map(m=>[m.participantId,cipher()])),hash};
 }
-export async function create(owner:Person,status=201) {
+export async function create(owner:Person,status=201,errorCode='owned_window_limit') {
   const windowId=randomBase64url(16),roster:GroupRoster={windowId,revision:1,keyEpoch:1,previousHash:base64urlEncode(new Uint8Array(32)),
     ownerPersonId:owner.id,members:[await member(owner,windowId,'owner')]};
   const data=await packet(owner,roster),{hash,...wire}=data,operationId=crypto.randomUUID();
   const response=await call(owner,'/v3/group-windows',{operationId,...wire});
   if(status===201) ok(response,201);
-  else expect({status:response.status,code:response.data.error?.code}).toEqual({status,code:'owned_window_limit'});
+  else expect({status:response.status,code:response.data.error?.code}).toEqual({status,code:errorCode});
   return {windowId,roster,hash};
 }
 export async function invitation(owner:Person,w:Awaited<ReturnType<typeof create>>) {

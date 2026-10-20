@@ -7,6 +7,7 @@ import { loadStoredGroupRoster,verifyGroupEnvelopes,verifyGroupRoster,
   type GroupKeyEnvelope,type SignedGroupRoster,type VerifiedGroupRoster } from "./group-protocol";
 import { asObject,binaryField,exactKeys,integerField,opaqueId,stringField,uuidField,type JsonRecord } from "./validation";
 import { groupCursor,groupPage } from './group-reads';
+import { groupCreationPolicyStatements,groupDeliveryPolicies } from './group-owner-plus';
 
 export function groupCipher(body:JsonRecord,key:string,maximum=8192):string {
   const value=stringField(body,key),bytes=base64urlDecode(value);
@@ -54,9 +55,9 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
   const envelopes=groupEnvelopes(body); await verifyGroupEnvelopes(envelopes,roster);
   const encryptedName=groupCipher(body,"encryptedName"),memberNames=groupNames(body,roster);
   const response={operationId,windowId:r.windowId,participantId:member.participantId,revision:1,keyEpoch:1,serverNow:actor.now};
-  // Until the verified billing-person bridge is connected, creation has only
-  // the free allowance. No client flag or claimed price can grant Plus.
-  const ownedLimit=1;
+  // The first window also needs Plus after the server-observed creation trial.
+  // Both trial and verified Plus have five owned windows; total ten is separate.
+  const ownedLimit=5;
   await env.DB.batch([...groupNonceStatements(env,actor),
     env.DB.prepare("INSERT INTO group_windows(space_id,owner_person_id,mode,created_at,updated_at) VALUES (?,?,'preparing',?,?)")
       .bind(r.windowId,actor.personId,actor.now,actor.now),
@@ -66,6 +67,7 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
     ...groupPacketStatements(env,roster,envelopes,actor,operationId,"create",0),
     env.DB.prepare("INSERT INTO group_window_metadata VALUES (?,?,1,1)").bind(r.windowId,encryptedName),
     env.DB.prepare("INSERT INTO group_window_creation_checks VALUES (?,?,?,?,?)").bind(operationId,r.windowId,actor.personId,ownedLimit,actor.now),
+    ...groupCreationPolicyStatements(env,r.windowId,actor.personId,operationId),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response,201);
 }
@@ -84,7 +86,8 @@ export async function listGroupWindows(env:Env,actor:GroupActor,body:JsonRecord)
   for(const item of items) checks.push(...groupAuthorizationStatements(env,actor,
     {windowId:item.windowId,expectedRevision:item.revision}));
   await env.DB.batch(checks);
-  return jsonResponse({items:items.map(i=>({...i,rotationRequired:i.rotationRequired===1})),
+  const policies=await groupDeliveryPolicies(env,items.map(i=>i.windowId));
+  return jsonResponse({items:items.map(i=>({...i,rotationRequired:i.rotationRequired===1,...policies.get(i.windowId)})),
     next:result.results.length>page.limit?groupCursor(cursorScope,items.at(-1)!.windowId):null,serverNow:actor.now});
 }
 
@@ -94,7 +97,8 @@ export async function getGroupWindow(env:Env,actor:GroupActor,windowId:string):P
   const metadata=await env.DB.prepare("SELECT encrypted_name AS encryptedName,key_epoch AS nameKeyEpoch,roster_revision AS nameRosterRevision FROM group_window_metadata WHERE space_id=?")
     .bind(windowId).first();
   await env.DB.batch(groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}));
-  return jsonResponse({window:{windowId,revision:access.revision,keyEpoch:access.keyEpoch,rotationRequired:access.rotationRequired===1,...metadata},
+  const policy=(await groupDeliveryPolicies(env,[windowId])).get(windowId);
+  return jsonResponse({window:{windowId,revision:access.revision,keyEpoch:access.keyEpoch,rotationRequired:access.rotationRequired===1,...metadata,...policy},
     roster:roster.packet,rosterHash:roster.hash,serverNow:actor.now});
 }
 
