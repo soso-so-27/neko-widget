@@ -125,8 +125,10 @@ final class GroupWindowScreenModel: ObservableObject {
         do {
             try GroupWidgetCache.update(
                 windowID: windowID, windowName: window.name, photoID: newest?.id, jpeg: jpeg,
-                senderDisplayName: newest.map { $0.isOwn ? "自分" : $0.senderDisplayName },
-                capturedAt: newest?.createdAt, isPaused: isPaused
+                // No "さんから" line under a photo this iPhone sent.
+                senderDisplayName: newest.flatMap { $0.isOwn ? nil : $0.senderDisplayName },
+                capturedAt: newest?.createdAt, isPaused: isPaused,
+                myHeartActive: newest.map { myHeartIsActive($0.id) } ?? false
             )
         } catch {
             return
@@ -447,6 +449,19 @@ struct GroupWindowMembersScreen: View {
     }
 }
 
+// MARK: - Opening a window from the home screen
+
+/// The window a home-screen photo asked to open, held in memory until the
+/// group list in the まど tab shows it.
+@MainActor
+final class GroupWindowOpenInbox: ObservableObject {
+    static let shared = GroupWindowOpenInbox()
+    @Published private(set) var pendingWindowID: String?
+
+    func open(windowID: String) { pendingWindowID = windowID }
+    func consume() { pendingWindowID = nil }
+}
+
 // MARK: - The list in the まど tab
 
 @MainActor
@@ -489,6 +504,8 @@ struct GroupWindowListSection: View {
     @State private var showsNameEntry = false
     @State private var nameDraft = ""
     @State private var createdWindowID: String?
+    @State private var openedWindowID: String?
+    @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
 
     init(client: ProductionGroupWindowClient) {
         _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
@@ -523,6 +540,23 @@ struct GroupWindowListSection: View {
             .accessibilityIdentifier("group-window-create")
         }
         .task { await model.load() }
+        .task(id: openInbox.pendingWindowID) {
+            guard let requested = openInbox.pendingWindowID else { return }
+            openInbox.consume()
+            if !model.windows.contains(where: { $0.id == requested }) { await model.load() }
+            // Open only a window this iPhone is still a member of.
+            if model.windows.contains(where: { $0.id == requested }) {
+                openedWindowID = requested
+            }
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { openedWindowID != nil },
+            set: { if !$0 { openedWindowID = nil } }
+        )) {
+            if let openedWindowID {
+                GroupWindowScreen(client: model.client, windowID: openedWindowID)
+            }
+        }
         .alert("まどの名前", isPresented: $showsNameEntry) {
             TextField("例：実家のまど", text: $nameDraft)
             Button("作る") {

@@ -16,6 +16,9 @@ enum GroupWidgetCache {
         let senderDisplayName: String?
         let capturedAt: Date?
         let isPaused: Bool
+        /// This iPhone already sent a heart to `photoID`. Optional so a
+        /// catalog written before this field still decodes.
+        var myHeartActive: Bool? = nil
     }
 
     private struct Catalog: Codable {
@@ -36,6 +39,29 @@ enum GroupWidgetCache {
     }
 
     static func isGroupSourceID(_ id: String) -> Bool { windowID(fromSourceID: id) != nil }
+
+    /// Tapping a group window's home-screen photo opens that window. The URL
+    /// carries only the window ID, never a photo, name, or key.
+    static func openURL(windowID: String) -> URL? {
+        guard isValidID(windowID) else { return nil }
+        var components = URLComponents()
+        components.scheme = "nekowidget"
+        components.host = "group-window"
+        components.queryItems = [URLQueryItem(name: "window", value: windowID)]
+        return components.url
+    }
+
+    static func windowID(fromOpenURL url: URL) -> String? {
+        guard url.scheme?.lowercased() == "nekowidget",
+              url.host?.lowercased() == "group-window",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.path.isEmpty, components.fragment == nil,
+              let items = components.queryItems, items.count == 1,
+              items[0].name == "window", let windowID = items[0].value,
+              isValidID(windowID)
+        else { return nil }
+        return windowID
+    }
 
     // MARK: Reading (Widget and app)
 
@@ -66,7 +92,8 @@ enum GroupWidgetCache {
     /// memory limit first; the catalog is written last, so the Widget never
     /// points to a file that is not there.
     static func update(windowID: String, windowName: String, photoID: String?, jpeg: Data?,
-                       senderDisplayName: String?, capturedAt: Date?, isPaused: Bool) throws {
+                       senderDisplayName: String?, capturedAt: Date?, isPaused: Bool,
+                       myHeartActive: Bool = false) throws {
         guard isValidID(windowID), let directory = directory() else { return }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var catalog = Catalog(entries: entries())
@@ -79,7 +106,7 @@ enum GroupWidgetCache {
         }
         let entry = Entry(windowID: windowID, windowName: windowName, photoID: photoID,
                           imageFileName: imageFileName, senderDisplayName: senderDisplayName,
-                          capturedAt: capturedAt, isPaused: isPaused)
+                          capturedAt: capturedAt, isPaused: isPaused, myHeartActive: myHeartActive)
         catalog.entries.removeAll { $0.windowID == windowID }
         catalog.entries.insert(entry, at: 0)
         catalog.entries = Array(catalog.entries.prefix(maximumWindows))
@@ -87,6 +114,17 @@ enum GroupWidgetCache {
         if let old = previous?.imageFileName, old != imageFileName {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(old))
         }
+    }
+
+    /// After the app sent a heart from the Widget, show it as sent.
+    static func markMyHeart(windowID: String, photoID: String) throws {
+        guard let directory = directory() else { return }
+        var catalog = Catalog(entries: entries())
+        guard let index = catalog.entries.firstIndex(where: { $0.windowID == windowID }),
+              catalog.entries[index].photoID == photoID
+        else { return }
+        catalog.entries[index].myHeartActive = true
+        try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
     }
 
     // MARK: Files

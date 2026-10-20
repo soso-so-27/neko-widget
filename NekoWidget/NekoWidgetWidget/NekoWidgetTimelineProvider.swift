@@ -512,11 +512,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             isLikeInteractionEnabled: false,
             isBookmarked: false,
             isBookmarkInteractionEnabled: false,
-            familyHeartStatus: .hidden,
+            familyHeartStatus: cached.myHeartActive == true ? .serverAccepted : .ready,
             familyActionsRequireApp: false,
             emptyStateReason: .none
         )
         entry.familyCaption = cached.senderDisplayName.map { "\($0)さんから" }
+        if let photoID = cached.photoID {
+            entry.groupWindowPhoto = GroupWindowPhotoReference(windowID: windowID, photoID: photoID)
+        }
         return entry
     }
 

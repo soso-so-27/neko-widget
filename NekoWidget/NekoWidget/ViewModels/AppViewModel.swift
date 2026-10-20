@@ -2377,6 +2377,12 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleURL(_ url: URL) {
+        // A group window's home-screen photo opens that window in the まど tab.
+        if let groupWindowID = GroupWidgetCache.windowID(fromOpenURL: url) {
+            GroupWindowOpenInbox.shared.open(windowID: groupWindowID)
+            SharedLog.app.info("deeplink", "Opened group window from Widget")
+            return
+        }
         // An invitation link carries its keys in the fragment. Keep the link
         // out of logs and messages; only the parsed value goes to the まど tab.
         if GroupInvitationLink.isCandidate(url) {
