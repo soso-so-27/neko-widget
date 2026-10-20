@@ -88,10 +88,16 @@ final class CatCareStore: ObservableObject {
     /// Reads what the tools already know and fills only empty fields. Safe to
     /// call every time 「この子のこと」 opens; the result does not change after
     /// the first run unless a tool gained new information.
+    func importFromTools() {
+        // Read on the main actor; default arguments would be evaluated outside it.
+        importFromTools(care: CareHandoffStore.shared.plan, evacuation: EvacuationStore.shared.plan,
+                        preparedness: CatPreparednessStore.shared.records)
+    }
+
     func importFromTools(
-        care: CareHandoffPlan = CareHandoffStore.shared.plan,
-        evacuation: EvacuationPlan = EvacuationStore.shared.plan,
-        preparedness: [String: CatPreparednessRecord] = CatPreparednessStore.shared.records
+        care: CareHandoffPlan,
+        evacuation: EvacuationPlan,
+        preparedness: [String: CatPreparednessRecord]
     ) {
         let sources = Self.sources(care: care, evacuation: evacuation, preparedness: preparedness)
         update { state in
