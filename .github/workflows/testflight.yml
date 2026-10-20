@@ -43,6 +43,11 @@ on:
         required: true
         default: false
         type: boolean
+      group_windows:
+        description: "グループのまどを本人の内部media-stagingで確認。protected承認と内部専用IPAが必要。既定OFF"
+        required: false
+        default: false
+        type: boolean
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -77,6 +82,8 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       PROJECT_DIRECTORY: NekoWidget
       RELEASE_SOURCE_SHA: ${{ inputs.expected_main_sha || github.sha }}
+      GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
+      GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
 
     steps:
       - name: Require signed artifact retention for TestFlight uploads
@@ -715,6 +722,16 @@ jobs:
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
 
+      - name: Prepare internal group window switch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
+            --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --env-file "$GITHUB_ENV"
+
       - name: Validate the exact runtime embedded in the limited external beta
         if: ${{ inputs.release_mode == 'media-staging' }}
         working-directory: NekoWidget/SharingService
@@ -1229,6 +1246,7 @@ jobs:
             SHARING_RELEASE_MODE="$RELEASE_SHARING_RELEASE_MODE" \
             OFFICIAL_WINDOW_FEED_URL="$RELEASE_OFFICIAL_WINDOW_FEED_URL" \
             SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
+            GROUP_WINDOWS_ENABLED="$RELEASE_GROUP_WINDOWS_ENABLED" \
             SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             PERSONAL_ARCHIVE_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             MANAGED_PRESERVATION_ENABLED="$RELEASE_MANAGED_PRESERVATION_ENABLED" \
@@ -1457,6 +1475,12 @@ jobs:
             --billing-requested "${BILLING_REQUESTED:-false}" \
             --settings-file "$RUNNER_TEMP/internal-report-settings.json" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
+          python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
+            --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --app-info-plist "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist" \
+            --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Export IPA
@@ -1476,6 +1500,12 @@ jobs:
             exit 1
           fi
           echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
+          python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
+            --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --ipa "$ipa_path" \
+            --verify-export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Generate build-bound moderation release metadata
         if: ${{ inputs.retain_signed_artifacts }}

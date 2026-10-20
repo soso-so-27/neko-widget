@@ -40,6 +40,7 @@ def fixture() -> list[dict]:
                     "PHOTO_LIBRARY_USAGE_DESCRIPTION": LOCAL_DESCRIPTION,
                     "SHARING_RELEASE_MODE": "disabled",
                     "SHARING_FEATURE_ENABLED": "NO",
+                    "GROUP_WINDOWS_ENABLED": "NO",
                     "SHARING_MEDIA_ENABLED": "NO",
                     "SHARING_SHARE_EXTENSION_HANDOFF_ENABLED": "NO",
                     "SHARING_SHARE_EXTENSION_SEND_ENABLED": "NO",
@@ -97,6 +98,7 @@ class DisabledReleaseBuildSettingsTests(unittest.TestCase):
         for key in (
             "SHARING_RELEASE_MODE",
             "SHARING_FEATURE_ENABLED",
+            "GROUP_WINDOWS_ENABLED",
             "SHARING_MEDIA_ENABLED",
             "SHARING_SHARE_EXTENSION_HANDOFF_ENABLED",
             "SHARING_SHARE_EXTENSION_SEND_ENABLED",

@@ -65,6 +65,9 @@ WIDGET_SCREENSHOT_FIXTURE_CONDITION =
 // xcodebuild overrides so target-specific provisioning mappings remain intact.
 SHARING_RELEASE_MODE = review-preview
 SHARING_FEATURE_ENABLED = NO
+// Explicit owner-only media-staging TestFlight input can override this.
+// It never follows sharing/media capability automatically.
+GROUP_WINDOWS_ENABLED = NO
 SHARING_API_BASE_URL =
 // Pairing can be exercised independently. One-photo moment upload/download
 // remains separately off until privacy, safety, staging, and device gates pass.
