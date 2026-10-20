@@ -338,9 +338,10 @@ struct SettingsView: View {
                     Label("対応OS", systemImage: "iphone")
                 }
 
-                NavigationLink {
-                    advancedDiagnosticsView
-                } label: {
+                if InternalBuildPresentationAvailability.isAvailable {
+                    NavigationLink {
+                        advancedDiagnosticsView
+                    } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("診断情報")
@@ -351,6 +352,8 @@ struct SettingsView: View {
                     } icon: {
                         Image(systemName: "wrench.and.screwdriver")
                     }
+                    }
+                    .accessibilityIdentifier("settings-internal-diagnostics")
                 }
             } header: {
                 Text("アプリ")
@@ -1127,14 +1130,14 @@ struct SharingReviewPreviewView: View {
                     if SharingAPIConfiguration.current.isEncryptedReportAvailable {
                         Label("写真を通報", systemImage: "exclamationmark.bubble")
                     } else {
-                        Label("TestFlightから問題を連絡", systemImage: "envelope")
+                        Label("サポートへ連絡", systemImage: "envelope")
                     }
                     Label("相手をブロックして表示と取得を停止", systemImage: "person.crop.circle.badge.xmark")
                     Label("共有を解除", systemImage: "person.2.slash")
 
                     Text(SharingAPIConfiguration.current.isEncryptedReportAvailable
                         ? "通報・ブロック・公開連絡先を使って安全を確認します。"
-                        : "この限定ベータではアプリ内通報を停止しています。写真や招待秘密を添付せず、TestFlightのベータ版フィードバックから連絡してください。")
+                        : "アプリ内で通報できない場合は、設定のサポートから連絡してください。写真や招待の秘密は添付しないでください。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

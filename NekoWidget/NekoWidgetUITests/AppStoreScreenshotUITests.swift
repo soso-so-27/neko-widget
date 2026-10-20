@@ -10,6 +10,44 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testReviewPublicPresentation() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture", "--review-public-presentation"]
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        app.buttons["tools-settings-button"].tap()
+        XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
+        app.swipeUp()
+        XCTAssertFalse(app.buttons["settings-membership-preview"].exists)
+        XCTAssertFalse(app.buttons["settings-window-support-preview"].exists)
+        XCTAssertFalse(app.buttons["settings-internal-diagnostics"].exists)
+        XCTAssertTrue(app.staticTexts["対応OS"].exists)
+        captureScreenshot(named: "public-settings-no-internal-options")
+        app.terminate()
+
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        app.buttons["photos-section-favorites"].tap()
+        let create = app.buttons["saved-memories-selection-toggle"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10)); create.tap()
+        XCTAssertTrue(app.buttons["saved-memories-create-pdf"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["saved-memories-create-book-preview"].exists)
+        captureScreenshot(named: "public-creation-pdf-only")
+        app.terminate()
+
+        // Internal DEBUG distribution still exposes its preview; sandbox is
+        // deliberately not used as the discriminator in shipping code.
+        app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
+        app.buttons["tools-settings-button"].tap()
+        XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
+        app.swipeUp()
+        XCTAssertTrue(app.buttons["settings-membership-preview"].exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testReviewOctoberLayoutBatch() {
         executionTimeAllowance = 360
         // One simulator build for the four stacked feature PRs. Each check
