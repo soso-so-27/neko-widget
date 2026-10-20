@@ -76,7 +76,7 @@ struct VeterinaryVisitsView: View {
                     guard let id = UUID(uuidString: profile.identifier) else { return }
                     Task { await open(PhotoMemoryNoteCat(id: id, name: profile.displayName)) }
                 }) {
-                    Section("プロフィール未登録の猫") {
+                    Section("まだ登録していない猫") {
                         ForEach(cats.filter { cat in !profiles.contains { $0.identifier == cat.id.uuidString } }, id: \.id) { cat in
                             Button(cat.name) { Task { await open(cat) } }
                                 .accessibilityIdentifier("vet-cat-\(cat.id.uuidString)")
@@ -96,8 +96,8 @@ struct VeterinaryVisitsView: View {
                     }
                 }
             } else if error == nil { ProgressView() }
-            if let error { Section { Text(error); Button("再試行") { Task { await reload() } } } }
-            if cleanupPending { Section { Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote); Button("削除を再試行") { Task { await reload() } } } }
+            if let error { Section { Text(error); Button("もう一度読み込む") { Task { await reload() } } } }
+            if cleanupPending { Section { Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote); Button("もう一度片付ける") { Task { await reload() } } } }
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
@@ -204,16 +204,14 @@ private struct VeterinaryConsultationView: View {
                           systemImage: "cat").font(.headline)
                     if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
                 }
-                Section {
-                    VeterinaryCatCareFields(fields: CatCareSummary.veterinaryFields(
+                ToolCatCareSection(
+                    title: "この子のこと（自動で載ります）",
+                    lines: CatCareSummary.veterinaryFields(
                         CatCareSummary.record(profileIdentifier: visit.catID.uuidString),
-                        household: catCareStore.state?.household))
-                    if let profile = profiles.first(where: { $0.identifier == visit.catID.uuidString }) {
-                        NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
-                            .accessibilityIdentifier("vet-open-cat-care")
-                    }
-                } header: { Text("この子のこと（自動で載ります）") }
-                  footer: { Text("薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。医療の判断ではありません。") }
+                        household: catCareStore.state?.household),
+                    profile: profiles.first(where: { $0.identifier == visit.catID.uuidString }),
+                    footer: "薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。医療の判断ではありません。",
+                    identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care")
                 if visit.completedAt == nil {
                     Section {
                         TextField("家で気付いたこと", text: $observations, axis: .vertical).lineLimit(3...8)
@@ -249,9 +247,11 @@ private struct VeterinaryConsultationView: View {
                             .accessibilityIdentifier("vet-pick-records")
                     }
                 } header: { Text("見せる記録 · \(visit.entries.count)件") }
-                  footer: { Text("選んだ時点の控えです。元のメモを編集しても自動では変わりません。外しても元の写真・メモは残ります。") }
+                  footer: { Text("選んだときの内容を残します。外しても、元の写真とメモは消えません。") }
                 Section {
-
+                    ToolImportantInformation(text: "飼い主の記録をまとめたもので、医療の判断ではありません。様子がおかしいときは、迷わず動物病院に連絡してください。")
+                }
+                Section {
                     if visit.completedAt == nil {
                         Button("診察済みとして残す", systemImage: "checkmark") { finishing = true }.disabled(changes)
                     }
@@ -262,14 +262,15 @@ private struct VeterinaryConsultationView: View {
             if let error { Section { Text(error).foregroundStyle(.secondary).accessibilityIdentifier("vet-error") } }
         }
         .navigationTitle("診察メモ").navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(error)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("閉じる") { if changes { discarding = true } else { dismiss() } }.disabled(busy) }
+            ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
 
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 6) {
                 if error != nil, changes {
-                    Button("保存を再試行") { Task { await save() } }.accessibilityIdentifier("vet-save")
+                    Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")
                 }
                 Text(observations.count > 500 || questions.count > 500 ? "各項目は500文字以内で入力してください" : changes ? "保存中…" : "自動保存済み").font(.caption).foregroundStyle(.secondary)
                 Button("プレビュー", systemImage: "rectangle.inset.filled") { showing = true }
@@ -313,9 +314,9 @@ private struct VeterinaryConsultationView: View {
         .fullScreenCover(isPresented: $showing) {
             if let visit { VeterinaryReadView(visit: visit, store: store, displayName: profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName).environment(\.dynamicTypeSize, typeSize) }
         }
-        .confirmationDialog("保存せずに閉じますか？", isPresented: $discarding, titleVisibility: .visible) {
-            Button("変更を破棄", role: .destructive) { dismiss() }; Button("編集を続ける", role: .cancel) {}
-        }
+        .confirmationDialog("まだ保存できていません", isPresented: $discarding, titleVisibility: .visible) {
+            Button("書いた内容を消して閉じる", role: .destructive) { dismiss() }; Button("画面に戻る", role: .cancel) {}
+        } message: { Text("500文字を超えた欄があると保存できません。短くしてから閉じてください。") }
         .confirmationDialog("診察済みの控えとして残しますか？", isPresented: $finishing, titleVisibility: .visible) {
             Button("残す") { Task { await save(completing: true) } }; Button("キャンセル", role: .cancel) {}
         } message: { Text("次の診察は空のメモから作れます。この控えは自分だけの記録として残ります。") }
@@ -336,6 +337,16 @@ private struct VeterinaryConsultationView: View {
             await save()
         }
     }
+    /// Closing saves first; it asks only when the memo could not be saved.
+    private func close() {
+        guard changes else { dismiss(); return }
+        autosaveTask?.cancel()
+        Task {
+            await save()
+            if changes { discarding = true } else { dismiss() }
+        }
+    }
+
     private func save(completing: Bool = false) async {
         guard var draft = visit, !busy, completing || changes,
               observations.count <= 500, questions.count <= 500 else { return }
@@ -406,7 +417,7 @@ private struct VeterinaryRecordPicker: View {
                 }
                 if let error { Text(error) }
             }
-            .navigationTitle("メモを選ぶ").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("写真・メモを選ぶ").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
             .task {
                 access.start(photos: photos)
@@ -454,11 +465,11 @@ private struct VeterinaryRecordConfirmation: View {
                     if let weight = source.note.weight { PhotoMemoWeightLabel(weight: weight.value) }
                     Toggle("この記録は\(visit.catName)のものです", isOn: $confirmed)
                         .accessibilityIdentifier("vet-confirm-target")
-                    if wrongCat { Text("体重の測定対象が別の猫です。元のメモで対象を確認してください。") }
+                    if wrongCat { Text("この体重は別の猫のものです。元のメモで猫を確かめてください。") }
                     Button(visit.entries.contains { $0.sourceNoteID == source.id } ? "選んだ記録を更新" : "診察メモに追加") { Task { await add() } }
                         .disabled(!confirmed || wrongCat || busy).accessibilityIdentifier("vet-add-confirmed")
                     if busy { ProgressView("写真の控えを準備しています…") }
-                } footer: { Text("選んだこの記録だけを追加します。まどへの共有や自動送信はしません。") }
+                } footer: { Text("選んだこの記録だけを追加します。まどに届けることはありません。") }
                 if let error { Text(error).accessibilityIdentifier("vet-add-error") }
             }
             .navigationTitle("内容を確認").navigationBarTitleDisplayMode(.inline)
@@ -572,16 +583,16 @@ private struct VeterinaryReadView: View {
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier("vet-reading")
-            .navigationTitle("診察で見せる").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button("PDFで書き出す", systemImage: "doc") { Task { await makeExport(pdf: true) } }
-                        Button("画像で書き出す", systemImage: "photo") { Task { await makeExport(pdf: false) } }
-                    } label: { Label("書き出す", systemImage: "square.and.arrow.up") }
-                    .accessibilityIdentifier("vet-export")
+            }
+            .safeAreaInset(edge: .bottom) {
+                ViewThatFits {
+                    HStack(spacing: 12) { exportButtons }
+                    VStack(spacing: 8) { exportButtons }
                 }
+                .padding().background(.regularMaterial)
             }
             .alert("書き出せませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("閉じる", role: .cancel) {}
@@ -594,6 +605,17 @@ private struct VeterinaryReadView: View {
                 VeterinaryActivitySheet(items: made.files)
             }
         }
+    }
+
+    @ViewBuilder private var exportButtons: some View {
+        Button { Task { await makeExport(pdf: false) } } label: {
+            Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-images")
+        Button { Task { await makeExport(pdf: true) } } label: {
+            Label("PDFで渡す", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-pdf")
     }
 
     /// One sheet for the reception desk: 「この子のこと」, what was noticed,

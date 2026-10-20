@@ -94,7 +94,7 @@ enum CareHandoffError: LocalizedError {
         switch self {
         case .unreadable: "お世話メモを開けません。元の記録は変更していません。"
         case .photoUnavailable: "写真を開けません。写真を選び直してください。"
-        case .tooLarge: "メモが長すぎます。内容を分けてください。"
+        case .tooLarge: "メモが長すぎます。長い欄を短くしてから、もう一度お試しください。"
         case .noSelection: "渡す猫を選んでください。"
         }
     }

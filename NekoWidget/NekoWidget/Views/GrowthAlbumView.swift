@@ -69,7 +69,7 @@ struct GrowthAlbumDetailView: View {
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
-        .alert("このまとめについて", isPresented: $showsAboutSelection) {
+        .alert("この比べ方について", isPresented: $showsAboutSelection) {
             Button("閉じる", role: .cancel) {}
         } message: {
             Text(aboutSelectionMessage)
@@ -88,7 +88,7 @@ struct GrowthAlbumDetailView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("アプリの「写真」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("アプリの「写真」・ウィジェット・「アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             if let identifier = pendingAssignmentIdentifier {
@@ -158,7 +158,7 @@ struct GrowthAlbumDetailView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel("このまとめについて")
+        .accessibilityLabel("この比べ方について")
     }
 
     @ViewBuilder
