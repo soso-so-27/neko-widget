@@ -7444,7 +7444,7 @@ final class PersonalRediscoveryUITests: XCTestCase {
         let history = app.buttons["photo-browser-rediscovery-history"]
         XCTAssertTrue(history.waitForExistence(timeout: 5))
         history.tap()
-        XCTAssertTrue(app.navigationBars["まどでめくった写真"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["ホーム画面に出た写真"].waitForExistence(timeout: 5))
     }
 
     @MainActor

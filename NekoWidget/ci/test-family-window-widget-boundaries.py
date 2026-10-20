@@ -1851,11 +1851,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
         app_root = source("NekoWidget/App/AppRootView.swift")
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         for section_title in (
-            "写真とねこ",
-            "ウィジェット",
+            "写真と猫",
+            "ホーム画面",
             "まど",
-            "プライバシーとサポート",
-            "アプリ",
+            "保存と引き継ぎ",
+            "困ったとき",
+            "このアプリ",
+            "テスト用",
         ):
             self.assertIn(f'Text("{section_title}")', settings)
         self.assertNotIn('Label("写真の検出", systemImage: "lock.iphone")', settings)
@@ -1868,8 +1870,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"settings-widget-placement-guide"', settings)
         self.assertIn('"settings-sharing-review"', settings)
         self.assertIn('FamilyWindowView(initialPresentation: .settings)', settings)
-        self.assertIn('Text("まどの設定")', settings)
-        self.assertIn('Image(systemName: "rectangle.split.2x2")', settings)
+        self.assertIn('Label("まどの設定", systemImage: "rectangle.split.2x2")', settings)
         self.assertIn('Text("接続と端末")', family)
         self.assertIn('"接続相手と、使っているiPhoneを確認します"', family)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
@@ -1891,9 +1892,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private var canReviewDetectionAccuracySample",
         )
         self.assertIn('Text("写真を見つけ直す")', photo_settings)
-        self.assertIn('"最初から再スキャン"', photo_settings)
-        self.assertNotIn('"最初から再スキャン"', diagnostics)
-        self.assertIn('Text("診断情報")', settings)
+        self.assertIn('"最初から探し直す"', photo_settings)
+        self.assertNotIn('"最初から探し直す"', diagnostics)
+        self.assertIn('Label("診断情報", systemImage: "wrench.and.screwdriver")', settings)
         self.assertIn('.navigationTitle("診断情報")', settings)
         self.assertIn('Label("未保存の変更があります",', diagnostics)
         self.assertIn('Text("検証データ")', diagnostics)
@@ -4974,6 +4975,25 @@ class GroupJoinOpensWindowTests(unittest.TestCase):
         # The list opens only a window this iPhone belongs to.
         window = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertIn("if model.windows.contains(where: { $0.id == requested }) {", window)
+
+
+class SettingsLayoutTests(unittest.TestCase):
+    def test_settings_put_daily_things_first_and_test_tools_last(self) -> None:
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
+        order = ["PlusSettingsSection()", 'Text("写真と猫")', 'Text("ホーム画面")', 'Text("まど")',
+                 'Text("保存と引き継ぎ")', 'Text("困ったとき")', 'Text("このアプリ")', 'Text("テスト用")']
+        positions = [body.index(item) for item in order]
+        self.assertEqual(positions, sorted(positions))
+        # Previews and diagnostics sit together in the test-only section.
+        cut = body.index("// Test builds only.")
+        for identifier in ("settings-membership-preview", "settings-window-support-preview",
+                           "settings-internal-diagnostics", "settings-billing-owner-enrollment"):
+            self.assertIn(identifier, body[cut:])
+            self.assertNotIn(identifier, body[:cut])
+        # Plain words.
+        for old in ("接続設定のみ", "画面プレビュー", "1枚ずつ非公開で共有", "ブロックした共有", "まどでめくった写真"):
+            self.assertNotIn(old, settings)
 
 
 if __name__ == "__main__":

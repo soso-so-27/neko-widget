@@ -148,8 +148,8 @@ struct PhotoAssetImageView: View {
                     } description: {
                         Text(
                             networkAccessAllowed
-                                ? "写真へのアクセスや通信を確認してください。"
-                                : "この計測では、端末内にある写真だけを使います。"
+                                ? "写真の許可と、iCloud写真の読み込みが終わっているかを確かめてください。"
+                                : "このiPhoneに保存されている写真だけを使います。"
                         )
                     } actions: {
                         Button {
