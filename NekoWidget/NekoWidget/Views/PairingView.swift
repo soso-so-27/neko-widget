@@ -674,7 +674,14 @@ struct PairingView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("pairing-own-window-limit")
             } else if membershipAccess.decision(for: .createOwnWindow) != .allowed {
-                MembershipAccessNotice(decision: membershipAccess.decision(for: .createOwnWindow))
+                // ADR-027 5章 "まどを作る": the one Plus screen, opened only
+                // when tapped (14-day trial through App Store). A status that
+                // cannot be confirmed still shows the restore notice.
+                PlusOfferPrompt(
+                    context: .createWindow,
+                    decision: membershipAccess.decision(for: .createOwnWindow),
+                    presentsImmediately: false
+                )
             } else {
             Button {
                 Task {

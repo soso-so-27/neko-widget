@@ -300,8 +300,9 @@ struct GroupWindowScreenCapabilities: Equatable, Sendable {
 struct GroupWindowMembersView: View {
     @ObservedObject var model: GroupWindowMembersModel
     var capabilities: GroupWindowScreenCapabilities = .full
-    /// Opens the Plus sheet (the same single subscription as every entry).
-    var onContinueWithPlus: (() -> Void)? = nil
+    /// Builds the model for the one Plus screen ("このまどを続ける"). Nil hides
+    /// the button and points to Settings instead.
+    var plusOfferModel: (@MainActor () -> MembershipOfferModel)? = { .live() }
     /// Starts creating this person's own window.
     var onCreateOwnWindow: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -311,6 +312,7 @@ struct GroupWindowMembersView: View {
     @State private var showsRemoval = false
     @State private var showsRevokeConfirmation = false
     @State private var showsLeaveConfirmation = false
+    @State private var showsPlusOffer = false
 
     var body: some View {
         Form {
@@ -358,6 +360,17 @@ struct GroupWindowMembersView: View {
             }
         }
         .refreshable { await model.load() }
+        .sheet(isPresented: $showsPlusOffer, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            Task { await model.load() }
+        }) {
+            if let plusOfferModel {
+                // ADR-027 5章 "このまどを続ける": the same single subscription.
+                MembershipOfferSheet(model: plusOfferModel(), context: .continueWindow) { _ in
+                    showsPlusOffer = false
+                }
+            }
+        }
         .confirmationDialog(
             approvalTarget.map { "「\($0.displayName)」を承認しますか？" } ?? "承認しますか？",
             isPresented: $showsApproval,
@@ -428,9 +441,9 @@ struct GroupWindowMembersView: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("group-window-paused")
             if GroupWindowPresentation.isMyWindow(window) {
-                if let onContinueWithPlus {
+                if plusOfferModel != nil {
                     Button {
-                        onContinueWithPlus()
+                        showsPlusOffer = true
                     } label: {
                         Text("このまどを続ける")
                             .font(.headline)
@@ -1202,7 +1215,7 @@ struct GroupWindowUIFixtureRoot: View {
         } else {
             GroupWindowMembersView(
                 model: membersModel,
-                onContinueWithPlus: {},
+                plusOfferModel: { .preview() },
                 onCreateOwnWindow: {}
             )
         }
