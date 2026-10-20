@@ -4526,5 +4526,20 @@ class GroupWidgetCacheTests(unittest.TestCase):
         self.assertNotIn("GroupWindowStorage.swift in Sources", widget_sources)
 
 
+class GroupInvitationAssociatedDomainTests(unittest.TestCase):
+    def test_only_the_app_claims_the_invitation_domain(self) -> None:
+        import plistlib
+        with (ROOT / "NekoWidget/NekoWidget.entitlements").open("rb") as handle:
+            app = plistlib.load(handle)
+        # applinks only, exactly the invitation domain (AASA limits it to /join).
+        self.assertEqual(app["com.apple.developer.associated-domains"], ["applinks:nekonomado.com"])
+        for extension in (
+            "NekoWidgetWidget/NekoWidgetWidget.entitlements",
+            "NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements",
+        ):
+            with (ROOT / extension).open("rb") as handle:
+                self.assertNotIn("com.apple.developer.associated-domains", plistlib.load(handle))
+
+
 if __name__ == "__main__":
     unittest.main()
