@@ -81,6 +81,8 @@ struct PersonalRediscoverySnapshot: Equatable, Sendable {
     var canTurn: Bool
     var remainingUnissuedCount: Int
     var retirableCandidateCount: Int
+    /// The photo kept on the Widget while membership selection is stopped.
+    var frozenPhotoID: String? = nil
 }
 
 private struct PersonalRediscoveryCycle: Codable {
@@ -131,6 +133,12 @@ private struct PersonalRediscoveryFile: Codable {
     var operations: [PersonalRediscoveryOperation] = []
     var nextAvailableAt: Date? = nil
     var updatedAt: Date
+    /// The photo shown when membership selection stopped. It stays on the
+    /// Widget after the pool rotates it out or the scope no longer includes
+    /// it, and is cleared when selection resumes, when the source photo is
+    /// reported gone, or when photo authority is lost. Absent in older files.
+    var frozenItem: WidgetManifestItem? = nil
+    var frozenAt: Date? = nil
 }
 
 /// The app, Widget provider and intents share this single commit boundary.
@@ -155,6 +163,10 @@ struct PersonalRediscoveryStore: Sendable {
     private static let historyDuration: TimeInterval = 48 * 60 * 60
     private static let operationDuration: TimeInterval = 7 * 24 * 60 * 60
     private static let leaseDuration: TimeInterval = 12 * 60 * 60
+    /// A stopped Widget shows one fixed photo; the app reloads timelines when
+    /// membership changes, so frequent provider reloads buy nothing.
+    static let pausedReloadInterval: TimeInterval = 6 * 60 * 60
+    private static let frozenSlotID = "membership-frozen"
     private let containerURL: URL?
 
     private static var defaultContainerURL: URL? {
@@ -216,7 +228,7 @@ struct PersonalRediscoveryStore: Sendable {
             for index in state.issues.indices where !allowed.contains(state.issues[index].photoID) {
                 state.issues[index].invalidated = true
             }
-            if !isAuthorized { state.plan = nil }
+            if !isAuthorized { state.plan = nil; clearFrozen(&state) }
             prune(&state, now: now)
             if isAuthorized && state.candidates.isEmpty {
                 var protected = pinnedFiles(state, now: now)
@@ -263,15 +275,27 @@ struct PersonalRediscoveryStore: Sendable {
 
     /// Background PhotoKit reconciliation may remove inaccessible IDs, but can
     /// never widen foreground authority or override a newer foreground revision.
+    /// `frozenPhotoAccessible` is PhotoKit's answer for the frozen photo alone
+    /// (it may sit outside the eligible set); `false` drops the frozen photo
+    /// because its source is gone. `nil` leaves it untouched.
     @discardableResult
     func restrictEligibility(
-        to photoIDs: Set<String>, expectedRevision: String, now: Date = .now
+        to photoIDs: Set<String>, expectedRevision: String, now: Date = .now,
+        frozenPhotoAccessible: Bool? = nil
     ) throws -> String {
         try locked {
             guard var state = try read(), state.isAuthorized,
                   state.eligibilityRevision == expectedRevision else { throw Error.staleRevision }
+            let frozenDropped = frozenPhotoAccessible == false && state.frozenItem != nil
+            if frozenDropped { clearFrozen(&state) }
             let allowed = state.eligiblePhotoIDs.intersection(photoIDs)
-            guard allowed != state.eligiblePhotoIDs else { return state.eligibilityRevision }
+            guard allowed != state.eligiblePhotoIDs else {
+                if frozenDropped {
+                    state.updatedAt = now
+                    try write(state)
+                }
+                return state.eligibilityRevision
+            }
             state.eligibilityRevision = UUID().uuidString
             state.eligiblePhotoIDs = allowed
             state.modificationDates = state.modificationDates.filter { allowed.contains($0.key) }
@@ -447,18 +471,45 @@ struct PersonalRediscoveryStore: Sendable {
             let canSelect = allowsSelection && (selectionValidUntil.map {
                 $0.timeIntervalSinceReferenceDate.isFinite && now < $0
             } ?? true)
+            let idleReload = now.addingTimeInterval(canSelect ? 20 * 60 : Self.pausedReloadInterval)
             guard state.isAuthorized else {
-                return PersonalRediscoveryTimeline(entries: [], reloadDate: now.addingTimeInterval(20 * 60))
+                return PersonalRediscoveryTimeline(entries: [], reloadDate: idleReload)
+            }
+            var frozenChanged = false
+            if canSelect, state.frozenItem != nil {
+                // Selection resumed (Plus): the plan chooses again from today.
+                clearFrozen(&state)
+                frozenChanged = true
             }
             // Never resolve the current calendar slot while paused: doing so
             // would select an unseen photo each day despite the membership gate.
-            let selected = canSelect
-                ? resolve(&state, date: now, now: now, timeZone: timeZone)
-                : lastIssuedEntry(state, now: now, before: selectionValidUntil.flatMap {
-                    $0.timeIntervalSinceReferenceDate.isFinite ? $0 : nil
-                })
+            let selected: PersonalRediscoveryEntry?
+            if canSelect {
+                selected = resolve(&state, date: now, now: now, timeZone: timeZone)
+            } else if let frozen = state.frozenItem {
+                // The photo shown when selection stopped stays, even after the
+                // pool rotated it out or the scope no longer includes it.
+                selected = PersonalRediscoveryEntry(
+                    date: state.frozenAt ?? now, item: frozen, slotID: Self.frozenSlotID,
+                    scopeRevision: state.eligibilityRevision, action: .unavailable)
+            } else if let last = lastIssuedEntry(state, now: now, before: selectionValidUntil.flatMap({
+                $0.timeIntervalSinceReferenceDate.isFinite ? $0 : nil
+            })) {
+                // First paused timeline: journal this photo so later pool
+                // changes and cache cleanup cannot blank the Widget.
+                state.frozenItem = last.item
+                state.frozenAt = now
+                frozenChanged = true
+                selected = last
+            } else {
+                selected = nil
+            }
             guard var first = selected else {
-                return PersonalRediscoveryTimeline(entries: [], reloadDate: now.addingTimeInterval(20 * 60))
+                if frozenChanged {
+                    state.updatedAt = now
+                    try write(state)
+                }
+                return PersonalRediscoveryTimeline(entries: [], reloadDate: idleReload)
             }
             let firstScheduledAt = first.date
             first.date = now
@@ -515,7 +566,7 @@ struct PersonalRediscoveryStore: Sendable {
             try write(state) // A failed lease/journal commit must not issue the entries.
             var reload = canSelect
                 ? min(nextBoundary(state, now: boundary), Self.nextMidnight(boundary, timeZone: timeZone))
-                : now.addingTimeInterval(20 * 60)
+                : now.addingTimeInterval(Self.pausedReloadInterval)
             if let cutoff = selectionValidUntil, now < cutoff {
                 reload = min(reload, min(cutoff, boundary))
             }
@@ -840,7 +891,8 @@ struct PersonalRediscoveryStore: Sendable {
             remainingUnissuedCount: state.candidates.filter { !used.contains($0.item.localIdentifier) }.count,
             retirableCandidateCount: state.candidates.filter {
                 used.contains($0.item.localIdentifier) && pinned.isDisjoint(with: $0.item.allCacheFilenames)
-            }.count
+            }.count,
+            frozenPhotoID: state.frozenItem?.localIdentifier
         )
     }
 
@@ -919,7 +971,17 @@ struct PersonalRediscoveryStore: Sendable {
                 result.formUnion(grant.previousItem.allCacheFilenames)
             }
         }
+        // The frozen photo's three renditions survive every cleanup
+        // (publish, prune, compatibility manifest) until the freeze ends.
+        if let frozen = state.frozenItem {
+            result.formUnion(frozen.allCacheFilenames)
+        }
         return result
+    }
+
+    private func clearFrozen(_ state: inout PersonalRediscoveryFile) {
+        state.frozenItem = nil
+        state.frozenAt = nil
     }
 
     private func protectedFiles(_ state: PersonalRediscoveryFile, now: Date) -> Set<String> {
@@ -1029,6 +1091,7 @@ struct PersonalRediscoveryStore: Sendable {
               state.candidates.count <= Self.maximumCandidateCount,
               Set(state.candidates.map { $0.item.localIdentifier }).count == state.candidates.count,
               state.candidates.allSatisfy({ validItem($0.item) }),
+              state.frozenItem.map({ validItem($0) }) ?? true,
               state.issues.count <= 3_002,
               Set(state.grants.map(\.id)).count == state.grants.count,
               state.operations.count <= 10_000,

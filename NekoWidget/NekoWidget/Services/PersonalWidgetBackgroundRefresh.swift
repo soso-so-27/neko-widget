@@ -64,9 +64,17 @@ enum PersonalWidgetBackgroundRefresh {
                 let known = Dictionary(uniqueKeysWithValues: eligibleRecords.map { ($0.localIdentifier, $0) })
                 // Resolve only known analyzed IDs, never enumerate/analyze the
                 // full library or start an iCloud photo download in background.
-                let assets = PHAsset.fetchAssets(withLocalIdentifiers: Array(state.eligiblePhotoIDs), options: nil)
+                // The frozen photo (shown while membership selection is stopped)
+                // may sit outside the eligible set; only its existence matters.
+                var checkedIDs = state.eligiblePhotoIDs
+                if let frozenPhotoID = state.frozenPhotoID { checkedIDs.insert(frozenPhotoID) }
+                let assets = PHAsset.fetchAssets(withLocalIdentifiers: Array(checkedIDs), options: nil)
                 var accessible = Set<String>()
+                var frozenPresent = false
                 assets.enumerateObjects { asset, _, _ in
+                    if asset.localIdentifier == state.frozenPhotoID, asset.mediaType == .image {
+                        frozenPresent = true
+                    }
                     guard let record = known[asset.localIdentifier], asset.mediaType == .image else { return }
                     let modified = asset.modificationDate.map {
                         Date(timeIntervalSince1970: floor($0.timeIntervalSince1970))
@@ -74,9 +82,13 @@ enum PersonalWidgetBackgroundRefresh {
                     guard record.sourceModificationDate == modified else { return }
                     accessible.insert(asset.localIdentifier)
                 }
+                let frozenAccessible: Bool? = state.frozenPhotoID == nil ? nil : frozenPresent
                 let revision = try PersonalRediscoveryStore.shared.restrictEligibility(
-                    to: accessible, expectedRevision: state.eligibilityRevision, now: .now)
-                if revision != state.eligibilityRevision { WidgetCenter.shared.reloadAllTimelines() }
+                    to: accessible, expectedRevision: state.eligibilityRevision, now: .now,
+                    frozenPhotoAccessible: frozenAccessible)
+                if revision != state.eligibilityRevision || frozenAccessible == false {
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
                 input.assets.removeAll { !accessible.contains($0.localIdentifier) }
                 try Task.checkCancellation()
                 let result = try await builder.replenishPersonal(from: input, eligibilityRevision: revision)

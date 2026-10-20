@@ -271,6 +271,10 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     /// The shared plan chooses the photo before testing a size's cache. A
     /// missing rendition stays empty at that slot instead of showing the next
     /// photo, and the store secures its lease before returning these entries.
+    /// While membership selection is stopped the store returns its frozen
+    /// photo (kept across pool changes and cache cleanup) with a long reload,
+    /// so `.needsApp` below is reached only without a journal, with a
+    /// corrupted journal, or when that photo's rendition is unreadable.
     private func personalRediscoveryTimeline(now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         do {
             let enforced = PersonalWidgetMembershipStore.isEnforced
@@ -309,6 +313,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     familyHeartStatus: .hidden, familyActionsRequireApp: false,
                     emptyStateReason: .none)
                 entry.personalRediscoveryAction = planned.action
+                // Informational only: the view shows the photo alone while
+                // paused (no pause, lock or grey treatment).
                 entry.personalSelectionPaused = enforced && (!allowsSelection
                     || cutoff.map { planned.date >= $0 } == true)
                 return entry
