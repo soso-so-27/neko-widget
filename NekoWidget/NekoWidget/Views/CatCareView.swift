@@ -492,6 +492,7 @@ struct CatCareListEntrySheet: View {
     @State private var food = ""
     @State private var amount = ""
     @State private var proofItem: PhotosPickerItem?
+    @State private var showsCamera = false
     @State private var proof: CatCarePhotoRef?
     @State private var message: String?
 
@@ -512,6 +513,12 @@ struct CatCareListEntrySheet: View {
                     PhotosPicker(selection: $proofItem, matching: .images) {
                         Label(proof == nil ? "証明の写真を写真から選ぶ" : "証明の写真を選び直す", systemImage: "photo")
                     }
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        Button { showsCamera = true } label: {
+                            Label(proof == nil ? "証明をカメラで撮る" : "カメラで撮り直す", systemImage: "camera")
+                        }
+                        .accessibilityIdentifier("cat-care-proof-camera")
+                    }
                     if proof != nil {
                         Label("証明の写真を付けました", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     }
@@ -529,6 +536,19 @@ struct CatCareListEntrySheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("追加") { save() } }
+            }
+            .fullScreenCover(isPresented: $showsCamera) {
+                CatCareCameraView { image in
+                    showsCamera = false
+                    guard let image else { return }
+                    // Re-encoding drops metadata. The shot stays in this app, not in Photos.
+                    if let data = image.jpegData(compressionQuality: 0.95), let jpeg = CatCareFormat.cleanJPEG(data) {
+                        proof = store.savePhoto(jpeg, sourceAssetID: nil, origin: .camera)
+                    } else {
+                        message = "写真を保存できませんでした。"
+                    }
+                }
+                .ignoresSafeArea()
             }
             .onChange(of: proofItem) { _, item in
                 guard let item else { return }
@@ -563,6 +583,35 @@ struct CatCareListEntrySheet: View {
             onSave(.meal(time: name, food: food, amount: amount))
         }
         dismiss()
+    }
+}
+
+/// The system camera. Nothing is written to the Photos library.
+private struct CatCareCameraView: UIViewControllerRepresentable {
+    let done: (UIImage?) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(done: done) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let done: (UIImage?) -> Void
+        init(done: @escaping (UIImage?) -> Void) { self.done = done }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            done(info[.originalImage] as? UIImage)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { done(nil) }
     }
 }
 

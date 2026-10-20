@@ -4733,5 +4733,19 @@ class CatCareMemoWeightTests(unittest.TestCase):
         self.assertIn("try memoWeights()", source("ci/verify-cat-care.swift"))
 
 
+class CatCareProofCameraTests(unittest.TestCase):
+    def test_vaccination_proof_from_camera_stays_in_the_app(self) -> None:
+        view = source("NekoWidget/Views/CatCareView.swift")
+        plist = source("NekoWidget/Info.plist")
+        self.assertIn("<key>NSCameraUsageDescription</key>", plist)
+        self.assertIn("写真アプリには追加しません", plist)
+        camera = section(view, "private struct CatCareCameraView", "// MARK: - Formatting")
+        self.assertIn("picker.sourceType = .camera", camera)
+        for forbidden in ("UIImageWriteToSavedPhotosAlbum", "PHPhotoLibrary", "PHAssetChangeRequest"):
+            self.assertNotIn(forbidden, view)
+        self.assertIn('origin: .camera', view)
+        self.assertIn("UIImagePickerController.isSourceTypeAvailable(.camera)", view)
+
+
 if __name__ == "__main__":
     unittest.main()
