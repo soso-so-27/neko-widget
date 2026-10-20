@@ -16,8 +16,8 @@ enum MembershipOperation: String, CaseIterable, Sendable {
     case openGrowingSummary
     case refreshPersonalWidget
     case createPersonalMemo
-    /// 自分のまどを作る（`maximumOwnWindowCount` まで）。会員。14日間の体験中は
-    /// `verified(体験終了)` で開く（ADR-027 改訂：1つ目も体験後はPlus）。
+    /// 自分のまどを作る（`maximumOwnWindowCount` まで）。購読中（App Store の
+    /// お試し中を含む `verified`）だけ。購読なしでは1つ目から作れない（ADR-027）。
     case createOwnWindow
     /// 作った人として、自分のまどへ届ける。会員。まどは作った人のPlusで続く。
     case addContentToOwnWindow
@@ -67,7 +67,7 @@ enum MembershipWindowState: Equatable, Sendable {
 /// was accepted before choosing the corresponding operation. This policy neither
 /// accepts a delivery nor permits an unaccepted attempt to be labeled a retry.
 enum MembershipAccessPolicy {
-    /// 自分で作れるまどの数（ADR-027）。作るのは会員（体験中は無料）で5つまで。
+    /// 自分で作れるまどの数（ADR-027）。作るのは購読中（お試し中を含む）で5つまで。
     /// 招待で入ったまどは数えない。まどの合計上限は
     /// `PrivateWindowCatalogState.maximumProductWindowCount`。
     static let maximumOwnWindowCount = 5

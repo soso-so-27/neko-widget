@@ -168,13 +168,13 @@ private struct MembershipAccessVerifier {
                 )
             }
         }
-        // まどを作る・作ったまどへ届けるのは作った人のPlus（体験中は verified）。
-        // まどの状態では開かず、体験後（inactive）は会員要。
+        // まどを作る・作ったまどへ届けるのは作った人の購読（お試し中を含む
+        // verified）。まどの状態では開かず、購読なし（inactive）は会員要。
         for (label, window) in windowStates {
             for operation in [MembershipOperation.createOwnWindow, .addContentToOwnWindow] {
                 require(
                     decision(operation, personal: .verified(validUntil: future), window: window) == .allowed,
-                    "\(operation.rawValue) blocked during a valid trial/membership: \(label)"
+                    "\(operation.rawValue) blocked during a verified subscription: \(label)"
                 )
                 require(
                     decision(operation, personal: .inactive, window: window) == .membershipRequired,
@@ -183,7 +183,7 @@ private struct MembershipAccessVerifier {
             }
         }
 
-        // 月のまとめ・季節のムービーを開くのは「育つもの」。体験中（verified）だけ開く。
+        // 月のまとめ・季節のムービーを開くのは「育つもの」。購読中（verified）だけ開く。
         require(
             decision(.openGrowingSummary, personal: .verified(validUntil: future)) == .allowed,
             "A verified member could not open a growing summary"

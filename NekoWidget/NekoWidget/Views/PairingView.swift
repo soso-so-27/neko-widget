@@ -667,8 +667,8 @@ struct PairingView: View {
 
     private var createSection: some View {
         Section {
-            // まどを作るのは会員（14日間の体験中は無料）。自分のまどは5つまで
-            // （ADR-027）。招待で入ったまどは数えない。
+            // まどを作るのは購読中（App Store のお試し中を含む）。自分のまどは
+            // 5つまで（ADR-027）。招待で入ったまどは数えない。
             if model.ownWindowLimitReached {
                 Text("自分で作るまどは\(MembershipAccessPolicy.maximumOwnWindowCount)個までです。")
                     .font(.footnote).foregroundStyle(.secondary)
