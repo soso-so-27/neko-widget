@@ -4198,5 +4198,80 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('accessibilityIdentifier("pairing-build-identity")', build)
 
 
+class GroupWindowUITests(unittest.TestCase):
+    def test_group_window_screens_stay_behind_the_client_boundary(self) -> None:
+        view = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        # No network, storage, or key material in the screens themselves.
+        for forbidden in (
+            "URLSession", "Keychain", "UserDefaults", "import CryptoKit",
+            "SymmetricKey", "roomKey", "HPKE", "print(", "SharedLog",
+        ):
+            self.assertNotIn(forbidden, view)
+        self.assertEqual(view.count("import SwiftUI"), 1)
+
+        # Every mutation is compare-and-set against the revision on screen,
+        # and a retry resends the same operation ID instead of a new one.
+        perform = section(view, "private func perform(", "struct GroupWindowMembersView: View")
+        self.assertIn("expectedRevision: window.revision", perform)
+        self.assertIn("id: retainedOperations[key]?.id ?? UUID()", perform)
+        self.assertIn("case .offline:", perform)
+        self.assertIn("case .staleRevision:", perform)
+        stale = section(perform, "case .staleRevision:", "default:")
+        self.assertIn("await load()", stale)
+        self.assertNotIn("retainedOperations[key] = nil", stale)
+
+        # The invitation link travels only through the share sheet; it is
+        # never drawn on screen or logged.
+        invitation = section(view, "private func invitationSection(", "private func leaveSection(")
+        self.assertIn("item: invitation.shareText", invitation)
+        self.assertEqual(view.count("shareText"), 1)
+
+        # Approval asks for the verification phrase; nothing approves alone.
+        self.assertIn("\\(request.verificationPhrase)", view)
+        self.assertIn('Button("承認する") { Task { await model.approve(request) } }', view)
+        self.assertNotIn("autoApprove", view)
+
+        # Waiting states refresh by themselves (M2); no manual check button.
+        self.assertEqual(view.count(".task(id: model.shouldAutoRefresh)"), 1)
+        self.assertEqual(view.count(".task(id: model.isPending)"), 1)
+        for removed in ("相手が参加したか確認", "承認されたか確認"):
+            self.assertNotIn(removed, view)
+
+        # Limits are people, iPhones and windows, never a paid lever.
+        presentation = section(view, "enum GroupWindowPresentation {", "// MARK: - Members and invitation")
+        self.assertIn("static let memberLimit = 6", presentation)
+        self.assertIn("static let deviceLimitPerPerson = 3", presentation)
+        self.assertIn("static let totalWindowLimit = 10", presentation)
+        for expected in (
+            "このまどは\\(memberLimit)人までです。",
+            "1人が使えるiPhoneは\\(deviceLimitPerPerson)台までです。",
+            "まどは合計\\(totalWindowLimit)までです。使っていないまどを整理してください。",
+            "鍵を更新するため、作った人の接続を待っています。",
+            "招待の期限が切れました。新しい招待を受け取ってください。",
+            "接続できません。申し込みは残っています。",
+            "作った人は退出できません。",
+        ):
+            self.assertIn(expected, presentation)
+        for forbidden in ("Plus", "会員", "980", "購入", "課金"):
+            self.assertNotIn(forbidden, presentation)
+
+        # A failed refresh keeps the last known members and requests.
+        load = section(view, "func load() async {", "func createInvitation() async {")
+        self.assertNotIn("window = nil", load)
+        self.assertNotIn("pendingRequests = []", load)
+
+        # The fixture is DEBUG-only and reached by a launch argument.
+        debug = section(view, "// MARK: - DEBUG fixture entry", "#endif")
+        self.assertIn("#if DEBUG", debug)
+        self.assertEqual(view.count("GroupWindowFixture("), debug.count("GroupWindowFixture("))
+        self.assertIn('"--group-window-ui-fixture"', debug)
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        self.assertIn("} else if GroupWindowUIFixture.isRequested {", family)
+        self.assertIn("GroupWindowUIFixtureRoot()", family)
+        self.assertEqual(family.count("GroupWindowUIFixture"), 2)
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        self.assertIn("GroupWindowSetupView.swift in Sources", project)
+
+
 if __name__ == "__main__":
     unittest.main()
