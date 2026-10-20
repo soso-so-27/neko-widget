@@ -98,6 +98,11 @@ final class GroupWindowScreenModel: ObservableObject {
         return hearts[photoID]?.contains { $0.participantID == me && $0.active } ?? false
     }
 
+    /// Photos already kept on this iPhone appear at once, before the relay answers.
+    func showStored() async {
+        if entries.isEmpty { entries = await store.entries(windowID: windowID) }
+    }
+
     /// Reads the window, keeps every new photo on this iPhone, then tells the
     /// relay it arrived. A failed step keeps what is already shown.
     func sync() async {
@@ -112,6 +117,8 @@ final class GroupWindowScreenModel: ObservableObject {
             for photo in photos {
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
                 await receive(photo, me: latest.myParticipantID)
+                // Each photo shows as soon as it is kept, not after all of them.
+                entries = await store.entries(windowID: windowID)
             }
             message = nil
         } catch {
@@ -269,7 +276,19 @@ struct GroupWindowScreen: View {
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-screen-message")
                 }
-                if model.entries.isEmpty {
+                if model.isSyncing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(model.entries.isEmpty ? "写真を読み込んでいます…" : "新しい写真を確かめています…")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("group-window-syncing")
+                }
+                if model.entries.isEmpty && model.isSyncing {
+                    Color.clear.frame(height: 120)
+                } else if model.entries.isEmpty {
                     ContentUnavailableView(
                         "まだ写真はありません",
                         systemImage: "photo.on.rectangle",
@@ -304,7 +323,10 @@ struct GroupWindowScreen: View {
             }
         }
         .safeAreaInset(edge: .bottom) { sendBar }
-        .task { await model.sync() }
+        .task {
+            await model.showStored()
+            await model.sync()
+        }
         .refreshable { await model.sync() }
         .onChange(of: pickedItem) { _, item in
             guard let item else { return }
@@ -559,11 +581,13 @@ final class GroupWindowListModel: ObservableObject {
     @Published private(set) var windows: [GroupWindow] = []
     @Published private(set) var message: String?
     @Published private(set) var isWorking = false
+    @Published private(set) var hasLoaded = false
     let client: ProductionGroupWindowClient
 
     init(client: ProductionGroupWindowClient) { self.client = client }
 
     func load() async {
+        defer { hasLoaded = true }
         do {
             windows = try await client.windows()
             message = nil
@@ -683,6 +707,23 @@ struct GroupWindowListSection: View {
                 }
                 .buttonStyle(.plain)
             }
+            if !model.hasLoaded && model.windows.isEmpty {
+                // Names kept on this iPhone from the last visit, so the list is not empty while it loads.
+                ForEach(GroupWidgetCache.entries(), id: \.windowID) { known in
+                    NavigationLink {
+                        GroupWindowScreen(client: model.client, windowID: known.windowID)
+                    } label: {
+                        knownRow(known.windowName)
+                    }
+                    .buttonStyle(.plain)
+                }
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("まどを読み込んでいます…").font(.footnote).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("group-window-list-loading")
+            }
             if let message = model.message {
                 Text(message).font(.footnote).foregroundStyle(.orange)
             }
@@ -698,6 +739,20 @@ struct GroupWindowListSection: View {
         }
         .task { await model.load() }
         .accessibilityIdentifier("group-window-list")
+    }
+
+    private func knownRow(_ name: String) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.body.weight(.semibold))
+                Text("読み込み中").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .frame(minHeight: 44)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func row(_ window: GroupWindow) -> some View {

@@ -4908,5 +4908,18 @@ class GroupSendConfirmTests(unittest.TestCase):
         self.assertIn("if GroupWindowClientProvider.production == nil {", pairing)
 
 
+class GroupWindowSpeedTests(unittest.TestCase):
+    def test_kept_photos_and_known_windows_show_before_the_relay_answers(self) -> None:
+        screen = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("await model.showStored()\n            await model.sync()", screen)
+        sync = section(screen, "func sync() async {", "private func updateHomeScreenPhoto()")
+        loop = section(sync, "for photo in photos {", "message = nil")
+        self.assertIn("entries = await store.entries(windowID: windowID)", loop)
+        self.assertIn('"group-window-syncing"', screen)
+        listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
+        self.assertIn("GroupWidgetCache.entries()", listing)
+        self.assertIn("!model.hasLoaded && model.windows.isEmpty", listing)
+
+
 if __name__ == "__main__":
     unittest.main()
