@@ -4347,5 +4347,41 @@ class GroupInvitationLinkTests(unittest.TestCase):
         self.assertIn("GroupInvitationLink.swift in Sources", project)
 
 
+class ReceivedPhotoPagingTests(unittest.TestCase):
+    def test_received_photos_page_in_list_order_without_representing_the_viewer(self) -> None:
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        detail = section(
+            family,
+            "private func receivedPhotoDetail(_ momentID: String) -> some View",
+            "private func receivedPhotoPages(",
+        )
+        self.assertIn("receivedPhotoPages(momentID)", detail)
+        self.assertIn('"photo-detail-close"', detail)
+        self.assertIn(".preferredColorScheme(.dark)", detail)
+
+        pager = section(family, "private func receivedPhotoPages(", "private func receivedPageSelection(")
+        # Same order as the list; a Widget-opened photo stays single.
+        self.assertIn("widgetPhotoRequest == nil ? orderedReceivedMoments : []", pager)
+        self.assertIn(".tabViewStyle(.page(indexDisplayMode: .never))", pager)
+        self.assertIn("receivedPhotoDetailPage(item.id)", pager)
+        self.assertIn(".tag(item.id)", pager)
+        # A deleted or expired page closes the viewer rather than swapping photos.
+        self.assertIn("selectedMomentForDetail = nil", pager)
+        self.assertNotIn("selectedSharedPhoto = .received", pager)
+
+        # Paging keeps its own state so the cover is never re-presented.
+        selection = section(family, "private func receivedPageSelection(", "private func receivedPhotoDetailPage(")
+        self.assertIn("pagedReceivedMomentID ?? momentID", selection)
+        self.assertIn("set: { pagedReceivedMomentID = $0 }", selection)
+        self.assertNotIn("selectedMomentForDetail", selection)
+        cover = section(family, "item: $selectedSharedPhoto,", "case let .sent(record):")
+        self.assertIn("pagedReceivedMomentID = nil", cover)
+
+        page = section(family, "private func receivedPhotoDetailPage(", "private var pairedContent: some View")
+        self.assertIn("receivedPhotoActionControls(item)", page)
+        self.assertIn('.id("\\(model.pairingState?.spaceID ?? "")-\\(item.id)")', page)
+        self.assertNotIn("NavigationStack", page)
+
+
 if __name__ == "__main__":
     unittest.main()
