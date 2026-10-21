@@ -76,10 +76,13 @@ struct VeterinaryVisitsView: View {
                     guard let id = UUID(uuidString: profile.identifier) else { return }
                     Task { await open(PhotoMemoryNoteCat(id: id, name: profile.displayName)) }
                 }) {
-                    Section("まだ登録していない猫") {
-                        ForEach(cats.filter { cat in !profiles.contains { $0.identifier == cat.id.uuidString } }, id: \.id) { cat in
-                            Button(cat.name) { Task { await open(cat) } }
-                                .accessibilityIdentifier("vet-cat-\(cat.id.uuidString)")
+                    let guests = cats.filter { cat in !profiles.contains { $0.identifier == cat.id.uuidString } }
+                    if !guests.isEmpty {
+                        Section("まだ登録していない猫") {
+                            ForEach(guests, id: \.id) { cat in
+                                Button(cat.name) { Task { await open(cat) } }
+                                    .accessibilityIdentifier("vet-cat-\(cat.id.uuidString)")
+                            }
                         }
                     }
                 }
