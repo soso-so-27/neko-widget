@@ -308,8 +308,10 @@ private struct EvacuationCatsView: View {
     var body: some View {
         List {
             ToolCatPicker(profiles: profiles, select: selectProfile) {
+                let guests = store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }
+                if !guests.isEmpty || !availableSavedCats.isEmpty {
                 Section("まだ登録していない猫") {
-                    ForEach(store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }) { cat in
+                    ForEach(guests) { cat in
                         NavigationLink { destination(cat.id) } label: { Label(cat.displayName, systemImage: "cat") }
                             .accessibilityIdentifier("evacuation-cat-\(cat.id.uuidString)")
                         ToolPromoteCatButton(name: cat.name) { profileID in
@@ -323,6 +325,7 @@ private struct EvacuationCatsView: View {
                             }
                         }
                     }
+                }
                 }
             }
         }
