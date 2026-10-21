@@ -252,9 +252,12 @@ struct AlbumView: View {
                     }.padding(.top, 8)
                 } label: {
                     // Identifying the entire group overrides its child links' IDs.
+                    // Black like the rows around it: it opens more, it is not an action.
                     Text("ほかのテーマ")
+                        .foregroundStyle(.primary)
                         .accessibilityIdentifier("albums-other-themes")
                 }
+                .tint(.secondary)
             }
         }
     }

@@ -192,7 +192,9 @@ struct SettingsView: View {
             }
 
             Section {
-                Button(action: showWidgetPlacementGuide) {
+                NavigationLink {
+                    WidgetPlacementGuidePage()
+                } label: {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
@@ -284,39 +286,28 @@ struct SettingsView: View {
             Section {
                 if let url = AppPublicLinksConfiguration.current.supportURL {
                     Link(destination: url) {
-                        Label("サポート・問い合わせ", systemImage: "questionmark.circle")
+                        ExternalLinkRow("サポート・問い合わせ", systemImage: "questionmark.circle")
                     }
                     .accessibilityIdentifier("settings-support-page")
                 }
                 if let url = AppPublicLinksConfiguration.current.privacyURL {
                     Link(destination: url) {
-                        Label("プライバシーポリシー", systemImage: "hand.raised.fill")
+                        ExternalLinkRow("プライバシーポリシー", systemImage: "doc.text")
                     }
                     .accessibilityIdentifier("settings-privacy-policy")
                 }
                 if SharingAPIConfiguration.current.isReviewVisible,
                    let url = SharingAPIConfiguration.current.communityStandardsURL {
                     Link(destination: url) {
-                        Label("コミュニティ基準", systemImage: "checkmark.shield")
+                        ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")
                     }
                 }
             } header: {
                 Text("困ったとき")
-            }
-
-            Section {
-                LabeledContent {
-                    Text("iOS 17.1以上")
-                } label: {
-                    Label("対応OS", systemImage: "iphone")
-                }
-                LabeledContent {
-                    Text(appVersion)
-                } label: {
-                    Label("バージョン", systemImage: "info.circle")
-                }
-            } header: {
-                Text("このアプリ")
+            } footer: {
+                // Read-only facts live in the footer, not in a row that looks tappable.
+                Text("ねこのまど バージョン \(appVersion)・iOS 17.1以上")
+                    .accessibilityIdentifier("settings-app-version")
             }
 
             // Test builds only. Public builds show none of this (InternalBuildPresentationAvailability).
@@ -441,20 +432,21 @@ struct SettingsView: View {
         Form {
             Section {
                 if hasPhotoAccess {
-                    LabeledContent(
-                        "写真へのアクセス",
-                        value: isLimitedAccess ? "選択した写真" : "許可済み"
-                    )
-
                     if isLimitedAccess {
-                        Button("写真を追加・変更", action: chooseMorePhotos)
+                        SettingsActionRow("写真を追加・変更", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                    } else {
+                        EmptyView()
                     }
                 } else {
-                    Button("写真へのアクセスを許可", action: requestPhotoAccess)
+                    SettingsActionRow("写真へのアクセスを許可", systemImage: "photo", action: requestPhotoAccess)
                         .accessibilityIdentifier("settings-photo-permission")
                 }
             } header: {
                 Text("アクセス")
+            } footer: {
+                Text(hasPhotoAccess
+                     ? (isLimitedAccess ? "選んだ写真だけを使っています。" : "すべての写真を使えます。")
+                     : "写真へのアクセスがまだありません。")
             }
 
             Section {
@@ -520,58 +512,20 @@ struct SettingsView: View {
                 Text("変更は自動で保存します。候補から外しても、写真アプリの写真は消えません。")
             }
 
-            if catProfilesPresentation.profiles.isEmpty {
-                Section {
-                    Picker("年齢の基準", selection: lifeReferenceKind) {
-                        Text("設定しない").tag(nil as CatLifeReferenceKind?)
-                        ForEach(CatLifeReferenceKind.allCases) { kind in
-                            Text(lifeReferenceKindTitle(kind)).tag(Optional(kind))
-                        }
-                    }
-
-                    if let kind = draft.catLifeReference?.kind {
-                        DatePicker(
-                            lifeReferenceKindTitle(kind),
-                            selection: lifeReferenceDate,
-                            in: ...Date.now,
-                            displayedComponents: .date
-                        )
-
-                        Button("日付を削除", role: .destructive) {
-                            draft.catLifeReference = nil
-                        }
-                    }
-
-                    if isSavingLifeReference {
-                        Text("保存中…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("年齢ごとのアルバム")
-                } footer: {
-                    Text("誕生日を入れると、「子猫のころ」のように年齢ごとに写真を分けます。日付はこのiPhoneの中だけで使います。")
-                }
-            }
-
             Section {
-                Button {
+                SettingsActionRow(isRescanning || isScanning ? "探しています…" : "最初から探し直す",
+                                  systemImage: "arrow.clockwise") {
                     Task {
                         isRescanning = true
                         await rescan()
                         isRescanning = false
                     }
-                } label: {
-                    Label(
-                        isRescanning || isScanning ? "探しています…" : "最初から探し直す",
-                        systemImage: "arrow.clockwise"
-                    )
                 }
                 .disabled(isRescanning || isScanning || !hasPhotoAccess)
             } header: {
                 Text("写真を見つけ直す")
             } footer: {
-                Text("写真が増えたときや、見つけ方を作り直したいときに使います。")
+                Text("写真が増えたときや、見つけ方を作り直したいときに使います。年齢ごとのアルバムは、猫のプロフィールの誕生日から作ります。")
             }
 
             if isSaving {
@@ -1357,4 +1311,60 @@ private struct ActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Row shapes (design rules 10/21)
+
+/// A row that leaves the app: tinted, with an arrow out, so blue means "opens outside".
+struct ExternalLinkRow: View {
+    let title: String
+    let systemImage: String
+
+    init(_ title: String, systemImage: String) {
+        self.title = title
+        self.systemImage = systemImage
+    }
+
+    var body: some View {
+        LabeledContent {
+            Image(systemName: "arrow.up.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tint)
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
+    }
+}
+
+/// An action inside a Form: a bordered button, never a row that looks like a page.
+struct SettingsActionRow: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    init(_ title: String, systemImage: String, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity, minHeight: 36)
+        }
+        .buttonStyle(.bordered)
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets())
+    }
+}
+
+/// The widget guide as a page inside 設定; finishing or skipping goes back.
+struct WidgetPlacementGuidePage: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() })
+            .navigationBarTitleDisplayMode(.inline)
+    }
 }

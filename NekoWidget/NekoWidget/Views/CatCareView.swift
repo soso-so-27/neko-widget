@@ -197,20 +197,28 @@ struct CatCareDetailView: View {
 
     // MARK: Sections
 
+    /// 「ミケ・2020/1/1（4歳）」: read-only facts go in the footer, not in rows.
+    private var basicsFooter: String {
+        var line = subject.displayName
+        if let birthday = currentRecord?.birthday?.value ?? nil {
+            line += "・誕生日 " + CatCareFormat.day(birthday)
+                + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? "")
+        } else if case .profile = subject {
+            line += "・誕生日は未記入"
+        }
+        if case .profile = subject { line += "。名前と誕生日は猫のプロフィールで直せます。" }
+        return line
+    }
+
     private var basicsSection: some View {
-        Section("基本") {
-            LabeledContent("名前", value: subject.displayName)
-            if let birthday = currentRecord?.birthday?.value ?? nil {
-                LabeledContent("誕生日", value: CatCareFormat.day(birthday)
-                    + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? ""))
-            } else if case .profile = subject {
-                LabeledContent("誕生日", value: "未記入")
-            }
+        Section {
             if case let .profile(profile) = subject {
                 // Name and birthday belong to the cat profile; change them there.
-                NavigationLink("名前と誕生日は猫のプロフィールで直す") {
+                NavigationLink {
                     CatProfileDetailView(profile: profile, allProfiles: otherProfiles.isEmpty ? [profile] : otherProfiles,
                         manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: profileActions)
+                } label: {
+                    Label("猫のプロフィール", systemImage: "cat")
                 }
                 .accessibilityIdentifier("cat-care-open-profile")
             }
@@ -242,6 +250,11 @@ struct CatCareDetailView: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
+        } header: {
+            Text("基本")
+        } footer: {
+            Text(basicsFooter)
+                .accessibilityIdentifier("cat-care-basics")
         }
     }
 

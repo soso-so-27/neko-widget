@@ -735,13 +735,15 @@ struct GroupWindowMembersView: View {
         }
     }
 
+    @ViewBuilder
     private func leaveSection(_ window: GroupWindow) -> some View {
-        Section {
-            if window.myRole == .owner {
+        if window.myRole == .owner {
+            // Nothing to press: said in a footer, not in a row that looks like one.
+            Section { EmptyView() } footer: {
                 Text(GroupWindowPresentation.message(for: GroupClientError.ownerCannotLeave))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
+            }
+        } else {
+            Section {
                 Button("このまどから抜ける", role: .destructive) {
                     showsLeaveConfirmation = true
                 }
