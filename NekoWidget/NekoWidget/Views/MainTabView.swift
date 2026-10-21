@@ -767,21 +767,26 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                NavigationLink {
-                    CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
-                                    opensProfileSettings: true)
-                } label: {
-                    Label("猫のプロフィール", systemImage: "cat.fill")
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                // The cats themselves come first, as cards like every other tool.
+                toolSection("猫のこと") {
+                    NavigationLink {
+                        CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
+                                        opensProfileSettings: true)
+                    } label: {
+                        ToolTile(title: "猫のプロフィール", systemImage: "cat.fill",
+                                 subtitle: "名前・写真・誕生日", catPose: "tilt")
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-cat-profiles")
+                    NavigationLink {
+                        CatCareEntryView(profiles: catProfilesPresentation.profiles)
+                    } label: {
+                        ToolTile(title: "この子のこと", systemImage: "heart.text.square",
+                                 subtitle: "体重・薬・ワクチン・連絡先", catPose: "side-eye")
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-cat-care")
                 }
-                .accessibilityIdentifier("tools-cat-profiles")
-                NavigationLink {
-                    CatCareEntryView(profiles: catProfilesPresentation.profiles)
-                } label: {
-                    Label("この子のこと（体重・薬・ワクチン・連絡先）", systemImage: "heart.text.square")
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }
-                .accessibilityIdentifier("tools-cat-care")
                 showcaseToolCard
                 if !preparingShowcaseScopes.isEmpty {
                     ProgressView("見せる写真を準備中")
@@ -854,13 +859,15 @@ struct MainTabView: View {
         } label: {
             HStack(spacing: 20) {
                 ToolCatArtwork(pose: "tilt", systemImage: "photo.on.rectangle.angled")
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("写真を見せる").font(.title2.bold())
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("写真を見せる").font(.title3.bold())
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("お気に入りの写真を、さっと見せる").font(.subheadline).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-            }.padding(20).frame(maxWidth: .infinity, minHeight: 140)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }.padding(16).frame(maxWidth: .infinity, minHeight: 112)
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(ToolCardButtonStyle())
@@ -2598,7 +2605,7 @@ struct MainTabView: View {
         ContentUnavailableView(
             "アルバムを更新しています",
             systemImage: "rectangle.stack",
-            description: Text("スキャン結果が更新されました。アルバムの一覧へ戻って、もう一度開いてください。")
+            description: Text("写真を探し終えました。アルバムの一覧に戻って、もう一度開いてください。")
         )
     }
 
@@ -2776,7 +2783,7 @@ private struct WindowListView: View {
             VStack(alignment: .leading, spacing: 12) {
                 windowAdditionControl
                 if let message = model.operationErrorMessage {
-                    Text(message).font(.footnote).foregroundStyle(.orange)
+                    Text(message).font(.footnote).foregroundStyle(.red)
                         .accessibilityIdentifier("window-add-error")
                 }
             }
@@ -2828,13 +2835,13 @@ private struct WindowListView: View {
                     }
 
                     if GroupWindowClientProvider.ui != nil {
-                        if receivingPublicWindows.isEmpty { publicWindowEntry }
+                        publicWindowEntry
                     } else if windows.isEmpty, receivingPublicWindows.isEmpty {
                         emptyWindowCard
                     }
 
                     if let message = model.operationErrorMessage {
-                        Text(message).font(.footnote).foregroundStyle(.orange)
+                        Text(message).font(.footnote).foregroundStyle(.red)
                     }
 
                 }
@@ -2845,23 +2852,22 @@ private struct WindowListView: View {
         .navigationTitle("まど")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let showSettings {
-                ToolbarItem(placement: .topBarLeading) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if supportsPrivateWindows {
+                    connectionEntry
+                    // Without group windows, the public list is reached from here.
+                    NavigationLink { discovery } label: {
+                        Label("公式のまど", systemImage: "safari")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .accessibilityLabel("公式のまどを探す")
+                    .accessibilityIdentifier("window-list-discover")
+                }
+                if let showSettings {
                     Button(action: showSettings) { Image(systemName: "gearshape") }
                         .accessibilityLabel("設定")
                         .accessibilityIdentifier("windows-settings-button")
                 }
-            }
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if supportsPrivateWindows {
-                    connectionEntry
-                }
-                NavigationLink { discovery } label: {
-                    Label("公式のまど", systemImage: "safari")
-                        .labelStyle(.titleAndIcon)
-                }
-                .accessibilityLabel("公式のまどを探す")
-                .accessibilityIdentifier("window-list-discover")
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -2931,7 +2937,7 @@ private struct WindowListView: View {
     private func unavailableWindowContent(message: String) -> some View {
         VStack(spacing: 16) {
             ContentUnavailableView(
-                "身近な人とのまどを確認できません",
+                "家族・友だちのまどを確認できません",
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text(message)
             )
@@ -2957,7 +2963,7 @@ private struct WindowListView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Text("更新が完了するまで、身近な人とのまどの切り替えや追加は行いません。")
+            Text("更新が終わるまで、まどの切り替えや追加はできません。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -2974,21 +2980,27 @@ private struct WindowListView: View {
 
     /// With group windows on, public windows are a small second entry below them.
     private var publicWindowEntry: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("公式のまど")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
-            NavigationLink { discovery } label: {
-                Label("公式の写真を受け取る", systemImage: "photo")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+        NavigationLink { discovery } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "building.2")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
+                        .font(.body.weight(.semibold))
+                    Text("猫カフェや保護猫の写真を、見るだけで受け取れます")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
             }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("window-list-start")
-            Text("猫カフェや保護猫などの写真を、見るだけで受け取れます。")
-                .font(.footnote).foregroundStyle(.secondary)
+            .padding(14)
+            .frame(minHeight: 44)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("window-list-start")
     }
 
     private var emptyWindowCard: some View {
@@ -3003,7 +3015,7 @@ private struct WindowListView: View {
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("window-list-start-private")
-                    Text("身近な相手と写真を送り合います。送る写真と相手を確認してから届けます。")
+                    Text("家族や友だちと写真を届け合います。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
@@ -3062,7 +3074,7 @@ private struct WindowListView: View {
             setupAction("以前のまどにこのiPhoneを追加", path: .recover, identifier: "window-list-recover")
         }
         if pausesWindowChanges {
-            Text(availabilityMessage ?? "身近な人とのまどを確認しています…")
+            Text(availabilityMessage ?? "家族・友だちのまどを確認しています…")
                 .font(.footnote).foregroundStyle(.secondary)
             if availabilityMessage != nil {
                 Button("もう一度確認する") { Task { await reload() } }
@@ -3172,7 +3184,7 @@ private struct WindowListView: View {
                             } else if windowErrors.contains(window.localWindowID) {
                                 Label("開けませんでした", systemImage: "exclamationmark.circle.fill")
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.red)
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }
                         }

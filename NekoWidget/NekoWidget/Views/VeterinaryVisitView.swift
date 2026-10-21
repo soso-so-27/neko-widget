@@ -200,13 +200,13 @@ private struct VeterinaryConsultationView: View {
                     }
                 }
                 ToolCatCareSection(
-                    title: "「この子のこと」から載ること",
+                    title: "この子のこと",
                     lines: CatCareSummary.veterinaryFields(
                         CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
                         household: catCareStore.state?.household),
                     subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
                         ?? .toolCat(id: visit.catID, name: visit.catName),
-                    footer: "薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。医療の判断ではありません。",
+                    footer: "薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。",
                     identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care")
                 if visit.completedAt == nil {
                     Section {
@@ -271,9 +271,11 @@ private struct VeterinaryConsultationView: View {
                 Text(observations.count > 500 || questions.count > 500 ? "各項目は500文字以内で入力してください"
                      : changes ? (error != nil ? "保存できませんでした" : "保存中…") : "自動保存済み")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("プレビュー", systemImage: "rectangle.inset.filled") { showing = true }
-                    .buttonStyle(.borderedProminent).frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityIdentifier("vet-show").disabled(changes || busy)
+                Button { showing = true } label: {
+                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("vet-show").disabled(changes || busy)
             }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
         }
         .onChange(of: observations) { _, _ in scheduleSave() }
@@ -629,14 +631,14 @@ private struct VeterinaryReadView: View {
     }
 
     @ViewBuilder private var exportButtons: some View {
-        Button { pendingExportIsPDF = false } label: {
-            Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-images")
         Button { pendingExportIsPDF = true } label: {
             Label("PDFで渡す", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-pdf")
+        Button { pendingExportIsPDF = false } label: {
+            Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered).accessibilityIdentifier("vet-export-images")
     }
 
     /// One sheet for the reception desk: 「この子のこと」, what was noticed,

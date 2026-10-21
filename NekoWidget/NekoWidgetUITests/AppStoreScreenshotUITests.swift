@@ -21,7 +21,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertFalse(app.buttons["settings-membership-preview"].exists)
         XCTAssertFalse(app.buttons["settings-window-support-preview"].exists)
         XCTAssertFalse(app.buttons["settings-internal-diagnostics"].exists)
-        XCTAssertTrue(app.staticTexts["対応OS"].exists)
+        XCTAssertTrue(app.staticTexts["settings-app-version"].exists)
         captureScreenshot(named: "public-settings-no-internal-options")
         app.terminate()
 

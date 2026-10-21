@@ -79,7 +79,7 @@ struct GrowthAlbumDetailView: View {
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])
@@ -260,7 +260,7 @@ struct GrowthAlbumDetailView: View {
                 pendingExclusionIdentifier = item.photo.localIdentifier
                 showsExclusionConfirmation = true
             } label: {
-                Label("候補から外す", systemImage: "eye.slash")
+                Label("猫の写真から外す", systemImage: "eye.slash")
             }
         }
     }

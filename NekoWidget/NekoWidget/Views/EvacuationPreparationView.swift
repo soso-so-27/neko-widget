@@ -34,15 +34,13 @@ struct EvacuationPreparationView: View {
                     }
                     Section {
                         NavigationLink { EvacuationPackingView(store: store) } label: {
-                            entry("持ち出すものを見る", detail: "何を持つか、どこにあるか", icon: "backpack")
+                            entry("持ち出すもの", detail: "何を持つか、どこにあるか", icon: "backpack")
                         }
                         .accessibilityIdentifier("evacuation-packing-open")
-                    }
-                    Section {
                         NavigationLink {
                             EvacuationCatsView(profiles: profiles, otherPhotos: allPhotos, store: store, reuseStore: reuseStore)
                         } label: {
-                            entry("猫の情報を見せる", detail: "写真・ごはん・必要な配慮", icon: "person.text.rectangle")
+                            entry("猫の情報", detail: "写真・ごはん・必要な配慮", icon: "person.text.rectangle")
                         }
                         .accessibilityIdentifier("evacuation-cats-open")
                         NavigationLink { EvacuationDestinationsView(store: store) } label: {
@@ -52,15 +50,20 @@ struct EvacuationPreparationView: View {
                     }
                     Section {
                         Button { confirmBook = true } label: {
-                            entry("1冊のPDFにまとめる", detail: "持ち物・行き先・猫の情報を紙で持つ", icon: "book.closed")
+                            Label("1冊のPDFにまとめる", systemImage: "book.closed")
+                                .frame(maxWidth: .infinity, minHeight: 40)
                         }
-                        .foregroundStyle(.primary)
+                        .buttonStyle(.bordered)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
                         .disabled(store.saveError != nil)
                         .accessibilityIdentifier("evacuation-book-open")
                         if let bookError { Text(bookError).foregroundStyle(.red) }
+                    } footer: {
+                        Text("持ち物・行き先・猫の情報を、紙で持てます。")
                     }
                     Section {
-                        ToolImportantInformation(text: "災害時は自身と家族の安全を優先し、避難先の受入条件を事前に確認してください。保存済みの入力・写真は通信なしで開けます。")
+                        ToolImportantInformation(text: "災害のときは、まず自分と家族の安全を。受け入れの条件は、避難先に確かめてください。")
                     }
                 }
             }
@@ -409,7 +412,7 @@ private struct EvacuationCatView: View {
                         .accessibilityIdentifier("evacuation-cat-edit")
                 }
                 ToolCatCareSection(
-                    title: "「この子のこと」から載ること",
+                    title: "この子のこと",
                     lines: CatCareSummary.evacuationShareFields(catCareRecord(cat), legacy: cat,
                         household: catCare.state?.household, planContact: store.plan.contact,
                         disclosure: EvacuationDisclosure(food: true, handling: true, medical: true, contact: true,
@@ -433,7 +436,7 @@ private struct EvacuationCatView: View {
                 }
                 Section {
                     if let error { Text(error).foregroundStyle(.red) }
-                    ToolImportantInformation(text: "写真・名前・特徴は表示します。病歴・連絡先・マイクロチップ番号は、必要な相手にだけ見せてください。避難先の受入条件は、自治体や施設に確かめてください。")
+                    ToolImportantInformation(text: "病歴・連絡先・マイクロチップ番号は、必要な相手にだけ見せてください。")
                 }
                 Section {
                     Text("内容確認日：" + (cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
@@ -686,14 +689,14 @@ private struct EvacuationDisplayView: View {
         }) { EvacuationActivitySheet(items: $0.files) }
     }
     @ViewBuilder private var exportButtons: some View {
+        Button { wantsPrint = true; confirmShare = true } label: {
+            Label("PDFで渡す", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-pdf")
         Button { wantsPrint = false; confirmShare = true } label: {
             Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-images")
-        Button { wantsPrint = true; confirmShare = true } label: {
-            Label("PDFで保存・印刷", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.borderedProminent).accessibilityIdentifier("evacuation-share-pdf")
+        .buttonStyle(.bordered).accessibilityIdentifier("evacuation-share-images")
     }
 
     private func createExport() {

@@ -740,8 +740,17 @@ struct ToolCatPicker<Legacy: View>: View {
         Group {
             Section("猫のプロフィール") {
                 ForEach(profiles) { profile in
-                    Button { select(profile) } label: { Label(profile.displayName, systemImage: "cat") }
-                        .accessibilityIdentifier("tool-profile-\(profile.identifier)")
+                    // A row that opens the cat's page: black text and a chevron, like a link.
+                    Button { select(profile) } label: {
+                        HStack {
+                            Label(profile.displayName, systemImage: "cat")
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("tool-profile-\(profile.identifier)")
                 }
                 Button("猫を追加", systemImage: "plus") { name = ""; addsCat = true }
                     .accessibilityIdentifier("tool-profile-add").disabled(busy)

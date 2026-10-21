@@ -662,17 +662,18 @@ struct PlusSettingsSection: View {
                     showsOffer = true
                 } label: {
                     Label(PlusOfferContext.settings.entryTitle, systemImage: "sparkles")
+                        .frame(maxWidth: .infinity, minHeight: 40)
                 }
+                .buttonStyle(.borderedProminent)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
                 .accessibilityIdentifier("settings-membership-offer")
             case .member:
-                Label("Plus利用中", systemImage: "checkmark.seal")
-                    .accessibilityIdentifier("settings-membership-active")
-                Button("サブスクリプションを管理") { showsManagement = true }
+                SettingsActionRow("サブスクリプションを管理", systemImage: "checkmark.seal") { showsManagement = true }
                     .accessibilityIdentifier("settings-membership-manage")
             case .unknown:
-                Label("購入状況を確認できません", systemImage: "exclamationmark.arrow.circlepath")
-                    .accessibilityIdentifier("settings-membership-unknown")
-                Button(isRechecking ? "確認しています…" : "再確認") {
+                SettingsActionRow(isRechecking ? "確認しています…" : "購入状況を再確認",
+                                  systemImage: "exclamationmark.arrow.circlepath") {
                     isRechecking = true
                     Task {
                         await purchases.refreshAfterForegroundEntry()
@@ -684,12 +685,17 @@ struct PlusSettingsSection: View {
             }
             if status != .member {
                 Button("購入を復元") { showsRestore = true }
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
                     .accessibilityIdentifier("settings-membership-restore")
             }
         } header: {
             // Presenters live on the header, which stays while the rows switch
             // between states (a list Section would copy them onto every row).
-            Text("Plus")
+            Text(status == .member ? "Plus（利用中）" : status == .unknown ? "Plus（購入状況を確認できません）" : "Plus")
+                .accessibilityIdentifier(status == .member ? "settings-membership-active"
+                                         : status == .unknown ? "settings-membership-unknown" : "settings-membership-header")
                 .sheet(isPresented: $showsOffer, onDismiss: refreshMembership) {
                     MembershipOfferSheet(model: .live(), context: .settings) { _ in showsOffer = false }
                 }

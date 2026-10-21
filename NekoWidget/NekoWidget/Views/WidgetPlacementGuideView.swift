@@ -91,8 +91,8 @@ struct WidgetPlacementGuideView: View {
                     .accessibilityIdentifier("widget-placement-complete")
 
                     Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
                         .accessibilityIdentifier("widget-placement-skip")
                 }
             }

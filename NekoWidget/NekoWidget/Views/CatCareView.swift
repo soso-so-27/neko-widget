@@ -142,7 +142,7 @@ struct CatCareDetailView: View {
                 }
             }
             if let message = store.loadError {
-                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             } else if store.unreadableCatCount > 0 {
                 Section {
                     Label("読み込めない記録があるため、いまは保存できません。アプリを最新にしてください。記録は消していません。",
@@ -197,20 +197,28 @@ struct CatCareDetailView: View {
 
     // MARK: Sections
 
+    /// 「ミケ・2020/1/1（4歳）」: read-only facts go in the footer, not in rows.
+    private var basicsFooter: String {
+        var line = subject.displayName
+        if let birthday = currentRecord?.birthday?.value ?? nil {
+            line += "・誕生日 " + CatCareFormat.day(birthday)
+                + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? "")
+        } else if case .profile = subject {
+            line += "・誕生日は未記入"
+        }
+        if case .profile = subject { line += "。名前と誕生日は猫のプロフィールで直せます。" }
+        return line
+    }
+
     private var basicsSection: some View {
-        Section("基本") {
-            LabeledContent("名前", value: subject.displayName)
-            if let birthday = currentRecord?.birthday?.value ?? nil {
-                LabeledContent("誕生日", value: CatCareFormat.day(birthday)
-                    + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? ""))
-            } else if case .profile = subject {
-                LabeledContent("誕生日", value: "未記入")
-            }
+        Section {
             if case let .profile(profile) = subject {
                 // Name and birthday belong to the cat profile; change them there.
-                NavigationLink("名前と誕生日は猫のプロフィールで直す") {
+                NavigationLink {
                     CatProfileDetailView(profile: profile, allProfiles: otherProfiles.isEmpty ? [profile] : otherProfiles,
                         manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: profileActions)
+                } label: {
+                    Label("猫のプロフィール", systemImage: "cat")
                 }
                 .accessibilityIdentifier("cat-care-open-profile")
             }
@@ -242,6 +250,11 @@ struct CatCareDetailView: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
+        } header: {
+            Text("基本")
+        } footer: {
+            Text(basicsFooter)
+                .accessibilityIdentifier("cat-care-basics")
         }
     }
 
@@ -288,9 +301,9 @@ struct CatCareDetailView: View {
                 .keyboardType(.phonePad)
             TextField("避難のときの家族の集合場所", text: $draft.meetingPlace)
         } header: {
-            Text("家の情報（ほかの猫と共通）")
+            Text("家の情報")
         } footer: {
-            Text("1回入れると、ほかの猫にも同じ内容が入ります。")
+            Text("ほかの猫と共通です。1回入れると、どの猫にも載ります。")
         }
     }
 
@@ -675,7 +688,7 @@ struct CatCareListEntrySheet: View {
                     TextField("量（例：20g）", text: $amount)
                 }
                 if let message {
-                    Text(message).font(.footnote).foregroundStyle(.orange)
+                    Text(message).font(.footnote).foregroundStyle(.red)
                 }
             }
             .navigationTitle(CatCareFormat.title(editor.kind) + (editor.entryID == nil ? "を追加" : "を直す"))
