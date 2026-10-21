@@ -366,11 +366,34 @@ struct HomeView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
+    /// The first card on the tab until WidgetKit sees a Widget: a small
+    /// preview of what the Widget shows, and the three words of the gesture.
     private var widgetPlacementCard: some View {
         Button(action: showWidgetPlacementGuide) {
-            Label("ウィジェットを置く", systemImage: "rectangle.on.rectangle.angled")
-                .font(.subheadline)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            HStack(spacing: 12) {
+                if let photo = catPhotos.first {
+                    PhotoAssetImageView(
+                        localIdentifier: photo.localIdentifier,
+                        catBoundingBox: photo.catBoundingBox,
+                        targetPixelSize: CGSize(width: 160, height: 160),
+                        networkAccessAllowed: false
+                    )
+                    .aspectRatio(1, contentMode: .fill)
+                    .frame(width: 52, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ホーム画面にまどを置く").font(.headline)
+                    Text("長押し → ＋ → ねこのまど").font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("home-widget-placement-guide")
