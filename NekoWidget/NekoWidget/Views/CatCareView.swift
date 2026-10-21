@@ -746,7 +746,8 @@ struct ToolCatCareSection<Extra: View>: View {
                     .accessibilityIdentifier(identifier + "-empty")
             }
             if !missing.isEmpty && !filled.isEmpty {
-                Text("まだ書いていないこと：" + missing.joined(separator: "・"))
+                // 「、」 between items: some names already contain 「・」.
+                Text("まだ書いていないこと：" + missing.joined(separator: "、"))
                     .font(.footnote).foregroundStyle(.secondary)
             }
             extra()
@@ -1031,7 +1032,10 @@ enum CatCareSummary {
             var health: [(String, String)] = []
             if let conditions = nonEmpty(record?.conditions?.value) { health.append(("持病", conditions)) }
             health += careHandoffHealthFields(record)
-            if health.isEmpty { health.append(("病歴・薬（飼い主の記録）", cat.medicalText)) }
+            if health.isEmpty {
+                // Older entry from this tool only when it says something.
+                health.append(cat.medicalStatus == .unknown ? ("病歴・薬", empty) : ("病歴・薬（飼い主の記録）", cat.medicalText))
+            }
             fields += health
         }
         if disclosure.contact {
