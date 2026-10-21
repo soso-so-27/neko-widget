@@ -243,17 +243,6 @@ struct SettingsView: View {
                 }
             }
 
-            if GroupWindowClientProvider.ui != nil {
-                Section {
-                    NavigationLink { GroupHiddenMembersView() } label: {
-                        Label("表示しないようにした人", systemImage: "eye.slash")
-                    }
-                    .accessibilityIdentifier("settings-group-hidden-members")
-                } header: {
-                    Text("まど")
-                }
-            }
-
             Section {
                 if ManagedPreservationConfiguration.current.isEnabled {
                     NavigationLink { AppRecordSettingsView() } label: {
@@ -277,7 +266,10 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings-memory-note-export")
                 if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+                    if InternalBuildPresentationAvailability.isAvailable {
+                        // An internal CloudKit pilot; the public build keeps 保存・復元 only.
+                        PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+                    }
                 }
             } header: {
                 Text("保存と引き継ぎ")
@@ -301,6 +293,12 @@ struct SettingsView: View {
                     Link(destination: url) {
                         ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")
                     }
+                }
+                if GroupWindowClientProvider.ui != nil {
+                    NavigationLink { GroupHiddenMembersView() } label: {
+                        Label("表示しないようにした人", systemImage: "eye.slash")
+                    }
+                    .accessibilityIdentifier("settings-group-hidden-members")
                 }
             } header: {
                 Text("困ったとき")
@@ -450,12 +448,6 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("表示する範囲", selection: $draft.range) {
-                    ForEach(PhotoRangePresentation.allCases) { range in
-                        Text(range.rawValue).tag(range)
-                    }
-                }
-                .pickerStyle(.segmented)
 
                 NavigationLink {
                     PhotoSourceAlbumSelectionView(
@@ -504,7 +496,12 @@ struct SettingsView: View {
                         update: updatePhotoLibraryAlbum
                     )
                 } label: {
-                    Label("写真アプリとの連携", systemImage: "rectangle.stack.badge.plus")
+                    Label("写真アプリの「うちの子」アルバム", systemImage: "rectangle.stack.badge.plus")
+                }
+                Picker("探す期間", selection: $draft.range) {
+                    ForEach(PhotoRangePresentation.allCases) { range in
+                        Text(range.rawValue).tag(range)
+                    }
                 }
             } header: {
                 Text("表示と整理")
@@ -901,7 +898,7 @@ private struct PhotoLibraryAlbumSettingsView: View {
                 Text("写真シャッフルはOS側の機能です。アルバム更新後は、壁紙側でアルバムを選び直す必要があります。")
             }
         }
-        .navigationTitle("写真アプリとの連携")
+        .navigationTitle("写真アプリの「うちの子」アルバム")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showsPhotoShuffleGuide) {
             PhotoShuffleGuideView()

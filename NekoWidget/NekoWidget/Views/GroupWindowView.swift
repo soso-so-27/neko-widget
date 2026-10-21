@@ -690,21 +690,21 @@ struct GroupWindowScreen: View {
                     .font(.footnote.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
+            HStack(spacing: 10) {
                 Button("やめる") { model.discardFailedDelivery() }
+                    .buttonStyle(.bordered)
                     .frame(minHeight: 44)
-                Spacer(minLength: 8)
                 Button {
                     Task { await model.retryFailedDelivery() }
                 } label: {
                     Label("もう一度届ける", systemImage: "arrow.clockwise")
-                        .frame(minHeight: 44)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .disabled(!model.canSend)
                 .accessibilityIdentifier("group-window-send-retry")
             }
-            .font(.footnote.weight(.semibold))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("group-window-send-failed")
@@ -732,7 +732,9 @@ struct GroupWindowScreen: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 50)
             }
+            // While a photo waits to be sent again, the retry is the main button.
             .buttonStyle(.borderedProminent)
+            .opacity(model.failedDelivery == nil ? 1 : 0.45)
             .disabled(!model.canSend)
             .accessibilityIdentifier("group-window-send-photo")
         }
@@ -769,12 +771,14 @@ private struct GroupPhotoTile: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) {
-                    Image(systemName: "heart.fill")
-                        .font(.caption)
+                let heartCount = model.hearts[entry.id]?.filter(\.active).count ?? 0
+                if heartCount > 0 {
+                    Label(heartCount.formatted(), systemImage: "heart.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.red)
-                        .padding(4)
-                        .background(.white.opacity(0.85), in: Circle())
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(.white.opacity(0.85), in: Capsule())
                         .padding(4)
                 }
             }
@@ -1291,12 +1295,8 @@ struct GroupWindowCreateScreen: View {
             if let message = model.message {
                 Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             }
-        }
-        .navigationTitle("家族・友だちとまどを作る")
-        .navigationBarTitleDisplayMode(.inline)
-        .announcesWhenShown(model.message)
-        .safeAreaInset(edge: .bottom) {
-            Group {
+            // The button sits right under the name, not at the bottom of an empty screen.
+            Section {
                 if membershipAccess.decision(for: .createOwnWindow) != .allowed {
                     // まどを作るのは Plus（App Store の14日間無料を含む）。押したときだけ開く。
                     PlusOfferPrompt(context: .createWindow,
@@ -1306,15 +1306,19 @@ struct GroupWindowCreateScreen: View {
                     Button {
                         Task { createdWindowID = await model.create(name: trimmed)?.id }
                     } label: {
-                        Text("作る").frame(maxWidth: .infinity, minHeight: 44)
+                        Text("作る").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(trimmed.isEmpty || model.isWorking)
                     .accessibilityIdentifier("group-window-create-confirm")
                 }
             }
-            .padding().background(.regularMaterial)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
         }
+        .navigationTitle("家族・友だちとまどを作る")
+        .navigationBarTitleDisplayMode(.inline)
+        .announcesWhenShown(model.message)
         .sheet(isPresented: $model.needsPlus, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
         }) {

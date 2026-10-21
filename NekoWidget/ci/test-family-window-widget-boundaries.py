@@ -2969,7 +2969,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('.accessibilityLabel("この比べ方について")', growth)
         self.assertIn('Text(aboutSelectionMessage)', growth)
         self.assertIn('scrapbookTimeline(items: resolvedItems)', growth)
-        self.assertIn('Label("選び直す"', growth)
+        self.assertIn('Label("写真を変える"', growth)
+        # The screen title names the album; no second big range heading above the story.
+        self.assertNotIn('.font(.title.bold())', growth)
         self.assertIn('.alert("この比べ方について"', growth)
         self.assertIn('"\\(firstPeriod.label) → \\(lastPeriod.label)"', growth)
         self.assertNotIn('roleLabel:', growth)
@@ -3432,7 +3434,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("CatProfilePhotoSourcesView", profile)
         self.assertIn('"この子の写真を見る"', detail)
         self.assertIn('Text("この子の時間")', detail)
-        self.assertIn('"写真アプリのアルバムをつなぐ"', detail)
+        # The album link is not offered on the profile; 「うちの子」 lives in 設定 → 写真.
+        self.assertNotIn('"写真アプリのアルバムをつなぐ"', detail)
+        self.assertNotIn('Text("その他")', detail)
         self.assertIn("await actions.setKeyPhoto", detail)
 
     def test_cat_pages_browse_before_editing_and_creation_can_start_from_a_photo(self) -> None:
@@ -5068,6 +5072,8 @@ class LibraryGroupDeliveryTests(unittest.TestCase):
     def test_photo_detail_delivers_to_a_group_window_after_confirming(self) -> None:
         browser = source("NekoWidget/Views/LikedPhotosView.swift")
         self.assertIn('"photo-browser-deliver-group"', browser)
+        # The deliver button is pinned at the bottom, visible without scrolling the footer.
+        self.assertIn("// The one main action, always in view (not below the fold).", browser)
         self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)", browser)
         window = source("NekoWidget/Views/GroupWindowView.swift")
         sheet = section(window, "struct GroupLibraryDeliverySheet: View {", "/// Shown after a photo is picked")

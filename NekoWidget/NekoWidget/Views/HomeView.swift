@@ -209,6 +209,8 @@ struct HomeView: View {
     let supplementaryPhotos: AnyView?
     let readingPositionKey: String?
     let showsCatProfileNavigation: Bool
+    /// Shown at the right of the 「猫写真」 heading (the 写真 tab's cat switch).
+    let headerAccessory: AnyView?
 
     @State private var visibleDetectedPhotoCount = 24
     @State private var openedCatProfileIdentifier: String?
@@ -236,7 +238,8 @@ struct HomeView: View {
         isEmbedded: Bool = false,
         supplementaryPhotos: AnyView? = nil,
         readingPositionKey: String? = nil,
-        showsCatProfileNavigation: Bool = true
+        showsCatProfileNavigation: Bool = true,
+        headerAccessory: AnyView? = nil
     ) {
         self.catPhotos = catPhotos
         self.scan = scan
@@ -260,6 +263,7 @@ struct HomeView: View {
         self.supplementaryPhotos = supplementaryPhotos
         self.readingPositionKey = readingPositionKey
         self.showsCatProfileNavigation = showsCatProfileNavigation
+        self.headerAccessory = headerAccessory
         _initialReadingIdentifier = State(initialValue: isEmbedded
             ? PhotoLibraryReadingPosition.identifier(for: readingPositionKey ?? "all") : nil)
     }
@@ -414,10 +418,18 @@ struct HomeView: View {
     }
 
     @ViewBuilder private var detectedPhotosSection: some View {
-            HStack(alignment: .firstTextBaseline) {
-                Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")
-                    .font(.title3.bold())
-                    .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .center, spacing: 10) {
+                if let headerAccessory {
+                    // The cat switch is the heading: 「ミケの写真 ▾」.
+                    headerAccessory
+                } else {
+                    Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")
+                        .font(.title3.bold())
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Text("\(catPhotos.count.formatted())枚")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
                     .accessibilityIdentifier("photo-hub-detected-grid")
                 Spacer()
                 if isEmbedded, !monthDestinations.isEmpty {
@@ -426,15 +438,13 @@ struct HomeView: View {
                             Button(month.label) { moveToMonth(month.identifier) }
                         }
                     } label: {
-                        Image(systemName: "calendar")
-                            .frame(minWidth: 44, minHeight: 44)
+                        Label("日付", systemImage: "calendar")
+                            .font(.subheadline.weight(.medium))
+                            .frame(minHeight: 44)
                     }
                     .accessibilityLabel("年月へ移動")
                     .accessibilityIdentifier("photo-library-month-jump")
                 }
-                Text("\(catPhotos.count.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
             }
             .padding(.top, 2)
             .padding(.bottom, 8)

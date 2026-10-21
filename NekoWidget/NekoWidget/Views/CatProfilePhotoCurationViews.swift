@@ -120,8 +120,6 @@ struct CatProfileDetailView: View {
                 } label: {
                     Label("迷子のとき", systemImage: "pawprint")
                 }
-            } footer: {
-                Text("「この子のこと」に体や食事のことを書くと、預けるとき・病院・避難の控えに載ります。迷子のときは、写真と特徴から渡す画像を作れます。")
             }
 
             Section {
@@ -163,22 +161,8 @@ struct CatProfileDetailView: View {
                 }
                 .disabled(profile.confirmedPhotos.isEmpty)
 
-                NavigationLink {
-                    CatProfilePhotoAlbumSelectionView(
-                        profile: profile,
-                        albums: photoAlbumOptions,
-                        actions: actions
-                    )
-                } label: {
-                    LabeledContent(
-                        "写真アプリのアルバムをつなぐ",
-                        value: profile.photoAlbumLink?.displayTitle ?? "未連携"
-                    )
-                }
             } header: {
                 Text("写真")
-            } footer: {
-                Text("一緒に写っている猫を複数選べます。写真は移動・削除されません。")
             }
 
             Section {
@@ -208,10 +192,8 @@ struct CatProfileDetailView: View {
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
-            } header: {
-                Text("その他")
             } footer: {
-                Text("プロフィールを削除しても、写真や預けるとき・迷子のときなどの入力は残ります。")
+                Text("削除しても、写真とツールの入力は残ります。")
             }
         }
         .disabled(isDeleting || isSavingName)
