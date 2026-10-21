@@ -230,6 +230,8 @@ struct ShowcasePhotoView: View {
                     Text("今年の9枚").tag(NineSet.thisYear)
                 }
                 .pickerStyle(.segmented)
+                // The gallery is black: draw the segments for a dark background.
+                .environment(\.colorScheme, .dark)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
                 .accessibilityIdentifier("showcase-nine-set")
