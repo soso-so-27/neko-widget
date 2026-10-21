@@ -332,6 +332,91 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 10/21 review fixes: only the screens the fixes touch.
+    @MainActor
+    func testReviewFixScreens() {
+        executionTimeAllowance = 900
+        continueAfterFailure = true
+        let app = XCUIApplication()
+        let fixture = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        let group = fixture + ["--group-window-screens-fixture"]
+        let profileID = "tool-profile-11111111-1111-4111-8111-111111111111"
+
+        // 写真: heading row, favorites chips, detail with the deliver button, albums.
+        app.launchArguments = group
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真") {
+            settle(3); shot("fix-05-photos-all")
+            if tapID("photos-cat-picker", app) { settle(1); shot("fix-05b-photos-cat-menu"); app.swipeDown(); settle(1) }
+            if tapID("photos-section-favorites", app) { settle(2); shot("fix-06-photos-favorites") }
+            tapID("photos-section-all", app); settle(2)
+            if tapID("photo-hub-photo-app-store-screenshot-fixture-1", app) {
+                settle(2); shot("fix-07-photo-detail")
+                app.swipeUp(); settle(1); shot("fix-07b-photo-detail-lower")
+                closeSheet(app)
+            }
+        }
+        if tapTab(application: app, identifier: "main-tab-albums", fallbackLabel: "アルバム") {
+            settle(2)
+            if tapLabel("昔と最近", app) { settle(3); shot("fix-10-growth-album"); back(app) }
+            if tapLabel("日付から探す", app) { settle(2); shot("fix-11-dates"); back(app) }
+        }
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "NEKO_UX_RECOVERY_CASE")
+
+        // まど: hearts with a count, members with a pending request, create.
+        app.launchArguments = group
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
+            settle(2)
+            if tapLabel("まどを作る", app) { settle(2); shot("fix-17-create-window"); back(app) }
+            openGroupWindow(app); settle(3); shot("fix-13-window")
+            if tapID("group-window-open-members", app) { settle(2); shot("fix-16-members") }
+        }
+        app.terminate()
+
+        // まど: a delivery to retry.
+        app.launchArguments = group + ["--group-window-screens-check-off", "--group-window-screens-failed-send"]
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
+            openGroupWindow(app); settle(3); shot("fix-15-failed-send")
+        }
+        app.terminate()
+
+        // ツール: 猫のプロフィール, 預けるとき, 診察メモ.
+        app.launchArguments = fixture
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), tapID("tools-cat-profiles", app) {
+            settle(2)
+            if tapLabel("ミケ", app) { settle(2); shot("fix-21-cat-profile"); app.swipeUp(); settle(1); shot("fix-22-cat-profile-lower") }
+        }
+        app.terminate()
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), tapID("tools-care-open", app) {
+            settle(2); shot("fix-26-care-list")
+            if tapID(profileID, app) || tapLabel("ミケ", app) {
+                settle(2)
+                if tapLabel("渡す内容を選ぶ", app) { settle(2); shot("fix-28-care-disclosure") }
+            }
+        }
+        app.terminate()
+        app.launch(); settle(2)
+        if openTool("tools-vet-open", profile: profileID, app: app) { settle(2); shot("fix-31-vet-memo") }
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "NEKO_UX_RECOVERY_CASE")
+
+        // 設定: the list, and 写真の表示と整理.
+        app.launchArguments = group
+        app.launch(); settle(2)
+        if openSettings(app) {
+            shot("fix-35-settings"); app.swipeUp(); settle(1); shot("fix-35b-settings-lower")
+            if openSettings(app), tapLabel("写真の表示と整理", app) { settle(2); shot("fix-37-photo-settings") }
+        }
+        app.terminate()
+    }
+
     /// The settings sheet opens from the ツール tab; re-opened when a step closed it.
     @MainActor @discardableResult
     private func openSettings(_ app: XCUIApplication) -> Bool {
