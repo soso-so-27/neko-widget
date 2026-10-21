@@ -115,6 +115,9 @@ protocol GroupWindowClient: Sendable {
     func windows() async throws -> [GroupWindow]
     func window(id: String) async throws -> GroupWindow
     func createWindow(name: String, operationID: UUID) async throws -> GroupWindow
+    /// Explicit creator name; adapters must encrypt it instead of substituting
+    /// a local-only label such as "自分" for the other members to see.
+    func createWindow(name: String, ownerDisplayName: String, operationID: UUID) async throws -> GroupWindow
     func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation
     func revokeInvitation(id: String, windowID: String, operation: GroupOperation) async throws
     func apply(invitationID: String, displayName: String, operationID: UUID) async throws -> GroupJoinRequest
@@ -134,6 +137,14 @@ protocol GroupWindowClient: Sendable {
     func photos(windowID: String) async throws -> [GroupPhoto]
     func setHeart(photoID: String, windowID: String, active: Bool,
                   operationID: UUID) async throws -> GroupPhoto
+}
+
+extension GroupWindowClient {
+    // Legacy/preview adapters fail explicitly until they support this intent;
+    // silently ignoring a supplied name would recreate the original problem.
+    func createWindow(name: String, ownerDisplayName: String, operationID: UUID) async throws -> GroupWindow {
+        throw GroupClientError.unavailable
+    }
 }
 
 // Main app writes this derived snapshot only AFTER authenticating membership and photo.

@@ -262,8 +262,19 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
 
     func createWindow(name: String, operationID: UUID) async throws -> GroupWindow {
-        try await connectExistingBillingAccount()
         let text = try GroupWire.name(name), intent = "create:" + GroupWire.base64(GroupCanonical.hash(Data(text.utf8)))
+        // Preserve the old operation fingerprint and exact stored body so a
+        // creation interrupted before this update can still be resumed.
+        return try await createWindow(validatedName: text, creatorName: ownerDisplayName, operationID: operationID, intent: intent)
+    }
+    func createWindow(name: String, ownerDisplayName: String, operationID: UUID) async throws -> GroupWindow {
+        let text = try GroupWire.name(name), creator = try GroupWire.name(ownerDisplayName)
+        let context = try GroupCanonical.fields([GroupCanonical.text(text), GroupCanonical.text(creator)])
+        let intent = "create-with-owner-name:" + GroupWire.base64(GroupCanonical.hash(context))
+        return try await createWindow(validatedName: text, creatorName: creator, operationID: operationID, intent: intent)
+    }
+    private func createWindow(validatedName text: String, creatorName: String, operationID: UUID, intent: String) async throws -> GroupWindow {
+        try await connectExistingBillingAccount()
         let path = "/v3/group-windows", identity = try await registeredIdentity()
         let body: Data
         if let stored = try pending(operationID, intent: intent) {
@@ -278,7 +289,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             let member = try GroupRosterMember(participantID: participantID, personID: identity.personID, identityPublicKey: identity.personPublicKey,
                 role: .owner, devices: [identity.certificate(windowID: windowID)])
             let roster = GroupRoster(windowID: windowID, revision: 1, keyEpoch: 1, previousHash: Data(repeating: 0, count: 32), ownerPersonID: identity.personID, members: [member])
-            let data = try material(roster: roster, names: [participantID: ownerDisplayName], windowName: text, identity: identity, previous: nil, anchor: anchor)
+            let data = try material(roster: roster, names: [participantID: creatorName], windowName: text, identity: identity, previous: nil, anchor: anchor)
             body = try GroupWire.encode(GroupAPIModel.CreateInput(operationID: operationID.uuidString.lowercased(), packet: data.packet,
                 envelopes: data.envelopes, encryptedName: data.encryptedName, encryptedMemberNames: data.encryptedMemberNames))
             try pin(anchor)

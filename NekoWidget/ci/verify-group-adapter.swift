@@ -273,6 +273,20 @@ private struct GroupAdapterChecks {
         try check(parsed.privateKey == cap.privateKey && link.query == nil, "invitation secret stays in fragment")
         _ = try await client.stageInvitation(url: link)
         try rejects("invitation query is rejected") { _ = try GroupInvitationCapability(url: URL(string: link.absoluteString.replacingOccurrences(of: "/join#", with: "/join?tracking=1#"))!) }
+        let creatorOperation = UUID(), creatingClient: any GroupWindowClient = client
+        let named = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: "そや", operationID: creatorOperation)
+        try check(named.members.first(where: { $0.role == .owner })?.displayName == "そや", "creator name survives signed encryption round trip through protocol")
+        let namedRetry = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: "そや", operationID: creatorOperation)
+        try check(namedRetry.id == named.id, "creator-name retry reuses the original creation")
+        do { _ = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: "別の名前", operationID: creatorOperation); throw Failure.check("creator name changed within the same intent") }
+        catch GroupClientError.idempotencyConflict { }
+        let namedStats = await relay.stats()
+        for invalidName in ["", "  ", "名前\u{0000}", String(repeating: "あ", count: 27)] {
+            do { _ = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: invalidName, operationID: UUID()); throw Failure.check("invalid creator name accepted") }
+            catch GroupClientError.invalidResponse { }
+        }
+        let afterInvalidName = await relay.stats()
+        try check(namedStats.1.count == afterInvalidName.1.count, "invalid creator name makes no creation request")
         print("Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed")
     }
 }
