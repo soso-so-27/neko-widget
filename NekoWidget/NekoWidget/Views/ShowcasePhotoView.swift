@@ -1,3 +1,4 @@
+import Photos
 import SwiftUI
 import UIKit
 
@@ -93,7 +94,34 @@ struct ShowcasePhotoView: View {
     /// The nine photos as one picture, for the share sheet. Built off the main
     /// thread when the set changes; nil until then or when nothing can be drawn.
     @State private var bestNineImage: UIImage?
+    /// Which nine: the chosen set, or this year's (picked on the spot, not kept).
+    @State private var nineSet: NineSet = .chosen
     @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
+
+    enum NineSet: Hashable { case chosen, thisYear }
+
+    private var thisYear: Int { Calendar.current.component(.year, from: Date()) }
+
+    /// This year's cats, favourites first, newest next: up to nine, chosen
+    /// each time from the candidates and never written to the store.
+    private var thisYearItems: [Item] {
+        let known = scopeID.isEmpty ? nil
+            : Set(profiles.first(where: { $0.identifier == scopeID })?.confirmedPhotos.map(\.localIdentifier) ?? [])
+        let calendar = Calendar.current
+        return candidates
+            .filter { photo in
+                guard let date = photo.creationDate, calendar.component(.year, from: date) == thisYear else { return false }
+                return known?.contains(photo.localIdentifier) ?? true
+            }
+            .sorted { first, second in
+                let firstFavorite = first.isLiked || first.isPhotoLibraryFavorite
+                let secondFavorite = second.isLiked || second.isPhotoLibraryFavorite
+                if firstFavorite != secondFavorite { return firstFavorite }
+                return (first.creationDate ?? .distantPast) > (second.creationDate ?? .distantPast)
+            }
+            .prefix(9)
+            .map { Item.current($0.localIdentifier) }
+    }
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
 
@@ -111,12 +139,21 @@ struct ShowcasePhotoView: View {
 
     private var visibleItems: [Item] {
         guard initialScopeID != nil else { return items }
+        if nineSet == .thisYear { return thisYearItems }
 #if DEBUG && targetEnvironment(simulator)
         if Self.layoutFixtureItems != nil { return items }
 #endif
         return store.availableEntries(in: scopeID).compactMap { entry in
             store.imageURL(for: entry).map { .prepared(entry, $0) }
         }
+    }
+
+    /// The band under the nine: the cat's name, and the year for this year's set.
+    private var bandTitle: String? {
+        let name = scopeID.isEmpty ? nil : visibleTitle
+        let year = nineSet == .thisYear ? "\(thisYear)" : nil
+        let parts = [name, year].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " ・ ")
     }
 
     private var visibleTitle: String {
@@ -187,6 +224,17 @@ struct ShowcasePhotoView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
+            if detailIndex == nil, initialScopeID != nil {
+                Picker("どの9枚", selection: $nineSet) {
+                    Text("ベストナイン").tag(NineSet.chosen)
+                    Text("今年の9枚").tag(NineSet.thisYear)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .accessibilityIdentifier("showcase-nine-set")
+            }
+
             if !displayedItems.isEmpty {
                 ZStack {
                     ScrollView {
@@ -209,8 +257,8 @@ struct ShowcasePhotoView: View {
                         }
                     }
                     .overlay(alignment: .bottom) {
-                        if initialScopeID != nil, !scopeID.isEmpty {
-                            Text(visibleTitle)
+                        if initialScopeID != nil, let bandTitle {
+                            Text(bandTitle)
                                 .font(.headline)
                                 .tracking(2)
                                 .frame(maxWidth: .infinity, minHeight: 40)
@@ -233,16 +281,22 @@ struct ShowcasePhotoView: View {
                             .padding(.horizontal, 16)
                             .accessibilityIdentifier("showcase-share-best-nine")
                         }
-                        Text("写真を押すと大きく見られます。鉛筆から差し替えられます。")
+                        Text(nineSet == .thisYear
+                             ? "今年の写真から自動で選びました。写真を押すと大きく見られます。"
+                             : "写真を押すと大きく見られます。鉛筆から差し替えられます。")
                             .font(.footnote)
                             .foregroundStyle(.white.opacity(0.7))
                             .padding(.top, 10)
                     }
                     }
                     .id(scopeID)
-                    .task(id: displayedItems.map(\.id).joined(separator: ",")) {
-                        let sources = displayedItems.prefix(9).compactMap(Self.image(of:))
-                        let title = scopeID.isEmpty ? nil : visibleTitle
+                    .task(id: displayedItems.map(\.id).joined(separator: ",") + (bandTitle ?? "")) {
+                        bestNineImage = nil
+                        var sources: [UIImage] = []
+                        for item in displayedItems.prefix(9) {
+                            if let image = await Self.image(of: item) { sources.append(image) }
+                        }
+                        let title = bandTitle
                         bestNineImage = await Task.detached(priority: .userInitiated) {
                             BestNineComposer.image(sources, title: title)
                         }.value
@@ -306,6 +360,10 @@ struct ShowcasePhotoView: View {
                         }
                     }
                 }
+            } else if nineSet == .thisYear {
+                ContentUnavailableView("今年の猫写真はまだありません", systemImage: "calendar",
+                                       description: Text("今年に撮った猫の写真が見つかると、ここに9枚並びます。"))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 16) {
                     ContentUnavailableView("見せる写真がありません", systemImage: "photo")
@@ -375,13 +433,37 @@ struct ShowcasePhotoView: View {
         }
     }
 
-    /// The file-backed image behind an item; a direct Photos item has none.
-    private static func image(of item: Item) -> UIImage? {
+    /// The picture behind an item, for the composed image: the kept file, or
+    /// a Photos rendition fetched on this iPhone (no network).
+    private static func image(of item: Item) async -> UIImage? {
         switch item {
-        case let .prepared(_, url): UIImage(contentsOfFile: url.path)
-        case .current: nil
+        case let .prepared(_, url):
+            return UIImage(contentsOfFile: url.path)
+        case let .current(identifier):
+#if DEBUG
+            if let fixture = AppStoreScreenshotFixture.image(for: identifier) { return fixture }
+#endif
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+            else { return nil }
+            return await withCheckedContinuation { continuation in
+                let options = PHImageRequestOptions()
+                options.deliveryMode = .highQualityFormat
+                options.resizeMode = .fast
+                options.isNetworkAccessAllowed = false
+                var completed = false
+                PHImageManager.default().requestImage(
+                    for: asset, targetSize: CGSize(width: 800, height: 800),
+                    contentMode: .aspectFill, options: options
+                ) { image, info in
+                    if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
+                    guard !completed else { return }
+                    completed = true
+                    continuation.resume(returning: image)
+                }
+            }
 #if DEBUG && targetEnvironment(simulator)
-        case let .fixture(_, image): image
+        case let .fixture(_, image):
+            return image
 #endif
         }
     }
