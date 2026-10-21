@@ -2894,10 +2894,24 @@ struct PhotoBrowserView: View {
             .disabled(isExportingMemoryPhoto || noteState.isLoading)
 
             if exportMemoryPhoto != nil {
-                quickAction("square.and.arrow.up", "共有", tinted: false, identifier: "photo-browser-export") {
+                // The public page names this action 「写真を書き出す」; the caption is its short form.
+                Button {
                     beginMemoryPhotoExport(photo.localIdentifier)
+                } label: {
+                    VStack(spacing: 3) {
+                        Label("写真を書き出す", systemImage: "square.and.arrow.up")
+                            .labelStyle(.iconOnly)
+                            .font(.title3)
+                        Text("書き出す").font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .foregroundStyle(Color.secondary)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("写真を書き出す")
                 .accessibilityHint("位置情報などを除いた画像を共有します")
+                .accessibilityIdentifier("photo-browser-export")
                 .disabled(isExportingMemoryPhoto)
             }
         }
