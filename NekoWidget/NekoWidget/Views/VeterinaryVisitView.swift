@@ -272,7 +272,7 @@ private struct VeterinaryConsultationView: View {
                      : changes ? (error != nil ? "保存できませんでした" : "保存中…") : "自動保存済み")
                     .font(.caption).foregroundStyle(.secondary)
                 Button { showing = true } label: {
-                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    Label("控えを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("vet-show").disabled(changes || busy)

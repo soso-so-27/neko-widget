@@ -1869,7 +1869,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"settings-widget-placement-guide"', settings)
         self.assertIn('"settings-sharing-review"', settings)
         self.assertIn('FamilyWindowView(initialPresentation: .settings)', settings)
-        self.assertIn('Label("まどの設定", systemImage: "rectangle.split.2x2")', settings)
+        self.assertIn('Label("まどの設定", systemImage: "window.vertical.closed")', settings)
         self.assertIn('Text("接続と端末")', family)
         self.assertIn('"接続相手と、使っているiPhoneを確認します"', family)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
@@ -2861,7 +2861,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             main_tab,
         )
         self.assertIn(
-            'Label("まど", systemImage: "rectangle.split.2x2")',
+            'Label("まど", systemImage: "window.vertical.closed")',
             main_tab,
         )
         self.assertIn(
@@ -4070,7 +4070,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("一時的な届いた写真", pairing)
         self.assertIn("写真アプリへ保存した写真は残ります", pairing_model)
         self.assertIn("FamilyWindowView(", main_tab)
-        self.assertIn('Label("まど", systemImage: "rectangle.split.2x2")', main_tab)
+        self.assertIn('Label("まど", systemImage: "window.vertical.closed")', main_tab)
         self.assertNotIn("届いた写真の履歴", main_tab)
 
     def test_temporary_pairing_storage_failure_has_one_retry_path(self) -> None:
@@ -4263,7 +4263,7 @@ class GroupWindowUITests(unittest.TestCase):
             "まどは全部で\\(totalWindowLimit)個までです。",
             "まどを作った人がアプリを開くと、続けられます。",
             "招待の期限が切れました。新しい招待を受け取ってください。",
-            "接続できません。申し込みは残っています。",
+            "接続できません。電波のあるところで",
             "まどを作った人は抜けられません。",
         ):
             self.assertIn(expected, presentation)

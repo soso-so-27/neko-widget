@@ -225,7 +225,7 @@ struct SettingsView: View {
                             LabeledContent {
                                 Text(privateWindowDisplayName)
                             } label: {
-                                Label("まどの設定", systemImage: "rectangle.split.2x2")
+                                Label("まどの設定", systemImage: "window.vertical.closed")
                             }
                         }
                         .accessibilityIdentifier("settings-sharing-review")

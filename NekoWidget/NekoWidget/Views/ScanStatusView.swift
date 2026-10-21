@@ -139,7 +139,7 @@ struct InitialScanView: View {
                         .multilineTextAlignment(.center)
 
                     Text(scan.displayedCatCount.formatted())
-                        .font(.system(size: 62, weight: .bold, design: .rounded))
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
                         .contentTransition(.numericText())
 
                     Text(scan.hasFinalResult ? "枚ありました" : "枚見つかっています")
@@ -306,7 +306,7 @@ struct ScanProgressCard: View {
 
             if scan.hasFinalResult, scan.hasDeferredAssets {
                 Text("このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度調べられます。")
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
