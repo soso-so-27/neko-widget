@@ -92,9 +92,9 @@ enum OnboardingPresentationCopy {
 
     static func homePermissionBody(isMediaAvailable: Bool) -> String {
         if isMediaAvailable {
-            return "写真を調べるのは、このiPhoneの中だけです。あなたが選んで届ける写真のほかは、外に送りません。あとから許可できます。"
+            return "解析はこの端末内で行います。共有は別に同意した後、選んだ縮小写真1枚だけを送ります。写真や動画の自動送信・削除・変更はしません。あとから許可できます。"
         }
-        return "写真を調べるのは、このiPhoneの中だけです。写真を外に送ったり、消したりしません。あとから許可できます。"
+        return "解析はこの端末内で行い、写真や動画を開発者のサーバーへ自動送信しません。変更や削除もしません。あとから許可できます。"
     }
     static let permissionLimitedAccessNote = "「すべての写真」がおすすめです。「選択した写真のみ」でも動きます。"
     static let permissionAction = "写真へのアクセスを許可"

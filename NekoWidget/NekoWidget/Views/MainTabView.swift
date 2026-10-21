@@ -454,7 +454,7 @@ struct MainTabView: View {
                     )
                 }
                 .tabItem {
-                    Label("まど", systemImage: "rectangle.split.2x2")
+                    Label("まど", systemImage: "window.vertical.closed")
                         .accessibilityIdentifier("main-tab-windows")
                 }
                 .badge(newMadoPhotoCount)
@@ -1076,9 +1076,15 @@ struct MainTabView: View {
             Button("猫のプロフィール", systemImage: "cat.fill") { showsCatProfiles = true }
                 .accessibilityIdentifier("photos-cat-profiles")
         } label: {
-            Label(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" }
-                    ?? "すべての猫", systemImage: "chevron.down")
-                .font(.subheadline).lineLimit(1).frame(minHeight: 44)
+            HStack(spacing: 4) {
+                Text(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" } ?? "すべての猫")
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            }
+            .font(.subheadline.weight(.medium)).lineLimit(1)
+            .padding(.horizontal, 14).frame(minHeight: 36)
+            .background(Color.secondary.opacity(0.08), in: Capsule())
+            .foregroundStyle(.primary)
+            .frame(minHeight: 44)
         }
         .accessibilityIdentifier("photos-cat-picker")
     }
@@ -3611,7 +3617,7 @@ struct WindowListNavigationFixture: View {
                                publicWindows: sources)
                     .frame(maxWidth: CommandLine.arguments.contains("--window-list-narrow") ? 320 : .infinity)
             }
-            .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
+            .tabItem { Label("まど", systemImage: "window.vertical.closed") }.tag(2)
         }
         .environment(\.dynamicTypeSize,
                      CommandLine.arguments.contains("--window-list-largest-text") ? .accessibility5 :

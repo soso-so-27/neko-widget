@@ -824,7 +824,7 @@ struct GroupLibraryDeliverySheet: View {
                 } else if !list.hasLoaded {
                     ProgressView("まどを読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if openWindows.isEmpty {
-                    ContentUnavailableView("届け先のまどがありません", systemImage: "rectangle.split.2x2",
+                    ContentUnavailableView("届け先のまどがありません", systemImage: "window.vertical.closed",
                         description: Text("まどタブで、まどを作るか、届いた招待リンクから参加してください。"))
                 } else {
                     List(openWindows) { window in
@@ -1381,9 +1381,10 @@ struct GroupWindowListSection: View {
                 GroupWindowCreateScreen(client: model.client)
             } label: {
                 Label("まどを作る（\(GroupWindowPresentation.memberLimit)人まで）", systemImage: "plus")
+                    .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .disabled(model.isWorking)
             .accessibilityIdentifier("group-window-create")
             if !formerWindows.isEmpty {
