@@ -338,7 +338,7 @@ struct AppRootView: View {
             isPhotoRequestReady: viewModel.catHouseholdIdentity != nil,
             scan: scanPresentation(records: viewModel.catAssets),
             resultPhotos: hasPhotoAccess
-                ? viewModel.catAssets.prefix(3).map(photoPresentation)
+                ? viewModel.catAssets.prefix(9).map(photoPresentation)
                 : [],
             scanErrorMessage: onboardingScanErrorMessage,
             isLimitedAccess: viewModel.isLimitedAccess,
