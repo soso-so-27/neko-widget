@@ -180,7 +180,7 @@ struct CatCareDetailView: View {
             Text("入れた内容は画面に残っています。少し待ってから、もう一度お試しください。")
         }
         .sheet(item: $editing) { editor in
-            CatCareListEntrySheet(editor: editor) { result in
+            CatCareListEntrySheet(editor: editor, catID: catID) { result in
                 apply(result)
             }
         }
@@ -445,28 +445,54 @@ struct CatCareListEditor: Identifiable {
     enum Kind: String { case weight, medication, vaccination, meal }
     let id = UUID()
     let kind: Kind
+    /// The record being changed; nil adds a new one.
+    var entryID: UUID? = nil
 
     enum Result {
-        case weight(grams: Int, day: CatCareDay)
-        case medication(name: String, dose: String, schedule: String)
-        case vaccination(kind: String, day: CatCareDay, proof: CatCarePhotoRef?)
-        case meal(time: String, food: String, amount: String)
+        case weight(grams: Int, day: CatCareDay, replacing: UUID? = nil)
+        case medication(name: String, dose: String, schedule: String, replacing: UUID? = nil)
+        case vaccination(kind: String, day: CatCareDay, proof: CatCarePhotoRef?, replacing: UUID? = nil)
+        case meal(time: String, food: String, amount: String, replacing: UUID? = nil)
         case delete(kind: Kind, entryID: UUID)
 
         func apply(to r: inout CatCareRecord, by: String, now: Date) {
             switch self {
-            case let .weight(grams, day):
+            case let .weight(grams, day, replacing):
+                if let index = replacing.flatMap({ id in r.weights.firstIndex { $0.id == id } }) {
+                    r.weights[index].grams = grams; r.weights[index].measuredOn = day
+                    r.weights[index].editedAt = now; r.weights[index].editedBy = by
+                    return
+                }
                 guard r.weights.count < CatCareLimits.maximumWeights else { return }
                 r.weights.append(.init(measuredOn: day, grams: grams, editedAt: now, editedBy: by))
-            case let .medication(name, dose, schedule):
+            case let .medication(name, dose, schedule, replacing):
+                if let index = replacing.flatMap({ id in r.medications.firstIndex { $0.id == id } }) {
+                    r.medications[index].name = CatCareLimits.clippedText(name)
+                    r.medications[index].dose = CatCareLimits.clippedText(dose)
+                    r.medications[index].schedule = CatCareLimits.clippedText(schedule)
+                    r.medications[index].editedAt = now; r.medications[index].editedBy = by
+                    return
+                }
                 guard r.medications.count < CatCareLimits.maximumMedications else { return }
                 r.medications.append(.init(name: CatCareLimits.clippedText(name), dose: CatCareLimits.clippedText(dose),
                                            schedule: CatCareLimits.clippedText(schedule), editedAt: now, editedBy: by))
-            case let .vaccination(kind, day, proof):
+            case let .vaccination(kind, day, proof, replacing):
+                if let index = replacing.flatMap({ id in r.vaccinations.firstIndex { $0.id == id } }) {
+                    r.vaccinations[index].kind = CatCareLimits.clippedText(kind)
+                    r.vaccinations[index].givenOn = day
+                    if let proof { r.vaccinations[index].proof = proof }
+                    r.vaccinations[index].editedAt = now; r.vaccinations[index].editedBy = by
+                    return
+                }
                 guard r.vaccinations.count < CatCareLimits.maximumVaccinations else { return }
                 r.vaccinations.append(.init(kind: CatCareLimits.clippedText(kind), givenOn: day, proof: proof,
                                             editedAt: now, editedBy: by))
-            case let .meal(time, food, amount):
+            case let .meal(time, food, amount, replacing):
+                if let index = replacing.flatMap({ id in r.meals.firstIndex { $0.id == id } }) {
+                    r.meals[index].time = time; r.meals[index].food = food; r.meals[index].amount = amount
+                    r.meals[index].editedAt = now; r.meals[index].editedBy = by
+                    return
+                }
                 guard r.activeMeals.count < CatCareLimits.maximumMeals else { return }
                 r.meals.append(.init(time: time, food: food, amount: amount,
                                      order: (r.activeMeals.map(\.order).max() ?? -1) + 1,
@@ -493,13 +519,14 @@ struct CatCareListView: View {
 
     private var record: CatCareRecord? { catID.flatMap { store.state?.record(catID: $0) } }
 
-    /// Every record is a button that asks before deleting, so a swipe is never the only way.
+    /// Every record opens to be changed; deleting is a button there (and a
+    /// swipe), always with a confirmation.
     private func row<Content: View>(_ id: UUID, @ViewBuilder _ content: () -> Content) -> some View {
-        Button { pendingDelete = id } label: {
+        Button { editing = CatCareListEditor(kind: kind, entryID: id) } label: {
             content().frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("押すと削除できます")
+        .accessibilityHint("押すと直せます。削除もここからできます")
         .swipeActions { Button("削除", role: .destructive) { pendingDelete = id } }
     }
 
@@ -560,6 +587,9 @@ struct CatCareListView: View {
         }
         .navigationTitle(CatCareFormat.title(kind))
         .navigationBarTitleDisplayMode(.inline)
+        .onReceive(NotificationCenter.default.publisher(for: CatCareListEntrySheet.deleteRequested)) { note in
+            if let id = note.object as? UUID { pendingDelete = id }
+        }
         .confirmationDialog("この記録を削除しますか？", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
             Button("削除", role: .destructive) {
@@ -591,7 +621,11 @@ struct CatCareListView: View {
 }
 
 struct CatCareListEntrySheet: View {
+    /// Asks the list to confirm deleting the record this sheet was showing.
+    static let deleteRequested = Notification.Name("catCare.listEntry.deleteRequested")
+
     let editor: CatCareListEditor
+    let catID: UUID?
     let onSave: (CatCareListEditor.Result) -> Void
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store = CatCareStore.shared
@@ -644,13 +678,23 @@ struct CatCareListEntrySheet: View {
                     Text(message).font(.footnote).foregroundStyle(.orange)
                 }
             }
-            .navigationTitle(CatCareFormat.title(editor.kind) + "を追加")
+            .navigationTitle(CatCareFormat.title(editor.kind) + (editor.entryID == nil ? "を追加" : "を直す"))
             .announcesWhenShown(message)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("追加") { save() } }
+                ToolbarItem(placement: .confirmationAction) { Button(editor.entryID == nil ? "追加" : "保存") { save() } }
+                if let entryID = editor.entryID {
+                    ToolbarItem(placement: .bottomBar) {
+                        Button("この記録を削除", role: .destructive) {
+                            dismiss()
+                            NotificationCenter.default.post(name: Self.deleteRequested, object: entryID)
+                        }
+                        .accessibilityIdentifier("cat-care-delete-entry")
+                    }
+                }
             }
+            .onAppear(perform: fillFromRecord)
             .fullScreenCover(isPresented: $showsCamera) {
                 CatCareCameraView { image in
                     showsCamera = false
@@ -678,8 +722,33 @@ struct CatCareListEntrySheet: View {
         }
     }
 
+    /// When changing a record, start from what is stored.
+    private func fillFromRecord() {
+        guard let entryID = editor.entryID, let catID,
+              let record = store.state?.record(catID: catID) else { return }
+        func dateOf(_ day: CatCareDay) -> Date {
+            Calendar.current.date(from: DateComponents(year: day.year, month: day.month, day: day.day)) ?? Date()
+        }
+        switch editor.kind {
+        case .weight:
+            guard let entry = record.weights.first(where: { $0.id == entryID }) else { return }
+            date = dateOf(entry.measuredOn)
+            gramsText = String(format: "%.2f", Double(entry.grams) / 1000)
+        case .medication:
+            guard let entry = record.medications.first(where: { $0.id == entryID }) else { return }
+            name = entry.name; dose = entry.dose; schedule = entry.schedule
+        case .vaccination:
+            guard let entry = record.vaccinations.first(where: { $0.id == entryID }) else { return }
+            name = entry.kind; date = dateOf(entry.givenOn); proof = entry.proof
+        case .meal:
+            guard let entry = record.meals.first(where: { $0.id == entryID }) else { return }
+            name = entry.time; food = entry.food; amount = entry.amount
+        }
+    }
+
     private func save() {
         guard let day = CatCareDay(date: date) else { return }
+        let replacing = editor.entryID
         switch editor.kind {
         case .weight:
             // kg, as in the photo memo. Full-width digits and a comma also work.
@@ -690,18 +759,18 @@ struct CatCareListEntrySheet: View {
                   case let grams = Int((kilograms * 1000).rounded()),
                   CatCareLimits.isValidWeight(grams: grams, on: day, today: today)
             else { message = "体重はkgの数字で入れてください（例：4.2）。"; return }
-            onSave(.weight(grams: grams, day: day))
+            onSave(.weight(grams: grams, day: day, replacing: replacing))
         case .medication:
             guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { message = "薬の名前を入れてください。"; return }
-            onSave(.medication(name: name, dose: dose, schedule: schedule))
+            onSave(.medication(name: name, dose: dose, schedule: schedule, replacing: replacing))
         case .vaccination:
             guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { message = "種類を入れてください。"; return }
-            onSave(.vaccination(kind: name, day: day, proof: proof))
+            onSave(.vaccination(kind: name, day: day, proof: proof, replacing: replacing))
         case .meal:
             guard ![name, food, amount].allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
                 message = "時間・フード・量のどれかを入れてください。"; return
             }
-            onSave(.meal(time: name, food: food, amount: amount))
+            onSave(.meal(time: name, food: food, amount: amount, replacing: replacing))
         }
         dismiss()
     }
@@ -889,7 +958,9 @@ enum CatCareSummary {
         case .no: "去勢・避妊 まだ"
         case .unknown: "去勢・避妊 未記入"
         }
-        fields.append(("性別", sex + "・" + neutered))
+        // Both unknown: one 「未記入」, not 「未記入・去勢・避妊 未記入」.
+        let bothUnknown = (record?.sex?.value ?? .unknown) == .unknown && (record?.neutered?.value ?? .unknown) == .unknown
+        fields.append(("性別", bothUnknown ? empty : sex + "・" + neutered))
         fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: CatCareDay(date: Date())) ?? empty))
         fields.append(("マイクロチップ", text(record?.microchip?.value)))
         fields.append(("持病", text(record?.conditions?.value)))

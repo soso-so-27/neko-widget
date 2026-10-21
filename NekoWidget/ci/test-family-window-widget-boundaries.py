@@ -4780,7 +4780,8 @@ class CatCareUsabilityTests(unittest.TestCase):
         self.assertIn("value.microchip = savedDraft.microchip", save)
         # Deleting is a button with a confirmation; a swipe is not the only way.
         self.assertIn('confirmationDialog("この記録を削除しますか？"', view)
-        self.assertIn('.accessibilityHint("押すと削除できます")', view)
+        self.assertIn('.accessibilityHint("押すと直せます。削除もここからできます")', view)
+        self.assertIn('"cat-care-delete-entry"', view)
         self.assertNotIn("deleteButton(entry.id)", view)
 
 

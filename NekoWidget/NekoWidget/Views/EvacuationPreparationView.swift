@@ -241,10 +241,14 @@ private struct EvacuationSuppliesEditor: View {
         }
         store.update { plan in
             plan.addRecommendedSupplies()
-            for (catID, names) in medicines where !names.isEmpty && plan.supplies.count < 200
-                && !plan.supplies.contains(where: { $0.catID == catID && $0.title.hasPrefix("薬") }) {
-                plan.supplies.append(EvacuationSupply(title: "薬：" + names.joined(separator: "・"),
-                                                      quantity: "5日分以上", catID: catID))
+            for (catID, names) in medicines where !names.isEmpty {
+                let title = "薬：" + names.joined(separator: "・")
+                if let index = plan.supplies.firstIndex(where: { $0.catID == catID && $0.title.hasPrefix("薬") }) {
+                    // An item this app made follows the current medicines; one the owner renamed stays.
+                    if plan.supplies[index].title.hasPrefix("薬：") { plan.supplies[index].title = title }
+                } else if plan.supplies.count < 200 {
+                    plan.supplies.append(EvacuationSupply(title: title, quantity: "5日分以上", catID: catID))
+                }
             }
         }
     }
