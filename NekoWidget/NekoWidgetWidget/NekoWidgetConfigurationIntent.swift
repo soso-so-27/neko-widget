@@ -118,21 +118,24 @@ struct WidgetPhotoSource: AppEntity {
 
     /// Add future selectable sources here, or replace this with App Group data.
     /// Existing widget instances continue to resolve by their stable `id`.
+    /// The windows people share come first, then this iPhone's photos, then
+    /// public windows. A new widget still starts on this iPhone's photos
+    /// (`defaultResult`), so reordering never changes an existing choice.
     static var availableSources: [WidgetPhotoSource] {
-        var sources: [WidgetPhotoSource] = [.personalLibrary]
-            + OfficialWindowConfiguration.definitions
-                .filter { $0.endpoint != nil }
-                .map(publicWindow)
+        // Group windows the app has verified and kept on this iPhone.
+        var sources: [WidgetPhotoSource] = GroupWidgetCache.entries().map(groupWindow)
         if familyWindowSourceIsEnabled {
             let windows = PrivateWindowCatalogStore.widgetEntries()
             if windows.isEmpty {
-                sources.append(.familyWindow)
+                if sources.isEmpty { sources.append(.familyWindow) }
             } else {
                 sources.append(contentsOf: windows.map(familyWindow))
             }
         }
-        // Group windows the app has verified and kept on this iPhone.
-        sources.append(contentsOf: GroupWidgetCache.entries().map(groupWindow))
+        sources.append(.personalLibrary)
+        sources.append(contentsOf: OfficialWindowConfiguration.definitions
+            .filter { $0.endpoint != nil }
+            .map(publicWindow))
         return sources
     }
 
