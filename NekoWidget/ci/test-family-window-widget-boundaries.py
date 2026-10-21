@@ -2913,7 +2913,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("猫写真のまどをひとつ。", onboarding)
 
         self.assertIn('"photo-browser-memory-saved-state"', liked)
-        self.assertIn('Button("お気に入りから外す", systemImage: "bookmark.slash", role: .destructive)', liked)
+        self.assertIn('.accessibilityLabel(saved ? "お気に入りから外す" : "お気に入りに追加")', liked)
 
         settings = source("NekoWidget/Views/SettingsView.swift")
         profiles = source("NekoWidget/Views/CatProfilesView.swift")

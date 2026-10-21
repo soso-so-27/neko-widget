@@ -64,14 +64,20 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "received-favorites"
         app.launch()
-        XCTAssertTrue(app.buttons["favorites-origin-received"].waitForExistence(timeout: 15))
+        // The origins live in one menu at the heading's right.
+        let originMenu = app.buttons["favorites-origin-menu"]
+        XCTAssertTrue(originMenu.waitForExistence(timeout: 15))
         captureScreenshot(named: "favorites-all-origins")
+        originMenu.tap()
+        XCTAssertTrue(app.buttons["favorites-origin-received"].waitForExistence(timeout: 5))
         app.buttons["favorites-origin-received"].tap()
-        XCTAssertTrue(app.buttons["favorites-origin-received"].isSelected)
+        XCTAssertEqual(originMenu.label, "絞り込み、まどから届いた")
         XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.waitForExistence(timeout: 5))
         captureScreenshot(named: "favorites-from-mado")
+        originMenu.tap()
+        XCTAssertTrue(app.buttons["favorites-origin-ownCats"].waitForExistence(timeout: 5))
         app.buttons["favorites-origin-ownCats"].tap()
-        XCTAssertTrue(app.buttons["favorites-origin-ownCats"].isSelected)
+        XCTAssertEqual(originMenu.label, "絞り込み、自分の猫")
         // A received photo explicitly assigned to one's cat also belongs to
         // Own Cats, while retaining its true received provenance label.
         XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.exists)
