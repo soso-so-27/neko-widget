@@ -958,7 +958,9 @@ enum CatCareSummary {
         case .no: "去勢・避妊 まだ"
         case .unknown: "去勢・避妊 未記入"
         }
-        fields.append(("性別", sex + "・" + neutered))
+        // Both unknown: one 「未記入」, not 「未記入・去勢・避妊 未記入」.
+        let bothUnknown = (record?.sex?.value ?? .unknown) == .unknown && (record?.neutered?.value ?? .unknown) == .unknown
+        fields.append(("性別", bothUnknown ? empty : sex + "・" + neutered))
         fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: CatCareDay(date: Date())) ?? empty))
         fields.append(("マイクロチップ", text(record?.microchip?.value)))
         fields.append(("持病", text(record?.conditions?.value)))
