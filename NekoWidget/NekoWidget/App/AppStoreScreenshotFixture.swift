@@ -914,12 +914,8 @@ private struct SoloMemoriesFixtureView: View {
                     )
                 case .reflectionsArchive:
                     albumsView(showsReflectionArchive: true)
-                case .highlightsArchive:
-                    albumsView(showsHighlightArchive: true)
                 case let .catAlbums(identifier):
                     albumsView(scope: .profile(identifier))
-                case let .catHighlightsArchive(identifier):
-                    albumsView(scope: .profile(identifier), showsHighlightArchive: true)
                 case let .catHighlight(identifier, highlight):
                     highlightBrowser(highlight, scope: .profile(identifier))
                 case let .highlight(highlight):
@@ -1346,9 +1342,7 @@ private struct SoloMemoriesFixtureView: View {
         case let .memoryNote(id): "memory-note:\(id)"
         case let .memoryNotePhoto(id): "memory-note-photo:\(id)"
         case .reflectionsArchive: "reflections-archive"
-        case .highlightsArchive: "highlights-archive"
         case let .catAlbums(identifier): "cat-albums:\(identifier)"
-        case let .catHighlightsArchive(identifier): "cat-highlights-archive:\(identifier)"
         case let .catHighlight(identifier, highlight): "cat-highlight:\(identifier):\(highlight.id)"
         case let .highlight(highlight): "highlight:\(highlight.id)"
         case let .photo(identifier): "photo:\(identifier)"

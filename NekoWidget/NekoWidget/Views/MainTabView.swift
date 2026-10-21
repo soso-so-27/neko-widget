@@ -153,13 +153,11 @@ enum MemoriesRoute: Hashable {
     case memoryNote(UUID)
     case memoryNotePhoto(UUID)
     case reflectionsArchive
-    case highlightsArchive
     case highlight(AlbumHighlightPresentation)
     case photo(String)
     case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
     case catAlbums(String)
-    case catHighlightsArchive(String)
     case catHighlight(String, AlbumHighlightPresentation)
 }
 
@@ -1652,12 +1650,8 @@ struct MainTabView: View {
             )
         case .reflectionsArchive:
             albumsView(showsReflectionArchive: true)
-        case .highlightsArchive:
-            albumsView(showsHighlightArchive: true)
         case let .catAlbums(identifier):
             catAlbumsDestination(identifier, showsHighlightArchive: false)
-        case let .catHighlightsArchive(identifier):
-            catAlbumsDestination(identifier, showsHighlightArchive: true)
         case let .catHighlight(identifier, snapshot):
             highlightDestination(snapshot, scope: .profile(identifier))
         case let .highlight(snapshot):
