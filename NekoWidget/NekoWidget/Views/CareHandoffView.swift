@@ -20,14 +20,9 @@ struct CareHandoffView: View {
                 } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
             } else {
                 List {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("いつものお世話を伝える").font(.headline)
-                            Text("ごはんの量も、この子の苦手も。写真付きのメモを作って渡せます。")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }.padding(.vertical, 8)
-                    }
                     ToolCatPicker(profiles: profiles, select: selectProfile) {
+                        let guests = store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }
+                        if !guests.isEmpty || !availableSavedCats.isEmpty {
                         Section("まだ登録していない猫") {
                             ForEach(store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }) { cat in
                                 NavigationLink { editor(cat.id) } label: { Label(cat.displayName, systemImage: "cat") }
@@ -39,6 +34,7 @@ struct CareHandoffView: View {
                             ForEach(availableSavedCats) { cat in
                                 Button(cat.displayName) { addCat(sourceCatID: cat.id) }
                             }
+                        }
                         }
                     }
                     if !store.plan.cats.isEmpty {
@@ -430,7 +426,7 @@ private struct CareDisclosureView: View {
             Section {
                 Toggle("薬・アレルギーを含める", isOn: $disclosure.health).accessibilityIdentifier("care-disclose-health")
                 Toggle("連絡先・動物病院を含める", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
-            } header: { Text("必要な相手に渡す情報")
+            } header: { Text("渡す相手に合わせて選ぶ")
             } footer: { Text("写真・名前・お世話・今回のお願いは載せます。薬や連絡先は、渡す相手に合わせて選んでください。") }
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
         }.navigationTitle("渡す内容を選ぶ").navigationBarTitleDisplayMode(.inline)

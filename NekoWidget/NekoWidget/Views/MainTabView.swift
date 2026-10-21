@@ -706,10 +706,9 @@ struct MainTabView: View {
 
     private var photoLibrary: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
-                photoLibraryCatPicker
-            }.padding(.horizontal, 16)
+            // One row, one kind of control: which photos (all / favorites / memos).
+            PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
+                .padding(.horizontal, 16)
             photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
         }
         .navigationTitle("写真")
@@ -1076,15 +1075,15 @@ struct MainTabView: View {
             Button("猫のプロフィール", systemImage: "cat.fill") { showsCatProfiles = true }
                 .accessibilityIdentifier("photos-cat-profiles")
         } label: {
-            HStack(spacing: 4) {
-                Text(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" } ?? "すべての猫")
-                Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
+            HStack(spacing: 6) {
+                Text((photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" } ?? "すべての猫") + "の写真")
+                    .font(.title3.bold())
+                Image(systemName: "chevron.down").font(.caption.weight(.bold)).foregroundStyle(.secondary)
             }
-            .font(.subheadline.weight(.medium)).lineLimit(1)
-            .padding(.horizontal, 14).frame(minHeight: 36)
-            .background(Color.secondary.opacity(0.08), in: Capsule())
+            .lineLimit(1)
             .foregroundStyle(.primary)
             .frame(minHeight: 44)
+            .accessibilityAddTraits(.isHeader)
         }
         .accessibilityIdentifier("photos-cat-picker")
     }
@@ -1145,7 +1144,8 @@ struct MainTabView: View {
             supplementaryPhotos: photoLibraryProfileIdentifier == nil ? AnyView(PersonalArchivePhotosSection(
                 photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
             readingPositionKey: photoLibraryPositionKey,
-            showsCatProfileNavigation: false
+            showsCatProfileNavigation: false,
+            headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker)
         )
     }
 

@@ -568,19 +568,29 @@ struct GroupWindowMembersView: View {
         }
     }
 
+    @ViewBuilder
     private func membersSection(_ window: GroupWindow) -> some View {
+        if !model.pendingRequests.isEmpty {
+            // People waiting come first: that is what the creator opened this for.
+            Section {
+                ForEach(model.pendingRequests) { request in
+                    requestRow(request, window: window)
+                }
+            } header: {
+                Text("参加を待っている人")
+            } footer: {
+                Text("知らない人は入れないでください。")
+            }
+        }
         Section {
             ForEach(window.activeMembers) { member in
                 memberRow(member, window: window)
             }
-            ForEach(model.pendingRequests) { request in
-                requestRow(request, window: window)
-            }
         } header: {
             Text("メンバー")
         } footer: {
-            if window.canManage {
-                Text("参加したい人はここに出ます。知らない人は入れないでください。")
+            if window.canManage && model.pendingRequests.isEmpty {
+                Text("参加したい人は、ここの上に出ます。")
             }
         }
     }
