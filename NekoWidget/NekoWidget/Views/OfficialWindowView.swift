@@ -110,7 +110,7 @@ struct OfficialWindowStatusPresentation {
 
     var title: String {
         switch kind {
-        case .preparing: "公式まどを準備しています"
+        case .preparing: "公式のまどを準備しています"
         case .stopped: "受け取りをやめました"
         case .checking: "写真を確認しています…"
         case .paused: "いまは配信をお休みしています"
@@ -166,7 +166,7 @@ struct PublicWindowDiscoveryView: View {
             .frame(maxWidth: 520)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle("まどを探す")
+        .navigationTitle("公式のまど")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier("window-discovery")
@@ -624,7 +624,7 @@ struct OfficialWindowView: View {
                             Text("1. ホーム画面にある「ねこのまど」のウィジェットを長押しして、「ウィジェットを編集」を開きます。")
                             Text("2. 「表示する写真」で、次の表示元を選びます。")
                         }
-                        Label("\(store.displayName) · 公式まど", systemImage: "pawprint.fill")
+                        Label("\(store.displayName) · 公式のまど", systemImage: "pawprint.fill")
                             .font(.headline)
                             .accessibilityIdentifier("official-window-widget-source")
                     }
@@ -704,7 +704,7 @@ struct OfficialWindowView: View {
                 NavigationLink {
                     PublicWindowDiscoveryView(sources: discoverySources)
                 } label: {
-                    Label("まどを探す", systemImage: "chevron.right")
+                    Label("公式のまどを見る", systemImage: "building.2")
                         .frame(minHeight: 44)
                 }
                 .accessibilityIdentifier("official-window-state-discovery")

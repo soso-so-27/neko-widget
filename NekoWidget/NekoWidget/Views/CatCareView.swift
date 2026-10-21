@@ -142,7 +142,7 @@ struct CatCareDetailView: View {
                 }
             }
             if let message = store.loadError {
-                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             } else if store.unreadableCatCount > 0 {
                 Section {
                     Label("読み込めない記録があるため、いまは保存できません。アプリを最新にしてください。記録は消していません。",
@@ -301,9 +301,9 @@ struct CatCareDetailView: View {
                 .keyboardType(.phonePad)
             TextField("避難のときの家族の集合場所", text: $draft.meetingPlace)
         } header: {
-            Text("家の情報（ほかの猫と共通）")
+            Text("家の情報")
         } footer: {
-            Text("1回入れると、ほかの猫にも同じ内容が入ります。")
+            Text("ほかの猫と共通です。1回入れると、どの猫にも載ります。")
         }
     }
 
@@ -688,7 +688,7 @@ struct CatCareListEntrySheet: View {
                     TextField("量（例：20g）", text: $amount)
                 }
                 if let message {
-                    Text(message).font(.footnote).foregroundStyle(.orange)
+                    Text(message).font(.footnote).foregroundStyle(.red)
                 }
             }
             .navigationTitle(CatCareFormat.title(editor.kind) + (editor.entryID == nil ? "を追加" : "を直す"))

@@ -359,7 +359,7 @@ struct GroupWindowMembersView: View {
             } else if let message = model.loadFailureMessage {
                 Section {
                     Label(message, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.red)
                         .accessibilityIdentifier("group-window-load-failure")
                 }
             } else {
@@ -731,7 +731,7 @@ struct GroupWindowMembersView: View {
         } header: {
             Text("招待")
         } footer: {
-            Text("アプリがなければApp Storeが開きます（24時間有効・何人でも使えます）。リンクを開いただけでは写真は見られません。あなたが承認した人だけが参加します。")
+            Text("リンクは24時間有効で、何人でも使えます。参加するには、あなたの承認が要ります。")
         }
     }
 
@@ -902,7 +902,7 @@ struct GroupJoinView: View {
             if let message = model.errorMessage {
                 Section {
                     Label(message, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.red)
                         .accessibilityIdentifier("group-join-error")
                 }
             }

@@ -540,7 +540,7 @@ struct GroupWindowScreen: View {
                 if let message = model.message {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.red)
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-screen-message")
                     if model.canSend && model.failedDelivery == nil {
@@ -886,10 +886,10 @@ private struct GroupLibraryDeliveryStep: View {
                     }
                     Section {
                         TextField("例：おなかを見せて寝ていた", text: $memo, axis: .vertical).lineLimit(2...5)
-                    } header: { Text("メモ（自分だけ）") }
+                    } header: { Text("メモ") }
                       footer: { Text("メモはこのiPhoneにだけ残り、まどには届きません。") }
                     if let message = model.message {
-                        Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                        Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
                     }
                 }
                 .safeAreaInset(edge: .bottom) {
@@ -958,7 +958,7 @@ private struct GroupSendConfirmSheet: View {
                     TextField("例：おなかを見せて寝ていた", text: $memo, axis: .vertical)
                         .lineLimit(2...5)
                         .accessibilityIdentifier("group-window-send-memo")
-                } header: { Text("メモ（自分だけ）") }
+                } header: { Text("メモ") }
                   footer: { Text("メモはこのiPhoneにだけ残り、まどには届きません。写真タブで見返せます。") }
             }
             .navigationTitle("「\(windowName)」に届ける")
@@ -1028,7 +1028,7 @@ private struct GroupPhotoDetail: View {
             .navigationTitle(model.window?.name ?? model.formerName ?? "まど")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if let current, !current.isOwn {
                             Button("\(GroupDisplayName.withSan(current.senderDisplayName))の写真を表示しない", systemImage: "eye.slash") {
@@ -1047,7 +1047,7 @@ private struct GroupPhotoDetail: View {
                     .accessibilityLabel("この写真の操作")
                     .accessibilityIdentifier("group-photo-menu")
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる", systemImage: "xmark") { dismiss() }
                         .labelStyle(.iconOnly)
                 }
@@ -1059,7 +1059,7 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("写真アプリへコピーして、お気に入りに追加します。位置情報は含みません。iCloud写真の設定により、iCloudにも同期される場合があります。届けた人には知らせません。")
+                Text("写真アプリにコピーして、お気に入りに入れます。位置情報は付けません。届けた人には知らせません。")
             }
             .confirmationDialog(current.map { "\(GroupDisplayName.withSan($0.senderDisplayName))の写真を表示しないようにしますか？" } ?? "",
                                 isPresented: $showsHideConfirmation, titleVisibility: .visible) {
@@ -1289,7 +1289,7 @@ struct GroupWindowCreateScreen: View {
             } header: { Text("まどの名前") }
               footer: { Text("名前はメンバー全員に表示されます。作ったら、招待リンクを送りましょう。") }
             if let message = model.message {
-                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             }
         }
         .navigationTitle("家族・友だちとまどを作る")
@@ -1375,7 +1375,7 @@ struct GroupWindowListSection: View {
                 .accessibilityIdentifier("group-window-list-loading")
             }
             if let message = model.message {
-                Text(message).font(.footnote).foregroundStyle(.orange)
+                Text(message).font(.footnote).foregroundStyle(.red)
             }
             NavigationLink {
                 GroupWindowCreateScreen(client: model.client)

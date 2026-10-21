@@ -2783,7 +2783,7 @@ private struct WindowListView: View {
             VStack(alignment: .leading, spacing: 12) {
                 windowAdditionControl
                 if let message = model.operationErrorMessage {
-                    Text(message).font(.footnote).foregroundStyle(.orange)
+                    Text(message).font(.footnote).foregroundStyle(.red)
                         .accessibilityIdentifier("window-add-error")
                 }
             }
@@ -2841,7 +2841,7 @@ private struct WindowListView: View {
                     }
 
                     if let message = model.operationErrorMessage {
-                        Text(message).font(.footnote).foregroundStyle(.orange)
+                        Text(message).font(.footnote).foregroundStyle(.red)
                     }
 
                 }
@@ -2937,7 +2937,7 @@ private struct WindowListView: View {
     private func unavailableWindowContent(message: String) -> some View {
         VStack(spacing: 16) {
             ContentUnavailableView(
-                "身近な人とのまどを確認できません",
+                "家族・友だちのまどを確認できません",
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text(message)
             )
@@ -2963,7 +2963,7 @@ private struct WindowListView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Text("更新が完了するまで、身近な人とのまどの切り替えや追加は行いません。")
+            Text("更新が終わるまで、まどの切り替えや追加はできません。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -3015,7 +3015,7 @@ private struct WindowListView: View {
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("window-list-start-private")
-                    Text("身近な相手と写真を送り合います。送る写真と相手を確認してから届けます。")
+                    Text("家族や友だちと写真を届け合います。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
@@ -3074,7 +3074,7 @@ private struct WindowListView: View {
             setupAction("以前のまどにこのiPhoneを追加", path: .recover, identifier: "window-list-recover")
         }
         if pausesWindowChanges {
-            Text(availabilityMessage ?? "身近な人とのまどを確認しています…")
+            Text(availabilityMessage ?? "家族・友だちのまどを確認しています…")
                 .font(.footnote).foregroundStyle(.secondary)
             if availabilityMessage != nil {
                 Button("もう一度確認する") { Task { await reload() } }
@@ -3184,7 +3184,7 @@ private struct WindowListView: View {
                             } else if windowErrors.contains(window.localWindowID) {
                                 Label("開けませんでした", systemImage: "exclamationmark.circle.fill")
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.red)
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }
                         }
