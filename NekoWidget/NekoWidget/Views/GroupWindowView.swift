@@ -521,7 +521,6 @@ struct GroupWindowScreen: View {
         GroupWindowMembersScreen(client: model.client, windowID: model.windowID, onLeft: closeAfterLeaving)
     }
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
 
     var body: some View {
         ScrollView {
@@ -579,14 +578,13 @@ struct GroupWindowScreen: View {
                     )
                     .frame(minHeight: 240)
                 } else {
-                    LazyVGrid(columns: columns, spacing: 2) {
+                    // One photo per row, large, with who sent it and the hearts under it.
+                    LazyVStack(spacing: 14) {
                         ForEach(model.entries) { entry in
-                            Button { openedEntry = entry } label: {
-                                GroupPhotoTile(model: model, entry: entry)
-                            }
-                            .buttonStyle(.plain)
+                            GroupPhotoTile(model: model, entry: entry) { openedEntry = entry }
                         }
                     }
+                    .padding(.horizontal, 12)
                 }
             }
             .padding(.vertical, 12)
@@ -744,49 +742,70 @@ struct GroupWindowScreen: View {
     }
 }
 
+/// One photo in the window's feed: the picture, then one line with who sent
+/// it, when, and the hearts. Tap opens it; a double tap sends a heart.
 private struct GroupPhotoTile: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
+    let open: () -> Void
     @State private var url: URL?
 
+    private var heartCount: Int { model.hearts[entry.id]?.filter(\.active).count ?? 0 }
+    private var canHeart: Bool { !entry.isHidden && !entry.isOwn && !model.isFormer }
+
     var body: some View {
-        Color(uiColor: .tertiarySystemFill)
-            .aspectRatio(1, contentMode: .fit)
-            .overlay {
-                if entry.isHidden {
-                    Image(systemName: "eye.slash").foregroundStyle(.secondary)
-                } else if let url, let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image).resizable().scaledToFill()
+        VStack(spacing: 0) {
+            Color(uiColor: .tertiarySystemFill)
+                .aspectRatio(4 / 3, contentMode: .fit)
+                .overlay {
+                    if entry.isHidden {
+                        Image(systemName: "eye.slash").font(.title2).foregroundStyle(.secondary)
+                    } else if let url, let image = UIImage(contentsOfFile: url.path) {
+                        Image(uiImage: image).resizable().scaledToFill()
+                    }
                 }
-            }
-            .clipped()
-            .overlay(alignment: .bottomLeading) {
-                if !entry.isOwn {
-                    Text(entry.senderDisplayName)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.black.opacity(0.5), in: Capsule())
-                        .padding(4)
+                .clipped()
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    guard canHeart else { return }
+                    Task { await model.toggleHeart(entry.id) }
                 }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                let heartCount = model.hearts[entry.id]?.filter(\.active).count ?? 0
-                if heartCount > 0 {
-                    Label(heartCount.formatted(), systemImage: "heart.fill")
+                .onTapGesture(count: 1, perform: open)
+            HStack(spacing: 8) {
+                GroupMemberAvatar(name: entry.isOwn ? "自" : entry.senderDisplayName, size: 24)
+                Text(entry.isOwn ? "自分" : entry.senderDisplayName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(entry.createdAt.formatted(.dateTime.month().day()))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button {
+                    guard canHeart else { return }
+                    Task { await model.toggleHeart(entry.id) }
+                } label: {
+                    Label(heartCount > 0 ? heartCount.formatted() : "", systemImage: model.myHeartIsActive(entry.id) || heartCount > 0 ? "heart.fill" : "heart")
                         .labelStyle(.titleAndIcon)
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.red)
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(.white.opacity(0.85), in: Capsule())
-                        .padding(4)
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(heartCount > 0 ? Color.red : Color.secondary)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
+                .buttonStyle(.plain)
+                .disabled(!canHeart)
+                .accessibilityLabel(heartCount > 0 ? "ハート \(heartCount)" : "ハート")
+                .accessibilityHint(canHeart ? "ハートを送ります" : "")
+                .accessibilityIdentifier("group-photo-tile-heart")
             }
-            .contentShape(Rectangle())
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(tileLabel)
-            .accessibilityHint("押すと大きく見て、ハートを送れます")
-            .task { url = await model.imageURL(for: entry) }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+        }
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(tileLabel)
+        .accessibilityHint("押すと大きく見て、ハートを送れます")
+        .accessibilityAction(named: Text("大きく見る"), open)
+        .task { url = await model.imageURL(for: entry) }
     }
 }
 
@@ -1107,17 +1126,19 @@ private struct GroupPhotoDetail: View {
     private func details(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
         let day = entry.createdAt.formatted(.dateTime.month().day())
         let names = reactors(entry)
-        return VStack(spacing: 6) {
-            Text(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から")
-                .font(.subheadline.weight(.semibold))
-            Text(entry.isOwn ? "\(day)に届けました" : "\(day)に届きました")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            if entry.isOwn && names.isEmpty && !model.isFormer {
-                Text("ハートはまだ届いていません").font(.footnote).foregroundStyle(.secondary)
+        let position = model.entries.firstIndex { $0.id == entry.id }.map { "\($0 + 1) / \(model.entries.count)" }
+        return VStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(entry.isOwn ? "自分" : GroupDisplayName.withSan(entry.senderDisplayName))
+                    .font(.subheadline.weight(.semibold))
+                Text(entry.isOwn ? "\(day)に届けました" : "\(day)に届きました")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                if let position {
+                    Text(position).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                }
             }
             if !names.isEmpty {
-                Label(names.joined(separator: "・"), systemImage: "heart.fill")
+                Text("♥ " + names.joined(separator: "・"))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("ハートを送った人：\(names.joined(separator: "、"))")
@@ -1126,35 +1147,53 @@ private struct GroupPhotoDetail: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Under the photo: ♥ with its count, and お気に入り. Words only as captions.
     @ViewBuilder
     private func actions(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
-        VStack(spacing: 8) {
+        let heartCount = reactors(entry).count
+        let mine = model.myHeartIsActive(entry.id)
+        HStack(spacing: 0) {
             if !entry.isHidden && !entry.isOwn && !model.isFormer {
                 Button {
                     Task { await model.toggleHeart(entry.id) }
                 } label: {
-                    Label(model.myHeartIsActive(entry.id) ? "ハートを送りました" : "ハートを送る",
-                          systemImage: model.myHeartIsActive(entry.id) ? "heart.fill" : "heart")
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                    VStack(spacing: 3) {
+                        Image(systemName: mine ? "heart.fill" : "heart").font(.title2)
+                        Text(heartCount > 0 ? heartCount.formatted() : "ハート").font(.caption2.monospacedDigit())
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .foregroundStyle(mine ? Color.red : Color.secondary)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(.plain)
+                .accessibilityLabel(mine ? "ハートを送りました" : "ハートを送る")
+                .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
                 .accessibilityIdentifier("group-photo-heart")
             }
             if !entry.isHidden && !entry.isOwn {
                 if entry.favoriteLocalIdentifier != nil {
-                    Label("お気に入りに追加済み", systemImage: "bookmark.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .accessibilityIdentifier("group-photo-favorite-done")
+                    VStack(spacing: 3) {
+                        Image(systemName: "bookmark.fill").font(.title2)
+                        Text("お気に入り").font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityLabel("お気に入りに追加済み")
+                    .accessibilityIdentifier("group-photo-favorite-done")
                 } else {
                     Button {
                         showsFavoriteConfirmation = true
                     } label: {
-                        Label("自分のお気に入りに追加", systemImage: "bookmark")
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                        VStack(spacing: 3) {
+                            Image(systemName: "bookmark").font(.title2)
+                            Text("お気に入り").font(.caption2)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .foregroundStyle(Color.secondary)
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("自分のお気に入りに追加")
                     .accessibilityIdentifier("group-photo-favorite")
                 }
             }
@@ -1474,27 +1513,60 @@ struct GroupWindowListSection: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
+    /// A window is its newest photo: the card shows it (from the Widget's own
+    /// cache, so nothing is fetched), the name over it, and who is in it.
     private func row(_ window: GroupWindow) -> some View {
-        HStack(spacing: 12) {
-            HStack(spacing: -8) {
-                ForEach(window.activeMembers.prefix(3)) { member in
-                    GroupMemberAvatar(name: member.displayName)
+        let cached = GroupWidgetCache.entry(windowID: window.id)
+        let cover = cached.flatMap(GroupWidgetCache.imageURL(for:)).flatMap { UIImage(contentsOfFile: $0.path) }
+        let paused = GroupWindowPresentation.isPaused(window)
+        return ZStack(alignment: .bottomLeading) {
+            Group {
+                if let cover {
+                    Image(uiImage: cover).resizable().scaledToFill()
+                } else {
+                    Color(uiColor: .secondarySystemGroupedBackground)
+                        .overlay {
+                            Image("ToolCat-snug").resizable().interpolation(.high).scaledToFit()
+                                .frame(width: 72, height: 72)
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                                .opacity(0.9)
+                        }
                 }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(window.name).font(.body.weight(.semibold))
-                Text(GroupWindowPresentation.isPaused(window)
-                     ? "止まっています"
-                     : GroupWindowPresentation.memberCountText(window))
-                    .font(.caption)
-                    .foregroundStyle(GroupWindowPresentation.isPaused(window) ? Color.orange : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .aspectRatio(16 / 10, contentMode: .fill)
+            .clipped()
+            .overlay(alignment: .bottom) {
+                if cover != nil {
+                    LinearGradient(colors: [.clear, .black.opacity(0.62)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 96)
+                }
             }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(window.name)
+                        .font(.title3.bold())
+                    Text(paused ? "止まっています"
+                         : cached?.senderDisplayName.map { "\(GroupDisplayName.withSan($0))から ・ \(window.memberCount)人" }
+                           ?? "\(window.memberCount)人")
+                        .font(.footnote)
+                }
+                .foregroundStyle(cover != nil ? Color.white : paused ? Color.orange : Color.primary)
+                .shadow(color: cover != nil ? .black.opacity(0.5) : .clear, radius: 4, y: 1)
+                Spacer(minLength: 0)
+                HStack(spacing: -8) {
+                    ForEach(window.activeMembers.prefix(4)) { member in
+                        GroupMemberAvatar(name: member.displayName, size: 28)
+                            .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                    }
+                }
+            }
+            .padding(14)
         }
-        .padding(14)
-        .frame(minHeight: 44)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(window.name)、\(paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))")
     }
 }
 

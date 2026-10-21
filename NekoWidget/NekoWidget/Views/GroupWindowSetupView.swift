@@ -571,10 +571,11 @@ struct GroupWindowMembersView: View {
     @ViewBuilder
     private func membersSection(_ window: GroupWindow) -> some View {
         if !model.pendingRequests.isEmpty {
-            // People waiting come first: that is what the creator opened this for.
+            // People waiting come first, on a yellow card: that is what the creator opened this for.
             Section {
                 ForEach(model.pendingRequests) { request in
                     requestRow(request, window: window)
+                        .listRowBackground(Color.yellow.opacity(0.18))
                 }
             } header: {
                 Text("参加を待っている人")
@@ -583,14 +584,20 @@ struct GroupWindowMembersView: View {
             }
         }
         Section {
-            ForEach(window.activeMembers) { member in
-                memberRow(member, window: window)
+            // Faces in a row, not a list of sentences.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 14) {
+                ForEach(window.activeMembers) { member in
+                    memberRow(member, window: window)
+                }
             }
+            .padding(.vertical, 6)
         } header: {
             Text("メンバー")
         } footer: {
-            if window.canManage && model.pendingRequests.isEmpty {
-                Text("参加したい人は、ここの上に出ます。")
+            if window.canManage {
+                if model.pendingRequests.isEmpty {
+                    Text("参加したい人は、ここの上に出ます。")
+                }
             }
         }
     }
@@ -600,47 +607,39 @@ struct GroupWindowMembersView: View {
             && window.canManage
             && member.role != .owner
             && member.id != window.myParticipantID
-        return HStack(spacing: 12) {
-            GroupMemberAvatar(name: member.displayName)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(member.displayName)
-                    .font(.body.weight(.semibold))
-                Text(GroupWindowPresentation.memberDetail(member, in: window))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
+        return VStack(spacing: 6) {
+            GroupMemberAvatar(name: member.displayName, size: 52)
+            Text(member.displayName)
+                .font(.footnote.weight(.semibold))
+                .lineLimit(1)
             if canRemove {
+                // Removal stays a visible button, small, under the face.
                 Button("外す") {
                     removalTarget = member
                     showsRemoval = true
                 }
+                .font(.caption.weight(.semibold))
                 .buttonStyle(.bordered)
-                .frame(minHeight: 44)
+                .controlSize(.mini)
                 .disabled(model.isWorking)
                 .accessibilityHidden(true)
                 .accessibilityIdentifier("group-window-remove-member")
+            } else {
+                Text(member.id == window.myParticipantID ? "あなた" : member.role == .owner ? "作った人" : " ")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
-        .frame(minHeight: 44)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(member.displayName)、\(GroupWindowPresentation.memberDetail(member, in: window))")
         .accessibilityAction(named: Text("外す")) {
             guard canRemove, !model.isWorking else { return }
             removalTarget = member
             showsRemoval = true
         }
         .accessibilityIdentifier("group-window-member")
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if canRemove {
-                Button(role: .destructive) {
-                    removalTarget = member
-                    showsRemoval = true
-                } label: {
-                    Label("外す", systemImage: "person.badge.minus")
-                }
-                .disabled(model.isWorking)
-            }
-        }
     }
 
     private func requestRow(_ request: GroupJoinRequest, window: GroupWindow) -> some View {
@@ -766,12 +765,13 @@ struct GroupWindowMembersView: View {
 
 struct GroupMemberAvatar: View {
     let name: String
+    var size: CGFloat = 36
 
     var body: some View {
         Text(GroupWindowPresentation.initial(name))
-            .font(.subheadline.weight(.semibold))
+            .font(.system(size: size * 0.42, weight: .semibold))
             .foregroundStyle(.tint)
-            .frame(width: 36, height: 36)
+            .frame(width: size, height: size)
             .background(Color.accentColor.opacity(0.15), in: Circle())
             .accessibilityHidden(true)
     }
