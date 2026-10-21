@@ -392,6 +392,25 @@ final class AppStoreScreenshotUITests: XCTestCase {
             app.terminate()
             app.launchEnvironment.removeValue(forKey: "NEKO_MAINLINE_ACCEPTANCE_CASE")
         }
+
+        if area == "windows" {
+            app.launchArguments = fixture + ["--group-window-screens-fixture"]
+            app.launch(); settle(2)
+            if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
+                settle(3); shot("re-20-window-list")
+                openGroupWindow(app); settle(3); shot("re-21-window")
+                app.swipeUp(); settle(1); shot("re-22-window-lower")
+                let tile = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "届いた写真")).firstMatch
+                if tile.waitForExistence(timeout: 5) {
+                    app.swipeDown(); settle(1)
+                    tile.tap(); settle(2); shot("re-23-photo-detail")
+                    if tapID("group-photo-heart", app) { settle(1); shot("re-24-photo-detail-hearted") }
+                    closeSheet(app)
+                }
+                if tapID("group-window-open-members", app) { settle(2); shot("re-25-members"); app.swipeUp(); settle(1); shot("re-26-members-lower") }
+            }
+            app.terminate()
+        }
     }
 
     /// 10/21 review fixes: only the screens the fixes touch.
