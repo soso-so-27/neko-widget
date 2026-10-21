@@ -264,7 +264,7 @@ struct MainTabView: View {
     @State private var arrivalRefreshSequence = 0
 
     private var showsMadoTab: Bool {
-        SharingAPIConfiguration.current.isReviewVisible
+        SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
             || OfficialWindowConfiguration.definitions.contains { $0.endpoint != nil }
     }
 
@@ -289,7 +289,17 @@ struct MainTabView: View {
                 return labels
             }) ?? [:]
         }.value
-        receivedPhotoSourceLabels = sources
+        // Group window photos kept with 「自分のお気に入りに追加」: 「ゆかさんから」.
+        var labels = sources
+        let store = GroupWindowLocalPhotoStore.shared
+        for window in await store.knownWindows() {
+            for entry in await store.entries(windowID: window.id) {
+                if let identifier = entry.favoriteLocalIdentifier {
+                    labels[identifier] = GroupDisplayName.withSan(entry.senderDisplayName) + "から"
+                }
+            }
+        }
+        receivedPhotoSourceLabels = labels
     }
 
     private func rememberMadoVisit() {
@@ -465,6 +475,7 @@ struct MainTabView: View {
     private var presentedTabContent: some View {
         tabContent
         .environment(\.toolProfileActions, catProfilesActions)
+        .environment(\.receivedPhotoIdentifiers, receivedPhotoIdentifiers)
         .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")

@@ -2513,6 +2513,10 @@ private struct PhotoRediscoveryScopeKey: EnvironmentKey {
     static var defaultValue: CatProfileScopePresentation { .everyone }
 }
 
+private struct ReceivedPhotoIdentifiersKey: EnvironmentKey {
+    static let defaultValue: Set<String> = []
+}
+
 extension EnvironmentValues {
     var photoRelatedAlbums: PhotoRelatedAlbums? {
         get { self[PhotoRelatedAlbumsKey.self] }
@@ -2537,6 +2541,13 @@ extension EnvironmentValues {
     var photoRediscoveryScope: CatProfileScopePresentation {
         get { self[PhotoRediscoveryScopeKey.self] }
         set { self[PhotoRediscoveryScopeKey.self] = newValue }
+    }
+
+    /// Photos copied in from a まど (received). Removing one from favorites
+    /// says once that the copy in the Photos app stays.
+    var receivedPhotoIdentifiers: Set<String> {
+        get { self[ReceivedPhotoIdentifiersKey.self] }
+        set { self[ReceivedPhotoIdentifiersKey.self] = newValue }
     }
 }
 
@@ -2569,6 +2580,8 @@ struct PhotoBrowserView: View {
     @Environment(\.showcaseOpenOne) private var showcaseOpenOne
     @Environment(\.showcaseAddTargets) private var showcaseAddTargets
     @Environment(\.showcaseAddPhoto) private var showcaseAddPhoto
+    @Environment(\.receivedPhotoIdentifiers) private var receivedPhotoIdentifiers
+    @State private var pendingReceivedRemoval: String?
 
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -2869,7 +2882,11 @@ struct PhotoBrowserView: View {
     private func photoActions(_ photo: PhotoPresentation) -> some View {
         if confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked {
             Button("お気に入りから外す", systemImage: "bookmark.slash", role: .destructive) {
-                setMemorySaved(photo.localIdentifier, false)
+                if receivedPhotoIdentifiers.contains(photo.localIdentifier) {
+                    pendingReceivedRemoval = photo.localIdentifier
+                } else {
+                    setMemorySaved(photo.localIdentifier, false)
+                }
             }
             .accessibilityIdentifier("photo-browser-memory-saved-state")
             .disabled(isExportingMemoryPhoto)
@@ -3116,6 +3133,17 @@ struct PhotoBrowserView: View {
 
     var body: some View {
         browserDialogs
+        .confirmationDialog("お気に入りから外しますか？", isPresented: Binding(
+            get: { pendingReceivedRemoval != nil }, set: { if !$0 { pendingReceivedRemoval = nil } }),
+            titleVisibility: .visible) {
+            Button("お気に入りから外す", role: .destructive) {
+                if let identifier = pendingReceivedRemoval { setMemorySaved(identifier, false) }
+                pendingReceivedRemoval = nil
+            }
+            Button("戻る", role: .cancel) { pendingReceivedRemoval = nil }
+        } message: {
+            Text("まどから届いた写真です。写真アプリへコピーした写真は、外してもそのまま残ります。")
+        }
         .task(id: selectedPhotoIdentifier) {
             await personalNote.load(for: selectedPhotoIdentifier)
         }
