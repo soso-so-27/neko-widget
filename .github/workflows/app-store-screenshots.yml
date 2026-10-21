@@ -7,6 +7,10 @@ on:
         description: "対象のtestReviewメソッド。空欄は従来のApp Store用セット"
         type: string
         default: ""
+      review_area:
+        description: "testReviewRedesignScreens の対象（onboarding / photos / windows / tools / settings）"
+        type: string
+        default: "onboarding"
 
 permissions:
   contents: read
@@ -280,6 +284,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       REVIEW_TEST: ${{ inputs.review_test }}
+      TEST_RUNNER_REVIEW_AREA: ${{ inputs.review_area }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

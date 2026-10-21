@@ -332,6 +332,39 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 10/21 redesign (案 A〜J): the screens each proposal touches, by REVIEW_AREA.
+    @MainActor
+    func testReviewRedesignScreens() {
+        executionTimeAllowance = 900
+        continueAfterFailure = true
+        let app = XCUIApplication()
+        let fixture = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        let area = ProcessInfo.processInfo.environment["REVIEW_AREA"] ?? "onboarding"
+
+        if area == "onboarding" {
+            app.launchArguments = japaneseLaunchArguments
+            app.launchEnvironment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] = "1"
+            app.launch(); settle(3)
+            shot("re-01-purpose")
+            if tapID("onboarding-purpose-start", app) { settle(2); shot("re-02-permission") }
+            dismissSystemAlert(); settle(3); shot("re-03-after-dialog")
+            settle(5); shot("re-04-scan")
+            if tapID("initial-scan-widget-guide", app) { settle(2); shot("re-05-widget-guide"); tapID("widget-placement-skip", app); settle(2) }
+            if app.buttons["onboarding-plus-offer-skip"].waitForExistence(timeout: 3) { shot("re-06-plus"); tapID("onboarding-plus-offer-skip", app); settle(2) }
+            shot("re-07-after")
+            app.terminate()
+            app.launchEnvironment.removeValue(forKey: "NEKO_RESET_ONBOARDING_FOR_UI_TESTS")
+
+            // The scan page with the fixture's photos.
+            app.launchArguments = fixture
+            app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "three"
+            app.launch(); settle(4)
+            shot("re-08-scan-three")
+            app.terminate()
+            app.launchEnvironment.removeValue(forKey: "NEKO_MAINLINE_ACCEPTANCE_CASE")
+        }
+    }
+
     /// 10/21 review fixes: only the screens the fixes touch.
     @MainActor
     func testReviewFixScreens() {
