@@ -188,8 +188,14 @@ struct LostCatDraftView: View {
         Form {
             Section {
                 Button { showsGuide = true } label: {
-                    Label("まず探す・届け出る", systemImage: "info.circle")
+                    HStack {
+                        Label("まず探す・届け出る", systemImage: "info.circle")
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .foregroundStyle(.primary)
             }
             catSection.disabled(!loaded)
             incidentSection.disabled(!loaded)
@@ -206,11 +212,18 @@ struct LostCatDraftView: View {
             }
             if saveError {
                 Section {
-                    Button("保存できませんでした。もう一度保存する") {
+                    Label("保存できませんでした", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                    Button {
                         if loaded { saveNow() }
                         else { load(initialKey, name: initialName) }
+                    } label: {
+                        Label("もう一度保存", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity, minHeight: 36)
                     }
-                    .foregroundStyle(.red)
+                    .buttonStyle(.bordered)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
                 }
             }
         }
@@ -436,7 +449,7 @@ struct LostCatDraftView: View {
     @ViewBuilder private var reportSection: some View {
         if let profile = profiles.first(where: { $0.identifier == key }) {
             let fields = CatCareSummary.lostCatReportFields(catCareRecord)
-            ToolCatCareSection(title: "届け出に使う情報（「この子のこと」から）", lines: fields, subject: .profile(profile),
+            ToolCatCareSection(title: "届け出の情報", lines: fields, subject: .profile(profile),
                                footer: "チラシ・画像には載りません。警察・保健所・動物愛護センターに伝えるときに使えます。",
                                identifier: "lost-cat-report", editIdentifier: "lost-cat-open-cat-care") {
                 Button("まとめてコピー", systemImage: "doc.on.doc") {

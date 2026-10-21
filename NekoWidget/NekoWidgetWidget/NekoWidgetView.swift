@@ -272,14 +272,15 @@ struct NekoWidgetView: View {
 
             if status == .pending {
                 Image(systemName: "clock.fill")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.caption2.weight(.bold))
                     .padding(1.5)
                     .background(Color.black.opacity(0.82), in: Circle())
                     .offset(x: 2, y: 2)
             }
         }
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(.white)
+        .font(.footnote.weight(.medium))
+        // Sent: red, as in the app. Not yet: white outline.
+        .foregroundStyle(status == .serverAccepted ? Color.red : .white)
         .frame(width: 30, height: 30)
         .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
@@ -397,7 +398,7 @@ struct NekoWidgetView: View {
 
     private func dailyPersonalPhotoMark(isUsed: Bool) -> some View {
         Image(systemName: isUsed ? "checkmark" : "arrow.clockwise")
-        .font(.system(size: 13, weight: .medium))
+        .font(.footnote.weight(.medium))
         .invalidatableContent()
         .foregroundStyle(.white)
         .frame(width: 30, height: 30)
@@ -422,7 +423,7 @@ struct NekoWidgetView: View {
                 Image(systemName: isSelected ? "bookmark.fill" : "bookmark")
             }
         }
-        .font(.system(size: 13, weight: .medium))
+        .font(.footnote.weight(.medium))
         .foregroundStyle(.white)
         .frame(width: 30, height: 30)
         .background(Color.black.opacity(0.64), in: Circle())
@@ -515,7 +516,7 @@ struct NekoWidgetView: View {
     private var emptyStateTitle: String {
         if let windowID = PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) {
             guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return "このまどは利用できません" }
-            if definition.endpoint == nil { return "公式まどを準備中" }
+            if definition.endpoint == nil { return "公式のまどを準備中" }
             return OfficialWindowStore.forWindow(definition).snapshot().isSubscribed ? "いま届いている写真はありません" : definition.displayName
         }
         if effectiveEmptyStateReason == .sourceUnavailable {

@@ -94,7 +94,7 @@ struct OnboardingView: View {
         case .authorized, .limited:
             ProgressView()
                 .controlSize(.large)
-                .accessibilityLabel("スキャン画面を準備中")
+                .accessibilityLabel("写真を探す準備をしています")
 
         @unknown default:
             PhotoPermissionView(
@@ -194,7 +194,8 @@ private struct OnboardingScanErrorPage: View {
                     .accessibilityIdentifier("onboarding-scan-retry")
 
                 Button("写真画面へ進む", action: continueToApp)
-                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .accessibilityIdentifier("onboarding-scan-skip")
             }
             .frame(maxWidth: .infinity)
@@ -238,18 +239,23 @@ private struct OnboardingPurposePage: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
-                if let joinInvitation {
-                    Button("招待を受け取った", action: joinInvitation)
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("onboarding-purpose-join")
-                }
+                // Most people start on their own: that is the main button.
                 Button(action: continueAction) {
                     Text(OnboardingPresentationCopy.purposeAction)
                         .font(.headline).frame(maxWidth: .infinity)
                         .padding(.vertical, 5)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("onboarding-purpose-start")
+                if let joinInvitation {
+                    Button(action: joinInvitation) {
+                        Text("招待を受け取った")
+                            .font(.headline).frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("onboarding-purpose-join")
+                }
             }
             .font(.headline)
             .controlSize(.large)
@@ -339,7 +345,8 @@ private struct OnboardingPhotoPermissionPage: View {
                 )
 
                 Button(OnboardingPresentationCopy.permissionSkipAction, action: skip)
-                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .accessibilityIdentifier("onboarding-photo-permission-skip")
             }
             .padding(.horizontal, 28)
@@ -455,7 +462,8 @@ private struct OnboardingPlusOfferPage: View {
                 .accessibilityIdentifier("onboarding-plus-offer-open")
 
                 Button("あとで", action: skip)
-                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .accessibilityIdentifier("onboarding-plus-offer-skip")
             }
             .padding(.horizontal, 28)

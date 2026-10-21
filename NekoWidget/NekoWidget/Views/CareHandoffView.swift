@@ -192,7 +192,7 @@ private struct CareCatEditor: View {
         let health = CatCareSummary.careHandoffHealthLines(care, legacy: cat).map { ($0.0 + "（選んだときだけ）", $0.1) }
         let subject: CatCareSubject = profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
-        ToolCatCareSection(title: "「この子のこと」から載ること",
+        ToolCatCareSection(title: "この子のこと",
                            lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health, subject: subject,
                            footer: "ごはん・水・トイレ・接し方・薬は「この子のこと」で書きます。薬とアレルギーは、渡すときに選んだ場合だけ載ります。",
                            identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care")
@@ -490,8 +490,8 @@ private struct CareDisplayView: View {
             .navigationTitle("プレビュー").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 ViewThatFits {
-                    HStack(spacing: 12) { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
-                    VStack(spacing: 8) { shareButton("画像で渡す", pdf: false); shareButton("PDFで渡す", pdf: true) }
+                    HStack(spacing: 12) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
+                    VStack(spacing: 8) { shareButton("PDFで渡す", pdf: true); shareButton("画像で渡す", pdf: false) }
                 }
                 .padding().background(.regularMaterial)
             }
@@ -513,10 +513,16 @@ private struct CareDisplayView: View {
             }
         }
     }
-    private func shareButton(_ title: String, pdf: Bool) -> some View {
-        Button { self.pdf = pdf; confirmShare = true } label: {
+    /// PDF is the main way out; the image is the second.
+    @ViewBuilder private func shareButton(_ title: String, pdf: Bool) -> some View {
+        let button = Button { self.pdf = pdf; confirmShare = true } label: {
             Label(title, systemImage: pdf ? "doc" : "photo").frame(maxWidth: .infinity, minHeight: 44)
-        }.buttonStyle(.borderedProminent).accessibilityIdentifier(pdf ? "care-share-pdf" : "care-share-images")
+        }
+        if pdf {
+            button.buttonStyle(.borderedProminent).accessibilityIdentifier("care-share-pdf")
+        } else {
+            button.buttonStyle(.bordered).accessibilityIdentifier("care-share-images")
+        }
     }
     private func createExport() {
         do {

@@ -94,7 +94,7 @@ struct CatProfileDetailView: View {
                     .buttonStyle(.borderless)
                     .disabled(isSavingName)
                 } else {
-                    Button("名前を変更", systemImage: "pencil") {
+                    SettingsActionRow("名前を変更", systemImage: "pencil") {
                         draftName = profile.name ?? ""
                         nameSaveFailed = false
                         showsNameEditor = true
@@ -185,7 +185,11 @@ struct CatProfileDetailView: View {
                 Button {
                     showsLifeReferenceEditor = true
                 } label: {
-                    LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)
+                    HStack {
+                        LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
                 .foregroundStyle(.primary)
             } header: {
@@ -722,7 +726,7 @@ struct CatProfileConfirmedPhotosView: View {
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -774,7 +778,7 @@ struct CatProfileConfirmedPhotosView: View {
                     Button("\(profile.displayName)ではない") {
                         showsRemoveConfirmation = true
                     }
-                    Button("候補から外す", role: .destructive) {
+                    Button("猫の写真から外す", role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     }
                 } label: {
@@ -893,7 +897,7 @@ struct UnassignedCatPhotosView: View {
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -949,7 +953,7 @@ struct UnassignedCatPhotosView: View {
                     Button(role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     } label: {
-                        Label("候補から外す", systemImage: "eye.slash")
+                        Label("猫の写真から外す", systemImage: "eye.slash")
                     }
                 }
             }
@@ -1107,7 +1111,7 @@ struct LegacyCatExclusionReviewView: View {
                 }
             } label: {
                 Label(
-                    isRestoring ? "戻しています…" : "候補に戻す（\(selection.count.formatted())枚）",
+                    isRestoring ? "戻しています…" : "猫の写真に戻す（\(selection.count.formatted())枚）",
                     systemImage: "arrow.uturn.backward.circle"
                 )
                 .frame(maxWidth: .infinity)

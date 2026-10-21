@@ -620,7 +620,7 @@ struct HomeView: View {
                 Label("猫の写真を探しています", systemImage: "photo.on.rectangle")
             } description: {
                 Text(scan.isPaused
-                    ? "アプリへ戻るとスキャンを再開します。"
+                    ? "アプリに戻ると、探すのを続けます。"
                     : "見つかるとここに表示します。")
             }
             .frame(maxWidth: .infinity, minHeight: 280)
@@ -693,7 +693,7 @@ struct PhotoShuffleGuideView: View {
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
 
                     Label {
-                        Text("写真シャッフルは設定時のアルバム内容を使います。アルバム更新後の写真を反映するには、壁紙で写真アプリの「うちの子」アルバムを選び直してください。")
+                        Text("写真シャッフルは、設定したときの写真を使います。新しい写真を出すには、壁紙でアルバムを選び直してください。")
                             .font(.subheadline)
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")

@@ -252,9 +252,12 @@ struct AlbumView: View {
                     }.padding(.top, 8)
                 } label: {
                     // Identifying the entire group overrides its child links' IDs.
+                    // Black like the rows around it: it opens more, it is not an action.
                     Text("ほかのテーマ")
+                        .foregroundStyle(.primary)
                         .accessibilityIdentifier("albums-other-themes")
                 }
+                .tint(.secondary)
             }
         }
     }
@@ -461,7 +464,7 @@ struct AlbumView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Text("スキャンはアプリを開いている間に進みます。")
+            Text("写真を探すのは、アプリを開いている間に進みます。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -777,7 +780,7 @@ struct CuratedAlbumDetailView: View {
                     Button(role: .destructive) {
                         requestExclusion(Array(selectedIdentifiers))
                     } label: {
-                        Label("候補から外す", systemImage: "eye.slash")
+                        Label("猫の写真から外す", systemImage: "eye.slash")
                     }
                     .disabled(selectedIdentifiers.isEmpty)
                 }
@@ -798,7 +801,7 @@ struct CuratedAlbumDetailView: View {
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 let identifiers = pendingExclusionIdentifiers
                 pendingExclusionIdentifiers.removeAll()
                 selectedIdentifiers.subtract(identifiers)
@@ -870,7 +873,7 @@ struct CuratedAlbumDetailView: View {
                 Button {
                     requestExclusion([photo.localIdentifier])
                 } label: {
-                    Label("候補から外す", systemImage: "eye.slash")
+                    Label("猫の写真から外す", systemImage: "eye.slash")
                 }
             }
         }
@@ -2995,14 +2998,14 @@ struct PhotoBrowserView: View {
                         Button {
                             restoreCatCandidates([selectedPhotoIdentifier])
                         } label: {
-                            Label("表示候補に戻す", systemImage: "arrow.uturn.backward.circle")
+                            Label("猫の写真に戻す", systemImage: "arrow.uturn.backward.circle")
                         }
                     } else {
                         Button {
                             pendingExclusionIdentifier = selectedPhotoIdentifier
                             showsExclusionConfirmation = true
                         } label: {
-                            Label("候補から外す", systemImage: "eye.slash")
+                            Label("猫の写真から外す", systemImage: "eye.slash")
                         }
                     }
                 } label: {
@@ -3103,7 +3106,7 @@ struct PhotoBrowserView: View {
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])

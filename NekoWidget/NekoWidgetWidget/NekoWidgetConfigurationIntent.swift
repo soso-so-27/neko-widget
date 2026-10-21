@@ -14,13 +14,13 @@ struct WidgetPhotoSource: AppEntity {
     static let personalLibraryID = "personal-library"
     static let officialWindow = WidgetPhotoSource(
         id: OfficialWindowCatalog.sourceID,
-        name: "どこかの猫 · 公式まど",
+        name: "どこかの猫 · 公式のまど",
         detail: "公開用に提供された猫の一枚"
     )
     static let familyWindowIDPrefix = "family-window:"
     static func publicWindow(_ definition: PublicWindowDefinition) -> WidgetPhotoSource {
         WidgetPhotoSource(id: definition.widgetSourceID,
-                          name: "\(definition.displayName) · 公式まど", detail: definition.subtitle)
+                          name: "\(definition.displayName) · 公式のまど", detail: definition.subtitle)
     }
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,

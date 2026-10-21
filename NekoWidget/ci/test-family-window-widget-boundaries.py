@@ -1856,7 +1856,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "まど",
             "保存と引き継ぎ",
             "困ったとき",
-            "このアプリ",
             "テスト用",
         ):
             self.assertIn(f'Text("{section_title}")', settings)
@@ -4983,7 +4982,7 @@ class SettingsLayoutTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         order = ["PlusSettingsSection()", 'Text("写真と猫")', 'Text("ホーム画面")', 'Text("まど")',
-                 'Text("保存と引き継ぎ")', 'Text("困ったとき")', 'Text("このアプリ")', 'Text("テスト用")']
+                 'Text("保存と引き継ぎ")', 'Text("困ったとき")', '"settings-app-version"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
         # Previews and diagnostics sit together in the test-only section.
@@ -5086,8 +5085,8 @@ class WindowListOrderTests(unittest.TestCase):
     def test_shared_windows_first_and_public_windows_named(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
         self.assertLess(tab.index("GroupWindowListSection(client: groupClient)"), tab.index('.accessibilityIdentifier("window-list-receiving")'))
-        self.assertIn("if receivingPublicWindows.isEmpty { publicWindowEntry }", tab)
-        self.assertIn('Label("公式のまど", systemImage: "safari")', tab)
+        self.assertIn("if GroupWindowClientProvider.ui != nil {\n                        publicWindowEntry", tab)
+        self.assertIn('"window-list-start"', tab)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertNotIn("退出", setup)
 
