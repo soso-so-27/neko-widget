@@ -66,7 +66,7 @@ struct PersonalRediscoveryHistoryView: View {
             }
             .padding(20)
         }
-        .navigationTitle("まどでめくった写真")
+        .navigationTitle("ホーム画面に出た写真")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("personal-rediscovery-history")
         .refreshable { reload() }

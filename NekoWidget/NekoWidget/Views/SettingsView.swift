@@ -156,6 +156,11 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            // Plus first: what the person pays for, and how to change it.
+            if canOpenMembershipOffer {
+                PlusSettingsSection()
+            }
+
             Section {
                 NavigationLink {
                     photoSettingsView
@@ -166,7 +171,6 @@ struct SettingsView: View {
                         Label("写真の表示と整理", systemImage: "photo.on.rectangle.angled")
                     }
                 }
-
                 NavigationLink {
                     CatProfilesView(
                         presentation: catProfilesPresentation,
@@ -183,36 +187,8 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings-cat-profiles")
-                NavigationLink {
-                    CatProfileTransferView(actions: catProfilesActions,
-                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
-                } label: {
-                    Label("猫と写真の引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .accessibilityIdentifier("settings-cat-profile-transfer")
-
             } header: {
-                Text("写真とねこ")
-            }
-
-            Section {
-                if ManagedPreservationConfiguration.current.isEnabled {
-                    NavigationLink { AppRecordSettingsView() } label: {
-                        Label("保存・復元", systemImage: "checkmark.icloud")
-                    }
-                    .accessibilityIdentifier("settings-managed-preservation")
-                }
-                NavigationLink { RestoredToolsView() } label: {
-                    Label("復元したツール", systemImage: "arrow.counterclockwise")
-                }
-                .accessibilityIdentifier("settings-restored-tools")
-                if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
-                }
-                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
-                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityIdentifier("settings-memory-note-export")
+                Text("写真と猫")
             }
 
             Section {
@@ -223,64 +199,88 @@ struct SettingsView: View {
                 NavigationLink {
                     PersonalRediscoveryHistoryView()
                 } label: {
-                    Label("まどでめくった写真", systemImage: "clock.arrow.circlepath")
+                    Label("ホーム画面に出た写真", systemImage: "clock.arrow.circlepath")
                 }
                 .accessibilityIdentifier("settings-personal-rediscovery")
             } header: {
-                Text("ウィジェット")
+                Text("ホーム画面")
+            }
+
+            if SharingAPIConfiguration.current.isReviewVisible || SharingAPIConfiguration.current.isAvailable {
+                Section {
+                    if SharingAPIConfiguration.current.isReviewVisible {
+                        NavigationLink {
+                            if SharingAPIConfiguration.current.isMediaAvailable {
+                                FamilyWindowView(initialPresentation: .settings)
+                            } else if SharingAPIConfiguration.current.isAvailable {
+                                PairingView()
+                            } else {
+                                SharingReviewPreviewView()
+                            }
+                        } label: {
+                            LabeledContent {
+                                Text(privateWindowDisplayName)
+                            } label: {
+                                Label("まどの設定", systemImage: "rectangle.split.2x2")
+                            }
+                        }
+                        .accessibilityIdentifier("settings-sharing-review")
+                    }
+                    if SharingAPIConfiguration.current.isAvailable {
+                        NavigationLink {
+                            BlockedSharingView()
+                        } label: {
+                            Label("ブロックした相手", systemImage: "hand.raised")
+                        }
+                        .accessibilityIdentifier("settings-blocked-sharing")
+                    }
+                } header: {
+                    Text("まど")
+                }
             }
 
             Section {
-                if SharingAPIConfiguration.current.isReviewVisible {
-                    NavigationLink {
-                        if SharingAPIConfiguration.current.isMediaAvailable {
-                            FamilyWindowView(initialPresentation: .settings)
-                        } else if SharingAPIConfiguration.current.isAvailable {
-                            PairingView()
-                        } else {
-                            SharingReviewPreviewView()
-                        }
-                    } label: {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("まどの設定")
-                                Text("\(privateWindowDisplayName)・\(sharingSettingsSummary)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "rectangle.split.2x2")
-                        }
+                if ManagedPreservationConfiguration.current.isEnabled {
+                    NavigationLink { AppRecordSettingsView() } label: {
+                        Label("保存・復元", systemImage: "checkmark.icloud")
                     }
-                    .accessibilityIdentifier("settings-sharing-review")
+                    .accessibilityIdentifier("settings-managed-preservation")
+                    NavigationLink { RestoredToolsView() } label: {
+                        Label("復元したツール", systemImage: "arrow.counterclockwise")
+                    }
+                    .accessibilityIdentifier("settings-restored-tools")
                 }
-                if SharingAPIConfiguration.current.isAvailable {
-                    NavigationLink {
-                        BlockedSharingView()
-                    } label: {
-                        Label("ブロックした共有", systemImage: "hand.raised")
-                    }
-                    .accessibilityIdentifier("settings-blocked-sharing")
+                NavigationLink {
+                    CatProfileTransferView(actions: catProfilesActions,
+                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
+                } label: {
+                    Label("機種変更のときの引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .accessibilityIdentifier("settings-cat-profile-transfer")
+                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
+                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("settings-memory-note-export")
+                if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
+                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
                 }
             } header: {
-                Text("まど")
+                Text("保存と引き継ぎ")
             }
 
             Section {
+                if let url = AppPublicLinksConfiguration.current.supportURL {
+                    Link(destination: url) {
+                        Label("サポート・問い合わせ", systemImage: "questionmark.circle")
+                    }
+                    .accessibilityIdentifier("settings-support-page")
+                }
                 if let url = AppPublicLinksConfiguration.current.privacyURL {
                     Link(destination: url) {
                         Label("プライバシーポリシー", systemImage: "hand.raised.fill")
                     }
                     .accessibilityIdentifier("settings-privacy-policy")
                 }
-
-                if let url = AppPublicLinksConfiguration.current.supportURL {
-                    Link(destination: url) {
-                        Label("サポート", systemImage: "questionmark.circle")
-                    }
-                    .accessibilityIdentifier("settings-support-page")
-                }
-
                 if SharingAPIConfiguration.current.isReviewVisible,
                    let url = SharingAPIConfiguration.current.communityStandardsURL {
                     Link(destination: url) {
@@ -288,38 +288,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("プライバシーとサポート")
-            }
-
-            if canOpenMembershipOffer {
-                PlusSettingsSection()
-            }
-
-            if BillingSandboxOwnerEnrollmentAvailability.isAvailable {
-                Section {
-                    NavigationLink("本人限定テストの端末確認") {
-                        BillingSandboxOwnerEnrollmentView()
-                    }.accessibilityIdentifier("settings-billing-owner-enrollment")
-                }
-            }
-
-            if MembershipOfferPreviewAvailability.isAvailable {
-                Section {
-                    if !canOpenMembershipOffer {
-                        Button {
-                            showsMembershipPreview = true
-                        } label: {
-                            Label("Plusの画面のプレビュー", systemImage: "sparkles")
-                        }
-                        .accessibilityIdentifier("settings-membership-preview")
-                    }
-                    Button {
-                        showsWindowSupportPreview = true
-                    } label: {
-                        Label("まどの再開のプレビュー", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .accessibilityIdentifier("settings-window-support-preview")
-                }
+                Text("困ったとき")
             }
 
             Section {
@@ -328,26 +297,54 @@ struct SettingsView: View {
                 } label: {
                     Label("対応OS", systemImage: "iphone")
                 }
-
-                if InternalBuildPresentationAvailability.isAvailable {
-                    NavigationLink {
-                        advancedDiagnosticsView
-                    } label: {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("診断情報")
-                            Text("不具合を調べるための情報")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "wrench.and.screwdriver")
-                    }
-                    }
-                    .accessibilityIdentifier("settings-internal-diagnostics")
+                LabeledContent {
+                    Text(appVersion)
+                } label: {
+                    Label("バージョン", systemImage: "info.circle")
                 }
             } header: {
-                Text("アプリ")
+                Text("このアプリ")
+            }
+
+            // Test builds only. Public builds show none of this (InternalBuildPresentationAvailability).
+            if BillingSandboxOwnerEnrollmentAvailability.isAvailable
+                || MembershipOfferPreviewAvailability.isAvailable
+                || InternalBuildPresentationAvailability.isAvailable {
+                Section {
+                    if BillingSandboxOwnerEnrollmentAvailability.isAvailable {
+                        NavigationLink("本人限定テストの端末確認") {
+                            BillingSandboxOwnerEnrollmentView()
+                        }.accessibilityIdentifier("settings-billing-owner-enrollment")
+                    }
+                    if MembershipOfferPreviewAvailability.isAvailable {
+                        if !canOpenMembershipOffer {
+                            Button {
+                                showsMembershipPreview = true
+                            } label: {
+                                Label("Plusの画面のプレビュー", systemImage: "sparkles")
+                            }
+                            .accessibilityIdentifier("settings-membership-preview")
+                        }
+                        Button {
+                            showsWindowSupportPreview = true
+                        } label: {
+                            Label("まどの再開のプレビュー", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .accessibilityIdentifier("settings-window-support-preview")
+                    }
+                    if InternalBuildPresentationAvailability.isAvailable {
+                        NavigationLink {
+                            advancedDiagnosticsView
+                        } label: {
+                            Label("診断情報", systemImage: "wrench.and.screwdriver")
+                        }
+                        .accessibilityIdentifier("settings-internal-diagnostics")
+                    }
+                } header: {
+                    Text("テスト用")
+                } footer: {
+                    Text("テスト用の版にだけ出ます。公開する版には出ません。")
+                }
             }
         }
         .navigationTitle("設定")
@@ -415,21 +412,16 @@ struct SettingsView: View {
         .onDisappear(perform: cleanupVerificationExport)
     }
 
+    private var appVersion: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        return build.isEmpty ? short : "\(short)（\(build)）"
+    }
+
     private var photoSettingsSummary: String {
         guard hasPhotoAccess else { return "未許可" }
         let access = isLimitedAccess ? "選択した写真" : "許可済み"
         return "\(access)・\(settings.range.rawValue)"
-    }
-
-    private var sharingSettingsSummary: String {
-        let configuration = SharingAPIConfiguration.current
-        if configuration.isMediaAvailable {
-            return "1枚ずつ非公開で共有"
-        }
-        if configuration.isAvailable {
-            return "接続設定のみ"
-        }
-        return "画面プレビュー"
     }
 
     private var photoSettingsView: some View {
@@ -512,7 +504,7 @@ struct SettingsView: View {
             } header: {
                 Text("表示と整理")
             } footer: {
-                Text("変更は自動で保存されます。候補から外しても、写真アプリの写真は削除しません。")
+                Text("変更は自動で保存します。候補から外しても、写真アプリの写真は消えません。")
             }
 
             if catProfilesPresentation.profiles.isEmpty {
@@ -543,9 +535,9 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("思い出の分け方")
+                    Text("年齢ごとのアルバム")
                 } footer: {
-                    Text("誕生日を設定すると、年齢ごとに思い出を分けます。日付は端末内だけで使います。")
+                    Text("誕生日を入れると、「子猫のころ」のように年齢ごとに写真を分けます。日付はこのiPhoneの中だけで使います。")
                 }
             }
 
@@ -558,7 +550,7 @@ struct SettingsView: View {
                     }
                 } label: {
                     Label(
-                        isRescanning || isScanning ? "スキャン中…" : "最初から再スキャン",
+                        isRescanning || isScanning ? "探しています…" : "最初から探し直す",
                         systemImage: "arrow.clockwise"
                     )
                 }
@@ -566,7 +558,7 @@ struct SettingsView: View {
             } header: {
                 Text("写真を見つけ直す")
             } footer: {
-                Text("写真が増えたときや、検出結果を作り直したいときに使います。")
+                Text("写真が増えたときや、見つけ方を作り直したいときに使います。")
             }
 
             if isSaving {

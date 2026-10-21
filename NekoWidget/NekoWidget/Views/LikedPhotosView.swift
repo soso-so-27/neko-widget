@@ -476,7 +476,7 @@ struct AlbumView: View {
             ContentUnavailableView(
                 "アルバムを表示できません",
                 systemImage: "exclamationmark.triangle",
-                description: Text("写真を探し終えられませんでした。設定の「最初から再スキャン」で、もう一度探してください。")
+                description: Text("写真を探し終えられませんでした。設定の「最初から探し直す」で、もう一度探してください。")
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
         } else if scan.isPreparingGroupedAlbums || scan.isScanning {
