@@ -556,6 +556,7 @@ struct MainTabView: View {
                 widgetShownAt = nil
                 showsSettings = false
                 selectedTab = .photos
+                photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 photosPath.append(PhotosRoute.unavailableWidgetPhoto)
                 deepLinkedPhotoIdentifier = nil
@@ -566,6 +567,7 @@ struct MainTabView: View {
             widgetShownAt = selection.shownAt
             showsSettings = false
             selectedTab = .photos
+            photoLibrarySelection.select(.all)
             photosPath = NavigationPath()
             photosPath.append(PhotosRoute.photo(identifier))
             deepLinkedPhotoIdentifier = nil
@@ -855,6 +857,7 @@ struct MainTabView: View {
         .alert(hasPhotoAccess ? "猫の写真を準備しましょう" : "写真の許可が必要です", isPresented: $showsShowcaseNoPhotos) {
             Button(hasPhotoAccess ? "写真を開く" : "写真の許可を確認") {
                 selectedTab = .photos
+                photoLibrarySelection.select(.all)
                 if !hasPhotoAccess { requestPhotoAccess() }
             }
             Button("閉じる", role: .cancel) {}
@@ -880,6 +883,7 @@ struct MainTabView: View {
         guard ShowcaseLaunchRequest.hasPending else { return }
         guard hasPhotoAccess || !showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty else {
             selectedTab = .photos
+            photoLibrarySelection.select(.all)
             return
         }
         guard ShowcaseLaunchRequest.consume() else { return }

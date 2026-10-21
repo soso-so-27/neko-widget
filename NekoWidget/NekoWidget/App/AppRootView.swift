@@ -35,6 +35,8 @@ struct AppRootView: View {
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
     @State private var showsInvitationJoin = false
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
+    @State private var onboardingInvitation: GroupInvitationLink?
     @State private var firstRunPhoto: PhotoPresentation?
     @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
@@ -65,11 +67,33 @@ struct AppRootView: View {
             }
         }) {
             NavigationStack {
-                PairingView(initialSetupPath: .join)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) {
-                        Button("閉じる") { showsInvitationJoin = false }
-                    } }
+                Group {
+                    if GroupWindowClientProvider.production != nil {
+                        OnboardingInvitationHelpView()
+                    } else {
+                        PairingView(initialSetupPath: .join)
+                    }
+                }
+                .toolbar { ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { showsInvitationJoin = false }
+                } }
             }
+        }
+        // An invitation link opened before the first-run guide ends: join at once,
+        // then land in the まど tab. The guide can be finished later from 設定.
+        .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in
+            guard OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
+                  let invitation = invitationInbox.pending else { return }
+            showsInvitationJoin = false
+            onboardingInvitation = invitation
+        }
+        .sheet(item: $onboardingInvitation, onDismiss: {
+            guard GroupWindowOpenInbox.shared.pendingWindowID != nil else { return }
+            invitationInbox.discard()
+            completeOnboardingWithoutPhotoAccess()
+            viewModel.isFamilyWindowPresented = true
+        }) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
         }
         .onReceive(NotificationCenter.default.publisher(for: .onboardingInvitationReceived)) { _ in
             guard SharingAPIConfiguration.current.isReviewVisible else { return }
