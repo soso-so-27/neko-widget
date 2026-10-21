@@ -91,7 +91,7 @@ struct LimitedAccessBanner: View {
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("選んだ写真だけをスキャン中")
+                Text("選んだ写真だけを探しています")
                     .font(.subheadline.weight(.semibold))
                 Text("後からいつでも対象を増やせます。")
                     .font(.caption)

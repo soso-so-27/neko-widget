@@ -94,7 +94,7 @@ struct OnboardingView: View {
         case .authorized, .limited:
             ProgressView()
                 .controlSize(.large)
-                .accessibilityLabel("スキャン画面を準備中")
+                .accessibilityLabel("写真を探す準備をしています")
 
         @unknown default:
             PhotoPermissionView(

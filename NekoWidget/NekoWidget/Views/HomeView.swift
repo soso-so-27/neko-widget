@@ -620,7 +620,7 @@ struct HomeView: View {
                 Label("猫の写真を探しています", systemImage: "photo.on.rectangle")
             } description: {
                 Text(scan.isPaused
-                    ? "アプリへ戻るとスキャンを再開します。"
+                    ? "アプリに戻ると、探すのを続けます。"
                     : "見つかるとここに表示します。")
             }
             .frame(maxWidth: .infinity, minHeight: 280)

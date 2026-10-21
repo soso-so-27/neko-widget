@@ -233,7 +233,7 @@ struct CatPostureDiagnosticsPresentation: Equatable {
         case .noTargets:
             "猫候補の写真が見つかると、ここに分類状況が表示されます。"
         case .completed:
-            "保存済みの猫の検出枠から分類しています。再スキャンは不要です。"
+            "保存した猫の写真から選んでいます。探し直す必要はありません。"
         case .completedWithMissingBoxes:
             "保存済みの検出枠がある写真を分類しました。検出枠のない \(missingBoxPhotoCount.formatted())枚だけは対象外です。"
         }

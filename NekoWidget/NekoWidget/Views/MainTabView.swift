@@ -2605,7 +2605,7 @@ struct MainTabView: View {
         ContentUnavailableView(
             "アルバムを更新しています",
             systemImage: "rectangle.stack",
-            description: Text("スキャン結果が更新されました。アルバムの一覧へ戻って、もう一度開いてください。")
+            description: Text("写真を探し終えました。アルバムの一覧に戻って、もう一度開いてください。")
         )
     }
 

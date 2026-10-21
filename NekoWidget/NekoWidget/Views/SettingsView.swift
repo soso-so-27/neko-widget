@@ -890,7 +890,7 @@ private struct PhotoLibraryAlbumSettingsView: View {
             } header: {
                 Text("写真アプリの「うちの子」")
             } footer: {
-                Text("見つけた猫の写真を、写真アプリの「うちの子」アルバムに入れます。写真はコピーしません。上限を変えても、お気に入りの写真は消えません。")
+                Text("写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。上限を変えても、お気に入りの写真は消えません。")
             }
 
             Section {
