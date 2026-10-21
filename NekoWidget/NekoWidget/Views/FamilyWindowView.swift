@@ -558,7 +558,7 @@ struct FamilyWindowView: View {
         .alert("ブロックしました", isPresented: $showsBlockCompleted) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("この相手との写真共有を終了しました。ブロックは、設定の「ブロックした共有」から解除できます。")
+            Text("この相手との写真共有を終了しました。ブロックは、設定の「ブロックした相手」から解除できます。")
         }
         .task {
             await model.bootstrap()

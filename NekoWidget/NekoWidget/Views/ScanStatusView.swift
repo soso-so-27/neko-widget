@@ -209,7 +209,7 @@ struct InitialScanView: View {
                 .foregroundStyle(.secondary)
             } else if scan.hasDeferredAssets {
                 Label(
-                    "このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「最初から探し直す」で、もう一度調べられます。",
+                    "このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度調べられます。",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
@@ -305,7 +305,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.hasFinalResult, scan.hasDeferredAssets {
-                Text("このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「最初から探し直す」で、もう一度調べられます。")
+                Text("このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度調べられます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -319,7 +319,7 @@ struct ScanProgressCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("再スキャン", systemImage: "arrow.clockwise", action: rescan)
+                Button("最初から探し直す", systemImage: "arrow.clockwise", action: rescan)
                     .font(.subheadline)
             }
         }

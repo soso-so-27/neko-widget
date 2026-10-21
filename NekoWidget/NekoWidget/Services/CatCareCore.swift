@@ -424,7 +424,8 @@ enum CatCareImport {
                                            text: CatCareLimits.clippedText(allergy.text)),
                               editedAt: now, editedBy: by)
         }
-        if r.activeMeals.isEmpty {
+        // Only into a cat that never had meals here: deleting them all is a choice.
+        if r.meals.isEmpty {
             let meals = source.meals
                 .filter { ![$0.time, $0.food, $0.amount].allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
                 .prefix(CatCareLimits.maximumMeals)
@@ -468,9 +469,10 @@ enum CatCareImport {
         }
     }
 
+    /// Only a field never set here. One the owner cleared stays cleared.
     private static func fill(_ field: inout CatCareStamped<String>?, _ value: String?,
                              by: String, now: Date, limit: Int = CatCareLimits.textCharacters) {
-        guard field == nil || field?.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true,
+        guard field == nil,
               let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return }
         field = .init(value: CatCareLimits.clippedText(value, limit: limit), editedAt: now, editedBy: by)

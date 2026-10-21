@@ -312,7 +312,7 @@ struct PairingView: View {
                     NavigationLink {
                         BlockedSharingView()
                     } label: {
-                        Label("ブロックした共有を確認", systemImage: "hand.raised")
+                        Label("ブロックした相手を確認", systemImage: "hand.raised")
                     }
                 }
             }
@@ -537,7 +537,7 @@ struct PairingView: View {
         Section {
             // With group windows on, new windows are made there; this screen
             // keeps joining and adding an iPhone for existing two-person windows.
-            if GroupWindowClientProvider.production == nil {
+            if GroupWindowClientProvider.ui == nil {
                 Button {
                     setupPath = .create
                 } label: {

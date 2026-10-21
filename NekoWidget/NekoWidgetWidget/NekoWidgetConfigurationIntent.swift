@@ -124,7 +124,8 @@ struct WidgetPhotoSource: AppEntity {
     static var availableSources: [WidgetPhotoSource] {
         // Group windows the app has verified and kept on this iPhone.
         var sources: [WidgetPhotoSource] = GroupWidgetCache.entries().map(groupWindow)
-        if familyWindowSourceIsEnabled {
+        // Builds with group windows on show no two-person window anywhere.
+        if familyWindowSourceIsEnabled && !GroupWidgetCache.groupWindowsAreOn {
             let windows = PrivateWindowCatalogStore.widgetEntries()
             if windows.isEmpty {
                 if sources.isEmpty { sources.append(.familyWindow) }

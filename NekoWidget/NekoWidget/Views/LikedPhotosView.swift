@@ -195,7 +195,7 @@ struct AlbumView: View {
         // 成長 is for each cat (情報設計 4章): the album root lists every cat.
         let showsCatGrowth = selectedProfileIdentifier == nil && !profiles.isEmpty
         return VStack(alignment: .leading, spacing: 16) {
-            Text(comparisons.isEmpty && !showsCatGrowth ? "探す" : "成長")
+            Text(!comparisons.isEmpty ? "成長" : showsCatGrowth ? "猫ごとのアルバム" : "探す")
                 .font(.title3.bold()).accessibilityAddTraits(.isHeader)
             if showsCatGrowth {
                 CatProfileNavigationStrip {
@@ -204,7 +204,7 @@ struct AlbumView: View {
                             CatProfileNavigationLabel(profile: profile)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(profile.displayName)の成長とアルバム")
+                        .accessibilityLabel("\(profile.displayName)のアルバム")
                         .accessibilityIdentifier("albums-cat-growth-\(profile.identifier)")
                     }
                 } more: { EmptyView() }
@@ -476,7 +476,7 @@ struct AlbumView: View {
             ContentUnavailableView(
                 "アルバムを表示できません",
                 systemImage: "exclamationmark.triangle",
-                description: Text("写真を探し終えられませんでした。設定の「最初から探し直す」で、もう一度探してください。")
+                description: Text("写真を探し終えられませんでした。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度探してください。")
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
         } else if scan.isPreparingGroupedAlbums || scan.isScanning {
@@ -1330,10 +1330,14 @@ struct LikedPhotosView: View {
             if let month = months.first {
                 monthLink(month, isLatest: true, isWide: true)
                     .overlay(alignment: .topLeading) { if summaryNeedsPlus { plusMark.padding(10) } }
+            } else {
+                Label("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。", systemImage: "calendar")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
             if let movie = seasonalMovies.first {
                 NavigationLink(value: MemoriesRoute.seasonalMovie(movie.periodID)) {
-                    HStack(spacing: 12) {
+                    // Stacked at very large text, so the title is not squeezed.
+                    ToolAdaptiveStack(spacing: 12) {
                         ZStack {
                             if let scene = movie.effectivePresentation.coverScene {
                                 PhotoAssetImageView(localIdentifier: scene.localIdentifier,
@@ -1346,10 +1350,10 @@ struct LikedPhotosView: View {
                         .background(Color.secondary.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(movie.effectivePresentation.periodTitle)の季節のムービー").font(.headline)
-                            Text("\(movie.effectivePresentation.scenes.count)枚").font(.caption).foregroundStyle(.secondary)
+                            Text("\(movie.effectivePresentation.scenes.count)場面").font(.caption).foregroundStyle(.secondary)
                         }
                         if summaryNeedsPlus { plusMark }
-                        if latestSeasonalMovieIsNew {
+                        if latestSeasonalMovieIsNew && !summaryNeedsPlus {
                             Text("新着").font(.caption2.bold()).foregroundStyle(.white)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(.red, in: Capsule())
@@ -1507,11 +1511,12 @@ struct LikedPhotosView: View {
             if showsCover {
                 AlbumOverviewCard(identifier: month.coverPhoto?.localIdentifier, catBoundingBox: month.coverPhoto?.catBoundingBox,
                     title: "\(month.monthNumber)月のまとめ", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
-                    isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread,
+                    isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread && !summaryNeedsPlus,
                     networkAccessAllowed: true, previewPhotos: Array(month.photos.prefix(3)), isCompact: false, isWide: isWide)
             } else {
                 AlbumNavigationRow(title: "\(month.yearNumber)年\(month.monthNumber)月", subtitle: "\(month.photos.count.formatted())枚",
-                    newBadgeIdentifier: isLatest && latestMonthlyWindowIsUnread ? "monthly-window-new-badge" : nil)
+                    newBadgeIdentifier: isLatest && latestMonthlyWindowIsUnread && !summaryNeedsPlus
+                        ? "monthly-window-new-badge" : nil)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
             }
         }
@@ -2752,7 +2757,7 @@ struct PhotoBrowserView: View {
                     }
                     .accessibilityIdentifier("photo-memory-note-read-error")
                 }
-                if GroupWindowClientProvider.production != nil {
+                if GroupWindowClientProvider.ui != nil {
                     Button {
                         // Choosing the window and confirming come first; nothing is sent here.
                         groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)
@@ -3115,7 +3120,7 @@ struct PhotoBrowserView: View {
             await personalNote.load(for: selectedPhotoIdentifier)
         }
         .sheet(item: $groupDelivery) { request in
-            if let client = GroupWindowClientProvider.production {
+            if let client = GroupWindowClientProvider.ui {
                 GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
             }
         }
@@ -3221,7 +3226,7 @@ struct PhotoBrowserView: View {
         // This delivers to two-person windows, which are hidden with group windows on.
         return SharingAPIConfiguration.current.isMediaAvailable
             && SharingAPIConfiguration.current.isShareExtensionHandoffAvailable
-            && GroupWindowClientProvider.production == nil
+            && GroupWindowClientProvider.ui == nil
     }
 
     private func addToShowcase(_ identifier: String, scopeID: String) {

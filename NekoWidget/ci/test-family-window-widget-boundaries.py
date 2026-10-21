@@ -1865,7 +1865,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         self.assertIn('Label("写真の表示と整理"', settings)
         self.assertIn("private var photoSettingsView: some View", settings)
-        self.assertIn('.navigationTitle("写真")', settings)
+        self.assertIn('.navigationTitle("写真の表示と整理")', settings)
         self.assertIn('Label("ウィジェットの置き方"', settings)
         self.assertIn('"settings-widget-placement-guide"', settings)
         self.assertIn('"settings-sharing-review"', settings)
@@ -4298,7 +4298,7 @@ class GroupWindowUITests(unittest.TestCase):
         # Today's two-person window is read-only through the same boundary:
         # every change is refused, and the screen hides what it cannot do.
         legacy = section(view, "struct LegacyPairingGroupWindowClient: GroupWindowClient", "struct LegacyWindowMembersScreen: View")
-        self.assertEqual(legacy.count("throw GroupClientError.unavailable"), 12)
+        self.assertEqual(legacy.count("throw GroupClientError.unavailable"), 13)
         self.assertNotIn("URLSession", legacy)
         self.assertIn('displayName: "自分"', legacy)
         self.assertIn('displayName: "相手"', legacy)
@@ -4422,7 +4422,7 @@ class GroupWindowPausedTests(unittest.TestCase):
         self.assertIn("presentsImmediately: false", pairing)
         checks = source("ci/run-cheap-safety-checks.sh")
         self.assertIn("NekoWidget/Views/GroupWindowSetupView.swift", checks)
-        self.assertIn("さんがPlusを続けると、また届くようになります。", paused)
+        self.assertIn("がPlusを続けると、また届くようになります。", paused)
         self.assertIn("自分でまどを作る（14日間無料）", paused)
         self.assertIn("GroupWindowPresentation.isMyWindow(window)", paused)
         # Owner sees continue; members see who can resume.
@@ -4446,14 +4446,14 @@ class GroupWindowScreenTests(unittest.TestCase):
         for forbidden in ("URLSession", "Keychain", "UserDefaults", "print(", "SharedLog", "roomKey"):
             self.assertNotIn(forbidden, screen)
         # Received photos: sensitive-content check, then the durable write,
-        # and only inside storeAndAcknowledge (so ACK follows the write).
+        # and only inside keep(), which the production adapter runs through storeAndAcknowledge (so ACK follows the write).
         receive = section(screen, "private func receive(", "func prepare(_ item: PhotosPickerItem) async")
         self.assertIn("GroupPhotoModeration.check(incoming.jpeg, with: moderation)", receive)
-        self.assertIn("guard verdict != .retryLater else { return }", receive)
-        self.assertIn("client.storeAndAcknowledge(incoming, outgoingOperationID: outgoingOperationID)", receive)
-        self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("storeAndAcknowledge"))
+        self.assertIn("guard verdict != .retryLater, verdict != .checkOff else { return verdict }", receive)
+        self.assertIn("client.keep(incoming, outgoingOperationID: outgoingOperationID)", receive)
+        self.assertLess(receive.index("GroupPhotoModeration.check"), receive.index("client.keep("))
         self.assertIn("try await store.save(", receive)
-        self.assertIn("jpeg: verdict == .hidden ? nil : verified.jpeg", receive)
+        self.assertIn("jpeg: hidden ? nil : jpeg", receive)
         # Sending: the same canonical JPEG and check as the two-person window.
         send = section(screen, "func prepare(_ item: PhotosPickerItem) async", "func toggleHeart(")
         self.assertIn("guard canSend", send)
@@ -4461,7 +4461,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         self.assertIn("outgoingOperationID: operationID", send)
         self.assertIn("MomentShareIngressService().prepare(fromFileURL: received.file).canonicalJPEG", screen)
         # Paused windows cannot send; the card points to who can resume.
-        self.assertIn("guard let window, window.state == .active, !isPaused else { return false }", screen)
+        self.assertIn("guard !isFormer, let window, window.state == .active, !isPaused else { return false }", screen)
         self.assertIn('"group-window-screen-paused"', screen)
 
         store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
@@ -4475,7 +4475,7 @@ class GroupWindowScreenTests(unittest.TestCase):
             self.assertNotIn(forbidden, store)
 
         tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("if let groupClient = GroupWindowClientProvider.production {", tab)
+        self.assertIn("if let groupClient = GroupWindowClientProvider.ui {", tab)
         self.assertIn("GroupWindowListSection(client: groupClient)", tab)
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         self.assertIn("GroupWindowView.swift in Sources", project)
@@ -4590,7 +4590,7 @@ class VeterinaryCatCareTests(unittest.TestCase):
         self.assertIn('editIdentifier: "vet-open-cat-care"', view)
         self.assertNotIn("以前の薬やお世話情報は自動で入りません", view)
         # Matched by the saved identity, never by name.
-        self.assertIn("CatCareSummary.record(profileIdentifier: visit.catID.uuidString)", view)
+        self.assertIn("CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString)", view)
         record = section(summary, "static func record(profileIdentifier: String)", "static func veterinaryFields(")
         self.assertIn("$0.profileID == profileID", record)
         self.assertNotIn("name", record)
@@ -4657,7 +4657,7 @@ class EvacuationCatCareTests(unittest.TestCase):
         # Vaccinations, proofs and the chip come from 「この子のこと」; the tool ID is matched first.
         share = section(store, "func shareRecord(", "func bookRecords()")
         self.assertIn("if disclosure.catCare {", share)
-        self.assertIn("CatCareSummary.evacuationFields(care)", share)
+        self.assertIn("CatCareSummary.evacuationShareFields(care, legacy: cat,", share)
         self.assertIn("attachments.append", share)
         matching = section(summary, "static func record(toolCatID:", "static func evacuationFields(")
         self.assertLess(matching.index("$0.catID == toolCatID"), matching.index("record(profileIdentifier:"))
@@ -4691,8 +4691,8 @@ class CareHandoffCatCareTests(unittest.TestCase):
         self.assertIn("!current.contains(choice)".lstrip("!"), view)
         # Age and weight always; medicines and allergy only when health is shared.
         share = section(store, "func shareRecord(", "private static func normalizedJPEG(")
-        self.assertIn("CatCareSummary.ageAndWeight(care)", share)
-        self.assertIn("if disclosure.health { fields += CatCareSummary.careHandoffHealthFields(care) }", share)
+        self.assertIn("CatCareSummary.careHandoffLines(care, legacy: cat)", share)
+        self.assertIn("health: CatCareSummary.careHandoffHealthLines(care, legacy: cat)", share)
         health = section(summary, "static func careHandoffHealthFields(", "/// For 「避難に備える」")
         self.assertIn("medicine.dose, medicine.schedule", health)
         # The editor only shows them; 「この子のこと」 stays the one place to change them.
@@ -4751,7 +4751,7 @@ class CatCareProofCameraTests(unittest.TestCase):
 class ToolTemplateTests(unittest.TestCase):
     def test_tools_share_the_cat_care_section_and_a_bottom_preview(self) -> None:
         shared = section(source("NekoWidget/Views/CatCareView.swift"), "struct ToolCatCareSection<Extra: View>", "/// The system camera.")
-        self.assertIn('NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }', shared)
+        self.assertIn('NavigationLink("この子のことを直す") { CatCareSubjectView(subject: subject) }', shared)
         self.assertNotIn("CatCareStore.shared.update", shared)
         for path in ("NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
                      "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
@@ -4773,7 +4773,7 @@ class CatCareUsabilityTests(unittest.TestCase):
         # No save button to forget; leaving or switching cats saves.
         self.assertNotIn('Button("保存") { save() }', view)
         self.assertIn(".onDisappear { autosave?.cancel(); save() }", view)
-        switching = section(view, ".task(id: profile.identifier) {", "// MARK: Sections")
+        switching = section(view, ".task(id: subject.key) {", "// MARK: Sections")
         self.assertLess(switching.index("save()"), switching.index("load()"))
         save = section(view, "private func save() {", "private func apply(")
         self.assertIn("draft != savedDraft", save)
@@ -4906,7 +4906,7 @@ class GroupSendConfirmTests(unittest.TestCase):
         self.assertIn("GroupWindowCreateScreen(client: model.client)", listing)
         self.assertNotIn("showsNameEntry", listing)
         pairing = source("NekoWidget/Views/PairingView.swift")
-        self.assertIn("if GroupWindowClientProvider.production == nil {", pairing)
+        self.assertIn("if GroupWindowClientProvider.ui == nil {", pairing)
 
 
 class GroupWindowSpeedTests(unittest.TestCase):
@@ -5006,7 +5006,8 @@ class WidgetSourceOrderTests(unittest.TestCase):
         # New widgets still start on this iPhone's photos.
         self.assertIn("func defaultResult() async -> WidgetPhotoSource? {\n        .personalLibrary", intent)
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn('"このまどは止まっています" : "まだ写真が届いていません"', view)
+        self.assertIn('return "このまどは止まっています"', view)
+        self.assertIn('"アプリを開くと写真が出ます" : "まだ写真が届いていません"', view)
 
 
 class FirstLaunchInvitationTests(unittest.TestCase):
@@ -5034,7 +5035,7 @@ class Build269FeedbackTests(unittest.TestCase):
         store = source("NekoWidget/Services/CatCareStore.swift")
         birthdays = section(store, "func importBirthdays(", "func ensureRecord(")
         self.assertIn('editedBy: "import:Profile"', birthdays)
-        self.assertIn("(state.cats[index].birthday?.value ?? nil) == nil", birthdays)
+        self.assertIn("return stored != day", birthdays)
         for path in ("NekoWidget/Views/CareHandoffView.swift", "NekoWidget/Views/CatCareView.swift",
                      "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/VeterinaryVisitView.swift",
                      "NekoWidget/Views/EvacuationPreparationView.swift"):
@@ -5046,7 +5047,7 @@ class Build269FeedbackTests(unittest.TestCase):
 class TwoPersonWindowHiddenTests(unittest.TestCase):
     def test_group_builds_show_no_two_person_window(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible\n             && GroupWindowClientProvider.production == nil", tab)
+        self.assertIn("supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible\n             && GroupWindowClientProvider.ui == nil", tab)
         self.assertIn("get: { supportsPrivateWindows && opensActiveWindow }", tab)
         self.assertIn("GroupInvitationJoinSheet(invitation: invitation)", tab)
         self.assertIn("countsPrivateWindows ? catalog?.windows ?? [] : []", tab)
@@ -5054,10 +5055,10 @@ class TwoPersonWindowHiddenTests(unittest.TestCase):
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
         help_view = section(onboarding, "struct OnboardingInvitationHelpView: View", '.navigationTitle("招待を受け取った")')
         self.assertNotIn("PairingView(initialSetupPath: .join)", help_view)
-        self.assertIn("&& GroupWindowClientProvider.production == nil {", source("NekoWidget/Views/SettingsView.swift"))
+        self.assertIn("&& GroupWindowClientProvider.ui == nil {", source("NekoWidget/Views/SettingsView.swift"))
         browser = source("NekoWidget/Views/LikedPhotosView.swift")
         deliver = section(browser, "private var canDeliverToWindow: Bool {", "private func addToShowcase(")
-        self.assertIn("GroupWindowClientProvider.production == nil", deliver)
+        self.assertIn("GroupWindowClientProvider.ui == nil", deliver)
         root_view = source("NekoWidget/App/AppRootView.swift")
         dismiss = section(root_view, ".sheet(item: $onboardingInvitation, onDismiss: {", "GroupInvitationJoinSheet(invitation: invitation)")
         self.assertNotIn("isFamilyWindowPresented", dismiss)
@@ -5088,6 +5089,124 @@ class WindowListOrderTests(unittest.TestCase):
         self.assertIn('Label("公式のまど", systemImage: "safari")', tab)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
         self.assertNotIn("退出", setup)
+
+
+class GroupWindowAuditFixTests(unittest.TestCase):
+    def test_window_goes_on_after_a_member_leaves(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        sync = section(window, "    func sync() async {", "private func updateHomeScreenPhoto()")
+        self.assertIn("latest.state == .rotationRequired, latest.canManage", sync)
+        self.assertIn("client.rotate(", sync)
+        members = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("try? await client.rotate(", section(members, "    func load() async {", "func createInvitation()"))
+        self.assertIn("func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow",
+                      source("NekoWidget/Services/GroupWindowContract.swift"))
+
+    def test_waiting_photos_and_failed_sends_are_explained(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("catch MomentSharingError.moderationDisabled {\n            return .checkOff", window)
+        self.assertIn("receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)", window)
+        deliver = section(window, "    func deliver(_ prepared: PreparedPhoto", "func retryFailedDelivery()")
+        self.assertIn("let operationID = prepared.operationID", deliver)
+        self.assertNotIn("UUID()\n            let sent", deliver)
+        self.assertIn("failedDelivery = FailedDelivery(photo: retry, memo: memo)", deliver)
+        self.assertIn('"group-window-send-retry"', window)
+
+    def test_left_windows_keep_their_photos(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("GroupWindowScreen(client: model.client, windowID: former.id, formerName: former.name)", window)
+        self.assertIn("guard model.hasLoaded, model.message == nil else { return }", window)
+        self.assertIn("onLeft: closeAfterLeaving", window)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("if let onLeft { onLeft() } else { dismiss() }", setup)
+        self.assertNotIn("届いた写真とお気に入りは", setup)
+        self.assertNotIn("相手のiPhoneに残ります", setup)
+        store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
+        self.assertIn("func knownWindows()", store)
+        # A photo removed here is not downloaded again.
+        contains = section(store, "func contains(photoID: String", "func entry(photoID:")
+        self.assertNotIn("isRemoved", contains)
+
+    def test_received_photo_can_be_kept_like_the_two_person_window(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        favorite = section(window, "func addToFavorites(", "func remove(_ entry:")
+        self.assertIn("ReceivedPhotoMemoryImportService()", favorite)
+        self.assertIn('source: "received-memory"', favorite)
+        self.assertIn(".receivedMemoryImportNeedsRefresh", favorite)
+        self.assertLess(favorite.index("token: token, localIdentifier: nil"), favorite.index("service.importMemory("))
+        detail = section(window, "private struct GroupPhotoDetail: View {", "private struct GroupPhotoPage: View {")
+        self.assertIn(".tabViewStyle(.page(indexDisplayMode: .never))", detail)
+        self.assertIn("に届きました", detail)
+        self.assertIn('"group-photo-favorite"', detail)
+
+    def test_widget_matches_the_app(self) -> None:
+        view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        self.assertIn("if photo.isOwn {\n            unavailableHeartSlot", view)
+        intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
+        self.assertIn("familyWindowSourceIsEnabled && !GroupWidgetCache.groupWindowsAreOn", intent)
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        self.assertNotIn("catalog.entries.insert(entry, at: 0)", cache)
+
+
+class OnboardingInvitationSequenceTests(unittest.TestCase):
+    def test_join_opens_after_the_help_sheet_and_used_invitations_go(self) -> None:
+        root_view = source("NekoWidget/App/AppRootView.swift")
+        self.assertIn("invitationAfterHelp = invitation\n                showsInvitationJoin = false", root_view)
+        self.assertIn("onboardingInvitation = next", root_view)
+        self.assertIn("GroupWindowOpenInbox.shared.pendingWindowID != nil || invitationInbox.pending == nil", root_view)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        settle = section(setup, "private func settleInvitation()", "// MARK: - DEBUG fixture entry")
+        self.assertIn("case .approved?:", settle)
+        self.assertIn("GroupInvitationInbox.shared.discard()", settle)
+
+
+class CatCareOnePlaceTests(unittest.TestCase):
+    def test_tools_read_everyday_care_from_cat_care_only(self) -> None:
+        care = source("NekoWidget/Views/CareHandoffView.swift")
+        for removed in ('identifier: "care-water"', 'identifier: "care-toilet"', 'identifier: "care-health"',
+                        '"care-meal-time-', 'identifier: "care-usual-food"'):
+            self.assertNotIn(removed, care)
+        store = source("NekoWidget/Services/CareHandoffStore.swift")
+        self.assertIn("everyday: CatCareSummary.careHandoffLines(care, legacy: cat)", store)
+        self.assertIn("commonFields(plan: plan, household: CatCareStore.shared.state?.household)", store)
+        evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        for removed in ('"evacuation-cat-food"', '"evacuation-cat-handling"', '"evacuation-contact"'):
+            self.assertNotIn(removed, evacuation)
+        plan = source("NekoWidget/Services/EvacuationPlan.swift")
+        self.assertIn("var catCare = false", plan)
+        evac_store = source("NekoWidget/Services/EvacuationStore.swift")
+        self.assertIn("|| disclosure.catCare,", evac_store)
+
+    def test_imports_never_refill_or_misfile(self) -> None:
+        core = source("NekoWidget/Services/CatCareCore.swift")
+        fill = section(core, "private static func fill(", "// MARK: - Weights from photo memos")
+        self.assertIn("guard field == nil,", fill)
+        self.assertIn("if r.meals.isEmpty {", core)
+        store = source("NekoWidget/Services/CatCareStore.swift")
+        sources = section(store, "nonisolated static func sources(", "// MARK: - Photos")
+        self.assertNotIn("healthDetails", sources)
+        self.assertNotIn("approachAdvice", sources)
+        self.assertIn('allergy?.editedBy == "import:CareHandoff"', store)
+
+    def test_cat_care_page_keeps_what_is_typed(self) -> None:
+        view = source("NekoWidget/Views/CatCareView.swift")
+        save = section(view, "private func save() {", "private func apply(")
+        self.assertIn("if saved { savedDraft = value }", save)
+        self.assertIn("guard loadedKey != subject.key else { return }", view)
+        self.assertIn('TextField("体重（kg）例：4.2"', view)
+        self.assertIn("case let .toolCat(id, name):", view)
+        self.assertNotIn("enum CatCareCompleteness", view)
+        self.assertNotIn("写真タブで「うちの子」を登録", view)
+
+    def test_vet_sheet_has_its_own_heading_and_asks_first(self) -> None:
+        vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
+        self.assertIn('heading: "病院で見せるメモ", isCareMemo: false', vet)
+        self.assertIn('confirmationDialog("病院に渡す控えを作ります"', vet)
+        self.assertIn('.navigationTitle("病院で見せるメモ")', vet)
+        exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
+        self.assertIn("record.heading", exporter)
+        summary = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn('fields.append(("年齢", CatCareLostCat.age(', summary)
 
 
 if __name__ == "__main__":

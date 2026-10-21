@@ -371,12 +371,18 @@ private struct EvacuationCatView: View {
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: EvacuationStore
     @ObservedObject var reuseStore: CareHandoffStore
+    /// Redraws when 「この子のこと」 changes, for example after 「この子のことを直す」.
+    @ObservedObject private var catCare = CatCareStore.shared
     @State private var disclosure = EvacuationDisclosure()
     @State private var preview: EvacuationPreviewItem?
     @State private var error: String?
     @State private var deleteRequested = false
     @Environment(\.dismiss) private var dismiss
     private var cat: EvacuationCat? { store.plan.cats.first { $0.id == id } }
+
+    private func catCareRecord(_ cat: EvacuationCat) -> CatCareRecord? {
+        CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+    }
 
     var body: some View {
         List {
@@ -387,7 +393,7 @@ private struct EvacuationCatView: View {
                             .frame(width: 80, height: 90)
                         VStack(alignment: .leading, spacing: 7) {
                             Text(profiles.first(where: { $0.identifier == cat.profileID })?.displayName ?? cat.displayName).font(.title2.bold())
-                            Text(cat.features.isEmpty ? "特徴は未記入" : cat.features)
+                            Text(CatCareSummary.features(catCareRecord(cat), legacy: cat.features) ?? "特徴は未記入")
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
                     }
@@ -395,28 +401,35 @@ private struct EvacuationCatView: View {
                         EvacuationCatEditor(id: id,
                             ownPhotos: profiles.first(where: { $0.identifier == cat.profileID })?.confirmedPhotos ?? [],
                             otherPhotos: otherPhotos, store: store, reuseStore: reuseStore, profiles: profiles)
-                    } label: { Label("写真やこの子の情報を編集", systemImage: "pencil") }
+                    } label: { Label("避難用の写真を選ぶ", systemImage: "photo") }
                         .accessibilityIdentifier("evacuation-cat-edit")
                 }
                 ToolCatCareSection(
-                    title: "この子のこと",
-                    lines: CatCareSummary.evacuationFields(
-                        CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)),
-                    profile: profiles.first(where: { $0.identifier == cat.profileID }),
-                    footer: "「見せる内容」で「ワクチン・マイクロチップ」を選ぶと、証明の写真と一緒に載ります。",
+                    title: "「この子のこと」から載ること",
+                    lines: CatCareSummary.evacuationShareFields(catCareRecord(cat), legacy: cat,
+                        household: catCare.state?.household, planContact: store.plan.contact,
+                        disclosure: EvacuationDisclosure(food: true, handling: true, medical: true, contact: true,
+                                                         withOwnerPhoto: false, catCare: true)),
+                    subject: profiles.first(where: { $0.identifier == cat.profileID }).map(CatCareSubject.profile)
+                        ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name),
+                    footer: "特徴・ごはん・接し方・病歴・連絡先は「この子のこと」で書きます。下の「見せる内容」で選んだものだけ載ります。",
                     identifier: "evacuation-cat-care-fields", editIdentifier: "evacuation-open-cat-care")
-                Section("見せる内容") {
+                Section {
                     Toggle("いつものごはん", isOn: $disclosure.food)
                     Toggle("接し方・苦手なこと", isOn: $disclosure.handling)
-                    Toggle("病歴・薬", isOn: $disclosure.medical).accessibilityIdentifier("evacuation-disclose-medical")
+                    Toggle("病歴・薬・アレルギー", isOn: $disclosure.medical).accessibilityIdentifier("evacuation-disclose-medical")
                     Toggle("飼い主の連絡先", isOn: $disclosure.contact).accessibilityIdentifier("evacuation-disclose-contact")
                     if cat.photos["withOwner"] != nil { Toggle("飼い主と一緒の写真", isOn: $disclosure.withOwnerPhoto) }
-                    Toggle("ワクチン・マイクロチップ（この子のこと）", isOn: $disclosure.catCare)
+                    Toggle("ワクチン・マイクロチップ番号", isOn: $disclosure.catCare)
                         .accessibilityIdentifier("evacuation-disclose-cat-care")
+                } header: {
+                    Text("見せる内容")
+                } footer: {
+                    Text("ワクチンの証明の写真には、住所や名前が写っていることがあります。見せる相手を確かめてから選んでください。")
                 }
                 Section {
                     if let error { Text(error).foregroundStyle(.red) }
-                    ToolImportantInformation(text: "写真・名前・特徴は表示します。病歴や連絡先は、必要な相手にだけ見せてください。避難先の受入条件は、自治体や施設に確かめてください。")
+                    ToolImportantInformation(text: "写真・名前・特徴は表示します。病歴・連絡先・マイクロチップ番号は、必要な相手にだけ見せてください。避難先の受入条件は、自治体や施設に確かめてください。")
                 }
                 Section {
                     Text("内容確認日：" + (cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
@@ -505,52 +518,13 @@ private struct EvacuationCatEditor: View {
                             }
                         }
                     }
-                    TextField("見分ける特徴（任意）", text: text(\.features), axis: .vertical)
                 }
                 Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("いつものごはん").font(.subheadline.weight(.medium))
-                            if cat.prefilledFields?.contains("food") == true {
-                                Text("前に入れた内容").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        TextField("フード名・普段の量など", text: text(\.food), axis: .vertical)
-                            .accessibilityIdentifier("evacuation-cat-food")
-                            .foregroundStyle(Color.primary)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("接し方・苦手なこと").font(.subheadline.weight(.medium))
-                            if cat.prefilledFields?.contains("handling") == true {
-                                Text("前に入れた内容").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        TextField("例：大きな音が苦手", text: text(\.handling), axis: .vertical)
-                            .accessibilityIdentifier("evacuation-cat-handling")
-                            .foregroundStyle(Color.primary)
-                    }
-                    DisclosureGroup("薬・アレルギー") {
-                        Picker("記録はありますか", selection: Binding(get: { cat.medicalStatus }, set: { new in
-                            store.editCat(id) { $0.medicalStatus = new }
-                        })) { ForEach(EvacuationCat.MedicalStatus.allCases, id: \.self) { Text($0.title).tag($0) } }
-                        if cat.medicalStatus == .recorded {
-                            TextField("獣医師から指示された内容など", text: text(\.medicalDetails), axis: .vertical)
-                        }
-                        ToolImportantInformation(text: "薬は獣医師の指示を記入してください。薬・連絡先を見せるかは前の画面で選べます。")
-                    }
-                } header: { Text("必要なことだけ")
-                } footer: { Text("変更は自動で保存します。") }
-                Section("家庭で共通の連絡先") {
-                    TextField("相手に伝える連絡先（任意）", text: Binding(get: { store.plan.contact }, set: { new in
-                        store.update { plan in
-                            plan.contact = new
-                            for index in plan.cats.indices { plan.cats[index].reviewedAt = nil }
-                        }
-                    }), axis: .vertical).accessibilityIdentifier("evacuation-contact")
+                    Text("特徴・ごはん・接し方・薬・連絡先は「この子のこと」で書きます。前の画面の「この子のことを直す」から開けます。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-        }.navigationTitle("この子の情報を編集").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle("避難用の写真").navigationBarTitleDisplayMode(.inline)
             .task {
                 guard !refreshedCandidates else { return }
                 refreshedCandidates = true
@@ -757,7 +731,12 @@ private struct EvacuationDestinationsView: View {
                 }.disabled(store.plan.destinations.count >= 30)
             } footer: { Text("猫を受け入れてもらえるか、前もって自治体や施設に確かめてください。") }
             Section("家族の集合メモ") {
-                TextField("家族で決めた場所や連絡方法", text: Binding(get: { store.plan.familyMeetingMemo }, set: { new in
+                TextField("家族で決めた場所や連絡方法", text: Binding(get: {
+                    CatCareStore.shared.state?.household.meetingPlace == nil
+                        ? store.plan.familyMeetingMemo : CatCareStore.shared.householdText(\.meetingPlace)
+                }, set: { new in
+                    // One place: 「この子のこと」's household, read by every tool.
+                    CatCareStore.shared.setHouseholdText(new, \.meetingPlace)
                     store.update { $0.familyMeetingMemo = new }
                 }), axis: .vertical)
             }

@@ -31,7 +31,7 @@ struct BlockedSharingView: View {
             }
             if hasLoaded && entries.isEmpty {
                 ContentUnavailableView(
-                    "ブロックした共有はありません", systemImage: "hand.raised",
+                    "ブロックした相手はいません", systemImage: "hand.raised",
                     description: Text("このiPhoneで行ったブロックを、ここから解除できます。")
                 )
             }
@@ -64,7 +64,7 @@ struct BlockedSharingView: View {
             }
             .font(.footnote).foregroundStyle(.secondary)
         }
-        .navigationTitle("ブロックした共有")
+        .navigationTitle("ブロックした相手")
         .navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in

@@ -17,9 +17,9 @@ struct CatCareEntryView: View {
         Group {
             if profiles.isEmpty {
                 ContentUnavailableView(
-                    "まだ猫が登録されていません",
+                    "まだ猫のプロフィールがありません",
                     systemImage: "cat",
-                    description: Text("写真タブで「うちの子」を登録すると、ここで情報をまとめられます。")
+                    description: Text("ツールの「猫のプロフィール」で猫を入れると、ここで猫ごとの情報をまとめられます。")
                 )
             } else if let profile = selectedProfile {
                 CatCareDetailView(profile: profile, otherProfiles: profiles.count > 1 ? profiles : [],
@@ -57,26 +57,68 @@ struct CatCareEntryView: View {
     }
 }
 
-/// How many of the main items are still empty, for the Tools tab badge.
-enum CatCareCompleteness {
-    static func missingCount(_ record: CatCareRecord?) -> Int {
-        guard let record else { return 6 }
-        var missing = 0
-        if record.sex == nil || record.sex?.value == .unknown { missing += 1 }
-        if (record.marks?.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing += 1 }
-        if (record.microchip?.value ?? "").isEmpty { missing += 1 }
-        if record.allergy == nil || record.allergy?.value.status == .unknown { missing += 1 }
-        if record.activeWeights.isEmpty { missing += 1 }
-        if record.activeVaccinations.isEmpty { missing += 1 }
-        return missing
+/// Whose 「この子のこと」 a page shows: a cat profile, or a tool's cat that
+/// has no profile (a guest cat), which has a page of its own too.
+enum CatCareSubject {
+    case profile(CatProfilePresentation)
+    case toolCat(id: UUID, name: String)
+
+    var displayName: String {
+        switch self {
+        case let .profile(profile): profile.displayName
+        case let .toolCat(_, name):
+            name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "名前未設定の猫" : name
+        }
+    }
+
+    var key: String {
+        switch self {
+        case let .profile(profile): profile.identifier
+        case let .toolCat(id, _): "tool-" + id.uuidString
+        }
+    }
+}
+
+/// 「この子のことを直す」 from a tool: the profile's page, or the guest cat's.
+struct CatCareSubjectView: View {
+    let subject: CatCareSubject
+    @ObservedObject private var store = CatCareStore.shared
+
+    var body: some View {
+        switch subject {
+        case let .profile(profile):
+            CatCareEntryView(profiles: [profile])
+        case let .toolCat(id, name):
+            CatCareDetailView(toolCatID: id, name: name)
+                .navigationTitle("この子のこと")
+                .navigationBarTitleDisplayMode(.inline)
+                .onAppear { store.importFromTools() }
+        }
     }
 }
 
 struct CatCareDetailView: View {
-    let profile: CatProfilePresentation
+    let subject: CatCareSubject
     let otherProfiles: [CatProfilePresentation]
     @Binding var selectedProfileID: String?
     @ObservedObject private var store = CatCareStore.shared
+    @Environment(\.toolProfileActions) private var profileActions
+    /// The cat this page last loaded, so coming back from a list does not
+    /// reload over what is on screen.
+    @State private var loadedKey: String?
+
+    init(profile: CatProfilePresentation, otherProfiles: [CatProfilePresentation],
+         selectedProfileID: Binding<String?>) {
+        subject = .profile(profile)
+        self.otherProfiles = otherProfiles
+        _selectedProfileID = selectedProfileID
+    }
+
+    init(toolCatID: UUID, name: String) {
+        subject = .toolCat(id: toolCatID, name: name)
+        otherProfiles = []
+        _selectedProfileID = .constant(nil)
+    }
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = CatCareDraft()
@@ -135,18 +177,21 @@ struct CatCareDetailView: View {
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("この画面を閉じて開き直し、もう一度入れてください。")
+            Text("入れた内容は画面に残っています。少し待ってから、もう一度お試しください。")
         }
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor) { result in
                 apply(result)
             }
         }
-        .task(id: profile.identifier) {
-            // Save the cat shown before; the draft still belongs to it here.
+        .task(id: subject.key) {
+            // Only when the cat changes: save the one shown before (the draft
+            // still belongs to it), then load the new one.
+            guard loadedKey != subject.key else { return }
             autosave?.cancel()
             save()
             load()
+            loadedKey = subject.key
         }
     }
 
@@ -154,10 +199,20 @@ struct CatCareDetailView: View {
 
     private var basicsSection: some View {
         Section("基本") {
-            LabeledContent("名前", value: profile.displayName)
+            LabeledContent("名前", value: subject.displayName)
             if let birthday = currentRecord?.birthday?.value ?? nil {
                 LabeledContent("誕生日", value: CatCareFormat.day(birthday)
                     + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? ""))
+            } else if case .profile = subject {
+                LabeledContent("誕生日", value: "未記入")
+            }
+            if case let .profile(profile) = subject {
+                // Name and birthday belong to the cat profile; change them there.
+                NavigationLink("名前と誕生日は猫のプロフィールで直す") {
+                    CatProfileDetailView(profile: profile, allProfiles: otherProfiles.isEmpty ? [profile] : otherProfiles,
+                        manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: profileActions)
+                }
+                .accessibilityIdentifier("cat-care-open-profile")
             }
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)
@@ -265,9 +320,14 @@ struct CatCareDetailView: View {
     // MARK: Load and save
 
     private func load() {
-        guard let profileID = UUID(uuidString: profile.identifier),
-              let record = store.ensureRecord(profileID: profileID, name: profile.name)
-        else { catID = nil; return }
+        let found: CatCareRecord?
+        switch subject {
+        case let .profile(profile):
+            found = UUID(uuidString: profile.identifier).flatMap { store.ensureRecord(profileID: $0, name: profile.name) }
+        case let .toolCat(id, name):
+            found = store.ensureRecord(toolCatID: id, profileIdentifier: nil, name: name)
+        }
+        guard let record = found else { catID = nil; return }
         catID = record.catID
         draft = CatCareDraft(record: record, household: store.state?.household ?? CatCareHousehold())
         savedDraft = draft
@@ -291,7 +351,8 @@ struct CatCareDetailView: View {
             value.write(to: &state.cats[index], household: &state.household,
                         by: state.deviceID, now: Date())
         }
-        if saved { savedDraft = draft } else { saveFailed = true }
+        // What was actually stored: an unfinished chip number stays out of it.
+        if saved { savedDraft = value } else { saveFailed = true }
     }
 
     private func apply(_ result: CatCareListEditor.Result) {
@@ -553,7 +614,8 @@ struct CatCareListEntrySheet: View {
                 switch editor.kind {
                 case .weight:
                     DatePicker("測った日", selection: $date, in: ...Date(), displayedComponents: .date)
-                    TextField("体重（g）例：4200", text: $gramsText).keyboardType(.numberPad)
+                    TextField("体重（kg）例：4.2", text: $gramsText).keyboardType(.decimalPad)
+                        .accessibilityIdentifier("cat-care-weight-kg")
                 case .medication:
                     TextField("薬の名前", text: $name)
                     TextField("量（例：1/2錠）", text: $dose)
@@ -620,10 +682,14 @@ struct CatCareListEntrySheet: View {
         guard let day = CatCareDay(date: date) else { return }
         switch editor.kind {
         case .weight:
-            guard let grams = Int(gramsText.filter(\.isNumber)),
+            // kg, as in the photo memo. Full-width digits and a comma also work.
+            let half = gramsText.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? gramsText
+            let number = half.replacingOccurrences(of: ",", with: ".").filter { $0.isASCII && ($0.isNumber || $0 == ".") }
+            guard let kilograms = Double(number), kilograms > 0,
                   let today = CatCareDay(date: Date()),
+                  case let grams = Int((kilograms * 1000).rounded()),
                   CatCareLimits.isValidWeight(grams: grams, on: day, today: today)
-            else { message = "体重は1〜30000gの数字で入れてください。"; return }
+            else { message = "体重はkgの数字で入れてください（例：4.2）。"; return }
             onSave(.weight(grams: grams, day: day))
         case .medication:
             guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { message = "薬の名前を入れてください。"; return }
@@ -632,6 +698,9 @@ struct CatCareListEntrySheet: View {
             guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { message = "種類を入れてください。"; return }
             onSave(.vaccination(kind: name, day: day, proof: proof))
         case .meal:
+            guard ![name, food, amount].allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
+                message = "時間・フード・量のどれかを入れてください。"; return
+            }
             onSave(.meal(time: name, food: food, amount: amount))
         }
         dismiss()
@@ -643,33 +712,47 @@ struct CatCareListEntrySheet: View {
 struct ToolCatCareSection<Extra: View>: View {
     let title: String
     let lines: [(String, String)]
-    let profile: CatProfilePresentation?
+    let subject: CatCareSubject?
     let footer: String?
     let identifier: String
     let editIdentifier: String
     let extra: () -> Extra
 
-    init(title: String, lines: [(String, String)], profile: CatProfilePresentation?, footer: String? = nil,
+    init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String, @ViewBuilder extra: @escaping () -> Extra) {
-        self.title = title; self.lines = lines; self.profile = profile; self.footer = footer
+        self.title = title; self.lines = lines; self.subject = subject; self.footer = footer
         self.identifier = identifier; self.editIdentifier = editIdentifier; self.extra = extra
     }
 
+    /// A line whose value only says it is not written yet.
+    private static func isEmptyLine(_ line: (String, String)) -> Bool {
+        line.1.hasPrefix("未記入") || line.1.hasPrefix("未確認")
+    }
+
     var body: some View {
+        let filled = lines.filter { !Self.isEmptyLine($0) }
+        let missing = lines.filter(Self.isEmptyLine).map(\.0)
         Section {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+            ForEach(Array(filled.enumerated()), id: \.offset) { _, line in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(line.0).font(.subheadline).foregroundStyle(.secondary)
                     Text(line.1).font(.body).textSelection(.enabled)
                 }
             }
             .accessibilityIdentifier(identifier)
-            if lines.isEmpty {
-                Text("「この子のこと」に書くと、ここに載ります。").foregroundStyle(.secondary)
+            if filled.isEmpty {
+                Text("まだ何も書いていません。「この子のことを直す」から書くと、ここと渡す控えに載ります。")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(identifier + "-empty")
+            }
+            if !missing.isEmpty && !filled.isEmpty {
+                // 「、」 between items: some names already contain 「・」.
+                Text("まだ書いていないこと：" + missing.joined(separator: "、"))
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             extra()
-            if let profile {
-                NavigationLink("この子のことを直す") { CatCareEntryView(profiles: [profile]) }
+            if let subject {
+                NavigationLink("この子のことを直す") { CatCareSubjectView(subject: subject) }
                     .accessibilityIdentifier(editIdentifier)
             }
         } header: { Text(title) }
@@ -678,9 +761,9 @@ struct ToolCatCareSection<Extra: View>: View {
 }
 
 extension ToolCatCareSection where Extra == EmptyView {
-    init(title: String, lines: [(String, String)], profile: CatProfilePresentation?, footer: String? = nil,
+    init(title: String, lines: [(String, String)], subject: CatCareSubject?, footer: String? = nil,
          identifier: String, editIdentifier: String) {
-        self.init(title: title, lines: lines, profile: profile, footer: footer,
+        self.init(title: title, lines: lines, subject: subject, footer: footer,
                   identifier: identifier, editIdentifier: editIdentifier) { EmptyView() }
     }
 }
@@ -807,6 +890,7 @@ enum CatCareSummary {
         case .unknown: "去勢・避妊 未記入"
         }
         fields.append(("性別", sex + "・" + neutered))
+        fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: CatCareDay(date: Date())) ?? empty))
         fields.append(("マイクロチップ", text(record?.microchip?.value)))
         fields.append(("持病", text(record?.conditions?.value)))
         let allergy: String = switch record?.allergy?.value.status ?? .unknown {
@@ -866,6 +950,98 @@ enum CatCareSummary {
             fields.append(("アレルギー", text.isEmpty ? "あり・飼い主に確認" : text))
         case .unknown: break
         }
+        return fields
+    }
+
+    // MARK: One place for each fact
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// 「この子のこと」's value; the tool's older entry only for a field never
+    /// set here. A field the owner cleared stays empty.
+    private static func pick(_ field: CatCareStamped<String>?, _ legacy: String?, empty: String) -> String {
+        if let field { return nonEmpty(field.value) ?? empty }
+        return nonEmpty(legacy) ?? empty
+    }
+
+    /// 「朝7時 腎臓ケア 20g」, one meal a line.
+    static func mealsText(_ record: CatCareRecord?) -> String? {
+        let lines = (record?.activeMeals ?? []).map { meal in
+            [meal.time, meal.food, meal.amount].compactMap(nonEmpty).joined(separator: " ")
+        }.filter { !$0.isEmpty }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    /// 「キジトラ・しっぽが短い」.
+    static func features(_ record: CatCareRecord?, legacy: String?) -> String? {
+        if record?.coat != nil || record?.marks != nil {
+            let parts = [record?.coat?.value, record?.marks?.value].compactMap(nonEmpty)
+            return parts.isEmpty ? nil : parts.joined(separator: "・")
+        }
+        return nonEmpty(legacy)
+    }
+
+    /// For 「預けるとき」: everyday care, all from 「この子のこと」.
+    static func careHandoffLines(_ record: CatCareRecord?, legacy cat: CareCat) -> [(String, String)] {
+        let empty = "未記入・飼い主に確認"
+        var lines: [(String, String)] = []
+        if let about = ageAndWeight(record) { lines.append(("年齢・体重", about)) }
+        let neverHadMeals = record?.meals.isEmpty ?? true
+        let food = mealsText(record) ?? (neverHadMeals ? nonEmpty(cat.reusableFood) : nil)
+        lines.append(("ごはん", food ?? empty))
+        if let diet = nonEmpty(record?.specialDiet?.value) { lines.append(("療法食など", diet)) }
+        lines.append(("水", pick(record?.water, cat.water, empty: empty)))
+        lines.append(("トイレ", pick(record?.litter, cat.toilet, empty: empty)))
+        lines.append(("接し方・苦手なこと", pick(record?.temperament, cat.handling, empty: empty)))
+        return lines
+    }
+
+    /// For 「預けるとき」 when health is shared: medicines, allergy and conditions.
+    /// A note written in the tool before is shown until 「この子のこと」 has them.
+    static func careHandoffHealthLines(_ record: CatCareRecord?, legacy cat: CareCat) -> [(String, String)] {
+        var fields = careHandoffHealthFields(record)
+        if let conditions = nonEmpty(record?.conditions?.value) { fields.append(("持病", conditions)) }
+        if fields.isEmpty, cat.healthStatus != .unknown {
+            fields.append(("薬・アレルギー（前にこのツールに書いた内容）", cat.healthText))
+        }
+        if fields.isEmpty { fields.append(("薬・アレルギー", "未記入・飼い主に確認")) }
+        return fields
+    }
+
+    /// For 「避難に備える」: one cat's sheet. What is shown follows the toggles;
+    /// everything per cat comes from 「この子のこと」.
+    static func evacuationShareFields(_ record: CatCareRecord?, legacy cat: EvacuationCat,
+                                      household: CatCareHousehold?, planContact: String,
+                                      disclosure: EvacuationDisclosure) -> [(String, String)] {
+        let empty = "未記入"
+        var fields: [(String, String)] = [("見分ける特徴", features(record, legacy: cat.features) ?? empty)]
+        fields.append(evacuationFields(record)[0])
+        if disclosure.food {
+            let neverHadMeals = record?.meals.isEmpty ?? true
+            let food = [mealsText(record), nonEmpty(record?.specialDiet?.value)].compactMap { $0 }
+            let text = food.isEmpty ? (neverHadMeals ? nonEmpty(cat.food) : nil) : food.joined(separator: "\n")
+            fields.append(("いつものごはん", text ?? empty))
+        }
+        if disclosure.handling {
+            fields.append(("接し方・苦手なこと", pick(record?.temperament, cat.handling, empty: empty)))
+        }
+        if disclosure.medical {
+            var health: [(String, String)] = []
+            if let conditions = nonEmpty(record?.conditions?.value) { health.append(("持病", conditions)) }
+            health += careHandoffHealthFields(record)
+            if health.isEmpty {
+                // Older entry from this tool only when it says something.
+                health.append(cat.medicalStatus == .unknown ? ("病歴・薬", empty) : ("病歴・薬（飼い主の記録）", cat.medicalText))
+            }
+            fields += health
+        }
+        if disclosure.contact {
+            fields.append(("飼い主の連絡先", pick(household?.ownerContact, planContact, empty: empty)))
+        }
+        if disclosure.catCare { fields += evacuationFields(record).dropFirst() }
         return fields
     }
 

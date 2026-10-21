@@ -97,8 +97,10 @@ struct ShowcasePhotoView: View {
     /// 「むぎ・3歳」 for one chosen cat. 「すべての猫」 has no caption: a photo's cat is not guessed.
     private var caption: String? {
         guard initialScopeID != nil, !scopeID.isEmpty,
-              let name = profiles.first(where: { $0.identifier == scopeID })?.displayName else { return nil }
-        let age = CatCareLostCat.age(CatCareSummary.record(profileIdentifier: scopeID)?.birthday?.value,
+              let profile = profiles.first(where: { $0.identifier == scopeID }) else { return nil }
+        let name = profile.displayName
+        // The cat profile's own birthday, so the age is right without opening another tool.
+        let age = CatCareLostCat.age(profile.lifeDates.birthday.flatMap { CatCareDay(date: $0.date) },
                                      today: CatCareDay(date: Date()))
         return [name, age].compactMap { $0 }.joined(separator: "・")
     }

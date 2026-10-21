@@ -101,14 +101,6 @@ struct VeterinaryVisitsView: View {
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
-        .alert("猫の名前", isPresented: $addsCat) {
-            TextField("名前", text: $newName)
-            Button("作る") { Task { await open(PhotoMemoryNoteCat(id: UUID(), name: newName.trimmingCharacters(in: .whitespacesAndNewlines))) } }
-                .disabled(!VeterinaryVisitStore.isValidCatName(newName.trimmingCharacters(in: .whitespacesAndNewlines)))
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("猫の名前を1〜200文字で入力してください。")
-        }
         .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
             NavigationStack {
                 VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
@@ -152,7 +144,7 @@ struct VeterinaryVisitsView: View {
             cats = candidates.filter { seen.insert($0.id).inserted }
             toolSources = Dictionary(uniqueKeysWithValues: savedTools.map { ($0.id, $0.source) })
             if careStore.loadError != nil || careStore.saveError != nil || evacuationStore.loadError != nil || evacuationStore.saveError != nil {
-                let message = "入力済みの猫を一部読み込めません。既存の診察メモや、名前を入力して作る操作は使えます。"
+                let message = "入力済みの猫を一部読み込めません。これまでの診察メモは使えます。"
                 sourceError = sourceError.map { $0 + "\n" + message } ?? message
             }
             visits = loaded; ready = true; error = sourceError
@@ -208,11 +200,12 @@ private struct VeterinaryConsultationView: View {
                     }
                 }
                 ToolCatCareSection(
-                    title: "この子のこと（自動で載ります）",
+                    title: "「この子のこと」から載ること",
                     lines: CatCareSummary.veterinaryFields(
-                        CatCareSummary.record(profileIdentifier: visit.catID.uuidString),
+                        CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
                         household: catCareStore.state?.household),
-                    profile: profiles.first(where: { $0.identifier == visit.catID.uuidString }),
+                    subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
+                        ?? .toolCat(id: visit.catID, name: visit.catName),
                     footer: "薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。医療の判断ではありません。",
                     identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care")
                 if visit.completedAt == nil {
@@ -275,7 +268,9 @@ private struct VeterinaryConsultationView: View {
                 if error != nil, changes {
                     Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")
                 }
-                Text(observations.count > 500 || questions.count > 500 ? "各項目は500文字以内で入力してください" : changes ? "保存中…" : "自動保存済み").font(.caption).foregroundStyle(.secondary)
+                Text(observations.count > 500 || questions.count > 500 ? "各項目は500文字以内で入力してください"
+                     : changes ? (error != nil ? "保存できませんでした" : "保存中…") : "自動保存済み")
+                    .font(.caption).foregroundStyle(.secondary)
                 Button("プレビュー", systemImage: "rectangle.inset.filled") { showing = true }
                     .buttonStyle(.borderedProminent).frame(maxWidth: .infinity, minHeight: 44)
                     .accessibilityIdentifier("vet-show").disabled(changes || busy)
@@ -285,7 +280,11 @@ private struct VeterinaryConsultationView: View {
         .onChange(of: questions) { _, _ in scheduleSave() }
         .onChange(of: hasStartedDay) { _, _ in scheduleSave() }
         .onChange(of: startedDay) { _, _ in scheduleSave() }
-        .onDisappear { autosaveTask?.cancel() }
+        .onDisappear {
+            // Leaving another way than 「閉じる」 still saves what was written.
+            autosaveTask?.cancel()
+            if changes { Task { await save() } }
+        }
         .disabled(busy)
         .interactiveDismissDisabled(changes || busy)
         .task {
@@ -320,7 +319,11 @@ private struct VeterinaryConsultationView: View {
         }
         .confirmationDialog("まだ保存できていません", isPresented: $discarding, titleVisibility: .visible) {
             Button("書いた内容を消して閉じる", role: .destructive) { dismiss() }; Button("画面に戻る", role: .cancel) {}
-        } message: { Text("500文字を超えた欄があると保存できません。短くしてから閉じてください。") }
+        } message: {
+            Text(observations.count > 500 || questions.count > 500
+                 ? "500文字を超えた欄があると保存できません。短くしてから閉じてください。"
+                 : (error ?? "保存できませんでした。") + " 画面に戻って、もう一度お試しください。")
+        }
         .confirmationDialog("診察済みの控えとして残しますか？", isPresented: $finishing, titleVisibility: .visible) {
             Button("残す") { Task { await save(completing: true) } }; Button("キャンセル", role: .cancel) {}
         } message: { Text("次の診察は空のメモから作れます。この控えは自分だけの記録として残ります。") }
@@ -558,10 +561,13 @@ private struct VeterinaryReadView: View {
     @State private var export: CareHandoffExporter.Export?
     @State private var retainedDirectory: URL?
     @State private var exportError: String?
+    /// Set while the confirmation before handing over is open.
+    @State private var pendingExportIsPDF: Bool?
 
     private var catCareFields: [(String, String)] {
-        CatCareSummary.veterinaryFields(CatCareSummary.record(profileIdentifier: visit.catID.uuidString),
-                                        household: CatCareStore.shared.state?.household)
+        CatCareSummary.veterinaryFields(
+            CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
+            household: CatCareStore.shared.state?.household)
     }
 
     var body: some View {
@@ -587,7 +593,7 @@ private struct VeterinaryReadView: View {
                 }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier("vet-reading")
-            .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("病院で見せるメモ").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
             }
@@ -597,6 +603,17 @@ private struct VeterinaryReadView: View {
                     VStack(spacing: 8) { exportButtons }
                 }
                 .padding().background(.regularMaterial)
+            }
+            .confirmationDialog("病院に渡す控えを作ります", isPresented: Binding(
+                get: { pendingExportIsPDF != nil }, set: { if !$0 { pendingExportIsPDF = nil } }),
+                titleVisibility: .visible) {
+                Button(pendingExportIsPDF == true ? "PDFを作って渡す" : "画像を作って渡す") {
+                    let pdf = pendingExportIsPDF == true
+                    pendingExportIsPDF = nil
+                    Task { await makeExport(pdf: pdf) }
+                }
+            } message: {
+                Text("薬・アレルギー・体重など体の情報と、選んだ写真を含みます。渡す相手を確かめてください。渡した控えは、あとから編集しても更新されません。")
             }
             .alert("書き出せませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("閉じる", role: .cancel) {}
@@ -612,11 +629,11 @@ private struct VeterinaryReadView: View {
     }
 
     @ViewBuilder private var exportButtons: some View {
-        Button { Task { await makeExport(pdf: false) } } label: {
+        Button { pendingExportIsPDF = false } label: {
             Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-images")
-        Button { Task { await makeExport(pdf: true) } } label: {
+        Button { pendingExportIsPDF = true } label: {
             Label("PDFで渡す", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-pdf")
@@ -632,7 +649,9 @@ private struct VeterinaryReadView: View {
         for entry in visit.orderedEntries {
             var lines: [String] = []
             if !entry.text.isEmpty { lines.append(entry.text) }
-            if let weight = entry.weight { lines.append("体重 \(CatCareFormat.weight(weight.grams))") }
+            if let weight = entry.weight, !catCareFields.contains(where: { $0.1.contains(CatCareFormat.weight(weight.grams)) }) {
+                lines.append("体重 \(CatCareFormat.weight(weight.grams))")
+            }
             if let captured = entry.capturedAt { lines.append("撮影日 \(VeterinaryVisit.day(captured))") }
             if !lines.isEmpty { fields.append(("記録", lines.joined(separator: "\n"))) }
         }
@@ -644,7 +663,8 @@ private struct VeterinaryReadView: View {
         }
         let record = CareHandoffShareRecord(
             cats: [.init(name: displayName ?? visit.catName, photo: photo, fields: fields, updatedAt: Date())],
-            commonFields: [], includesHealth: true, includesContacts: false, createdAt: Date())
+            commonFields: [], includesHealth: true, includesContacts: false, createdAt: Date(),
+            heading: "病院で見せるメモ", isCareMemo: false)
         do {
             let made = try CareHandoffExporter.create(record, pdf: pdf)
             retainedDirectory = made.directory; export = made
