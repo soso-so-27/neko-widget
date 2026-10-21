@@ -411,6 +411,30 @@ final class AppStoreScreenshotUITests: XCTestCase {
             }
             app.terminate()
         }
+
+        if area == "tools" {
+            let profileID = "tool-profile-11111111-1111-4111-8111-111111111111"
+            app.launchArguments = fixture
+            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+            app.launch(); settle(2)
+            if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") {
+                settle(2); shot("re-30-tools")
+                if tapID("tools-cat-care", app) { settle(2); shot("re-31-cat-care"); back(app) }
+            }
+            app.terminate()
+            app.launchArguments = fixture + ["--showcase-gallery-ui-fixture"]
+            app.launch(); settle(2)
+            if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), tapID("tools-showcase-open", app) {
+                settle(3); shot("re-32-best-nine")
+            }
+            app.terminate()
+            app.launchArguments = fixture + ["--ux-large-text"]
+            app.launch(); settle(2)
+            if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") { settle(2); shot("re-33-tools-large") }
+            app.terminate()
+            app.launchEnvironment.removeValue(forKey: "NEKO_UX_RECOVERY_CASE")
+            _ = profileID
+        }
     }
 
     /// 10/21 review fixes: only the screens the fixes touch.
