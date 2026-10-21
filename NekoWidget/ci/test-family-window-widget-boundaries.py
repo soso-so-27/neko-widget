@@ -1258,10 +1258,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("return ordered", ordering)
         self.assertNotIn(".sorted", ordering)
 
-        self.assertIn('Label("ウィジェットを置く", systemImage: "rectangle.on.rectangle.angled")', home)
+        self.assertIn('Text("ホーム画面にまどを置く").font(.headline)', home)
         self.assertIn("showWidgetPlacementGuide", home)
-        self.assertIn("撮りためた猫写真が、", onboarding)
-        self.assertIn("自動アルバムとホーム画面へ。", onboarding)
+        self.assertIn("猫の写真を、まどに。", onboarding)
+        self.assertIn("ホーム画面に飾ります。", onboarding)
         self.assertIn("TodayPhotoSelectionPolicy.resolve(", model)
         self.assertIn("UIApplication.significantTimeChangeNotification", model)
 
@@ -2864,10 +2864,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             'Label("まど", systemImage: "window.vertical.closed")',
             main_tab,
         )
-        self.assertIn(
-            'Label("ウィジェットを置く", systemImage: "rectangle.on.rectangle.angled")',
-            home,
-        )
+        self.assertIn('Text("ホーム画面にまどを置く").font(.headline)', home)
         self.assertIn('Label("アルバム", systemImage: "photo.stack.fill")', main_tab)
         self.assertIn('.navigationTitle("写真")', home)
         self.assertIn('"window-settings-button"', home)
