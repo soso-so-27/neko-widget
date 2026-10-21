@@ -1520,21 +1520,20 @@ struct GroupWindowListSection: View {
         let cover = cached.flatMap(GroupWidgetCache.imageURL(for:)).flatMap { UIImage(contentsOfFile: $0.path) }
         let paused = GroupWindowPresentation.isPaused(window)
         return ZStack(alignment: .bottomLeading) {
-            Group {
-                if let cover {
-                    Image(uiImage: cover).resizable().scaledToFill()
-                } else {
-                    Color(uiColor: .secondarySystemGroupedBackground)
-                        .overlay {
-                            Image("ToolCat-snug").resizable().interpolation(.high).scaledToFit()
-                                .frame(width: 72, height: 72)
-                                .clipShape(RoundedRectangle(cornerRadius: 14))
-                                .opacity(0.9)
-                        }
+            // The card's height comes from the 16:10 box, never from the photo's pixels.
+            Color(uiColor: .secondarySystemGroupedBackground)
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    if let cover {
+                        Image(uiImage: cover).resizable().scaledToFill()
+                    } else {
+                        Image("ToolCat-snug").resizable().interpolation(.high).scaledToFit()
+                            .frame(width: 72, height: 72)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .opacity(0.9)
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(16 / 10, contentMode: .fill)
             .clipped()
             .overlay(alignment: .bottom) {
                 if cover != nil {
