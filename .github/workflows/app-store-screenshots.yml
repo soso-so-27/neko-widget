@@ -280,7 +280,7 @@ jobs:
     name: Capture changed screens
     if: inputs.review_test != ''
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 50
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       REVIEW_TEST: ${{ inputs.review_test }}
