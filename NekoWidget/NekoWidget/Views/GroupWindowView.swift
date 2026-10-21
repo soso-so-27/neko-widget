@@ -240,6 +240,47 @@ final class GroupWindowScreenModel: ObservableObject {
         _ = try? await notes.save(text: combined, for: identifier, expectedRevision: existing?.revision)
     }
 
+    /// Reads only the window (state, name, members), so a delivery from a
+    /// photo's detail can check it without downloading every photo.
+    func loadWindow() async {
+        do { window = try await client.window(id: windowID); message = nil }
+        catch { message = GroupWindowPresentation.message(for: error) }
+    }
+
+    /// The same checks as a picked photo, for a photo opened in the 写真 tab or an album.
+    func prepare(localIdentifier: String) async -> PreparedPhoto? {
+        guard canSend else { return nil }
+        isPreparing = true
+        sendCompleted = false
+        defer { isPreparing = false }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let jpeg: Data
+        do {
+            let exported = try await PhotoLibraryJPEGExporter().export(localIdentifier: localIdentifier)
+#if os(iOS)
+            try exported.jpeg.write(to: file, options: [.atomic, .completeFileProtection])
+#else
+            try exported.jpeg.write(to: file, options: .atomic)
+#endif
+            jpeg = try MomentShareIngressService().prepare(fromFileURL: file).canonicalJPEG
+        } catch {
+            message = "写真を読み込めませんでした。別の写真でお試しください。"
+            return nil
+        }
+        switch await GroupPhotoModeration.check(jpeg, with: moderation) {
+        case .safe: break
+        case .hidden:
+            message = "この写真は届けられません。iPhoneがセンシティブな内容と判断しました。"
+            return nil
+        case .retryLater:
+            message = "写真を確認できませんでした。iPhoneの設定で「センシティブな内容の警告」がオンか確かめてください。"
+            return nil
+        }
+        message = nil
+        return PreparedPhoto(jpeg: jpeg, photoIdentifier: localIdentifier)
+    }
+
     func toggleHeart(_ photoID: String) async {
         do {
             let updated = try await client.setHeart(
@@ -451,6 +492,146 @@ private extension GroupPhotoTile {
         if entry.isHidden { parts.append("表示していない写真") }
         if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
         return parts.joined(separator: "、")
+    }
+}
+
+// MARK: - Delivering from a photo's detail
+
+/// 「まどに届ける」 from the 写真 tab or an album: choose a group window (not
+/// asked when there is only one), then the same confirmation as in the window.
+struct GroupLibraryDeliverySheet: View {
+    let client: ProductionGroupWindowClient
+    let localIdentifier: String
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var list: GroupWindowListModel
+    @State private var screen: GroupWindowScreenModel?
+
+    init(client: ProductionGroupWindowClient, localIdentifier: String) {
+        self.client = client
+        self.localIdentifier = localIdentifier
+        _list = StateObject(wrappedValue: GroupWindowListModel(client: client))
+    }
+
+    private var openWindows: [GroupWindow] {
+        list.windows.filter { $0.state == .active && !GroupWindowPresentation.isPaused($0) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let screen {
+                    GroupLibraryDeliveryStep(model: screen, localIdentifier: localIdentifier) { dismiss() }
+                } else if !list.hasLoaded {
+                    ProgressView("まどを読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if openWindows.isEmpty {
+                    ContentUnavailableView("届け先のまどがありません", systemImage: "rectangle.split.2x2",
+                        description: Text("まどタブで、まどを作るか、届いた招待リンクから参加してください。"))
+                } else {
+                    List(openWindows) { window in
+                        Button { screen = GroupWindowScreenModel(client: client, windowID: window.id) } label: {
+                            LabeledContent(window.name, value: GroupWindowPresentation.memberCountText(window))
+                                .frame(minHeight: 44)
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                    .accessibilityIdentifier("group-library-delivery-windows")
+                }
+            }
+            .navigationTitle("まどに届ける")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if screen == nil {
+                    ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+                }
+            }
+        }
+        .task {
+            await list.load()
+            if openWindows.count == 1 {
+                screen = GroupWindowScreenModel(client: client, windowID: openWindows[0].id)
+            }
+        }
+        .announcesWhenShown(list.message)
+    }
+}
+
+/// The chosen window: checks the photo, then the same confirmation as in the window.
+private struct GroupLibraryDeliveryStep: View {
+    @ObservedObject var model: GroupWindowScreenModel
+    let localIdentifier: String
+    let close: () -> Void
+    @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
+    @State private var checked = false
+    @State private var memo = ""
+
+    var body: some View {
+        Group {
+            if model.sendCompleted {
+                ContentUnavailableView {
+                    Label("届けました", systemImage: "checkmark.circle.fill")
+                } description: {
+                    Text(model.window.map { "「\($0.name)」のメンバーに届きました。" } ?? "")
+                } actions: {
+                    Button("閉じる", action: close).buttonStyle(.borderedProminent)
+                }
+                .accessibilityIdentifier("group-library-delivery-done")
+            } else if let prepared {
+                Form {
+                    Section {
+                        if let image = UIImage(data: prepared.jpeg) {
+                            Image(uiImage: image).resizable().scaledToFit()
+                                .frame(maxWidth: .infinity, maxHeight: 300)
+                                .accessibilityLabel("届ける写真")
+                        }
+                    }
+                    Section {
+                        TextField("例：おなかを見せて寝ていた", text: $memo, axis: .vertical).lineLimit(2...5)
+                    } header: { Text("メモ（自分だけ）") }
+                      footer: { Text("メモはこのiPhoneにだけ残り、まどには届きません。") }
+                    if let message = model.message {
+                        Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                    }
+                }
+                .safeAreaInset(edge: .bottom) {
+                    Button {
+                        Task { await model.deliver(prepared, memo: String(memo.prefix(500))) }
+                    } label: {
+                        Group {
+                            if model.isSending {
+                                HStack(spacing: 8) { ProgressView(); Text("届けています…") }
+                            } else {
+                                Label("届ける", systemImage: "paperplane")
+                            }
+                        }
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isSending)
+                    .accessibilityIdentifier("group-library-delivery-send")
+                    .padding().background(.regularMaterial)
+                }
+            } else if checked, let message = model.message {
+                ContentUnavailableView {
+                    Label("届けられません", systemImage: "exclamationmark.triangle")
+                } description: { Text(message) } actions: {
+                    Button("閉じる", action: close)
+                }
+            } else {
+                ProgressView("写真を確かめています…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle(model.window.map { "「\($0.name)」に届ける" } ?? "まどに届ける")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(model.sendCompleted ? "閉じる" : "キャンセル", action: close)
+            }
+        }
+        .announcesWhenShown(model.message)
+        .task {
+            await model.loadWindow()
+            prepared = await model.prepare(localIdentifier: localIdentifier)
+            checked = true
+        }
     }
 }
 

@@ -5063,5 +5063,22 @@ class TwoPersonWindowHiddenTests(unittest.TestCase):
         self.assertNotIn("isFamilyWindowPresented", dismiss)
 
 
+class LibraryGroupDeliveryTests(unittest.TestCase):
+    def test_photo_detail_delivers_to_a_group_window_after_confirming(self) -> None:
+        browser = source("NekoWidget/Views/LikedPhotosView.swift")
+        self.assertIn('"photo-browser-deliver-group"', browser)
+        self.assertIn("GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)", browser)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        sheet = section(window, "struct GroupLibraryDeliverySheet: View {", "/// Shown after a photo is picked")
+        # One window: no choosing step. Sending only from the confirmation's button.
+        self.assertIn("if openWindows.count == 1 {", sheet)
+        self.assertEqual(sheet.count("model.deliver("), 1)
+        self.assertIn('"group-library-delivery-send"', sheet)
+        prepare = section(window, "func prepare(localIdentifier: String) async", "func toggleHeart(")
+        self.assertLess(prepare.index("GroupPhotoModeration.check(jpeg"), prepare.index("return PreparedPhoto("))
+        self.assertIn(".canonicalJPEG", prepare)
+        self.assertNotIn("client.sendPhoto(", prepare)
+
+
 if __name__ == "__main__":
     unittest.main()
