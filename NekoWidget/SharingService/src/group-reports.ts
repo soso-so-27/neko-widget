@@ -63,7 +63,7 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
   const size=integerField(body,'ciphertextSize',29,GROUP_REPORT_MAX_BYTES),hash=binaryField(body,'ciphertextSHA256',32);
   const consent=asObject(body.reporterConsent);exactKeys(consent,['version','acceptedAt']);
   if(integerField(consent,'version',1,Number.MAX_SAFE_INTEGER)!==1)fail('reporter_consent_required');
-  const consentAt=integerField(consent,'acceptedAt',actor.now-300,actor.now+300);
+  const consentAt=integerField(consent,'acceptedAt',0,Number.MAX_SAFE_INTEGER);
   const prior=await replay(env,actor,windowId,generation,operationId);if(prior)return prior;
   // Historical delivery, not current media access: blocking/leaving must not
   // disable reporting. Never download the group ciphertext or a group key.
@@ -84,6 +84,10 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
     await env.DB.batch([...checks(env,actor,windowId,generation),...nonce(env,actor),groupMutationStatement(env,actor,operationId,receipt)]);
     return jsonResponse(receipt);
   }
+  // The exact signed retry (or the same already-consented ciphertext) above
+  // creates no new evidence or deadline. Only a NEW reservation needs fresh
+  // consent; SQL independently enforces that same rule at insertion time.
+  if(Math.abs(consentAt-actor.now)>300)fail('reporter_consent_required');
   const id=randomBase64url(16),objectKey=`groups/reports/v3/${id}/${randomBase64url(24)}`;
   const row={id,space_id:windowId,moment_id:momentId,state:'reserved',moderation_key_id:key,ciphertext_size:size,ciphertext_sha256:hash,
     upload_expires_at:actor.now+GROUP_REPORT_UPLOAD_SECONDS,committed_at:null,content_expires_at:null} as Report;
