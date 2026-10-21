@@ -94,7 +94,7 @@ struct CatProfileDetailView: View {
                     .buttonStyle(.borderless)
                     .disabled(isSavingName)
                 } else {
-                    Button("名前を変更", systemImage: "pencil") {
+                    SettingsActionRow("名前を変更", systemImage: "pencil") {
                         draftName = profile.name ?? ""
                         nameSaveFailed = false
                         showsNameEditor = true
@@ -185,7 +185,11 @@ struct CatProfileDetailView: View {
                 Button {
                     showsLifeReferenceEditor = true
                 } label: {
-                    LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)
+                    HStack {
+                        LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
                 .foregroundStyle(.primary)
             } header: {

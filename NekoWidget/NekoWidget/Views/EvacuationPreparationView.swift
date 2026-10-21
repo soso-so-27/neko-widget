@@ -76,7 +76,7 @@ struct EvacuationPreparationView: View {
             CatCareStore.shared.importBirthdays(profiles)
         }
         .confirmationDialog("1冊のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
-            Button("PDFを作って保存・印刷") { makeBook() }
+            Button("PDFを作って渡す") { makeBook() }
         } message: {
             Text("病歴・薬、連絡先、ワクチン・マイクロチップを含みます。紙で持つための控えで、あとから編集しても更新されません。")
         }
@@ -678,7 +678,7 @@ private struct EvacuationDisplayView: View {
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
         .confirmationDialog("表示中の内容を控えにします", isPresented: $confirmShare, titleVisibility: .visible) {
-            Button(wantsPrint == true ? "PDFを作って保存・印刷" : "画像を作って渡す") { createExport() }
+            Button(wantsPrint == true ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
         } message: {
             Text((record.includesPrivateInformation ? "病歴・連絡先・飼い主の写真のうち、選択した内容を含みます。渡す相手を確認してください。\n" : "")
                  + "渡した控えは、あとから編集しても更新されません。長い内容は複数ページになります。")
@@ -750,7 +750,9 @@ private struct EvacuationDestinationsView: View {
             Section {
                 Text("猫と一緒に避難しても、同じ部屋で過ごせるとは限りません。")
                     .font(.subheadline).foregroundStyle(.secondary)
-                Link("環境省の公式案内（通信が必要）", destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/1_law/disaster.html")!)
+                Link(destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/1_law/disaster.html")!) {
+                    ExternalLinkRow("環境省の案内を見る", systemImage: "safari")
+                }
             }
         }.navigationTitle("行き先と連絡先").navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }

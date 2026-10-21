@@ -188,8 +188,14 @@ struct LostCatDraftView: View {
         Form {
             Section {
                 Button { showsGuide = true } label: {
-                    Label("まず探す・届け出る", systemImage: "info.circle")
+                    HStack {
+                        Label("まず探す・届け出る", systemImage: "info.circle")
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .foregroundStyle(.primary)
             }
             catSection.disabled(!loaded)
             incidentSection.disabled(!loaded)

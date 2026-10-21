@@ -333,8 +333,8 @@ private struct ResultBadge: View {
     let deferredAssets: Int
 
     private var label: String {
-        if !isFinal { return "速報" }
-        return deferredAssets > 0 ? "端末内確定" : "確定"
+        if !isFinal { return "探している途中" }
+        return deferredAssets > 0 ? "読めた分は済み" : "探し終えた"
     }
 
     var body: some View {
