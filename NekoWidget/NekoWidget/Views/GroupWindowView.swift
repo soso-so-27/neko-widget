@@ -774,10 +774,11 @@ private struct GroupPhotoTile: View {
                 let heartCount = model.hearts[entry.id]?.filter(\.active).count ?? 0
                 if heartCount > 0 {
                     Label(heartCount.formatted(), systemImage: "heart.fill")
-                        .font(.caption.weight(.semibold))
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.red)
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(.white.opacity(0.85), in: Circle())
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(.white.opacity(0.85), in: Capsule())
                         .padding(4)
                 }
             }
