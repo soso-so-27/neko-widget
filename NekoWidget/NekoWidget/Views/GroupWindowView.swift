@@ -525,6 +525,9 @@ private struct GroupPhotoDetail: View {
                 VStack(spacing: 6) {
                     Text(entry.isOwn ? "自分が届けた写真" : "\(entry.senderDisplayName)さんから")
                         .font(.subheadline.weight(.semibold))
+                    if entry.isOwn && reactors.isEmpty {
+                        Text("ハートはまだ届いていません").font(.footnote).foregroundStyle(.secondary)
+                    }
                     if !reactors.isEmpty {
                         Label(reactors.joined(separator: "・"), systemImage: "heart.fill")
                             .font(.footnote)
@@ -532,7 +535,7 @@ private struct GroupPhotoDetail: View {
                             .accessibilityLabel("ハートを送った人：\(reactors.joined(separator: "、"))")
                     }
                 }
-                if !entry.isHidden {
+                if !entry.isHidden && !entry.isOwn {
                     Button {
                         Task { await model.toggleHeart(entry.id) }
                     } label: {

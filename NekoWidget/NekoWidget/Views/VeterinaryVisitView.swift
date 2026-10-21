@@ -199,10 +199,13 @@ private struct VeterinaryConsultationView: View {
                 if let profile = profiles.first(where: { $0.identifier == visit.catID.uuidString }) {
                     ToolCatProfileInfo(profile: profile, profiles: profiles)
                 }
-                Section {
-                    Label(profiles.first(where: { $0.identifier == visit.catID.uuidString })?.displayName ?? visit.catName,
-                          systemImage: "cat").font(.headline)
-                    if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
+                // The name already shows above for a registered cat; say it here only otherwise.
+                let registered = profiles.contains { $0.identifier == visit.catID.uuidString }
+                if !registered || visit.completedAt != nil {
+                    Section {
+                        if !registered { Label(visit.catName, systemImage: "cat").font(.headline) }
+                        if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
+                    }
                 }
                 ToolCatCareSection(
                     title: "この子のこと（自動で載ります）",
@@ -287,6 +290,7 @@ private struct VeterinaryConsultationView: View {
         .interactiveDismissDisabled(changes || busy)
         .task {
             catCareStore.importFromTools()
+            catCareStore.importBirthdays(profiles)
             guard visit == nil else { return }
             visit = initialVisit; observations = initialVisit.observations; questions = initialVisit.questions
             hasStartedDay = initialVisit.startedOn != nil

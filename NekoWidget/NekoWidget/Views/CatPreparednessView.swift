@@ -287,6 +287,7 @@ struct LostCatDraftView: View {
         }
         .task {
             catCareStore.importFromTools()
+            catCareStore.importBirthdays(profiles)
             if !loaded { load(initialKey, name: initialName) }
         }
         .onChange(of: draft) { _, _ in
