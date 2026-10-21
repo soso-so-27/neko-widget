@@ -1775,27 +1775,55 @@ struct SavedMemoriesGalleryView: View {
         photos.filter { originFilter.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }
     }
 
+    private func originCount(_ origin: FavoritePhotoOrigin) -> Int {
+        photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }.count
+    }
+
+    /// Origins with something in them. More origins can come without the row growing.
+    private var offeredOrigins: [FavoritePhotoOrigin] {
+        FavoritePhotoOrigin.allCases.filter { $0 == .all || originCount($0) > 0 }
+    }
+
+    /// The heading row: what this is, how many, and (when there is a choice)
+    /// where the photos came from, as one menu at the right.
     private var originPicker: some View {
-        HStack(spacing: 8) {
-            ForEach(FavoritePhotoOrigin.allCases, id: \.rawValue) { origin in
-                let count = photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }.count
-                // A choice with nothing in it is not offered.
-                if count > 0 || origin == .all {
-                Button { originFilter = origin } label: {
-                    Text("\(origin.title) \(count)")
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 12).frame(minHeight: 44)
-                        .background(originFilter == origin ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: Capsule())
+        HStack(alignment: .center, spacing: 8) {
+            Text("お気に入り")
+                .font(.title3.bold())
+                .accessibilityAddTraits(.isHeader)
+            Text("\(visiblePhotos.count.formatted())枚")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if offeredOrigins.count > 1 {
+                Menu {
+                    ForEach(offeredOrigins, id: \.rawValue) { origin in
+                        Button {
+                            originFilter = origin
+                        } label: {
+                            if originFilter == origin {
+                                Label("\(origin.title)  \(originCount(origin))", systemImage: "checkmark")
+                            } else {
+                                Text("\(origin.title)  \(originCount(origin))")
+                            }
+                        }
+                        .accessibilityAddTraits(originFilter == origin ? .isSelected : [])
+                        .accessibilityIdentifier("favorites-origin-\(origin.rawValue)")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(originFilter.title)
+                        Image(systemName: "chevron.down").font(.caption.weight(.bold))
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .frame(minHeight: 44)
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(originFilter == origin ? .isSelected : [])
-                .accessibilityIdentifier("favorites-origin-\(origin.rawValue)")
                 .disabled(isExportingPhotoBook)
-                }
+                .accessibilityLabel("絞り込み、\(originFilter.title)")
+                .accessibilityIdentifier("favorites-origin-menu")
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.horizontal, 16).padding(.top, 6)
     }
     let isDedicatedPhotoBookFlow: Bool
     let isEmbedded: Bool
@@ -1883,7 +1911,7 @@ struct SavedMemoriesGalleryView: View {
         .toolbar {
             if hasPhotoAccess && !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isSelectingForExport ? "キャンセル" : "作成") {
+                    Button(isSelectingForExport ? "キャンセル" : "PDFを作る") {
                         toggleExportMode()
                     }
                     .disabled(isExportingPhotoBook)
@@ -2769,6 +2797,7 @@ struct PhotoBrowserView: View {
     private var browserFooter: some View {
         VStack(spacing: 8) {
             if let selectedPhoto {
+                quickActions(selectedPhoto)
                 if let note = personalNote.note(for: selectedPhoto.localIdentifier) {
                     Button {
                         personalNotePhoto = selectedPhoto
@@ -2832,6 +2861,76 @@ struct PhotoBrowserView: View {
         .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 8 : 16)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial)
+    }
+
+    /// The three things people do with a photo, as icons under it:
+    /// お気に入り, メモ, 共有. Everything rarer stays in 「…」.
+    private func quickActions(_ photo: PhotoPresentation) -> some View {
+        let saved = confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked
+        let noteState = personalNote.state(for: photo.localIdentifier)
+        return HStack(spacing: 0) {
+            quickAction(saved ? "bookmark.fill" : "bookmark", "お気に入り", tinted: saved,
+                        identifier: "photo-browser-bookmark") {
+                // The requested state, never a toggle of a stale display.
+                if !saved {
+                    setMemorySaved(photo.localIdentifier, true)
+                } else if receivedPhotoIdentifiers.contains(photo.localIdentifier) {
+                    pendingReceivedRemoval = photo.localIdentifier
+                } else {
+                    setMemorySaved(photo.localIdentifier, false)
+                }
+            }
+            .accessibilityLabel(saved ? "お気に入りから外す" : "お気に入りに追加")
+            .accessibilityHint("自分のお気に入りです。相手には共有されません")
+            .accessibilityIdentifier("photo-browser-memory-saved-state")
+            .disabled(isExportingMemoryPhoto)
+
+            quickAction("square.and.pencil", "メモ", tinted: personalNote.note(for: photo.localIdentifier) != nil,
+                        identifier: "photo-memory-note-open") {
+                personalNotePhoto = photo
+            }
+            .accessibilityLabel(noteState.actionTitle(hasNote: personalNote.note(for: photo.localIdentifier) != nil))
+            .accessibilityHint("自分だけのメモです。相手には送られません")
+            .disabled(isExportingMemoryPhoto || noteState.isLoading)
+
+            if exportMemoryPhoto != nil {
+                // The public page names this action 「写真を書き出す」; the caption is its short form.
+                Button {
+                    beginMemoryPhotoExport(photo.localIdentifier)
+                } label: {
+                    VStack(spacing: 3) {
+                        Label("写真を書き出す", systemImage: "square.and.arrow.up")
+                            .labelStyle(.iconOnly)
+                            .font(.title3)
+                        Text("書き出す").font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .foregroundStyle(Color.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("写真を書き出す")
+                .accessibilityHint("位置情報などを除いた画像を共有します")
+                .accessibilityIdentifier("photo-browser-export")
+                .disabled(isExportingMemoryPhoto)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func quickAction(_ systemImage: String, _ title: String, tinted: Bool,
+                             identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: systemImage).font(.title3)
+                Text(title).font(.caption2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .foregroundStyle(tinted ? Color.accentColor : Color.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
     }
 
     @ViewBuilder
@@ -2900,39 +2999,6 @@ struct PhotoBrowserView: View {
         }
     }
 
-    @ViewBuilder
-    private func photoActions(_ photo: PhotoPresentation) -> some View {
-        if confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked {
-            Button("お気に入りから外す", systemImage: "bookmark.slash", role: .destructive) {
-                if receivedPhotoIdentifiers.contains(photo.localIdentifier) {
-                    pendingReceivedRemoval = photo.localIdentifier
-                } else {
-                    setMemorySaved(photo.localIdentifier, false)
-                }
-            }
-            .accessibilityIdentifier("photo-browser-memory-saved-state")
-            .disabled(isExportingMemoryPhoto)
-        } else {
-            Button("お気に入りに追加", systemImage: "bookmark") {
-                setMemorySaved(photo.localIdentifier, true)
-            }
-            .accessibilityHint("自分のお気に入りに追加します。相手には共有されません")
-            .disabled(isExportingMemoryPhoto)
-        }
-        Button {
-            personalNotePhoto = photo
-        } label: {
-            Label(personalNote.state(for: photo.localIdentifier).actionTitle(
-                hasNote: personalNote.note(for: photo.localIdentifier) != nil), systemImage: "square.and.pencil")
-        }
-        .accessibilityHint("自分だけのメモです。相手には送られません")
-        .accessibilityIdentifier("photo-memory-note-open")
-        .disabled(isExportingMemoryPhoto || personalNote.state(for: photo.localIdentifier).isLoading)
-        Button("見せる", systemImage: "eye") { showcaseOpenOne?(photo.localIdentifier) }
-            .disabled(showcaseOpenOne == nil)
-            .accessibilityIdentifier("photo-browser-showcase")
-    }
-
     private var browserNavigation: some View {
         browserContent
         .background(Color.black)
@@ -2943,27 +3009,8 @@ struct PhotoBrowserView: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if let photo = selectedPhoto {
-                    // The bookmark sits where the Widget and the まど put it: always in view.
-                    let saved = confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked
-                    Button {
-                        if saved, receivedPhotoIdentifiers.contains(photo.localIdentifier) {
-                            pendingReceivedRemoval = photo.localIdentifier
-                        } else {
-                            setMemorySaved(photo.localIdentifier, !saved)
-                        }
-                    } label: {
-                        Image(systemName: saved ? "bookmark.fill" : "bookmark")
-                    }
-                    .disabled(isExportingMemoryPhoto)
-                    .accessibilityLabel(saved ? "お気に入りから外す" : "お気に入りに追加")
-                    .accessibilityIdentifier("photo-browser-bookmark")
-                }
+                // お気に入り・メモ・共有 are under the photo. 「…」 holds the rest.
                 Menu {
-                    if let photo = selectedPhoto {
-                        photoActions(photo)
-                        Divider()
-                    }
                     if rediscoveryEnabled, let photo = selectedPhoto, let date = photo.creationDate,
                        dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
@@ -3003,24 +3050,6 @@ struct PhotoBrowserView: View {
                         }
                         Divider()
                     }
-                    if exportMemoryPhoto != nil {
-                        if isExportingMemoryPhoto {
-                            Button(role: .cancel) {
-                                cancelMemoryPhotoExport()
-                            } label: {
-                                Label("書き出しをキャンセル", systemImage: "xmark.circle")
-                            }
-                        } else {
-                            Button {
-                                beginMemoryPhotoExport(selectedPhotoIdentifier)
-                            } label: {
-                                Label("写真を書き出す", systemImage: "square.and.arrow.up")
-                            }
-                            .accessibilityHint("位置情報などを除いた画像を共有します")
-                        }
-                        Divider()
-                    }
-
                     if !profiles.isEmpty,
                        !excludedCatCandidateIdentifiers.contains(selectedPhotoIdentifier) {
                         Button {

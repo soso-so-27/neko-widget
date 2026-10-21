@@ -39,6 +39,8 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 }
 
+/// Thin underline tabs under the title, the way Photos lists its albums:
+/// no box, no fill, the chosen one underlined.
 struct PhotoLibrarySectionPicker: View {
     @Binding var selection: PhotoLibrarySection
     var isCompact = false
@@ -46,25 +48,31 @@ struct PhotoLibrarySectionPicker: View {
 
     var body: some View {
         let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
-        layout {
-            ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
-                Button { selection = section } label: {
-                    Text(section.title)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(selection == section ? Color.accentColor : .clear,
-                                    in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(selection == section ? .white : .primary)
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(spacing: 20))
+        VStack(spacing: 0) {
+            layout {
+                ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
+                    Button { selection = section } label: {
+                        Text(section.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(selection == section ? .primary : .secondary)
+                            .frame(minHeight: 44)
+                            .overlay(alignment: .bottom) {
+                                Rectangle()
+                                    .fill(selection == section ? Color.primary : .clear)
+                                    .frame(height: 2)
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("photos-section-\(section.rawValue)")
+                    .accessibilityAddTraits(selection == section ? .isSelected : [])
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("photos-section-\(section.rawValue)")
-                .accessibilityAddTraits(selection == section ? .isSelected : [])
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
             }
+            Divider()
         }
-        .padding(4)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, isCompact ? 0 : 16).padding(.vertical, 8)
+        .padding(.horizontal, isCompact ? 0 : 16)
     }
 }
 
