@@ -310,12 +310,13 @@ struct MainTabView: View {
         guard showsMadoTab else { return }
         arrivalRefreshSequence &+= 1
         let sequence = arrivalRefreshSequence
+        let countsPrivateWindows = GroupWindowClientProvider.production == nil
         let result = await Task.detached(priority: .utility) { () -> [String: [Date]]? in
             try? SharingLifecycleGate.withExclusive {
                 let catalog = try PrivateWindowCatalogStore.load()
                 var dates: [String: [Date]] = [:]
                 let now = Date()
-                for window in catalog?.windows ?? [] where window.spaceID != nil {
+                for window in (countsPrivateWindows ? catalog?.windows ?? [] : []) where window.spaceID != nil {
                     let state = try MomentSharingStateStore.loadWhileLifecycleLocked(localWindowID: window.localWindowID)
                     guard state.reportOnlyUntil == nil else { continue }
                     dates[window.localWindowID] = state.inbox.compactMap { item in
@@ -580,7 +581,7 @@ struct MainTabView: View {
             showsSettings = false
             selectedTab = .windows
         }
-        .onChange(of: groupWindowOpenInbox.pendingWindowID) { _, windowID in
+        .onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true) { _, windowID in
             // A group window's home-screen photo: show the まど tab, where
             // the group list opens that window.
             guard windowID != nil else { return }
@@ -2688,6 +2689,7 @@ private struct WindowListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = PairingViewModel()
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
 
     @Binding var opensActiveWindow: Bool
     @Binding var pendingFamilyMomentSourceDigest: String?
@@ -2715,7 +2717,9 @@ private struct WindowListView: View {
     init(opensActiveWindow: Binding<Bool>,
          pendingFamilyMomentSourceDigest: Binding<String?>,
          pendingFamilyNotificationRoute: Binding<MomentNotificationRoute?>,
-         supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible,
+         // With group windows on, the two-person window is not shown anywhere (10/21).
+         supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible
+             && GroupWindowClientProvider.production == nil,
          officialStore: OfficialWindowStore = .shared,
          refreshOfficialFeed: (() async throws -> Void)? = nil,
          previewOfficialFeed: (() async throws -> OfficialWindowPreview)? = nil,
@@ -2849,9 +2853,23 @@ private struct WindowListView: View {
         .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
             reloadPublicStates()
         }
-        .navigationDestination(isPresented: $opensActiveWindow) {
+        .navigationDestination(isPresented: Binding(
+            get: { supportsPrivateWindows && opensActiveWindow },
+            set: { opensActiveWindow = $0 }
+        )) {
             activeWindowDestination
                 .id(activeWindowID ?? "no-active-window")
+        }
+        .onChange(of: opensActiveWindow, initial: true) { _, opens in
+            // Links that used to open the two-person window only show this tab.
+            if opens && !supportsPrivateWindows { opensActiveWindow = false }
+        }
+        // A group invitation link joins here, in the まど tab itself.
+        .sheet(item: Binding(
+            get: { GroupWindowClientProvider.production != nil ? invitationInbox.pending : nil },
+            set: { if $0 == nil { invitationInbox.discard() } }
+        )) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }

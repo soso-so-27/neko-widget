@@ -3198,8 +3198,10 @@ struct PhotoBrowserView: View {
 #if DEBUG
         if deliveryActions != nil { return true }
 #endif
+        // This delivers to two-person windows, which are hidden with group windows on.
         return SharingAPIConfiguration.current.isMediaAvailable
             && SharingAPIConfiguration.current.isShareExtensionHandoffAvailable
+            && GroupWindowClientProvider.production == nil
     }
 
     private func addToShowcase(_ identifier: String, scopeID: String) {

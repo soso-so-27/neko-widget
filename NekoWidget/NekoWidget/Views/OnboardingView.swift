@@ -478,7 +478,7 @@ private struct OnboardingPlusOfferPage: View {
 }
 
 /// 「招待を受け取った」 on the first screen. Group invitations arrive as a link,
-/// so the help says to open it; an older two-person code can still be used.
+/// so the help says to open it. (Two-person codes are not offered with group windows on.)
 struct OnboardingInvitationHelpView: View {
     var body: some View {
         List {
@@ -491,16 +491,6 @@ struct OnboardingInvitationHelpView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 6)
-            }
-            Section {
-                NavigationLink {
-                    PairingView(initialSetupPath: .join)
-                } label: {
-                    Label("招待コードで参加する（前からのまど）", systemImage: "number")
-                }
-                .accessibilityIdentifier("onboarding-invitation-code")
-            } footer: {
-                Text("「NW1.」から始まるコードが届いたときだけ使います。")
             }
         }
         .navigationTitle("招待を受け取った")
