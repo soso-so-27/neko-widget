@@ -322,6 +322,8 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ui-review-screenshots
-          path: ${{ runner.temp }}/ui-review-screenshots/**/*.png
+          path: |
+            ${{ runner.temp }}/ui-review-screenshots/**/*.png
+            ${{ runner.temp }}/ui-review-screenshots/**/*.json
           if-no-files-found: warn
           retention-days: 14

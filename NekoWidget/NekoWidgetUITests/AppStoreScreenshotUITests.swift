@@ -183,6 +183,167 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// Design review (10/21): every main screen, for looking at colour,
+    /// wording, spacing and type. Nothing asserts; a missing step attaches
+    /// the hierarchy and goes on.
+    @MainActor
+    func testReviewDesignScreens() {
+        executionTimeAllowance = 1200
+        continueAfterFailure = true
+        let app = XCUIApplication()
+        let fixture = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        let group = fixture + ["--group-window-screens-fixture"]
+        let profileID = "tool-profile-11111111-1111-4111-8111-111111111111"
+
+        // 初回起動
+        app.launchArguments = fixture
+        app.launchEnvironment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] = "1"
+        app.launch(); settle(2)
+        shot("design-01-onboarding-purpose")
+        if tapID("onboarding-purpose-start", app) { settle(2); shot("design-02-onboarding-photos") }
+        if tapID("onboarding-photo-permission-skip", app) { settle(2); shot("design-03-onboarding-after-photos") }
+        if tapID("onboarding-scan-skip", app) || tapID("onboarding-scan-continue", app) { settle(2); shot("design-04-onboarding-after-scan") }
+        if app.buttons["onboarding-plus-offer-skip"].exists { shot("design-05-onboarding-plus"); tapID("onboarding-plus-offer-skip", app); settle(2) }
+        shot("design-06-after-onboarding")
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "NEKO_RESET_ONBOARDING_FOR_UI_TESTS")
+
+        // アルバムと写真
+        app.launchArguments = fixture
+        app.launch(); settle(2)
+        shot("design-07-albums-top")
+        app.swipeUp(); settle(1); shot("design-08-albums-lower")
+        app.swipeUp(); settle(1); shot("design-09-albums-bottom")
+        if tapID("album-card-household_growth", app) { settle(2); shot("design-10-growth-album"); app.swipeUp(); settle(1); shot("design-11-growth-album-lower"); back(app) }
+        _ = tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム")
+        if tapLabel("日付から探す", app) { settle(2); shot("design-12-by-date"); back(app) }
+        if tapID("albums-other-themes", app) { settle(2); shot("design-13-other-themes"); back(app) }
+        if tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真") {
+            settle(2); shot("design-14-photos-all")
+            if tapID("photos-section-favorites", app) { settle(2); shot("design-15-photos-favorites") }
+            tapID("photos-section-all", app); settle(1)
+            if tapID("photo-hub-photo-app-store-screenshot-fixture-1", app) {
+                settle(2); shot("design-16-photo-detail")
+                app.swipeUp(); settle(1); shot("design-17-photo-detail-actions")
+                if tapID("photo-browser-related", app) { settle(1); shot("design-18-photo-more-menu"); app.swipeDown(); settle(1) }
+                back(app)
+            }
+            if tapID("photo-hub-cat-profiles", app) { settle(2); shot("design-19-photos-cat-picker"); app.swipeDown(); settle(1) }
+        }
+        app.terminate()
+
+        // まど
+        app.launchArguments = group
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
+            settle(2)
+            if tapID("window-list-start", app) { settle(2); shot("design-20-official-windows"); back(app) }
+            if tapID("group-window-create", app) { settle(2); shot("design-21-create-window"); back(app) }
+            if tapID("window-list-discover", app) { settle(2); shot("design-22-discover"); back(app) }
+        }
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), tapID("tools-settings-button", app) {
+            settle(2)
+            if tapID("settings-group-hidden-members", app) { settle(2); shot("design-23-hidden-members"); back(app) }
+            if tapID("settings-membership-preview", app) { settle(3); shot("design-24-plus-offer"); app.swipeUp(); settle(1); shot("design-25-plus-offer-lower") }
+        }
+        app.terminate()
+
+        // ツール
+        app.launchArguments = fixture
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") {
+            shot("design-26-tools")
+            app.swipeUp(); settle(1); shot("design-27-tools-lower")
+            if tapID("tools-cat-profiles", app) {
+                settle(2); shot("design-28-cat-profiles")
+                if tapID(profileID, app) || tapID("cat-profile-open", app) { settle(2); shot("design-29-cat-profile"); app.swipeUp(); settle(1); shot("design-30-cat-profile-lower"); back(app) }
+                back(app)
+            }
+            if tapID("tools-showcase-open", app) { settle(2); shot("design-31-showcase"); if tapID(profileID, app) { settle(2); shot("design-32-showcase-cat") }; back(app); back(app) }
+            if tapID("tools-lost-cat-open", app) { settle(2); shot("design-33-lost-cat-list"); if tapID(profileID, app) { settle(2); shot("design-34-lost-cat"); app.swipeUp(); settle(1); shot("design-35-lost-cat-lower"); app.swipeUp(); settle(1); shot("design-36-lost-cat-bottom"); back(app) }; back(app) }
+            if tapID("tools-care-open", app) {
+                settle(2); shot("design-37-care-list")
+                if tapID(profileID, app) {
+                    settle(2)
+                    if tapLabel("渡す内容を選ぶ", app) { settle(2); shot("design-38-care-disclosure"); back(app) }
+                    back(app)
+                }
+                if tapID("care-disclosure-open", app) { settle(2); shot("design-39-care-disclosure-from-list"); back(app) }
+                back(app)
+            }
+            if tapID("tools-vet-open", app) { settle(2); shot("design-40-vet-list"); back(app) }
+            if tapID("tools-evacuation-open", app) {
+                settle(2)
+                if tapID("evacuation-packing-open", app) { settle(2); shot("design-41-evacuation-packing"); app.swipeUp(); settle(1); shot("design-42-evacuation-packing-lower"); back(app) }
+                if tapID("evacuation-destinations-open", app) { settle(2); shot("design-43-evacuation-destinations"); back(app) }
+                back(app)
+            }
+        }
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "NEKO_UX_RECOVERY_CASE")
+
+        // 設定の中
+        app.launchArguments = fixture
+        app.launch(); settle(2)
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), tapID("tools-settings-button", app) {
+            settle(2)
+            if tapLabel("写真の表示と整理", app) { settle(2); shot("design-44-settings-photos"); app.swipeUp(); settle(1); shot("design-45-settings-photos-lower"); back(app) }
+            if tapID("settings-widget-placement-guide", app) { settle(2); shot("design-46-widget-guide"); app.swipeUp(); settle(1); shot("design-47-widget-guide-lower"); closeSheet(app) }
+            if tapID("settings-personal-rediscovery", app) { settle(2); shot("design-48-rediscovery"); back(app) }
+            if tapID("settings-cat-profile-transfer", app) { settle(2); shot("design-49-transfer"); back(app) }
+            if tapID("settings-memory-note-export", app) { settle(2); shot("design-50-memo-export"); back(app) }
+            if tapID("settings-personal-archive", app) { settle(2); shot("design-51-icloud"); back(app) }
+            if tapID("settings-support-page", app) == false, tapID("settings-internal-diagnostics", app) { settle(2); shot("design-52-diagnostics"); back(app) }
+        }
+        app.terminate()
+
+        // 大きな文字
+        app.launchArguments = fixture + ["--ux-large-text"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch(); settle(2)
+        shot("design-53-large-albums")
+        if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") {
+            settle(1); shot("design-54-large-tools")
+            if tapID("tools-care-open", app), tapID(profileID, app) { settle(2); shot("design-55-large-care"); back(app); back(app) }
+            if tapID("tools-settings-button", app) { settle(2); shot("design-56-large-settings") }
+        }
+        app.terminate()
+    }
+
+    @MainActor @discardableResult
+    private func tapID(_ identifier: String, _ app: XCUIApplication) -> Bool {
+        let element = app.buttons[identifier].exists ? app.buttons[identifier]
+            : app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        guard element.waitForExistence(timeout: 4) else { auditMissing(identifier, app: app); return false }
+        guard scrollUpUntilHittable(element, application: app) else { auditMissing(identifier + "-hittable", app: app); return false }
+        element.tap()
+        return true
+    }
+
+    @MainActor @discardableResult
+    private func tapLabel(_ label: String, _ app: XCUIApplication) -> Bool {
+        let element = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
+        guard element.waitForExistence(timeout: 4) else { auditMissing("label-" + label, app: app); return false }
+        guard scrollUpUntilHittable(element, application: app) else { auditMissing("label-" + label + "-hittable", app: app); return false }
+        element.tap()
+        return true
+    }
+
+    @MainActor
+    private func back(_ app: XCUIApplication) {
+        let button = app.navigationBars.buttons.element(boundBy: 0)
+        if button.exists, button.isHittable { button.tap(); settle(1) }
+    }
+
+    @MainActor
+    private func closeSheet(_ app: XCUIApplication) {
+        let close = app.buttons["閉じる"].firstMatch
+        if close.exists, close.isHittable { close.tap(); settle(1) } else { app.swipeDown(); settle(1) }
+    }
+
+    private func shot(_ name: String) { captureScreenshot(named: name) }
+
     @MainActor
     private func openGroupWindow(_ app: XCUIApplication) {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
