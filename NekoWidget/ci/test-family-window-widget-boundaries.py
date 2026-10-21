@@ -5080,5 +5080,15 @@ class LibraryGroupDeliveryTests(unittest.TestCase):
         self.assertNotIn("client.sendPhoto(", prepare)
 
 
+class WindowListOrderTests(unittest.TestCase):
+    def test_shared_windows_first_and_public_windows_named(self) -> None:
+        tab = source("NekoWidget/Views/MainTabView.swift")
+        self.assertLess(tab.index("GroupWindowListSection(client: groupClient)"), tab.index('.accessibilityIdentifier("window-list-receiving")'))
+        self.assertIn("if receivingPublicWindows.isEmpty { publicWindowEntry }", tab)
+        self.assertIn('Label("公式のまど", systemImage: "safari")', tab)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertNotIn("退出", setup)
+
+
 if __name__ == "__main__":
     unittest.main()
