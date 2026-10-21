@@ -56,6 +56,27 @@ Phase 1は写真、render plan、reactionを一切受け取りません。
 
 ## API contract
 
+### 作成者によるまど名の変更・閉鎖（ドラフト・未稼働）
+
+`GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED` は既定OFFです。追加schema0047と稼働反映は所有者確認後。
+クライアント接続は#465後に行います。作成者Plusが停止中でも、現在の作成者は管理できます。
+
+- `POST /v3/group-windows/{windowId}/name`:
+  `{operationId, expectedRevision, keyEpoch, expectedNameRevision, encryptedName, ownerSignature}`。
+  名前は既存の `GroupNameCrypto` による作成者署名付き暗号文だけを送ります。
+  外側の署名は `groupRenameTranscript`（window、名簿のrevision/epoch/hash、次のnameRevision、operation、暗号文SHA-256）です。
+  現在のGETには `nameRevision` と検証用 `nameProof` を追加し、同時変更はCASで拒否します。
+  名簿の世代が変わると名前のcounterは0から始まります。名前変更だけで鍵や名簿を回しません。
+- `POST /v3/group-windows/{windowId}/close`:
+  `{operationId, expectedRevision, keyEpoch, ownerSignature}`。
+  署名は `groupCloseTranscript` により現在のwindow、名簿のrevision/epoch/hash、operationへ固定します。
+  まどの状態をclosedにし、全メンバーのこのまどへの資格と招待・参加申請・通知登録を同じtransactionで失効します。
+  同じoperationの再送は閉鎖後も同じ結果を返します。別のまど、課金、本人のglobal鍵は変えません。
+
+閉鎖で端末内の写真を消したり、サーバーの既存写真・保持期限を変更したりしません。
+新しい送受信・取得は止まり、0045の通報専用資格は元の端末に24時間だけ残ります。
+アプリでの説明・表示や暗号化名の作成・検証は未接続で、実機での閉鎖操作は未確認です。
+
 ### グループ写真の暗号化通報（受付のドラフト・未稼働）
 
 `0045_group_encrypted_reports.sql` は追加schemaだけです。稼働中のD1への適用、
