@@ -363,6 +363,35 @@ final class AppStoreScreenshotUITests: XCTestCase {
             app.terminate()
             app.launchEnvironment.removeValue(forKey: "NEKO_MAINLINE_ACCEPTANCE_CASE")
         }
+
+        if area == "photos" {
+            app.launchArguments = fixture + ["--group-window-screens-fixture"]
+            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+            app.launch(); settle(2)
+            if tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真") {
+                settle(3); shot("re-10-photos-all")
+                if tapID("photos-section-favorites", app) {
+                    settle(2); shot("re-11-favorites")
+                    if tapID("favorites-origin-menu", app) { settle(1); shot("re-12-favorites-menu"); app.swipeDown(); settle(1) }
+                }
+                if tapID("photos-section-notes", app) { settle(2); shot("re-13-notes") }
+                tapID("photos-section-all", app); settle(2)
+                if tapID("photo-hub-photo-app-store-screenshot-fixture-1", app) {
+                    settle(2); shot("re-14-photo-detail")
+                    if tapID("photo-browser-related", app) { settle(1); shot("re-15-photo-menu"); app.swipeDown(); settle(1) }
+                }
+            }
+            app.terminate()
+            app.launchEnvironment.removeValue(forKey: "NEKO_UX_RECOVERY_CASE")
+
+            app.launchArguments = fixture
+            app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "received-favorites"
+            app.launch(); settle(3)
+            shot("re-16-received-favorites")
+            if tapID("favorites-origin-menu", app) { settle(1); shot("re-17-received-menu") }
+            app.terminate()
+            app.launchEnvironment.removeValue(forKey: "NEKO_MAINLINE_ACCEPTANCE_CASE")
+        }
     }
 
     /// 10/21 review fixes: only the screens the fixes touch.
