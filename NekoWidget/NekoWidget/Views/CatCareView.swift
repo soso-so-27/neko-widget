@@ -150,6 +150,7 @@ struct CatCareDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
+            progressSection
             basicsSection
             healthSection
             livingSection
@@ -196,6 +197,61 @@ struct CatCareDetailView: View {
     }
 
     // MARK: Sections
+
+    /// The top of the page: how far this cat's page is, and what each entry
+    /// makes possible (the lost-cat picture, the care sheet, the vet sheet).
+    private var progressSection: some View {
+        let progress = CatCareProgress(draft: draft, record: currentRecord)
+        return Section {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle().stroke(Color(.tertiarySystemFill), lineWidth: 7)
+                        Circle()
+                            .trim(from: 0, to: progress.total == 0 ? 0 : CGFloat(progress.filled) / CGFloat(progress.total))
+                            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(.easeOut(duration: 0.4), value: progress.filled)
+                        Text("\(progress.filled)")
+                            .font(.title3.bold().monospacedDigit())
+                    }
+                    .frame(width: 58, height: 58)
+                    .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(progress.filled >= progress.total ? "すべて入っています"
+                             : "\(progress.filled) / \(progress.total) 入っています")
+                            .font(.headline)
+                        if let hint = progress.nextHint {
+                            Text(hint).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                HStack(spacing: 10) {
+                    ForEach(progress.sheets, id: \.title) { sheet in
+                        VStack(spacing: 5) {
+                            VStack(spacing: 4) {
+                                Image(systemName: sheet.isComplete ? "checkmark.circle.fill" : "doc.text")
+                                    .font(.title3)
+                                    .foregroundStyle(sheet.isComplete ? Color.green : Color.secondary)
+                                Text(sheet.title).font(.caption.weight(.semibold))
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 64)
+                            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            Text(sheet.isComplete ? "できた" : "\(sheet.done) / \(sheet.total)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(sheet.isComplete ? Color.green : Color.secondary)
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(sheet.title)、\(sheet.isComplete ? "できています" : "\(sheet.done)／\(sheet.total)")")
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .accessibilityIdentifier("cat-care-progress")
+        } footer: {
+            Text("入れるほど、迷子の画像・預けるメモ・病院の控えが埋まります。")
+        }
+    }
 
     /// 「ミケ・2020/1/1（4歳）」: read-only facts go in the footer, not in rows.
     private var basicsFooter: String {
@@ -375,6 +431,59 @@ struct CatCareDetailView: View {
             result.apply(to: &state.cats[index], by: state.deviceID, now: Date())
         }
         if !saved { saveFailed = true }
+    }
+}
+
+// MARK: - Progress (what is filled, and what that makes)
+
+/// Which entries are in, and how close each tool's sheet is. The fields are
+/// the ones the sheets print; nothing is counted twice.
+struct CatCareProgress {
+    struct Sheet: Equatable {
+        let title: String
+        let done: Int
+        let total: Int
+        var isComplete: Bool { done >= total }
+    }
+
+    let filled: Int
+    let total: Int
+    let sheets: [Sheet]
+
+    init(draft: CatCareDraft, record: CatCareRecord?) {
+        func has(_ value: String) -> Bool { !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let items: [(String, Bool)] = [
+            ("毛色", has(draft.coat)),
+            ("特徴", has(draft.marks)),
+            ("連絡先", has(draft.ownerContact)),
+            ("ごはん", (record?.activeMeals.count ?? 0) > 0),
+            ("水", has(draft.water)),
+            ("トイレ", has(draft.litter)),
+            ("接し方", has(draft.temperament)),
+            ("かかりつけ", has(draft.vetName)),
+            ("体重", (record?.activeWeights.count ?? 0) > 0),
+            ("ワクチン", (record?.activeVaccinations.count ?? 0) > 0),
+            ("持病", has(draft.conditions)),
+            ("アレルギー", draft.allergyStatus != .unknown)
+        ]
+        filled = items.filter(\.1).count
+        total = items.count
+        func sheet(_ title: String, _ names: [String]) -> Sheet {
+            let picked = items.filter { names.contains($0.0) }
+            return Sheet(title: title, done: picked.filter(\.1).count, total: picked.count)
+        }
+        sheets = [
+            sheet("迷子", ["毛色", "特徴", "連絡先"]),
+            sheet("預ける", ["ごはん", "水", "トイレ", "接し方", "かかりつけ"]),
+            sheet("病院", ["体重", "ワクチン", "持病", "アレルギー", "かかりつけ"])
+        ]
+    }
+
+    /// The sheet closest to done: 「あと2つで「預ける」の控えが完成」.
+    var nextHint: String? {
+        sheets.filter { !$0.isComplete }
+            .min { ($0.total - $0.done, $0.title) < ($1.total - $1.done, $1.title) }
+            .map { "あと\($0.total - $0.done)つで「\($0.title)」の控えが完成" }
     }
 }
 
