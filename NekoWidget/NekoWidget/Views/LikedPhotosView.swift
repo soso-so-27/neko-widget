@@ -280,9 +280,9 @@ struct AlbumView: View {
                     ContentUnavailableView("この範囲の写真はありません", systemImage: "calendar")
                         .accessibilityIdentifier("album-scope-empty")
                 }
-                if !dates.isEmpty { periodShelf(dates, title: "日付から探す") }
                 if !lifePeriods.isEmpty { periodShelf(lifePeriods, title: "時期ごと") }
                 ForEach(years) { album in albumLink(album, isPrimary: false) }
+                if !dates.isEmpty { periodShelf(dates, title: "日付", compact: true) }
             }.padding(16)
         }
         .navigationTitle("日付から探す")
@@ -1779,6 +1779,8 @@ struct SavedMemoriesGalleryView: View {
         HStack(spacing: 8) {
             ForEach(FavoritePhotoOrigin.allCases, id: \.rawValue) { origin in
                 let count = photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }.count
+                // A choice with nothing in it is not offered.
+                if count > 0 || origin == .all {
                 Button { originFilter = origin } label: {
                     Text("\(origin.title) \(count)")
                         .font(.subheadline.weight(.medium))
@@ -1789,6 +1791,7 @@ struct SavedMemoriesGalleryView: View {
                 .accessibilityAddTraits(originFilter == origin ? .isSelected : [])
                 .accessibilityIdentifier("favorites-origin-\(origin.rawValue)")
                 .disabled(isExportingPhotoBook)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -2724,7 +2727,7 @@ struct PhotoBrowserView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topTrailing) {
-                if browserPhotos.count > 1 {
+                if false {
                     Text(pagePositionText)
                         .font(.caption2.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.white)
@@ -2743,6 +2746,24 @@ struct PhotoBrowserView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom) {
+            // The one main action, always in view (not below the fold).
+            if let selectedPhoto, GroupWindowClientProvider.ui != nil {
+                Button {
+                    groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)
+                } label: {
+                    Label("まどに届ける", systemImage: "paperplane.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isExportingMemoryPhoto)
+                .accessibilityHint("届け先のまどを選んでから、写真とメモを確認します")
+                .accessibilityIdentifier("photo-browser-deliver-group")
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(.bar)
+            }
+        }
     }
 
     private var browserFooter: some View {
@@ -2777,20 +2798,6 @@ struct PhotoBrowserView: View {
                         .accessibilityIdentifier("photo-memory-note-read-retry")
                     }
                     .accessibilityIdentifier("photo-memory-note-read-error")
-                }
-                if GroupWindowClientProvider.ui != nil {
-                    Button {
-                        // Choosing the window and confirming come first; nothing is sent here.
-                        groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)
-                    } label: {
-                        Label("まどに届ける", systemImage: "paperplane.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 48)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityHint("届け先のまどを選んでから、写真とメモを確認します")
-                    .accessibilityIdentifier("photo-browser-deliver-group")
-                    .disabled(isExportingMemoryPhoto)
                 }
                 if canDeliverToWindow {
                     Button {
@@ -2833,7 +2840,14 @@ struct PhotoBrowserView: View {
             let spokenDate = creationDate.formatted(.dateTime.year().month().day())
             let dateText = dynamicTypeSize.isAccessibilitySize
                 ? creationDate.formatted(date: .numeric, time: .omitted) : spokenDate
-            photoDateLabel(dateText, photo: photo, showsCollectionIcon: false)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                photoDateLabel(dateText, photo: photo, showsCollectionIcon: false)
+                if browserPhotos.count > 1 {
+                    Text(pagePositionText)
+                        .font(.subheadline.monospacedDigit())
+                        .accessibilityIdentifier("photo-browser-position")
+                }
+            }
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(spokenDate)

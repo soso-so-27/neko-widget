@@ -199,15 +199,7 @@ private struct VeterinaryConsultationView: View {
                         if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
                     }
                 }
-                ToolCatCareSection(
-                    title: "この子のこと",
-                    lines: CatCareSummary.veterinaryFields(
-                        CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
-                        household: catCareStore.state?.household),
-                    subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
-                        ?? .toolCat(id: visit.catID, name: visit.catName),
-                    footer: "薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。",
-                    identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care")
+                // What the owner came to write goes first; the cat's facts follow.
                 if visit.completedAt == nil {
                     Section {
                         TextField("家で気付いたこと", text: $observations, axis: .vertical).lineLimit(3...8)
@@ -225,6 +217,15 @@ private struct VeterinaryConsultationView: View {
                         if !visit.questions.isEmpty { Text(visit.questions) }
                     }
                 }
+                ToolCatCareSection(
+                    title: "この子のこと",
+                    lines: CatCareSummary.veterinaryFields(
+                        CatCareSummary.record(toolCatID: visit.catID, profileIdentifier: visit.catID.uuidString),
+                        household: catCareStore.state?.household),
+                    subject: profiles.first(where: { $0.identifier == visit.catID.uuidString }).map(CatCareSubject.profile)
+                        ?? .toolCat(id: visit.catID, name: visit.catName),
+                    footer: "薬・アレルギー・ワクチン・体重は「この子のこと」から載ります。",
+                    identifier: "vet-cat-care-fields", editIdentifier: "vet-open-cat-care")
                 Section {
                     ForEach(visit.orderedEntries) { entry in
                         VStack(alignment: .leading, spacing: 8) {

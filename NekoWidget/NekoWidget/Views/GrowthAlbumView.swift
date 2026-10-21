@@ -48,14 +48,9 @@ struct GrowthAlbumDetailView: View {
                         canReplacePhoto(for: $0.period, in: groups)
                     }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(timelineRangeLabel(from: first.period, to: last.period))
-                            .font(.title.bold())
-                            .monospacedDigit()
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        timelineIntroduction(replaceableItems: replaceableItems)
-                    }
+                    // The screen title already names the album; no second big heading.
+                    timelineIntroduction(replaceableItems: replaceableItems)
+                        .accessibilityLabel(timelineRangeLabel(from: first.period, to: last.period))
 
                     scrapbookTimeline(items: resolvedItems)
                 }
@@ -273,7 +268,7 @@ struct GrowthAlbumDetailView: View {
                 }
             }
         } label: {
-            Label("選び直す", systemImage: "photo.on.rectangle.angled")
+            Label("写真を変える", systemImage: "photo.on.rectangle.angled")
                 .font(.subheadline.weight(.semibold))
         }
         .buttonStyle(.plain)
