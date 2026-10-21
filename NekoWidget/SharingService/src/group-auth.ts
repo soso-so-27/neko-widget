@@ -18,7 +18,7 @@ export function groupId(value: string): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) throw new ApiError(404,"not_found","The group record was not found.");
   return value;
 }
-export async function authenticateGroupRequest(request: Request, env: Env,maximumBody=128*1024): Promise<{actor:GroupActor;body:Uint8Array}> {
+export async function authenticateGroupRequest(request: Request, env: Env,maximumBody=128*1024,reportWindowId?:string): Promise<{actor:GroupActor;body:Uint8Array}> {
   await enforceRateLimit(env,env.MEMBER_RATE_LIMITER,transientNetworkKey(request,"group-member"));
   const body = await readBody(request,maximumBody);
   const now = Math.floor(Date.now()/1000);
@@ -31,10 +31,16 @@ export async function authenticateGroupRequest(request: Request, env: Env,maximu
       || Math.abs(now-Number(timestamp)) > 300) throw new ApiError(401,"invalid_authentication","Group authentication failed.");
   try { base64urlDecode(nonce,16); base64urlDecode(signature,64); }
   catch { throw new ApiError(401,"invalid_authentication","Group authentication failed."); }
-  const row = await env.DB.prepare(`SELECT d.id AS deviceId,d.person_id AS personId,d.signing_public_key AS signingPublicKey,
+  // Ordinary traffic must work before the additive report migration exists.
+  // Only the report router may opt into scoped, expiring report-only access.
+  const credentialPredicate=reportWindowId===undefined?"d.state='active' AND p.state='active'":
+    "((d.state='active' AND p.state='active') OR EXISTS (SELECT 1 FROM group_report_access a WHERE a.device_id=d.id AND a.space_id=? AND a.expires_at>unixepoch()))";
+  const credentialQuery = env.DB.prepare(`SELECT d.id AS deviceId,d.person_id AS personId,d.signing_public_key AS signingPublicKey,
       d.hpke_public_key AS hpkePublicKey,p.identity_public_key AS identityPublicKey
       FROM group_person_devices d JOIN group_people p ON p.id=d.person_id
-      WHERE d.id=? AND d.state='active' AND p.state='active'`).bind(deviceId).first<Omit<GroupActor,"nonce"|"now"|"requestHash">>();
+      WHERE d.id=? AND ${credentialPredicate}`);
+  const row=await (reportWindowId===undefined?credentialQuery.bind(deviceId):credentialQuery.bind(deviceId,reportWindowId))
+    .first<Omit<GroupActor,"nonce"|"now"|"requestHash">>();
   if (!row) throw new ApiError(401,"invalid_authentication","Group authentication failed.");
   const bodyHash = await sha256Base64url(body);
   const pathname = new URL(request.url).pathname;
