@@ -169,7 +169,7 @@ struct AlbumView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(sectionTitle(for: section.id))
-                        .font(.title3.bold())
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
 
                     LazyVGrid(columns: cardColumns, spacing: 12) {
@@ -196,7 +196,7 @@ struct AlbumView: View {
         let showsCatGrowth = selectedProfileIdentifier == nil && !profiles.isEmpty
         return VStack(alignment: .leading, spacing: 16) {
             Text(!comparisons.isEmpty ? "成長" : showsCatGrowth ? "猫ごとのアルバム" : "探す")
-                .font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             if showsCatGrowth {
                 CatProfileNavigationStrip {
                     ForEach(profiles) { profile in
@@ -227,7 +227,7 @@ struct AlbumView: View {
                 }
             }
             if !comparisons.isEmpty || showsCatGrowth {
-                Text("探す").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                Text("探す").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             }
             if !periods.isEmpty || !dates.isEmpty {
                 NavigationLink(value: AlbumCatalogRoute.years(profileIdentifier: selectedProfileIdentifier)) {
@@ -294,7 +294,7 @@ struct AlbumView: View {
         _ albums: [CuratedAlbumPresentation], title: String, compact: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.title3.bold())
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) {
                 ForEach(albums) { album in
@@ -636,7 +636,10 @@ private struct AlbumNavigationRow: View {
             Text(title).font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
             if let newBadgeIdentifier {
-                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                // The same red 「新着」 capsule as the album cards.
+                Text("新着").font(.caption2.bold()).foregroundStyle(.white)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.red, in: Capsule())
                     .accessibilityLabel("新着")
                     .accessibilityIdentifier(newBadgeIdentifier)
             }
@@ -1186,7 +1189,7 @@ struct LikedPhotosView: View {
                     }
                     if memoLoadFailed, !isCatDetail {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("ピックアップのメモを読み込めませんでした")
+                            Text("おすすめのメモを読み込めませんでした")
                                 .font(.subheadline)
                             Button {
                                 memoLoadFailed = false
@@ -1227,7 +1230,7 @@ struct LikedPhotosView: View {
         .membershipFeature(.browseAlbums, hasContent: hasPhotoAccess && !isPreparingAlbums
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
-        .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
+        .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
         .navigationBarTitleDisplayMode(isCatDetail || showsReflectionArchive || showsHighlightArchive ? .inline : .large)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
@@ -1329,7 +1332,7 @@ struct LikedPhotosView: View {
     }
     private var reflectionShelf: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("ふりかえり").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            Text("ふりかえり").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             if let month = months.first {
                 monthLink(month, isLatest: true, isWide: true)
                     .overlay(alignment: .topLeading) { if summaryNeedsPlus { plusMark.padding(10) } }
@@ -1382,10 +1385,12 @@ struct LikedPhotosView: View {
     /// best part of the album is not a surprise (A2).
     private var reflectionPlaceholder: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("ふりかえり").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            Text("ふりかえり").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 10) {
-                Label("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。", systemImage: "calendar")
-                Label("いろいろな日の写真が2か月分たまると、季節のムービーができます。", systemImage: "film")
+                Text("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Text("いろいろな日の写真が2か月分たまると、季節のムービーができます。")
+                    .font(.subheadline).foregroundStyle(.secondary)
                 if summaryNeedsPlus {
                     HStack(spacing: 6) {
                         plusMark
@@ -1438,8 +1443,8 @@ struct LikedPhotosView: View {
     private var featuredShelf: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let item = featuredPhotoRecommendation {
-                Text("今日のピックアップ")
-                    .font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                Text("今日のおすすめ")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                 recommendationLink(item)
             }
         }
@@ -1468,7 +1473,7 @@ struct LikedPhotosView: View {
     }
     private var highlightArchive: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            if !hasPickupArchive { ContentUnavailableView("ピックアップはまだありません", systemImage: "photo.stack") }
+            if !hasPickupArchive { ContentUnavailableView("おすすめはまだありません", systemImage: "photo.stack") }
             ForEach(highlights) { highlightLink($0, featured: false) }
             if hasPeriodCollections {
                 ForEach(months) { monthLink($0, isLatest: $0.id == months.first?.id, showsCover: false) }
@@ -2923,7 +2928,23 @@ struct PhotoBrowserView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if let photo = selectedPhoto {
+                    // The bookmark sits where the Widget and the まど put it: always in view.
+                    let saved = confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked
+                    Button {
+                        if saved, receivedPhotoIdentifiers.contains(photo.localIdentifier) {
+                            pendingReceivedRemoval = photo.localIdentifier
+                        } else {
+                            setMemorySaved(photo.localIdentifier, !saved)
+                        }
+                    } label: {
+                        Image(systemName: saved ? "bookmark.fill" : "bookmark")
+                    }
+                    .disabled(isExportingMemoryPhoto)
+                    .accessibilityLabel(saved ? "お気に入りから外す" : "お気に入りに追加")
+                    .accessibilityIdentifier("photo-browser-bookmark")
+                }
                 Menu {
                     if let photo = selectedPhoto {
                         photoActions(photo)

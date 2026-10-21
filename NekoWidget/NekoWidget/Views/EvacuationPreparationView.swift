@@ -44,7 +44,7 @@ struct EvacuationPreparationView: View {
                         }
                         .accessibilityIdentifier("evacuation-cats-open")
                         NavigationLink { EvacuationDestinationsView(store: store) } label: {
-                            entry("行き先と連絡先", detail: "候補と受入条件を残す", icon: "mappin.and.ellipse")
+                            entry("行き先と連絡先", detail: "行き先と、受け入れの条件", icon: "mappin.and.ellipse")
                         }
                         .accessibilityIdentifier("evacuation-destinations-open")
                     }
@@ -462,7 +462,7 @@ private struct EvacuationCatView: View {
                             ?? "表示する記録を開けませんでした。元の記録は変更していません。"
                     }
                 } label: {
-                    Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    Label("控えを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.saveError != nil || cat == nil)
@@ -726,7 +726,7 @@ private struct EvacuationDestinationsView: View {
                     NavigationLink { EvacuationDestinationEditor(id: place.id, store: store) } label: {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(place.name.isEmpty ? "行き先の候補" : place.name).font(.headline)
-                            Text(place.checkedAt.map { "受入条件の確認日：" + $0.formatted(date: .numeric, time: .omitted) } ?? "受入条件は未確認")
+                            Text(place.checkedAt.map { "受け入れの条件を確かめた日：" + $0.formatted(date: .numeric, time: .omitted) } ?? "受入条件は未確認")
                                 .font(.subheadline).foregroundStyle(.secondary)
                             if !place.conditions.isEmpty { Text(place.conditions).font(.subheadline) }
                             if !place.telephone.isEmpty { Text(place.telephone).font(.subheadline) }
@@ -780,7 +780,7 @@ private struct EvacuationDestinationEditor: View {
                 Section("行き先の候補") {
                     TextField("施設名", text: text(\.name))
                     TextField("電話番号（任意）", text: text(\.telephone))
-                    TextField("確認した受入条件", text: text(\.conditions), axis: .vertical)
+                    TextField("確かめた受け入れの条件", text: text(\.conditions), axis: .vertical)
                     TextField("確認先（窓口や公式ページなど）", text: text(\.source), axis: .vertical)
                 }
                 Section {
@@ -791,8 +791,8 @@ private struct EvacuationDestinationEditor: View {
                             }
                         }), in: ...Date(), displayedComponents: .date)
                     } else {
-                        Text("受入条件は未確認").foregroundStyle(.secondary)
-                        Button("自分で受入条件を確認した") {
+                        Text("受け入れの条件は、まだ確かめていません").foregroundStyle(.secondary)
+                        Button("受け入れの条件を確かめた") {
                             store.update { plan in
                                 if let index = plan.destinations.firstIndex(where: { $0.id == id }) { plan.destinations[index].checkedAt = Date() }
                             }

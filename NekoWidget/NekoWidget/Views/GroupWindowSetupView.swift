@@ -28,7 +28,7 @@ enum GroupWindowPresentation {
         }
         switch error {
         case .offline:
-            return "接続できません。申し込みは残っています。電波のあるところでもう一度お試しください。"
+            return "接続できません。電波のあるところで、もう一度お試しください。"
         case .unavailable:
             return "まどの仕組みをいま利用できません。時間をおいてもう一度お試しください。"
         case .authenticationRequired:
@@ -54,7 +54,7 @@ enum GroupWindowPresentation {
         case .invitationRevoked:
             return "この招待は取り消されました。新しい招待を受け取ってください。"
         case .requestNotPending:
-            return "この申し込みは、もう承認か取り消しが済んでいます。"
+            return "この人は、もう参加しているか、取り消されています。"
         case .cannotRemoveOwner:
             return "まどを作った人は外せません。"
         case .ownerCannotLeave:
@@ -399,7 +399,7 @@ struct GroupWindowMembersView: View {
             }
         }
         .confirmationDialog(
-            approvalTarget.map { "「\($0.displayName)」を承認しますか？" } ?? "承認しますか？",
+            approvalTarget.map { "「\($0.displayName)」に参加してもらいますか？" } ?? "参加してもらいますか？",
             isPresented: $showsApproval,
             titleVisibility: .visible,
             presenting: approvalTarget
@@ -408,7 +408,7 @@ struct GroupWindowMembersView: View {
                 .accessibilityIdentifier("group-window-approve-confirm")
             Button("戻る", role: .cancel) {}
         } message: { request in
-            Text("本人に確認の言葉を聞いて、「\(request.verificationPhrase)」と答えたら承認してください。")
+            Text("本人に確認の言葉を聞いて、「\(request.verificationPhrase)」と答えたら「参加してもらう」を押してください。")
         }
         .confirmationDialog(
             removalTarget.map { "\(GroupDisplayName.withSan($0.displayName))をこのまどから外しますか？" } ?? "外しますか？",
@@ -429,7 +429,7 @@ struct GroupWindowMembersView: View {
             Button("招待を取り消す", role: .destructive) { Task { await model.revokeInvitation() } }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("取り消すと、このリンクからは申し込めなくなります。まだ承認していない申し込みも無効になります。")
+            Text("取り消すと、このリンクからは参加できなくなります。まだ入れていない人も入れなくなります。")
         }
         .confirmationDialog(
             "このまどから抜けますか？",
@@ -580,7 +580,7 @@ struct GroupWindowMembersView: View {
             Text("メンバー")
         } footer: {
             if window.canManage {
-                Text("申し込みは自動でここに出ます。知らない人は承認しないでください。")
+                Text("参加したい人はここに出ます。知らない人は入れないでください。")
             }
         }
     }
@@ -640,7 +640,7 @@ struct GroupWindowMembersView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(request.displayName)
                         .font(.body.weight(.semibold))
-                    Text("参加を申し込んでいます")
+                    Text("参加を待っています")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -652,7 +652,7 @@ struct GroupWindowMembersView: View {
                         approvalTarget = request
                         showsApproval = true
                     } label: {
-                        Text("承認する")
+                        Text("参加してもらう")
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
@@ -731,7 +731,7 @@ struct GroupWindowMembersView: View {
         } header: {
             Text("招待")
         } footer: {
-            Text("リンクは24時間有効で、何人でも使えます。参加するには、あなたの承認が要ります。")
+            Text("リンクは24時間有効で、何人でも使えます。あなたが「参加してもらう」を押した人だけが入れます。")
         }
     }
 
@@ -882,8 +882,8 @@ struct GroupJoinView: View {
                 approvedSection
             case .rejected:
                 resultSection(
-                    "承認されませんでした。",
-                    detail: "まどを作った人が承認しなかったため、参加できません。",
+                    "参加できませんでした。",
+                    detail: "まどを作った人が、参加を見送りました。",
                     systemImage: "xmark.circle"
                 )
             case .expired:
@@ -894,7 +894,7 @@ struct GroupJoinView: View {
                 )
             case .cancelled:
                 resultSection(
-                    "申し込みを取り消しました。",
+                    "参加をやめました。",
                     detail: "参加するときは、招待リンクをもう一度開いてください。",
                     systemImage: "arrow.uturn.backward.circle"
                 )
@@ -945,7 +945,7 @@ struct GroupJoinView: View {
             Button {
                 Task { await model.apply() }
             } label: {
-                Label("参加を申し込む", systemImage: "person.badge.plus")
+                Label("参加を頼む", systemImage: "person.badge.plus")
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -961,7 +961,7 @@ struct GroupJoinView: View {
 
     private func pendingSection(_ request: GroupJoinRequest) -> some View {
         Section {
-            Label("申し込みました", systemImage: "paperplane")
+            Label("頼みました", systemImage: "paperplane")
                 .font(.headline)
                 .accessibilityIdentifier("group-join-pending")
             Text("まどを作った人の承認を待っています。承認されると、ここに表示されます。")
@@ -973,7 +973,7 @@ struct GroupJoinView: View {
             Text("作った人に聞かれたら、この言葉を伝えてください。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Button("申し込みを取り消す", role: .destructive) {
+            Button("参加をやめる", role: .destructive) {
                 Task { await model.cancel() }
             }
             .disabled(model.isWorking)

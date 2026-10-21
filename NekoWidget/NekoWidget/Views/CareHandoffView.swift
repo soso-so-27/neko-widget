@@ -449,7 +449,7 @@ private struct CareDisclosureView: View {
                         do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
                         catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "控えを開けませんでした。もう一度お試しください。元の記録は残っています。" }
                     } label: {
-                        Label("プレビュー", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                        Label("控えを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(disclosure.catIDs.isEmpty || store.saveError != nil)

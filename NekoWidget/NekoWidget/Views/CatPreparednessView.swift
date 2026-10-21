@@ -240,7 +240,7 @@ struct LostCatDraftView: View {
                     Text("直す項目があります。各欄の説明を確かめてください")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Button("プレビュー") { openPreview() }
+                Button("控えを見る") { openPreview() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canPreview)
                     .frame(maxWidth: .infinity, minHeight: 44)
