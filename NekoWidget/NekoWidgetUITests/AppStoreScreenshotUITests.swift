@@ -435,6 +435,13 @@ final class AppStoreScreenshotUITests: XCTestCase {
             app.launchEnvironment.removeValue(forKey: "NEKO_UX_RECOVERY_CASE")
             _ = profileID
         }
+
+        if area == "settings" {
+            app.launchArguments = fixture + ["--group-window-screens-fixture"]
+            app.launch(); settle(2)
+            if openSettings(app) { shot("re-40-settings"); app.swipeUp(); settle(1); shot("re-41-settings-lower") }
+            app.terminate()
+        }
     }
 
     /// 10/21 review fixes: only the screens the fixes touch.
