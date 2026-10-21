@@ -1513,13 +1513,22 @@ struct GroupWindowListSection: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    /// A window is its newest photo: the card shows it (from the Widget's own
-    /// cache, so nothing is fetched), the name over it, and who is in it.
     private func row(_ window: GroupWindow) -> some View {
-        let cached = GroupWidgetCache.entry(windowID: window.id)
-        let cover = cached.flatMap(GroupWidgetCache.imageURL(for:)).flatMap { UIImage(contentsOfFile: $0.path) }
+        GroupWindowCard(window: window)
+    }
+}
+
+/// A window is its newest photo: the card shows it (the Widget's copy, or the
+/// newest photo kept on this iPhone; nothing is fetched), the name over it,
+/// and who is in it.
+private struct GroupWindowCard: View {
+    let window: GroupWindow
+    @State private var cover: UIImage?
+    @State private var senderName: String?
+
+    var body: some View {
         let paused = GroupWindowPresentation.isPaused(window)
-        return ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .bottomLeading) {
             // The card's height comes from the 16:10 box, never from the photo's pixels.
             Color(uiColor: .secondarySystemGroupedBackground)
                 .aspectRatio(16 / 10, contentMode: .fit)
@@ -1546,7 +1555,7 @@ struct GroupWindowListSection: View {
                     Text(window.name)
                         .font(.title3.bold())
                     Text(paused ? "止まっています"
-                         : cached?.senderDisplayName.map { "\(GroupDisplayName.withSan($0))から ・ \(window.memberCount)人" }
+                         : senderName.map { "\(GroupDisplayName.withSan($0))から ・ \(window.memberCount)人" }
                            ?? "\(window.memberCount)人")
                         .font(.footnote)
                 }
@@ -1566,6 +1575,26 @@ struct GroupWindowListSection: View {
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(window.name)、\(paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))")
+        .task(id: window.id) { await loadCover() }
+    }
+
+    private func loadCover() async {
+        if let cached = GroupWidgetCache.entry(windowID: window.id),
+           let url = GroupWidgetCache.imageURL(for: cached),
+           let image = UIImage(contentsOfFile: url.path) {
+            cover = image
+            senderName = cached.senderDisplayName
+            return
+        }
+        // Not yet on the Widget: the newest photo this iPhone received.
+        let store = GroupWindowLocalPhotoStore.shared
+        let newest = await store.entries(windowID: window.id)
+            .filter { !$0.isHidden }
+            .max { $0.createdAt < $1.createdAt }
+        guard let newest, let url = await store.imageURL(photoID: newest.id, windowID: window.id),
+              let image = UIImage(contentsOfFile: url.path) else { return }
+        cover = image
+        senderName = newest.isOwn ? nil : newest.senderDisplayName
     }
 }
 
