@@ -1851,10 +1851,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         app_root = source("NekoWidget/App/AppRootView.swift")
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         for section_title in (
-            "写真と猫",
+            "写真",
+            "猫",
             "ホーム画面",
             "まど",
-            "保存と引き継ぎ",
+            "保存",
             "困ったとき",
             "テスト用",
         ):
@@ -4985,8 +4986,8 @@ class SettingsLayoutTests(unittest.TestCase):
     def test_settings_put_daily_things_first_and_test_tools_last(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
-        order = ["PlusSettingsSection()", 'Text("写真と猫")', 'Text("ホーム画面")', 'Text("まど")',
-                 'Text("保存と引き継ぎ")', 'Text("困ったとき")', '"settings-app-version"', 'Text("テスト用")']
+        order = ["PlusSettingsSection()", 'Text("写真")', 'Text("猫")', 'Text("ホーム画面")', 'Text("まど")',
+                 'Text("保存")', 'Text("困ったとき")', '"settings-app-version"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
         # Previews and diagnostics sit together in the test-only section.
