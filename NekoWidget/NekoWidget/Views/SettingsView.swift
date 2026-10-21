@@ -171,6 +171,11 @@ struct SettingsView: View {
                         Label("写真の表示と整理", systemImage: "photo.on.rectangle.angled")
                     }
                 }
+            } header: {
+                Text("写真")
+            }
+
+            Section {
                 NavigationLink {
                     CatProfilesView(
                         presentation: catProfilesPresentation,
@@ -188,7 +193,7 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings-cat-profiles")
             } header: {
-                Text("写真と猫")
+                Text("猫")
             }
 
             Section {
@@ -272,7 +277,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("保存と引き継ぎ")
+                Text("保存")
             }
 
             Section {
