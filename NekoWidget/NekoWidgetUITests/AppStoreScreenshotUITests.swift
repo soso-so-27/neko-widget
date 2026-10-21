@@ -177,6 +177,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
     func testReviewToolsAndAutomaticVisitSave() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        // The vet memo starts from a cat profile (the name prompt is gone).
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
         app.launch()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
         for identifier in ["tools-showcase-open", "tools-care-open", "tools-vet-open", "tools-lost-cat-open", "tools-evacuation-open"] {
@@ -184,12 +186,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "PR4-tools")
         app.buttons["tools-vet-open"].tap()
-        let add = app.buttons["vet-new-cat"]
-        XCTAssertTrue(add.waitForExistence(timeout: 10)); add.tap()
-        let alert = app.alerts["猫の名前"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 5))
-        alert.textFields.firstMatch.tap(); alert.textFields.firstMatch.typeText("むぎ")
-        alert.buttons["作る"].tap()
+        let cat = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 10)); cat.tap()
         let observations = app.descendants(matching: .any)["vet-observations"].firstMatch
         XCTAssertTrue(observations.waitForExistence(timeout: 10), app.debugDescription)
         observations.tap(); observations.typeText("いつもの様子")

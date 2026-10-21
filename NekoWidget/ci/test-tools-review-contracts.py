@@ -46,7 +46,9 @@ class ToolsReviewContracts(unittest.TestCase):
         self.assertIn('guard Self.validName(visit.catName)', store)
         self.assertIn('private static func validName(_ name: String) -> Bool { !name.isEmpty', store)
         view = source("VeterinaryVisitView.swift")
-        self.assertIn('.disabled(!VeterinaryVisitStore.isValidCatName(newName.trimmingCharacters', view)
+        # The name prompt is gone (10/21); a vet memo starts from a cat the tools know,
+        # and the store still refuses an invalid name.
+        self.assertNotIn('alert("猫の名前"', view)
         verifier = (ROOT / "ci/verify-veterinary-visits.swift").read_text(encoding="utf-8")
         self.assertIn('Legacy whitespace name became unreadable', verifier)
         self.assertIn('Invalid name changed records', verifier)
