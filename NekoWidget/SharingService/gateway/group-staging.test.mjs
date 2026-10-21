@@ -7,6 +7,16 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { createGroupStagingRouter } from './group-staging-router.mjs';
 import { groupStagingConfigs } from './group-staging-config.mjs';
 
+test('existing schedule is preserved and only its APNs tick adds the group drain',async()=>{
+  const env={ENVIRONMENT:'staging'},pending=[];let legacyRuns=0,drains=0;
+  const ctx={waitUntil(job){pending.push(job);}};
+  const router=createGroupStagingRouter({scheduled(_c,e,x){assert.equal(e,env);assert.equal(x,ctx);legacyRuns++;}},
+    {},async()=>{},'cleanup',async(e)=>{assert.equal(e,env);drains++;},'* * * * *');
+  router.scheduled({cron:'unrelated'},env,ctx);assert.equal(drains,0);
+  router.scheduled({cron:'* * * * *'},env,ctx);await Promise.all(pending);
+  assert.equal(drains,1);assert.equal(legacyRuns,2);
+});
+
 test('exact legacy body/environment/context and scheduled callback remain untouched',async()=>{
   const env={ENVIRONMENT:'staging',PRIVATE_BILLING_GATEWAY:{},BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED:'NO'},ctx={waitUntil(){}};
   let schedules=0,cleanups=0;
