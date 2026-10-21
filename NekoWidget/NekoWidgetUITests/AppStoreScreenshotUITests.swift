@@ -357,10 +357,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
                 closeSheet(app)
             }
         }
-        if tapTab(application: app, identifier: "main-tab-albums", fallbackLabel: "アルバム") {
+        if tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム") {
             settle(2)
-            if tapLabel("昔と最近", app) { settle(3); shot("fix-10-growth-album"); back(app) }
-            if tapLabel("日付から探す", app) { settle(2); shot("fix-11-dates"); back(app) }
+            if tapID("album-card-household_growth", app) || tapLabel("昔と最近", app) { settle(3); shot("fix-10-growth-album"); back(app) }
+            if tapID("albums-years-toggle", app) { settle(2); shot("fix-11-dates") }
         }
         app.terminate()
         app.launchEnvironment.removeValue(forKey: "NEKO_UX_RECOVERY_CASE")
@@ -412,7 +412,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launch(); settle(2)
         if openSettings(app) {
             shot("fix-35-settings"); app.swipeUp(); settle(1); shot("fix-35b-settings-lower")
-            if openSettings(app), tapLabel("写真の表示と整理", app) { settle(2); shot("fix-37-photo-settings") }
+            let photoRow = app.staticTexts["写真の表示と整理"].firstMatch
+            if openSettings(app), photoRow.waitForExistence(timeout: 4) { photoRow.tap(); settle(2); shot("fix-37-photo-settings") }
         }
         app.terminate()
     }
