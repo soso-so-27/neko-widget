@@ -12,6 +12,7 @@ import { acknowledgeGroupPhoto,commitGroupPhoto,getGroupPhoto,GROUP_MAX_CIPHERTE
 import { listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
 import { groupReportAPI,isGroupReportPath } from './group-reports';
 import { registerGroupPush } from './group-push';
+import { manageGroupWindow } from './group-management';
 
 export async function groupAPI(request:Request,env:Env):Promise<Response> {
   try { return await dispatchGroup(request,env); }
@@ -46,6 +47,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
       ['group_report_daily_limit',429,'report_daily_quota_exceeded'],['group_report_key_required',409,'moderation_key_required'],
       ['group_reports.moment_id',409,'already_reported'],['group_report_invalid_',409,'report_conflict'],
       ['group_push_gate_closed',503,'group_push_disabled'],
+      ['group_name_stale_revision',409,'stale_name_revision'],
     ];
     for(const [marker,status,code] of codes) if(message.includes(marker)) throw new ApiError(status,code,'The group operation could not be completed.');
     throw error;
@@ -78,6 +80,8 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const key=suffix.match(/^keys\/([1-9][0-9]{0,14})$/u);
   if(key && request.method==='GET') return getGroupKey(env,actor,windowId,Number(key[1]));
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');
+  if(suffix==='name')return manageGroupWindow(env,actor,windowId,body);
+  if(suffix==='close')return manageGroupWindow(env,actor,windowId,body,true);
   if(suffix==='push-subscription')return registerGroupPush(env,actor,windowId,body);
   if(suffix==='push-subscription/remove')return registerGroupPush(env,actor,windowId,body,true);
   if(suffix==='moments/reserve')return reserveGroupPhoto(env,actor,windowId,body);
