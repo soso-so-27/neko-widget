@@ -81,63 +81,41 @@ private struct ShowcaseSession: Identifiable {
     let scopeID: String
 }
 
+/// A tool is a card you can see is a button: a big coloured symbol, the
+/// name, one line of what it makes. No cat art, no small icons.
 private struct ToolTile: View {
     let title: String
     let systemImage: String
     let subtitle: String
-    let catPose: String
+    let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer(minLength: 0)
-                ToolCatArtwork(pose: catPose, systemImage: systemImage)
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(tint, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.top, 2)
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+        .padding(14)
         .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title)、\(subtitle)")
-    }
-}
-
-/// The approved window-cat artwork stays black on its original pale background
-/// in either appearance. The small blue symbol explains the tool, not a status.
-private struct ToolCatArtwork: View {
-    let pose: String
-    let systemImage: String
-
-    var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            Image("ToolCat-\(pose)")
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: 48, height: 48)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.leading, 14)
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 28, height: 28)
-                .background(Color(.secondarySystemGroupedBackground), in: Circle())
-                .overlay(Circle().strokeBorder(Color(.separator).opacity(0.3), lineWidth: 1))
-                .offset(y: 3)
-        }
-        .padding(.bottom, 3)
-        .accessibilityHidden(true)
     }
 }
 
@@ -765,53 +743,32 @@ struct MainTabView: View {
 
     private var toolsView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // The cats themselves come first, as cards like every other tool.
-                toolSection("猫のこと") {
+            VStack(alignment: .leading, spacing: 22) {
+                // Two groups: what you use anyway, and what you hope not to need.
+                toolSection("いつも") {
                     NavigationLink {
                         CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
                                         opensProfileSettings: true)
                     } label: {
                         ToolTile(title: "猫のプロフィール", systemImage: "cat.fill",
-                                 subtitle: "名前・写真・誕生日", catPose: "tilt")
+                                 subtitle: "名前・写真・誕生日", tint: Color(red: 0.82, green: 0.63, blue: 0.29))
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-cat-profiles")
+                    showcaseToolCard
                     NavigationLink {
                         CatCareEntryView(profiles: catProfilesPresentation.profiles)
                     } label: {
-                        ToolTile(title: "この子のこと", systemImage: "heart.text.square",
-                                 subtitle: "体重・薬・ワクチン・連絡先", catPose: "side-eye")
+                        ToolTile(title: "この子のこと", systemImage: "heart.text.square.fill",
+                                 subtitle: "体・ごはん・薬", tint: .green)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-cat-care")
                 }
-                showcaseToolCard
                 if !preparingShowcaseScopes.isEmpty {
                     ProgressView("見せる写真を準備中")
                 }
-                toolSection("ふだんの準備") {
-                        NavigationLink {
-                            CareHandoffView(profiles: catProfilesPresentation.profiles,
-                                            unregisteredPhotos: unregisteredCatPhotos)
-                        } label: {
-                            ToolTile(title: "預けるとき", systemImage: "list.clipboard",
-                                     subtitle: "お世話メモを渡す", catPose: "snug")
-                        }
-                        .buttonStyle(ToolCardButtonStyle())
-                        .accessibilityIdentifier("tools-care-open")
-                        NavigationLink {
-                            VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
-                                photos: memoryNotePhotos, noteStore: memoStore)
-                        } label: {
-                            ToolTile(title: "病院で見せる", systemImage: "cross.case",
-                                     subtitle: "写真とメモで伝える", catPose: "hide")
-                        }
-                        .buttonStyle(ToolCardButtonStyle())
-                        .accessibilityIdentifier("tools-vet-open")
-                }
-
-                toolSection("もしものとき") {
+                toolSection("もしも") {
                     NavigationLink {
                         LostCatEmergencyEntryView(
                             profiles: catProfilesPresentation.profiles,
@@ -819,24 +776,41 @@ struct MainTabView: View {
                         )
                     } label: {
                         ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
-                                 subtitle: "画像・チラシを作る", catPose: "peek")
+                                 subtitle: "探す画像を作る", tint: .orange)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-lost-cat-open")
-
+                    NavigationLink {
+                        CareHandoffView(profiles: catProfilesPresentation.profiles,
+                                        unregisteredPhotos: unregisteredCatPhotos)
+                    } label: {
+                        ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
+                                 subtitle: "お世話を渡す", tint: .purple)
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-care-open")
+                    NavigationLink {
+                        VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
+                            photos: memoryNotePhotos, noteStore: memoStore)
+                    } label: {
+                        ToolTile(title: "病院で見せる", systemImage: "cross.case.fill",
+                                 subtitle: "診察メモ", tint: .red)
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-vet-open")
                     NavigationLink {
                         EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
                                                   unregisteredPhotos: unregisteredCatPhotos)
                     } label: {
-                        ToolTile(title: "避難に備える", systemImage: "backpack",
-                                 subtitle: "持ち物と猫の情報", catPose: "side-eye")
+                        ToolTile(title: "避難に備える", systemImage: "backpack.fill",
+                                 subtitle: "持ち物と行き先", tint: .gray)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-evacuation-open")
                 }
-
             }
-            .padding(12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
@@ -856,18 +830,8 @@ struct MainTabView: View {
                 showsShowcaseNoPhotos = true
             } else { openPreparedShowcase(scopeID: "") }
         } label: {
-            HStack(spacing: 20) {
-                ToolCatArtwork(pose: "tilt", systemImage: "photo.on.rectangle.angled")
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("写真を見せる").font(.title3.bold())
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("お気に入りの写真を、さっと見せる").font(.subheadline).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-            }.padding(16).frame(maxWidth: .infinity, minHeight: 112)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+            ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
+                     subtitle: "ベストナインを作る", tint: .cyan)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
