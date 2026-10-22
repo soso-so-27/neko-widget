@@ -106,18 +106,17 @@ enum OnboardingPresentationVerifier {
 
     private static func verifiesApprovedJapaneseCopy() throws {
         try require(
-            OnboardingPresentationCopy.purposeTitle == "猫の写真を、まどに。"
-                && OnboardingPresentationCopy.purposeBody
-                    == "このiPhoneの中から猫の写真だけを集めて、ホーム画面に飾ります。",
-            "page-one product promise changed"
+            OnboardingPresentationCopy.purposeTitle == "このiPhoneの中の猫を、全部見つけます。"
+                && OnboardingPresentationCopy.purposeBody == "写真はiPhoneの中だけで探します。外には送りません。",
+            "page-one promise changed"
         )
         try require(
-            OnboardingPresentationCopy.purposeAction == "写真から猫を探す",
+            OnboardingPresentationCopy.purposeAction == "猫を探す",
             "page-one action changed"
         )
         try require(
-            OnboardingPresentationCopy.purposeFootnote == "写真はこのiPhoneの中だけで探します",
-            "page-one on-device promise changed"
+            OnboardingPresentationCopy.purposeFootnote.isEmpty,
+            "page-one grew a footnote again"
         )
         try require(
             OnboardingPresentationCopy.permissionTitleLines == [

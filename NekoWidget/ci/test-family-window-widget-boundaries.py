@@ -1260,8 +1260,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         self.assertIn('Text("ホーム画面にまどを置く").font(.headline)', home)
         self.assertIn("showWidgetPlacementGuide", home)
-        self.assertIn("猫の写真を、まどに。", onboarding)
-        self.assertIn("ホーム画面に飾ります。", onboarding)
+        self.assertIn("このiPhoneの中の猫を、全部見つけます。", onboarding)
+        self.assertIn("外には送りません。", onboarding)
         self.assertIn("TodayPhotoSelectionPolicy.resolve(", model)
         self.assertIn("UIApplication.significantTimeChangeNotification", model)
 

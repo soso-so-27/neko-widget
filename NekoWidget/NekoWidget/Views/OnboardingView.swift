@@ -248,9 +248,11 @@ private struct OnboardingPurposePage: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("onboarding-purpose-join")
                 }
-                Text(OnboardingPresentationCopy.purposeFootnote)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                if !OnboardingPresentationCopy.purposeFootnote.isEmpty {
+                    Text(OnboardingPresentationCopy.purposeFootnote)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.headline)
             .controlSize(.large)
@@ -267,7 +269,7 @@ private struct OnboardingPurposePage: View {
 struct OnboardingWindowMosaic: View {
     var dimmed = false
 
-    private static let poses: [Int: String] = [1: "peek", 3: "tilt", 6: "snug", 8: "side-eye", 10: "hide"]
+    private static let poses: [Int: String] = [1: "peek", 6: "snug", 10: "hide"]
     private static let tints: [Color] = [
         Color(red: 0.91, green: 0.79, blue: 0.65),
         Color(red: 0.81, green: 0.84, blue: 0.89),
