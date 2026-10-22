@@ -14,8 +14,10 @@ export const codePaths=Object.freeze([
  'NekoWidget/SharingService/scripts/check-staging-runtime.mjs','NekoWidget/SharingService/scripts/staging-runtime-check-lib.mjs',
  'NekoWidget/SharingService/migrations/0035_moderation_owner_scope_adoption.sql','NekoWidget/SharingService/migrations/0036_moderation_owner_report_key.sql',
  'NekoWidget/SharingService/migrations/0037_moderation_enrollment_counter_floor.sql',
+ 'NekoWidget/SharingService/migrations/0048_moderation_review_duration.sql',
  'NekoWidget/SharingService/src/moderation-owner-scope-adoption.ts','NekoWidget/SharingService/src/moderation-operator-identity.ts',
- 'NekoWidget/SharingService/src/moderation-owner-local.ts','NekoWidget/SharingService/src/moderation-report-key-policy.ts','NekoWidget/SharingService/src/moments.ts',
+ 'NekoWidget/SharingService/src/moderation-owner-local.ts','NekoWidget/SharingService/src/moderation-owner-console.ts',
+ 'NekoWidget/SharingService/src/moderation-report-key-policy.ts','NekoWidget/SharingService/src/moments.ts',
  'NekoWidget/SharingService/scripts/moderation-operator-staging-start.mjs','NekoWidget/SharingService/scripts/moderation-operator-local-server.mjs',
  'NekoWidget/SharingService/scripts/moderation-owner-r2-transport.mjs','NekoWidget/SharingService/scripts/moderation-owner-key-check-broker-windows.ps1',
  'NekoWidget/SharingService/scripts/moderation-owner-key-check-client-windows.ps1','NekoWidget/SharingService/scripts/moderation-staging-keygen-windows-security.ps1'

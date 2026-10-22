@@ -128,7 +128,7 @@ describe('case-bound signed reversible moderation',()=>{
    WHERE reply.event_id=? AND reply.recipient_participant_id=report.reporter_participant_id AND reply.template_code='no_action'`).bind(result.eventId).first()).toEqual({n:1});
   expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${receipt}/1`,'POST'),f.local)).status).toBe(409);
  });
- it.each([false,true])('keeps read expiry for active reports and permits only completed retired decision receipts after photo expiry (retired=%s)',async retired=>{
+ it.each([false,true])('allows a fresh signed decision after the completed read and its challenge expire (retired=%s)',async retired=>{
   const f=await resolutionFixture(undefined,undefined,true);
   if(retired){await db.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch()`).run();await db.prepare(`UPDATE moments SET state='deleted'`).run()}
   const receipt=await f.read();
@@ -136,12 +136,48 @@ describe('case-bound signed reversible moderation',()=>{
   expect(claim!.expires_at-claim!.claimed_at).toBeLessThanOrEqual(4);
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,claim!.expires_at*1000-Date.now()+100)));
   expect((await db.prepare('SELECT expires_at>unixepoch() AS live FROM moderation_owner_read_claims WHERE read_receipt_id=?').bind(receipt).first<{live:number}>())!.live).toBe(0);
+  expect((await db.prepare('SELECT COUNT(*) AS n FROM moderation_owner_current_challenges').first<{n:number}>())!.n).toBe(0);
+  await db.prepare('DELETE FROM moderation_owner_source_snapshots WHERE expires_at<=unixepoch()').run();
+  expect(await count('moderation_owner_source_snapshots')).toBe(0);
   if(retired){
    expect((await routeLocalModerationResolution(f.request(`${f.path()}/hide/${receipt}/0`,'POST'),f.local)).status).toBe(409);
    const result=await f.act('no_action',receipt,0);expect(result.reply).toBe('available_in_app');
    expect((await db.prepare('SELECT state FROM moments').first<{state:string}>())!.state).toBe('deleted');
    expect(await db.prepare('SELECT COUNT(*) AS n FROM moment_changes WHERE moderation_event_id=?').bind(result.eventId).first()).toEqual({n:0});
-  }else expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${receipt}/0`,'POST'),f.local)).status).toBe(409);
+  }else {const result=await f.act('hide',receipt,0);expect(result.reply).toBe('available_in_app')}
+  expect(await count('moderation_resolution_events')).toBe(1);
+ });
+ it('requires a completed read, even when a consumed claim exists',async()=>{
+  const f=await resolutionFixture();f.local.reviewEvidence=async()=>new Uint8Array([255,216,255,217]);
+  const path=`/operator/owner/v1/cases/${f.caseReference}/1/content-read`;
+  const response=await routeLocalModerationOwner(f.request(path,'POST'),f.local);
+  const issued=await response.json() as {assertionPath:string;challenge:string};
+  expect((await routeLocalModerationOwner(f.request(issued.assertionPath,'POST',await f.assertion(issued.challenge)),f.local)).status).toBeGreaterThanOrEqual(400);
+  const claim=await db.prepare('SELECT read_receipt_id FROM moderation_owner_read_claims').first<{read_receipt_id:string}>();
+  expect(claim).not.toBeNull();expect(await count('moderation_owner_read_receipts')).toBe(0);
+  expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${claim!.read_receipt_id}/0`,'POST'),f.local)).status).toBe(503);
+  expect(f.databaseFailures.at(-1)).toContain('resolution scope must be database derived');
+  expect(await count('moderation_resolution_events')).toBe(0);
+ });
+ it('refuses a different or expired Access session and a revoked owner policy after review',async()=>{
+  const f=await resolutionFixture(),receipt=await f.read();
+  const path=`${f.path()}/no_action/${receipt}/0`;
+  for(const lifetime of [600,-1]){
+   const request=f.request(path,'POST',undefined,{'Cf-Access-Jwt-Assertion':await f.sessionToken(lifetime)});
+   expect((await routeLocalModerationResolution(request,f.local)).status).toBe(lifetime>0?503:401);
+   if(lifetime>0)expect(f.databaseFailures.at(-1)).toContain('resolution scope must be database derived');
+  }
+  await db.prepare('INSERT INTO moderation_owner_policy_revocations(policy_revision) SELECT MAX(policy_revision) FROM moderation_owner_policies').run();
+  expect((await routeLocalModerationResolution(f.request(path,'POST'),f.local)).status).toBe(403);
+  expect(await count('moderation_resolution_events')).toBe(0);
+ });
+ it('rejects a changed object after review, including when it changes during fresh confirmation',async()=>{
+  const f=await resolutionFixture(),receipt=await f.read(),issued=await f.issue('no_action',receipt,0);
+  await db.prepare("UPDATE moment_reports SET object_key='reports/replaced' WHERE id=?").bind(f.reportId).run();
+  expect((await f.prove(issued)).status).toBe(409);
+  expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${receipt}/0`,'POST'),f.local)).status).toBe(503);
+  expect(f.databaseFailures.at(-1)).toContain('resolution scope must be database derived');
+  expect(await count('moderation_resolution_events')).toBe(0);expect(await count('moderation_resolution_replies')).toBe(0);
  });
  it('refuses retired report completion when its evidence expires after the challenge, with no partial result',async()=>{
   const f=await resolutionFixture();await db.prepare(`UPDATE moments SET state='expired',closed_at=unixepoch()`).run();await db.prepare(`UPDATE moments SET state='deleted'`).run();
