@@ -374,7 +374,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
                     settle(2); shot("re-11-favorites")
                     if tapID("favorites-origin-menu", app) { settle(1); shot("re-12-favorites-menu"); app.swipeDown(); settle(1) }
                 }
-                if tapID("photos-section-notes", app) { settle(2); shot("re-13-notes") }
+                if tapID("photos-section-notes", app) {
+                    settle(2); shot("re-13-notes")
+                    let memoPhoto = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-photo")).firstMatch
+                    if memoPhoto.waitForExistence(timeout: 3) { memoPhoto.tap(); settle(3); shot("re-18-memo-photo-detail"); back(app) }
+                }
                 tapID("photos-section-all", app); settle(2)
                 if tapID("photo-hub-photo-app-store-screenshot-fixture-1", app) {
                     settle(2); shot("re-14-photo-detail")
@@ -399,6 +403,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
                 settle(3); shot("re-20-window-list")
                 openGroupWindow(app); settle(3); shot("re-21-window")
+                if tapID("group-window-send-photo", app) { settle(2); shot("re-27-send-picker"); closeSheet(app); settle(1) }
                 app.swipeUp(); settle(1); shot("re-22-window-lower")
                 let tile = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "届いた写真")).firstMatch
                 if tile.waitForExistence(timeout: 5) {
