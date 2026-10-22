@@ -1947,7 +1947,6 @@ final class SoloMemoriesUITests: XCTestCase {
         return app
     }
 
-    @MainActor
     /// Settings has one door since 10/22: the gear on the ツール tab.
     @MainActor
     private func openSettings(in app: XCUIApplication) {
@@ -1967,6 +1966,7 @@ final class SoloMemoriesUITests: XCTestCase {
         door.tap()
     }
 
+    @MainActor
     private func revealVetElement(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<10 where !element.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
