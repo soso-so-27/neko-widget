@@ -110,7 +110,8 @@ enum OnboardingPresentationCopy {
     ]
     static let scanCountLead = "いま"
     static let scanWidgetAction = "まどを置く"
-    static let scanContinueAction = "写真を見る"
+    /// The quiet way past the Widget: straight into the 写真 tab.
+    static let scanContinueAction = "あとで"
 
     static let widgetTitleLines = [
         "ホーム画面に、",

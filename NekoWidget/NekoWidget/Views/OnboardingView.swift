@@ -126,13 +126,8 @@ struct OnboardingView: View {
                 rescan: rescan,
                 openPreviewPhoto: openPhoto,
                 placeWidget: { page = .widgetGuide },
-                continueToApp: {
-                    if scan.displayedCatCount > 0, let photo = resultPhotos.first {
-                        openPhoto(photo)
-                    } else {
-                        finishWithoutWidgetPhoto()
-                    }
-                }
+                // 「あとで」 goes straight to the 写真 tab; the photos are right there.
+                continueToApp: finishWithoutWidgetPhoto
             )
         }
     }
@@ -493,7 +488,7 @@ private struct OnboardingScanPage: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("initial-scan-widget-guide")
-                    continueButton.buttonStyle(.plain).foregroundStyle(.tint)
+                    continueButton.buttonStyle(.plain).foregroundStyle(.secondary).font(.subheadline)
                 } else {
                     continueButton.buttonStyle(.borderedProminent)
                 }

@@ -178,8 +178,7 @@ enum OnboardingPresentationVerifier {
             "scan manuscript copy changed"
         )
         try require(
-            OnboardingPresentationCopy.scanContinueAction
-                == "写真を見る",
+            OnboardingPresentationCopy.scanContinueAction == "あとで",
             "scan page stopped offering a non-blocking continuation"
         )
         try require(

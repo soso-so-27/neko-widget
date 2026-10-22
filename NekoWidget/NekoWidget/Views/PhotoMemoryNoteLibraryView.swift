@@ -394,7 +394,7 @@ struct PhotoMemoryNotesListView: View {
         }
         .refreshable { await library.reload() }
         .navigationTitle(isEmbedded ? "写真" : "メモあり")
-        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { readingToolbar }
         .navigationDestination(isPresented: Binding(
             get: { selectedArchive != nil }, set: { if !$0 { selectedArchive = nil } }

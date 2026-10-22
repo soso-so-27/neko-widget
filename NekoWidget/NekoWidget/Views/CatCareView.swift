@@ -270,22 +270,12 @@ struct CatCareDetailView: View {
         } else if case .profile = subject {
             line += "・誕生日は未記入"
         }
-        if case .profile = subject { line += "。名前と誕生日は猫のプロフィールで直せます。" }
         return line
     }
 
     private var basicsSection: some View {
         Section {
-            if case let .profile(profile) = subject {
-                // Name and birthday belong to the cat profile; change them there.
-                NavigationLink {
-                    CatProfileDetailView(profile: profile, allProfiles: otherProfiles.isEmpty ? [profile] : otherProfiles,
-                        manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: profileActions)
-                } label: {
-                    Label("猫のプロフィール", systemImage: "cat")
-                }
-                .accessibilityIdentifier("cat-care-open-profile")
-            }
+            // Name and birthday are on the プロフィール tab of this same page.
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)
                 Text("オス").tag(CatCareSex.male)

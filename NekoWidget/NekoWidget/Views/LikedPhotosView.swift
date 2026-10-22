@@ -1902,7 +1902,7 @@ struct SavedMemoriesGalleryView: View {
         }
         }
         .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")
-        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("saved-memories-gallery")

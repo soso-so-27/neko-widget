@@ -312,7 +312,7 @@ struct HomeView: View {
         .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "all") : nil,
             normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
         .navigationTitle("写真")
-        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
             if !isEmbedded {
