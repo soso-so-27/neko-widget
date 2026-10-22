@@ -13,7 +13,9 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private let billingSigner: any GroupBillingSigner
     private let ownerDisplayName: String
     private let outboxDirectory: URL
-    private var registering = false
+    /// The one registration in flight. A second caller (the list and a window
+    /// opening together on a fresh iPhone) waits for it instead of failing.
+    private var registrationTask: Task<GroupDeviceIdentity, Error>?
     private var inFlight = Set<UUID>()
     private var photoMetadata: [String: GroupAPIModel.PhotoRow] = [:]
     private var historicalRosters: [String: VerifiedGroupRoster] = [:]
@@ -75,10 +77,17 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         return try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 1_048_576))
     }
     private func registeredIdentity() async throws -> GroupDeviceIdentity {
-        var value = try identity()
+        let value = try identity()
         if value.registered { return value }
-        guard !registering else { throw GroupClientError.unavailable }
-        registering = true; defer { registering = false }
+        if let registrationTask { return try await registrationTask.value }
+        let task = Task { try await self.register(value) }
+        registrationTask = task
+        defer { registrationTask = nil }
+        return try await task.value
+    }
+
+    private func register(_ initial: GroupDeviceIdentity) async throws -> GroupDeviceIdentity {
+        var value = initial
         var body = try secrets.read("registration-request")
         if body == nil {
             guard let root = value.personPrivateKey else { throw GroupClientError.authenticationRequired }

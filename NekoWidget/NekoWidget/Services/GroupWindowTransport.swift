@@ -82,6 +82,8 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
             }
             return .init(status: http.statusCode, data: data)
         } catch let error as URLError {
+            // A request the app itself cancelled (a screen closed) is not an outage.
+            if error.code == .cancelled { throw CancellationError() }
             if [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost].contains(error.code) {
                 throw GroupClientError.offline
             }

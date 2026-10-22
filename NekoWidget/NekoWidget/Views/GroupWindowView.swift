@@ -1,3 +1,4 @@
+import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -451,6 +452,7 @@ final class GroupWindowScreenModel: ObservableObject {
     /// photo's detail can check it without downloading every photo.
     func loadWindow() async {
         do { window = try await client.window(id: windowID); message = nil }
+        catch is CancellationError {}
         catch { message = GroupWindowPresentation.message(for: error) }
     }
 
@@ -848,11 +850,28 @@ struct GroupWindowScreen: View {
 
 /// One photo in the window's feed: the picture, then one line with who sent
 /// it, when, and the hearts. Tap opens it; a double tap sends a heart.
+/// Reads a kept JPEG at a size fit for the screen, off the main thread, so a
+/// list of photos scrolls without stalls.
+enum GroupPhotoDecoder {
+    static func image(at url: URL, maxPixel: CGFloat) -> UIImage? {
+        let options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options as CFDictionary) else { return nil }
+        let thumbnail: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnail as CFDictionary) else { return nil }
+        return UIImage(cgImage: cg)
+    }
+}
+
 private struct GroupPhotoTile: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
     let open: () -> Void
-    @State private var url: URL?
+    @State private var image: UIImage?
 
     private var heartCount: Int { model.hearts[entry.id]?.filter(\.active).count ?? 0 }
     private var canHeart: Bool { !entry.isHidden && !entry.isOwn && !model.isFormer }
@@ -864,7 +883,7 @@ private struct GroupPhotoTile: View {
                 .overlay {
                     if entry.isHidden {
                         Image(systemName: "eye.slash").font(.title2).foregroundStyle(.secondary)
-                    } else if let url, let image = UIImage(contentsOfFile: url.path) {
+                    } else if let image {
                         Image(uiImage: image).resizable().scaledToFill()
                     }
                 }
@@ -909,7 +928,12 @@ private struct GroupPhotoTile: View {
         .accessibilityLabel(tileLabel)
         .accessibilityHint("押すと大きく見て、ハートを送れます")
         .accessibilityAction(named: Text("大きく見る"), open)
-        .task { url = await model.imageURL(for: entry) }
+        .task(id: entry.id) {
+            guard !entry.isHidden, let url = await model.imageURL(for: entry) else { return }
+            image = await Task.detached(priority: .userInitiated) {
+                GroupPhotoDecoder.image(at: url, maxPixel: 900)
+            }.value
+        }
     }
 }
 
@@ -1402,12 +1426,15 @@ final class GroupWindowListModel: ObservableObject {
     init(client: any GroupWindowMediaClient) { self.client = client }
 
     func load() async {
-        defer { hasLoaded = true }
         do {
             windows = try await client.windows()
             message = nil
+            hasLoaded = true
+        } catch is CancellationError {
+            // The screen went away mid-request: nothing to tell.
         } catch {
             message = GroupWindowPresentation.message(for: error)
+            hasLoaded = true
         }
     }
 
@@ -1694,7 +1721,7 @@ private struct GroupWindowCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(window.name)
                         .font(.title3.bold())
-                    Text(paused ? "止まっています" : companions)
+                    Text(paused ? "止まっています" : "\(window.memberCount)人")
                         .font(.footnote)
                 }
                 .foregroundStyle(cover != nil ? Color.white : paused ? Color.orange : Color.primary)
@@ -1708,14 +1735,6 @@ private struct GroupWindowCard: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(window.name)、\(paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))")
         .task(id: window.id) { await loadCover() }
-    }
-
-    /// 「母・妹 と」: the others in the window, by name. Alone: say so.
-    private var companions: String {
-        let others = window.activeMembers.filter { $0.id != window.myParticipantID }.map(\.displayName)
-        if others.isEmpty { return "まだあなただけ" }
-        let shown = others.prefix(3).joined(separator: "・")
-        return others.count > 3 ? "\(shown)・ほか\(others.count - 3)人 と" : "\(shown) と"
     }
 
     private func loadCover() async {

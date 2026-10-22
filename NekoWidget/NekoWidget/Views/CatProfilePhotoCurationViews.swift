@@ -59,7 +59,7 @@ struct CatProfileDetailView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("ページ", selection: $page) {
-                    Text("写真").tag(CatPage.photos)
+                    Text("プロフィール").tag(CatPage.photos)
                     Text("この子のこと").tag(CatPage.care)
                 }
                 .pickerStyle(.segmented)
@@ -141,19 +141,7 @@ struct CatProfileDetailView: View {
                 }
             }
 
-            Section {
-                NavigationLink {
-                    CatPreparednessView(
-                        identityKey: profile.identifier,
-                        catName: profile.displayName,
-                        candidatePhotos: preparednessCandidates,
-                        profiles: allProfiles
-                    )
-                } label: {
-                    Label("迷子のとき", systemImage: "pawprint")
-                }
-            }
-
+            // 迷子のとき is a tool; it lives on the ツール tab, not in the profile.
             Section {
                 NavigationLink {
                     UnassignedCatPhotosView(
@@ -208,8 +196,6 @@ struct CatProfileDetailView: View {
                     .contentShape(Rectangle())
                 }
                 .foregroundStyle(.primary)
-            } header: {
-                Text("この子の時間")
             } footer: {
                 Text(timeGroupingExplanation)
             }
