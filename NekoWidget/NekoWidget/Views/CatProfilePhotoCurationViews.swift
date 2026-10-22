@@ -117,10 +117,6 @@ struct CatProfileDetailView: View {
                             .accessibilityIdentifier("cat-profile-rename")
                         }
                     }
-                    Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)

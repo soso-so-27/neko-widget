@@ -166,14 +166,20 @@ final class GroupWindowScreenModel: ObservableObject {
         await store.imageURL(photoID: entry.id, windowID: windowID)
     }
 
+    /// Who this iPhone is in the window: from the relay, or as last remembered.
+    private var rememberedMe: String?
+    private var me: String? { window?.myParticipantID ?? rememberedMe }
+
     func myHeartIsActive(_ photoID: String) -> Bool {
-        guard let me = window?.myParticipantID else { return false }
+        guard let me else { return false }
         return hearts[photoID]?.contains { $0.participantID == me && $0.active } ?? false
     }
 
-    /// Photos already kept on this iPhone appear at once, before the relay answers.
+    /// Photos and hearts already kept on this iPhone appear at once, before the relay answers.
     func showStored() async {
         if entries.isEmpty { entries = await store.entries(windowID: windowID) }
+        if hearts.isEmpty { hearts = await store.hearts(windowID: windowID) }
+        if rememberedMe == nil { rememberedMe = await store.myParticipantID(windowID: windowID) }
     }
 
     /// Reads the window, keeps every new photo on this iPhone, then tells the
@@ -196,9 +202,10 @@ final class GroupWindowScreenModel: ObservableObject {
                 latest = renewed
             }
             window = latest
-            await store.remember(windowID: windowID, name: latest.name)
+            await store.remember(windowID: windowID, name: latest.name, myParticipantID: latest.myParticipantID)
             let photos = try await client.photos(windowID: windowID)
             hearts = Dictionary(photos.map { ($0.id, $0.hearts) }, uniquingKeysWith: { _, last in last })
+            await store.saveHearts(hearts, windowID: windowID)
             var waiting: GroupPhotoModeration.Verdict?
             for photo in photos {
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
@@ -490,7 +497,7 @@ final class GroupWindowScreenModel: ObservableObject {
         let active = !myHeartIsActive(photoID)
         // Show the heart at once; the relay confirms (or corrects) it after.
         let before = hearts[photoID]
-        if let me = window?.myParticipantID {
+        if let me {
             var current = before ?? []
             if let index = current.firstIndex(where: { $0.participantID == me }) {
                 current[index].active = active
@@ -506,6 +513,7 @@ final class GroupWindowScreenModel: ObservableObject {
                 active: active, operationID: UUID()
             )
             hearts[photoID] = updated.hearts
+            await store.saveHearts(hearts, windowID: windowID)
         } catch {
             hearts[photoID] = before
             message = GroupWindowPresentation.message(for: error)

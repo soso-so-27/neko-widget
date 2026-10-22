@@ -100,6 +100,7 @@ struct AlbumView: View {
                     .padding(.vertical, 12)
             }
             .navigationTitle("アルバム")
+            .navigationBarTitleDisplayMode(.inline)
             .background(Color(.systemGroupedBackground))
         }
     }
