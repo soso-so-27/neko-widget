@@ -106,6 +106,7 @@ struct CatCareDetailView: View {
     /// The cat this page last loaded, so coming back from a list does not
     /// reload over what is on screen.
     @State private var loadedKey: String?
+    @State private var showsLifeDatesEditor = false
 
     init(profile: CatProfilePresentation, otherProfiles: [CatProfilePresentation],
          selectedProfileID: Binding<String?>) {
@@ -193,6 +194,11 @@ struct CatCareDetailView: View {
                 apply(result)
             }
         }
+        .sheet(isPresented: $showsLifeDatesEditor) {
+            if case let .profile(profile) = subject {
+                CatProfileLifeReferenceEditor(profile: profile, save: profileActions.updateLifeDates)
+            }
+        }
         .task(id: subject.key) {
             // Only when the cat changes: save the one shown before (the draft
             // still belongs to it), then load the new one.
@@ -261,21 +267,34 @@ struct CatCareDetailView: View {
         }
     }
 
-    /// 「ミケ・2020/1/1（4歳）」: read-only facts go in the footer, not in rows.
+    /// 「ミケ（4歳）」 and what the dates are for: read-only facts go in the footer, not in rows.
     private var basicsFooter: String {
         var line = subject.displayName
-        if let birthday = currentRecord?.birthday?.value ?? nil {
-            line += "・誕生日 " + CatCareFormat.day(birthday)
-                + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? "")
-        } else if case .profile = subject {
-            line += "・誕生日は未記入"
+        if let birthday = currentRecord?.birthday?.value ?? nil,
+           let age = CatCareLostCat.age(birthday, today: CatCareDay(date: Date())) {
+            line += "（\(age)）"
+        }
+        if case let .profile(profile) = subject {
+            line += "\n" + profile.lifeDatesExplanation
         }
         return line
     }
 
     private var basicsSection: some View {
         Section {
-            // Name and birthday are on the プロフィール tab of this same page.
+            // The name is the page title. The dates are facts about the cat,
+            // so they live here with the rest; the album reads them from here.
+            if case let .profile(profile) = subject {
+                Button { showsLifeDatesEditor = true } label: {
+                    HStack {
+                        LabeledContent("誕生日・迎えた日", value: profile.lifeDatesSummary)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
+                .accessibilityIdentifier("cat-care-life-dates")
+            }
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)
                 Text("オス").tag(CatCareSex.male)

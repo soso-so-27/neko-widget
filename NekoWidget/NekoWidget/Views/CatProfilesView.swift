@@ -779,6 +779,74 @@ struct ToolCatPicker<Legacy: View>: View {
     }
 }
 
+/// A cat in the row at the top of a もしも tool.
+struct ToolStripCat: Identifiable, Equatable {
+    let id: String
+    let name: String
+    /// nil for a cat without a profile (one written only in a tool).
+    let profile: CatProfilePresentation?
+    /// Kept from the old lists, so the same identifier still finds the cat.
+    let accessibilityIdentifier: String
+}
+
+/// The row of cats at the top of a もしも tool: round photo and name, the
+/// chosen one ringed. Tapping switches the page in place. With one cat
+/// there is nothing to choose, so the row stays away.
+struct ToolCatStrip: View {
+    let cats: [ToolStripCat]
+    let selectedID: String?
+    let select: (ToolStripCat) -> Void
+
+    var body: some View {
+        if cats.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(cats) { cat in
+                        Button { select(cat) } label: { chip(cat) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(cat.name)
+                            .accessibilityAddTraits(cat.id == selectedID ? .isSelected : [])
+                            .accessibilityIdentifier(cat.accessibilityIdentifier)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .background(Color(.systemGroupedBackground))
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("tool-cat-strip")
+        }
+    }
+
+    private func chip(_ cat: ToolStripCat) -> some View {
+        let chosen = cat.id == selectedID
+        return VStack(spacing: 4) {
+            Group {
+                if let profile = cat.profile {
+                    CatProfileThumbnail(photo: profile.coverPhoto)
+                } else {
+                    Image(systemName: "cat")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(.tertiarySystemFill))
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(chosen ? Color.accentColor : Color.clear, lineWidth: 3))
+            .padding(3)
+            Text(cat.name)
+                .font(.caption.weight(chosen ? .bold : .regular))
+                .foregroundStyle(chosen ? .primary : .secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .frame(width: 72)
+        .contentShape(Rectangle())
+    }
+}
+
 struct ToolCatProfileInfo: View {
     let profile: CatProfilePresentation
     let profiles: [CatProfilePresentation]

@@ -33,7 +33,6 @@ struct CatProfileDetailView: View {
     let actions: CatProfilesViewActions
 
     @Environment(\.dismiss) private var dismiss
-    @State private var showsLifeReferenceEditor = false
     @State private var showsKeyPhotoPicker = false
     @State private var showsDeleteConfirmation = false
     @State private var showsNameEditor = false
@@ -46,15 +45,16 @@ struct CatProfileDetailView: View {
 
     enum CatPage: Hashable { case photos, care }
 
-    /// One page per cat: its photos and dates, or この子のこと. The switch
-    /// sits in the title, so both are one tap from the cat's card.
+    /// One page per cat. 写真: what the app found in Photos (name, face, which
+    /// photos are this cat). この子のこと: the facts people write (dates,
+    /// health, daily life, household), read by the tools and the album.
     var body: some View {
         VStack(spacing: 0) {
             // The same underline tabs as the 写真 tab, full width under the title.
             HStack(spacing: 24) {
                 ForEach([CatPage.photos, CatPage.care], id: \.self) { candidate in
                     Button { page = candidate } label: {
-                        Text(candidate == .photos ? "プロフィール" : "この子のこと")
+                        Text(candidate == .photos ? "写真" : "この子のこと")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(page == candidate ? .primary : .secondary)
                             .frame(minHeight: 44)
@@ -194,21 +194,6 @@ struct CatProfileDetailView: View {
             }
 
             Section {
-                Button {
-                    showsLifeReferenceEditor = true
-                } label: {
-                    HStack {
-                        LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .foregroundStyle(.primary)
-            } footer: {
-                Text(timeGroupingExplanation)
-            }
-
-            Section {
                 Button("プロフィールを削除", role: .destructive) {
                     deleteFailed = false
                     showsDeleteConfirmation = true
@@ -241,12 +226,6 @@ struct CatProfileDetailView: View {
         } message: {
             Text("写真やツールの入力は残ります。この子への写真の指定とアルバム連携だけを外します。")
         }
-        .sheet(isPresented: $showsLifeReferenceEditor) {
-            CatProfileLifeReferenceEditor(
-                profile: profile,
-                save: actions.updateLifeDates
-            )
-        }
         .sheet(isPresented: $showsKeyPhotoPicker) {
             NavigationStack {
                 CatProfilePhotoPicker(
@@ -256,7 +235,7 @@ struct CatProfileDetailView: View {
                 )
             }
         }
-        .appRecordEditing(retainWhileHidden: showsNameEditor || isSavingName || showsLifeReferenceEditor || showsKeyPhotoPicker)
+        .appRecordEditing(retainWhileHidden: showsNameEditor || isSavingName || showsKeyPhotoPicker)
     }
 
     private var preparednessCandidates: [CatProfilePhotoPresentation] {
@@ -266,26 +245,29 @@ struct CatProfileDetailView: View {
             .filter { seen.insert($0.localIdentifier).inserted }
     }
 
-    private var lifeReferenceSummary: String {
-        if profile.lifeDates.hasBothDates { return "両方設定済み" }
-        guard let reference = profile.lifeDates.birthday ?? profile.lifeDates.adoptionDay
-            ?? profile.lifeReference else { return "未設定" }
+}
+
+extension CatProfilePresentation {
+    /// 「推定の誕生日 2020/5/1」「両方設定済み」「未設定」: the 誕生日・迎えた日 row.
+    var lifeDatesSummary: String {
+        if lifeDates.hasBothDates { return "両方設定済み" }
+        guard let reference = lifeDates.birthday ?? lifeDates.adoptionDay ?? lifeReference else { return "未設定" }
         let prefix = reference.isApproximate ? "推定の" : ""
         return "\(prefix)\(reference.kind.title) \(reference.date.formatted(date: .numeric, time: .omitted))"
     }
 
-    private var timeGroupingExplanation: String {
-        guard let reference = profile.lifeReference else {
-            return "誕生日を設定すると、この子だけの「子猫のころ」「1歳のころ」を作ります。"
+    /// What the dates do: the album groups this cat's photos by them.
+    var lifeDatesExplanation: String {
+        guard let reference = lifeReference else {
+            return "誕生日を入れると、アルバムにこの子だけの「子猫のころ」「1歳のころ」ができます。分からなければ迎えた日でも。"
         }
         switch reference.kind {
         case .birthday:
-            return "このプロフィール内だけで「子猫のころ」「1歳のころ」のようにまとめます。"
+            return "アルバムで「子猫のころ」「1歳のころ」のようにまとめます。"
         case .adoptionDay:
             return "迎えた日を基準に「お迎えしたころ」「いっしょに暮らして1年」のようにまとめます。"
         }
     }
-
 }
 
 private struct CatProfilePhotoAlbumSelectionView: View {
@@ -393,7 +375,7 @@ private struct CatProfilePhotoAlbumSelectionView: View {
     }
 }
 
-private struct CatProfileLifeReferenceEditor: View {
+struct CatProfileLifeReferenceEditor: View {
     let profile: CatProfilePresentation
     let save: (String, CatProfileLifeDatesPresentation) async -> Bool
 
