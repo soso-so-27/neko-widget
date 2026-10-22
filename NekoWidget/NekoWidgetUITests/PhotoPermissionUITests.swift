@@ -1486,9 +1486,10 @@ final class PhotoPermissionUITests: XCTestCase {
             )
         }
 
+        app.buttons["main-tab-tools"].tap()
         let settingsButton = firstExistingButton(
             in: app,
-            identifiers: ["albums-settings-button"],
+            identifiers: ["tools-settings-button"],
             labels: ["設定"],
             timeout: 10
         )
@@ -1947,6 +1948,16 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    /// Settings has one door since 10/22: the gear on the ツール tab.
+    @MainActor
+    private func openSettings(in app: XCUIApplication) {
+        let tools = app.buttons["main-tab-tools"]
+        if tools.waitForExistence(timeout: 10) { tools.tap() } else { app.tabBars.buttons["ツール"].tap() }
+        let gear = app.buttons["tools-settings-button"]
+        XCTAssertTrue(gear.waitForExistence(timeout: 10))
+        gear.tap()
+    }
+
     /// Settings keeps saving and moving data behind one row (10/22).
     @MainActor
     private func openSaveAndTransfer(_ app: XCUIApplication) {
@@ -3122,7 +3133,7 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     func testManagedPreservationDisabledHidesEntries() {
         let app = launchRecordPortabilityFixture()
-        app.buttons["albums-settings-button"].tap()
+        openSettings(in: app)
         openSaveAndTransfer(app)
         let existing = app.buttons["settings-memory-note-export"]
         XCTAssertTrue(existing.waitForExistence(timeout: 5))
@@ -3147,7 +3158,7 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     func testMemoryNoteExportCancellationKeepsText() {
         let app = launchRecordPortabilityFixture()
-        app.buttons["albums-settings-button"].tap()
+        openSettings(in: app)
         openSaveAndTransfer(app)
         let entry = app.buttons["settings-memory-note-export"]
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
@@ -3172,7 +3183,7 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     func testPersonalArchiveExportCancellationKeepsPhotoAndText() {
         let app = launchRecordPortabilityFixture()
-        app.buttons["albums-settings-button"].tap()
+        openSettings(in: app)
         openSaveAndTransfer(app)
         let archive = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archive.waitForExistence(timeout: 5))
@@ -3227,7 +3238,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(probe.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "ready"), object: probe)], timeout: 5), .completed)
-        XCTAssertTrue(app.buttons["albums-settings-button"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["main-tab-tools"].waitForExistence(timeout: 5))
         return app
     }
 
@@ -3800,9 +3811,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertGreaterThan(initialProgress, 0)
         assertReadyRemainsVisible(for: 2)
         capture("personal-archive-albums-ready-under-progress")
-        let settings = app.buttons["albums-settings-button"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 15))
-        settings.tap()
+        openSettings(in: app)
         openSaveAndTransfer(app)
         let archive = app.buttons["settings-personal-archive"]
         let settingsOpened = archive.waitForExistence(timeout: 5)
@@ -4035,7 +4044,7 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertTrue(filter.isSelected)
             XCTAssertEqual(photos.count, 1)
         }
-        app.buttons["window-settings-button"].tap()
+        openSettings(in: app)
         let profiles = app.buttons["settings-cat-profiles"]
         XCTAssertTrue(profiles.waitForExistence(timeout: 5))
         for _ in 0..<5 where !profiles.isHittable { app.swipeUp() }
@@ -4118,7 +4127,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
         app.launch()
         openPhotosTab(in: app)
-        app.buttons["window-settings-button"].tap()
+        openSettings(in: app)
         let profiles = app.buttons["settings-cat-profiles"]
         XCTAssertTrue(profiles.waitForExistence(timeout: 10))
         reveal(profiles, in: app)
@@ -5881,7 +5890,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "iCloudに保管済み"), object: row)], timeout: 10), .completed)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch.exists)
-        app.buttons["window-settings-button"].tap()
+        openSettings(in: app)
         openSaveAndTransfer(app)
         let archiveSettings = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archiveSettings.waitForExistence(timeout: 5))

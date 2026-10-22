@@ -1262,14 +1262,8 @@ struct LikedPhotosView: View {
         .onChange(of: availableRecommendations.map(\.id)) { _, _ in freezeRecommendations() }
         .onChange(of: recommendationDay) { _, _ in freezeRecommendations() }
         .toolbar {
-            if !isCatDetail && !showsReflectionArchive && !showsHighlightArchive {
-                if let showSettings {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: showSettings) { Image(systemName: "gearshape") }
-                            .accessibilityLabel("設定").accessibilityIdentifier("albums-settings-button")
-                    }
-                }
-            } else if isCatDetail && !showsHighlightArchive {
+            // Settings lives in one place (the ツール tab); no gear here.
+            if isCatDetail && !showsHighlightArchive {
                 ToolbarItem(placement: .topBarTrailing) { catAlbumMenu }
             }
         }
