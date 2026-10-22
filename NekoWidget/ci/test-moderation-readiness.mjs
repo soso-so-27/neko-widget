@@ -20,7 +20,7 @@ test('the recorded release is accepted only for its reviewed code',async()=>{
 
 test('signed review covers the human review UI and its database authorization rules',()=>{
  assert.ok(codePaths.includes('NekoWidget/SharingService/src/moderation-owner-console.ts'));
- assert.ok(codePaths.includes('NekoWidget/SharingService/migrations/0048_moderation_review_duration.sql'));
+ assert.ok(codePaths.includes('NekoWidget/SharingService/migrations/0049_moderation_review_duration.sql'));
 });
 test('rejects stale evidence, a different key/policy/target, changed evidence, unsigned permission and tampered code',async()=>{
  await assert.rejects(verifyReadiness(evidence,policy,evidence.payload.expiresAtMs),/stale_readiness/);
