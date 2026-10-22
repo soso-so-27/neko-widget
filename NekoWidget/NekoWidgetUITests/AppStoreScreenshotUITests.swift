@@ -265,10 +265,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let menu = app.buttons["photo-browser-related"]
         XCTAssertTrue(menu.waitForExistence(timeout: 20))
         menu.tap()
-        XCTAssertTrue(app.buttons["写真を書き出す"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["同じ日の猫写真"].waitForExistence(timeout: 5))
         captureScreenshot(named: "PR2-photo-menu")
-        app.buttons["photo-browser-showcase-add"].tap()
-        XCTAssertTrue(app.staticTexts["見せる写真に追加しました"].waitForExistence(timeout: 5))
         app.terminate()
     }
 

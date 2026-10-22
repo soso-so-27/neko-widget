@@ -4154,8 +4154,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         app_root = source("NekoWidget/App/AppRootView.swift")
         checker = source("NekoWidget/Services/WidgetInstallationChecker.swift")
 
-        self.assertNotIn("TabView(selection:", guide)
-        self.assertNotIn("selectedStep", guide)
+        # 10/22: the owner asked for the real iOS screens, swiped one by one, with
+        # one line each. The guide is still short: no daily rule, no rediscovery.
+        self.assertIn(".tabViewStyle(.page(indexDisplayMode: .always))", guide)
+        self.assertNotIn("widget-placement-daily-rule", guide)
+        self.assertNotIn("widget-placement-rediscovery", guide)
         self.assertIn("widgetModernPlacementSteps", guide)
         self.assertIn("widgetLegacyPlacementSteps", guide)
         self.assertIn("if #available(iOS 18.0, *)", guide)
