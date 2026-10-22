@@ -3029,19 +3029,7 @@ struct PhotoBrowserView: View {
                         Label("この写真があるアルバム", systemImage: "rectangle.stack")
                     }
                     .disabled((relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty)
-                    if let photo = selectedPhoto {
-                        Button {
-                            if showcaseAddTargets.count == 1, let target = showcaseAddTargets.first {
-                                addToShowcase(photo.localIdentifier, scopeID: target.id)
-                            } else {
-                                showcasePhotoToAdd = photo.localIdentifier
-                            }
-                        } label: {
-                            Label(isAddingToShowcase ? "追加中…" : "見せる写真に追加", systemImage: "photo.badge.plus")
-                        }
-                        .disabled(showcaseAddPhoto == nil || isAddingToShowcase)
-                        .accessibilityIdentifier("photo-browser-showcase-add")
-                    }
+                    // 「見せる写真に追加」 is done from 写真を見せる's own picker, not here.
                     if ManagedPreservationConfiguration.current.isEnabled, let photo = selectedPhoto {
                         Button { managedPreservationPhoto = photo } label: {
                             Label("サービスに保管", systemImage: "externaldrive.badge.plus")
