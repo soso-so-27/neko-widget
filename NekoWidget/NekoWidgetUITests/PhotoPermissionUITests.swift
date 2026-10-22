@@ -1584,12 +1584,8 @@ final class PhotoPermissionUITests: XCTestCase {
                 }
                 captureMainlineScreen(scenario)
                 next.tap()
-                let closePhoto = app.buttons["first-run-photo-close"]
-                XCTAssertTrue(closePhoto.waitForExistence(timeout: 15))
-                XCTAssertTrue(app.buttons["photo-memory-note-open"].exists)
+                // 10/22: 「あとで」 enters the 写真 tab directly; no first photo is opened.
                 XCTAssertFalse(app.buttons["widget-placement-skip"].exists)
-                captureMainlineScreen("\(scenario)-first-photo")
-                closePhoto.tap()
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
 
                 // Widget placement remains an explicit alternative, rather

@@ -49,24 +49,37 @@ struct CatProfileDetailView: View {
     /// One page per cat: its photos and dates, or この子のこと. The switch
     /// sits in the title, so both are one tap from the cat's card.
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            // The same underline tabs as the 写真 tab, full width under the title.
+            HStack(spacing: 24) {
+                ForEach([CatPage.photos, CatPage.care], id: \.self) { candidate in
+                    Button { page = candidate } label: {
+                        Text(candidate == .photos ? "プロフィール" : "この子のこと")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(page == candidate ? .primary : .secondary)
+                            .frame(minHeight: 44)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(page == candidate ? Color.primary : .clear).frame(height: 2)
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(page == candidate ? .isSelected : [])
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+            .background(Color(.systemGroupedBackground))
+            .accessibilityIdentifier("cat-profile-page")
+            Divider()
             if page == .care {
                 CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
             } else {
                 profileForm
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("ページ", selection: $page) {
-                    Text("プロフィール").tag(CatPage.photos)
-                    Text("この子のこと").tag(CatPage.care)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 220)
-                .accessibilityIdentifier("cat-profile-page")
-            }
-        }
+        .navigationTitle(profile.displayName)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var profileForm: some View {
@@ -104,8 +117,7 @@ struct CatProfileDetailView: View {
                             .accessibilityIdentifier("cat-profile-rename")
                         }
                     }
-                    Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚"
-                         + (profile.confirmedPhotos.isEmpty ? "" : " ・ 写真を押して代表写真を変える"))
+                    Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
