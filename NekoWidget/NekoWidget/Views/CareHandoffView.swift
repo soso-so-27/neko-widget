@@ -7,10 +7,28 @@ struct CareHandoffView: View {
     var unregisteredPhotos: [PhotoPresentation]
     @ObservedObject var store: CareHandoffStore = .shared
     @ObservedObject var reuseStore: EvacuationStore = .shared
-    @State private var newCatID: UUID?
-    @State private var opensNewCat = false
-    @State private var duplicateProfile: CatProfilePresentation?
+    @AppStorage("careHandoff.lastCat.v1") private var lastCatID = ""
+    @State private var selectedCatID: UUID?
+    @State private var couldNotOpen = false
     @Environment(\.membershipActions) private var actionAccess
+
+    /// The cats in the row: profiles, this tool's cats without a profile, and
+    /// cats written in 避難に備える that can be copied here.
+    private var stripCats: [ToolStripCat] {
+        let guests = store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }
+        return profiles.map { ToolStripCat(id: $0.identifier, name: $0.displayName, profile: $0,
+                                           accessibilityIdentifier: "tool-profile-\($0.identifier)") }
+            + guests.map { ToolStripCat(id: $0.id.uuidString, name: $0.displayName, profile: nil,
+                                        accessibilityIdentifier: "care-cat-\($0.id.uuidString)") }
+            + availableSavedCats.map { ToolStripCat(id: "saved-" + $0.id.uuidString, name: $0.displayName, profile: nil,
+                                                    accessibilityIdentifier: "care-saved-\($0.id.uuidString)") }
+    }
+
+    private var selectedStripID: String? {
+        guard let selectedCatID, let cat = store.plan.cats.first(where: { $0.id == selectedCatID }) else { return nil }
+        if let profileID = cat.profileID, profiles.contains(where: { $0.identifier == profileID }) { return profileID }
+        return cat.id.uuidString
+    }
 
     var body: some View {
         Group {
@@ -18,78 +36,70 @@ struct CareHandoffView: View {
                 ContentUnavailableView {
                     Label("お世話メモを開けません", systemImage: "exclamationmark.folder")
                 } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
+            } else if stripCats.isEmpty {
+                // No cat yet: add one here.
+                List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }) {} }
+                    .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
+            } else if let id = selectedCatID, store.plan.cats.contains(where: { $0.id == id }) {
+                // The chosen cat's memo, with the row of cats above it to switch in place.
+                editor(id)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        ToolCatStrip(cats: stripCats, selectedID: selectedStripID) { select($0) }
+                    }
             } else {
                 List {
-                    ToolCatPicker(profiles: profiles, select: selectProfile) {
-                        let guests = store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }
-                        if !guests.isEmpty || !availableSavedCats.isEmpty {
-                        Section("まだ登録していない猫") {
-                            ForEach(store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }) { cat in
-                                NavigationLink { editor(cat.id) } label: { Label(cat.displayName, systemImage: "cat") }
-                                    .accessibilityIdentifier("care-cat-\(cat.id.uuidString)")
-                                ToolPromoteCatButton(name: cat.name) { profileID in
-                                    ToolCatProfileLinker.care(cat.id, profileID: profileID, care: store, evacuation: reuseStore)
-                                }
-                            }
-                            ForEach(availableSavedCats) { cat in
-                                Button(cat.displayName) { addCat(sourceCatID: cat.id) }
-                            }
-                        }
-                        }
-                    }
-                    if !store.plan.cats.isEmpty {
-                        Section {
-                            NavigationLink { CareRequestEditor(store: store) } label: {
-                                Label {
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text("今回のお願い").font(.headline)
-                                        Text("相手・期間・連絡先").font(.subheadline).foregroundStyle(.secondary)
-                                    }
-                                } icon: { Image(systemName: "calendar") }
-                            }.accessibilityIdentifier("care-request-open")
-                            NavigationLink { CareDisclosureView(store: store) } label: {
-                                Label("渡す内容を確認", systemImage: "doc.text.image").font(.headline)
-                            }.accessibilityIdentifier("care-disclosure-open").disabled(store.saveError != nil)
-                        } footer: {
-                            Text("相手はアプリなしで読めます。作ったメモは次に預けるときも使えます。")
-                        }
+                    if couldNotOpen {
+                        Text("お世話メモを作れませんでした。上の猫をもう一度押してください。")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    ToolCatStrip(cats: stripCats, selectedID: nil) { select($0) }
+                }
+                .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
             }
         }
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: $opensNewCat) { if let newCatID { editor(newCatID) } }
-        .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
-        .confirmationDialog("この子の記録が複数あります", isPresented: Binding(
-            get: { duplicateProfile != nil }, set: { if !$0 { duplicateProfile = nil } }
-        ), titleVisibility: .visible) {
-            if let profile = duplicateProfile {
-                ForEach(store.plan.cats.filter { $0.profileID == profile.identifier }) { cat in
-                    Button("\(cat.displayName)・\(cat.updatedAt.formatted(date: .abbreviated, time: .shortened))") {
-                        openExisting(cat.id, profile: profile); duplicateProfile = nil
-                    }
-                }
-            }
+        .task {
+            guard selectedCatID == nil, store.loadError == nil,
+                  let first = stripCats.first(where: { $0.id == lastCatID }) ?? stripCats.first else { return }
+            select(first)
         }
     }
-    private func selectProfile(_ profile: CatProfilePresentation) {
-        let matches = store.plan.cats.filter { $0.profileID == profile.identifier }
-        if matches.count > 1 { duplicateProfile = profile }
-        else if let cat = matches.first { openExisting(cat.id, profile: profile) }
-        else { addCat(profileID: profile.identifier, name: profile.displayName) }
-    }
-    private func openExisting(_ id: UUID, profile: CatProfilePresentation) {
-        if store.plan.cats.first(where: { $0.id == id })?.name != profile.displayName {
-            store.editCat(id) { $0.name = profile.displayName }
+
+    /// Opens the cat in place: its memo, made now if this is the first time.
+    private func select(_ cat: ToolStripCat) {
+        couldNotOpen = false
+        if let profile = cat.profile {
+            select(profileID: profile.identifier, name: profile.displayName)
+            return
         }
-        newCatID = id; opensNewCat = true
+        if cat.id.hasPrefix("saved-"), let sourceID = UUID(uuidString: String(cat.id.dropFirst(6))) {
+            addCat(sourceCatID: sourceID)
+        } else if let id = UUID(uuidString: cat.id) {
+            selectedCatID = id
+        }
+        lastCatID = cat.id
+    }
+    private func select(profileID: String, name: String) {
+        couldNotOpen = false
+        let matches = store.plan.cats.filter { $0.profileID == profileID }
+        if let cat = matches.max(by: { $0.updatedAt < $1.updatedAt }) {
+            if cat.name != name { store.editCat(cat.id) { $0.name = name } }
+            selectedCatID = cat.id
+        } else {
+            addCat(profileID: profileID, name: name)
+        }
+        lastCatID = profileID
     }
     private func addCat(profileID: String? = nil, name: String = "", sourceCatID: UUID? = nil) {
         // 預けるときは無料のツール（ADR-027）。nil は重複や保存エラーで、
         // そのときは store の案内がそのまま表示される。
         if let id = store.addCat(profileID: profileID, name: name, using: reuseStore,
             sourceCatID: sourceCatID, access: actionAccess) {
-            newCatID = id; opensNewCat = true
+            selectedCatID = id
+        } else {
+            couldNotOpen = true
         }
     }
     private var availableSavedCats: [EvacuationCat] {
@@ -109,7 +119,23 @@ struct CareHandoffView: View {
             + unregisteredPhotos.map { CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
                 creationDate: $0.creationDate, catBoundingBox: $0.catBoundingBox) })
             .filter { seen.insert($0.localIdentifier).inserted }
-        return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore, profiles: profiles)
+        return CareCatEditor(id: id, ownPhotos: own, otherPhotos: other, store: store, reuseStore: reuseStore,
+                             profiles: profiles, householdSection: AnyView(householdSection))
+    }
+    /// The one request for everyone being handed over: who, when, how to reach you.
+    private var householdSection: some View {
+        Section {
+            NavigationLink { CareRequestEditor(store: store) } label: {
+                Label {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("今回のお願い").font(.headline)
+                        Text("相手・期間・連絡先").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                } icon: { Image(systemName: "calendar") }
+            }.accessibilityIdentifier("care-request-open")
+        } footer: {
+            Text("相手はアプリなしで読めます。作ったメモは次に預けるときも使えます。")
+        }
     }
 }
 
@@ -159,6 +185,8 @@ private struct CareCatEditor: View {
     @ObservedObject var store: CareHandoffStore
     @ObservedObject var reuseStore: EvacuationStore
     var profiles: [CatProfilePresentation] = []
+    /// 今回のお願い, shared by every cat, shown under this cat's memo.
+    var householdSection: AnyView? = nil
     /// Redraws when 「この子のこと」 changes, for example after 「この子のことを直す」.
     @ObservedObject private var catCare = CatCareStore.shared
     @State private var showsPhotoPicker = false
@@ -243,6 +271,7 @@ private struct CareCatEditor: View {
                     }
                     .accessibilityIdentifier("care-call-when-choices")
                 } footer: { Text("「こんな時は連絡を」は、預かる人が迷わないための目安です。") }
+                if let householdSection { householdSection }
                 Section {
                     ToolImportantInformation(text: "書いた内容は自動で保存します。薬は「この子のこと」に、獣医師に言われたとおりに書いてください。")
                 }
@@ -251,7 +280,7 @@ private struct CareCatEditor: View {
                 }
             }
         }
-        .navigationTitle("お世話メモを編集").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
         .task {
             CatCareStore.shared.importFromTools()
             CatCareStore.shared.importBirthdays(profiles)

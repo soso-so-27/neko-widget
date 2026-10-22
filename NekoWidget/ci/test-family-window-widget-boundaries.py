@@ -3432,8 +3432,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("UnassignedCatPhotosView(", detail)
         self.assertNotIn("CatProfilePhotoSourcesView", profile)
         self.assertIn('"この子の写真を見る"', detail)
-        # 10/22: the dates row keeps its footer; the 「この子の時間」 heading is gone.
-        self.assertIn('LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)', detail)
+        # 10/23: 写真 holds what Photos knows (name, face, photos); the dates are
+        # facts about the cat, so they moved to この子のこと → 基本.
+        self.assertNotIn('"誕生日・迎えた日"', detail)
+        self.assertIn('Text(candidate == .photos ? "写真" : "この子のこと")', detail)
+        care = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn('LabeledContent("誕生日・迎えた日", value: profile.lifeDatesSummary)', care)
+        self.assertIn('"cat-care-life-dates"', care)
         self.assertNotIn('Text("この子の時間")', detail)
         # The album link is not offered on the profile; 「うちの子」 lives in 設定 → 写真.
         self.assertNotIn('"写真アプリのアルバムをつなぐ"', detail)

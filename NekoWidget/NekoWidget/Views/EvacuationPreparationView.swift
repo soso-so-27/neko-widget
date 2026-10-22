@@ -302,64 +302,88 @@ private struct EvacuationCatsView: View {
     let otherPhotos: [CatProfilePhotoPresentation]
     @ObservedObject var store: EvacuationStore
     @ObservedObject var reuseStore: CareHandoffStore
+    @AppStorage("evacuation.lastCat.v1") private var lastCatID = ""
     @State private var openedID: UUID?
-    @State private var opensNewCat = false
-    @State private var duplicateProfile: CatProfilePresentation?
+    @State private var couldNotOpen = false
+
+    /// The cats in the row: profiles, this tool's cats without a profile, and
+    /// cats written in 預けるとき that can be copied here.
+    private var stripCats: [ToolStripCat] {
+        let guests = store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }
+        return profiles.map { ToolStripCat(id: $0.identifier, name: $0.displayName, profile: $0,
+                                           accessibilityIdentifier: "tool-profile-\($0.identifier)") }
+            + guests.map { ToolStripCat(id: $0.id.uuidString, name: $0.displayName, profile: nil,
+                                        accessibilityIdentifier: "evacuation-cat-\($0.id.uuidString)") }
+            + availableSavedCats.map { ToolStripCat(id: "saved-" + $0.id.uuidString, name: $0.displayName, profile: nil,
+                                                    accessibilityIdentifier: "evacuation-saved-\($0.id.uuidString)") }
+    }
+
+    private var selectedStripID: String? {
+        guard let openedID, let cat = store.plan.cats.first(where: { $0.id == openedID }) else { return nil }
+        if let profileID = cat.profileID, profiles.contains(where: { $0.identifier == profileID }) { return profileID }
+        return cat.id.uuidString
+    }
+
     var body: some View {
-        List {
-            ToolCatPicker(profiles: profiles, select: selectProfile) {
-                let guests = store.plan.cats.filter { cat in !profiles.contains { $0.identifier == cat.profileID } }
-                if !guests.isEmpty || !availableSavedCats.isEmpty {
-                Section("まだ登録していない猫") {
-                    ForEach(guests) { cat in
-                        NavigationLink { destination(cat.id) } label: { Label(cat.displayName, systemImage: "cat") }
-                            .accessibilityIdentifier("evacuation-cat-\(cat.id.uuidString)")
-                        ToolPromoteCatButton(name: cat.name) { profileID in
-                            ToolCatProfileLinker.evacuation(cat.id, profileID: profileID, care: reuseStore, evacuation: store)
-                        }
+        Group {
+            if stripCats.isEmpty {
+                // No cat yet: add one here.
+                List { ToolCatPicker(profiles: profiles, select: { select(profileID: $0.identifier, name: $0.displayName) }) {} }
+                    .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
+                    .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
+            } else if let id = openedID, store.plan.cats.contains(where: { $0.id == id }) {
+                // The chosen cat's page, with the row of cats above it to switch in place.
+                destination(id)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        ToolCatStrip(cats: stripCats, selectedID: selectedStripID) { select($0) }
                     }
-                    ForEach(availableSavedCats) { cat in
-                        Button(cat.displayName) {
-                            if let id = store.addCat(using: reuseStore, sourceCatID: cat.id) {
-                                openedID = id; opensNewCat = true
-                            }
-                        }
+            } else {
+                List {
+                    if couldNotOpen {
+                        Text("猫の情報を作れませんでした。上の猫をもう一度押してください。")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                .navigationTitle("猫の情報").navigationBarTitleDisplayMode(.inline)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    ToolCatStrip(cats: stripCats, selectedID: nil) { select($0) }
                 }
+                .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
             }
         }
-        .navigationTitle("猫を選ぶ").navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: $opensNewCat) {
-            if let openedID { destination(openedID) }
-        }
-        .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
-        .confirmationDialog("この子の記録が複数あります", isPresented: Binding(
-            get: { duplicateProfile != nil }, set: { if !$0 { duplicateProfile = nil } }
-        ), titleVisibility: .visible) {
-            if let profile = duplicateProfile {
-                ForEach(store.plan.cats.filter { $0.profileID == profile.identifier }) { cat in
-                    Button("\(cat.displayName)・\(cat.updatedAt.formatted(date: .abbreviated, time: .shortened))") {
-                        openExisting(cat.id, profile: profile); duplicateProfile = nil
-                    }
-                }
-            }
+        .task {
+            guard openedID == nil,
+                  let first = stripCats.first(where: { $0.id == lastCatID }) ?? stripCats.first else { return }
+            select(first)
         }
     }
-    private func selectProfile(_ profile: CatProfilePresentation) {
-        let matches = store.plan.cats.filter { $0.profileID == profile.identifier }
-        if matches.count > 1 { duplicateProfile = profile }
-        else if let cat = matches.first { openExisting(cat.id, profile: profile) }
-        else { openNew(profileID: profile.identifier, name: profile.displayName) }
-    }
-    private func openExisting(_ id: UUID, profile: CatProfilePresentation) {
-        if store.plan.cats.first(where: { $0.id == id })?.name != profile.displayName {
-            store.editCat(id) { $0.name = profile.displayName }
+
+    /// Opens the cat in place: its page, made now if this is the first time.
+    private func select(_ cat: ToolStripCat) {
+        couldNotOpen = false
+        if let profile = cat.profile {
+            select(profileID: profile.identifier, name: profile.displayName)
+            return
         }
-        openedID = id; opensNewCat = true
+        if cat.id.hasPrefix("saved-"), let sourceID = UUID(uuidString: String(cat.id.dropFirst(6))) {
+            if let id = store.addCat(using: reuseStore, sourceCatID: sourceID) { openedID = id } else { couldNotOpen = true }
+        } else if let id = UUID(uuidString: cat.id) {
+            openedID = id
+        }
+        lastCatID = cat.id
     }
-    private func openNew(profileID: String? = nil, name: String = "") {
-        if let id = store.addCat(profileID: profileID, name: name, using: reuseStore) { openedID = id; opensNewCat = true }
+    private func select(profileID: String, name: String) {
+        couldNotOpen = false
+        let matches = store.plan.cats.filter { $0.profileID == profileID }
+        if let cat = matches.max(by: { $0.updatedAt < $1.updatedAt }) {
+            if cat.name != name { store.editCat(cat.id) { $0.name = name } }
+            openedID = cat.id
+        } else if let id = store.addCat(profileID: profileID, name: name, using: reuseStore) {
+            openedID = id
+        } else {
+            couldNotOpen = true
+        }
+        lastCatID = profileID
     }
     private var availableSavedCats: [CareCat] {
         guard reuseStore.loadError == nil, reuseStore.saveError == nil else { return [] }
