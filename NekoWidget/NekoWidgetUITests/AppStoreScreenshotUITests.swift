@@ -429,7 +429,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
             app.launch(); settle(2)
             if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") {
                 settle(2); shot("re-30-tools")
-                if tapID("tools-cat-care", app) { settle(2); shot("re-31-cat-care"); back(app) }
+                if tapID("tools-cat-\(profileID)", app) {
+                    settle(2); shot("re-31-cat-page")
+                    if tapLabel("この子のこと", app) { settle(2); shot("re-31b-cat-care") }
+                    back(app)
+                }
             }
             app.terminate()
             app.launchArguments = fixture + ["--showcase-gallery-ui-fixture"]
@@ -449,7 +453,17 @@ final class AppStoreScreenshotUITests: XCTestCase {
         if area == "settings" {
             app.launchArguments = fixture + ["--group-window-screens-fixture"]
             app.launch(); settle(2)
-            if openSettings(app) { shot("re-40-settings"); app.swipeUp(); settle(1); shot("re-41-settings-lower") }
+            if openSettings(app) {
+                shot("re-40-settings")
+                if tapID("settings-save-and-transfer", app) { settle(2); shot("re-42-save-and-transfer"); backToSettings(app) }
+                app.swipeUp(); settle(1); shot("re-41-settings-lower")
+            }
+            app.terminate()
+            app.launchArguments = fixture
+            app.launch(); settle(2)
+            if tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"), tapID("home-widget-placement-guide", app) {
+                settle(2); shot("re-43-widget-guide"); app.swipeLeft(); settle(1); shot("re-44-widget-guide-2")
+            }
             app.terminate()
         }
     }
