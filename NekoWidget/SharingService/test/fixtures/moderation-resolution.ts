@@ -7,10 +7,19 @@ import { routeLocalModerationResolution } from '../../src/moderation-resolution-
 export const resolutionDB=(env as unknown as {DB:D1Database}).DB;
 export async function resolutionFixture(existingReportId?: string, crossCommitSecond?: 'scope'|'event'|'reply', shortReadWindow=false) {
  const f=await fixture(existingReportId),db=resolutionDB;
+ // Shorten test clock boundaries only; exercise the same snapshot purge guard.
+ if(shortReadWindow){
+  for(const name of ['moderation_owner_challenge_snapshot','moderation_owner_snapshot_insert']){
+   const trigger=await db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?").bind(name).first<{sql:string}>();
+   expect(trigger!.sql).toContain('issued_at+900');
+   await db.exec(`DROP TRIGGER ${name};`);
+   await db.prepare(trigger!.sql.replace('issued_at+900','issued_at+4')).run();
+  }
+ }
  const databaseFailures:string[]=[];
  let observedOperation:'issue'|'prove'|undefined;
  const observedDB=new Proxy(db,{get(target,key){
-  if(key==='prepare'&&shortReadWindow)return(sql:string)=>target.prepare(sql.replace('MIN(unixepoch()+60,?)','MIN(unixepoch()+4,?)'));
+  if(key==='prepare'&&shortReadWindow)return(sql:string)=>target.prepare(sql.replace('MIN(unixepoch()+60,?)','MIN(unixepoch()+4,?)').replace('MIN(unixepoch()+300,?,?)','MIN(unixepoch()+4,?,?)'));
   if(key==='batch')return async(statements:D1PreparedStatement[])=>{
    // Keep the real atomic transaction and constraints. A read-only SQL workload
    // forces a clock boundary before the event or reply, independently of request time.
@@ -41,6 +50,7 @@ export async function resolutionFixture(existingReportId?: string, crossCommitSe
   const opened=await routeLocalModerationOwner(f.request(issued.assertionPath,'POST',await f.assertion(issued.challenge,{counter:++counter})),local);
   expect(opened.status,opened.status===200?'':await opened.clone().text()).toBe(200);
   await opened.arrayBuffer();
+  expect(Number(opened.headers.get('X-Moderation-Review-Expires-At'))).toBeGreaterThanOrEqual(Number(opened.headers.get('X-Moderation-Expires-At')));
   return opened.headers.get('X-Moderation-Read-Receipt')!;
  }
  async function issue(operation:string,identity:string,revision:number,reference=f.caseReference) {
