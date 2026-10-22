@@ -438,6 +438,8 @@ struct MainTabView: View {
                         pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
                         showSettings: { showsSettings = true }
                     )
+                    // The window screens start 「写真を届ける」 from these cat photos.
+                    .environment(\.groupWindowCatPhotos, catPhotos)
                 }
                 .tabItem {
                     Label("まど", systemImage: "window.vertical.closed")
@@ -2781,7 +2783,6 @@ private struct WindowListView: View {
                 if let groupClient = GroupWindowClientProvider.ui {
                     // Windows people share come first (1-4); public windows follow.
                     GroupWindowListSection(client: groupClient)
-                        .environment(\.groupWindowCatPhotos, catPhotos)
                     if !receivingPublicWindows.isEmpty {
                         Text("公式のまど")
                             .font(.subheadline.weight(.semibold))
