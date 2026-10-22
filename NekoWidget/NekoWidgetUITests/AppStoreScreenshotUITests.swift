@@ -211,7 +211,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launch()
-        XCTAssertTrue(app.buttons["albums-settings-button"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["main-tab-photos"].waitForExistence(timeout: 20))
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if permission.waitForExistence(timeout: 3) {
             let deny = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
