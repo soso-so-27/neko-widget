@@ -4996,7 +4996,7 @@ class SettingsLayoutTests(unittest.TestCase):
     def test_settings_put_daily_things_first_and_test_tools_last(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
-        order = ["PlusSettingsSection()", 'Text("写真")', 'Text("猫")', 'Text("ホーム画面")', 'Text("まど")',
+        order = ['Text("写真")', 'Text("猫")', 'Text("ホーム画面")', 'Text("まど")', "PlusSettingsSection()",
                  'Text("保存")', 'Text("困ったとき")', '"settings-app-version"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))

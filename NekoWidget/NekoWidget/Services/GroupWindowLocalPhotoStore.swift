@@ -37,6 +37,8 @@ actor GroupWindowLocalPhotoStore {
         var name: String
         /// People whose photos this iPhone does not show in this window.
         var hiddenMembers: [HiddenMember]? = nil
+        /// This iPhone's participant ID, so hearts show as its own before the relay answers.
+        var myParticipantID: String? = nil
     }
 
     struct HiddenMember: Codable, Equatable, Sendable, Identifiable {
@@ -104,15 +106,35 @@ actor GroupWindowLocalPhotoStore {
         return directory.windows
     }
 
-    func remember(windowID: String, name: String) {
+    func remember(windowID: String, name: String, myParticipantID: String? = nil) {
         var windows = knownWindows()
         if let index = windows.firstIndex(where: { $0.id == windowID }) {
-            guard windows[index].name != name else { return }
+            let me = myParticipantID ?? windows[index].myParticipantID
+            guard windows[index].name != name || windows[index].myParticipantID != me else { return }
             windows[index].name = name
+            windows[index].myParticipantID = me
         } else {
-            windows.append(KnownWindow(id: windowID, name: name))
+            windows.append(KnownWindow(id: windowID, name: name, myParticipantID: myParticipantID))
         }
         writeDirectory(windows)
+    }
+
+    func myParticipantID(windowID: String) -> String? {
+        knownWindows().first { $0.id == windowID }?.myParticipantID
+    }
+
+    /// The hearts last seen from the relay, shown at once when the window opens.
+    func hearts(windowID: String) -> [String: [GroupHeart]] {
+        guard let url = try? heartsURL(windowID: windowID), FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let hearts = try? JSONDecoder().decode([String: [GroupHeart]].self, from: data)
+        else { return [:] }
+        return hearts
+    }
+
+    func saveHearts(_ hearts: [String: [GroupHeart]], windowID: String) {
+        guard let url = try? heartsURL(windowID: windowID), let data = try? JSONEncoder().encode(hearts) else { return }
+        try? write(data, to: url)
     }
 
     /// Stops showing one person's photos in a window, on this iPhone only.
@@ -195,6 +217,10 @@ actor GroupWindowLocalPhotoStore {
 
     private func indexURL(windowID: String) throws -> URL {
         try directory(windowID: windowID).appendingPathComponent("index.json")
+    }
+
+    private func heartsURL(windowID: String) throws -> URL {
+        try directory(windowID: windowID).appendingPathComponent("hearts.json")
     }
 
     private func photoURL(photoID: String, windowID: String) throws -> URL {

@@ -156,11 +156,6 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            // Plus first: what the person pays for, and how to change it.
-            if canOpenMembershipOffer {
-                PlusSettingsSection()
-            }
-
             Section {
                 NavigationLink {
                     photoSettingsView
@@ -246,6 +241,11 @@ struct SettingsView: View {
                 } header: {
                     Text("まど")
                 }
+            }
+
+            // Plus sits with 保存, the thing it pays for, after the everyday sections.
+            if canOpenMembershipOffer {
+                PlusSettingsSection()
             }
 
             Section {
