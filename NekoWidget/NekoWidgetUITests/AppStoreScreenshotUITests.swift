@@ -429,7 +429,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             app.launch(); settle(2)
             if tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") {
                 settle(2); shot("re-30-tools")
-                if tapID("tools-cat-\(profileID)", app) {
+                if tapLabel("ミケ", app) {
                     settle(2); shot("re-31-cat-page")
                     if tapLabel("この子のこと", app) { settle(2); shot("re-31b-cat-care") }
                     back(app)
@@ -461,7 +461,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             app.terminate()
             app.launchArguments = fixture
             app.launch(); settle(2)
-            if tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"), tapID("home-widget-placement-guide", app) {
+            if openSettings(app), tapID("settings-widget-placement-guide", app) {
                 settle(2); shot("re-43-widget-guide"); app.swipeLeft(); settle(1); shot("re-44-widget-guide-2")
             }
             app.terminate()
