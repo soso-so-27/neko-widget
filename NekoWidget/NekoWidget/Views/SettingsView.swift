@@ -503,7 +503,8 @@ struct SettingsView: View {
                 } label: {
                     Label("写真アプリの「うちの子」アルバム", systemImage: "rectangle.stack.badge.plus")
                 }
-                Picker("探す期間", selection: $draft.range) {
+                // Which cat photos the Widget may show; the scan itself covers every photo.
+                Picker("まどに出す写真", selection: $draft.range) {
                     ForEach(PhotoRangePresentation.allCases) { range in
                         Text(range.rawValue).tag(range)
                     }
@@ -515,7 +516,7 @@ struct SettingsView: View {
             }
 
             Section {
-                SettingsActionRow(isRescanning || isScanning ? "探しています…" : "最初から探し直す",
+                SettingsActionRow(isRescanning || isScanning ? "探しています…" : "写真を最初から探し直す",
                                   systemImage: "arrow.clockwise") {
                     Task {
                         isRescanning = true
@@ -525,9 +526,9 @@ struct SettingsView: View {
                 }
                 .disabled(isRescanning || isScanning || !hasPhotoAccess)
             } header: {
-                Text("写真を見つけ直す")
+                Text("困ったとき")
             } footer: {
-                Text("写真が増えたときや、見つけ方を作り直したいときに使います。年齢ごとのアルバムは、猫のプロフィールの誕生日から作ります。")
+                Text("猫の写真が見つからない、見分けがおかしいと感じたときに。ふだんは、新しい写真は自動で探します。")
             }
 
             if isSaving {
