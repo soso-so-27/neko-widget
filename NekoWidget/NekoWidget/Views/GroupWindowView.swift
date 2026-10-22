@@ -876,8 +876,8 @@ private struct GroupPhotoTile: View {
                 }
                 .onTapGesture(count: 1, perform: open)
             HStack(spacing: 8) {
-                GroupMemberAvatar(name: entry.isOwn ? "自" : entry.senderDisplayName, size: 24)
-                Text(entry.isOwn ? "自分" : entry.senderDisplayName)
+                GroupMemberAvatar(name: entry.isOwn ? "あなた" : entry.senderDisplayName, size: 24)
+                Text(entry.isOwn ? "あなた" : entry.senderDisplayName)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Text(entry.createdAt.formatted(.dateTime.month().day()))
@@ -1227,28 +1227,49 @@ private struct GroupPhotoDetail: View {
         return index > 0 ? model.entries[index - 1].id : nil
     }
 
+    /// Who, when, and who sent a heart (as their coloured circles). No
+    /// sentence, no page count; the spoken label keeps the full sentence.
     private func details(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
         let day = entry.createdAt.formatted(.dateTime.month().day())
         let names = reactors(entry)
-        let position = model.entries.firstIndex { $0.id == entry.id }.map { "\($0 + 1) / \(model.entries.count)" }
-        return VStack(spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(entry.isOwn ? "自分" : GroupDisplayName.withSan(entry.senderDisplayName))
+        let spokenDay = entry.isOwn ? "\(day)に届けました" : "\(day)に届きました"
+        return VStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(entry.isOwn ? "あなた" : GroupDisplayName.withSan(entry.senderDisplayName))
                     .font(.subheadline.weight(.semibold))
-                Text(entry.isOwn ? "\(day)に届けました" : "\(day)に届きました")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                if let position {
-                    Text(position).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
-                }
+                Text(day).font(.subheadline).foregroundStyle(.secondary)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(entry.isOwn ? "あなたの写真、\(spokenDay)" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から、\(spokenDay)")
             if !names.isEmpty {
-                Text("♥ " + names.joined(separator: "・"))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("ハートを送った人：\(names.joined(separator: "、"))")
+                HStack(spacing: 6) {
+                    HStack(spacing: -5) {
+                        ForEach(Array(names.prefix(6).enumerated()), id: \.offset) { _, name in
+                            GroupMemberAvatar(name: name, size: 18)
+                                .overlay(Circle().stroke(Color.black, lineWidth: 1))
+                        }
+                    }
+                    Text("♥ \(names.count)")
+                        .font(.footnote.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("ハートを送った人：\(names.joined(separator: "、"))")
             }
+            weekLine
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    /// 「このまどの今週 ・ 5 枚届いた ・ あなたは 1 枚」: a small reason to send the next one.
+    private var weekLine: some View {
+        let calendar = Calendar.current
+        let thisWeek = model.entries.filter { calendar.isDate($0.createdAt, equalTo: Date(), toGranularity: .weekOfYear) }
+        let mine = thisWeek.filter(\.isOwn).count
+        return Text("このまどの今週 ・ \(thisWeek.count)枚届いた ・ あなたは\(mine == 0 ? "まだ 0" : "\(mine)")枚")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.top, 2)
+            .accessibilityIdentifier("group-photo-week")
     }
 
     /// Under the photo: ♥ with its count, and お気に入り. Words only as captions.
@@ -1673,20 +1694,12 @@ private struct GroupWindowCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(window.name)
                         .font(.title3.bold())
-                    Text(paused ? "止まっています"
-                         : senderName.map { "\(GroupDisplayName.withSan($0))から ・ \(window.memberCount)人" }
-                           ?? "\(window.memberCount)人")
+                    Text(paused ? "止まっています" : companions)
                         .font(.footnote)
                 }
                 .foregroundStyle(cover != nil ? Color.white : paused ? Color.orange : Color.primary)
                 .shadow(color: cover != nil ? .black.opacity(0.5) : .clear, radius: 4, y: 1)
                 Spacer(minLength: 0)
-                HStack(spacing: -8) {
-                    ForEach(window.activeMembers.prefix(4)) { member in
-                        GroupMemberAvatar(name: member.displayName, size: 28)
-                            .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
-                    }
-                }
             }
             .padding(14)
         }
@@ -1695,6 +1708,14 @@ private struct GroupWindowCard: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(window.name)、\(paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))")
         .task(id: window.id) { await loadCover() }
+    }
+
+    /// 「母・妹 と」: the others in the window, by name. Alone: say so.
+    private var companions: String {
+        let others = window.activeMembers.filter { $0.id != window.myParticipantID }.map(\.displayName)
+        if others.isEmpty { return "まだあなただけ" }
+        let shown = others.prefix(3).joined(separator: "・")
+        return others.count > 3 ? "\(shown)・ほか\(others.count - 3)人 と" : "\(shown) と"
     }
 
     private func loadCover() async {

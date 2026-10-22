@@ -1947,6 +1947,15 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    /// Settings keeps saving and moving data behind one row (10/22).
+    @MainActor
+    private func openSaveAndTransfer(_ app: XCUIApplication) {
+        let door = app.buttons["settings-save-and-transfer"]
+        guard door.waitForExistence(timeout: 5) else { return }
+        for _ in 0..<4 where !door.isHittable { app.swipeUp() }
+        door.tap()
+    }
+
     private func revealVetElement(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<10 where !element.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(element.isHittable, "Required action must be reachable: \(element.identifier)")
@@ -3114,6 +3123,7 @@ final class SoloMemoriesUITests: XCTestCase {
     func testManagedPreservationDisabledHidesEntries() {
         let app = launchRecordPortabilityFixture()
         app.buttons["albums-settings-button"].tap()
+        openSaveAndTransfer(app)
         let existing = app.buttons["settings-memory-note-export"]
         XCTAssertTrue(existing.waitForExistence(timeout: 5))
         for _ in 0..<4 where !existing.isHittable { app.swipeUp() }
@@ -3138,6 +3148,7 @@ final class SoloMemoriesUITests: XCTestCase {
     func testMemoryNoteExportCancellationKeepsText() {
         let app = launchRecordPortabilityFixture()
         app.buttons["albums-settings-button"].tap()
+        openSaveAndTransfer(app)
         let entry = app.buttons["settings-memory-note-export"]
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         for _ in 0..<4 where !entry.isHittable { app.swipeUp() }
@@ -3162,6 +3173,7 @@ final class SoloMemoriesUITests: XCTestCase {
     func testPersonalArchiveExportCancellationKeepsPhotoAndText() {
         let app = launchRecordPortabilityFixture()
         app.buttons["albums-settings-button"].tap()
+        openSaveAndTransfer(app)
         let archive = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archive.waitForExistence(timeout: 5))
         for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
@@ -3791,6 +3803,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let settings = app.buttons["albums-settings-button"]
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
         settings.tap()
+        openSaveAndTransfer(app)
         let archive = app.buttons["settings-personal-archive"]
         let settingsOpened = archive.waitForExistence(timeout: 5)
         if !settingsOpened {
@@ -5869,6 +5882,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             predicate: NSPredicate(format: "value == %@", "iCloudに保管済み"), object: row)], timeout: 10), .completed)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch.exists)
         app.buttons["window-settings-button"].tap()
+        openSaveAndTransfer(app)
         let archiveSettings = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archiveSettings.waitForExistence(timeout: 5))
         archiveSettings.tap()
