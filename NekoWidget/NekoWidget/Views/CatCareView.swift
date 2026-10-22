@@ -150,6 +150,15 @@ struct CatCareDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
+            if let hint = CatCareProgress(draft: draft, record: currentRecord).nextHint {
+                // One line, not a dashboard: what the next entry unlocks.
+                Section {
+                    Label(hint, systemImage: "arrow.right.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("cat-care-next-hint")
+                }
+            }
             basicsSection
             healthSection
             livingSection
