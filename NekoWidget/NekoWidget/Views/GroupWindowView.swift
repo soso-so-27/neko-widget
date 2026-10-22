@@ -451,6 +451,7 @@ final class GroupWindowScreenModel: ObservableObject {
     /// photo's detail can check it without downloading every photo.
     func loadWindow() async {
         do { window = try await client.window(id: windowID); message = nil }
+        catch is CancellationError {}
         catch { message = GroupWindowPresentation.message(for: error) }
     }
 
@@ -1402,12 +1403,15 @@ final class GroupWindowListModel: ObservableObject {
     init(client: any GroupWindowMediaClient) { self.client = client }
 
     func load() async {
-        defer { hasLoaded = true }
         do {
             windows = try await client.windows()
             message = nil
+            hasLoaded = true
+        } catch is CancellationError {
+            // The screen went away mid-request: nothing to tell.
         } catch {
             message = GroupWindowPresentation.message(for: error)
+            hasLoaded = true
         }
     }
 

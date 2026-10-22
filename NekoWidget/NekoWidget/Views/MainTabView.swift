@@ -485,9 +485,10 @@ struct MainTabView: View {
                         pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
                         showSettings: { showsSettings = true }
                     )
-                    // The window screens start 「写真を届ける」 from these cat photos.
-                    .environment(\.groupWindowCatPhotos, catPhotos)
                 }
+                // The window screens start 「写真を届ける」 from these cat photos.
+                // Set on the stack: pushed screens take the stack's environment.
+                .environment(\.groupWindowCatPhotos, catPhotos)
                 .tabItem {
                     Label("まど", systemImage: "window.vertical.closed")
                         .accessibilityIdentifier("main-tab-windows")
