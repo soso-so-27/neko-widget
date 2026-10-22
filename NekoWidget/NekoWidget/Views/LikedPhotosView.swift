@@ -1877,13 +1877,18 @@ struct SavedMemoriesGalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if hasPhotoAccess && !isDedicatedPhotoBookFlow { originPicker }
+            // With nothing to show, the heading stays above the empty state.
+            if hasPhotoAccess && !isDedicatedPhotoBookFlow && visiblePhotos.isEmpty { originPicker }
             ZStack {
             if !hasPhotoAccess || visiblePhotos.isEmpty {
                 emptyGalleryState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
+                        // The heading scrolls with the photos, as on the 「すべて」 tab.
+                        if !isDedicatedPhotoBookFlow {
+                            originPicker.padding(.bottom, 6)
+                        }
                         if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
                             unavailableSavedPhotosBanner
                         }
