@@ -3,6 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Public programme boundaries: local publisher/Worker and native metadata.
+# No UI suite, remote calls or publication.
+node --test ../OfficialWindowService/test/program.test.js
+xcrun swiftc -parse-as-library -D OFFICIAL_WINDOW_CHECKS \
+  Shared/Models/OfficialWindowCatalog.swift Shared/Storage/AtomicJSON.swift \
+  Shared/Storage/OfficialWindowStore.swift ci/verify-official-window.swift \
+  -o "$RUNNER_TEMP/verify-official-window"
+"$RUNNER_TEMP/verify-official-window"
+
 python3 ci/test-disabled-release-config.py
 python3 ci/test-disabled-release-build-settings.py
 python3 ci/test-group-window-release.py
