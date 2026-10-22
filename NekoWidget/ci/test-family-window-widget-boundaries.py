@@ -4579,7 +4579,12 @@ class CatCareTests(unittest.TestCase):
         self.assertIn("markDeleted", view)
         self.assertNotIn(".remove(at:", view)
         tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("CatCareEntryView(profiles: catProfilesPresentation.profiles)", tab)
+        # 10/22: the cat's card on the ツール tab opens the cat's page, whose
+        # title switch leads to この子のこと (CatCareDetailView).
+        self.assertIn("CatTile(profile: profile, progress: careProgress(for: profile))", tab)
+        detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
+        self.assertIn('"cat-profile-page"', detail)
+        self.assertIn("CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))", detail)
         checks = source("ci/run-quick-ios-checks.sh")
         self.assertIn("ci/verify-cat-care.swift", checks)
         project = source("NekoWidget.xcodeproj/project.pbxproj")

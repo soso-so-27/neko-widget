@@ -42,8 +42,34 @@ struct CatProfileDetailView: View {
     @State private var isDeleting = false
     @State private var nameSaveFailed = false
     @State private var deleteFailed = false
+    @State private var page: CatPage = .photos
 
+    enum CatPage: Hashable { case photos, care }
+
+    /// One page per cat: its photos and dates, or この子のこと. The switch
+    /// sits in the title, so both are one tap from the cat's card.
     var body: some View {
+        Group {
+            if page == .care {
+                CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
+            } else {
+                profileForm
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("ページ", selection: $page) {
+                    Text("写真").tag(CatPage.photos)
+                    Text("この子のこと").tag(CatPage.care)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
+                .accessibilityIdentifier("cat-profile-page")
+            }
+        }
+    }
+
+    private var profileForm: some View {
         Form {
             Section {
                 // One heading: the photo, the name with its pencil, the count.
@@ -116,13 +142,6 @@ struct CatProfileDetailView: View {
             }
 
             Section {
-                // The cat's health, food and contacts, read by every tool.
-                NavigationLink {
-                    CatCareEntryView(profiles: [profile])
-                } label: {
-                    Label("この子のこと", systemImage: "heart.text.square")
-                }
-                .accessibilityIdentifier("cat-profile-open-cat-care")
                 NavigationLink {
                     CatPreparednessView(
                         identityKey: profile.identifier,

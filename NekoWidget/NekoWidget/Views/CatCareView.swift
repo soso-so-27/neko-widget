@@ -150,7 +150,6 @@ struct CatCareDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            progressSection
             basicsSection
             healthSection
             livingSection
