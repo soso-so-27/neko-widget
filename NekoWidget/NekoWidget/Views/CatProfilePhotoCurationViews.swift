@@ -46,28 +46,47 @@ struct CatProfileDetailView: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 14) {
+                // One heading: the photo, the name with its pencil, the count.
+                // No badge on the photo and no second box under it.
+                VStack(spacing: 8) {
                     Button {
                         showsKeyPhotoPicker = true
                     } label: {
                         CatProfileThumbnail(photo: profile.coverPhoto)
-                            .frame(width: 82, height: 82)
-                            .overlay(alignment: .bottomTrailing) {
-                                Image(systemName: "photo.badge.checkmark")
-                                    .padding(5)
-                                    .background(.regularMaterial, in: Circle())
-                            }
+                            .frame(width: 96, height: 96)
+                            .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .disabled(profile.confirmedPhotos.isEmpty)
                     .accessibilityLabel("\(profile.displayName)の代表写真を変更")
-                    VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
                         Text(profile.displayName)
                             .font(.title2.bold())
-                        Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
-                            .foregroundStyle(.secondary)
+                        if !showsNameEditor {
+                            Button {
+                                draftName = profile.name ?? ""
+                                nameSaveFailed = false
+                                showsNameEditor = true
+                            } label: {
+                                Image(systemName: "pencil.circle.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    .frame(minWidth: 44, minHeight: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("名前を変更")
+                            .accessibilityIdentifier("cat-profile-rename")
+                        }
                     }
+                    Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚"
+                         + (profile.confirmedPhotos.isEmpty ? "" : " ・ 写真を押して代表写真を変える"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .listRowBackground(Color.clear)
 
                 if showsNameEditor {
                     TextField("名前", text: $draftName)
@@ -93,12 +112,6 @@ struct CatProfileDetailView: View {
                     }
                     .buttonStyle(.borderless)
                     .disabled(isSavingName)
-                } else {
-                    SettingsActionRow("名前を変更", systemImage: "pencil") {
-                        draftName = profile.name ?? ""
-                        nameSaveFailed = false
-                        showsNameEditor = true
-                    }
                 }
             }
 
