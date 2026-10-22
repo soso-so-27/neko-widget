@@ -103,6 +103,16 @@ struct LostCatEmergencyEntryView: View {
     @State private var chosenProfile: CatProfilePresentation?
     @State private var opensProfile = false
     var body: some View {
+        if let first = profiles.first, savedCats.isEmpty, savedGuestKeys.isEmpty {
+            // Only profiles to choose from: straight to the first cat's page.
+            // Switching is 「猫を変更」 inside it; the list below is for guest cats.
+            editor(first.identifier, first.displayName)
+        } else {
+            catList
+        }
+    }
+
+    private var catList: some View {
         List {
             ToolCatPicker(profiles: profiles, select: { chosenProfile = $0; opensProfile = true }) {
                 // Only when there is something in it: an empty heading is noise.

@@ -67,7 +67,19 @@ struct VeterinaryVisitsView: View {
     @State private var addsCat = false
     @State private var newName = ""
     @State private var cleanupPending = false
+    @State private var autoOpened = false
+    @State private var pendingSwitch: PhotoMemoryNoteCat?
     @Environment(\.membershipActions) private var actionAccess
+
+    /// Straight to a cat's memo when the only choices are profiles; the list
+    /// stays for guest cats and for coming back to past memos.
+    private func openFirstProfileIfAlone() async {
+        guard !autoOpened, let first = profiles.first, let id = UUID(uuidString: first.identifier),
+              cats.allSatisfy({ cat in profiles.contains { $0.identifier == cat.id.uuidString } })
+        else { return }
+        autoOpened = true
+        await open(PhotoMemoryNoteCat(id: id, name: first.displayName))
+    }
 
     var body: some View {
         List {
@@ -103,11 +115,18 @@ struct VeterinaryVisitsView: View {
             if cleanupPending { Section { Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote); Button("もう一度片付ける") { Task { await reload() } } } }
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
-        .task { await reload() }
-        .sheet(item: $selected, onDismiss: { Task { await reload() } }) { visit in
+        .task { await reload(); await openFirstProfileIfAlone() }
+        .sheet(item: $selected, onDismiss: {
+            Task {
+                await reload()
+                // 「ほかの猫」 inside the memo: close this one, open that cat's.
+                if let next = pendingSwitch { pendingSwitch = nil; await open(next) }
+            }
+        }) { visit in
             NavigationStack {
                 VeterinaryConsultationView(initialVisit: visit, photos: photos, noteStore: noteStore,
-                    store: store, initialRecord: initialRecord, profiles: profiles)
+                    store: store, initialRecord: initialRecord, profiles: profiles,
+                    switchCat: profiles.count > 1 ? { cat in pendingSwitch = cat; selected = nil } : nil)
             }
             .environment(\.dynamicTypeSize, typeSize)
         }
@@ -164,6 +183,8 @@ private struct VeterinaryConsultationView: View {
     let store: VeterinaryVisitStore
     let initialRecord: PhotoMemoryNoteRecord?
     var profiles: [CatProfilePresentation] = []
+    /// Set when the memo can hand over to another cat's memo.
+    var switchCat: ((PhotoMemoryNoteCat) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var visit: VeterinaryVisit?
@@ -265,7 +286,22 @@ private struct VeterinaryConsultationView: View {
         .announcesWhenShown(error)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("閉じる") { close() }.disabled(busy) }
-
+            if let switchCat, let visit {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        ForEach(profiles.filter { $0.identifier != visit.catID.uuidString }) { profile in
+                            Button(profile.displayName) {
+                                guard let id = UUID(uuidString: profile.identifier) else { return }
+                                switchCat(PhotoMemoryNoteCat(id: id, name: profile.displayName))
+                            }
+                        }
+                    } label: {
+                        Label("ほかの猫", systemImage: "cat")
+                    }
+                    .disabled(busy)
+                    .accessibilityIdentifier("vet-switch-cat")
+                }
+            }
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 6) {
