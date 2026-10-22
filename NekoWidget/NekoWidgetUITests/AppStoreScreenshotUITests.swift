@@ -403,7 +403,12 @@ final class AppStoreScreenshotUITests: XCTestCase {
             if tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") {
                 settle(3); shot("re-20-window-list")
                 openGroupWindow(app); settle(3); shot("re-21-window")
-                if tapID("group-window-send-photo", app) { settle(2); shot("re-27-send-picker"); closeSheet(app); settle(1) }
+                if tapID("group-window-send-photo", app) {
+                    settle(2); shot("re-27-send-picker")
+                    let cancel = app.buttons["キャンセル"].firstMatch
+                    if cancel.waitForExistence(timeout: 3) { cancel.tap() } else { app.swipeDown() }
+                    settle(1)
+                }
                 app.swipeUp(); settle(1); shot("re-22-window-lower")
                 let tile = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "届いた写真")).firstMatch
                 if tile.waitForExistence(timeout: 5) {
