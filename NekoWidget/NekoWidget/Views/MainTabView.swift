@@ -2781,6 +2781,7 @@ private struct WindowListView: View {
                 if let groupClient = GroupWindowClientProvider.ui {
                     // Windows people share come first (1-4); public windows follow.
                     GroupWindowListSection(client: groupClient)
+                        .environment(\.groupWindowCatPhotos, catPhotos)
                     if !receivingPublicWindows.isEmpty {
                         Text("公式のまど")
                             .font(.subheadline.weight(.semibold))

@@ -497,8 +497,81 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 }
 
+/// The app's own cat photos, handed to the window screens so 「写真を届ける」
+/// starts from cats rather than the whole Photos library.
+struct GroupWindowCatPhotosKey: EnvironmentKey {
+    static let defaultValue: [PhotoPresentation] = []
+}
+
+extension EnvironmentValues {
+    var groupWindowCatPhotos: [PhotoPresentation] {
+        get { self[GroupWindowCatPhotosKey.self] }
+        set { self[GroupWindowCatPhotosKey.self] = newValue }
+    }
+}
+
+/// Picks one of the app's cat photos to deliver; the Photos app stays one
+/// tap away for anything else.
+private struct GroupCatPhotoPickerSheet: View {
+    let photos: [PhotoPresentation]
+    @Binding var pickedItem: PhotosPickerItem?
+    let choose: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3), spacing: 2) {
+                    ForEach(photos) { photo in
+                        Button {
+                            choose(photo.localIdentifier)
+                        } label: {
+                            PhotoAssetImageView(
+                                localIdentifier: photo.localIdentifier,
+                                catBoundingBox: photo.catBoundingBox,
+                                targetPixelSize: CGSize(width: 360, height: 360),
+                                networkAccessAllowed: false
+                            )
+                            .aspectRatio(1, contentMode: .fill)
+                            .clipped()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("group-window-cat-photo-\(photo.localIdentifier)")
+                    }
+                }
+            }
+            .navigationTitle("届ける写真を選ぶ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+            }
+            .safeAreaInset(edge: .bottom) {
+                PhotosPicker(selection: $pickedItem, matching: .images, photoLibrary: .shared()) {
+                    Label("写真アプリから選ぶ", systemImage: "photo.on.rectangle")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(.bar)
+                .accessibilityIdentifier("group-window-send-photo-library")
+            }
+            .onChange(of: pickedItem) { _, item in
+                if item != nil { dismiss() }
+            }
+        }
+    }
+}
+
+private struct GroupLibraryDeliveryRequest: Identifiable {
+    let localIdentifier: String
+    var id: String { localIdentifier }
+}
+
 struct GroupWindowScreen: View {
     @StateObject private var model: GroupWindowScreenModel
+    @Environment(\.groupWindowCatPhotos) private var catPhotos
+    @State private var showsCatPicker = false
+    @State private var libraryDelivery: GroupLibraryDeliveryRequest?
     @State private var pickedItem: PhotosPickerItem?
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var openedEntry: GroupWindowLocalPhotoStore.Entry?
@@ -628,6 +701,21 @@ struct GroupWindowScreen: View {
         .safeAreaInset(edge: .bottom) {
             if !model.isFormer { sendBar }
         }
+        .sheet(isPresented: $showsCatPicker) {
+            GroupCatPhotoPickerSheet(photos: catPhotos, pickedItem: $pickedItem) { identifier in
+                showsCatPicker = false
+                libraryDelivery = GroupLibraryDeliveryRequest(localIdentifier: identifier)
+            }
+        }
+        .sheet(item: $libraryDelivery) { request in
+            NavigationStack {
+                GroupLibraryDeliveryStep(model: model, localIdentifier: request.localIdentifier) {
+                    libraryDelivery = nil
+                }
+                .navigationTitle("まどに届ける")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
         .task {
             await model.showStored()
             await model.sync()
@@ -725,16 +813,32 @@ struct GroupWindowScreen: View {
             } else if let failed = model.failedDelivery {
                 failedDeliveryRow(failed)
             }
-            PhotosPicker(selection: $pickedItem, matching: .images, photoLibrary: .shared()) {
-                Label(model.isSending ? "届けています…" : "写真を届ける", systemImage: "paperplane")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 50)
+            if catPhotos.isEmpty {
+                // No cat photos found yet: the Photos app is the only source.
+                PhotosPicker(selection: $pickedItem, matching: .images, photoLibrary: .shared()) {
+                    Label(model.isSending ? "届けています…" : "写真を届ける", systemImage: "paperplane")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                // While a photo waits to be sent again, the retry is the main button.
+                .buttonStyle(.borderedProminent)
+                .opacity(model.failedDelivery == nil ? 1 : 0.45)
+                .disabled(!model.canSend)
+                .accessibilityIdentifier("group-window-send-photo")
+            } else {
+                // The app's cat photos first; the Photos app from inside the picker.
+                Button {
+                    showsCatPicker = true
+                } label: {
+                    Label(model.isSending ? "届けています…" : "写真を届ける", systemImage: "paperplane")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .opacity(model.failedDelivery == nil ? 1 : 0.45)
+                .disabled(!model.canSend)
+                .accessibilityIdentifier("group-window-send-photo")
             }
-            // While a photo waits to be sent again, the retry is the main button.
-            .buttonStyle(.borderedProminent)
-            .opacity(model.failedDelivery == nil ? 1 : 0.45)
-            .disabled(!model.canSend)
-            .accessibilityIdentifier("group-window-send-photo")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -1400,30 +1504,45 @@ struct GroupWindowListSection: View {
                 }
                 .buttonStyle(.plain)
             }
-            if !model.hasLoaded && model.windows.isEmpty {
-                // Names kept on this iPhone from the last visit, so the list is not empty while it loads.
-                ForEach(GroupWidgetCache.entries(), id: \.windowID) { known in
+            let known = GroupWidgetCache.entries()
+            if model.windows.isEmpty, !model.hasLoaded || model.message != nil {
+                // Names kept on this iPhone from the last visit: shown while the
+                // list loads, and kept when the relay cannot be reached.
+                ForEach(known, id: \.windowID) { entry in
                     NavigationLink {
-                        GroupWindowScreen(client: model.client, windowID: known.windowID)
+                        GroupWindowScreen(client: model.client, windowID: entry.windowID)
                     } label: {
-                        knownRow(known.windowName)
+                        knownRow(entry.windowName, subtitle: model.hasLoaded ? "最後に確認したまど" : "読み込み中")
                     }
                     .buttonStyle(.plain)
                 }
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("まどを読み込んでいます…").font(.footnote).foregroundStyle(.secondary)
+                if !model.hasLoaded {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("まどを読み込んでいます…").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("group-window-list-loading")
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("group-window-list-loading")
             }
             if let message = model.message {
-                Text(message).font(.footnote).foregroundStyle(.red)
+                if model.windows.isEmpty && known.isEmpty {
+                    Text(message).font(.footnote).foregroundStyle(.red)
+                } else {
+                    // A refresh that failed is not an emergency: say so quietly, with a retry.
+                    HStack(spacing: 8) {
+                        Text("いまは最新を確認できません。").font(.footnote).foregroundStyle(.secondary)
+                        Button("もう一度") { Task { await model.load() } }
+                            .font(.footnote.weight(.semibold))
+                            .disabled(model.isWorking)
+                    }
+                    .accessibilityIdentifier("group-window-list-stale")
+                }
             }
             NavigationLink {
                 GroupWindowCreateScreen(client: model.client)
             } label: {
-                Label("まどを作る（\(GroupWindowPresentation.memberLimit)人まで）", systemImage: "plus")
+                Label("まどを作る", systemImage: "plus")
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -1499,11 +1618,11 @@ struct GroupWindowListSection: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func knownRow(_ name: String) -> some View {
+    private func knownRow(_ name: String, subtitle: String) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.body.weight(.semibold))
-                Text("読み込み中").font(.caption).foregroundStyle(.secondary)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
