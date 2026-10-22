@@ -4921,7 +4921,9 @@ class GroupWindowSpeedTests(unittest.TestCase):
         self.assertIn('"group-window-syncing"', screen)
         listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
         self.assertIn("GroupWidgetCache.entries()", listing)
-        self.assertIn("!model.hasLoaded && model.windows.isEmpty", listing)
+        # Known windows show while loading, and stay when the relay cannot be reached.
+        self.assertIn("if model.windows.isEmpty, !model.hasLoaded || model.message != nil {", listing)
+        self.assertIn('"group-window-list-stale"', listing)
 
 
 class GroupWidgetOpenTests(unittest.TestCase):
