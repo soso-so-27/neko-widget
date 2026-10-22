@@ -609,7 +609,7 @@ struct GroupWindowMembersView: View {
             && member.id != window.myParticipantID
         return VStack(spacing: 6) {
             GroupMemberAvatar(name: member.displayName, size: 52)
-            Text(member.displayName)
+            Text(member.id == window.myParticipantID ? "あなた" : member.displayName)
                 .font(.footnote.weight(.semibold))
                 .lineLimit(1)
             if canRemove {
@@ -625,7 +625,7 @@ struct GroupWindowMembersView: View {
                 .accessibilityHidden(true)
                 .accessibilityIdentifier("group-window-remove-member")
             } else {
-                Text(member.id == window.myParticipantID ? "あなた" : member.role == .owner ? "作った人" : " ")
+                Text(member.role == .owner ? "作った人" : " ")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -763,16 +763,30 @@ struct GroupWindowMembersView: View {
     }
 }
 
+/// A person is a coloured circle with a paw: the colour comes from the name,
+/// so the same person is the same colour everywhere. No initials.
 struct GroupMemberAvatar: View {
     let name: String
     var size: CGFloat = 36
 
+    private static let palette: [Color] = [
+        Color(red: 0.77, green: 0.49, blue: 0.40), Color(red: 0.49, green: 0.55, blue: 0.64),
+        Color(red: 0.56, green: 0.60, blue: 0.43), Color(red: 0.82, green: 0.64, blue: 0.29),
+        Color(red: 0.58, green: 0.47, blue: 0.66), Color(red: 0.36, green: 0.62, blue: 0.66)
+    ]
+
+    private var color: Color {
+        let key = name.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars
+            .reduce(7) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+        return Self.palette[key % Self.palette.count]
+    }
+
     var body: some View {
-        Text(GroupWindowPresentation.initial(name))
+        Image(systemName: "pawprint.fill")
             .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundStyle(.tint)
+            .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(Color.accentColor.opacity(0.15), in: Circle())
+            .background(color, in: Circle())
             .accessibilityHidden(true)
     }
 }
