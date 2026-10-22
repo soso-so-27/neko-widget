@@ -808,7 +808,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launch()
-        XCTAssertTrue(app.buttons["albums-settings-button"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["main-tab-photos"].waitForExistence(timeout: 20))
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if permission.waitForExistence(timeout: 3) {
             let deny = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
@@ -862,10 +862,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let menu = app.buttons["photo-browser-related"]
         XCTAssertTrue(menu.waitForExistence(timeout: 20))
         menu.tap()
-        XCTAssertTrue(app.buttons["写真を書き出す"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["同じ日の猫写真"].waitForExistence(timeout: 5))
         captureScreenshot(named: "PR2-photo-menu")
-        app.buttons["photo-browser-showcase-add"].tap()
-        XCTAssertTrue(app.staticTexts["見せる写真に追加しました"].waitForExistence(timeout: 5))
         app.terminate()
     }
 

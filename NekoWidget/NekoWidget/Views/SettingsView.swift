@@ -249,33 +249,11 @@ struct SettingsView: View {
             }
 
             Section {
-                if ManagedPreservationConfiguration.current.isEnabled {
-                    NavigationLink { AppRecordSettingsView() } label: {
-                        Label("保存・復元", systemImage: "checkmark.icloud")
-                    }
-                    .accessibilityIdentifier("settings-managed-preservation")
-                    NavigationLink { RestoredToolsView() } label: {
-                        Label("復元したツール", systemImage: "arrow.counterclockwise")
-                    }
-                    .accessibilityIdentifier("settings-restored-tools")
+                // One door for everything about keeping and moving data.
+                NavigationLink { saveAndTransferView } label: {
+                    Label("保存と引き継ぎ", systemImage: "externaldrive")
                 }
-                NavigationLink {
-                    CatProfileTransferView(actions: catProfilesActions,
-                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
-                } label: {
-                    Label("機種変更のときの引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .accessibilityIdentifier("settings-cat-profile-transfer")
-                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
-                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityIdentifier("settings-memory-note-export")
-                if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                    if InternalBuildPresentationAvailability.isAvailable {
-                        // An internal CloudKit pilot; the public build keeps 保存・復元 only.
-                        PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
-                    }
-                }
+                .accessibilityIdentifier("settings-save-and-transfer")
             } header: {
                 Text("保存")
             }
@@ -429,6 +407,58 @@ struct SettingsView: View {
         guard hasPhotoAccess else { return "未許可" }
         let access = isLimitedAccess ? "選択した写真" : "許可済み"
         return "\(access)・\(settings.range.rawValue)"
+    }
+
+    /// 保存と引き継ぎ: this iPhone's automatic save (Plus), moving to another
+    /// iPhone, and what the person keeps themselves.
+    private var saveAndTransferView: some View {
+        Form {
+            if ManagedPreservationConfiguration.current.isEnabled {
+                Section {
+                    NavigationLink { AppRecordSettingsView() } label: {
+                        Label("自動の保存", systemImage: "checkmark.icloud")
+                    }
+                    .accessibilityIdentifier("settings-managed-preservation")
+                    NavigationLink { RestoredToolsView() } label: {
+                        Label("復元したツール", systemImage: "arrow.counterclockwise")
+                    }
+                    .accessibilityIdentifier("settings-restored-tools")
+                } header: {
+                    Text("このiPhoneの保存")
+                } footer: {
+                    Text("Plus の保存です。猫の情報・メモ・ツールの入力を、このiPhoneの外にも残します。")
+                }
+            }
+            Section {
+                NavigationLink {
+                    CatProfileTransferView(actions: catProfilesActions,
+                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
+                } label: {
+                    Label("機種変更のとき", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .accessibilityIdentifier("settings-cat-profile-transfer")
+            } header: {
+                Text("別のiPhoneへ")
+            } footer: {
+                Text("猫の名前・誕生日・写真の所属を、ファイルにして新しいiPhoneへ。")
+            }
+            Section {
+                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
+                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("settings-memory-note-export")
+                if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
+                    if InternalBuildPresentationAvailability.isAvailable {
+                        // An internal CloudKit pilot; the public build keeps 自動の保存 only.
+                        PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+                    }
+                }
+            } header: {
+                Text("自分で持つ")
+            }
+        }
+        .navigationTitle("保存と引き継ぎ")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var photoSettingsView: some View {

@@ -89,6 +89,52 @@ private struct ShowcaseSession: Identifiable {
     let scopeID: String
 }
 
+/// The app's one accent is blue: 「いつも」 tools take its shades. Only the
+/// 「もしも」 tools are warm, so colour itself means "in case".
+private enum ToolTint {
+    static let everyday = Color.accentColor
+    static let everydayLight = Color(red: 0.36, green: 0.62, blue: 0.86)
+    static let everydayDeep = Color(red: 0.22, green: 0.42, blue: 0.70)
+    static let emergency = Color.orange
+    static let emergencyWarm = Color(red: 0.93, green: 0.56, blue: 0.19)
+    static let emergencyDeep = Color.red
+    static let emergencyBrown = Color(red: 0.78, green: 0.36, blue: 0.26)
+}
+
+/// A cat's card on the ツール tab: the cat's photo, the name, and one line
+/// (how many photos, how far この子のこと is).
+private struct CatTile: View {
+    let profile: CatProfilePresentation
+    let progress: CatCareProgress
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            CatProfileThumbnail(photo: profile.coverPhoto)
+                .frame(width: 46, height: 46)
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(profile.displayName)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text("写真 \(profile.confirmedPhotoCount.formatted()) ・ この子のこと \(progress.filled)/\(progress.total)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(profile.displayName)、写真\(profile.confirmedPhotoCount)枚、この子のこと \(progress.filled)／\(progress.total)")
+    }
+}
+
 /// A tool is a card you can see is a button: a big coloured symbol, the
 /// name, one line of what it makes. No cat art, no small icons.
 private struct ToolTile: View {
@@ -242,6 +288,7 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .memories
     @Environment(\.membershipAccess) private var membershipAccess
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
+    @ObservedObject private var careStore = CatCareStore.shared
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
@@ -711,13 +758,7 @@ struct MainTabView: View {
                 photoLibraryProfileIdentifier = nil
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { showsSettings = true } label: { Image(systemName: "gearshape") }
-                    .accessibilityLabel("設定")
-                    .accessibilityIdentifier("window-settings-button")
-            }
-        }
+        // Settings lives in one place (the ツール tab), as in Apple's own apps.
 
     }
 
@@ -754,26 +795,39 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                // Two groups: what you use anyway, and what you hope not to need.
-                toolSection("いつも") {
+                // The cats are the door: one card per cat opens its page
+                // (photos, and この子のこと). Then what you use anyway, then
+                // what you hope not to need.
+                toolSection("猫") {
+                    ForEach(catProfilesPresentation.profiles) { profile in
+                        NavigationLink {
+                            CatProfileDetailView(
+                                profile: profile,
+                                allProfiles: catProfilesPresentation.profiles,
+                                manualCandidatePhotos: profile.manualCandidatePhotos,
+                                photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+                                actions: catProfilesActions
+                            )
+                        } label: {
+                            CatTile(profile: profile, progress: careProgress(for: profile))
+                        }
+                        .buttonStyle(ToolCardButtonStyle())
+                        .accessibilityIdentifier("tools-cat-\(profile.identifier)")
+                    }
                     NavigationLink {
                         CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
                                         opensProfileSettings: true)
                     } label: {
-                        ToolTile(title: "猫のプロフィール", systemImage: "cat.fill",
-                                 subtitle: "名前・写真・誕生日", tint: Color(red: 0.82, green: 0.63, blue: 0.29))
+                        ToolTile(title: catProfilesPresentation.profiles.isEmpty ? "猫を追加" : "猫を追加・整理",
+                                 systemImage: "plus",
+                                 subtitle: catProfilesPresentation.profiles.isEmpty ? "名前と写真から" : "名前・写真・並び",
+                                 tint: ToolTint.everydayLight)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-cat-profiles")
+                }
+                toolSection("いつも") {
                     showcaseToolCard
-                    NavigationLink {
-                        CatCareEntryView(profiles: catProfilesPresentation.profiles)
-                    } label: {
-                        ToolTile(title: "この子のこと", systemImage: "heart.text.square.fill",
-                                 subtitle: "体・ごはん・薬", tint: .green)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-cat-care")
                 }
                 if !preparingShowcaseScopes.isEmpty {
                     ProgressView("見せる写真を準備中")
@@ -786,7 +840,7 @@ struct MainTabView: View {
                         )
                     } label: {
                         ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
-                                 subtitle: "探す画像を作る", tint: .orange)
+                                 subtitle: "探す画像を作る", tint: ToolTint.emergency)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-lost-cat-open")
@@ -795,7 +849,7 @@ struct MainTabView: View {
                                         unregisteredPhotos: unregisteredCatPhotos)
                     } label: {
                         ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
-                                 subtitle: "お世話を渡す", tint: .purple)
+                                 subtitle: "お世話を渡す", tint: ToolTint.emergencyWarm)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-care-open")
@@ -804,7 +858,7 @@ struct MainTabView: View {
                             photos: memoryNotePhotos, noteStore: memoStore)
                     } label: {
                         ToolTile(title: "病院で見せる", systemImage: "cross.case.fill",
-                                 subtitle: "診察メモ", tint: .red)
+                                 subtitle: "診察メモ", tint: ToolTint.emergencyDeep)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-vet-open")
@@ -813,7 +867,7 @@ struct MainTabView: View {
                                                   unregisteredPhotos: unregisteredCatPhotos)
                     } label: {
                         ToolTile(title: "避難に備える", systemImage: "backpack.fill",
-                                 subtitle: "持ち物と行き先", tint: .gray)
+                                 subtitle: "持ち物と行き先", tint: ToolTint.emergencyBrown)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-evacuation-open")
@@ -841,7 +895,7 @@ struct MainTabView: View {
             } else { openPreparedShowcase(scopeID: "") }
         } label: {
             ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
-                     subtitle: "ベストナインを作る", tint: .cyan)
+                     subtitle: "ベストナインを作る", tint: ToolTint.everydayLight)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
@@ -855,6 +909,14 @@ struct MainTabView: View {
         } message: {
             Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」で猫の写真とアクセス範囲を確認してください。")
         }
+    }
+
+    /// How far this cat's この子のこと is, for the card's one line.
+    private func careProgress(for profile: CatProfilePresentation) -> CatCareProgress {
+        let record = careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier }
+        let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
+            ?? CatCareDraft()
+        return CatCareProgress(draft: draft, record: record)
     }
 
     private func toolSection<Content: View>(_ title: String,
@@ -2842,11 +2904,6 @@ private struct WindowListView: View {
                     }
                     .accessibilityLabel("公式のまどを探す")
                     .accessibilityIdentifier("window-list-discover")
-                }
-                if let showSettings {
-                    Button(action: showSettings) { Image(systemName: "gearshape") }
-                        .accessibilityLabel("設定")
-                        .accessibilityIdentifier("windows-settings-button")
                 }
             }
         }
