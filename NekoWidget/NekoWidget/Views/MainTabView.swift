@@ -101,37 +101,30 @@ private enum ToolTint {
     static let emergencyBrown = Color(red: 0.78, green: 0.36, blue: 0.26)
 }
 
-/// A cat's card on the ツール tab: the cat's photo, the name, and one line
-/// (how many photos, how far この子のこと is).
-private struct CatTile: View {
+/// A cat in the row above the tools: round photo, name, and a tiny line
+/// saying how far この子のこと is.
+private struct CatChip: View {
     let profile: CatProfilePresentation
     let progress: CatCareProgress
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 6) {
             CatProfileThumbnail(photo: profile.coverPhoto)
-                .frame(width: 46, height: 46)
-                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .frame(width: 60, height: 60)
+                .clipShape(Circle())
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(profile.displayName)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text("写真 \(profile.confirmedPhotoCount.formatted()) ・ この子のこと \(progress.filled)/\(progress.total)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(profile.displayName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            Text("\(progress.filled)/\(progress.total)")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-        .padding(14)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(width: 72)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(profile.displayName)、写真\(profile.confirmedPhotoCount)枚、この子のこと \(progress.filled)／\(progress.total)")
+        .accessibilityLabel("\(profile.displayName)、この子のこと \(progress.filled)／\(progress.total)")
     }
 }
 
@@ -796,37 +789,9 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                // The cats are the door: one card per cat opens its page
-                // (photos, and この子のこと). Then what you use anyway, then
-                // what you hope not to need.
-                toolSection("猫") {
-                    ForEach(catProfilesPresentation.profiles) { profile in
-                        NavigationLink {
-                            CatProfileDetailView(
-                                profile: profile,
-                                allProfiles: catProfilesPresentation.profiles,
-                                manualCandidatePhotos: profile.manualCandidatePhotos,
-                                photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                                actions: catProfilesActions
-                            )
-                        } label: {
-                            CatTile(profile: profile, progress: careProgress(for: profile))
-                        }
-                        .buttonStyle(ToolCardButtonStyle())
-                        .accessibilityIdentifier("tools-cat-\(profile.identifier)")
-                    }
-                    NavigationLink {
-                        CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
-                                        opensProfileSettings: true)
-                    } label: {
-                        ToolTile(title: catProfilesPresentation.profiles.isEmpty ? "猫を追加" : "猫を追加・整理",
-                                 systemImage: "plus",
-                                 subtitle: catProfilesPresentation.profiles.isEmpty ? "名前と写真から" : "名前・写真・並び",
-                                 tint: ToolTint.everydayLight)
-                    }
-                    .buttonStyle(ToolCardButtonStyle())
-                    .accessibilityIdentifier("tools-cat-profiles")
-                }
+                // The cats are the door, but small: a row of faces above the
+                // tools, each opening the cat's page. The tools stay tools.
+                catStrip
                 toolSection("いつも") {
                     showcaseToolCard
                 }
@@ -912,7 +877,53 @@ struct MainTabView: View {
         }
     }
 
-    /// How far this cat's この子のこと is, for the card's one line.
+    /// A row of the cats (face and name) and 「＋」. One tap opens the cat's page.
+    private var catStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(catProfilesPresentation.profiles) { profile in
+                    NavigationLink {
+                        CatProfileDetailView(
+                            profile: profile,
+                            allProfiles: catProfilesPresentation.profiles,
+                            manualCandidatePhotos: profile.manualCandidatePhotos,
+                            photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+                            actions: catProfilesActions
+                        )
+                    } label: {
+                        CatChip(profile: profile, progress: careProgress(for: profile))
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-cat-\(profile.identifier)")
+                }
+                NavigationLink {
+                    CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
+                                    opensProfileSettings: true)
+                } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 60, height: 60)
+                            .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                            .overlay(Circle().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
+                        Text(catProfilesPresentation.profiles.isEmpty ? "猫を追加" : "追加・整理")
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                    }
+                    .frame(width: 72)
+                }
+                .buttonStyle(ToolCardButtonStyle())
+                .accessibilityLabel(catProfilesPresentation.profiles.isEmpty ? "猫を追加" : "猫を追加・整理")
+                .accessibilityIdentifier("tools-cat-profiles")
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 4)
+        }
+        .accessibilityIdentifier("tools-cat-strip")
+    }
+
+    /// How far this cat's この子のこと is, for the chip's small line.
     private func careProgress(for profile: CatProfilePresentation) -> CatCareProgress {
         let record = careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier }
         let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
