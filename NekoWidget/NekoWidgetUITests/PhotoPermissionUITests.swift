@@ -1,5 +1,24 @@
 import XCTest
 
+/// Settings has one door since 10/22: the gear on the ツール tab.
+@MainActor
+fileprivate func openSettings(in app: XCUIApplication) {
+    let tools = app.buttons["main-tab-tools"]
+    if tools.waitForExistence(timeout: 10) { tools.tap() } else { app.tabBars.buttons["ツール"].tap() }
+    let gear = app.buttons["tools-settings-button"]
+    XCTAssertTrue(gear.waitForExistence(timeout: 10))
+    gear.tap()
+}
+
+/// Settings keeps saving and moving data behind one row (10/22).
+@MainActor
+fileprivate func openSaveAndTransfer(_ app: XCUIApplication) {
+    let door = app.buttons["settings-save-and-transfer"]
+    guard door.waitForExistence(timeout: 5) else { return }
+    for _ in 0..<4 where !door.isHittable { app.swipeUp() }
+    door.tap()
+}
+
 final class OfficialWindowUITests: XCTestCase {
     @MainActor
     func testSyntheticMovieShippingExportsSoundOnAndOff() throws {
@@ -1945,25 +1964,6 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(row.isHittable); row.tap()
         XCTAssertTrue(app.staticTexts["memory-note-weight"].waitForExistence(timeout: 5))
         return app
-    }
-
-    /// Settings has one door since 10/22: the gear on the ツール tab.
-    @MainActor
-    private func openSettings(in app: XCUIApplication) {
-        let tools = app.buttons["main-tab-tools"]
-        if tools.waitForExistence(timeout: 10) { tools.tap() } else { app.tabBars.buttons["ツール"].tap() }
-        let gear = app.buttons["tools-settings-button"]
-        XCTAssertTrue(gear.waitForExistence(timeout: 10))
-        gear.tap()
-    }
-
-    /// Settings keeps saving and moving data behind one row (10/22).
-    @MainActor
-    private func openSaveAndTransfer(_ app: XCUIApplication) {
-        let door = app.buttons["settings-save-and-transfer"]
-        guard door.waitForExistence(timeout: 5) else { return }
-        for _ in 0..<4 where !door.isHittable { app.swipeUp() }
-        door.tap()
     }
 
     @MainActor
@@ -3931,7 +3931,8 @@ final class SoloMemoriesUITests: XCTestCase {
         queueMemo.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "ready"), object: queueMemo)], timeout: 5), .completed)
-        settings.tap()
+        openSettings(in: app)
+        openSaveAndTransfer(app)
         XCTAssertTrue(archive.waitForExistence(timeout: 5))
         for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
         archive.tap()
