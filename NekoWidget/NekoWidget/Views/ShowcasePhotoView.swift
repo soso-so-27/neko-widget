@@ -230,6 +230,8 @@ struct ShowcasePhotoView: View {
                     Text("今年の9枚").tag(NineSet.thisYear)
                 }
                 .pickerStyle(.segmented)
+                // The gallery is black: draw the segments for a dark background.
+                .environment(\.colorScheme, .dark)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
                 .accessibilityIdentifier("showcase-nine-set")
@@ -966,9 +968,12 @@ struct ShowcaseToolCatPicker: View {
                     Section {
                         Button("すべての猫") { select(""); dismiss() }
                     }
-                    Section("まだ登録していない猫") {
-                        ForEach(storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }, id: \.self) { scope in
-                            Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
+                    let former = storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }
+                    if !former.isEmpty {
+                        Section("まだ登録していない猫") {
+                            ForEach(former, id: \.self) { scope in
+                                Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
+                            }
                         }
                     }
                 }

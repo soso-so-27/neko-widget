@@ -1891,9 +1891,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private var advancedDiagnosticsView: some View",
             "private var canReviewDetectionAccuracySample",
         )
-        self.assertIn('Text("写真を見つけ直す")', photo_settings)
-        self.assertIn('"最初から探し直す"', photo_settings)
+        # The rescan is a repair: it sits under 困ったとき in the photo settings, not in diagnostics.
+        self.assertIn('"写真を最初から探し直す"', photo_settings)
         self.assertNotIn('"最初から探し直す"', diagnostics)
+        self.assertIn('Picker("まどに出す写真", selection: $draft.range)', photo_settings)
         self.assertIn('Label("診断情報", systemImage: "wrench.and.screwdriver")', settings)
         self.assertIn('.navigationTitle("診断情報")', settings)
         self.assertIn('Label("未保存の変更があります",', diagnostics)
@@ -4921,7 +4922,9 @@ class GroupWindowSpeedTests(unittest.TestCase):
         self.assertIn('"group-window-syncing"', screen)
         listing = section(screen, "struct GroupWindowListSection: View {", "private func row(")
         self.assertIn("GroupWidgetCache.entries()", listing)
-        self.assertIn("!model.hasLoaded && model.windows.isEmpty", listing)
+        # Known windows show while loading, and stay when the relay cannot be reached.
+        self.assertIn("if model.windows.isEmpty, !model.hasLoaded || model.message != nil {", listing)
+        self.assertIn('"group-window-list-stale"', listing)
 
 
 class GroupWidgetOpenTests(unittest.TestCase):

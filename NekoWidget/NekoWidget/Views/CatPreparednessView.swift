@@ -105,13 +105,16 @@ struct LostCatEmergencyEntryView: View {
     var body: some View {
         List {
             ToolCatPicker(profiles: profiles, select: { chosenProfile = $0; opensProfile = true }) {
-                Section("まだ登録していない猫") {
-                    ForEach(savedCats) { cat in
-                        NavigationLink { editor(cat.id, "") } label: { Label(cat.displayName, systemImage: "cat") }
-                            .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
-                    }
-                    ForEach(savedGuestKeys, id: \.self) { key in
-                        NavigationLink { editor(key, "") } label: { Label(guestLabel(key), systemImage: "cat") }
+                // Only when there is something in it: an empty heading is noise.
+                if !savedCats.isEmpty || !savedGuestKeys.isEmpty {
+                    Section("まだ登録していない猫") {
+                        ForEach(savedCats) { cat in
+                            NavigationLink { editor(cat.id, "") } label: { Label(cat.displayName, systemImage: "cat") }
+                                .accessibilityIdentifier("lost-cat-saved-\(cat.id)")
+                        }
+                        ForEach(savedGuestKeys, id: \.self) { key in
+                            NavigationLink { editor(key, "") } label: { Label(guestLabel(key), systemImage: "cat") }
+                        }
                     }
                 }
             }
@@ -570,12 +573,14 @@ struct LostCatDraftView: View {
         NavigationStack {
             List {
                 ToolCatPicker(profiles: profiles, select: { switchTo($0.identifier, name: $0.displayName) }) {
-                    Section("まだ登録していない猫") {
-                        ForEach(savedCats) { cat in
-                            Button(cat.displayName) { switchTo(cat.id, name: "") }
-                        }
-                        ForEach(savedGuestKeys, id: \.self) { guestKey in
-                            Button(guestLabel(guestKey)) { switchTo(guestKey, name: "") }
+                    if !savedCats.isEmpty || !savedGuestKeys.isEmpty {
+                        Section("まだ登録していない猫") {
+                            ForEach(savedCats) { cat in
+                                Button(cat.displayName) { switchTo(cat.id, name: "") }
+                            }
+                            ForEach(savedGuestKeys, id: \.self) { guestKey in
+                                Button(guestLabel(guestKey)) { switchTo(guestKey, name: "") }
+                            }
                         }
                     }
                 }

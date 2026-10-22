@@ -1877,13 +1877,18 @@ struct SavedMemoriesGalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if hasPhotoAccess && !isDedicatedPhotoBookFlow { originPicker }
+            // With nothing to show, the heading stays above the empty state.
+            if hasPhotoAccess && !isDedicatedPhotoBookFlow && visiblePhotos.isEmpty { originPicker }
             ZStack {
             if !hasPhotoAccess || visiblePhotos.isEmpty {
                 emptyGalleryState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
+                        // The heading scrolls with the photos, as on the 「すべて」 tab.
+                        if !isDedicatedPhotoBookFlow {
+                            originPicker.padding(.bottom, 6)
+                        }
                         if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
                             unavailableSavedPhotosBanner
                         }
@@ -2767,11 +2772,13 @@ struct PhotoBrowserView: View {
             }
 
             }
-            ViewThatFits(in: .vertical) {
-                browserFooter.fixedSize(horizontal: false, vertical: true)
-                ScrollView { browserFooter }
-                    .accessibilityIdentifier("photo-browser-actions-scroll")
-            }
+            // One shape, always: the layout clamps the footer's height, and the
+            // footer scrolls when its content is taller. (A ViewThatFits here
+            // flipped between its two shapes under the clamped height and the
+            // bottom inset, and the layout never settled: the screen froze.)
+            ScrollView { browserFooter }
+                .scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier("photo-browser-actions-scroll")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom) {

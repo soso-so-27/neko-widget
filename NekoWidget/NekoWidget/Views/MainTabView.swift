@@ -438,6 +438,8 @@ struct MainTabView: View {
                         pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
                         showSettings: { showsSettings = true }
                     )
+                    // The window screens start 「写真を届ける」 from these cat photos.
+                    .environment(\.groupWindowCatPhotos, catPhotos)
                 }
                 .tabItem {
                     Label("まど", systemImage: "window.vertical.closed")
