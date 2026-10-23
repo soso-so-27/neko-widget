@@ -126,13 +126,8 @@ struct OnboardingView: View {
                 rescan: rescan,
                 openPreviewPhoto: openPhoto,
                 placeWidget: { page = .widgetGuide },
-                continueToApp: {
-                    if scan.displayedCatCount > 0, let photo = resultPhotos.first {
-                        openPhoto(photo)
-                    } else {
-                        finishWithoutWidgetPhoto()
-                    }
-                }
+                // 「あとで」 goes straight to the 写真 tab; the photos are right there.
+                continueToApp: finishWithoutWidgetPhoto
             )
         }
     }
@@ -248,9 +243,11 @@ private struct OnboardingPurposePage: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("onboarding-purpose-join")
                 }
-                Text(OnboardingPresentationCopy.purposeFootnote)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                if !OnboardingPresentationCopy.purposeFootnote.isEmpty {
+                    Text(OnboardingPresentationCopy.purposeFootnote)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.headline)
             .controlSize(.large)
@@ -267,7 +264,7 @@ private struct OnboardingPurposePage: View {
 struct OnboardingWindowMosaic: View {
     var dimmed = false
 
-    private static let poses: [Int: String] = [1: "peek", 3: "tilt", 6: "snug", 8: "side-eye", 10: "hide"]
+    private static let poses: [Int: String] = [1: "peek", 6: "snug", 10: "hide"]
     private static let tints: [Color] = [
         Color(red: 0.91, green: 0.79, blue: 0.65),
         Color(red: 0.81, green: 0.84, blue: 0.89),
@@ -491,7 +488,7 @@ private struct OnboardingScanPage: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("initial-scan-widget-guide")
-                    continueButton.buttonStyle(.plain).foregroundStyle(.tint)
+                    continueButton.buttonStyle(.plain).foregroundStyle(.secondary).font(.subheadline)
                 } else {
                     continueButton.buttonStyle(.borderedProminent)
                 }

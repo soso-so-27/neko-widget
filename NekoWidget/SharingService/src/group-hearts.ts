@@ -1,7 +1,7 @@
 import { base64urlDecode,randomBase64url,verifyEd25519 } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
-import { groupId,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
+import { groupAuthorizationStatements,groupId,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
 import { groupFields,loadStoredGroupRoster } from './group-protocol';
 import { groupMediaChecks,groupMoment,groupPhotoMetadata,requireGroupDelivery } from './group-media';
 import { groupCursor,groupPage } from './group-reads';
@@ -13,7 +13,8 @@ export function groupHeartTranscript(input:{windowId:string;momentId:string;part
 export async function recordGroupHeart(env:Env,actor:GroupActor,windowId:string,momentId:string,body:JsonRecord):Promise<Response> {
   exactKeys(body,['operationId','active','keyEpoch','rosterRevision','reactorSignature']);
   const access=await requireGroupMember(env,actor,windowId),operationId=uuidField(body,'operationId');
-  const prior=await storedGroupMutation(env,actor,operationId,{windowId});if(prior!==null)return jsonResponse(prior);
+  const prior=await storedGroupMutation(env,actor,operationId,{windowId});
+  if(prior!==null)return groupHeartResponse(env,actor,windowId,momentId,prior);
   if(typeof body.active!=='boolean')throw new ApiError(400,'invalid_request','The heart state is invalid.');
   const epoch=integerField(body,'keyEpoch',1,Number.MAX_SAFE_INTEGER),revision=integerField(body,'rosterRevision',1,Number.MAX_SAFE_INTEGER);
   if(access.rotationRequired)throw new ApiError(409,'rotation_pending','The window key must be updated first.');
@@ -50,7 +51,24 @@ export async function recordGroupHeart(env:Env,actor:GroupActor,windowId:string,
         .bind(eventId,actor.now,eventId,row.sender_participant_id,actor.deviceId,actor.now,actor.now));
   }
   statements.push(groupMutationStatement(env,actor,operationId,response));
-  await env.DB.batch(statements);return jsonResponse(response);
+  await env.DB.batch(statements);return groupHeartResponse(env,actor,windowId,momentId,response);
+}
+async function groupHeartResponse(env:Env,actor:GroupActor,windowId:string,momentId:string,receipt:unknown):Promise<Response> {
+  try {
+    const access=await requireGroupMember(env,actor,windowId),row=await groupMoment(env,windowId,momentId);
+    await requireGroupDelivery(env,actor,row);
+    const moment=(await groupPhotoMetadata(env,[row],actor.deviceId))[0];
+    // Just like the metadata GET, guard membership, blocks and delivery AFTER
+    // the read. A stored mutation receipt never grants access to its snapshot.
+    await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
+      ...groupMediaChecks(env,actor,momentId,'read')]);
+    return jsonResponse({...receipt as Record<string,unknown>,moment});
+  } catch {
+    // The mutation is already committed. A denied/unavailable snapshot must
+    // neither leak metadata nor turn that receipt into an apparent failed write.
+    // The client falls back to the independently authorized metadata GET.
+    return jsonResponse(receipt);
+  }
 }
 export async function listGroupHearts(env:Env,actor:GroupActor,windowId:string,momentId:string,body:JsonRecord):Promise<Response> {
   const access=await requireGroupMember(env,actor,windowId),row=await groupMoment(env,windowId,momentId);await requireGroupDelivery(env,actor,row);

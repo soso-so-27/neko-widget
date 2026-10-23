@@ -763,8 +763,9 @@ struct GroupWindowMembersView: View {
     }
 }
 
-/// A person is a coloured circle with a paw: the colour comes from the name,
-/// so the same person is the same colour everywhere. No initials.
+/// A person is a coloured circle with the usual person shape (as in 連絡先):
+/// the colour comes from the name, so the same person is the same colour
+/// everywhere. No initials.
 struct GroupMemberAvatar: View {
     let name: String
     var size: CGFloat = 36
@@ -782,8 +783,8 @@ struct GroupMemberAvatar: View {
     }
 
     var body: some View {
-        Image(systemName: "pawprint.fill")
-            .font(.system(size: size * 0.42, weight: .semibold))
+        Image(systemName: "person.fill")
+            .font(.system(size: size * 0.46, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
             .background(color, in: Circle())

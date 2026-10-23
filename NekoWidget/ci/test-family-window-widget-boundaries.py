@@ -1260,8 +1260,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         self.assertIn('Text("ホーム画面にまどを置く").font(.headline)', home)
         self.assertIn("showWidgetPlacementGuide", home)
-        self.assertIn("猫の写真を、まどに。", onboarding)
-        self.assertIn("ホーム画面に飾ります。", onboarding)
+        self.assertIn("このiPhoneの中の猫を、全部見つけます。", onboarding)
+        self.assertIn("外には送りません。", onboarding)
         self.assertIn("TodayPhotoSelectionPolicy.resolve(", model)
         self.assertIn("UIApplication.significantTimeChangeNotification", model)
 
@@ -1360,7 +1360,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "struct SavedMemoriesGalleryView:",
             "private struct LikedPhotoBookExportFile:",
         )
-        self.assertIn("ForEach(PhotoLibraryGridRow.rows(visiblePhotos))", gallery)
+        self.assertIn("ForEach(Array(PhotoLibraryGridRow.rows(visiblePhotos).enumerated())", gallery)
         self.assertIn('_selectedExportIdentifiers = State(initialValue: Set<String>())', gallery)
         self.assertIn('isSelectingForExport ? "写真を選ぶ"', gallery)
         self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0)", gallery)
@@ -3432,7 +3432,14 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("UnassignedCatPhotosView(", detail)
         self.assertNotIn("CatProfilePhotoSourcesView", profile)
         self.assertIn('"この子の写真を見る"', detail)
-        self.assertIn('Text("この子の時間")', detail)
+        # 10/23: 写真 holds what Photos knows (name, face, photos); the dates are
+        # facts about the cat, so they moved to この子のこと → 基本.
+        self.assertNotIn('"誕生日・迎えた日"', detail)
+        self.assertIn('Text(candidate == .photos ? "写真" : "この子のこと")', detail)
+        care = source("NekoWidget/Views/CatCareView.swift")
+        self.assertIn('LabeledContent("誕生日・迎えた日", value: profile.lifeDatesSummary)', care)
+        self.assertIn('"cat-care-life-dates"', care)
+        self.assertNotIn('Text("この子の時間")', detail)
         # The album link is not offered on the profile; 「うちの子」 lives in 設定 → 写真.
         self.assertNotIn('"写真アプリのアルバムをつなぐ"', detail)
         self.assertNotIn('Text("その他")', detail)
@@ -4581,7 +4588,7 @@ class CatCareTests(unittest.TestCase):
         tab = source("NekoWidget/Views/MainTabView.swift")
         # 10/22: the cat's card on the ツール tab opens the cat's page, whose
         # title switch leads to この子のこと (CatCareDetailView).
-        self.assertIn("CatTile(profile: profile, progress: careProgress(for: profile))", tab)
+        self.assertIn("CatChip(profile: profile, progress: careProgress(for: profile))", tab)
         detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
         self.assertIn('"cat-profile-page"', detail)
         self.assertIn("CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))", detail)
@@ -4994,7 +5001,7 @@ class SettingsLayoutTests(unittest.TestCase):
     def test_settings_put_daily_things_first_and_test_tools_last(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
-        order = ["PlusSettingsSection()", 'Text("写真")', 'Text("猫")', 'Text("ホーム画面")', 'Text("まど")',
+        order = ['Text("写真")', 'Text("猫")', 'Text("ホーム画面")', 'Text("まど")', "PlusSettingsSection()",
                  'Text("保存")', 'Text("困ったとき")', '"settings-app-version"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))

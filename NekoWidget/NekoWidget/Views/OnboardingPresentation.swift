@@ -63,12 +63,13 @@ enum WidgetInstallationState: Equatable, Sendable {
 /// privacy variant. Keeping it outside the SwiftUI view makes both modes
 /// independently verifiable.
 enum OnboardingPresentationCopy {
-    /// Page one is a picture with one button: the windows with the app's cat,
-    /// one line of promise, and the start. Nothing to read before starting.
-    static let purposeTitle = "猫の写真を、まどに。"
-    static let purposeBody = "このiPhoneの中から猫の写真だけを集めて、ホーム画面に飾ります。"
-    static let purposeAction = "写真から猫を探す"
-    static let purposeFootnote = "写真はこのiPhoneの中だけで探します"
+    /// Page one has one job: the Photos permission. People come from the
+    /// site knowing what the app is, so it says what happens next, answers
+    /// the one worry (the photos stay on the iPhone), and asks. No feature list.
+    static let purposeTitle = "このiPhoneの中の猫を、全部見つけます。"
+    static let purposeBody = "写真はiPhoneの中だけで探します。外には送りません。"
+    static let purposeAction = "猫を探す"
+    static let purposeFootnote = ""
 
     static let permissionTitleLines = [
         "このiPhoneの猫の写真や動画を",
@@ -109,7 +110,8 @@ enum OnboardingPresentationCopy {
     ]
     static let scanCountLead = "いま"
     static let scanWidgetAction = "まどを置く"
-    static let scanContinueAction = "写真を見る"
+    /// The quiet way past the Widget: straight into the 写真 tab.
+    static let scanContinueAction = "あとで"
 
     static let widgetTitleLines = [
         "ホーム画面に、",

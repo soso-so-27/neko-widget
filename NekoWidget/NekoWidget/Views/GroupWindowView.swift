@@ -1,3 +1,4 @@
+import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -165,14 +166,23 @@ final class GroupWindowScreenModel: ObservableObject {
         await store.imageURL(photoID: entry.id, windowID: windowID)
     }
 
+    /// Who this iPhone is in the window: from the relay, or as last remembered.
+    private var rememberedMe: String?
+    /// Hearts tapped here and not yet answered by the relay: photo → (on, tap number).
+    private var pendingHearts: [String: (active: Bool, tap: Int)] = [:]
+    private var heartTaps = 0
+    private var me: String? { window?.myParticipantID ?? rememberedMe }
+
     func myHeartIsActive(_ photoID: String) -> Bool {
-        guard let me = window?.myParticipantID else { return false }
+        guard let me else { return false }
         return hearts[photoID]?.contains { $0.participantID == me && $0.active } ?? false
     }
 
-    /// Photos already kept on this iPhone appear at once, before the relay answers.
+    /// Photos and hearts already kept on this iPhone appear at once, before the relay answers.
     func showStored() async {
         if entries.isEmpty { entries = await store.entries(windowID: windowID) }
+        if hearts.isEmpty { hearts = await store.hearts(windowID: windowID) }
+        if rememberedMe == nil { rememberedMe = await store.myParticipantID(windowID: windowID) }
     }
 
     /// Reads the window, keeps every new photo on this iPhone, then tells the
@@ -195,9 +205,12 @@ final class GroupWindowScreenModel: ObservableObject {
                 latest = renewed
             }
             window = latest
-            await store.remember(windowID: windowID, name: latest.name)
+            await store.remember(windowID: windowID, name: latest.name, myParticipantID: latest.myParticipantID)
             let photos = try await client.photos(windowID: windowID)
             hearts = Dictionary(photos.map { ($0.id, $0.hearts) }, uniquingKeysWith: { _, last in last })
+            // The relay's list may predate a tap still on its way; keep the tap.
+            for (photoID, pending) in pendingHearts { applyMyHeart(pending.active, to: photoID) }
+            await store.saveHearts(hearts, windowID: windowID)
             var waiting: GroupPhotoModeration.Verdict?
             for photo in photos {
                 guard !(await store.contains(photoID: photo.id, windowID: windowID)) else { continue }
@@ -451,6 +464,7 @@ final class GroupWindowScreenModel: ObservableObject {
     /// photo's detail can check it without downloading every photo.
     func loadWindow() async {
         do { window = try await client.window(id: windowID); message = nil }
+        catch is CancellationError {}
         catch { message = GroupWindowPresentation.message(for: error) }
     }
 
@@ -485,15 +499,41 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     func toggleHeart(_ photoID: String) async {
+        let active = !myHeartIsActive(photoID)
+        // Show the heart at once; the relay confirms (or corrects) it after.
+        let before = hearts[photoID]
+        heartTaps += 1
+        let tap = heartTaps
+        pendingHearts[photoID] = (active, tap)
+        applyMyHeart(active, to: photoID)
         do {
             let updated = try await client.setHeart(
                 photoID: photoID, windowID: windowID,
-                active: !myHeartIsActive(photoID), operationID: UUID()
+                active: active, operationID: UUID()
             )
+            // A newer tap on the same photo wins; its own answer comes later.
+            guard pendingHearts[photoID]?.tap == tap else { return }
+            pendingHearts[photoID] = nil
             hearts[photoID] = updated.hearts
+            await store.saveHearts(hearts, windowID: windowID)
         } catch {
+            guard pendingHearts[photoID]?.tap == tap else { return }
+            pendingHearts[photoID] = nil
+            hearts[photoID] = before
             message = GroupWindowPresentation.message(for: error)
         }
+    }
+
+    private func applyMyHeart(_ active: Bool, to photoID: String) {
+        guard let me else { return }
+        var current = hearts[photoID] ?? []
+        if let index = current.firstIndex(where: { $0.participantID == me }) {
+            current[index].active = active
+        } else {
+            let name = window?.activeMembers.first { $0.id == me }?.displayName ?? "あなた"
+            current.append(GroupHeart(participantID: me, displayName: name, active: active, updatedAt: Date()))
+        }
+        hearts[photoID] = current
     }
 }
 
@@ -629,18 +669,13 @@ struct GroupWindowScreen: View {
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-receive-notice")
                 }
-                if model.isSyncing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text(model.entries.isEmpty ? "写真を読み込んでいます…" : "新しい写真を確かめています…")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 16)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("group-window-syncing")
-                }
+                // Photos already here stay as they are while new ones are checked
+                // quietly; new photos simply appear. Only an empty window says it is loading.
                 if model.entries.isEmpty && model.isSyncing {
-                    Color.clear.frame(height: 120)
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                        .accessibilityLabel("写真を読み込んでいます")
+                        .accessibilityIdentifier("group-window-syncing")
                 } else if model.entries.isEmpty {
                     ContentUnavailableView(
                         "まだ写真はありません",
@@ -848,11 +883,28 @@ struct GroupWindowScreen: View {
 
 /// One photo in the window's feed: the picture, then one line with who sent
 /// it, when, and the hearts. Tap opens it; a double tap sends a heart.
+/// Reads a kept JPEG at a size fit for the screen, off the main thread, so a
+/// list of photos scrolls without stalls.
+enum GroupPhotoDecoder {
+    static func image(at url: URL, maxPixel: CGFloat) -> UIImage? {
+        let options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options as CFDictionary) else { return nil }
+        let thumbnail: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnail as CFDictionary) else { return nil }
+        return UIImage(cgImage: cg)
+    }
+}
+
 private struct GroupPhotoTile: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
     let open: () -> Void
-    @State private var url: URL?
+    @State private var image: UIImage?
 
     private var heartCount: Int { model.hearts[entry.id]?.filter(\.active).count ?? 0 }
     private var canHeart: Bool { !entry.isHidden && !entry.isOwn && !model.isFormer }
@@ -864,7 +916,7 @@ private struct GroupPhotoTile: View {
                 .overlay {
                     if entry.isHidden {
                         Image(systemName: "eye.slash").font(.title2).foregroundStyle(.secondary)
-                    } else if let url, let image = UIImage(contentsOfFile: url.path) {
+                    } else if let image {
                         Image(uiImage: image).resizable().scaledToFill()
                     }
                 }
@@ -909,7 +961,12 @@ private struct GroupPhotoTile: View {
         .accessibilityLabel(tileLabel)
         .accessibilityHint("押すと大きく見て、ハートを送れます")
         .accessibilityAction(named: Text("大きく見る"), open)
-        .task { url = await model.imageURL(for: entry) }
+        .task(id: entry.id) {
+            guard !entry.isHidden, let url = await model.imageURL(for: entry) else { return }
+            image = await Task.detached(priority: .userInitiated) {
+                GroupPhotoDecoder.image(at: url, maxPixel: 900)
+            }.value
+        }
     }
 }
 
@@ -1233,43 +1290,16 @@ private struct GroupPhotoDetail: View {
         let day = entry.createdAt.formatted(.dateTime.month().day())
         let names = reactors(entry)
         let spokenDay = entry.isOwn ? "\(day)に届けました" : "\(day)に届きました"
-        return VStack(spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(entry.isOwn ? "あなた" : GroupDisplayName.withSan(entry.senderDisplayName))
-                    .font(.subheadline.weight(.semibold))
-                Text(day).font(.subheadline).foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(entry.isOwn ? "あなたの写真、\(spokenDay)" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から、\(spokenDay)")
-            if !names.isEmpty {
-                HStack(spacing: 6) {
-                    HStack(spacing: -5) {
-                        ForEach(Array(names.prefix(6).enumerated()), id: \.offset) { _, name in
-                            GroupMemberAvatar(name: name, size: 18)
-                                .overlay(Circle().stroke(Color.black, lineWidth: 1))
-                        }
-                    }
-                    Text("♥ \(names.count)")
-                        .font(.footnote.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("ハートを送った人：\(names.joined(separator: "、"))")
-            }
-            weekLine
+        // One line: who and when. The hearts live on the ♥ button below; who
+        // sent them is in its spoken value.
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(entry.isOwn ? "あなた" : GroupDisplayName.withSan(entry.senderDisplayName))
+                .font(.subheadline.weight(.semibold))
+            Text(day).font(.subheadline).foregroundStyle(.secondary)
         }
-    }
-
-    /// 「このまどの今週 ・ 5 枚届いた ・ あなたは 1 枚」: a small reason to send the next one.
-    private var weekLine: some View {
-        let calendar = Calendar.current
-        let thisWeek = model.entries.filter { calendar.isDate($0.createdAt, equalTo: Date(), toGranularity: .weekOfYear) }
-        let mine = thisWeek.filter(\.isOwn).count
-        return Text("このまどの今週 ・ \(thisWeek.count)枚届いた ・ あなたは\(mine == 0 ? "まだ 0" : "\(mine)")枚")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.top, 2)
-            .accessibilityIdentifier("group-photo-week")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel((entry.isOwn ? "あなたの写真、\(spokenDay)" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から、\(spokenDay)")
+                            + (names.isEmpty ? "" : "。ハートを送った人：\(names.joined(separator: "、"))"))
     }
 
     /// Under the photo: ♥ with its count, and お気に入り. Words only as captions.
@@ -1402,12 +1432,15 @@ final class GroupWindowListModel: ObservableObject {
     init(client: any GroupWindowMediaClient) { self.client = client }
 
     func load() async {
-        defer { hasLoaded = true }
         do {
             windows = try await client.windows()
             message = nil
+            hasLoaded = true
+        } catch is CancellationError {
+            // The screen went away mid-request: nothing to tell.
         } catch {
             message = GroupWindowPresentation.message(for: error)
+            hasLoaded = true
         }
     }
 
@@ -1533,17 +1566,15 @@ struct GroupWindowListSection: View {
                     NavigationLink {
                         GroupWindowScreen(client: model.client, windowID: entry.windowID)
                     } label: {
-                        knownRow(entry.windowName, subtitle: model.hasLoaded ? "最後に確認したまど" : "読み込み中")
+                        KnownWindowCard(entry: entry, subtitle: model.hasLoaded ? "最後に確認したまど" : "")
                     }
                     .buttonStyle(.plain)
                 }
-                if !model.hasLoaded {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("まどを読み込んでいます…").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("group-window-list-loading")
+                if !model.hasLoaded && known.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .accessibilityLabel("まどを読み込んでいます")
+                        .accessibilityIdentifier("group-window-list-loading")
                 }
             }
             if let message = model.message {
@@ -1639,20 +1670,6 @@ struct GroupWindowListSection: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func knownRow(_ name: String, subtitle: String) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.body.weight(.semibold))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
-        }
-        .padding(14)
-        .frame(minHeight: 44)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
     private func row(_ window: GroupWindow) -> some View {
         GroupWindowCard(window: window)
     }
@@ -1694,7 +1711,7 @@ private struct GroupWindowCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(window.name)
                         .font(.title3.bold())
-                    Text(paused ? "止まっています" : companions)
+                    Text(paused ? "止まっています" : "\(window.memberCount)人")
                         .font(.footnote)
                 }
                 .foregroundStyle(cover != nil ? Color.white : paused ? Color.orange : Color.primary)
@@ -1710,31 +1727,69 @@ private struct GroupWindowCard: View {
         .task(id: window.id) { await loadCover() }
     }
 
-    /// 「母・妹 と」: the others in the window, by name. Alone: say so.
-    private var companions: String {
-        let others = window.activeMembers.filter { $0.id != window.myParticipantID }.map(\.displayName)
-        if others.isEmpty { return "まだあなただけ" }
-        let shown = others.prefix(3).joined(separator: "・")
-        return others.count > 3 ? "\(shown)・ほか\(others.count - 3)人 と" : "\(shown) と"
-    }
-
     private func loadCover() async {
         if let cached = GroupWidgetCache.entry(windowID: window.id),
-           let url = GroupWidgetCache.imageURL(for: cached),
-           let image = UIImage(contentsOfFile: url.path) {
-            cover = image
+           let url = GroupWidgetCache.imageURL(for: cached) {
+            cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value
             senderName = cached.senderDisplayName
-            return
+            if cover != nil { return }
         }
         // Not yet on the Widget: the newest photo this iPhone received.
         let store = GroupWindowLocalPhotoStore.shared
         let newest = await store.entries(windowID: window.id)
             .filter { !$0.isHidden }
             .max { $0.createdAt < $1.createdAt }
-        guard let newest, let url = await store.imageURL(photoID: newest.id, windowID: window.id),
-              let image = UIImage(contentsOfFile: url.path) else { return }
-        cover = image
+        guard let newest, let url = await store.imageURL(photoID: newest.id, windowID: window.id) else { return }
+        cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value
         senderName = newest.isOwn ? nil : newest.senderDisplayName
+    }
+}
+
+/// A window this iPhone knows from last time, drawn like a loaded one so the
+/// tab does not change shape when the relay answers.
+private struct KnownWindowCard: View {
+    let entry: GroupWidgetCache.Entry
+    let subtitle: String
+    @State private var cover: UIImage?
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color(uiColor: .secondarySystemGroupedBackground)
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    if let cover {
+                        Image(uiImage: cover).resizable().scaledToFill()
+                    } else {
+                        Image("ToolCat-snug").resizable().interpolation(.high).scaledToFit()
+                            .frame(width: 72, height: 72)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .opacity(0.9)
+                    }
+                }
+                .clipped()
+                .overlay(alignment: .bottom) {
+                    if cover != nil {
+                        LinearGradient(colors: [.clear, .black.opacity(0.62)], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 96)
+                    }
+                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.windowName).font(.title3.bold())
+                if !subtitle.isEmpty { Text(subtitle).font(.footnote) }
+            }
+            .foregroundStyle(cover != nil ? Color.white : Color.primary)
+            .shadow(color: cover != nil ? .black.opacity(0.5) : .clear, radius: 4, y: 1)
+            .padding(14)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entry.windowName)
+        .task(id: entry.windowID) {
+            guard let url = GroupWidgetCache.imageURL(for: entry) else { return }
+            cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value
+        }
     }
 }
 

@@ -106,6 +106,7 @@ struct CatCareDetailView: View {
     /// The cat this page last loaded, so coming back from a list does not
     /// reload over what is on screen.
     @State private var loadedKey: String?
+    @State private var showsLifeDatesEditor = false
 
     init(profile: CatProfilePresentation, otherProfiles: [CatProfilePresentation],
          selectedProfileID: Binding<String?>) {
@@ -150,6 +151,15 @@ struct CatCareDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
+            if let hint = CatCareProgress(draft: draft, record: currentRecord).nextHint {
+                // One line, not a dashboard: what the next entry unlocks.
+                Section {
+                    Label(hint, systemImage: "arrow.right.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("cat-care-next-hint")
+                }
+            }
             basicsSection
             healthSection
             livingSection
@@ -182,6 +192,11 @@ struct CatCareDetailView: View {
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor, catID: catID) { result in
                 apply(result)
+            }
+        }
+        .sheet(isPresented: $showsLifeDatesEditor) {
+            if case let .profile(profile) = subject {
+                CatProfileLifeReferenceEditor(profile: profile, save: profileActions.updateLifeDates)
             }
         }
         .task(id: subject.key) {
@@ -252,30 +267,33 @@ struct CatCareDetailView: View {
         }
     }
 
-    /// 「ミケ・2020/1/1（4歳）」: read-only facts go in the footer, not in rows.
+    /// 「ミケ（4歳）」 and what the dates are for: read-only facts go in the footer, not in rows.
     private var basicsFooter: String {
         var line = subject.displayName
-        if let birthday = currentRecord?.birthday?.value ?? nil {
-            line += "・誕生日 " + CatCareFormat.day(birthday)
-                + (CatCareLostCat.age(birthday, today: CatCareDay(date: Date())).map { "（\($0)）" } ?? "")
-        } else if case .profile = subject {
-            line += "・誕生日は未記入"
+        if let birthday = currentRecord?.birthday?.value ?? nil,
+           let age = CatCareLostCat.age(birthday, today: CatCareDay(date: Date())) {
+            line += "（\(age)）"
         }
-        if case .profile = subject { line += "。名前と誕生日は猫のプロフィールで直せます。" }
+        if case let .profile(profile) = subject {
+            line += "\n" + profile.lifeDatesExplanation
+        }
         return line
     }
 
     private var basicsSection: some View {
         Section {
+            // The name is the page title. The dates are facts about the cat,
+            // so they live here with the rest; the album reads them from here.
             if case let .profile(profile) = subject {
-                // Name and birthday belong to the cat profile; change them there.
-                NavigationLink {
-                    CatProfileDetailView(profile: profile, allProfiles: otherProfiles.isEmpty ? [profile] : otherProfiles,
-                        manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: profileActions)
-                } label: {
-                    Label("猫のプロフィール", systemImage: "cat")
+                Button { showsLifeDatesEditor = true } label: {
+                    HStack {
+                        LabeledContent("誕生日・迎えた日", value: profile.lifeDatesSummary)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .accessibilityIdentifier("cat-care-open-profile")
+                .foregroundStyle(.primary)
+                .accessibilityIdentifier("cat-care-life-dates")
             }
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)

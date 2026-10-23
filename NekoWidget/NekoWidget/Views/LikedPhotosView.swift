@@ -100,6 +100,7 @@ struct AlbumView: View {
                     .padding(.vertical, 12)
             }
             .navigationTitle("アルバム")
+            .navigationBarTitleDisplayMode(.inline)
             .background(Color(.systemGroupedBackground))
         }
     }
@@ -1039,7 +1040,7 @@ struct LikedPhotosView: View {
 
     @Environment(\.membershipAccess) private var membershipAccess
     /// The monthly summary and movie open with Plus; their cards say so before a tap.
-    private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) != .allowed }
+    private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired }
     private var showsReflectionPlaceholder: Bool {
         hasPhotoAccess && !isCatDetail && albumScope.wrappedValue == .everyone && !hasPeriodCollections
     }
@@ -1231,7 +1232,8 @@ struct LikedPhotosView: View {
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
         .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
-        .navigationBarTitleDisplayMode(isCatDetail || showsReflectionArchive || showsHighlightArchive ? .inline : .large)
+        // The same small title as every other tab.
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
         .onAppear { freezeRecommendations(allowAppend: true) }
@@ -1886,15 +1888,15 @@ struct SavedMemoriesGalleryView: View {
                         if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
                             unavailableSavedPhotosBanner
                         }
-                        ForEach(PhotoLibraryGridRow.rows(visiblePhotos)) { row in
+                        ForEach(Array(PhotoLibraryGridRow.rows(visiblePhotos).enumerated()), id: \.element.id) { index, row in
                             PhotoLibraryGridRowView(row: row, spacing: 2) { photo in
                                 gridItem(photo)
                                     .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
                             }
                             .id(row.id)
+                            .photoLibraryReadingRow(row.id, index: index)
                         }
                     }
-                    .scrollTargetLayout(isEnabled: isEmbedded)
                 }
                 .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") + "." + originFilter.rawValue : nil,
                     normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: visiblePhotos) })
@@ -1902,7 +1904,7 @@ struct SavedMemoriesGalleryView: View {
         }
         }
         .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")
-        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("saved-memories-gallery")
