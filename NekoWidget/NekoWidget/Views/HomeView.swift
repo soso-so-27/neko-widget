@@ -212,7 +212,9 @@ struct HomeView: View {
     /// Shown at the right of the 「猫写真」 heading (the 写真 tab's cat switch).
     let headerAccessory: AnyView?
 
-    @State private var visibleDetectedPhotoCount = 24
+    /// Rows are built lazily, so a large batch costs little; fewer appends
+    /// mean fewer layout passes while the grid is moving.
+    @State private var visibleDetectedPhotoCount = 120
     @State private var openedCatProfileIdentifier: String?
     @State private var initialReadingIdentifier: String?
 
@@ -433,7 +435,7 @@ struct HomeView: View {
 
     private func moveToMonth(_ identifier: String) {
         guard let index = catPhotos.firstIndex(where: { $0.localIdentifier == identifier }) else { return }
-        visibleDetectedPhotoCount = max(visibleDetectedPhotoCount, index + 24)
+        visibleDetectedPhotoCount = max(visibleDetectedPhotoCount, index + 120)
         initialReadingIdentifier = identifier
         PhotoLibraryReadingPosition.returnToOpenedPhoto(
             PhotoLibraryGridRow.identifier(containing: identifier, in: catPhotos),
@@ -503,7 +505,7 @@ struct HomeView: View {
               catPhotos[displayedCount - 1].localIdentifier == localIdentifier else { return }
         // Append to the same grid. Reappearing cells from an earlier batch
         // cannot reveal another page or replace the user's scroll position.
-        visibleDetectedPhotoCount = min(catPhotos.count, displayedCount + 24)
+        visibleDetectedPhotoCount = min(catPhotos.count, displayedCount + 120)
     }
 
     private var restoredDetectedPhotoCount: Int {
@@ -511,7 +513,7 @@ struct HomeView: View {
               let index = catPhotos.firstIndex(where: { $0.localIdentifier == initialReadingIdentifier }) else {
             return visibleDetectedPhotoCount
         }
-        return max(visibleDetectedPhotoCount, index + 24)
+        return max(visibleDetectedPhotoCount, index + 120)
     }
 
     @ViewBuilder private var catProfilesSection: some View {

@@ -669,18 +669,13 @@ struct GroupWindowScreen: View {
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-receive-notice")
                 }
-                if model.isSyncing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text(model.entries.isEmpty ? "写真を読み込んでいます…" : "新しい写真を確かめています…")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 16)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("group-window-syncing")
-                }
+                // Photos already here stay as they are while new ones are checked
+                // quietly; new photos simply appear. Only an empty window says it is loading.
                 if model.entries.isEmpty && model.isSyncing {
-                    Color.clear.frame(height: 120)
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                        .accessibilityLabel("写真を読み込んでいます")
+                        .accessibilityIdentifier("group-window-syncing")
                 } else if model.entries.isEmpty {
                     ContentUnavailableView(
                         "まだ写真はありません",
@@ -1575,13 +1570,11 @@ struct GroupWindowListSection: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if !model.hasLoaded {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("まどを読み込んでいます…").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("group-window-list-loading")
+                if !model.hasLoaded && known.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .accessibilityLabel("まどを読み込んでいます")
+                        .accessibilityIdentifier("group-window-list-loading")
                 }
             }
             if let message = model.message {
