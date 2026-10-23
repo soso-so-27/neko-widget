@@ -130,9 +130,6 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     let isSearching: Bool
     let normalize: (String) -> String
     @State private var tracker = PhotoLibraryRowTracker()
-    /// Test builds only (設定 → テスト用): turn the whole reading position off,
-    /// to compare on a real iPhone if the grid still stutters.
-    @AppStorage("debug.photoGrid.noPosition.v1") private var experimentOff = false
 
     init(section: String?, isSearching: Bool, normalize: @escaping (String) -> String) {
         self.section = section
@@ -141,7 +138,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     }
 
     @ViewBuilder func body(content: Content) -> some View {
-        if let section, !(experimentOff && InternalBuildPresentationAvailability.isAvailable) {
+        if let section {
             ScrollViewReader { proxy in
                 content
                     .environment(\.photoLibraryRowTracker, tracker)
