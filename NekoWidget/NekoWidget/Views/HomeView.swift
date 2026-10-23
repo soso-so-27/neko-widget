@@ -61,6 +61,17 @@ extension View {
     }
 }
 
+/// Test builds only: switches in 設定 → テスト用 that turn one part of the
+/// photo grid off, to find on a real iPhone what makes scrolling stutter.
+enum PhotoGridExperiment {
+    static let noPositionKey = "debug.photoGrid.noPosition.v1"
+    static let localOnlyKey = "debug.photoGrid.localOnly.v1"
+
+    static func isOn(_ stored: Bool) -> Bool {
+        stored && InternalBuildPresentationAvailability.isAvailable
+    }
+}
+
 /// A vertical scrolling target is one complete row, with a stable photo ID.
 /// Keeping cells inside an ordinary HStack avoids resolving a nested grid's
 /// container rectangle as the target of an individual cell.
@@ -233,6 +244,8 @@ struct HomeView: View {
     /// Rows are built lazily, so a large batch costs little; fewer appends
     /// mean fewer layout passes while the grid is moving.
     @State private var visibleDetectedPhotoCount = 120
+    @AppStorage(PhotoGridExperiment.noPositionKey) private var experimentNoPosition = false
+    @AppStorage(PhotoGridExperiment.localOnlyKey) private var experimentLocalOnly = false
     @State private var openedCatProfileIdentifier: String?
     @State private var initialReadingIdentifier: String?
 
@@ -324,12 +337,13 @@ struct HomeView: View {
                 supplementaryPhotos.padding(.top, 16)
                     .id("photo-library-all-archive")
             }
-            .scrollTargetLayout(isEnabled: isEmbedded)
+            .scrollTargetLayout(isEnabled: isEmbedded && !PhotoGridExperiment.isOn(experimentNoPosition))
             .padding(.horizontal, isEmbedded ? 0 : 16)
             .padding(.vertical, 12)
         }
         .accessibilityIdentifier("photo-library-all-scroll")
-        .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "all") : nil,
+        .restoringPhotoLibraryPosition(section: isEmbedded && !PhotoGridExperiment.isOn(experimentNoPosition)
+                                           ? (readingPositionKey ?? "all") : nil,
             normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
@@ -501,7 +515,8 @@ struct HomeView: View {
                             localIdentifier: photo.localIdentifier,
                             catBoundingBox: photo.catBoundingBox,
                             targetPixelSize: CGSize(width: 360, height: 360),
-                            targetAspectRatio: 1
+                            targetAspectRatio: 1,
+                            networkAccessAllowed: !PhotoGridExperiment.isOn(experimentLocalOnly)
                         )
                         .aspectRatio(1, contentMode: .fit)
                     }
