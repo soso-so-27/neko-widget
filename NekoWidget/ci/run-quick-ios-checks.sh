@@ -59,6 +59,11 @@ xcrun --sdk macosx swiftc -parse-as-library \
   -o "$RUNNER_TEMP/cat-care-tests"
 "$RUNNER_TEMP/cat-care-tests"
 
+xcrun --sdk macosx swiftc -parse-as-library \
+  NekoWidget/Services/PlusAuthorityCache.swift ci/verify-plus-authority-cache.swift \
+  -o "$RUNNER_TEMP/plus-cache-tests"
+"$RUNNER_TEMP/plus-cache-tests"
+
 settings_paths=()
 for target in NekoWidget NekoWidgetWidgetExtension NekoWidgetShareExtension; do
   output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"

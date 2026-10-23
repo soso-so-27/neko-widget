@@ -158,6 +158,7 @@
 		10000000000000000000017D /* SeasonalMovieView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025F /* SeasonalMovieView.swift */; };
 		10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */; };
 		10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000261 /* SeasonalMovieExportService.swift */; };
+		E02310230000000000000001 /* PlusAuthorityCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02310230000000000000002 /* PlusAuthorityCache.swift */; };
 		100000000000000000000180 /* PlusPurchaseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000262 /* PlusPurchaseStore.swift */; };
 		100000000000000000000181 /* BillingClientCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000263 /* BillingClientCore.swift */; };
 		100000000000000000000182 /* BillingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000264 /* BillingKeychainStore.swift */; };
@@ -427,6 +428,7 @@
 		F0000000000000000000025F /* SeasonalMovieView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieView.swift; sourceTree = "<group>"; };
 		F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieArchiveStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000261 /* SeasonalMovieExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieExportService.swift; sourceTree = "<group>"; };
+		E02310230000000000000002 /* PlusAuthorityCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusAuthorityCache.swift; sourceTree = "<group>"; };
 		F00000000000000000000262 /* PlusPurchaseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusPurchaseStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000263 /* BillingClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingClientCore.swift; sourceTree = "<group>"; };
 		F00000000000000000000264 /* BillingKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingKeychainStore.swift; sourceTree = "<group>"; };
@@ -836,6 +838,7 @@
 				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
 				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
 				F00000000000000000000262 /* PlusPurchaseStore.swift */,
+				E02310230000000000000002 /* PlusAuthorityCache.swift */,
 				D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */,
 				94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */,
 				E02609210000000000000002 /* MembershipOfferModel.swift */,
@@ -1239,6 +1242,7 @@
 				10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */,
 				10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */,
 				100000000000000000000180 /* PlusPurchaseStore.swift in Sources */,
+				E02310230000000000000001 /* PlusAuthorityCache.swift in Sources */,
 				C09D345411BC400BBB805EB4 /* WindowSupportResumeClient.swift in Sources */,
 				05282243C4C04065AD6112F7 /* WindowSupportResumeModel.swift in Sources */,
 				E02609210000000000000001 /* MembershipOfferModel.swift in Sources */,

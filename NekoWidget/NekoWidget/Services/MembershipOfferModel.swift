@@ -285,7 +285,7 @@ final class MembershipOfferModel: ObservableObject {
     private func updateMembershipState() {
         expiryTask?.cancel()
         if let purchases {
-            isMember = purchases.entitlementState.grantsPlus
+            isMember = purchases.entitlementState.permitsPersonalPlus
             isWaiting = purchases.pendingProductID != nil || purchases.awaitingServerConfirmation
             verificationRequired = !isMember && !isWaiting && !purchases.canStartNewPurchase
             if isMember, let expiry = purchases.entitlementState.lastServerConfirmed?.expirationDate {
@@ -648,7 +648,7 @@ struct PlusSettingsSection: View {
     private enum Status { case notMember, member, unknown }
 
     private var status: Status {
-        if purchases.entitlementState.grantsPlus { return .member }
+        if purchases.entitlementState.permitsPersonalPlus { return .member }
         if case .indeterminate = purchases.entitlementState { return .unknown }
         if purchases.pendingProductID != nil || purchases.awaitingServerConfirmation { return .unknown }
         return .notMember
