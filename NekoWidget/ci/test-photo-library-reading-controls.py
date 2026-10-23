@@ -11,7 +11,7 @@ class ReadingControls(unittest.TestCase):
         self.assertIn('.onChange(of: self.section)', HOME)
     def test_month_jump_preserves_collection(self):
         jump = HOME.split('private func moveToMonth(', 1)[1].split('@ViewBuilder', 1)[0]
-        self.assertIn('index + 24', jump)
+        self.assertIn('index + 120', jump)
         self.assertIn('PhotoLibraryGridRow.identifier(containing:', jump)
         self.assertIn('section: readingPositionKey ?? "all"', jump)
     def test_partial_failure_keeps_photos_and_retry(self):

@@ -1040,7 +1040,7 @@ struct LikedPhotosView: View {
 
     @Environment(\.membershipAccess) private var membershipAccess
     /// The monthly summary and movie open with Plus; their cards say so before a tap.
-    private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) != .allowed }
+    private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired }
     private var showsReflectionPlaceholder: Bool {
         hasPhotoAccess && !isCatDetail && albumScope.wrappedValue == .everyone && !hasPeriodCollections
     }
