@@ -107,13 +107,14 @@ struct PlusVerifiedEntitlement: Equatable, Sendable {
     let status: BillingAuthoritativeEntitlementStatus
     let accessUntilDate: Date
     let authorityStaleAt: Date
+    let serverEvaluatedAt: Date
 
     /// Both Apple's access boundary and the server observation freshness bound
     /// are authoritative. Neither may be used to extend the other.
     var expirationDate: Date { min(accessUntilDate, authorityStaleAt) }
 
     func isUsable(at date: Date = .now) -> Bool {
-        status.grantsAccess && expirationDate > date
+        status.grantsAccess && date >= serverEvaluatedAt && expirationDate > date
     }
 }
 
@@ -142,6 +143,9 @@ enum PlusEntitlementState: Equatable, Sendable {
             return false
         }
     }
+    /// Personal UI/access may use the existing bounded fallback. This does
+    /// not turn an offline cache into a new server confirmation or purchase.
+    var permitsPersonalPlus: Bool { lastServerConfirmed?.isUsable() == true }
 }
 
 enum PlusProductAvailability: Equatable, Sendable {
@@ -239,6 +243,10 @@ final class PlusPurchaseStore: ObservableObject {
     private var reconciliationTask: Task<Void, Never>?
     private var authorityAllowsNewPurchase = false
     private var purchaseEligibilityGeneration: UInt64 = 0
+    private var usesLiveCache = false
+    private var purchaseCache: PlusPurchaseCache?
+    private var cacheContext: PlusCacheContext?
+    private var authorityGeneration: UInt64 = 0
 
     init(
         configuration: PlusPurchaseConfiguration = .current,
@@ -251,6 +259,7 @@ final class PlusPurchaseStore: ObservableObject {
            let liveSession = PlusBillingSession.configured(
                purchaseConfiguration: configuration
            ) {
+            usesLiveCache = true
             self.recordVerifiedTransactionEvent = { event, billingAccountID in
                 try await liveSession.recordVerifiedTransactionEvent(
                     event,
@@ -566,6 +575,8 @@ final class PlusPurchaseStore: ObservableObject {
         switch result {
         case let .verified(transaction):
             guard configuration.plan(for: transaction.productID) != nil else { return }
+            authorityGeneration &+= 1
+            if !isEligibleStoreKitTransaction(transaction) { discardCachedAuthority() }
             purchaseEligibilityGeneration &+= 1
             canStartNewPurchase = false
             guard let billingToken = transaction.appAccountToken,
@@ -597,6 +608,8 @@ final class PlusPurchaseStore: ObservableObject {
             }
         case let .unverified(transaction, _):
             guard configuration.plan(for: transaction.productID) != nil else { return }
+            authorityGeneration &+= 1
+            discardCachedAuthority()
             purchaseEligibilityGeneration &+= 1
             canStartNewPurchase = false
             entitlementState = .indeterminate(
@@ -619,6 +632,7 @@ final class PlusPurchaseStore: ObservableObject {
         let scan = await scanCurrentEntitlements()
 
         guard !scan.encounteredUnverifiedOrUnsupported else {
+            discardCachedAuthority()
             markServerConfirmationIndeterminate()
             return
         }
@@ -626,6 +640,11 @@ final class PlusPurchaseStore: ObservableObject {
             markServerConfirmationIndeterminate()
             return
         }
+
+        // Establish the CURRENT signed StoreKit environment/account first.
+        // Then unlock from the bounded cache before any POST or authority GET.
+        // Do not guess Sandbox from a receipt filename or silently bootstrap.
+        restoreCachedAuthority(from: scan.events)
 
         do {
             for event in scan.events {
@@ -636,7 +655,9 @@ final class PlusPurchaseStore: ObservableObject {
                 }
                 try await recordVerifiedTransactionEvent(
                     event,
-                    BillingAccountID(rawValue: billingToken)
+                    BillingAccountID(rawValue: billingToken),
+                    allowAcknowledgedReplay: !isRestoring && !isPurchasing
+                        && pendingProductID == nil && !awaitingServerConfirmation
                 )
                 await transaction.finish()
                 // An empty foreground/restore scan cannot resolve an Apple
@@ -676,18 +697,29 @@ final class PlusPurchaseStore: ObservableObject {
             markServerConfirmationIndeterminate()
             return .indeterminate
         }
+        let expectedContext = cacheContext
+        let generation = authorityGeneration
         do {
             // Validate again even for injected clients. Only this response,
             // never a transaction-recording acknowledgement, may grant Plus.
             let response = try await fetchAuthoritativeEntitlement()
+            // A newer transaction/denial wins over an older suspended GET.
+            guard generation == authorityGeneration else { return .indeterminate }
             let authority = try response.validated()
+            if let expectedContext, cacheContext != expectedContext
+                || currentCacheContext(environment: expectedContext.environment) != expectedContext {
+                discardCachedAuthority()
+                throw BillingClientError.credentialChanged
+            }
             if authority.status == .unconfirmed {
                 authorityAllowsNewPurchase = authority.productId == nil
                     && authority.accessUntilMs == nil && authority.authorityStaleAtMs == nil
+                discardCachedAuthority()
                 markServerConfirmationIndeterminate()
                 return .indeterminate
             }
             guard authority.status.grantsAccess else {
+                discardCachedAuthority()
                 authorityAllowsNewPurchase = authority.status == .expired || authority.status == .revoked
                 entitlementState = .inactive
                 return .denied
@@ -707,16 +739,33 @@ final class PlusPurchaseStore: ObservableObject {
                 ),
                 authorityStaleAt: Date(
                     timeIntervalSince1970: Double(authorityStaleAtMs) / 1_000
-                )
+                ),
+                serverEvaluatedAt: Date(timeIntervalSince1970: Double(authority.evaluatedAtMs) / 1_000)
             )
             guard entitlement.isUsable() else {
+                discardCachedAuthority()
                 entitlementState = .inactive
                 return .denied
             }
             entitlementState = .serverConfirmed(entitlement)
+            if var cache = purchaseCache, cache.context == expectedContext {
+                cache.authority = PlusCachedAuthority(status: authority.status.rawValue, productID: productID,
+                    accessUntil: entitlement.accessUntilDate, authorityStaleAt: entitlement.authorityStaleAt,
+                    serverEvaluatedAt: entitlement.serverEvaluatedAt, receivedAt: .now)
+                purchaseCache = cache
+                PlusAuthorityKeychainCache.save(cache)
+            }
             awaitingServerConfirmation = false
             return .confirmed
         } catch {
+            guard generation == authorityGeneration else { return .indeterminate }
+            if usesLiveCache {
+                switch error {
+                case BillingClientError.transportUnavailable: break
+                case BillingClientError.requestRejected(let status, _) where status >= 500: break
+                default: discardCachedAuthority()
+                }
+            }
             markServerConfirmationIndeterminate()
             return .indeterminate
         }
@@ -727,6 +776,53 @@ final class PlusPurchaseStore: ObservableObject {
         entitlementState = .indeterminate(
             lastServerConfirmed: entitlementState.lastServerConfirmed
         )
+    }
+
+    private func currentCacheContext(environment: String) -> PlusCacheContext? {
+        guard usesLiveCache, ["Sandbox", "Production"].contains(environment),
+              let credential = try? BillingKeychainStore.load(),
+              let checked = try? credential.validated(), checked.phase == .registered,
+              let marker = try? BillingInstallationMarkerStore.loadExisting(),
+              checked.installationMarker == marker.uuidString.lowercased(),
+              let account = checked.billingAccountID, let key = checked.billingKeyID,
+              let endpoint = BillingClientConfiguration.current.baseURL?.absoluteString
+        else { return nil }
+        return PlusCacheContext(billingAccountID: account, billingKeyID: key,
+            installationMarker: checked.installationMarker, environment: environment, endpoint: endpoint)
+    }
+
+    private func restoreCachedAuthority(from events: [PlusVerifiedTransactionEvent]) {
+        guard usesLiveCache else { return }
+        guard let first = events.first,
+              let context = currentCacheContext(environment: first.transaction.environment.rawValue),
+              events.allSatisfy({ $0.transaction.environment.rawValue == context.environment
+                  && $0.transaction.appAccountToken?.uuidString.lowercased() == context.billingAccountID })
+        else { discardCachedAuthority(); entitlementState = .checking; return }
+        if cacheContext != context {
+            authorityGeneration &+= 1
+            // A changed identity never inherits the old in-memory decision.
+            entitlementState = .checking
+            let stored = PlusAuthorityKeychainCache.load()
+            purchaseCache = stored?.context == context ? stored : PlusPurchaseCache(context: context)
+            cacheContext = context
+        }
+        guard let authority = purchaseCache?.usableAuthority(context: context, now: .now),
+              let plan = configuration.plan(for: authority.productID),
+              let status = BillingAuthoritativeEntitlementStatus(rawValue: authority.status)
+        else {
+            entitlementState = .checking
+            return
+        }
+        entitlementState = .indeterminate(lastServerConfirmed: PlusVerifiedEntitlement(plan: plan, status: status,
+            accessUntilDate: authority.accessUntil, authorityStaleAt: authority.authorityStaleAt,
+            serverEvaluatedAt: max(authority.serverEvaluatedAt, authority.receivedAt)))
+    }
+
+    private func discardCachedAuthority() {
+        authorityGeneration &+= 1
+        purchaseCache = nil; cacheContext = nil
+        if usesLiveCache { PlusAuthorityKeychainCache.clear() }
+        entitlementState = .indeterminate(lastServerConfirmed: nil)
     }
 
     private func hasFreshLocalPurchaseEligibility() async -> Bool {
@@ -789,10 +885,20 @@ final class PlusPurchaseStore: ObservableObject {
 
     private func recordVerifiedTransactionEvent(
         _ event: PlusVerifiedTransactionEvent,
-        _ billingAccountID: BillingAccountID
+        _ billingAccountID: BillingAccountID,
+        allowAcknowledgedReplay: Bool = false
     ) async throws {
         guard let recordVerifiedTransactionEvent else {
             throw PlusPurchaseRecordingFailure.invalidAcknowledgement
+        }
+        let context = currentCacheContext(environment: event.transaction.environment.rawValue)
+        let stamp = PlusRecordedTransaction(transactionID: String(event.transaction.id),
+            originalTransactionID: String(event.transaction.originalID),
+            signedContentDigest: PlusRecordedTransaction.digest(event.signedTransactionInfo), recordedAt: .now)
+        if allowAcknowledgedReplay, isEligibleStoreKitTransaction(event.transaction),
+           let context, context.billingAccountID == billingAccountID.rawValue.uuidString.lowercased(),
+           purchaseCache?.alreadyRecorded(stamp, context: context, now: .now) == true {
+            return
         }
         let acknowledgement = try await recordVerifiedTransactionEvent(
             event,
@@ -804,6 +910,12 @@ final class PlusPurchaseStore: ObservableObject {
               acknowledgement.originalTransactionID == String(transaction.originalID)
         else {
             throw PlusPurchaseRecordingFailure.invalidAcknowledgement
+        }
+        if let context, context == currentCacheContext(environment: context.environment),
+           var cache = purchaseCache, cache.context == context {
+            cache.acknowledge(stamp)
+            purchaseCache = cache
+            PlusAuthorityKeychainCache.save(cache)
         }
     }
 

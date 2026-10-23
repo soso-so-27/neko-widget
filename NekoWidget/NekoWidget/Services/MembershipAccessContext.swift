@@ -34,7 +34,9 @@ struct MembershipAccessContext: Equatable {
         case .disabled, .checking: personal = .checking
         case .inactive: personal = .inactive
         case let .serverConfirmed(value):
-            if !value.status.grantsAccess || value.accessUntilDate <= now {
+            if now < value.serverEvaluatedAt {
+                personal = .checking
+            } else if !value.status.grantsAccess || value.accessUntilDate <= now {
                 personal = .inactive
             } else if value.authorityStaleAt <= now {
                 personal = .indeterminate(lastVerifiedUntil: nil)
@@ -43,7 +45,7 @@ struct MembershipAccessContext: Equatable {
             }
         case let .indeterminate(value):
             personal = .indeterminate(lastVerifiedUntil:
-                value?.status.grantsAccess == true ? value?.expirationDate : nil)
+                value?.isUsable(at: now) == true ? value?.expirationDate : nil)
         }
     }
 
