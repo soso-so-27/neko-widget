@@ -1097,6 +1097,77 @@ enum ToolBackupTransfer {
         try? FileManager.default.removeItem(at: receipt)
     }
 
+    private static func metadataDraft(_ part: ToolBackupPart, id: UUID, saved: ToolBackupFiles.Saved) -> ManagedPreservationDraft {
+        let document = ManagedPreservationDocument(formatVersion: 3, text: part.kind == "index" ? "ツールの保存" : "ツールの保存データ",
+            capturedAt: nil, writtenAt: saved.index.createdAt, updatedAt: saved.index.createdAt,
+            catNames: [], photoFile: nil, toolBackup: part)
+        return .init(recordID: id, document: document, jpegData: nil)
+    }
+    /// Resume this before ordinary usage/detail reads: until union publication
+    /// those reads correctly reject the uncovered owner generation.
+    private static func finishMetadataBatch(_ batch: ManagedPreservationClient.MetadataBatch,
+        saved: ToolBackupFiles.Saved, pieces: [ToolBackupFiles.Draft], client: ManagedPreservationClient,
+        checkpoint: ManagedPreservationClient.SessionCheckpoint, sent: inout Set<UUID>, buckets: inout [String: Set<UUID>]) async throws {
+        guard batch.owner == saved.owner, batch.snapshotID == saved.id, (1...16).contains(batch.items.count),
+              Set(batch.items.map(\.recordID)).count == batch.items.count else { throw ToolBackupError.invalid }
+        for item in batch.items {
+            guard let piece = pieces.first(where: { $0.id == item.recordID }) else { throw ToolBackupError.invalid }
+            let part = try piece.load(saved)
+            guard part.kind != "photo" else { throw ToolBackupError.invalid }
+            try await client.validateMetadataBatchItem(item, draft: metadataDraft(part, id: piece.id, saved: saved))
+        }
+        try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.beginMetadataBatch(batch, checkpoint: checkpoint) }
+        // Replaying a fixed part reconciles a response lost after the D1 commit.
+        // A local sent receipt is not written until the whole union is covered.
+        for item in batch.items {
+            try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.stageMetadataBatch(batch, item: item, checkpoint: checkpoint) }
+        }
+        var ready = false
+        for _ in 0..<512 {
+            try Task.checkCancellation()
+            ready = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.finishMetadataBatch(batch, checkpoint: checkpoint) }
+            if ready { break }
+        }
+        guard ready else { throw ManagedPreservationError.unavailable }
+        for item in batch.items {
+            try await client.requireSessionCheckpoint(checkpoint)
+            sent.insert(item.recordID)
+            try ToolBackupFiles.acknowledge(item.recordID, sent: sent, saved: saved, buckets: &buckets)
+        }
+        try await client.requireSessionCheckpoint(checkpoint)
+        try FileManager.default.removeItem(at: ToolBackupFiles.directory(saved.id).appendingPathComponent("metadata-batch.json"))
+        // The existing final head CAS, outside this method, remains mandatory.
+    }
+
+    static func resumeMetadataBatchIfNeeded(snapshotID: UUID, owner: String, client: ManagedPreservationClient,
+        checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
+        let folder = ToolBackupFiles.directory(snapshotID)
+        let journal = folder.appendingPathComponent("metadata-batch.json")
+        guard checkpoint.ownerID == owner else { throw ManagedPreservationError.staleSession }
+        guard FileManager.default.fileExists(atPath: journal.path) else {
+            // OS backup excludes transport staging. Cover only already committed
+            // parts before the existing head reconciliation/recapture path.
+            do {
+                for _ in 0..<512 {
+                    if try await waitingForRateLimit(client: client, checkpoint: checkpoint, operation: {
+                        try await client.recoverMetadataInventory(checkpoint: checkpoint)
+                    }) { return }
+                }
+                throw ManagedPreservationError.unavailable
+            } catch ManagedPreservationError.notFound { return } // Older service / no grouped work.
+        }
+        let saved = try JSONDecoder().decode(ToolBackupFiles.Saved.self,
+            from: ToolBackupFiles.read(folder.appendingPathComponent("pending.json"), maximum: ToolBackupIndex.maximumReceiptBytes))
+        guard saved.id == snapshotID, saved.owner == owner else { throw ToolBackupError.invalid }
+        let pieces = try ToolBackupFiles.preparedParts(saved)
+        var sent = try ToolBackupFiles.sent(saved)
+        guard sent.isSubset(of: Set(pieces.map(\.id))) else { throw ToolBackupError.invalid }
+        var buckets = ToolBackupFiles.receiptBuckets(sent)
+        let batch = try JSONDecoder().decode(ManagedPreservationClient.MetadataBatch.self,
+            from: ToolBackupFiles.read(journal, maximum: 12 * 1024 * 1024))
+        try await finishMetadataBatch(batch, saved: saved, pieces: pieces, client: client, checkpoint: checkpoint, sent: &sent, buckets: &buckets)
+    }
+
     static func upload(_ saved: ToolBackupFiles.Saved, client: ManagedPreservationClient,
                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
         let checkpoint = try await client.captureSessionCheckpoint()
@@ -1106,6 +1177,12 @@ enum ToolBackupTransfer {
         var sent = try ToolBackupFiles.sent(saved)
         var buckets = ToolBackupFiles.receiptBuckets(sent)
         guard sent.isSubset(of: Set(pieces.map(\.id))) else { throw ToolBackupError.invalid }
+        let metadataBatchURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("metadata-batch.json")
+        if FileManager.default.fileExists(atPath: metadataBatchURL.path) {
+            let batch = try JSONDecoder().decode(ManagedPreservationClient.MetadataBatch.self,
+                from: ToolBackupFiles.read(metadataBatchURL, maximum: 12 * 1024 * 1024))
+            try await finishMetadataBatch(batch, saved: saved, pieces: pieces, client: client, checkpoint: checkpoint, sent: &sent, buckets: &buckets)
+        }
         let usage = try await client.usage()
         if saved.index.version >= 2 {
             guard let support = usage.toolSnapshots, support.maximumIndexVersion >= saved.index.version, support.strictPartDeletion else {
@@ -1145,6 +1222,25 @@ enum ToolBackupTransfer {
                 continue
             }
             let part = try item.load(saved)
+            if saved.index.version == 4, usage.toolSnapshots?.metadataBatchVersion == 1, part.kind != "photo" {
+                var items: [ManagedPreservationClient.MetadataBatch.Item] = []
+                for candidate in pieces[offset...] {
+                    if sent.contains(candidate.id) { continue }
+                    if candidate.file?.path.hasSuffix(".jpg") == true || candidate.node?.kind == "photo" { break }
+                    let next = try candidate.load(saved)
+                    if next.kind == "photo" { break }
+                    items.append(try await client.metadataBatchItem(metadataDraft(next, id: candidate.id, saved: saved)))
+                    if items.count == 16 { break }
+                }
+                if items.count > 1 {
+                    let batch = ManagedPreservationClient.MetadataBatch(id: UUID(), owner: saved.owner, snapshotID: saved.id, items: items)
+                    try await client.requireSessionCheckpoint(checkpoint)
+                    try ToolBackupFiles.write(JSONEncoder().encode(batch), to: metadataBatchURL)
+                    try await finishMetadataBatch(batch, saved: saved, pieces: pieces, client: client, checkpoint: checkpoint, sent: &sent, buckets: &buckets)
+                    await progress(sent.count, pieces.count)
+                    continue
+                }
+            }
             let jpeg = part.kind == "photo" ? try ToolBackupFiles.read(
                 ToolBackupFiles.directory(saved.id).appendingPathComponent(part.path), maximum: 20 * 1024 * 1024) : nil
             let document = ManagedPreservationDocument(formatVersion: 3, text: part.kind == "index" ? "ツールの保存" : "ツールの保存データ",

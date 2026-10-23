@@ -7,6 +7,7 @@ import { RecordRecoveryCopy, type CommittedRecordImage,
 import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 import type { ToolOwnerTrial } from './tool-owner-trial';
 import { exportPage } from './export-page';
+import { ToolMetadataBatches } from './tool-metadata-batches';
 
 interface Row {
   owner_id: string; record_id: string; revision: number; initial_fingerprint: string; initial_operation: string;
@@ -24,7 +25,7 @@ interface UsageRow {
 }
 interface Dependencies {
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
-  auth: { requireSession(token: string): Promise<Session> }; now: () => number; quotaBytes: number; maximumRecords: number;
+  auth: { requireSession(token: string): Promise<Session>; requireToolMetadataBatchSession?(token: string, batchId: string): Promise<Session> }; now: () => number; quotaBytes: number; maximumRecords: number;
   /** Operational admission cap across all owners. This does not cap S3 history or request charges. */
   globalActiveBytesLimit?: number;
   requireGlobalAdmissionLimit?: boolean;
@@ -44,8 +45,12 @@ const bytes = (value: unknown): ArrayBuffer => {
   if (value instanceof Uint8Array || Array.isArray(value)) return new Uint8Array(value).buffer;
   throw new ServiceError('ARCHIVE_INTEGRITY_FAILED', 503);
 };
-const activeSession = `EXISTS(SELECT 1 FROM pa_sessions s JOIN pa_owners o ON o.owner_id=s.owner_id
-  WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND o.disabled=0 AND s.owner_epoch=o.epoch)`;
+const activeSessionBase = `EXISTS(SELECT 1 FROM pa_sessions s JOIN pa_owners o ON o.owner_id=s.owner_id
+  WHERE s.session_hash=? AND s.owner_id=? AND s.expires_at>? AND o.disabled=0 AND o.purge_fence_id IS NULL AND s.owner_epoch=o.epoch
+    AND (s.device_grant_id IS NULL OR EXISTS(SELECT 1 FROM pa_device_session_grants g
+      WHERE g.grant_id=s.device_grant_id AND g.owner_id=o.owner_id AND g.owner_epoch=o.epoch
+        AND g.revoked_at IS NULL AND g.idle_expires_at>?)))`;
+const activeSession=activeSessionBase;
 const exactLegacy = `EXISTS(SELECT 1 FROM pa_record_legacy_baseline b
   WHERE b.owner_id=r.owner_id AND b.record_id=r.record_id AND b.revision=r.revision
   AND b.initial_operation=r.initial_operation AND b.initial_fingerprint=r.initial_fingerprint
@@ -67,8 +72,9 @@ export class ArchiveStore {
   async exportPage(token: string, request: Request, context?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
     return exportPage({ db: this.d.db, auth: this.d.auth, read: (value, id) => this.readBinary(value, id) }, request, token, context);
   }
-  private sessionBindings(session: Session): [string, string, number] {
-    return [session.sessionHash, session.ownerId, this.d.now()];
+  private sessionBindings(session: Session): [string, string, number, number] {
+    const now=this.d.now();
+    return [session.sessionHash, session.ownerId, now, now];
   }
   private async row(owner: string, id: string): Promise<Row | null> {
     return this.d.db.prepare('SELECT * FROM pa_records WHERE owner_id=? AND record_id=?').bind(owner, id).first<Row>();
@@ -315,8 +321,8 @@ export class ArchiveStore {
       return data;
     } catch { throw new ServiceError('ARCHIVE_INTEGRITY_FAILED', 503); }
   }
-  private async unchanged(token: string, session: Session, row: Row) {
-    const current = await this.d.auth.requireSession(token);
+  private async unchanged(token: string, session: Session, row: Row, authorize?:()=>Promise<Session>) {
+    const current = await (authorize ? authorize() : this.d.auth.requireSession(token));
     if (current.ownerId !== session.ownerId) throw new ServiceError('SESSION_INVALID', 401);
     const latest = await this.row(session.ownerId, row.record_id);
     if (!latest || latest.deleted) throw new ServiceError('RECORD_NOT_FOUND', 404);
@@ -362,7 +368,7 @@ export class ArchiveStore {
     const limitBytes = trial ? Math.max(1, Math.min(this.d.quotaBytes, allocated + trial.remainingBytes)) : this.d.quotaBytes;
     const maximumRecords = trial ? Math.max(1, Math.min(this.d.maximumRecords,
       row.saved_records + row.pending_records + trial.remainingRecords)) : this.d.maximumRecords;
-    return { version: 1, accounting: 'encrypted-records-v1', toolSnapshots: { maximumIndexVersion: trial ? 3 : 4, strictPartDeletion: true },
+    return { version: 1, accounting: 'encrypted-records-v1', toolSnapshots: { maximumIndexVersion: trial ? 3 : 4, strictPartDeletion: true, metadataBatchVersion: this.d.requireOwnerRecovery && !!this.d.auth.requireToolMetadataBatchSession && this.d.ownerRecovery?.supportsMetadataBatch() ? 1 : 0 },
       storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes,
         availableBytes: Math.max(0, limitBytes - allocated), overLimit: allocated > limitBytes },
       records: { saved: row.saved_records, pending: row.pending_records, maximumRecords,
@@ -429,9 +435,43 @@ export class ArchiveStore {
     if (!row || row.deleted) throw new ServiceError('RECORD_NOT_FOUND', 404);
     if (row.revision !== revision) throw new ServiceError('REVISION_CONFLICT', 409);
   }
+  private metadataBatches():ToolMetadataBatches {
+    const continuation=this.d.auth.requireToolMetadataBatchSession;
+    if(!continuation || !this.d.requireOwnerRecovery || !this.d.ownerRecovery?.supportsMetadataBatch())throw new ServiceError('PRESERVATION_NOT_CONFIGURED',503);
+    return new ToolMetadataBatches(this.d.db,{requireSession:token=>this.d.auth.requireSession(token),
+      requireToolMetadataBatchSession:(token,id)=>continuation.call(this.d.auth,token,id)},this.d.now);
+  }
+  async beginMetadataBatch(token:string,input:unknown){
+    const batches=this.metadataBatches();
+    let covered:Session|undefined;
+    try{covered=await this.d.auth.requireSession(token);}catch{}
+    // Seed a missing derived cursor before the first part can uncover the owner.
+    if(covered)await this.d.ownerRecovery?.copyCurrent(this.d.db,covered.ownerId,this.d.now());
+    return batches.begin(token,input);
+  }
+  stageMetadataBatch(token:string,batchId:string,id:string,raw:Uint8Array){
+    return this.metadataBatches().stage(token,batchId,id,raw,(input,authorize,nonce)=>this.putInternal(token,id,input,{id:batchId,nonce,authorize}));
+  }
+  finishMetadataBatch(token:string,batchId:string){
+    return this.metadataBatches().finish(token,batchId,async owner=>
+      (await this.d.ownerRecovery!.copyCurrentStep(this.d.db,owner,this.d.now())).status==='complete');
+  }
+  recoverMetadataBatch(token:string,batchId:string){
+    return this.metadataBatches().recover(token,batchId,async owner=>
+      (await this.d.ownerRecovery!.copyCurrentStep(this.d.db,owner,this.d.now())).status==='complete');
+  }
   async put(token: string, id: string, input: unknown) {
+    return this.putInternal(token,id,input);
+  }
+  private async putInternal(token:string,id:string,input:unknown,batch?:{id:string;nonce:string;authorize:()=>Promise<Session>}) {
+    const authorize=batch?.authorize ?? (()=>this.d.auth.requireSession(token));
+    const activeSession=batch ? `${activeSessionBase} AND EXISTS(SELECT 1 FROM pa_tool_metadata_batches b
+      JOIN pa_sessions bs ON bs.owner_id=b.owner_id WHERE bs.session_hash=? AND b.batch_id='${batch.id}'
+      AND b.owner_epoch=bs.owner_epoch AND b.batch_nonce='${batch.nonce}' AND b.state='open')` : activeSessionBase;
+    const sessionBindings=(session:Session)=>[...this.sessionBindings(session),...(batch?[session.sessionHash]:[])];
+    const acknowledge=async(owner:string)=>{if(!batch)await this.acknowledgeOwnerInventory(owner);};
     recordId(id);
-    const session = await this.d.auth.requireSession(token);
+    const session = await authorize();
     // Bound every PUT before decoding, hashing, key use or backup writes. Even
     // edits carry the photo input, although its unchanged S3 copy is reused.
     const encoded = input && typeof input === 'object'
@@ -456,7 +496,7 @@ export class ArchiveStore {
       // Malformed input still consumes an attempt, but never exceeds the photo cap.
       await this.d.intakeControl.admit(plannedBytes);
     }
-    if (this.d.requireOwnerRecovery) {
+    if (this.d.requireOwnerRecovery && !batch) {
       await this.d.ownerRecovery!.copyCurrent(this.d.db, session.ownerId, this.d.now());
     }
     if (!input || typeof input !== 'object') throw new ServiceError('INVALID_RECORD');
@@ -612,8 +652,8 @@ export class ArchiveStore {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.metadata(existing); // Corrupted data is never returned as a successful retry.
       await this.ensureCurrentRecovery(existing, session);
-      await this.unchanged(token, session, existing);
-      await this.acknowledgeOwnerInventory(session.ownerId);
+      await this.unchanged(token, session, existing,authorize);
+      await acknowledge(session.ownerId);
       await assertTransferActive();
       return { recordId: id, revision: existing.revision };
     }
@@ -625,8 +665,8 @@ export class ArchiveStore {
         if (latest.photoSHA256 === photoSHA256
           && JSON.stringify(latest.document) === JSON.stringify(retryDocument)) {
           await this.ensureCurrentRecovery(existing, session);
-          await this.unchanged(token, session, existing);
-          await this.acknowledgeOwnerInventory(session.ownerId);
+          await this.unchanged(token, session, existing,authorize);
+          await acknowledge(session.ownerId);
           return { recordId: id, revision: existing.revision };
         }
       }
@@ -682,7 +722,7 @@ export class ArchiveStore {
             AND ${activeSession} AND (? IS NULL OR (SELECT generation FROM pa_inventory WHERE owner_id=?)=?)
             AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_abandonments WHERE owner_id=? AND snapshot_id=?)
             RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id,
-              expected, ...this.sessionBindings(session), toolIndexGeneration, session.ownerId, toolIndexGeneration,
+              expected, ...sessionBindings(session), toolIndexGeneration, session.ownerId, toolIndexGeneration,
               session.ownerId,appHead?.snapshotID.toLowerCase() ?? ''),
           ...(copied ? [this.recoveryReference(session.ownerId, id, expected + 1, copied)] : []),
           ...(appHead ? [
@@ -696,19 +736,19 @@ export class ArchiveStore {
           ] : []),
         ]);
         if (results[0]?.results.length !== 1 || (copied && results[1]?.results.length !== 1)) {
-          await this.d.auth.requireSession(token);
+          await authorize();
           throw new ServiceError('REVISION_CONFLICT', 409);
         }
         if (copied) await this.verifiedRecoveryReference(session.ownerId, id, expected + 1);
-        await this.acknowledgeOwnerInventory(session.ownerId);
+        await acknowledge(session.ownerId);
         return { recordId: id, revision: expected + 1 };
       }
       const updated = await this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
         quota_bytes=quota_bytes-length(metadata)+? WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
         AND ${activeSession} RETURNING revision`).bind(bytes(metadata), metadata.length, session.ownerId, id, expected,
-        ...this.sessionBindings(session)).first<{ revision: number }>();
-      if (!updated) { await this.d.auth.requireSession(token); throw new ServiceError('REVISION_CONFLICT', 409); }
-      await this.acknowledgeOwnerInventory(session.ownerId);
+        ...sessionBindings(session)).first<{ revision: number }>();
+      if (!updated) { await authorize(); throw new ServiceError('REVISION_CONFLICT', 409); }
+      await acknowledge(session.ownerId);
       return { recordId: id, revision: updated.revision };
     }
     if (request.consentVersion !== 'managed-preservation-v1') throw new ServiceError('PRESERVATION_CONSENT_REQUIRED', 403);
@@ -743,9 +783,9 @@ export class ArchiveStore {
       RETURNING operation_id`).bind(operation, session.ownerId, id, key, size, this.d.now() + 600_000,
       session.ownerId, size, this.d.quotaBytes,
       this.d.globalActiveBytesLimit ?? null, this.d.globalActiveBytesLimit ?? null, size,
-      session.ownerId, session.ownerId, this.d.maximumRecords, ...this.sessionBindings(session), ...reservationFence.bindings)
+      session.ownerId, session.ownerId, this.d.maximumRecords, ...sessionBindings(session), ...reservationFence.bindings)
       .first<{ operation_id: string }>();
-    if (!reserved) { await this.d.auth.requireSession(token); throw new ServiceError('ARCHIVE_CAPACITY_REACHED', 409); }
+    if (!reserved) { await authorize(); throw new ServiceError('ARCHIVE_CAPACITY_REACHED', 409); }
     try {
       if (sealedPhoto !== null) {
         const write = () => this.d.bucket.put(key, sealedPhoto, { httpMetadata: { contentType: 'application/octet-stream' } });
@@ -785,7 +825,7 @@ export class ArchiveStore {
           AND (? IS NULL OR (SELECT generation FROM pa_inventory WHERE owner_id=?)=?)
           AND NOT EXISTS(SELECT 1 FROM pa_tool_snapshot_abandonments WHERE owner_id=? AND snapshot_id IN (?,?)) RETURNING revision`)
           .bind(session.ownerId, id, initialFingerprint, operation, bytes(metadata), photo === null ? null : key, photo?.length ?? 0,
-            size, operation, this.d.now(), ...this.sessionBindings(session), ...commitFence.bindings, session.ownerId, id,
+            size, operation, this.d.now(), ...sessionBindings(session), ...commitFence.bindings, session.ownerId, id,
             toolIndexGeneration, session.ownerId, toolIndexGeneration, session.ownerId,
             document.toolBackup?.snapshotId ?? appHead?.snapshotID.toLowerCase() ?? '',
             uploadSnapshotID ?? document.toolBackup?.snapshotId ?? ''),
@@ -806,11 +846,11 @@ export class ArchiveStore {
           .bind(document.toolBackup.snapshotId, document.toolBackup.kind, uploadSnapshotID, session.ownerId, id, operation)] : []),
       ]);
       if (result[0]?.results.length !== 1 || (copied && result[2]?.results.length !== 1)) {
-        await this.d.auth.requireSession(token);
+        await authorize();
         throw new ServiceError('REVISION_CONFLICT', 409);
       }
       await this.verifiedRecoveryReference(session.ownerId, id, 1);
-      await this.acknowledgeOwnerInventory(session.ownerId);
+      await acknowledge(session.ownerId);
       await assertTransferActive();
       return { recordId: id, revision: 1 };
     } catch (error) {
@@ -819,8 +859,8 @@ export class ArchiveStore {
       const committed = await this.row(session.ownerId, id);
       if (committed && !committed.deleted && committed.initial_fingerprint === initialFingerprint) {
         await this.ensureCurrentRecovery(committed, session);
-        await this.unchanged(token, session, committed);
-        await this.acknowledgeOwnerInventory(session.ownerId);
+        await this.unchanged(token, session, committed,authorize);
+        await acknowledge(session.ownerId);
         await assertTransferActive();
         return { recordId: id, revision: committed.revision };
       }

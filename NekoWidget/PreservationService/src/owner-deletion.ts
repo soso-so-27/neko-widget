@@ -174,7 +174,9 @@ export class OwnerDeletionExecutor {
       ...Object.entries(residue.recoveryRepairCursors).map(([table, n]) => [table, 'last_owner_id', n] as const),
     ]) {
       if (!n) continue;
-      await db.prepare(`UPDATE ${table} SET ${column}='' WHERE ${column}=? AND ${authority}`)
+      await db.prepare(`UPDATE ${table} SET ${column}=''
+        ${table === 'pa_retention_scan_cursor' ? ',revision=revision+1,retry_pending=0' : ''}
+        WHERE ${column}=? AND ${authority}`)
         .bind(ownerId, ownerId, r.requestId).run();
       return 'processing';
     }

@@ -25,6 +25,7 @@ import { OwnerRequestLimiter, OwnerRequestRateLimited } from './owner-request-li
 import { payloadResponse, payloadWork } from './payload-work';
 import { recordResponse } from './record-frame';
 import { recordId } from './documents';
+import { readBoundedBody } from './bounded-body';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
 export interface Env {
@@ -128,6 +129,35 @@ export async function route(request: Request, services: Services, context?: Pick
     // Receipt polling and auth bootstrap retain the IP guard only.
     return response(await services.ownerDeletion.status(deletionOwner, token));
   }
+  if(request.method==='POST' && path==='/v1/tool-metadata-batches/recovery')return payloadWork.run(async()=>{
+    const {session,batchId}=await services.auth.currentToolMetadataBatchSession(token);
+    await services.ownerRequestLimiter?.admitToolMetadataBatch(session,batchId);
+    return response(await services.archive.recoverMetadataBatch(token,batchId));
+  },request.signal);
+  if(request.method==='POST' && path==='/v1/tool-metadata-batches')return payloadWork.run(async()=>{
+    const input=await body(request,4096);
+    let session;
+    let continuation=false;
+    try{session=await services.auth.requireSession(token);}
+    catch(error){
+      if(typeof input.batchId!=='string')throw error;
+      session=await services.auth.requireToolMetadataBatchSession(token,input.batchId);continuation=true;
+    }
+    if(continuation)await services.ownerRequestLimiter?.admitToolMetadataBatch(session,String(input.batchId));
+    else await services.ownerRequestLimiter?.admit(session);
+    return response(await services.archive.beginMetadataBatch(token,input));
+  },request.signal);
+  const batchRoute=/^\/v1\/tool-metadata-batches\/([0-9a-f-]+)\/(?:parts\/([0-9a-f-]+)|(finish))$/u.exec(path);
+  if(batchRoute && ((request.method==='PUT' && batchRoute[2]) || (request.method==='POST' && batchRoute[3])))return payloadWork.run(async()=>{
+    const batchId=batchRoute[1]!;
+    const session=await services.auth.requireToolMetadataBatchSession(token,batchId);
+    await services.ownerRequestLimiter?.admitToolMetadataBatch(session,batchId);
+    if(batchRoute[3])return response(await services.archive.finishMetadataBatch(token,batchId));
+    if(request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()!=='application/json')throw new ServiceError('INVALID_REQUEST');
+    const raw=await readBoundedBody(request.body,512*1024,()=>new ServiceError('INVALID_REQUEST'),request.signal,
+      ()=>new ServiceError('REQUEST_TOO_LARGE',413));
+    return response(await services.archive.stageMetadataBatch(token,batchId,batchRoute[2]!,raw));
+  },request.signal);
   if (services.ownerRequestLimiter) {
     await services.ownerRequestLimiter.admit(await services.auth.requireSession(token));
   }

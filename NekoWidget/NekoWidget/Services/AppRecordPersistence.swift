@@ -689,6 +689,12 @@ final class AppRecordPersistence: ObservableObject {
             let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
             try await require(value, checkpoint)
             releaseUploadedPayload(value.snapshotID, owner: value.owner)
+            if let pending = value.pending {
+                phase = "中断した送信を再開"
+                try await ToolBackupTransfer.resumeMetadataBatchIfNeeded(snapshotID: pending, owner: value.owner,
+                    client: client, checkpoint: checkpoint)
+                try await require(value, checkpoint)
+            }
             let headID = AppRecordHead.id(origin: value.origin, owner: value.owner)
             requested = false
             let remote = try await remoteHead(headID)
@@ -1238,6 +1244,20 @@ private actor AppRecordFixtureServer {
     func simulateArchiveListingConflict() { rejectVisibleInventory = true }
     private var maximumIndexVersion = 4
     func useIndexVersion(_ version: Int) { maximumIndexVersion = version }
+    private var metadataBatchMode = false
+    private var interruptMetadataPart = false
+    private var metadataUncovered = false
+    private var metadataManifest: [UUID: String] = [:]
+    private var metadataBatchID: UUID?
+    private var metadataBodies: [UUID: String] = [:]
+    private var metadataFinishPending = false
+    private var metadataPublications = 0
+    private var metadataReplays = 0
+    private var metadataRecoveries = 0
+    func useMetadataBatches() { metadataBatchMode = true; interruptMetadataPart = true }
+    func metadataCounts() -> (publications: Int, replays: Int, uncovered: Bool) {
+        (metadataPublications, metadataReplays, metadataUncovered)
+    }
     var records: [UUID: [String: Any]] = [:]
     var deleted = Set<UUID>()
     var claimed = Set<UUID>()
@@ -1277,6 +1297,60 @@ private actor AppRecordFixtureServer {
                 headerFields: ["Content-Type": "application/json"])!)
         }
         func failure(_ code: String, _ status: Int) throws -> (Data, URLResponse) { try response(["error": ["code": code]], status) }
+        if url.path == "/v1/tool-metadata-batches/recovery" {
+            guard metadataBatchMode, metadataBatchID != nil else { return try failure("TOOL_METADATA_BATCH_NOT_FOUND", 404) }
+            metadataUncovered = false; metadataRecoveries += 1
+            return try response(["status": "inventory-ready"])
+        }
+        if metadataBatchMode, url.path == "/v1/tool-metadata-batches" {
+            guard let body = request.httpBody,
+                  let input = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let rawID = input["batchId"] as? String, let id = UUID(uuidString: rawID),
+                  let entries = input["items"] as? [[String: String]], (1...16).contains(entries.count) else { throw ToolBackupError.invalid }
+            var manifest: [UUID: String] = [:]
+            for entry in entries {
+                guard let raw = entry["recordId"], raw == raw.lowercased(), let record = UUID(uuidString: raw),
+                      let hash = entry["bodySHA256"], hash.count == 64, manifest[record] == nil else { throw ToolBackupError.invalid }
+                manifest[record] = hash
+            }
+            if metadataBatchID == id {
+                guard metadataManifest == manifest else { throw ToolBackupError.invalid }
+            } else {
+                guard !metadataUncovered else { throw ToolBackupError.invalid }
+                metadataBatchID = id; metadataManifest = manifest; metadataFinishPending = false
+            }
+            return try response(["batchId": rawID, "status": "open"])
+        }
+        if metadataBatchMode, url.path.hasPrefix("/v1/tool-metadata-batches/") {
+            let path = url.pathComponents
+            guard path.count >= 5, let batch = UUID(uuidString: path[3]), batch == metadataBatchID else { throw ToolBackupError.invalid }
+            if path[4] == "finish" {
+                guard metadataManifest.allSatisfy({ metadataBodies[$0.key] == $0.value }) else { throw ToolBackupError.invalid }
+                if !metadataFinishPending {
+                    metadataFinishPending = true
+                    return try response(["batchId": batch.uuidString.lowercased(), "status": "pending"])
+                }
+                metadataUncovered = false; metadataPublications += 1
+                return try response(["batchId": batch.uuidString.lowercased(), "status": "parts-ready"])
+            }
+            guard path.count == 6, path[4] == "parts", let id = UUID(uuidString: path[5]),
+                  let body = request.httpBody, metadataManifest[id] == ToolBackupIndex.hash(body),
+                  let input = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  input["photoBase64"] is NSNull, input["expectedRevision"] is NSNull,
+                  let document = input["document"] as? [String: Any], document["toolBackup"] != nil else { throw ToolBackupError.invalid }
+            if let old = records[id] {
+                guard NSDictionary(dictionary: old["document"] as! [String: Any]).isEqual(to: document) else { throw ToolBackupError.invalid }
+                metadataReplays += 1
+            } else {
+                records[id] = ["recordId": id.uuidString.lowercased(), "revision": 1, "document": document,
+                    "photoBase64": NSNull(), "photoSHA256": NSNull()]
+                generation += 1
+            }
+            metadataBodies[id] = ToolBackupIndex.hash(body); metadataUncovered = true
+            if interruptMetadataPart { interruptMetadataPart = false; throw CancellationError() }
+            return try response(["batchId": batch.uuidString.lowercased(), "recordId": id.uuidString.lowercased(), "revision": 1, "status": "part-staged"])
+        }
+        if metadataUncovered { return try failure("SESSION_INVALID", 401) }
         func references(_ record: [String: Any]) -> Set<UUID> {
             guard let document = record["document"] as? [String: Any] else { return [] }
             if let text = document["text"] as? String, let data = text.data(using: .utf8),
@@ -1315,7 +1389,7 @@ private actor AppRecordFixtureServer {
         if url.path == "/v1/retention" { return try response(["version": 1, "status": "active", "dueAt": NSNull(), "paused": false]) }
         if url.path == "/v1/usage" {
             return try response(["version": 1, "accounting": "encrypted-records-v1",
-                "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true],
+                "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true, "metadataBatchVersion": metadataBatchMode ? 1 : 0],
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 100000000,
                     "availableBytes": 100000000, "overLimit": false],
                 "records": ["saved": records.count, "pending": 0, "maximumRecords": 200, "creationLimitReached": false]])
@@ -1412,6 +1486,53 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static var preparationPhase = "開始"
+    func verifyMetadataBatchResume() async throws {
+        Self.preparationPhase = "集約保存を中断"
+        await server.useMetadataBatches()
+        await persistence.enable()
+        let client = authenticationClient()
+        guard let owner = try await client.sessionOwnerID(), let pending = try ToolBackupFiles.pending(owner: owner),
+              persistence.title != "保存済み", await server.metadataCounts().uncovered else { throw ToolBackupError.storage }
+        let journal = ToolBackupFiles.directory(pending.id).appendingPathComponent("metadata-batch.json")
+        let batch = try JSONDecoder().decode(ManagedPreservationClient.MetadataBatch.self,
+            from: ToolBackupFiles.read(journal, maximum: 12 * 1024 * 1024))
+        guard try ToolBackupFiles.sent(pending).isDisjoint(with: Set(batch.items.map(\.recordID))) else { throw ToolBackupError.storage }
+        Self.preparationPhase = "未ACKの送信を通常の同期から再開"
+        await persistence.retry()
+        let counts = await server.metadataCounts()
+        guard persistence.title == "保存済み", counts.publications > 0, counts.replays > 0, !counts.uncovered,
+              !FileManager.default.fileExists(atPath: journal.path) else { throw ToolBackupError.storage }
+        Self.preparationPhase = "集約保存のheadと復元を照合"
+        let headID = AppRecordHead.id(origin: configuration.origin!.absoluteString, owner: owner)
+        let head = try AppRecordHead.decode(await client.detail(headID).document)
+        let record = try await client.detail(head.snapshotID).record
+        let restored = try await ToolBackupTransfer.restore(record, client: client) { _, _ in }
+        guard restored.index.version == 4, restored.index.files.contains(where: { $0.path == "CareHandoff/plan.json" }),
+              restored.index.files.contains(where: { $0.path.hasSuffix(".jpg") }) else { throw ToolBackupError.invalid }
+        Self.preparationPhase = "端末移行による作業ファイル欠落を検査"
+        let noteURL = AppRecordDataset.directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+        var notes = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: AppRecordJSON.read(noteURL))
+        guard let key = notes.notes.keys.first, let previous = notes.notes[key] else { throw ToolBackupError.invalid }
+        var note = PhotoMemoryNote(id: previous.id, text: previous.text + " 集約保存の再構築", updatedAt: .now,
+            revision: UUID().uuidString, writtenAt: previous.writtenAt, context: previous.context, weight: previous.weight)
+        note.photoFile = previous.photoFile
+        notes.notes[key] = note
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        try AppRecordJSON.write(encoder.encode(notes), to: noteURL, options: [.atomic, .completeFileProtection])
+        await server.useMetadataBatches()
+        await persistence.retry()
+        guard await server.metadataCounts().uncovered, let missing = try ToolBackupFiles.pending(owner: owner) else { throw ToolBackupError.storage }
+        let staging = ToolBackupFiles.directory(missing.id)
+        // Only this isolated DEBUG fixture's excluded transport files disappear;
+        // the live notes/photos and last published head remain present.
+        try FileManager.default.removeItem(at: staging.appendingPathComponent("metadata-batch.json"))
+        try FileManager.default.removeItem(at: staging.appendingPathComponent("pending.json"))
+        await persistence.retry()
+        guard persistence.title == "保存済み", !(await server.metadataCounts().uncovered) else { throw ToolBackupError.storage }
+        let rebuiltHead = try AppRecordHead.decode(await client.detail(headID).document)
+        guard rebuiltHead.snapshotID != head.snapshotID,
+              try AppRecordJSON.read(noteURL) == encoder.encode(notes) else { throw ToolBackupError.invalid }
+    }
     func verifyPartitionedMigrationAndRestore() async throws {
         Self.preparationPhase = "旧形式を保存"
         await server.useIndexVersion(3)
@@ -1828,6 +1949,14 @@ struct AppRecordPersistenceFixtureView: View {
         }
         .disabled(switching)
         .task {
+            if CommandLine.arguments.contains("--app-records-metadata-batch-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifyMetadataBatchResume()
+                    result = "集約保存・中断再開・復元を確認しました"
+                } catch { result = "集約保存の検査に失敗: \(AppRecordFixture.preparationPhase)" }
+                return
+            }
             if CommandLine.arguments.contains("--app-records-capacity-probe") {
                 do {
                     let probe = try await AppRecordFixture.make()

@@ -44,7 +44,8 @@ export interface AuthDependencies {
   keys: KeyCustody;
   identityIndexSecret: string;
   now: () => number;
-  ownerRecovery?: { copyCurrent(db: D1Database, ownerId: string, now: number): Promise<unknown> };
+  ownerRecovery?: { copyCurrent(db: D1Database, ownerId: string, now: number): Promise<unknown>;
+    recoverStagedMetadata?(db:D1Database,ownerId:string,now:number):Promise<{status:'none'|'pending'|'complete'}> };
   requireOwnerRecovery?: boolean;
   ownerAdmission?: { createOwner(ownerId: string, identityKey: string, now: number): Promise<void> };
   ownerDeletion?: { assertNotRequested(ownerId: string): Promise<void>; requireAvailable?(): Promise<void> };

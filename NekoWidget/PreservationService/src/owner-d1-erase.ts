@@ -1,6 +1,6 @@
 import { ServiceError } from './contracts';
 import { verifyOwnerCloudEmpty } from './owner-cloud-empty';
-import { inspectOwnerD1Residue, ownerD1DeleteOrder } from './owner-d1-residue';
+import { inspectOwnerD1Residue, lastOwnerCursorTables, ownerD1DeleteOrder } from './owner-d1-residue';
 import { loadOwnerPurgeTimeline } from './purge-intent-replay';
 import type { VerifiedMembershipStatus } from './retention-ledger';
 import type { S3PurgeIntentStore } from './s3-purge-intent';
@@ -79,7 +79,7 @@ export class OwnerD1Eraser {
       // Advisory cursors and pending-deletion keys can still identify the
       // owner after content removal. They carry no erasure authority.
       for (const table of ['pa_expiry_review_cursor', 'pa_notice_scan_cursor',
-        'pa_recovery_repair_cursor', 'pa_owner_recovery_repair_cursor'] as const) {
+        ...lastOwnerCursorTables] as const) {
         const cursorRows = table === 'pa_expiry_review_cursor' || table === 'pa_notice_scan_cursor'
           ? residue.ownerCursors[table] : residue.recoveryRepairCursors[table];
         if (!cursorRows) continue;
@@ -87,6 +87,7 @@ export class OwnerD1Eraser {
         const result = await this.d.db.prepare(`UPDATE ${table} SET
           ${table === 'pa_expiry_review_cursor' || table === 'pa_notice_scan_cursor'
             ? 'owner_id' : 'last_owner_id'}=''
+          ${table === 'pa_retention_scan_cursor' ? ',revision=revision+1,retry_pending=0' : ''}
           WHERE ${table === 'pa_expiry_review_cursor' || table === 'pa_notice_scan_cursor'
             ? 'owner_id' : 'last_owner_id'}=?
           AND EXISTS(SELECT 1 FROM pa_purge_d1_erasing_authority

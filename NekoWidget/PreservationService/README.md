@@ -1,5 +1,22 @@
 # 個人保管サービス — 既定OFFの接続候補
 
+## 2026-10-19 保存部品の集約
+
+新しいアプリは `usage.toolSnapshots.metadataBatchVersion == 1` の場合だけ、新規の不変 JSON/index 部品を最大16個ずつまとめます。写真と既存記録の編集・退役は従来経路を使います。月額980円、会員資格、受付期限・残量、同意、個人保存の範囲は変えません。
+
+- `POST /v1/tool-metadata-batches` は部品IDと**送信する元body bytesのSHA-256**を固定します。初回は通常認証と検証済み owner tree が必要です。
+- `PUT /v1/tool-metadata-batches/{id}/parts/{recordId}` の `part-staged` は、部品の受領だけを示します。専用の継続認証は同じowner/epoch/batch nonceと有効session/device grantに限定し、通常の閲覧・編集・削除の認証を緩めません。
+- `POST /v1/tool-metadata-batches/{id}/finish` は、署名された再開状態から目録を更新し、独立S3 readbackと現在世代の照合が終わって `parts-ready` を返します。アプリはさらに従来のhead CASが成功してから保存完了にします。
+- `POST /v1/tool-metadata-batches/recovery` は、そのsessionの実際に確定済みの目録だけを復旧します。作業ファイルを失った場合も、未送信の部品やheadを完了扱いにはしません。期限切れ接続の更新と既存の定期修復も同じ限定復旧を進め、owner ACK前にtoken/idle期間を更新しません。
+
+0047は契約確認の巡回位置、0048は一時作業状態です。変更のないactive/graceの**定期**確認では不要なowner履歴を追加せず、毎回の請求元確認・暗号化データの確認と終了/削除の鮮度条件は維持します。期限切れ/unknownの扱いと明示的な確認は従来どおりです。
+
+巡回位置の予約は同じSQLでownerのepoch・有効状態・purge fence・請求元との対応を再確認します。0047の削除guardと0048の外部キーは、新しい巡回参照や一時作業行を残したまま旧版の削除処理がownerを消して完了扱いすることを拒否します。現在の削除処理は先にその参照・行を消してからownerを削除します。
+
+集約のtree更新は1要求あたり認証read最大4、prepared write最大4で再開します。全checkpointをowner/世代/連番とHMACで結び付け、PUT前に正確なkeyと暗号文を永続化します。確定済みの一時行だけをcheckpointの進行後に回収し、結果不明の行は消さずownerあたり32行で停止します。不明なwrite leaseの自動解除、復旧履歴/tombstoneの削除、鍵の平文キャッシュは行いません。この上限はtreeの1 quantumであり、定期処理全体のprovider呼出数や請求上限ではありません。
+
+ローカル合成3,650件inventoryでの新規9部品比較では、S3 PUT/HEADは各54→35、追加暗号文は202,285→122,754 bytesでした。headと退役は別の従来phaseです。実iPhone・本番速度・通常1人の総費用の値ではなく、この比較では集約側の局所処理時間は長くなりました。重い比較probeは通常CIと分離して証拠へ保持し、通常suiteでは中断、権限、破損、競合、削除、再開を検証します。
+
 本番サービスではありません。専用D1/R2で、Appleの本人確認に結び付けた写真・メモのコピーを保管する接続候補です。共有のE2EE、CloudKit、配送期限、利用者データは変更しません。
 
 ## ローカルの確認
