@@ -310,7 +310,6 @@ struct PhotoMemoryNotesListView: View {
                     yearSections(visible, account: displayedAccount)
                 }
             }
-            .scrollTargetLayout(isEnabled: isEmbedded)
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
         }
@@ -347,6 +346,7 @@ struct PhotoMemoryNotesListView: View {
                     }
             }
             .id(item.id)
+            .photoLibraryReadingRow(item.id, index: index)
         }
     }
 
