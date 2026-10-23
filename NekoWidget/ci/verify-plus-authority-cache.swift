@@ -60,6 +60,17 @@ private func check(_ condition: Bool, _ message: String) throws {
         cache.version = 2
         cache.authority = authority()
         try check(cache.usableAuthority(context: expected, now: now) == nil, "unknown cache version refused")
+        // Foreground with no usable Keychain value must keep an existing
+        // serverConfirmed/indeterminate grant, without replacing its deadline.
+        let memory = authority()
+        let foreground = PlusAuthorityRestoreDecision.resolve(memoryIsUsable: memory.isUsable(at: now),
+            identityChanged: false, cachedAuthority: nil)
+        try check(foreground == .keepMemory, "foreground + cache absent + valid memory does not become checking")
+        try check(PlusAuthorityRestoreDecision.resolve(memoryIsUsable: true, identityChanged: true,
+            cachedAuthority: memory) == .identityChanged, "known identity change overrides valid memory and disk")
+        try check(PlusAuthorityRestoreDecision.resolve(memoryIsUsable: memory.isUsable(at: now.addingTimeInterval(1800)),
+            identityChanged: false, cachedAuthority: nil) == .checking, "expired memory cannot bridge a missing cache")
+        print("Plus foreground: valid memory survives missing cache; identity changes and expiry still withdraw access")
         print("Plus cache: expiry, clock rollback, identity, environment, reinstall and exact-ACK boundaries passed")
         print("Plus transport policy: unchanged acknowledged transaction 1 POST + 1 GET -> 0 POST + 1 GET; device latency unmeasured")
     }

@@ -32,6 +32,23 @@ struct PlusCachedAuthority: Codable, Equatable, Sendable {
     }
 }
 
+/// A missing disk cache is not a server denial. Foreground reconciliation
+/// keeps the existing, still-bounded decision until fresh authority arrives.
+enum PlusAuthorityRestoreDecision: Equatable {
+    case keepMemory
+    case restore(PlusCachedAuthority)
+    case checking
+    case identityChanged
+
+    static func resolve(memoryIsUsable: Bool, identityChanged: Bool,
+                        cachedAuthority: PlusCachedAuthority?) -> Self {
+        if identityChanged { return .identityChanged }
+        if memoryIsUsable { return .keepMemory }
+        if let cachedAuthority { return .restore(cachedAuthority) }
+        return .checking
+    }
+}
+
 struct PlusRecordedTransaction: Codable, Equatable, Sendable {
     let transactionID: String
     let originalTransactionID: String

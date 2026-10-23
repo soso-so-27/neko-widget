@@ -707,7 +707,7 @@ final class PlusPurchaseStore: ObservableObject {
             guard generation == authorityGeneration else { return .indeterminate }
             let authority = try response.validated()
             if let expectedContext, cacheContext != expectedContext
-                || currentCacheContext(environment: expectedContext.environment) != expectedContext {
+                || hasKnownCacheIdentityChange(from: expectedContext, events: []) {
                 discardCachedAuthority()
                 throw BillingClientError.credentialChanged
             }
@@ -761,7 +761,8 @@ final class PlusPurchaseStore: ObservableObject {
             guard generation == authorityGeneration else { return .indeterminate }
             if usesLiveCache {
                 switch error {
-                case BillingClientError.transportUnavailable: break
+                case BillingClientError.transportUnavailable, BillingClientError.protectedDataUnavailable,
+                     BillingClientError.keychainUnavailable, BillingClientError.localStateUnavailable: break
                 case BillingClientError.requestRejected(let status, _) where status >= 500: break
                 default: discardCachedAuthority()
                 }
@@ -793,29 +794,63 @@ final class PlusPurchaseStore: ObservableObject {
 
     private func restoreCachedAuthority(from events: [PlusVerifiedTransactionEvent]) {
         guard usesLiveCache else { return }
-        guard let first = events.first,
-              let context = currentCacheContext(environment: first.transaction.environment.rawValue),
-              events.allSatisfy({ $0.transaction.environment.rawValue == context.environment
-                  && $0.transaction.appAccountToken?.uuidString.lowercased() == context.billingAccountID })
-        else { discardCachedAuthority(); entitlementState = .checking; return }
-        if cacheContext != context {
+        let context = events.first.flatMap {
+            currentCacheContext(environment: $0.transaction.environment.rawValue)
+        }
+        let identityChanged = cacheContext.map { hasKnownCacheIdentityChange(from: $0, events: events) } == true
+            || context.map { hasKnownCacheIdentityChange(from: $0, events: events) } == true
+        let canRestoreCache = context.map { context in
+            events.allSatisfy { $0.transaction.environment.rawValue == context.environment
+                && $0.transaction.appAccountToken?.uuidString.lowercased() == context.billingAccountID }
+        } == true
+        if !identityChanged, canRestoreCache, let context, cacheContext != context {
             authorityGeneration &+= 1
-            // A changed identity never inherits the old in-memory decision.
-            entitlementState = .checking
             let stored = PlusAuthorityKeychainCache.load()
             purchaseCache = stored?.context == context ? stored : PlusPurchaseCache(context: context)
             cacheContext = context
         }
-        guard let authority = purchaseCache?.usableAuthority(context: context, now: .now),
-              let plan = configuration.plan(for: authority.productID),
-              let status = BillingAuthoritativeEntitlementStatus(rawValue: authority.status)
-        else {
-            entitlementState = .checking
+        let cachedAuthority = canRestoreCache ? context.flatMap {
+            purchaseCache?.usableAuthority(context: $0, now: .now)
+        } : nil
+        switch PlusAuthorityRestoreDecision.resolve(
+            memoryIsUsable: entitlementState.lastServerConfirmed?.isUsable() == true,
+            identityChanged: identityChanged, cachedAuthority: cachedAuthority
+        ) {
+        case .keepMemory:
             return
+        case .identityChanged:
+            discardCachedAuthority()
+            entitlementState = .checking
+        case .checking:
+            entitlementState = .checking
+        case let .restore(authority):
+            guard let plan = configuration.plan(for: authority.productID),
+                  let status = BillingAuthoritativeEntitlementStatus(rawValue: authority.status)
+            else { entitlementState = .checking; return }
+            entitlementState = .indeterminate(lastServerConfirmed: PlusVerifiedEntitlement(plan: plan, status: status,
+                accessUntilDate: authority.accessUntil, authorityStaleAt: authority.authorityStaleAt,
+                serverEvaluatedAt: max(authority.serverEvaluatedAt, authority.receivedAt)))
         }
-        entitlementState = .indeterminate(lastServerConfirmed: PlusVerifiedEntitlement(plan: plan, status: status,
-            accessUntilDate: authority.accessUntil, authorityStaleAt: authority.authorityStaleAt,
-            serverEvaluatedAt: max(authority.serverEvaluatedAt, authority.receivedAt)))
+    }
+
+    private func hasKnownCacheIdentityChange(from expected: PlusCacheContext,
+                                             events: [PlusVerifiedTransactionEvent]) -> Bool {
+        if BillingClientConfiguration.current.baseURL?.absoluteString != expected.endpoint { return true }
+        // Keychain/file protection and an incomplete registration are absence
+        // of evidence, not a different identity. Compare values we did read.
+        if let credential = try? BillingKeychainStore.load(), let checked = try? credential.validated() {
+            if checked.installationMarker != expected.installationMarker { return true }
+            if let account = checked.billingAccountID, account != expected.billingAccountID { return true }
+            if let key = checked.billingKeyID, key != expected.billingKeyID { return true }
+        }
+        do {
+            let marker = try BillingInstallationMarkerStore.loadExisting()
+            if marker?.uuidString.lowercased() != expected.installationMarker { return true }
+        } catch { /* A temporarily unreadable marker is not a reinstall. */ }
+        return events.contains {
+            $0.transaction.environment.rawValue != expected.environment
+                || $0.transaction.appAccountToken.map { $0.uuidString.lowercased() != expected.billingAccountID } == true
+        }
     }
 
     private func discardCachedAuthority() {
