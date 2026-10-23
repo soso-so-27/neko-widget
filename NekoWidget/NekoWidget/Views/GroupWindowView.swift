@@ -168,6 +168,9 @@ final class GroupWindowScreenModel: ObservableObject {
 
     /// Who this iPhone is in the window: from the relay, or as last remembered.
     private var rememberedMe: String?
+    /// Hearts tapped here and not yet answered by the relay: photo → (on, tap number).
+    private var pendingHearts: [String: (active: Bool, tap: Int)] = [:]
+    private var heartTaps = 0
     private var me: String? { window?.myParticipantID ?? rememberedMe }
 
     func myHeartIsActive(_ photoID: String) -> Bool {
@@ -205,6 +208,8 @@ final class GroupWindowScreenModel: ObservableObject {
             await store.remember(windowID: windowID, name: latest.name, myParticipantID: latest.myParticipantID)
             let photos = try await client.photos(windowID: windowID)
             hearts = Dictionary(photos.map { ($0.id, $0.hearts) }, uniquingKeysWith: { _, last in last })
+            // The relay's list may predate a tap still on its way; keep the tap.
+            for (photoID, pending) in pendingHearts { applyMyHeart(pending.active, to: photoID) }
             await store.saveHearts(hearts, windowID: windowID)
             var waiting: GroupPhotoModeration.Verdict?
             for photo in photos {
@@ -497,27 +502,38 @@ final class GroupWindowScreenModel: ObservableObject {
         let active = !myHeartIsActive(photoID)
         // Show the heart at once; the relay confirms (or corrects) it after.
         let before = hearts[photoID]
-        if let me {
-            var current = before ?? []
-            if let index = current.firstIndex(where: { $0.participantID == me }) {
-                current[index].active = active
-            } else {
-                let name = window?.activeMembers.first { $0.id == me }?.displayName ?? "あなた"
-                current.append(GroupHeart(participantID: me, displayName: name, active: active, updatedAt: Date()))
-            }
-            hearts[photoID] = current
-        }
+        heartTaps += 1
+        let tap = heartTaps
+        pendingHearts[photoID] = (active, tap)
+        applyMyHeart(active, to: photoID)
         do {
             let updated = try await client.setHeart(
                 photoID: photoID, windowID: windowID,
                 active: active, operationID: UUID()
             )
+            // A newer tap on the same photo wins; its own answer comes later.
+            guard pendingHearts[photoID]?.tap == tap else { return }
+            pendingHearts[photoID] = nil
             hearts[photoID] = updated.hearts
             await store.saveHearts(hearts, windowID: windowID)
         } catch {
+            guard pendingHearts[photoID]?.tap == tap else { return }
+            pendingHearts[photoID] = nil
             hearts[photoID] = before
             message = GroupWindowPresentation.message(for: error)
         }
+    }
+
+    private func applyMyHeart(_ active: Bool, to photoID: String) {
+        guard let me else { return }
+        var current = hearts[photoID] ?? []
+        if let index = current.firstIndex(where: { $0.participantID == me }) {
+            current[index].active = active
+        } else {
+            let name = window?.activeMembers.first { $0.id == me }?.displayName ?? "あなた"
+            current.append(GroupHeart(participantID: me, displayName: name, active: active, updatedAt: Date()))
+        }
+        hearts[photoID] = current
     }
 }
 

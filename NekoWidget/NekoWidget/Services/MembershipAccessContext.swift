@@ -104,9 +104,26 @@ extension EnvironmentValues {
 /// the restore check, so an existing member is never told to buy again.
 struct MembershipAccessNotice: View {
     let decision: MembershipAccessDecision
+    @Environment(\.membershipAccess) private var access
     @State private var showsRestore = false
 
     var body: some View {
+        if decision == .verificationRequired, access.personal == .checking {
+            // Just after launch: the answer is on its way. Nothing to do yet.
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Plus を確認しています…").font(.subheadline).foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("membership-access-checking")
+        } else {
+            notice
+        }
+    }
+
+    private var notice: some View {
         VStack(spacing: 14) {
             Image(systemName: decision == .verificationRequired ? "arrow.clockwise" : "cat")
                 .font(.title).foregroundStyle(.tint).accessibilityHidden(true)

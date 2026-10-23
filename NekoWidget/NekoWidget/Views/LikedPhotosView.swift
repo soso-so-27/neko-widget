@@ -1232,7 +1232,8 @@ struct LikedPhotosView: View {
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
         .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
-        .navigationBarTitleDisplayMode(isCatDetail || showsReflectionArchive || showsHighlightArchive ? .inline : .large)
+        // The same small title as every other tab.
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
         .onAppear { freezeRecommendations(allowAppend: true) }
