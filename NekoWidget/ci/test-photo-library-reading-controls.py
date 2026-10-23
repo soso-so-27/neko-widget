@@ -7,7 +7,7 @@ VM = (ROOT / "NekoWidget/ViewModels/AppViewModel.swift").read_text(encoding="utf
 class ReadingControls(unittest.TestCase):
     def test_scoped_return_drops_stale_callback(self):
         self.assertIn('userInfo: ["section": section]', HOME)
-        self.assertIn('generation == restorationGeneration', HOME)
+        self.assertIn('generation == tracker.generation', HOME)
         self.assertIn('.onChange(of: self.section)', HOME)
     def test_month_jump_preserves_collection(self):
         jump = HOME.split('private func moveToMonth(', 1)[1].split('@ViewBuilder', 1)[0]

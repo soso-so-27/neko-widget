@@ -1708,15 +1708,13 @@ private struct AlbumOverviewCard: View {
 private struct MemoryPhotoThumbnail: View {
     let photo: PhotoPresentation
     var selectionState: Bool? = nil
-    @AppStorage(PhotoGridExperiment.localOnlyKey) private var experimentLocalOnly = false
 
     var body: some View {
         PhotoAssetImageView(
             localIdentifier: photo.localIdentifier,
             catBoundingBox: photo.catBoundingBox,
             targetPixelSize: CGSize(width: 360, height: 360),
-            targetAspectRatio: 1,
-            networkAccessAllowed: !PhotoGridExperiment.isOn(experimentLocalOnly)
+            targetAspectRatio: 1
         )
         .aspectRatio(1, contentMode: .fit)
         .overlay {
@@ -1750,7 +1748,6 @@ private func memoryPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String
 
 struct SavedMemoriesGalleryView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage(PhotoGridExperiment.noPositionKey) private var experimentNoPosition = false
 
     private enum CreationOutput: Equatable {
         case pdf
@@ -1891,18 +1888,17 @@ struct SavedMemoriesGalleryView: View {
                         if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
                             unavailableSavedPhotosBanner
                         }
-                        ForEach(PhotoLibraryGridRow.rows(visiblePhotos)) { row in
+                        ForEach(Array(PhotoLibraryGridRow.rows(visiblePhotos).enumerated()), id: \.element.id) { index, row in
                             PhotoLibraryGridRowView(row: row, spacing: 2) { photo in
                                 gridItem(photo)
                                     .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
                             }
                             .id(row.id)
+                            .photoLibraryReadingRow(row.id, index: index)
                         }
                     }
-                    .scrollTargetLayout(isEnabled: isEmbedded && !PhotoGridExperiment.isOn(experimentNoPosition))
                 }
-                .restoringPhotoLibraryPosition(section: isEmbedded && !PhotoGridExperiment.isOn(experimentNoPosition)
-                                                   ? (readingPositionKey ?? "favorites") + "." + originFilter.rawValue : nil,
+                .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") + "." + originFilter.rawValue : nil,
                     normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: visiblePhotos) })
             }
         }
