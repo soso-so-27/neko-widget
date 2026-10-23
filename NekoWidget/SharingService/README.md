@@ -56,6 +56,40 @@ Phase 1は写真、render plan、reactionを一切受け取りません。
 
 ## API contract
 
+### グループ写真の暗号化通報（受付のドラフト・未稼働）
+
+`0045_group_encrypted_reports.sql` は追加schemaだけです。稼働中のD1への適用、
+Workerへの反映、鍵・所有者権限・料金・受付期限の変更は行いません。
+`GROUP_REPORT_RUNTIME_ENABLED` は未設定／`YES`以外では閉じます。
+既存の `REPORT_INGESTION_RUNTIME_ENABLED=YES` とD1側の通報gateも両方必要です。
+**管理者側のグループ通報の一覧・復号・対応経路とアプリの接続が未完了のため、
+この受付を有効化してはいけません。** 既存の2人用の管理者経路へIDを偽装して流しません。
+
+認証は既存のv3署名（method・path・body digest・device・timestamp・nonce）。
+通常の写真受付、作成者のPlus、ブロックと独立して、実際の受信deliveryがある他人の写真だけを受理します。
+退出・除外・まどの終了・端末失効後は、そのまど・その端末だけ24時間の通報専用資格が残ります。
+通常の取得・送信権限は復活しません。繰り返しの失効では期限を延ばしません。
+元の写真の中継metadataが削除済みの場合は、新規予約できません。
+
+| Method | Path（先頭は `/v3/group-windows/{windowId}`） | 本文 |
+|---|---|---|
+| POST | `/reports/reserve` | `operationId`（UUIDv4）、`momentId`、`reasonCode`（`objectionable` / `harassment` / `privacy` / `other`）、`moderationKeyId`（`moderation-v2`）、`ciphertextSize`、`ciphertextSHA256`、`reporterConsent: {version: 1, acceptedAt: Unix秒}` |
+| PUT | `/reports/{reportId}/ciphertext` | 別途暗号化した資料のbytes。`application/octet-stream` |
+| POST | `/reports/{reportId}/commit` | `operationId`（UUIDv4） |
+
+返却は `protocolVersion: 3` と `report`（`id`、`windowId`、`momentId`、`state`、
+`moderationKeyId`、`ciphertextSize`、`ciphertextSHA256`、`uploadExpiresAt`、`committedAt`、`contentExpiresAt`）。
+R2のkeyやダウンロードURLは返しません。予約は1時間、29 bytes〜1 MiB、1人1日10回、
+同一写真・同一人の提出は1件です。同一operationの再送は結果を再利用し、内容違いは拒否します。
+期限切れの未提出予約は新しいoperationでやり直せます。提出後の期限は7日で固定し、再送で延びません。
+削除は既存cleanupの呼び出し内で、受付OFFでも動きます。通常写真・既存通報のbucket/prefixは触りません。
+
+アプリは利用者が選択・同意した資料だけを、現在採用済みの通報公開鍵へ別途暗号化します。
+グループ鍵を運営へ送ってはいけません。グループ用暗号文のdomainは `NW3.MODERATION-REPORT` とし、
+window／moment／reporter／reason／moderation keyへの結び付けをクライアントと管理者側で検証します。
+このreceiverは暗号文のサイズ・SHA-256と署名済み予約を検証し、元の写真・グループ鍵の取得や復号はしません。
+アプリの実装は #465 のmain取り込み後に行います。
+
 すべてのresponseはJSONで、`Cache-Control: no-store`です。Error shapeは次のとおりです。
 
 ```json
