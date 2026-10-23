@@ -900,15 +900,28 @@ final class PlusPurchaseStore: ObservableObject {
            purchaseCache?.alreadyRecorded(stamp, context: context, now: .now) == true {
             return
         }
-        let acknowledgement = try await recordVerifiedTransactionEvent(
-            event,
-            billingAccountID
-        )
+        let acknowledgement: BillingTransactionRecordAcknowledgement
+        do {
+            acknowledgement = try await recordVerifiedTransactionEvent(event, billingAccountID)
+        } catch {
+            if context == cacheContext {
+                switch error {
+                case BillingClientError.requestRejected(let status, _) where (400..<500).contains(status) && status != 429:
+                    discardCachedAuthority()
+                case BillingClientError.identityMismatch, BillingClientError.credentialChanged,
+                     BillingClientError.billingAccountRecoveryRequired, BillingClientError.installationChanged:
+                    discardCachedAuthority()
+                default: break
+                }
+            }
+            throw error
+        }
         let transaction = event.transaction
         guard acknowledgement.billingAccountID == billingAccountID,
               acknowledgement.transactionID == String(transaction.id),
               acknowledgement.originalTransactionID == String(transaction.originalID)
         else {
+            discardCachedAuthority()
             throw PlusPurchaseRecordingFailure.invalidAcknowledgement
         }
         if let context, context == currentCacheContext(environment: context.environment),
