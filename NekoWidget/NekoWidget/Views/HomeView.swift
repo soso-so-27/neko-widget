@@ -145,9 +145,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                     userScrolled = false
                     position = newSection.flatMap { PhotoLibraryReadingPosition.identifier(for: $0) }.map(normalize)
                 }
-                .simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
-                    userScrolled = true
-                })
+                .modifier(PhotoLibraryUserScrollDetector(userScrolled: $userScrolled))
                 .onChange(of: isSearching) { _, searching in
                     if !searching {
                         let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
@@ -175,6 +173,26 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                 }
         } else {
             content
+        }
+    }
+}
+
+/// Marks that the person, not a restore, moved the list. On iOS 18 the
+/// scroll view reports it directly. A DragGesture laid over the ScrollView
+/// (iOS 17 only now) runs with every frame of the drag and made the photo
+/// grid stutter all the way down; the photo picker without it was smooth.
+private struct PhotoLibraryUserScrollDetector: ViewModifier {
+    @Binding var userScrolled: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                if phase == .interacting, !userScrolled { userScrolled = true }
+            }
+        } else {
+            content.simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
+                if !userScrolled { userScrolled = true }
+            })
         }
     }
 }
