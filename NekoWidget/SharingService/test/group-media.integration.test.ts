@@ -1,6 +1,6 @@
 import {plusOwner,pauseOwner} from './group-billing-fixture';
 import {describe,expect,it} from 'vitest';
-import {base64urlDecode,randomBase64url,sha256Base64url} from '../src/encoding';
+import {base64urlDecode,randomBase64url,sha256Base64url,verifyEd25519} from '../src/encoding';
 import {groupFields} from '../src/group-protocol';
 import {groupHeartTranscript} from '../src/group-hearts';
 import {route} from '../src/index';
@@ -44,6 +44,61 @@ async function heart(p:Person,w:Window,momentId:string,active=true) {
       active,operationId,keyEpoch:w.roster.keyEpoch,rosterHash:w.hash}))};
 }
 describe('group encrypted relay and creator Plus commit boundary (runtime stays OFF outside test)',()=>{
+  it('returns signed hearts in the POST and checks current delivery even on receipt replay',async()=>{
+    const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}/hearts`;
+    const body=await heart(bob,w,p.id),reply=ok(await call(bob,path,body));
+    const h=reply.moment.hearts[0];
+    expect(reply.moment.id).toBe(p.id);
+    expect(h).toMatchObject({reactorDeviceId:bob.deviceId,active:true,operationId:body.operationId});
+    expect(await verifyEd25519(bob.signing.publicKey,h.reactorSignature,groupHeartTranscript({
+      windowId:w.windowId,momentId:p.id,participantId:h.reactorParticipantId,deviceId:h.reactorDeviceId,
+      active:h.active,operationId:h.operationId,keyEpoch:h.keyEpoch,rosterHash:h.rosterHash}))).toBe(true);
+    const replay=ok(await call(bob,path,body));expect(replay.moment.hearts).toEqual(reply.moment.hearts);
+    const ownerId=w.roster.members[0]!.participantId;
+    ok(await call(bob,`/v3/group-windows/${w.windowId}/blocks/${ownerId}`,{operationId:crypto.randomUUID(),active:true}));
+    const receipt=ok(await call(bob,path,body));
+    expect(receipt).toMatchObject({operationId:body.operationId,momentId:p.id,active:true});
+    expect(receipt).not.toHaveProperty('moment');
+    expect((await call(bob,path.replace(/\/hearts$/,''))).status).toBe(410);
+    expect((await call(bob,path,await heart(bob,w,p.id,false))).status).toBe(410);
+  });
+  it.each(['block','remove'] as const)('returns only the committed receipt when %s wins after reading the inline snapshot',async(change)=>{
+    const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}/hearts`;
+    const body=await heart(bob,w,p.id),bobId=w.roster.members[1]!.participantId;
+    let batches=0;
+    const racedDB=new Proxy(db,{get(target,property){
+      if(property==='batch')return async(statements:D1PreparedStatement[])=>{
+        // First batch commits the heart. The response then reads the snapshot;
+        // race a real block/removal immediately before its final authorization.
+        if(++batches===2){
+          if(change==='block')ok(await call(bob,`/v3/group-windows/${w.windowId}/blocks/${w.roster.members[0]!.participantId}`,
+            {operationId:crypto.randomUUID(),active:true}));
+          else ok((await transition(owner,w,'remove',bobId,[w.roster.members[0]!])).response);
+        }
+        return target.batch(statements);
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    const receipt=ok(await send(await signed(bob,path,body),{...testEnv,DB:racedDB}));
+    expect(batches).toBe(2);
+    expect(receipt).toMatchObject({operationId:body.operationId,momentId:p.id,active:true});
+    expect(receipt).not.toHaveProperty('moment');
+    expect(await db.prepare('SELECT operation_id,active FROM group_moment_hearts WHERE moment_id=? AND participant_id=?')
+      .bind(p.id,bobId).first()).toEqual({operation_id:body.operationId,active:1});
+    expect((await call(bob,path.replace(/\/hearts$/,''))).status).toBe(change==='block'?410:404);
+  });
+  it('allows a rejected stale heart to be re-signed with the SAME operation ID, once committed it is immutable',async()=>{
+    const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}/hearts`;
+    const body=await heart(bob,w,p.id),rotated=await transition(owner,w,'rotate',w.windowId,w.roster.members);
+    ok(rotated.response);
+    expect((await call(bob,path,body)).data.error.code).toBe('stale_epoch');
+    const next=rotated.next,participantId=next.roster.members.find(m=>m.personId===bob.id)!.participantId;
+    const updated={...body,keyEpoch:next.roster.keyEpoch,rosterRevision:next.roster.revision,
+      reactorSignature:await sign(bob.signing.privateKey,groupHeartTranscript({windowId:w.windowId,momentId:p.id,
+        participantId,deviceId:bob.deviceId,active:true,operationId:body.operationId,keyEpoch:next.roster.keyEpoch,rosterHash:next.hash}))};
+    expect(ok(await call(bob,path,updated)).moment.hearts[0].operationId).toBe(body.operationId);
+    expect((await call(bob,path,body)).data.error.code).toBe('idempotency_conflict');
+  });
   it('delivers one immutable ciphertext only to original eligible phones and ACK never extends retention',async()=>{
     const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}`;
     const response=await binary(bob,`${path}/ciphertext`);expect(response.status).toBe(200);

@@ -15,4 +15,5 @@ const signature=Buffer.from(matches[0][1],'base64url');
 assert(verify(null,bytes,publicKey,signature),'actual native signature accepted by independent verifier');
 assert(!verify(null,Buffer.concat([bytes,Buffer.from([0])]),publicKey,signature),'modified request refused');
 assert(output.includes('Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed'));
+for(const line of output.split('\n').filter(line=>line.startsWith('Heart transport fixture:'))) process.stdout.write(line+'\n');
 process.stdout.write('Group adapter and independent native HTTP signature verification passed\n');

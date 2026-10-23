@@ -82,6 +82,10 @@ enum GroupAPIModel {
     struct HeartInput: Codable {
         let operationID: String; let active: Bool; let keyEpoch: Int; let rosterRevision: Int; let reactorSignature: Data
     }
+    struct HeartReply: Decodable {
+        let momentID: String
+        let moment: PhotoRow?
+    }
     struct ReservePhoto: Codable {
         let operationID: String; let clientMomentID: String; let keyEpoch: Int; let rosterRevision: Int
         let ciphertextSize: Int; let ciphertextSHA256: Data; let senderSignature: Data; let kind: String

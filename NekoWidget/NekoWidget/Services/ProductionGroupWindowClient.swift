@@ -19,6 +19,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var inFlight = Set<UUID>()
     private var photoMetadata: [String: GroupAPIModel.PhotoRow] = [:]
     private var historicalRosters: [String: VerifiedGroupRoster] = [:]
+    // Only fully verified, in-process snapshots. The relay still authorizes
+    // every heart against its current membership and epoch.
+    private var verifiedWindows: [String: GroupWindow] = [:]
+    private var heartOperations = Set<UUID>()
 
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
         self.endpoint = endpoint; self.secrets = try GroupKeychainStore(namespace: namespace)
@@ -245,11 +249,13 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                 }))
         }
         let name = try GroupNameCrypto.open(reply.window.encryptedName, slot: "window", key: key, roster: head)
-        return .init(id: windowID, name: name, revision: head.roster.revision, keyEpoch: head.roster.keyEpoch,
+        let result = GroupWindow(id: windowID, name: name, revision: head.roster.revision, keyEpoch: head.roster.keyEpoch,
             myParticipantID: me.member.participantID, myRole: GroupRole(rawValue: me.member.role.rawValue)!,
             state: reply.window.rotationRequired ? .rotationRequired : .active, members: members,
             deliveryStatus: reply.window.deliveryStatus, deliveryReason: reply.window.deliveryReason,
             ownerParticipantID: reply.window.ownerParticipantID)
+        verifiedWindows[windowID] = result
+        return result
     }
 
     private func material(roster: GroupRoster, names: [String: String], windowName: String, identity: GroupDeviceIdentity,
@@ -691,21 +697,59 @@ extension ProductionGroupWindowClient {
         return result
     }
     func setHeart(photoID: String, windowID: String, active: Bool, operationID: UUID) async throws -> GroupPhoto {
-        let current = try await window(id: windowID), identity = try identity(), stored = try local(windowID)
-        guard current.state == .active, let roster = try stored.verified() else { throw GroupClientError.rotationPending }
-        let intent = "heart:\(windowID):\(photoID):\(active ? 1 : 0)", body: Data
-        if let saved = try pending(operationID, intent: intent) { body = saved.body }
-        else {
-            let signature = try identity.signingKey.signature(for: heartBytes(windowID: windowID, photoID: photoID, participantID: current.myParticipantID,
-                deviceID: identity.deviceID, active: active, operationID: operationID.uuidString.lowercased(), epoch: current.keyEpoch, rosterHash: roster.hash))
-            body = try GroupWire.encode(GroupAPIModel.HeartInput(operationID: operationID.uuidString.lowercased(), active: active,
-                keyEpoch: current.keyEpoch, rosterRevision: current.revision, reactorSignature: signature))
-        }
         guard GroupCanonical.validID(photoID) else { throw GroupClientError.invalidResponse }
-        _ = try await mutation(operationID: operationID, intent: intent, path: "/v3/group-windows/\(windowID)/moments/\(photoID)/hearts", body: body)
+        guard heartOperations.insert(operationID).inserted else { throw GroupClientError.unavailable }
+        defer { heartOperations.remove(operationID) }
+        let intent = "heart:\(windowID):\(photoID):\(active ? 1 : 0)"
+        let path = "/v3/group-windows/\(windowID)/moments/\(photoID)/hearts"
+        var current: GroupWindow
+        let stored = try local(windowID)
+        if let cached = verifiedWindows[windowID], cached.revision == stored.pinnedRevision,
+           cached.keyEpoch == (try stored.verified())?.roster.keyEpoch {
+            current = cached
+        } else { current = try await window(id: windowID) }
+        var response: Data
+        do {
+            let body = try heartBody(current, photoID: photoID, active: active, operationID: operationID)
+            response = try await mutation(operationID: operationID, intent: intent, path: path, body: body)
+        } catch GroupClientError.staleEpoch {
+            // This explicit rejection precedes the server's mutation commit.
+            // Only it permits re-signing the SAME operation ID. A timeout or
+            // unknown result must keep the original body for exact replay.
+            current = try await window(id: windowID)
+            guard let rejected = try pending(operationID, intent: intent), rejected.response == nil,
+                  rejected.path == path, Date().timeIntervalSince(rejected.createdAt) < 172_800
+            else { throw GroupClientError.unavailable }
+            let body = try heartBody(current, photoID: photoID, active: active, operationID: operationID)
+            let rebased = GroupPendingHTTP(operationID: rejected.operationID, path: rejected.path, body: body,
+                intentHash: rejected.intentHash, createdAt: rejected.createdAt, response: nil)
+            try save(rebased, "op:" + operationID.uuidString.lowercased())
+            response = try await mutation(operationID: operationID, intent: intent, path: path, body: body)
+        }
+        // Old relays/receipts and invalid inline snapshots use the existing
+        // read route. Neither a malformed list nor an invalid signature is
+        // allowed into the photo cache or UI.
+        if let reply = try? GroupWire.decode(GroupAPIModel.HeartReply.self, response),
+           reply.momentID == photoID, let row = reply.moment, row.id == photoID,
+           let photo = try? await displayPhoto(row, current: current) {
+            photoMetadata[windowID + ":" + photoID] = row
+            return photo
+        }
         photoMetadata.removeValue(forKey: windowID + ":" + photoID)
         let row = try await photoRow(windowID: windowID, photoID: photoID)
         return try await displayPhoto(row, current: current)
+    }
+    private func heartBody(_ current: GroupWindow, photoID: String, active: Bool, operationID: UUID) throws -> Data {
+        let identity = try identity(), stored = try local(current.id)
+        guard current.state == .active, let roster = try stored.verified(),
+              roster.roster.revision == current.revision, roster.roster.keyEpoch == current.keyEpoch,
+              roster.device(id: try identity.deviceID)?.member.participantID == current.myParticipantID
+        else { throw GroupClientError.rotationPending }
+        let signature = try identity.signingKey.signature(for: heartBytes(windowID: current.id, photoID: photoID,
+            participantID: current.myParticipantID, deviceID: identity.deviceID, active: active,
+            operationID: operationID.uuidString.lowercased(), epoch: current.keyEpoch, rosterHash: roster.hash))
+        return try GroupWire.encode(GroupAPIModel.HeartInput(operationID: operationID.uuidString.lowercased(), active: active,
+            keyEpoch: current.keyEpoch, rosterRevision: current.revision, reactorSignature: signature))
     }
     func downloadPhoto(photoID: String, windowID: String) async throws -> GroupVerifiedIncomingPhoto {
         let current = try await window(id: windowID), identity = try await registeredIdentity()

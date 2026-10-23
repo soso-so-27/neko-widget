@@ -48,12 +48,21 @@ private actor EchoTransport: GroupHTTPTransport {
     private var billingBodies: [Data] = []
     private var billingNonces = Set<String>()
     private var dropBillingOnce: Bool
+    let photoID = GroupWire.randomID()
+    private let clientPhotoID = GroupWire.randomID()
+    private var heartRows: [[String: Any]] = []
+    private var heartMode = "inline"
+    private var paths: [String] = []
+    private var heartBodies: [Data] = []
+    func configureHearts(_ mode: String) { heartMode = mode; paths = []; heartBodies = [] }
+    func heartStats() -> ([String], [Data]) { (paths, heartBodies) }
     init(dropBillingOnce: Bool = false) { self.dropBillingOnce = dropBillingOnce }
     func billingStats() -> [Data] { billingBodies }
     func setDelivery(_ value: String) { delivery = value }
     func stats() -> (Int, [Data]) { (publicRegistrations, createBodies) }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         let path = request.url!.path, body = request.httpBody ?? Data()
+        paths.append(path)
         let object = body.isEmpty ? [:] : try JSONSerialization.jsonObject(with: body) as! [String: Any]
         func text(_ key: String) throws -> String {
             guard let value = object[key] as? String else { throw Failure.check("native wire key: " + key) }; return value
@@ -115,6 +124,46 @@ private actor EchoTransport: GroupHTTPTransport {
         guard let creation, let packet = creation["packet"] as? [String: Any], let r = packet["roster"] as? [String: Any],
               let windowID = r["windowId"] as? String, let members = r["members"] as? [[String: Any]], let owner = members.first else { throw Failure.check("echo created window") }
         let root = "/v3/group-windows/" + windowID
+        let photoPath = root + "/moments/" + photoID
+        func photo() throws -> [String: Any] {
+            let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
+            return ["id": photoID, "clientMomentId": clientPhotoID, "senderParticipantId": owner["participantId"]!,
+                "senderDeviceId": device, "keyEpoch": 1, "rosterRevision": 1,
+                "rosterHash": GroupWire.base64(try GroupCanonical.hash(signed.packet.roster.canonicalBytes())),
+                "ciphertextSize": 48, "ciphertextSHA256": GroupWire.base64(Data(repeating: 1, count: 32)),
+                "senderSignature": GroupWire.base64(Data(repeating: 1, count: 64)), "createdAt": 1, "accessExpiresAt": 2,
+                "kind": "photo", "hearts": heartRows]
+        }
+        if path == photoPath + "/hearts" {
+            heartBodies.append(body)
+            if heartMode == "denied" { return try reply(["error": ["code": "not_found"]], status: 404) }
+            if heartMode == "stale-always" || (heartMode == "stale-once" && heartBodies.count == 1) {
+                return try reply(["error": ["code": "stale_epoch"]], status: 409)
+            }
+            if heartMode == "offline" { throw GroupClientError.offline }
+            let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
+            let hash = try GroupCanonical.hash(signed.packet.roster.canonicalBytes())
+            let fields = ["NW3.HEART", windowID, photoID, owner["participantId"] as! String, device,
+                          object["active"] as! Bool ? "1" : "0", try text("operationId"), "1"]
+            try check(Curve25519.Signing.PublicKey(rawRepresentation: signing).isValidSignature(
+                GroupWire.bytes(text("reactorSignature"), count: 64),
+                for: GroupCanonical.fields(fields.map(GroupCanonical.text) + [hash])), "heart proof")
+            heartRows = [["reactorParticipantId": owner["participantId"]!, "reactorDeviceId": device,
+                "active": object["active"]!, "updatedAt": 1, "keyEpoch": 1, "rosterRevision": 1,
+                "rosterHash": GroupWire.base64(hash), "operationId": try text("operationId"),
+                "reactorSignature": try text("reactorSignature")]]
+            var result: [String: Any] = ["operationId": try text("operationId"), "momentId": photoID]
+            if heartMode != "legacy" {
+                var inline = try photo()
+                if heartMode == "invalid-signature" {
+                    var bad = heartRows[0]; bad["reactorSignature"] = GroupWire.base64(Data(repeating: 0, count: 64))
+                    inline["hearts"] = [bad]
+                }
+                result["moment"] = inline
+            }
+            return try reply(result)
+        }
+        if path == photoPath { return try reply(["moment": photo()]) }
         if path == root {
             let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
             let hash = try GroupCanonical.hash(signed.packet.roster.canonicalBytes())
@@ -232,6 +281,48 @@ private struct GroupAdapterChecks {
         do { _ = try await client.window(id: room.id); throw Failure.check("unverified billing owner accepted") }
         catch GroupClientError.invalidResponse { }
         await relay.setDelivery("active")
+        _ = try await client.window(id: room.id)
+        let photoID = await relay.photoID
+        await relay.configureHearts("inline")
+        let heartStart = Date()
+        let heartPhoto = try await client.setHeart(photoID: photoID, windowID: room.id, active: true, operationID: UUID())
+        var heartStats = await relay.heartStats()
+        try check(heartStats.0.count == 1 && heartPhoto.hearts.first?.active == true, "warm heart uses ONE round trip")
+        print("Heart transport fixture: 1 request; local fixture elapsed \(Date().timeIntervalSince(heartStart))s (not iPhone/network latency)")
+        for mode in ["legacy", "invalid-signature"] {
+            await relay.configureHearts(mode)
+            let result = try await client.setHeart(photoID: photoID, windowID: room.id, active: false, operationID: UUID())
+            heartStats = await relay.heartStats()
+            try check(heartStats.0.count == 2 && result.hearts.first?.active == false, "validated metadata fallback: " + mode)
+        }
+        await relay.configureHearts("stale-once")
+        let heartOperation = UUID()
+        _ = try await client.setHeart(photoID: photoID, windowID: room.id, active: true, operationID: heartOperation)
+        heartStats = await relay.heartStats()
+        try check(heartStats.0.count == 4 && heartStats.1.count == 2, "one stale retry with window+members refresh")
+        for bytes in heartStats.1 {
+            let input = try GroupWire.decode(GroupAPIModel.HeartInput.self, bytes)
+            try check(input.operationID == heartOperation.uuidString.lowercased(), "stale retry preserves operation ID")
+        }
+        await relay.configureHearts("stale-always")
+        do { _ = try await client.setHeart(photoID: photoID, windowID: room.id, active: true, operationID: UUID()); throw Failure.check("unbounded stale retry") }
+        catch GroupClientError.staleEpoch { }
+        heartStats = await relay.heartStats()
+        try check(heartStats.1.count == 2, "second stale rejection stops")
+        await relay.configureHearts("denied")
+        do { _ = try await client.setHeart(photoID: photoID, windowID: room.id, active: true, operationID: UUID()); throw Failure.check("removed member accepted") }
+        catch GroupClientError.notMember { }
+        heartStats = await relay.heartStats()
+        try check(heartStats.0.count == 1, "denial is not retried")
+        await relay.configureHearts("offline")
+        let lostOperation = UUID()
+        do { _ = try await client.setHeart(photoID: photoID, windowID: room.id, active: false, operationID: lostOperation); throw Failure.check("offline heart accepted") }
+        catch GroupClientError.offline { }
+        let lostBodies = await relay.heartStats().1
+        await relay.configureHearts("inline")
+        _ = try await client.setHeart(photoID: photoID, windowID: room.id, active: false, operationID: lostOperation)
+        heartStats = await relay.heartStats()
+        try check(heartStats.1.first == lostBodies.first, "unknown result retries the exact original body")
         let stats = await relay.stats()
         try check(stats.0 == 1 && stats.1.count == 2 && stats.1[0] == stats.1[1], "durable exact-body retry across instances")
         let billingCopies = await relay.billingStats()
