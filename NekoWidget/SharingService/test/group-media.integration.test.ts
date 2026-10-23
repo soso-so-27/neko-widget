@@ -56,7 +56,36 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     const replay=ok(await call(bob,path,body));expect(replay.moment.hearts).toEqual(reply.moment.hearts);
     const ownerId=w.roster.members[0]!.participantId;
     ok(await call(bob,`/v3/group-windows/${w.windowId}/blocks/${ownerId}`,{operationId:crypto.randomUUID(),active:true}));
-    expect((await call(bob,path,body)).status).not.toBe(200);
+    const receipt=ok(await call(bob,path,body));
+    expect(receipt).toMatchObject({operationId:body.operationId,momentId:p.id,active:true});
+    expect(receipt).not.toHaveProperty('moment');
+    expect((await call(bob,path.replace(/\/hearts$/,''))).status).toBe(410);
+    expect((await call(bob,path,await heart(bob,w,p.id,false))).status).toBe(410);
+  });
+  it.each(['block','remove'] as const)('returns only the committed receipt when %s wins after reading the inline snapshot',async(change)=>{
+    const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}/hearts`;
+    const body=await heart(bob,w,p.id),bobId=w.roster.members[1]!.participantId;
+    let batches=0;
+    const racedDB=new Proxy(db,{get(target,property){
+      if(property==='batch')return async(statements:D1PreparedStatement[])=>{
+        // First batch commits the heart. The response then reads the snapshot;
+        // race a real block/removal immediately before its final authorization.
+        if(++batches===2){
+          if(change==='block')ok(await call(bob,`/v3/group-windows/${w.windowId}/blocks/${w.roster.members[0]!.participantId}`,
+            {operationId:crypto.randomUUID(),active:true}));
+          else ok((await transition(owner,w,'remove',bobId,[w.roster.members[0]!])).response);
+        }
+        return target.batch(statements);
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    const receipt=ok(await send(await signed(bob,path,body),{...testEnv,DB:racedDB}));
+    expect(batches).toBe(2);
+    expect(receipt).toMatchObject({operationId:body.operationId,momentId:p.id,active:true});
+    expect(receipt).not.toHaveProperty('moment');
+    expect(await db.prepare('SELECT operation_id,active FROM group_moment_hearts WHERE moment_id=? AND participant_id=?')
+      .bind(p.id,bobId).first()).toEqual({operation_id:body.operationId,active:1});
+    expect((await call(bob,path.replace(/\/hearts$/,''))).status).toBe(change==='block'?410:404);
   });
   it('allows a rejected stale heart to be re-signed with the SAME operation ID, once committed it is immutable',async()=>{
     const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}/hearts`;

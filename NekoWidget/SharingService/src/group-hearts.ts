@@ -54,14 +54,21 @@ export async function recordGroupHeart(env:Env,actor:GroupActor,windowId:string,
   await env.DB.batch(statements);return groupHeartResponse(env,actor,windowId,momentId,response);
 }
 async function groupHeartResponse(env:Env,actor:GroupActor,windowId:string,momentId:string,receipt:unknown):Promise<Response> {
-  const access=await requireGroupMember(env,actor,windowId),row=await groupMoment(env,windowId,momentId);
-  await requireGroupDelivery(env,actor,row);
-  const moment=(await groupPhotoMetadata(env,[row],actor.deviceId))[0];
-  // Just like the metadata GET, guard membership, blocks and delivery AFTER
-  // the read. A stored mutation receipt never grants access to its snapshot.
-  await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
-    ...groupMediaChecks(env,actor,momentId,'read')]);
-  return jsonResponse({...receipt as Record<string,unknown>,moment});
+  try {
+    const access=await requireGroupMember(env,actor,windowId),row=await groupMoment(env,windowId,momentId);
+    await requireGroupDelivery(env,actor,row);
+    const moment=(await groupPhotoMetadata(env,[row],actor.deviceId))[0];
+    // Just like the metadata GET, guard membership, blocks and delivery AFTER
+    // the read. A stored mutation receipt never grants access to its snapshot.
+    await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
+      ...groupMediaChecks(env,actor,momentId,'read')]);
+    return jsonResponse({...receipt as Record<string,unknown>,moment});
+  } catch {
+    // The mutation is already committed. A denied/unavailable snapshot must
+    // neither leak metadata nor turn that receipt into an apparent failed write.
+    // The client falls back to the independently authorized metadata GET.
+    return jsonResponse(receipt);
+  }
 }
 export async function listGroupHearts(env:Env,actor:GroupActor,windowId:string,momentId:string,body:JsonRecord):Promise<Response> {
   const access=await requireGroupMember(env,actor,windowId),row=await groupMoment(env,windowId,momentId);await requireGroupDelivery(env,actor,row);
