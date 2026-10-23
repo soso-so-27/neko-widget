@@ -89,6 +89,7 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
+    @AppStorage("debug.photoGrid.noPosition.v1") private var experimentNoPosition = false
     @State private var showsWindowSupportPreview = false
 
     private var canOpenMembershipOffer: Bool {
@@ -318,6 +319,9 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings-window-support-preview")
                     }
                     if InternalBuildPresentationAvailability.isAvailable {
+                        // Kept until the photo grid is confirmed smooth on a real iPhone.
+                        Toggle("写真の一覧：読む位置を覚えない", isOn: $experimentNoPosition)
+                            .accessibilityIdentifier("settings-photo-grid-no-position")
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {
