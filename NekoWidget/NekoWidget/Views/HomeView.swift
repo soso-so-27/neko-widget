@@ -33,11 +33,31 @@ enum PhotoLibraryReadingPosition {
 #endif
     }
 
+    /// Positions read while scrolling, kept in memory until the list goes
+    /// away or the app leaves the screen. Writing UserDefaults on every row
+    /// woke every @AppStorage view above the grid (the app root and the tab
+    /// view), so the whole screen was rebuilt row by row while scrolling.
+    private static var unsaved: [String: String] = [:]
+
     static func identifier(for section: String) -> String? {
-        defaults.string(forKey: "photoLibrary.position.\(section).v1")
+        unsaved[section] ?? defaults.string(forKey: "photoLibrary.position.\(section).v1")
+    }
+
+    /// While scrolling: memory only.
+    static func remember(_ identifier: String, section: String) {
+        unsaved[section] = identifier
+    }
+
+    /// Writes what was read while scrolling. Called when the list disappears
+    /// and when the app goes to the background.
+    static func flush() {
+        let pending = unsaved
+        unsaved = [:]
+        for (section, identifier) in pending { save(identifier, section: section) }
     }
 
     static func save(_ identifier: String?, section: String) {
+        unsaved[section] = nil
         let key = "photoLibrary.position.\(section).v1"
         guard defaults.string(forKey: key) != identifier else { return }
         diagnose("save \(section): \(defaults.string(forKey: key) ?? "nil") -> \(identifier ?? "nil")")
@@ -110,6 +130,9 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     let isSearching: Bool
     let normalize: (String) -> String
     @State private var tracker = PhotoLibraryRowTracker()
+    /// Test builds only (設定 → テスト用): turn the whole reading position off,
+    /// to compare on a real iPhone if the grid still stutters.
+    @AppStorage("debug.photoGrid.noPosition.v1") private var experimentOff = false
 
     init(section: String?, isSearching: Bool, normalize: @escaping (String) -> String) {
         self.section = section
@@ -118,7 +141,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
     }
 
     @ViewBuilder func body(content: Content) -> some View {
-        if let section {
+        if let section, !(experimentOff && InternalBuildPresentationAvailability.isAvailable) {
             ScrollViewReader { proxy in
                 content
                     .environment(\.photoLibraryRowTracker, tracker)
@@ -134,6 +157,11 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                     .onDisappear {
                         tracker.isVisible = false
                         tracker.generation &+= 1
+                        PhotoLibraryReadingPosition.flush()
+                    }
+                    .onReceive(NotificationCenter.default.publisher(
+                        for: UIApplication.willResignActiveNotification)) { _ in
+                        PhotoLibraryReadingPosition.flush()
                     }
                     .onChange(of: self.section) { _, newSection in
                         if tracker.isVisible { PhotoLibraryReadingPosition.activeSection = newSection }
@@ -168,7 +196,7 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
             guard tracker.isVisible, tracker.userScrolled, !tracker.isSearching,
                   let section = tracker.section,
                   PhotoLibraryReadingPosition.activeSection == section else { return }
-            PhotoLibraryReadingPosition.save(top, section: section)
+            PhotoLibraryReadingPosition.remember(top, section: section)
         }
     }
 
