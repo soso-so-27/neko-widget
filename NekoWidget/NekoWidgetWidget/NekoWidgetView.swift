@@ -54,7 +54,8 @@ struct NekoWidgetView: View {
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.45), value: entry.cloudyWindowSelection?.revealedAt)
+        // The fog melts away: blur dissolves into the sharp photo (WidgetKit animates transitions only).
+        .animation(reduceMotion ? nil : .easeOut(duration: 1.1), value: entry.cloudyWindowSelection?.revealedAt)
     }
 
     private var photoContent: some View {
@@ -85,7 +86,7 @@ struct NekoWidgetView: View {
                             )
                             .clipped()
                             .id(entry.cacheFilename)
-                            .transition(.opacity)
+                            .transition(reduceMotion ? AnyTransition.opacity : AnyTransition(.blurReplace))
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)

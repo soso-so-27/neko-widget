@@ -1,4 +1,6 @@
+import Photos
 import SwiftUI
+import UIKit
 
 /// Test builds only: the album as "works that arrive" and the monthly story.
 /// Turned on in 設定 → テスト用. Public builds never read the switch (always off).
@@ -379,21 +381,10 @@ struct MonthlyStoryView: View {
         }
     }
 
-    /// The whole photo, never cut, over a dim blurred copy filling the screen.
+    /// Tall photos fill the screen; wide or square ones are shown whole over a
+    /// dim blurred copy of themselves, so nothing important is cut.
     private func wholePhoto<Overlay: View>(_ photo: PhotoPresentation, @ViewBuilder overlay: () -> Overlay) -> some View {
-        ZStack {
-            PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                catBoundingBox: photo.catBoundingBox,
-                                targetPixelSize: CGSize(width: 240, height: 240),
-                                targetAspectRatio: 0.5)
-                .blur(radius: 28)
-                .opacity(0.55)
-                .ignoresSafeArea()
-            PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                targetPixelSize: CGSize(width: 1400, height: 1400),
-                                showsFullImage: true)
-                .padding(.vertical, 70)
-        }
+        StoryPhotoView(localIdentifier: photo.localIdentifier)
         .overlay(alignment: .bottom) {
             overlay()
                 .foregroundStyle(.white)
@@ -401,6 +392,90 @@ struct MonthlyStoryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 24)
+        }
+    }
+}
+
+/// One story photo. Loads once (aspect fit) and decides by its shape:
+/// portrait → fill the screen; square or landscape → whole, over its blur.
+struct StoryPhotoView: View {
+    let localIdentifier: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                if let image {
+                    let aspect = image.size.width / max(image.size.height, 1)
+                    if aspect < 0.85 {
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .frame(width: proxy.size.width, height: proxy.size.height).clipped()
+                    } else {
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .frame(width: proxy.size.width, height: proxy.size.height).clipped()
+                            .blur(radius: 30).opacity(0.5)
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .frame(width: proxy.size.width)
+                    }
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .ignoresSafeArea()
+        .accessibilityLabel("猫の写真")
+        .task(id: localIdentifier) { image = await Self.load(localIdentifier) }
+    }
+
+    private static func load(_ identifier: String) async -> UIImage? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.isNetworkAccessAllowed = true
+        options.resizeMode = .fast
+        return await withCheckedContinuation { continuation in
+            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: 1600, height: 1600),
+                                                         contentMode: .aspectFit, options: options) { image, _ in
+                continuation.resume(returning: image)
+            }
+        }
+    }
+}
+
+/// Opening 「この1枚」 from the cloudy window: soft clouds drift out to the
+/// edges and the frost melts, once, with a light tap of the phone.
+struct FogClearOverlay: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var cleared = false
+
+    private let clouds: [(x: CGFloat, y: CGFloat, w: CGFloat, dx: CGFloat, dy: CGFloat)] = [
+        (0.20, 0.25, 0.9, -1.0, -0.4), (0.80, 0.30, 0.8, 1.0, -0.3), (0.50, 0.50, 1.1, 0.1, 1.0),
+        (0.15, 0.70, 0.8, -1.0, 0.4), (0.85, 0.75, 0.9, 1.0, 0.5), (0.50, 0.15, 0.8, 0.0, -1.0),
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial).opacity(cleared ? 0 : 1)
+                ForEach(clouds.indices, id: \.self) { index in
+                    let cloud = clouds[index]
+                    Ellipse()
+                        .fill(Color.white.opacity(0.85))
+                        .frame(width: size.width * cloud.w, height: size.width * cloud.w * 0.55)
+                        .blur(radius: 40)
+                        .position(x: size.width * cloud.x, y: size.height * cloud.y)
+                        .offset(x: cleared ? cloud.dx * size.width * 0.9 : 0,
+                                y: cleared ? cloud.dy * size.height * 0.5 : 0)
+                        .opacity(cleared ? 0 : 1)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .sensoryFeedback(.success, trigger: cleared)
+        .onAppear {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.3) : .easeOut(duration: 1.4)) { cleared = true }
         }
     }
 }
