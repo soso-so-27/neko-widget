@@ -428,6 +428,36 @@ struct PersonalRediscoveryStore: Sendable {
         }
     }
 
+    /// Experiments use the same cross-process lock as permission publication.
+    /// The callback must not re-enter this store. This prevents a reveal or
+    /// derived-image publication from racing a revoked Photos permission.
+    func withAuthoritySnapshot<Value>(
+        now: Date = .now,
+        _ operation: (PersonalRediscoverySnapshot?) throws -> Value
+    ) throws -> Value {
+        try locked {
+            try operation(try read().map { snapshot($0, now: now) })
+        }
+    }
+
+    /// A separately rendered internal Widget still consumes the shared
+    /// preparation pool. Recording its issued slots lets used images retire
+    /// so newly scanned photos can enter the next bounded refill.
+    func recordExternalWidgetIssue(slotID: String, photoID: String, scheduledAt: Date, now: Date = .now) throws {
+        try locked {
+            guard var state = try read(), state.isAuthorized,
+                  Self.validIdentifier(slotID), scheduledAt <= now.addingTimeInterval(86_400),
+                  let candidate = state.candidates.first(where: { $0.item.localIdentifier == photoID }),
+                  eligible(candidate.item, in: state),
+                  !state.issues.contains(where: { $0.slotID == slotID }) else { return }
+            state.issues.append(.init(slotID: slotID, photoID: photoID, scheduledAt: scheduledAt,
+                issuedAt: now, leaseUntil: max(now, scheduledAt).addingTimeInterval(Self.leaseDuration),
+                cacheFilenames: candidate.item.allCacheFilenames))
+            prune(&state, now: now)
+            try write(state)
+        }
+    }
+
     func currentEntry(
         now: Date = .now, timeZone: TimeZone = .current
     ) throws -> PersonalRediscoveryEntry? {

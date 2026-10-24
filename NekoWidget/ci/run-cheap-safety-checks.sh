@@ -70,6 +70,12 @@ xcrun --sdk macosx swiftc \
   -o "$RUNNER_TEMP/verify-personal-rediscovery"
 "$RUNNER_TEMP/verify-personal-rediscovery"
 
+xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
+  Shared/Models/WidgetManifest.swift Shared/Models/WidgetRenderPlan.swift \
+  Shared/Storage/PersonalRediscoveryStore.swift Shared/Storage/CloudyWindowStore.swift \
+  ci/verify-cloudy-window.swift -o "$RUNNER_TEMP/verify-cloudy-window"
+"$RUNNER_TEMP/verify-cloudy-window"
+
 # ADR-027 5章: the one Plus screen opens only from its entry places. A new
 # caller of the sheet (or of the prompt that opens it) must be added here on
 # purpose; photo access, invitations, receiving, hearts, and favorites never are.

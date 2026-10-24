@@ -68,6 +68,13 @@ struct WidgetPhotoSource: AppEntity {
     }
 
     static func resolvedSource(id: String) -> WidgetPhotoSource? {
+        if id.hasPrefix(CloudyWindowStore.profilePrefix) {
+            let profileID = String(id.dropFirst(CloudyWindowStore.profilePrefix.count))
+            if let profile = CloudyWindowStore.shared.profiles().first(where: { $0.id == profileID }) {
+                return WidgetPhotoSource(id: id, name: profile.name, detail: "この子のくもりのまど")
+            }
+            return WidgetPhotoSource(id: id, name: "利用できないまど", detail: "ウィジェットを編集してください")
+        }
         if let windowID = PublicWindowDefinition.windowID(from: id) {
             if let definition = OfficialWindowConfiguration.definition(for: windowID) {
                 return publicWindow(definition)
@@ -134,6 +141,9 @@ struct WidgetPhotoSource: AppEntity {
             }
         }
         sources.append(.personalLibrary)
+        sources.append(contentsOf: CloudyWindowStore.shared.profiles().map {
+            WidgetPhotoSource(id: CloudyWindowStore.profilePrefix + $0.id, name: $0.name, detail: "この子のくもりのまど")
+        })
         sources.append(contentsOf: OfficialWindowConfiguration.definitions
             .filter { $0.endpoint != nil }
             .map(publicWindow))

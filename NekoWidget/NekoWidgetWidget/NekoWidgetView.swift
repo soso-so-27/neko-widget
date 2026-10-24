@@ -36,10 +36,28 @@ import UIKit
 
 struct NekoWidgetView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let entry: NekoWidgetEntry
 
     var body: some View {
+        Group {
+            if let selection = entry.cloudyWindowSelection, selection.revealedAt == nil {
+                Button(intent: RevealCloudyWindowIntent(selection: selection)) { photoContent }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("きょうのまどのくもりを晴らす")
+                    .accessibilityIdentifier("cloudy-window-reveal")
+            } else {
+                photoContent.widgetURL(entry.photoURL)
+            }
+        }
+        .containerBackground(for: .widget) {
+            Color(red: 0.12, green: 0.10, blue: 0.09)
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.45), value: entry.cloudyWindowSelection?.revealedAt)
+    }
+
+    private var photoContent: some View {
         Group {
             if
                 let cacheFilename = entry.cacheFilename,
@@ -66,12 +84,24 @@ struct NekoWidgetView: View {
                                 height: proxy.size.height
                             )
                             .clipped()
+                            .id(entry.cacheFilename)
+                            .transition(.opacity)
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(loadedPhotoAccessibilityLabel)
                     .overlay(alignment: .bottom) {
-                        if let photo = entry.officialPhoto {
+                        if let selection = entry.cloudyWindowSelection {
+                            if selection.revealedAt == nil {
+                                Text("タップして晴らす")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 12).padding(.vertical, 7)
+                                    .background(.black.opacity(0.35), in: Capsule())
+                                    .padding(12)
+                                    .accessibilityHidden(true)
+                            }
+                        } else if let photo = entry.officialPhoto {
                             Text(photo.catName)
                                 .font(.caption.weight(.medium))
                                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
@@ -96,9 +126,6 @@ struct NekoWidgetView: View {
                 emptyState
             }
         }
-        .containerBackground(for: .widget) {
-            Color(red: 0.12, green: 0.10, blue: 0.09)
-        }
 #if WIDGET_VISUAL_REVIEW_LARGE_TEXT
         // Use the normal shipping text-size limits, with the environment at
         // its largest setting; this never changes ordinary or Release Widgets.
@@ -108,7 +135,6 @@ struct NekoWidgetView: View {
         // The photo opens its detail; only the separate heart sends a reaction.
         // A received photo's bookmark only opens the app's save confirmation.
         // Personal-library memory stays explicit.
-        .widgetURL(entry.photoURL)
     }
 
     /// Used only inside the successfully decoded photo branch above. The
