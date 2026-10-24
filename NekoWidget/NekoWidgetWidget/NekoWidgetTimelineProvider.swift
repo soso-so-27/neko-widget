@@ -29,6 +29,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         return AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)
 #endif
         let source = configuration.photoSource ?? .personalLibrary
+        if let cloudy = cloudyTimeline(sourceID: source.id, now: now, variant: variant) {
+            return cloudy.entries.first ?? .empty(at: now, imageVariant: variant)
+        }
         if PublicWindowDefinition.windowID(from: source.id) != nil {
             return officialEntry(now: now, variant: variant, sourceID: source.id)
         }
@@ -131,6 +134,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
 #endif
         let source = configuration.photoSource ?? .personalLibrary
+        if let cloudy = cloudyTimeline(sourceID: source.id, now: now, variant: variant) { return cloudy }
         if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: source.id) {
             // The app reloads timelines whenever it keeps a new photo.
             return Timeline(
@@ -285,6 +289,39 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     /// photo (kept across pool changes and cache cleanup) with a long reload,
     /// so `.needsApp` below is reached only without a journal, with a
     /// corrupted journal, or when that photo's rendition is unreadable.
+    private func cloudyTimeline(sourceID: String, now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
+        let isProfile = sourceID.hasPrefix(CloudyWindowStore.profilePrefix)
+        guard sourceID == WidgetPhotoSource.personalLibraryID || isProfile else { return nil }
+        guard CloudyWindowStore.shared.configuration().enabled else {
+            return isProfile ? Timeline(entries: [.empty(at: now, imageVariant: variant,
+                photoSourceIdentifier: sourceID, emptyStateReason: .sourceUnavailable)], policy: .never) : nil
+        }
+        let membership = PersonalWidgetMembershipStore.read()
+        let enforced = PersonalWidgetMembershipStore.isEnforced
+        if enforced && membership == nil {
+            return Timeline(entries: [.empty(at: now, imageVariant: variant, photoSourceIdentifier: sourceID,
+                emptyStateReason: .needsApp)], policy: .after(now.addingTimeInterval(20 * 60)))
+        }
+        let allows = !enforced || membership?.allowsSelection(at: now) == true
+        let plan = (try? CloudyWindowStore.shared.timeline(scopeID: sourceID, now: now,
+            allowsSelection: allows, selectionValidUntil: enforced ? membership?.validUntil : nil)) ?? []
+        let likes = readLikeState()
+        let entries = plan.prefix(2).map { planned in
+            var entry = NekoWidgetEntry(date: planned.date, localIdentifier: planned.photo.photoID,
+                cacheFilename: (planned.isCloudy ? planned.photo.cloudy : planned.photo.clear).filename(for: variant),
+                imageVariant: variant, photoSourceIdentifier: sourceID, familySourceDigest: nil,
+                usesFamilySpecificImage: true, windowDisplayName: "くもりのまど",
+                isLiked: likes.records[planned.photo.photoID]?.isLiked ?? false,
+                isLikeInteractionEnabled: false, isBookmarked: false, isBookmarkInteractionEnabled: false,
+                familyHeartStatus: .hidden, familyActionsRequireApp: false, emptyStateReason: .none)
+            entry.cloudyWindowSelection = planned.selection
+            return entry
+        }
+        return Timeline(entries: entries.isEmpty ? [.empty(at: now, imageVariant: variant,
+            photoSourceIdentifier: sourceID, emptyStateReason: .needsApp)] : entries,
+            policy: .after(entries.isEmpty ? now.addingTimeInterval(20 * 60) : CloudyWindowStore.nextDay(after: now)))
+    }
+
     private func personalRediscoveryTimeline(now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         do {
             let enforced = PersonalWidgetMembershipStore.isEnforced

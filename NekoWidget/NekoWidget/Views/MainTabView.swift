@@ -1389,7 +1389,9 @@ struct MainTabView: View {
                 assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                 replaceProfileAssignments: { values in
                     await catProfilesActions.replacePhotoAssignments(values)
-                }
+                },
+                navigationTitle: openedFromWidget && CloudyWindowStore.shared.configuration().enabled ? "この1枚" : "写真",
+                legacyBirthday: settings.catLifeReference?.kind == .birthday ? settings.catLifeReference?.date.date() : nil
             )
             .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
             .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
