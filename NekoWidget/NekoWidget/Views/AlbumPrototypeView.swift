@@ -23,9 +23,41 @@ enum AlbumPrototype {
         }
     }
 
-    /// Favorites first, then larger cats: "よく撮れた" without guessing content.
+    /// Favorites first, then a cat that fills the frame; a person as the
+    /// subject counts against it. No guessing beyond what the scan knows.
     static func score(_ photo: PhotoPresentation) -> Double {
-        (photo.isLiked || photo.isPhotoLibraryFavorite ? 10 : 0) + (photo.largestCatAreaRatio ?? 0)
+        var value = (photo.isLiked || photo.isPhotoLibraryFavorite ? 10 : 0) + 3 * (photo.largestCatAreaRatio ?? 0)
+        if photo.albumContainsPerson == true { value -= 2 }
+        if photo.detectedCatCount == 0 { value -= 5 }
+        return value
+    }
+
+    /// The best `count` photos, spread out: never two within 15 minutes of each
+    /// other (bursts, near-duplicates) and at most two from the same day.
+    static func pick(_ photos: [PhotoPresentation], count: Int) -> [PhotoPresentation] {
+        let calendar = Calendar.current
+        var chosen: [PhotoPresentation] = []
+        var perDay: [Date: Int] = [:]
+        for photo in photos.sorted(by: { score($0) > score($1) }) {
+            guard chosen.count < count else { break }
+            if let date = photo.creationDate {
+                if chosen.contains(where: { other in
+                    guard let otherDate = other.creationDate else { return false }
+                    return abs(otherDate.timeIntervalSince(date)) < 15 * 60
+                }) { continue }
+                let day = calendar.startOfDay(for: date)
+                if perDay[day, default: 0] >= 2 { continue }
+                perDay[day, default: 0] += 1
+            }
+            chosen.append(photo)
+        }
+        // A month with few days: fill up with what is left, best first.
+        if chosen.count < count {
+            let ids = Set(chosen.map(\.localIdentifier))
+            chosen += photos.filter { !ids.contains($0.localIdentifier) }
+                .sorted { score($0) > score($1) }.prefix(count - chosen.count)
+        }
+        return chosen
     }
 
     /// The cats actually in these photos, most often first, at most two.
@@ -106,7 +138,9 @@ struct AlbumPrototypeView: View {
                     LazyVGrid(columns: columns, spacing: 8) {
                         ForEach(letters.dropFirst()) { letter in
                             Button { open(letter) } label: {
-                                workTile(photo: letter.coverPhoto, title: "\(letter.monthNumber)月",
+                                workTile(photo: AlbumPrototype.pick(AlbumPrototype.photos(in: letter.monthStart, from: catPhotos),
+                                                                    count: 1).first ?? letter.coverPhoto,
+                                         title: "\(letter.monthNumber)月",
                                          subtitle: "\(letter.yearNumber)", isMovie: false)
                             }
                             .buttonStyle(.plain)
@@ -154,7 +188,7 @@ struct AlbumPrototypeView: View {
     private func latestCard(_ letter: MonthlyWindowPresentation) -> some View {
         let wrapped = isWrapped(letter)
         let monthPhotos = AlbumPrototype.photos(in: letter.monthStart, from: catPhotos)
-        let cover = monthPhotos.max { AlbumPrototype.score($0) < AlbumPrototype.score($1) } ?? letter.coverPhoto
+        let cover = AlbumPrototype.pick(monthPhotos, count: 1).first ?? letter.coverPhoto
         return Button { open(letter) } label: {
             HStack(spacing: 12) {
                 Color.clear
@@ -173,7 +207,7 @@ struct AlbumPrototypeView: View {
                         Text("届きました").font(.caption.weight(.bold)).foregroundStyle(Color.accentColor)
                     }
                     Text(letter.title).font(.headline)
-                    Text("\(letter.yearNumber)年・\(max(monthPhotos.count, letter.photos.count))枚から")
+                    Text(verbatim: "\(letter.yearNumber)年・\(max(monthPhotos.count, letter.photos.count))枚から")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
@@ -242,7 +276,7 @@ struct MonthlyStoryView: View {
     }
 
     private var pages: [Page] {
-        let photos = monthPhotos.sorted { AlbumPrototype.score($0) > AlbumPrototype.score($1) }
+        let photos = AlbumPrototype.pick(monthPhotos, count: 9)
         guard let cover = photos.first else { return [] }
         var result: [Page] = [.cover(cover, AlbumPrototype.names(for: [cover], assignments: assignments,
                                                                   profileNames: profileNames))]
@@ -326,7 +360,7 @@ struct MonthlyStoryView: View {
         case let .cover(photo, names):
             wholePhoto(photo) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("\(letter.yearNumber)年 \(letter.monthNumber)月").font(.footnote.weight(.semibold)).opacity(0.9)
+                    Text(verbatim: "\(letter.yearNumber)年 \(letter.monthNumber)月").font(.footnote.weight(.semibold)).opacity(0.9)
                     Text(names).font(.system(.title, design: .serif).weight(.bold))
                 }
             }
@@ -437,45 +471,6 @@ struct StoryPhotoView: View {
                                                          contentMode: .aspectFit, options: options) { image, _ in
                 continuation.resume(returning: image)
             }
-        }
-    }
-}
-
-/// Opening 「この1枚」 from the cloudy window: soft clouds drift out to the
-/// edges and the frost melts, once, with a light tap of the phone.
-struct FogClearOverlay: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var cleared = false
-
-    private let clouds: [(x: CGFloat, y: CGFloat, w: CGFloat, dx: CGFloat, dy: CGFloat)] = [
-        (0.20, 0.25, 0.9, -1.0, -0.4), (0.80, 0.30, 0.8, 1.0, -0.3), (0.50, 0.50, 1.1, 0.1, 1.0),
-        (0.15, 0.70, 0.8, -1.0, 0.4), (0.85, 0.75, 0.9, 1.0, 0.5), (0.50, 0.15, 0.8, 0.0, -1.0),
-    ]
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial).opacity(cleared ? 0 : 1)
-                ForEach(clouds.indices, id: \.self) { index in
-                    let cloud = clouds[index]
-                    Ellipse()
-                        .fill(Color.white.opacity(0.85))
-                        .frame(width: size.width * cloud.w, height: size.width * cloud.w * 0.55)
-                        .blur(radius: 40)
-                        .position(x: size.width * cloud.x, y: size.height * cloud.y)
-                        .offset(x: cleared ? cloud.dx * size.width * 0.9 : 0,
-                                y: cleared ? cloud.dy * size.height * 0.5 : 0)
-                        .opacity(cleared ? 0 : 1)
-                }
-            }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-        .sensoryFeedback(.success, trigger: cleared)
-        .onAppear {
-            withAnimation(reduceMotion ? .easeOut(duration: 0.3) : .easeOut(duration: 1.4)) { cleared = true }
         }
     }
 }

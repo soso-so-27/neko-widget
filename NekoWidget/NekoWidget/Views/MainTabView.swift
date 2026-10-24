@@ -1410,12 +1410,6 @@ struct MainTabView: View {
                 navigationTitle: openedFromWidget && CloudyWindowStore.shared.configuration().enabled ? "この1枚" : "写真",
                 legacyBirthday: settings.catLifeReference?.kind == .birthday ? settings.catLifeReference?.date.date() : nil
             )
-            // The cloudy window: the last fog drifts away as 「この1枚」 opens.
-            .overlay {
-                if openedFromWidget && CloudyWindowStore.shared.configuration().enabled {
-                    FogClearOverlay()
-                }
-            }
             .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
             .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
             .environment(\.photoRelatedAlbums, libraryContext ? photoLibraryRelatedAlbums : relatedAlbums)
