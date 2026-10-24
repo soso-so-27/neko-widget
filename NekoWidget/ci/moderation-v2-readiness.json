@@ -2,8 +2,8 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-report-ui-continuation",
-    "issuedAtMs": 1792757244297,
-    "expiresAtMs": 1792843376793,
+    "issuedAtMs": 1792851409864,
+    "expiresAtMs": 1792936076319,
     "policyRevision": 2,
     "keyID": "moderation-v2",
     "publicKeySHA256": "8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d",
@@ -33,8 +33,8 @@
       "height": 1,
       "visible": true
     },
-    "readReceiptSHA256": "b1e8e3bcf0f1ee6b6f575bfea39abfccd0b19c93660be07de82bdbfd8817d15c",
-    "sourceSnapshotSHA256": "86d86530e1c91fbeb72190e9c02ac25dd796877b9c7454c3940bcc3d9bb2d711",
+    "readReceiptSHA256": "db31a1fcaf953549bdf3ea43e3e979adbd265c210e1588c4f68cd02a3358e481",
+    "sourceSnapshotSHA256": "7fd47a9c9d56baa0eb27067be3111af76681e724cb7abef3f92980c3d4cbea84",
     "readPhases": [
       "started",
       "disclosure_ready"
@@ -43,10 +43,10 @@
     "recipientReadVerified": false,
     "realUserPhotoVerified": false,
     "evidenceSHA256": {
-      "cloudObservation": "adad002564d0644621d2c9c773020816f22f78a50993646a2a41879cc96b7732",
+      "cloudObservation": "70f7857710e5e8dd17b15715c8d375a6a7ec2c84de243fa891d5fd4354260221",
       "photoScreenshot": "eed75a264ce77816e9770f9d029bcbc22d0edd93bd199851da6d8abde7c44889",
       "decisionScreenshot": "b7a4ad9f72e03e255383ac7134de38056c31518942eb86ba93de03b13e56e0d6",
-      "custodyProbe": "927141df0ebac8e0e76bca19e48138457760742fdece6c9b73e34e68e44d6f88",
+      "custodyProbe": "e49f21b415f5285873a6ac16eb672c041f46263793bccd9911f654fbc689f85a",
       "scopeApply": "f2b88cecb32530411da8cc86e2a457cd7209e407d193ddf89fa730175035b024",
       "keyPolicyApply": "5e32b9a21bcbd4add53d2fa42f114556b29fdbbba0fcd68ea01c6c79050a7e9d"
     },
@@ -88,12 +88,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "91XzDsKbYMyocuRqASrexWs3NOgj0DPYAQ05mx8-xYdJ5FYpFQaKpv0Aq5Ny4p09bRxUQe_8McRwSIBjaCPfBA"
+      "signatureBase64url": "gZsEZ967B3rsozwgoNwTbYluX0kJxgV_FzFL9DrUoOTnGME1snyNZBrEMl9cWOAjQSINiRPQbFd3-LYUyzcqDQ"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "8WYKcfGV1HG92yjts5wBCobXADL_3o4HANmB4rPngoC11HpPjgJEaSw2lIGdwOvQwAbXx9z38XcVVMBG2298AQ"
+      "signatureBase64url": "8AVQaZoOt4BhAPZviqw6rW0CYQLS-tZ2AYlh0xbQGl4T1VbTRALekfBRGj26lpvZd7nOA3nY934tnwLMrvdsBg"
     }
   ]
 }
