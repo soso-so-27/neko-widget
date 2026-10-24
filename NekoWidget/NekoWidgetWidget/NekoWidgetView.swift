@@ -93,8 +93,9 @@ struct NekoWidgetView: View {
                     .overlay(alignment: .bottom) {
                         if let selection = entry.cloudyWindowSelection {
                             if selection.revealedAt == nil {
-                                Text("タップして晴らす")
-                                    .font(.caption.weight(.medium))
+                                // Says what you get, not the verb: 「晴らす」 alone was unclear.
+                                Label("タップで きょうの 1 枚", systemImage: "hand.tap.fill")
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 12).padding(.vertical, 7)
                                     .background(.black.opacity(0.35), in: Capsule())

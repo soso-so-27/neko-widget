@@ -26,7 +26,8 @@ enum CloudyWindowStrength: String, Codable, CaseIterable, Sendable {
 
 struct CloudyWindowConfiguration: Codable, Equatable, Sendable {
     var enabled = false
-    var strength: CloudyWindowStrength = .light
+    /// 10/24: the owner preferred こいめ on a real iPhone.
+    var strength: CloudyWindowStrength = .strong
     var revision = UUID().uuidString
 }
 

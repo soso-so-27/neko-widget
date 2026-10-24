@@ -774,7 +774,8 @@ struct MainTabView: View {
                 letters: hasPhotoAccess ? currentMonthlyWindowCollection?.letters ?? [] : [],
                 movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
                 catPhotos: hasPhotoAccess ? catPhotos : [],
-                catNames: catProfilesPresentation.profiles.prefix(2).map(\.displayName).joined(separator: "と"),
+                assignments: currentPhotoLibraryAssignments,
+                profileNames: currentPhotoLibraryProfileNames,
                 openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) }
             )
         } else {
