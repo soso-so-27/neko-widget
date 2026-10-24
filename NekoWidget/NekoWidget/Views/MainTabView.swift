@@ -427,6 +427,8 @@ struct MainTabView: View {
     private var readMonthlyWindowPeriodIdentifier = ""
     @AppStorage(GrowthAlbumPhotoOverrides.storageKey)
     private var growthPhotoOverridesJSON = ""
+    /// Test builds only: 設定 → テスト用「新しいアルバム（試作）」.
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
 
     private var tabContent: some View {
         TabView(selection: Binding(get: { selectedTab }, set: { tab in
@@ -442,7 +444,7 @@ struct MainTabView: View {
             selectedTab = tab
         })) {
             NavigationStack(path: $memoriesPath) {
-                albumsView()
+                albumRoot
                     .navigationDestination(for: AlbumRoute.self) { route in
                         albumDestination(for: route, defaultScope: .everyone)
                     }
@@ -764,6 +766,20 @@ struct MainTabView: View {
         }
         // Settings lives in one place (the ツール tab), as in Apple's own apps.
 
+    }
+
+    @ViewBuilder private var albumRoot: some View {
+        if AlbumPrototype.isOn(albumPrototypeStored) {
+            AlbumPrototypeView(
+                letters: hasPhotoAccess ? currentMonthlyWindowCollection?.letters ?? [] : [],
+                movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
+                catPhotos: hasPhotoAccess ? catPhotos : [],
+                catNames: catProfilesPresentation.profiles.prefix(2).map(\.displayName).joined(separator: "と"),
+                openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) }
+            )
+        } else {
+            albumsView()
+        }
     }
 
     private var showcaseCandidates: [PhotoPresentation] {
