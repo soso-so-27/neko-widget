@@ -342,6 +342,17 @@ struct CloudyWindowStore: Sendable {
         }
     }
 
+    /// Photos revealed in the window between the dates (read only), for the
+    /// album prototype's monthly story.
+    func revealedPhotos(from start: Date, to end: Date) -> [(photoID: String, revealedAt: Date)] {
+        guard internalPresentation else { return [] }
+        let selections = (try? authorityStore.withAuthoritySnapshot { _ in try read().selections }) ?? []
+        return selections.compactMap { selection in
+            guard let revealedAt = selection.revealedAt, revealedAt >= start, revealedAt < end else { return nil }
+            return (selection.photoID, revealedAt)
+        }
+    }
+
     func noteViewed(photoID: String) {
         guard internalPresentation else { return }
         try? authorityStore.withAuthoritySnapshot { authority in

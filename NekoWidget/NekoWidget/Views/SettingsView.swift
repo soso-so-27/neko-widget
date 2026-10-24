@@ -89,6 +89,7 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeOn = false
     @State private var showsWindowSupportPreview = false
     @State private var cloudyWindowEnabled = CloudyWindowStore.shared.configuration().enabled
     @State private var cloudyWindowStrength = CloudyWindowStore.shared.configuration().strength
@@ -338,6 +339,9 @@ struct SettingsView: View {
                         if let cloudyWindowError {
                             Text(cloudyWindowError).foregroundStyle(.red)
                         }
+                        // The album as works that arrive, with the monthly story.
+                        Toggle("新しいアルバム（試作）", isOn: $albumPrototypeOn)
+                            .accessibilityIdentifier("settings-album-prototype")
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {
