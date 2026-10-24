@@ -219,8 +219,12 @@ private enum CloudyWindowVerifier {
         defer { f.cleanup() }
         let scope = CloudyWindowStore.profilePrefix + "cat-0"
         let cutoff = baseline.addingTimeInterval(30)
-        let first = try f.store.timeline(scopeID: scope, now: baseline, selectionValidUntil: cutoff)[0]
+        let first = try f.store.timeline(scopeID: scope, now: baseline)[0]
         let later = baseline.addingTimeInterval(3 * day)
+        let stopped = try f.store.timeline(scopeID: scope, now: later, allowsSelection: false, selectionValidUntil: cutoff)
+        try check(stopped.first?.selection.id == first.selection.id, "shortened expiry freezes the allowed previous day")
+        try check(f.store.reveal(selectionID: first.selection.id, scopeID: scope, photoID: first.photo.photoID,
+            now: later, allowsSelection: false, selectionValidUntil: cutoff), "shortened expiry still permits revealing the frozen photo")
         try check(f.authority.snapshot(now: later)!.retirableCandidateCount > 0,
                   "cloudy usage allows the base cache to refill")
         for photo in f.prepared.prefix(32) { f.store.noteViewed(photoID: photo.photoID) }

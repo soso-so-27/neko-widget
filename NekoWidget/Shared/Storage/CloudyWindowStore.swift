@@ -79,6 +79,7 @@ private struct CloudyWindowState: Codable {
     var metadata: [String: CloudyWindowPhotoMetadata] = [:]
     var photos: [CloudyWindowPreparedPhoto] = []
     var selections: [CloudyWindowSelection] = []
+    var frozenSelectionIDs: [String: String]? = nil
     var seenPhotoIDs: Set<String> = []
 }
 
@@ -281,6 +282,13 @@ struct CloudyWindowStore: Sendable {
                         $0.scopeID == scopeID && $0.day <= now
                     }.filter { value in selectionValidUntil.map { value.day < $0 } ?? true }
                         .max { $0.day < $1.day }
+                    if let selection {
+                        var frozen = state.frozenSelectionIDs ?? [:]
+                        frozen[scopeID] = selection.id
+                        state.frozenSelectionIDs = frozen
+                    }
+                } else if date == today {
+                    state.frozenSelectionIDs?[scopeID] = nil
                 }
                 if selection == nil && maySelect,
                    let chosen = choose(state: state, scopeID: scopeID, date: date) {
@@ -320,8 +328,9 @@ struct CloudyWindowStore: Sendable {
             let selection = state.selections[index]
             guard selectionValidUntil.map({ selection.day < $0 }) ?? true else { return false }
             let today = Self.calendar.startOfDay(for: now)
-            let frozen = !allowsSelection && state.selections.filter {
-                $0.scopeID == scopeID && $0.day <= now
+            let frozen = !allowsSelection && state.selections.filter { value in
+                value.scopeID == scopeID && value.day <= now
+                    && (selectionValidUntil.map { value.day < $0 } ?? true)
             }.max(by: { $0.day < $1.day })?.id == selectionID
             guard selection.day == today || frozen else { return false }
             if selection.revealedAt == nil {
@@ -465,13 +474,16 @@ struct CloudyWindowStore: Sendable {
             return !unavailableToday && !invalidScope && !expired
         }
         state.selections = keptSelections
+        let retainedIDs = Set(keptSelections.map(\.id))
+        state.frozenSelectionIDs = state.frozenSelectionIDs?.filter { retainedIDs.contains($0.value) }
     }
 
     private func protectedSelections(in state: CloudyWindowState, now: Date) -> Set<String> {
         let today = Self.calendar.startOfDay(for: now)
         let latest = Dictionary(grouping: state.selections.filter { $0.day <= now }, by: \.scopeID)
             .values.compactMap { $0.max(by: { $0.day < $1.day })?.photoID }
-        return Set(latest).union(state.selections.filter { $0.day >= today }.map(\.photoID))
+        let frozen = Set((state.frozenSelectionIDs ?? [:]).values)
+        return Set(latest).union(state.selections.filter { $0.day >= today || frozen.contains($0.id) }.map(\.photoID))
     }
 
     private func filesExist(_ photo: CloudyWindowPreparedPhoto) -> Bool {
