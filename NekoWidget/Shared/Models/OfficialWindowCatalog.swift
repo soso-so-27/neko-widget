@@ -70,6 +70,28 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         }
     }
 
+    /// The daily window changes at 18:00 JST (09:00 UTC). Never fall back to
+    /// yesterday's cached image when today's image has not arrived yet.
+    func widgetPhotos(at date: Date) -> [OfficialCatPhoto] {
+        let available = availablePhotos(at: date)
+        guard channelID == Self.sourceID else { return available }
+        let day: TimeInterval = 86_400
+        let cutover = floor((date.timeIntervalSince1970 - 9 * 3_600) / day) * day + 9 * 3_600
+        guard let latest = available.first, latest.publishedAt.timeIntervalSince1970 >= cutover else { return [] }
+        return [latest]
+    }
+
+    func widgetDeadline(for photo: OfficialCatPhoto) -> Date {
+        let expiry = min(photo.expiresAt, validUntil)
+        guard channelID == Self.sourceID else { return expiry }
+        return min(expiry, Self.nextDailyCutover(after: photo.publishedAt))
+    }
+
+    static func nextDailyCutover(after date: Date) -> Date {
+        let day: TimeInterval = 86_400
+        return Date(timeIntervalSince1970: (floor((date.timeIntervalSince1970 - 9 * 3_600) / day) + 1) * day + 9 * 3_600)
+    }
+
     func validate(at now: Date, expectedChannelID: String = Self.sourceID, expectedCatID: String? = nil) throws {
         guard schemaVersion == 1, Self.isIdentifier(expectedChannelID), channelID == expectedChannelID,
               expectedCatID.map(Self.isIdentifier) ?? true,
@@ -119,6 +141,42 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         formatter.isLenient = false
         guard text.count == 10, let date = formatter.date(from: text) else { return false }
         return formatter.string(from: date) == text
+    }
+}
+
+/// Public presentation metadata, fetched separately from the v1 photo catalog.
+/// Only the current week and two preceding Mondays can name archive channels.
+struct OfficialWeeklyThemeIndex: Codable, Equatable, Sendable {
+    struct Theme: Codable, Equatable, Sendable {
+        let name: String
+        let weekStart: String
+        let channelID: String
+
+    }
+    let schemaVersion: Int
+    let generatedAt: Date
+    let validUntil: Date
+    let themes: [Theme]
+
+    func validate(at now: Date) throws {
+        guard schemaVersion == 1, generatedAt <= now.addingTimeInterval(300), validUntil > now,
+              validUntil > generatedAt, validUntil.timeIntervalSince(generatedAt) <= OfficialWindowCatalog.maximumLifetime,
+              (1...3).contains(themes.count) else { throw OfficialWindowError.invalidCatalog }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3_600)!
+        let day = calendar.startOfDay(for: now)
+        let monday = calendar.date(byAdding: .day, value: -((calendar.component(.weekday, from: day) + 5) % 7), to: day)!
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = calendar; formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
+        for (index, theme) in themes.enumerated() {
+            let date = formatter.string(from: calendar.date(byAdding: .day, value: -7 * index, to: monday)!)
+            guard theme.weekStart == date, !theme.name.isEmpty, theme.name.count <= 30,
+                  theme.name == theme.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !theme.name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || $0.value == 0x2028 || $0.value == 0x2029 }),
+                  theme.channelID == (index == 0 ? "weekly-theme" : "weekly-theme-" + date.replacingOccurrences(of: "-", with: ""))
+            else { throw OfficialWindowError.invalidCatalog }
+        }
     }
 }
 
