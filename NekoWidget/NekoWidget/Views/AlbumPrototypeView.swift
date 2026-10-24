@@ -34,11 +34,12 @@ enum AlbumPrototype {
 
     /// The best `count` photos, spread out: never two within 15 minutes of each
     /// other (bursts, near-duplicates) and at most two from the same day.
-    static func pick(_ photos: [PhotoPresentation], count: Int) -> [PhotoPresentation] {
+    static func pick(_ photos: [PhotoPresentation], count: Int,
+                     by rank: (PhotoPresentation) -> Double = AlbumPrototype.score) -> [PhotoPresentation] {
         let calendar = Calendar.current
         var chosen: [PhotoPresentation] = []
         var perDay: [Date: Int] = [:]
-        for photo in photos.sorted(by: { score($0) > score($1) }) {
+        for photo in photos.sorted(by: { rank($0) > rank($1) }) {
             guard chosen.count < count else { break }
             if let date = photo.creationDate {
                 if chosen.contains(where: { other in
@@ -55,7 +56,7 @@ enum AlbumPrototype {
         if chosen.count < count {
             let ids = Set(chosen.map(\.localIdentifier))
             chosen += photos.filter { !ids.contains($0.localIdentifier) }
-                .sorted { score($0) > score($1) }.prefix(count - chosen.count)
+                .sorted { rank($0) > rank($1) }.prefix(count - chosen.count)
         }
         return chosen
     }
@@ -249,9 +250,9 @@ struct AlbumPrototypeView: View {
     }
 }
 
-/// The monthly story: pages to tap through. Photos come from every cat photo
-/// of that month, shown whole (never cut) over a blurred copy of themselves.
-/// Only a date or a word; pages without material are skipped.
+/// The monthly story, edited: a cover on the month's own colour, then one
+/// photo large, a pair, a trio, last year and this year, the month in numbers,
+/// and a card. Pages advance by themselves; tap the sides to move, hold to pause.
 struct MonthlyStoryView: View {
     let letter: MonthlyWindowPresentation
     let catPhotos: [PhotoPresentation]
@@ -259,79 +260,48 @@ struct MonthlyStoryView: View {
     let profileNames: [String: String]
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pages: [Page] = []
+    @State private var backdrop = Color(red: 0.11, green: 0.09, blue: 0.08)
     @State private var index = 0
+    @State private var paused = false
 
-    private enum Page: Hashable {
+    static let pageSeconds: Double = 5
+
+    enum Page: Hashable {
         case cover(PhotoPresentation, String)
-        case photo(PhotoPresentation)
-        case reunion(PhotoPresentation, Date)
-        case lastYear(PhotoPresentation, String)
-        case thisYear(PhotoPresentation, String)
+        case single(PhotoPresentation)
+        case pair(PhotoPresentation, PhotoPresentation)
+        case trio(PhotoPresentation, PhotoPresentation, PhotoPresentation)
+        case lastYear(PhotoPresentation, Int)
+        case thisYear(PhotoPresentation, Int)
+        case stats(count: Int, bestDay: Date?, companion: String?)
         case card([PhotoPresentation], String)
     }
 
-    private var monthPhotos: [PhotoPresentation] {
-        let all = AlbumPrototype.photos(in: letter.monthStart, from: catPhotos)
-        return all.isEmpty ? letter.storyPhotos : all
-    }
-
-    private var pages: [Page] {
-        let photos = AlbumPrototype.pick(monthPhotos, count: 9)
-        guard let cover = photos.first else { return [] }
-        var result: [Page] = [.cover(cover, AlbumPrototype.names(for: [cover], assignments: assignments,
-                                                                  profileNames: profileNames))]
-        for photo in photos.dropFirst().prefix(3) { result.append(.photo(photo)) }
-        if let reunion = reunionPhoto() { result.append(.reunion(reunion.photo, reunion.date)) }
-        if let lastYear = lastYearPhoto() {
-            result.append(.lastYear(lastYear, "\(letter.yearNumber - 1).\(letter.monthNumber)"))
-            result.append(.thisYear(cover, "\(letter.yearNumber).\(letter.monthNumber)"))
-        }
-        let nine = Array(photos.prefix(9))
-        result.append(.card(nine, AlbumPrototype.names(for: nine, assignments: assignments,
-                                                       profileNames: profileNames)))
-        return result
-    }
-
-    private func reunionPhoto() -> (photo: PhotoPresentation, date: Date)? {
-        guard let end = Calendar.current.date(byAdding: .month, value: 1, to: letter.monthStart) else { return nil }
-        let revealed = CloudyWindowStore.shared.revealedPhotos(from: letter.monthStart, to: end)
-        let byID = Dictionary(catPhotos.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
-        let hearted: [(photo: PhotoPresentation, date: Date)] = revealed.compactMap { item in
-            guard let photo = byID[item.photoID], photo.isLiked else { return nil }
-            return (photo: photo, date: item.revealedAt)
-        }
-        return hearted.max { $0.date < $1.date }
-    }
-
-    private func lastYearPhoto() -> PhotoPresentation? {
-        guard let start = Calendar.current.date(byAdding: .year, value: -1, to: letter.monthStart) else { return nil }
-        return AlbumPrototype.photos(in: start, from: catPhotos)
-            .max { AlbumPrototype.score($0) < AlbumPrototype.score($1) }
-    }
+    private struct AdvanceKey: Hashable { let index: Int; let paused: Bool; let count: Int }
 
     var body: some View {
-        let pages = self.pages
         ZStack {
-            Color.black.ignoresSafeArea()
+            backdrop.ignoresSafeArea()
             if pages.indices.contains(index) {
                 pageView(pages[index])
                     .id(index)
                     .transition(.opacity)
+            } else {
+                ProgressView().tint(.white)
             }
             HStack(spacing: 0) {
                 Color.clear.contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.easeInOut(duration: 0.25)) { index = max(index - 1, 0) } }
+                    .onTapGesture { move(-1) }
                     .accessibilityLabel("前のページ")
                     .accessibilityAddTraits(.isButton)
                 Color.clear.contentShape(Rectangle())
-                    .onTapGesture {
-                        if index + 1 < pages.count {
-                            withAnimation(.easeInOut(duration: 0.25)) { index += 1 }
-                        }
-                    }
+                    .onTapGesture { move(1) }
                     .accessibilityLabel("次のページ")
                     .accessibilityAddTraits(.isButton)
             }
+            .onLongPressGesture(minimumDuration: 0.2, perform: {}, onPressingChanged: { paused = $0 })
             .ignoresSafeArea()
             VStack(spacing: 6) {
                 HStack(spacing: 3) {
@@ -353,41 +323,175 @@ struct MonthlyStoryView: View {
         }
         .statusBarHidden()
         .accessibilityIdentifier("monthly-story")
+        .task { await build() }
+        .task(id: AdvanceKey(index: index, paused: paused, count: pages.count)) {
+            guard !paused, index + 1 < pages.count else { return }
+            try? await Task.sleep(for: .seconds(Self.pageSeconds))
+            guard !Task.isCancelled else { return }
+            move(1)
+        }
     }
+
+    private func move(_ step: Int) {
+        let next = index + step
+        guard pages.indices.contains(next) else { return }
+        withAnimation(.easeInOut(duration: 0.4)) { index = next }
+    }
+
+    // MARK: Building the pages
+
+    private func build() async {
+        guard pages.isEmpty else { return }
+        let month = AlbumPrototype.photos(in: letter.monthStart, from: catPhotos)
+        let source = month.isEmpty ? letter.storyPhotos : month
+        // Look at the best candidates themselves: sharp and well lit beats blurred or dark.
+        let candidates = Array(source.sorted { AlbumPrototype.score($0) > AlbumPrototype.score($1) }.prefix(24))
+        var looks: [String: Double] = [:]
+        var thumbnails: [String: UIImage] = [:]
+        for photo in candidates {
+            guard let image = await Self.thumbnail(photo.localIdentifier) else { continue }
+            thumbnails[photo.localIdentifier] = image
+            if let look = ShowcaseRecommender.lookScore(image, catArea: photo.largestCatAreaRatio) {
+                looks[photo.localIdentifier] = Double(look)
+            }
+        }
+        let picked = AlbumPrototype.pick(candidates.isEmpty ? source : candidates, count: 9) { photo in
+            AlbumPrototype.score(photo) + 6 * (looks[photo.localIdentifier] ?? 0.4)
+        }
+        guard let cover = picked.first else { return }
+        if let image = thumbnails[cover.localIdentifier], let color = Self.averageColor(image) {
+            backdrop = color
+        }
+        var result: [Page] = [.cover(cover, AlbumPrototype.names(for: [cover], assignments: assignments,
+                                                                  profileNames: profileNames))]
+        let rest = Array(picked.dropFirst())
+        if rest.count >= 1 { result.append(.single(rest[0])) }
+        if rest.count >= 3 { result.append(.pair(rest[1], rest[2])) }
+        if rest.count >= 6 { result.append(.trio(rest[3], rest[4], rest[5])) }
+        if let lastYear = lastYearPhoto() {
+            result.append(.lastYear(lastYear, letter.yearNumber - 1))
+            result.append(.thisYear(rest.last ?? cover, letter.yearNumber))
+        }
+        result.append(.stats(count: source.count, bestDay: Self.busiestDay(source),
+                             companion: companion(in: source)))
+        result.append(.card(picked, AlbumPrototype.names(for: picked, assignments: assignments,
+                                                         profileNames: profileNames)))
+        withAnimation(.easeOut(duration: 0.3)) { pages = result }
+    }
+
+    private func lastYearPhoto() -> PhotoPresentation? {
+        guard let start = Calendar.current.date(byAdding: .year, value: -1, to: letter.monthStart) else { return nil }
+        return AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos), count: 1).first
+    }
+
+    /// The cat that appears most often this month, when the photos are assigned.
+    private func companion(in photos: [PhotoPresentation]) -> String? {
+        var counts: [String: Int] = [:]
+        for photo in photos { for id in assignments[photo.localIdentifier] ?? [] { counts[id, default: 0] += 1 } }
+        return counts.max { $0.value < $1.value }.flatMap { profileNames[$0.key] }
+    }
+
+    private static func busiestDay(_ photos: [PhotoPresentation]) -> Date? {
+        let calendar = Calendar.current
+        var counts: [Date: Int] = [:]
+        for photo in photos { if let date = photo.creationDate { counts[calendar.startOfDay(for: date), default: 0] += 1 } }
+        return counts.max { $0.value < $1.value }?.key
+    }
+
+    private static func thumbnail(_ identifier: String) async -> UIImage? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.isNetworkAccessAllowed = false
+        options.resizeMode = .fast
+        return await withCheckedContinuation { continuation in
+            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: 160, height: 160),
+                                                         contentMode: .aspectFill, options: options) { image, _ in
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
+    /// The photo's average colour, darkened, for the page behind it.
+    private static func averageColor(_ image: UIImage) -> Color? {
+        guard let cgImage = image.cgImage else { return nil }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let drawn = pixel.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                                          bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true
+        }
+        guard drawn else { return nil }
+        let shade = 0.55
+        return Color(red: Double(pixel[0]) / 255 * shade, green: Double(pixel[1]) / 255 * shade,
+                     blue: Double(pixel[2]) / 255 * shade)
+    }
+
+    // MARK: Pages
 
     @ViewBuilder private func pageView(_ page: Page) -> some View {
         switch page {
         case let .cover(photo, names):
-            wholePhoto(photo) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: "\(letter.yearNumber)年 \(letter.monthNumber)月").font(.footnote.weight(.semibold)).opacity(0.9)
-                    Text(names).font(.system(.title, design: .serif).weight(.bold))
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer(minLength: 90)
+                Color.clear
+                    .aspectRatio(0.8, contentMode: .fit)
+                    .overlay { tile(photo, aspect: 0.8, pixels: 1000) }
+                    .clipped()
+                    .shadow(color: .black.opacity(0.35), radius: 22, y: 12)
+                    .padding(.horizontal, 26)
+                Spacer(minLength: 20)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: "\(letter.monthNumber)月")
+                        .font(.system(size: 56, weight: .bold, design: .serif))
+                    Text(verbatim: "\(names)　\(letter.yearNumber)")
+                        .font(.footnote.weight(.semibold)).tracking(2).opacity(0.9)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 54)
+            }
+        case let .single(photo):
+            KenBurnsPhoto(localIdentifier: photo.localIdentifier, reduceMotion: reduceMotion)
+        case let .pair(first, second):
+            VStack(spacing: 10) {
+                tile(first, aspect: 1.2, pixels: 900)
+                tile(second, aspect: 1.2, pixels: 900)
+            }
+            .padding(.horizontal, 16).padding(.top, 100).padding(.bottom, 80)
+        case let .trio(big, top, bottom):
+            HStack(spacing: 8) {
+                tile(big, aspect: 0.55, pixels: 900)
+                VStack(spacing: 8) {
+                    tile(top, aspect: 0.8, pixels: 600)
+                    tile(bottom, aspect: 0.8, pixels: 600)
                 }
             }
-        case let .photo(photo):
-            wholePhoto(photo) { EmptyView() }
-        case let .reunion(photo, date):
-            wholePhoto(photo) {
-                HStack {
-                    Text(date.formatted(.dateTime.month().day())).font(.footnote.weight(.semibold))
-                    Spacer()
-                    Image(systemName: "heart.fill").foregroundStyle(.pink)
+            .padding(.horizontal, 16).padding(.top, 100).padding(.bottom, 80)
+        case let .lastYear(photo, year):
+            KenBurnsPhoto(localIdentifier: photo.localIdentifier, reduceMotion: reduceMotion)
+                .overlay(alignment: .bottomLeading) { label("1 年前のこの月", String(year)) }
+        case let .thisYear(photo, year):
+            KenBurnsPhoto(localIdentifier: photo.localIdentifier, reduceMotion: reduceMotion)
+                .overlay(alignment: .bottomLeading) { label("ことし", String(year)) }
+        case let .stats(count, bestDay, companion):
+            VStack(alignment: .leading, spacing: 22) {
+                Spacer()
+                stat(String(count), "\(letter.monthNumber)月に撮った猫の写真")
+                if let bestDay {
+                    stat(bestDay.formatted(.dateTime.month(.defaultDigits).day()), "いちばん撮った日")
                 }
-            }
-        case let .lastYear(photo, label):
-            wholePhoto(photo) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("1 年前").font(.footnote.weight(.semibold)).opacity(0.9)
-                    Text(label).font(.system(.title, design: .serif).weight(.bold))
+                if let companion {
+                    stat(companion, "いちばん写っていた子", size: 30)
                 }
+                Spacer()
             }
-        case let .thisYear(photo, label):
-            wholePhoto(photo) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ことし").font(.footnote.weight(.semibold)).opacity(0.9)
-                    Text(label).font(.system(.title, design: .serif).weight(.bold))
-                }
-            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
         case let .card(photos, names):
             VStack(spacing: 10) {
                 Spacer(minLength: 80)
@@ -395,15 +499,11 @@ struct MonthlyStoryView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
                         ForEach(photos) { photo in
                             Color.clear.aspectRatio(1, contentMode: .fit)
-                                .overlay {
-                                    PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                                        catBoundingBox: photo.catBoundingBox,
-                                                        targetPixelSize: CGSize(width: 400, height: 400))
-                                }
+                                .overlay { tile(photo, aspect: 1, pixels: 400, rounded: false) }
                                 .clipped()
                         }
                     }
-                    Text("\(names)　\(letter.yearNumber).\(letter.monthNumber)")
+                    Text(verbatim: "\(names)　\(letter.yearNumber).\(letter.monthNumber)")
                         .font(.system(.headline, design: .serif))
                         .foregroundStyle(Color(red: 0.17, green: 0.14, blue: 0.12))
                 }
@@ -415,18 +515,46 @@ struct MonthlyStoryView: View {
         }
     }
 
-    /// Tall photos fill the screen; wide or square ones are shown whole over a
-    /// dim blurred copy of themselves, so nothing important is cut.
-    private func wholePhoto<Overlay: View>(_ photo: PhotoPresentation, @ViewBuilder overlay: () -> Overlay) -> some View {
-        StoryPhotoView(localIdentifier: photo.localIdentifier)
-        .overlay(alignment: .bottom) {
-            overlay()
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 24)
+    private func tile(_ photo: PhotoPresentation, aspect: CGFloat, pixels: CGFloat, rounded: Bool = true) -> some View {
+        PhotoAssetImageView(localIdentifier: photo.localIdentifier, catBoundingBox: photo.catBoundingBox,
+                            targetPixelSize: CGSize(width: pixels, height: pixels), targetAspectRatio: aspect)
+            .clipShape(RoundedRectangle(cornerRadius: rounded ? 6 : 0, style: .continuous))
+    }
+
+    private func label(_ caption: String, _ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(caption).font(.footnote.weight(.semibold)).opacity(0.9)
+            Text(verbatim: title).font(.system(size: 34, weight: .bold, design: .serif))
         }
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 44)
+    }
+
+    private func stat(_ value: String, _ caption: String, size: CGFloat = 46) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: value).font(.system(size: size, weight: .bold, design: .serif))
+            Text(caption).font(.caption.weight(.semibold)).tracking(1.5).opacity(0.8)
+        }
+    }
+}
+
+/// A story photo that drifts slowly closer while its page is shown.
+struct KenBurnsPhoto: View {
+    let localIdentifier: String
+    let reduceMotion: Bool
+    @State private var closer = false
+
+    var body: some View {
+        StoryPhotoView(localIdentifier: localIdentifier)
+            .scaleEffect(closer ? 1.08 : 1.0)
+            .clipped()
+            .ignoresSafeArea()
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: MonthlyStoryView.pageSeconds + 1)) { closer = true }
+            }
     }
 }
 
