@@ -439,7 +439,9 @@ struct CloudyWindowStore: Sendable {
                       filesExist(photo) else { continue }
                 if date <= now, state.seenPhotoIDs.count < 100_000 { state.seenPhotoIDs.insert(photo.photoID) }
                 var visibleSelection = selection
-                if state.albumPrototypeEnabled != true { visibleSelection.albumPeriod = nil }
+                if state.albumPrototypeEnabled != true || selection.day != date {
+                    visibleSelection.albumPeriod = nil
+                }
                 entries.append(.init(date: date == today ? now : date, selection: visibleSelection, photo: photo))
             }
             try write(state)

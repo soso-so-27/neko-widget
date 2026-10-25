@@ -92,6 +92,7 @@ private enum CloudyWindowVerifier {
         try preparationRetainsPlannedAndFrozenPhotos()
         try albumArrival()
         try albumArrivalGates()
+        try albumArrivalFrozenAfterExpiry()
         try albumCoverBeyondPreparationBounds()
         print("Cloudy window: daily reveal, stale actions, restart, rotation, cats, permission, public mode and publication checks passed")
     }
@@ -215,6 +216,18 @@ private enum CloudyWindowVerifier {
         try check(published.candidates.contains { $0.item.localIdentifier == arrived.photo.photoID },
                   "cover refill preserves issued photograph")
         try check(published.candidates.count == 100, "cover priority preserves preparation budget")
+    }
+
+    private static func albumArrivalFrozenAfterExpiry() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        try deliver(f, now: closing)
+        let arrived = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        let frozen = try f.store.timeline(scopeID: CloudyWindowStore.personalScope,
+            now: closing.addingTimeInterval(day), allowsSelection: false,
+            selectionValidUntil: closing.addingTimeInterval(60))
+        try check(frozen.allSatisfy { $0.selection.id == arrived.selection.id && $0.isCloudy
+            && $0.selection.albumPeriod == nil }, "membership freeze keeps photograph and reveal, not yesterday's delivery label")
     }
 
     private static func dailyReveal() throws {
