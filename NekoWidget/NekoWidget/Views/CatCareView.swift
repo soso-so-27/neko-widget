@@ -160,10 +160,12 @@ struct CatCareDetailView: View {
                         .accessibilityIdentifier("cat-care-next-hint")
                 }
             }
-            basicsSection
-            healthSection
-            livingSection
-            householdSection
+            // Folded by default: four short rows that say how full each part is.
+            // Open one to write in it; nothing is hidden, only folded.
+            folded("basics", "基本", basicsCount) { basicsSection }
+            folded("health", "健康", healthCount) { healthSection }
+            folded("living", "暮らし", livingCount) { livingSection }
+            folded("household", "家の情報", householdCount) { householdSection }
             Section {
                 Text("書いた内容は自動で保存します。")
                 Text("このiPhoneの中だけに保存し、外には送りません。")
@@ -329,6 +331,66 @@ struct CatCareDetailView: View {
             Text(basicsFooter)
                 .accessibilityIdentifier("cat-care-basics")
         }
+    }
+
+    @State private var openParts: Set<String> = []
+
+    private func filled(_ value: String) -> Bool { !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private var basicsCount: (Int, Int) {
+        var values = [filled(draft.coat), filled(draft.marks), filled(draft.microchip),
+                      draft.sex != .unknown, draft.neutered != .unknown, draft.indoorOnly != .unknown]
+        if case let .profile(profile) = subject { values.append(profile.lifeReference != nil) }
+        return (values.filter { $0 }.count, values.count)
+    }
+
+    private var healthCount: (Int, Int) {
+        let values = [filled(draft.conditions), draft.allergyStatus != .unknown,
+                      (currentRecord?.activeWeights.count ?? 0) > 0, (currentRecord?.activeVaccinations.count ?? 0) > 0]
+        return (values.filter { $0 }.count, values.count)
+    }
+
+    private var livingCount: (Int, Int) {
+        let values = [(currentRecord?.activeMeals.count ?? 0) > 0, filled(draft.specialDiet), filled(draft.water),
+                      filled(draft.litter), filled(draft.temperament)]
+        return (values.filter { $0 }.count, values.count)
+    }
+
+    private var householdCount: (Int, Int) {
+        let values = [filled(draft.ownerContact), filled(draft.backupContact), filled(draft.vetName),
+                      filled(draft.vetPhone), filled(draft.meetingPlace)]
+        return (values.filter { $0 }.count, values.count)
+    }
+
+    /// A part of この子のこと: one row while folded (「健康　2 / 4」), the whole
+    /// section when opened. Tapping the row again folds it.
+    @ViewBuilder private func folded<Content: View>(_ key: String, _ title: String, _ count: (Int, Int),
+                                                    @ViewBuilder content: () -> Content) -> some View {
+        let isOpen = openParts.contains(key)
+        Section {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isOpen { openParts.remove(key) } else { openParts.insert(key) }
+                }
+            } label: {
+                HStack {
+                    Text(title).font(.headline).foregroundStyle(.primary)
+                    Spacer()
+                    Text(verbatim: count.0 >= count.1 ? "そろっています" : "\(count.0) / \(count.1)")
+                        .font(.subheadline)
+                        .foregroundStyle(count.0 >= count.1 ? Color.green : Color.secondary)
+                    Image(systemName: "chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 180 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("\(title)、\(count.0) / \(count.1)")
+            .accessibilityHint(isOpen ? "たたむ" : "開いて書く")
+            .accessibilityIdentifier("cat-care-part-\(key)")
+        }
+        if isOpen { content() }
     }
 
     private var healthSection: some View {
