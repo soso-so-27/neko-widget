@@ -95,10 +95,12 @@ private enum ToolTint {
     static let everyday = Color.accentColor
     static let everydayLight = Color(red: 0.36, green: 0.62, blue: 0.86)
     static let everydayDeep = Color(red: 0.22, green: 0.42, blue: 0.70)
-    static let emergency = Color.orange
-    static let emergencyWarm = Color(red: 0.93, green: 0.56, blue: 0.19)
-    static let emergencyDeep = Color.red
-    static let emergencyBrown = Color(red: 0.78, green: 0.36, blue: 0.26)
+    // もしも: one warm family in steps of depth (10/26: four unrelated colours
+    // read as four different apps). Red is no longer used for a tool.
+    static let emergency = Color(red: 0.95, green: 0.58, blue: 0.24)
+    static let emergencyWarm = Color(red: 0.89, green: 0.50, blue: 0.22)
+    static let emergencyDeep = Color(red: 0.80, green: 0.42, blue: 0.20)
+    static let emergencyBrown = Color(red: 0.68, green: 0.36, blue: 0.19)
 }
 
 /// A cat in the row above the tools: round photo with a ring of twelve
