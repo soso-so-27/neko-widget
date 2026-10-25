@@ -97,7 +97,15 @@ node tools/prepare_bundle.mjs --assets C:/official-window-review/official-001 --
 - 現在の版は2026-09-13 07:34 JSTで期限切れになる。自動更新は設定していない。
 - `C:/dev/neko-widget-official-local-proof-20260910/preview-20260911-{first,updated}/http-result.json` に記録。実機Widgetで取得・更新したという証拠ではない。
 
-## 3つの公式チャンネルの配信候補（1021f・未配備）
+## 黒猫のまどを1日1枚で準備する（1025e・未配備）
+
+現在の候補は `tools/prepare_black_cat_days.mjs`。公開用JPEGのフォルダーから1〜60日分を作り、日本時間0時に切り替える。手順・画像の形式・サイズ・順序は [黒猫の画像の受け渡しと準備](tools/README-black-cat-days.md) を参照。
+
+内部版のアプリとWidgetは今日の黒猫1枚を表示する。`InternalBuildPresentationAvailability` が利用可能なときだけ黒猫の行を出し、猫カフェ・保護猫は灰色の「近日」行にする。公開版の一覧とWidgetの選び方・期限は従来どおり。表示クレジットは所有者指定の「ねこのまど」。画像の受領・このローカル準備は、素材の公開や配備の承認を意味しない。
+
+## 以前の3チャンネル候補の形式（1021f・互換用）
+
+以下は以前の候補ツールの説明。現在の黒猫開始手順には使わず、配備や公開チャンネルの追加も行わない。
 
 `prepare_program.mjs` は既存の配信を変更せず、新しいローカル配備候補だけを作る。`prepare_schedule.mjs` とその旧3チャンネルの形式は残る。新しい Worker・D1・R2・cron・自動補充・有料契約は作らない。mainへのマージと実配備は所有者確認後。既存の本番運用pointerや、権利判断・期限の記録は更新しない。
 
@@ -106,7 +114,7 @@ node tools/prepare_bundle.mjs --assets C:/official-window-review/official-001 --
 - `/windows/weekly-theme/catalog.json`: 月曜00:00 JSTにテーマを切替。`/windows/weekly-theme/themes.json` は今週・先週・先々週の `name` / `weekStart`（月曜日、YYYY-MM-DD）/ `channelID` を返す。過去のcatalogは `weekly-theme-YYYYMMDD`。写真は元の掲載期限・最大14日を守るため、先々週の名前はあっても写真が空のことがある。
 - catalogのschemaVersion=1、48時間以内のlease、JPEGのhash/寸法/metadata検査は維持。別の小さいthemes.jsonを使い、既存のアプリ保存形式を変えない。旧nap-cats/cat-tabby-napの保存済み購読とWidget IDは引き続き解決できる。新programmeの公開対象は上の3チャンネルとテーマ履歴なので、既存チャンネルを残す配布方法を含めて、実配備時に所有者が確認する。既存の配信を勝手に置換しない。
 - 予定は開始から最大14日で終了する。期限に自動で503となり延長しない。カタログの版は有限の各時刻に切替わり、定期タスクは不要。写真の追加素材・掲載許可・有限期間の補充は別の運用作業。
-- Widgetは当日の1枚だけを使い、当日画像の取得失敗時に昨日の画像へ戻さない。次の18時を終端entry/次回更新希望時刻に含める。実際の取得・更新時刻はiOSが制御するため、18時ちょうどの表示更新は未確認。
+- この旧program形式は18時の配信版を作るが、公開版Widgetに18時の日替わり選択を追加するものではない。今回の黒猫Widgetの日替わりは内部版のみ、日本時間0時を終端entry/次回更新希望時刻に含める。実際の更新時刻はiOSが制御する。
 
 ```powershell
 node tools/prepare_program.mjs --input C:/public-photos/approved-program.json --output C:/public-photos/candidate-new
@@ -140,4 +148,4 @@ node tools/prepare_program.mjs --input C:/public-photos/approved-program.json --
 
 公開assetsにはcatalog/JPEGと配信に必要な内部programmeだけを置き、入力manifest・ファイルパス・publicationApprovedは含めない。内部programme、未来の写真、未知のまど、URLのquery、別originへの転送は公開しない。
 
-Claude接続用: `OfficialWindowConfiguration.definitions` が新3チャンネルを返す。`OfficialWindowClient.weeklyThemes(store:)` は購読や保存をせず、検証したメタデータだけを返す。履歴の `Theme.definition(relativeTo:)` は同じ配信origin配下のcatalogだけを指す。画面・「近日」の2行はこのPRに含めない。
+読み取り側の互換用: `OfficialWindowClient.weeklyThemes(store:)` と `Theme.definition(relativeTo:)` は残しているが、新しい画面から今週のテーマへは案内しない。`OfficialWindowConfiguration.definitions` は内部版では黒猫だけを返し、公開版では従来の一覧を維持する。黒猫の行・詳細・Widgetと「近日」の2行はこのPRに含む。
