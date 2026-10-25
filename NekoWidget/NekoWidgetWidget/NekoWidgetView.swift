@@ -45,7 +45,8 @@ struct NekoWidgetView: View {
             if let selection = entry.cloudyWindowSelection, selection.revealedAt == nil {
                 Button(intent: RevealCloudyWindowIntent(selection: selection)) { photoContent }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("きょうのまどのくもりを晴らす")
+                    .accessibilityLabel(selection.albumPeriod == nil
+                        ? "きょうのまどのくもりを晴らす" : "作品が届きました。くもりを晴らす")
                     .accessibilityIdentifier("cloudy-window-reveal")
             } else {
                 photoContent.widgetURL(entry.photoURL)
@@ -102,7 +103,8 @@ struct NekoWidgetView: View {
                         if let selection = entry.cloudyWindowSelection {
                             if selection.revealedAt == nil {
                                 // Says what you get, not the verb: 「晴らす」 alone was unclear.
-                                Label("タップで きょうの 1 枚", systemImage: "hand.tap.fill")
+                                Label(selection.albumPeriod == nil ? "タップで きょうの 1 枚" : "作品が届きました",
+                                      systemImage: "hand.tap.fill")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 12).padding(.vertical, 7)

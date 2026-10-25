@@ -355,6 +355,11 @@ struct SettingsView: View {
                         // The album as works that arrive, with the monthly story.
                         Toggle("新しいアルバムとタブの並び（試作）", isOn: $albumPrototypeOn)
                             .accessibilityIdentifier("settings-album-prototype")
+                            .onChange(of: albumPrototypeOn) { _, enabled in
+                                if enabled, UserDefaults.standard.double(forKey: AlbumPrototype.enabledAtKey) == 0 {
+                                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: AlbumPrototype.enabledAtKey)
+                                }
+                            }
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {

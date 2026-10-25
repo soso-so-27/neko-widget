@@ -13,6 +13,17 @@ enum AlbumPrototype {
         stored && InternalBuildPresentationAvailability.isAvailable
     }
 
+    static func cover(of letter: MonthlyWindowPresentation, from catPhotos: [PhotoPresentation]) -> PhotoPresentation? {
+        pick(photos(in: letter.monthStart, from: catPhotos), count: 1).first ?? letter.coverPhoto
+    }
+
+    static func markOpened(_ period: String) {
+        let defaults = UserDefaults.standard
+        var opened = Set((defaults.string(forKey: openedKey) ?? "").split(separator: ",").map(String.init))
+        guard opened.insert(period).inserted else { return }
+        defaults.set(opened.sorted().joined(separator: ","), forKey: openedKey)
+    }
+
     /// Every cat photo taken in the month of `monthStart`.
     static func photos(in monthStart: Date, from catPhotos: [PhotoPresentation]) -> [PhotoPresentation] {
         let calendar = Calendar.current
@@ -183,15 +194,11 @@ struct AlbumPrototypeView: View {
     }
 
     private func open(_ letter: MonthlyWindowPresentation) {
-        if !opened.contains(letter.periodIdentifier) {
-            openedJSON = (Array(opened) + [letter.periodIdentifier]).joined(separator: ",")
-        }
         story = letter
     }
 
     static func cover(of letter: MonthlyWindowPresentation, from catPhotos: [PhotoPresentation]) -> PhotoPresentation? {
-        AlbumPrototype.pick(AlbumPrototype.photos(in: letter.monthStart, from: catPhotos), count: 1).first
-            ?? letter.coverPhoto
+        AlbumPrototype.cover(of: letter, from: catPhotos)
     }
 
     private func latestCard(_ letter: MonthlyWindowPresentation) -> some View {
@@ -377,6 +384,7 @@ struct MonthlyStoryView: View {
                 pageView(pages[index])
                     .id(index)
                     .transition(.opacity)
+                    .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
             } else {
                 ProgressView().tint(.white)
             }
@@ -627,6 +635,13 @@ struct MonthlyStoryView: View {
             Text(caption).font(.caption.weight(.semibold)).tracking(1.5).opacity(0.8)
         }
     }
+}
+
+/// A cold-start URL waits here until current Photos and album metadata resolve.
+@MainActor
+final class AlbumArrivalOpenInbox: ObservableObject {
+    static let shared = AlbumArrivalOpenInbox()
+    @Published var pending: CloudyWindowAlbumRoute?
 }
 
 /// A story photo that drifts slowly closer while its page is shown.

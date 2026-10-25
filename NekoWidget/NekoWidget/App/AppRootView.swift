@@ -237,6 +237,11 @@ struct AppRootView: View {
     }
 
     private func handleNonPhotoURL(_ url: URL) {
+        if let route = CloudyWindowAlbumRoute(url: url) {
+            guard AlbumPrototype.isOn(UserDefaults.standard.bool(forKey: AlbumPrototype.key)) else { return }
+            AlbumArrivalOpenInbox.shared.pending = route
+            return
+        }
         if let route = OfficialWindowRoute(url: url) {
             officialWindowPresentationID = UUID()
             officialWindowRoute = route
@@ -450,6 +455,7 @@ struct AppRootView: View {
             savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
             savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
             readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
+            photoLibraryLoadSucceeded: viewModel.widgetPhotoLibraryLoadSucceeded,
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
                 ? scanPresentation(records: visibleCatAssets)
