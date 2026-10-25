@@ -187,6 +187,12 @@ struct AlbumPrototypeView: View {
         .onAppear {
             if enabledAt == 0 { enabledAt = Date().timeIntervalSince1970 }
         }
+        // Ready before the tap: opening the newest work should not wait.
+        .task(id: letters.first?.periodIdentifier) {
+            guard let latest = letters.first else { return }
+            _ = await MonthlyStoryView.prepare(letter: latest, catPhotos: catPhotos,
+                                               assignments: assignments, profileNames: profileNames)
+        }
         .fullScreenCover(item: $story) { letter in
             MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                              assignments: assignments, profileNames: profileNames)
@@ -439,53 +445,66 @@ struct MonthlyStoryView: View {
 
     private func build() async {
         guard pages.isEmpty else { return }
+        let prepared = await Self.prepare(letter: letter, catPhotos: catPhotos,
+                                          assignments: assignments, profileNames: profileNames)
+        if let color = prepared.backdrop { backdrop = color }
+        withAnimation(.easeOut(duration: 0.3)) { pages = prepared.pages }
+    }
+
+    /// Prepared stories, so opening a work is instant when the album already
+    /// got it ready. Keyed by month and library size (a new photo rebuilds it).
+    private static var prepared: [String: (pages: [Page], backdrop: Color?)] = [:]
+
+    /// Builds (or returns) a month's pages. The album calls this ahead of time
+    /// for the newest work; thumbnails are read in parallel, not one by one.
+    static func prepare(letter: MonthlyWindowPresentation, catPhotos: [PhotoPresentation],
+                        assignments: [String: Set<String>],
+                        profileNames: [String: String]) async -> (pages: [Page], backdrop: Color?) {
+        let key = "\(letter.periodIdentifier)#\(catPhotos.count)"
+        if let cached = prepared[key] { return cached }
         let month = AlbumPrototype.photos(in: letter.monthStart, from: catPhotos)
         let source = month.isEmpty ? letter.storyPhotos : month
         // Look at the best candidates themselves: sharp and well lit beats blurred or dark.
         let candidates = Array(source.sorted { AlbumPrototype.score($0) > AlbumPrototype.score($1) }.prefix(24))
-        var looks: [String: Double] = [:]
         var thumbnails: [String: UIImage] = [:]
+        await withTaskGroup(of: (String, UIImage?).self) { group in
+            for photo in candidates {
+                group.addTask { (photo.localIdentifier, await Self.thumbnail(photo.localIdentifier)) }
+            }
+            for await (id, image) in group { if let image { thumbnails[id] = image } }
+        }
+        var looks: [String: Double] = [:]
         for photo in candidates {
-            guard let image = await Self.thumbnail(photo.localIdentifier) else { continue }
-            thumbnails[photo.localIdentifier] = image
-            if let look = ShowcaseRecommender.lookScore(image, catArea: photo.largestCatAreaRatio) {
+            if let image = thumbnails[photo.localIdentifier],
+               let look = ShowcaseRecommender.lookScore(image, catArea: photo.largestCatAreaRatio) {
                 looks[photo.localIdentifier] = Double(look)
             }
         }
         let picked = AlbumPrototype.pick(candidates.isEmpty ? source : candidates, count: 9) { photo in
             AlbumPrototype.score(photo) + 6 * (looks[photo.localIdentifier] ?? 0.4)
         }
-        guard let cover = picked.first else { return }
-        if let image = thumbnails[cover.localIdentifier], let color = Self.averageColor(image) {
-            backdrop = color
-        }
+        guard let cover = picked.first else { return ([], nil) }
+        let backdrop = thumbnails[cover.localIdentifier].flatMap(averageColor)
         var result: [Page] = [.cover(cover, AlbumPrototype.names(for: [cover], assignments: assignments,
                                                                   profileNames: profileNames))]
         let rest = Array(picked.dropFirst())
         if rest.count >= 1 { result.append(.single(rest[0])) }
         if rest.count >= 3 { result.append(.pair(rest[1], rest[2])) }
         if rest.count >= 6 { result.append(.trio(rest[3], rest[4], rest[5])) }
-        if let lastYear = lastYearPhoto() {
+        if let start = Calendar.current.date(byAdding: .year, value: -1, to: letter.monthStart),
+           let lastYear = AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos), count: 1).first {
             result.append(.lastYear(lastYear, letter.yearNumber - 1))
             result.append(.thisYear(rest.last ?? cover, letter.yearNumber))
         }
-        result.append(.stats(count: source.count, bestDay: Self.busiestDay(source),
-                             companion: companion(in: source)))
+        var counts: [String: Int] = [:]
+        for photo in source { for id in assignments[photo.localIdentifier] ?? [] { counts[id, default: 0] += 1 } }
+        let companion = counts.max { $0.value < $1.value }.flatMap { profileNames[$0.key] }
+        result.append(.stats(count: source.count, bestDay: busiestDay(source), companion: companion))
         result.append(.card(picked, AlbumPrototype.names(for: picked, assignments: assignments,
                                                          profileNames: profileNames)))
-        withAnimation(.easeOut(duration: 0.3)) { pages = result }
-    }
-
-    private func lastYearPhoto() -> PhotoPresentation? {
-        guard let start = Calendar.current.date(byAdding: .year, value: -1, to: letter.monthStart) else { return nil }
-        return AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos), count: 1).first
-    }
-
-    /// The cat that appears most often this month, when the photos are assigned.
-    private func companion(in photos: [PhotoPresentation]) -> String? {
-        var counts: [String: Int] = [:]
-        for photo in photos { for id in assignments[photo.localIdentifier] ?? [] { counts[id, default: 0] += 1 } }
-        return counts.max { $0.value < $1.value }.flatMap { profileNames[$0.key] }
+        let built = (pages: result, backdrop: backdrop)
+        prepared[key] = built
+        return built
     }
 
     private static func busiestDay(_ photos: [PhotoPresentation]) -> Date? {
