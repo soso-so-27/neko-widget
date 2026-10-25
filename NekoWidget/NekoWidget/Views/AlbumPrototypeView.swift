@@ -485,7 +485,7 @@ struct MonthlyStoryView: View {
                 if let image = await Self.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardImage = ShowcasePhotoView.image(images, title: "\(card.names)　\(cardTitle(card.photos.count))")
+            cardImage = BestNineComposer.image(images, title: "\(card.names)　\(cardTitle(card.photos.count))")
         }
     }
 
