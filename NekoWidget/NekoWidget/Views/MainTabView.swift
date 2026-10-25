@@ -245,6 +245,7 @@ struct MainTabView: View {
     var savedPhotoIdentifiers: Set<String>? = nil
     var savedPhotoStateReadFailed: Bool = false
     var readablePhotoIdentifiers: Set<String>? = nil
+    var photoLibraryLoadSucceeded: Bool? = nil
     let photoPresentationVersion: LibraryPresentationVersion
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
@@ -429,6 +430,11 @@ struct MainTabView: View {
     private var growthPhotoOverridesJSON = ""
     /// Test builds only: 設定 → テスト用「新しいアルバム（試作）」.
     @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
+    @AppStorage(AlbumPrototype.enabledAtKey) private var albumPrototypeEnabledAt: Double = 0
+    @AppStorage(AlbumPrototype.openedKey) private var albumPrototypeOpened = ""
+    @ObservedObject private var albumArrivalInbox = AlbumArrivalOpenInbox.shared
+    @State private var arrivalStory: MonthlyWindowPresentation?
+    @State private var arrivalUnavailable = false
 
     private var tabContent: some View {
         TabView(selection: Binding(get: { selectedTab }, set: { tab in
@@ -660,6 +666,31 @@ struct MainTabView: View {
             showsSettings = false
             selectedTab = .windows
         }
+        .onChange(of: albumArrivalInbox.pending, initial: true) { _, _ in openAlbumArrivalIfReady() }
+        .onChange(of: albumPrototypeStored, initial: true) { _, enabled in
+            if AlbumPrototype.isOn(enabled), albumPrototypeEnabledAt == 0 {
+                albumPrototypeEnabledAt = Date().timeIntervalSince1970
+            }
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
+        }
+        .onChange(of: albumPrototypeOpened) { _, _ in synchronizeAlbumArrival() }
+        .onChange(of: photoLibraryLoadSucceeded) { _, _ in openAlbumArrivalIfReady() }
+        .fullScreenCover(item: $arrivalStory) { letter in
+            if AlbumPrototype.isOn(albumPrototypeStored), hasPhotoAccess,
+               let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
+                MonthlyStoryView(letter: current, catPhotos: catPhotos,
+                    assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
+            } else {
+                NavigationStack {
+                    ContentUnavailableView("この作品は開けません", systemImage: "photo.stack")
+                        .toolbar { Button("閉じる") { arrivalStory = nil } }
+                }
+            }
+        }
+        .alert("この作品は開けません", isPresented: $arrivalUnavailable) {
+            Button("閉じる", role: .cancel) { }
+        } message: { Text("写真へのアクセスとアルバムの設定を確認してください。") }
         .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
             guard route != nil else { return }
             relatedPhotoUsesLibraryScope = false
@@ -2284,9 +2315,15 @@ struct MainTabView: View {
                 monthlyWindowCollection = nil
                 completedMonthlyWindowCollectionKey = nil
             }
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
             return
         }
-        guard completedMonthlyWindowCollectionKey != key else { return }
+        guard completedMonthlyWindowCollectionKey != key else {
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
+            return
+        }
 
         let photos = albumEligibleCatPhotos
         let referenceDate = Date()
@@ -2306,6 +2343,80 @@ struct MainTabView: View {
         }
         monthlyWindowCollection = collection
         completedMonthlyWindowCollectionKey = key
+        synchronizeAlbumArrival()
+        openAlbumArrivalIfReady()
+    }
+
+    private func synchronizeAlbumArrival() {
+        let enabled = AlbumPrototype.isOn(albumPrototypeStored)
+        if enabled, photoLibraryLoadSucceeded != false,
+           photoLibraryLoadSucceeded == nil || isScanning
+            || (monthlyWindowCollectionKey.canBuild
+                && completedMonthlyWindowCollectionKey != monthlyWindowCollectionKey) {
+            // Cold loading is not evidence that the previously prepared month
+            // disappeared. Current Photos authority still protects every read.
+            return
+        }
+        let now = Date()
+        let calendar = Calendar.current
+        var arrival: CloudyWindowAlbumArrival?
+        if enabled, monthlyWindowCollectionKey.canBuild,
+           completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey {
+            // Prewarm this month's actual cover whenever the album becomes
+            // ready, so no launch on the last day or at midnight is needed.
+            let nextClosing = calendar.dateInterval(of: .month, for: now)?.end ?? now
+            for delivery in [now, nextClosing] {
+                guard let interval = calendar.dateInterval(of: .month, for: delivery),
+                      CloudyWindowStore.calendar.startOfDay(for: interval.start)
+                        == CloudyWindowStore.calendar.startOfDay(for: delivery),
+                      let previous = calendar.date(byAdding: .month, value: -1, to: interval.start) else { continue }
+                guard case let .ready(letter) = MonthlyWindowBuilder().build(
+                    from: albumEligibleCatPhotos, monthContaining: previous),
+                    albumPrototypeEnabledAt > 0, interval.start.timeIntervalSince1970 > albumPrototypeEnabledAt,
+                    !Set(albumPrototypeOpened.split(separator: ",").map(String.init)).contains(letter.periodIdentifier),
+                    let cover = AlbumPrototype.cover(of: letter, from: catPhotos),
+                    !receivedPhotoIdentifiers.contains(cover.localIdentifier) else { continue }
+                arrival = .init(period: letter.periodIdentifier, availableAt: interval.start,
+                                photoID: cover.localIdentifier)
+                break
+            }
+        }
+        if (try? CloudyWindowStore.shared.synchronizeAlbumArrival(enabled: enabled,
+            enabledAt: albumPrototypeEnabledAt > 0 ? Date(timeIntervalSince1970: albumPrototypeEnabledAt) : nil,
+            openedPeriods: Set(albumPrototypeOpened.split(separator: ",").map(String.init)), arrival: arrival)) == true {
+            if CloudyWindowStore.shared.configuration().enabled {
+                NotificationCenter.default.post(name: .cloudyWindowConfigurationChanged, object: nil)
+            }
+        }
+    }
+
+    private func openAlbumArrivalIfReady() {
+        guard let route = albumArrivalInbox.pending else { return }
+        guard AlbumPrototype.isOn(albumPrototypeStored) else {
+            albumArrivalInbox.pending = nil
+            arrivalUnavailable = true
+            return
+        }
+        guard let photoLibraryLoadSucceeded else { return }
+        if !photoLibraryLoadSucceeded || (!monthlyWindowCollectionKey.canBuild && !isScanning) {
+            albumArrivalInbox.pending = nil
+            arrivalUnavailable = true
+            return
+        }
+        // A cold start has no collection yet. Keep the exact route until the
+        // current permission/source/scan projection has finished rebuilding it.
+        guard completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey else { return }
+        albumArrivalInbox.pending = nil
+        guard hasPhotoAccess, photoPresentationVersion.canPresent,
+              let period = CloudyWindowStore.shared.albumPeriod(for: route),
+              let letter = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == period }),
+              !letter.photos.isEmpty else {
+            arrivalUnavailable = true
+            return
+        }
+        showsSettings = false
+        selectedTab = .memories
+        arrivalStory = letter
     }
 
     private var seasonalMoviePreparationKey: SeasonalMoviePreparationKey {
