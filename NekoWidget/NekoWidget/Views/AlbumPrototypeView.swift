@@ -520,7 +520,7 @@ struct MonthlyStoryView: View {
     @State private var paused = false
     @State private var displayedPreparationKey: MonthlyStoryPreparationKey?
     /// The last page's nine as one picture, for the share sheet.
-    @State private var cardImage: UIImage?
+    @State private var cardShare = StoryCardShareState<UIImage>()
 
     static let pageSeconds: Double = 5
 
@@ -550,6 +550,12 @@ struct MonthlyStoryView: View {
         guard currentPageCount > 0, pages.indices.contains(index),
               case let .card(photos, names) = pages[index] else { return nil }
         return (photos, names)
+    }
+
+    private var cardShareInput: StoryCardShareInput? {
+        guard let card = shownCard else { return nil }
+        return .init(library: preparationKey.library, periodIdentifier: letter.periodIdentifier,
+                     photos: card.photos, title: "\(card.names)　\(cardTitle(card.photos.count))")
     }
 
     /// 「10月の9枚」: the app's nines are named by when, the user's own by 自慢.
@@ -597,7 +603,7 @@ struct MonthlyStoryView: View {
                     .accessibilityLabel("閉じる")
                 }
                 Spacer()
-                if let cardImage, let card = shownCard {
+                if let cardImage = cardShare.image(for: cardShareInput), let card = shownCard {
                     let title = "\(card.names)の\(cardTitle(card.photos.count))"
                     ShareLink(item: Image(uiImage: cardImage),
                               preview: SharePreview(title, image: Image(uiImage: cardImage))) {
@@ -624,15 +630,16 @@ struct MonthlyStoryView: View {
             guard !Task.isCancelled else { return }
             move(1)
         }
-        .task(id: shownCard?.photos.map(\.localIdentifier)) {
-            cardImage = nil
-            guard let card = shownCard else { return }
+        .task(id: cardShareInput) {
+            guard let request = cardShare.begin(cardShareInput) else { return }
             var images: [UIImage] = []
-            for photo in card.photos.prefix(9) {
+            for photo in request.input.photos.prefix(9) {
+                guard !Task.isCancelled else { return }
                 if let image = await Self.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardImage = BestNineComposer.image(images, title: "\(card.names)　\(cardTitle(card.photos.count))")
+            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+                               for: request, isCancelled: Task.isCancelled)
         }
     }
 
@@ -890,10 +897,26 @@ struct YearStoryView: View {
     let assignments: [String: Set<String>]
     let profileNames: [String: String]
 
+    static func periodIdentifier(_ year: Int) -> String { "Y\(year)" }
+
+    var body: some View {
+        let input = YearStoryPreparationKey(year: year, catPhotos: catPhotos,
+                                            assignments: assignments, profileNames: profileNames)
+        YearStoryContentView(input: input).id(input)
+    }
+}
+
+/// A new input identity replaces the entire per-open state, cancels its tasks,
+/// and removes the former image before rebuilding the year's pages.
+private struct YearStoryContentView: View {
+    let input: YearStoryPreparationKey
+    private var year: Int { input.year }
+    private var catPhotos: [PhotoPresentation] { input.library.catPhotos }
+    private var assignments: [String: Set<String>] { input.library.assignments }
+    private var profileNames: [String: String] { input.library.profileNames }
+
     static let pageSeconds: Double = 4
     static let monthSeconds: Double = 2.2
-
-    static func periodIdentifier(_ year: Int) -> String { "Y\(year)" }
 
     enum Page {
         case cover(PhotoPresentation)
@@ -906,13 +929,19 @@ struct YearStoryView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var index = 0
     @State private var paused = false
-    @State private var cardImage: UIImage?
+    @State private var cardShare = StoryCardShareState<UIImage>()
     @State private var pages: [Page] = []
     @State private var nine: [PhotoPresentation] = []
     @State private var names = "うちの子"
     @State private var isBuilt = false
 
     private var cardTitle: String { "\(year)年の\(nine.count)枚" }
+
+    private var cardShareInput: StoryCardShareInput? {
+        guard isBuilt, !nine.isEmpty else { return nil }
+        return .init(library: input.library, periodIdentifier: YearStoryView.periodIdentifier(year),
+                     photos: nine, title: "\(names)　\(cardTitle)")
+    }
 
     /// Built once when the story opens, not on every page turn.
     private func build() {
@@ -955,7 +984,7 @@ struct YearStoryView: View {
                 pageView(pages[index])
                     .id(index)
                     .transition(.opacity)
-                    .onAppear { AlbumPrototype.markOpened(Self.periodIdentifier(year)) }
+                    .onAppear { AlbumPrototype.markOpened(YearStoryView.periodIdentifier(year)) }
             } else {
                 ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
                                        description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
@@ -988,7 +1017,7 @@ struct YearStoryView: View {
                     .accessibilityLabel("閉じる")
                 }
                 Spacer()
-                if let cardImage, index == pages.count - 1 {
+                if let cardImage = cardShare.image(for: cardShareInput), index == pages.count - 1 {
                     ShareLink(item: Image(uiImage: cardImage),
                               preview: SharePreview("\(names)の\(cardTitle)", image: Image(uiImage: cardImage))) {
                         Label("画像にして共有", systemImage: "square.and.arrow.up")
@@ -1016,14 +1045,16 @@ struct YearStoryView: View {
             guard !Task.isCancelled else { return }
             move(1)
         }
-        .task(id: nine.map(\.localIdentifier)) {
-            cardImage = nil
+        .task(id: cardShareInput) {
+            guard let request = cardShare.begin(cardShareInput) else { return }
             var images: [UIImage] = []
-            for photo in nine {
+            for photo in request.input.photos {
+                guard !Task.isCancelled else { return }
                 if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
             }
             guard !Task.isCancelled else { return }
-            cardImage = BestNineComposer.image(images, title: "\(names)　\(cardTitle)")
+            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+                               for: request, isCancelled: Task.isCancelled)
         }
     }
 
