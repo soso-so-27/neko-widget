@@ -942,7 +942,7 @@ struct MainTabView: View {
             } else { openPreparedShowcase(scopeID: "") }
         } label: {
             ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
-                     subtitle: "ベストナインを作る", tint: ToolTint.everydayLight)
+                     subtitle: "自慢の 9 枚を作る", tint: ToolTint.everydayLight)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
