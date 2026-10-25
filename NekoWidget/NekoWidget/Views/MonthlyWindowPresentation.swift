@@ -128,6 +128,59 @@ struct MonthlyStoryPreparationKey: Hashable, Sendable {
     }
 }
 
+struct YearStoryPreparationKey: Hashable, Sendable {
+    let year: Int
+    let library: MonthlyStoryLibraryInput
+
+    init(year: Int, catPhotos: [PhotoPresentation], assignments: [String: Set<String>],
+         profileNames: [String: String], timeZone: TimeZone = .current) {
+        self.year = year
+        library = .init(catPhotos: catPhotos, assignments: assignments,
+                        profileNames: profileNames, timeZoneIdentifier: timeZone.identifier)
+    }
+}
+
+/// The exact inputs represented by one exported card, including its caption.
+struct StoryCardShareInput: Hashable, Sendable {
+    let library: MonthlyStoryLibraryInput
+    let periodIdentifier: String
+    let photos: [PhotoPresentation]
+    let title: String
+}
+
+/// Both story views use the same guard before offering a generated image to
+/// ShareLink. Input changes hide it immediately, before the next task starts.
+struct StoryCardShareState<Image> {
+    struct Request {
+        let input: StoryCardShareInput
+        fileprivate let generation: UInt64
+    }
+
+    private var generation: UInt64 = 0
+    private var request: Request?
+    private var prepared: Image?
+
+    mutating func begin(_ input: StoryCardShareInput?) -> Request? {
+        generation &+= 1
+        prepared = nil
+        request = input.map { Request(input: $0, generation: generation) }
+        return request
+    }
+
+    @discardableResult
+    mutating func complete(_ image: Image?, for completed: Request, isCancelled: Bool) -> Bool {
+        guard !isCancelled, let request, request.generation == completed.generation,
+              request.input == completed.input else { return false }
+        prepared = image
+        return true
+    }
+
+    func image(for currentInput: StoryCardShareInput?) -> Image? {
+        guard let currentInput, request?.input == currentInput else { return nil }
+        return prepared
+    }
+}
+
 /// Multiple months share one current library generation. An older async job
 /// cannot repopulate the cache after that input changed, even if it changes back.
 struct MonthlyStoryPreparationCache<Value> {

@@ -652,8 +652,64 @@ private struct MonthlyWindowVerifier {
         try verifyStoryCacheTracksCurrentPhotosAndNames()
         try verifyStoryCacheRejectsOutdatedPreparation()
         try verifyStoryCacheKeepsMultipleMonthsWithinItsBound()
+        try verifyStoryShareRequiresItsCurrentInputs()
         print("Monthly window proposal: PASS")
     }
+}
+
+private func verifyStoryShareRequiresItsCurrentInputs() throws {
+    let first = photo("first", date(2026, 8, 3))
+    let replacement = photo("replacement", date(2026, 8, 3))
+    let original = storyKey([first])
+    func input(_ key: MonthlyStoryPreparationKey, title: String = "ねこ　8月の1枚",
+               period: String = "2026-08", card: [PhotoPresentation]? = nil) -> StoryCardShareInput {
+        .init(library: key.library, periodIdentifier: period,
+              photos: card ?? key.library.catPhotos, title: title)
+    }
+    let initial = input(original)
+    let changed = [
+        input(storyKey([replacement])),
+        input(storyKey([first], current: [photo("first", date(2026, 8, 3), isMemory: true)])),
+        input(storyKey([first], assignments: ["first": ["other-cat"]])),
+        input(storyKey([first], names: ["cat": "新しい名前"])),
+        input(original, title: "新しい題名"),
+        input(original, period: "Y2026"),
+        input(original, card: []),
+        input(storyKey([first], current: []))
+    ]
+    var state = StoryCardShareState<String>()
+    let oldRequest = state.begin(initial)!
+    try require(state.complete("old image", for: oldRequest, isCancelled: false), "initial share image was rejected")
+    try require(state.image(for: initial) == "old image", "current card lost its ready share image")
+    for newInput in changed {
+        try require(state.image(for: newInput) == nil,
+                    "old image remained shareable before the new input's task began")
+    }
+    try require(state.image(for: nil) == nil, "leaving the card kept its share image visible")
+
+    let current = state.begin(changed[0])!
+    try require(!state.complete("late old image", for: oldRequest, isCancelled: false),
+                "a late old-input completion was accepted")
+    try require(!state.complete("cancelled image", for: current, isCancelled: true)
+                && state.image(for: changed[0]) == nil, "cancelled image became shareable")
+    let reopened = state.begin(initial)!
+    try require(!state.complete("old generation", for: oldRequest, isCancelled: false),
+                "returning to the same card accepted a previously cancelled generation")
+    try require(state.complete("fresh image", for: reopened, isCancelled: false)
+                && state.image(for: initial) == "fresh image", "current replacement image could not be shared")
+
+    func year(_ key: MonthlyStoryPreparationKey, number: Int = 2026) -> YearStoryPreparationKey {
+        .init(year: number, catPhotos: key.library.catPhotos, assignments: key.library.assignments,
+              profileNames: key.library.profileNames, timeZone: utc)
+    }
+    let yearInput = year(original)
+    try require(yearInput == year(original), "unchanged year input recreated its per-open state")
+    try require(yearInput != year(storyKey([replacement]))
+                && yearInput != year(storyKey([first], current: []))
+                && yearInput != year(storyKey([first], assignments: ["first": ["other-cat"]]))
+                && yearInput != year(storyKey([first], names: ["cat": "新しい名前"]))
+                && yearInput != year(original, number: 2025),
+                "year view identity retained state after its photo, permission, name, assignment or year changed")
 }
 
 private func storyKey(_ photos: [PhotoPresentation], month: Int = 8,
