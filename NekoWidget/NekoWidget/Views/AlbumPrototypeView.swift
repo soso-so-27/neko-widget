@@ -110,7 +110,6 @@ struct AlbumPrototypeView: View {
                 AlbumPrototype.photos(in: interval.start, from: catPhotos).count)
     }
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     var body: some View {
         ScrollView {
@@ -123,7 +122,7 @@ struct AlbumPrototypeView: View {
                         Text("\(next.month)月のまとめは \(next.arrives.formatted(.dateTime.month().day())) に届きます")
                             .font(.footnote)
                         Spacer(minLength: 8)
-                        Text("いま \(next.photoCount) 枚").font(.footnote).foregroundStyle(.secondary)
+                        Text(verbatim: "いま \(next.photoCount) 枚").font(.footnote).foregroundStyle(.secondary)
                     }
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
@@ -131,34 +130,38 @@ struct AlbumPrototypeView: View {
                     .accessibilityIdentifier("album-prototype-next")
                 }
                 if letters.count > 1 || !movies.isEmpty {
-                    Text("これまでの作品")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 6)
-                        .accessibilityAddTraits(.isHeader)
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(letters.dropFirst()) { letter in
-                            Button { open(letter) } label: {
-                                workTile(photo: AlbumPrototype.pick(AlbumPrototype.photos(in: letter.monthStart, from: catPhotos),
-                                                                    count: 1).first ?? letter.coverPhoto,
-                                         title: "\(letter.monthNumber)月",
-                                         subtitle: "\(letter.yearNumber)", isMovie: false)
+                    NavigationLink {
+                        PastWorksView(letters: Array(letters.dropFirst()), movies: movies, catPhotos: catPhotos,
+                                      assignments: assignments, profileNames: profileNames, openMovie: openMovie)
+                    } label: {
+                        HStack(spacing: 12) {
+                            HStack(spacing: -10) {
+                                ForEach(Array(letters.dropFirst().prefix(3))) { letter in
+                                    Color.clear.frame(width: 34, height: 34)
+                                        .overlay {
+                                            if let photo = Self.cover(of: letter, from: catPhotos) {
+                                                PhotoAssetImageView(localIdentifier: photo.localIdentifier,
+                                                                    catBoundingBox: photo.catBoundingBox,
+                                                                    targetPixelSize: CGSize(width: 120, height: 120))
+                                            }
+                                        }
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(Color(.secondarySystemGroupedBackground), lineWidth: 2))
+                                }
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(letter.accessibilityTitle)
-                            .accessibilityIdentifier("album-prototype-month-\(letter.periodIdentifier)")
+                            Text(verbatim: "これまでの作品　\(letters.count - 1 + movies.count)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                         }
-                        ForEach(movies) { record in
-                            let movie = record.effectivePresentation
-                            Button { openMovie(record.periodID) } label: {
-                                workTile(photo: movie.scenes.first.map {
-                                    PhotoPresentation(localIdentifier: $0.localIdentifier,
-                                                      catBoundingBox: $0.catBoundingBox)
-                                }, title: "ムービー", subtitle: movie.periodTitle, isMovie: true)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground),
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("album-prototype-past")
                 }
                 if letters.isEmpty {
                     ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
@@ -186,67 +189,153 @@ struct AlbumPrototypeView: View {
         story = letter
     }
 
+    static func cover(of letter: MonthlyWindowPresentation, from catPhotos: [PhotoPresentation]) -> PhotoPresentation? {
+        AlbumPrototype.pick(AlbumPrototype.photos(in: letter.monthStart, from: catPhotos), count: 1).first
+            ?? letter.coverPhoto
+    }
+
     private func latestCard(_ letter: MonthlyWindowPresentation) -> some View {
         let wrapped = isWrapped(letter)
-        let monthPhotos = AlbumPrototype.photos(in: letter.monthStart, from: catPhotos)
-        let cover = AlbumPrototype.pick(monthPhotos, count: 1).first ?? letter.coverPhoto
+        let cover = Self.cover(of: letter, from: catPhotos)
+        let names = AlbumPrototype.names(for: AlbumPrototype.photos(in: letter.monthStart, from: catPhotos),
+                                         assignments: assignments, profileNames: profileNames)
         return Button { open(letter) } label: {
-            HStack(spacing: 12) {
-                Color.clear
-                    .frame(width: 96, height: 96)
-                    .overlay {
-                        if let cover {
-                            PhotoAssetImageView(localIdentifier: cover.localIdentifier,
-                                                catBoundingBox: cover.catBoundingBox,
-                                                targetPixelSize: CGSize(width: 300, height: 300))
-                                .blur(radius: wrapped ? 10 : 0)
+            Color.clear
+                .aspectRatio(0.82, contentMode: .fit)
+                .overlay {
+                    if let cover {
+                        PhotoAssetImageView(localIdentifier: cover.localIdentifier,
+                                            catBoundingBox: cover.catBoundingBox,
+                                            targetPixelSize: CGSize(width: 1100, height: 1100),
+                                            targetAspectRatio: 0.82)
+                            .blur(radius: wrapped ? 18 : 0)
+                            .scaleEffect(wrapped ? 1.08 : 1)
+                    }
+                }
+                .overlay {
+                    if wrapped {
+                        // A ribbon tied around the work that has just arrived.
+                        ZStack {
+                            Rectangle().fill(Color(red: 0.95, green: 0.89, blue: 0.79).opacity(0.92)).frame(width: 22)
+                            Rectangle().fill(Color(red: 0.95, green: 0.89, blue: 0.79).opacity(0.92)).frame(height: 22)
+                                .offset(y: -40)
+                            Circle().fill(Color(red: 0.94, green: 0.86, blue: 0.72))
+                                .overlay(Circle().stroke(Color(red: 0.96, green: 0.92, blue: 0.82), lineWidth: 5))
+                                .frame(width: 54, height: 54).offset(y: -40)
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                VStack(alignment: .leading, spacing: 4) {
-                    if wrapped {
-                        Text("届きました").font(.caption.weight(.bold)).foregroundStyle(Color.accentColor)
-                    }
-                    Text(letter.title).font(.headline)
-                    Text(verbatim: "\(letter.yearNumber)年・\(max(monthPhotos.count, letter.photos.count))枚から")
-                        .font(.footnote).foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 4)
-                Text(wrapped ? "開ける" : "見る")
-                    .font(.subheadline.weight(.bold))
-                    .padding(.horizontal, 14).padding(.vertical, 7)
-                    .background(Color.accentColor, in: Capsule())
+                .overlay(alignment: .bottomLeading) {
+                    HStack(alignment: .bottom) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(verbatim: wrapped ? "とどきました" : String(letter.yearNumber))
+                                .font(.caption.weight(.bold)).tracking(2).opacity(0.9)
+                            Text(verbatim: "\(letter.monthNumber)月")
+                                .font(.system(size: 46, weight: .bold, design: .serif))
+                            Text(names).font(.footnote).opacity(0.9)
+                        }
+                        Spacer()
+                        Text(wrapped ? "開ける" : "見る")
+                            .font(.subheadline.weight(.bold))
+                            .padding(.horizontal, 16).padding(.vertical, 8)
+                            .background(.white, in: Capsule())
+                            .foregroundStyle(.black)
+                    }
                     .foregroundStyle(.white)
-            }
-            .padding(10)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(16)
+                    .padding(.top, 60)
+                    .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(letter.accessibilityTitle)、\(wrapped ? "届きました。開ける" : "見る")")
         .accessibilityIdentifier("album-prototype-latest")
     }
+}
 
-    private func workTile(photo: PhotoPresentation?, title: String, subtitle: String, isMovie: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Color.clear
-                .aspectRatio(1, contentMode: .fit)
-                .overlay {
-                    if let photo {
-                        PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                            catBoundingBox: photo.catBoundingBox,
-                                            targetPixelSize: CGSize(width: 300, height: 300))
+/// これまでの作品: one level below the album. Covers by year, the month
+/// written on each, seasonal movies after them.
+struct PastWorksView: View {
+    let letters: [MonthlyWindowPresentation]
+    let movies: [SeasonalMovieArchiveRecord]
+    let catPhotos: [PhotoPresentation]
+    let assignments: [String: Set<String>]
+    let profileNames: [String: String]
+    let openMovie: (SeasonalMoviePeriodID) -> Void
+
+    @State private var story: MonthlyWindowPresentation?
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+
+    private var years: [Int] {
+        Array(Set(letters.map(\.yearNumber))).sorted(by: >)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(years, id: \.self) { year in
+                    Text(verbatim: String(year))
+                        .font(.system(.title3, design: .serif).weight(.bold))
+                        .accessibilityAddTraits(.isHeader)
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(letters.filter { $0.yearNumber == year }) { letter in
+                            Button { story = letter } label: {
+                                cover(AlbumPrototypeView.cover(of: letter, from: catPhotos), title: "\(letter.monthNumber)月")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(letter.accessibilityTitle)
+                        }
                     }
                 }
-                .overlay {
-                    if isMovie {
-                        Image(systemName: "play.circle.fill").font(.title3).foregroundStyle(.white.opacity(0.9))
+                if !movies.isEmpty {
+                    Text("ムービー")
+                        .font(.system(.title3, design: .serif).weight(.bold))
+                        .accessibilityAddTraits(.isHeader)
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(movies) { record in
+                            let movie = record.effectivePresentation
+                            Button { openMovie(record.periodID) } label: {
+                                cover(movie.scenes.first.map {
+                                    PhotoPresentation(localIdentifier: $0.localIdentifier, catBoundingBox: $0.catBoundingBox)
+                                }, title: movie.periodTitle, isMovie: true)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            Text(title).font(.caption.weight(.semibold)).lineLimit(1)
-            Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .padding(16)
         }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("これまでの作品")
+        .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(item: $story) { letter in
+            MonthlyStoryView(letter: letter, catPhotos: catPhotos,
+                             assignments: assignments, profileNames: profileNames)
+        }
+    }
+
+    private func cover(_ photo: PhotoPresentation?, title: String, isMovie: Bool = false) -> some View {
+        Color.clear
+            .aspectRatio(0.75, contentMode: .fit)
+            .overlay {
+                if let photo {
+                    PhotoAssetImageView(localIdentifier: photo.localIdentifier, catBoundingBox: photo.catBoundingBox,
+                                        targetPixelSize: CGSize(width: 360, height: 360), targetAspectRatio: 0.75)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                HStack(spacing: 4) {
+                    if isMovie { Image(systemName: "play.fill").font(.caption2) }
+                    Text(verbatim: title).font(.system(.headline, design: .serif).weight(.bold)).lineLimit(1)
+                }
+                .foregroundStyle(.white)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
