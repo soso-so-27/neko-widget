@@ -2868,20 +2868,12 @@ private struct WindowListView: View {
                 if let groupClient = GroupWindowClientProvider.ui {
                     // Windows people share come first (1-4); public windows follow.
                     GroupWindowListSection(client: groupClient)
-                    if !receivingPublicWindows.isEmpty {
-                        Text("公式のまど")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityAddTraits(.isHeader)
-                    }
                 }
-                if !connectedWindows.isEmpty || !receivingPublicWindows.isEmpty || !setupWindows.isEmpty {
+                if !connectedWindows.isEmpty || !setupWindows.isEmpty {
                     LazyVGrid(columns: cardColumns, spacing: 22) {
                         ForEach(connectedWindows) { window in
                             windowCard(window)
                         }
-                        ForEach(receivingPublicWindows) { source in publicCard(source) }
                         ForEach(setupWindows) { window in windowCard(window) }
                     }
                     .accessibilityIdentifier("window-list-receiving")
@@ -2899,9 +2891,7 @@ private struct WindowListView: View {
                         cachedWindowWarning(message: message)
                     }
 
-                    if GroupWindowClientProvider.ui != nil {
-                        publicWindowEntry
-                    } else if windows.isEmpty, receivingPublicWindows.isEmpty {
+                    if GroupWindowClientProvider.ui == nil, windows.isEmpty, publicWindows.isEmpty {
                         emptyWindowCard
                     }
 
@@ -2910,6 +2900,7 @@ private struct WindowListView: View {
                     }
 
                 }
+                publicWindowEntry
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -3038,28 +3029,17 @@ private struct WindowListView: View {
         .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    /// With group windows on, public windows are a small second entry below them.
     private var publicWindowEntry: some View {
-        NavigationLink { discovery } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "building.2")
-                    .font(.title3)
-                    .foregroundStyle(.tint)
-                    .frame(width: 32)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
-                        .font(.body.weight(.semibold))
-                    Text("猫カフェや保護猫の写真を、見るだけで受け取れます")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("公式のまど")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(publicWindows) { source in
+                publicCard(source, presentation: .row)
             }
-            .padding(14)
-            .frame(minHeight: 44)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+            PublicWindowComingSoonRows()
         }
-        .buttonStyle(.plain)
         .accessibilityIdentifier("window-list-start")
     }
 

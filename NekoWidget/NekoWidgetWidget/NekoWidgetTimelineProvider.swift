@@ -158,9 +158,12 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                                       photoSourceIdentifier: source.id,
                                       windowDisplayName: store.displayName))
             }
-            let refresh = windowID == OfficialWindowCatalog.sourceID
+            var refresh = windowID == OfficialWindowCatalog.sourceID
                 ? min(date.addingTimeInterval(60 * 60), OfficialWindowCatalog.nextDailyCutover(after: date))
                 : date.addingTimeInterval(60 * 60)
+            if windowID == "black-cats", let deadline = state.catalog?.validUntil, deadline > date {
+                refresh = min(refresh, deadline)
+            }
             return Timeline(entries: entries, policy: .after(refresh))
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {

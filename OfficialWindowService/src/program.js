@@ -29,21 +29,32 @@ export function validateThemes(v, now) {
   return v;
 }
 export function validateProgram(index) {
-  require(keys(index, ['schemaVersion', 'startsAt', 'through', 'editions']) && index.schemaVersion === 1
+  require(keys(index, ['schemaVersion', 'startsAt', 'through', 'editions']) && [1, 2].includes(index.schemaVersion)
     && Array.isArray(index.editions) && index.editions.length >= 1 && index.editions.length <= 512);
+  const dailyBlackCats = index.schemaVersion === 2;
   const from = instant(index.startsAt), end = instant(index.through);
-  require(end > from && end - from <= 14 * DAY);
+  require(end > from && end - from <= (dailyBlackCats ? 60 : 14) * DAY);
+  if (dailyBlackCats) {
+    // The selected switch time is explicit in the dated editions. Both choices
+    // under owner review (00:00 / 18:00 JST) have exact UTC-hour boundaries.
+    require(index.editions.length <= 60 && [9, 15].includes(new Date(from).getUTCHours())
+      && from % 3600000 === 0);
+  }
   let next = from;
   for (const [i, edition] of index.editions.entries()) {
-    require(keys(edition, ['id', 'startsAt', 'endsAt', 'catalogs', 'themes'])
+    require(keys(edition, dailyBlackCats ? ['id', 'startsAt', 'endsAt', 'catalogs'] : ['id', 'startsAt', 'endsAt', 'catalogs', 'themes'])
       && edition.id === `edition-${String(i).padStart(3, '0')}`);
     const start = instant(edition.startsAt), until = instant(edition.endsAt);
     require(start === next && until > start && until <= end && until - start <= DAY);
-    validateThemes(edition.themes, start);
-    require(edition.themes.generatedAt === edition.startsAt && instant(edition.themes.validUntil) >= until
-      && instant(edition.themes.validUntil) <= end
-      && weekStart(start) === weekStart(until - 1));
-    const channels = ['official-cats', 'black-cats', ...edition.themes.themes.map(t => t.channelID)];
+    if (dailyBlackCats) {
+      require(until - start === DAY);
+    } else {
+      validateThemes(edition.themes, start);
+      require(edition.themes.generatedAt === edition.startsAt && instant(edition.themes.validUntil) >= until
+        && instant(edition.themes.validUntil) <= end
+        && weekStart(start) === weekStart(until - 1));
+    }
+    const channels = dailyBlackCats ? ['black-cats'] : ['official-cats', 'black-cats', ...edition.themes.themes.map(t => t.channelID)];
     require(keys(edition.catalogs, channels) && Object.values(edition.catalogs).every(h => typeof h === 'string' && HASH.test(h)));
     next = until;
   }

@@ -159,8 +159,9 @@ struct PublicWindowDiscoveryView: View {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(sources) { source in
                     OfficialWindowEntryCard(state: states[source.id], store: source.store, refreshFeed: source.refresh,
-                        presentation: .discovery, previewFeed: source.preview, relatedWindows: sources)
+                        presentation: .row, previewFeed: source.preview, relatedWindows: sources)
                 }
+                PublicWindowComingSoonRows()
             }
             .padding(20)
             .frame(maxWidth: 520)
@@ -183,9 +184,33 @@ struct PublicWindowDiscoveryView: View {
     }
 }
 
+struct PublicWindowComingSoonRows: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            row("猫カフェ", icon: "cup.and.saucer", id: "cat-cafe")
+            Divider()
+            row("保護猫", icon: "house", id: "rescue-cats")
+        }
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func row(_ title: String, icon: String, id: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon).frame(width: 28)
+            Text(title)
+            Spacer()
+            Text("近日").font(.caption)
+        }
+        .foregroundStyle(.secondary)
+        .padding(16)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("official-window-coming-soon-\(id)")
+    }
+}
+
 @MainActor
 struct OfficialWindowEntryCard: View {
-    enum Presentation: Equatable { case list, discovery }
+    enum Presentation: Equatable { case list, discovery, row }
     let state: OfficialWindowState
     let store: OfficialWindowStore
     let refreshFeed: () async throws -> Void
@@ -236,6 +261,23 @@ struct OfficialWindowEntryCard: View {
         } label: {
             if presentation == .list {
                 WindowPhotoCard(title: store.displayName, kind: .official) { cover(photo: photo, status: status) }
+            } else if presentation == .row {
+                HStack(spacing: 14) {
+                    cover(photo: photo, status: status)
+                        .frame(width: 76, height: 76)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(store.displayName).font(.headline)
+                        Text(store.definition.subtitle).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+                .contentShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     Color(.tertiarySystemFill).aspectRatio(16.0 / 9.0, contentMode: .fit)
@@ -267,7 +309,7 @@ struct OfficialWindowEntryCard: View {
             .compactMap { $0 }.joined(separator: "。"))
         .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "まどの内容を確認します")
         .task {
-            guard presentation == .discovery, !state.isSubscribed, store.endpoint != nil else { return }
+            guard presentation != .list, !state.isSubscribed, store.endpoint != nil else { return }
             await preview.load(using: previewFeed)
         }
     }
@@ -368,6 +410,9 @@ struct OfficialWindowView: View {
     }
     private var photos: [OfficialCatPhoto] {
         if state.isSubscribed { return state.catalog?.availablePhotos(at: displayDate) ?? [] }
+        if isPreviewing, store.windowID == "black-cats" {
+            return preview.content?.catalog.availablePhotos(at: displayDate) ?? []
+        }
         if isPreviewing, let photo = preview.content?.availablePhoto(at: displayDate) { return [photo] }
         return []
     }
@@ -384,6 +429,7 @@ struct OfficialWindowView: View {
                                             imageRevision: state.imageRevision,
                                             isRefreshing: isChecking,
                                             previewImageData: previewData(for: photo),
+                                            previewCatalog: isPreviewing ? currentCatalog : nil,
                                             showsCloseButton: false,
                                             relatedWindows: relatedWindows,
                                             onRetry: { Task { await refresh(interactive: true) } })
@@ -406,6 +452,7 @@ struct OfficialWindowView: View {
                 OfficialPhotoDetailView(photo: photo, store: store,
                                         imageRevision: state.imageRevision, isRefreshing: isChecking,
                                         previewImageData: previewData(for: photo),
+                                        previewCatalog: isPreviewing ? currentCatalog : nil,
                                         relatedWindows: relatedWindows,
                                         onRetry: { Task { await refresh(interactive: true) } })
             }
@@ -494,6 +541,7 @@ struct OfficialWindowView: View {
 
                 if state.isSubscribed {
                     widgetSetupOffer
+                }
 
                     if photos.count > 1 {
                         VStack(alignment: .leading, spacing: 14) {
@@ -508,7 +556,7 @@ struct OfficialWindowView: View {
                             .accessibilityIdentifier("official-window-recent-photos")
                         }
                     }
-                } else if store.endpoint != nil {
+                if !state.isSubscribed, store.endpoint != nil {
                     Button {
                         changeSubscription(true)
                     } label: {
@@ -720,7 +768,8 @@ struct OfficialWindowView: View {
             VStack(alignment: .leading, spacing: 10) {
                 OfficialPhotoImage(photo: photo, maximumPixelSize: latest ? 1100 : 650,
                                    store: store, isRefreshing: isChecking,
-                                   previewImageData: previewData(for: photo), fillsFrame: !latest)
+                                   previewImageData: previewData(for: photo),
+                                   previewCatalog: isPreviewing ? currentCatalog : nil, fillsFrame: !latest)
                     .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "")")
                     .aspectRatio(latest ? CGFloat(photo.width) / CGFloat(photo.height) : 1, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
@@ -836,6 +885,10 @@ struct OfficialWindowView: View {
             state = store.snapshot()
             displayDate = Date()
             dismissUnavailablePhoto()
+            if store.windowID == "black-cats", let catalog = currentCatalog, catalog.validUntil <= displayDate,
+               scenePhase == .active {
+                await refresh()
+            }
         }
     }
 
@@ -877,6 +930,7 @@ private struct OfficialPhotoDetailView: View {
     let imageRevision: UUID?
     var isRefreshing = false
     var previewImageData: Data? = nil
+    var previewCatalog: OfficialWindowCatalog? = nil
     var showsCloseButton = true
     var relatedWindows: [PublicWindowPresentationSource] = []
     var onRetry: (() -> Void)? = nil
@@ -895,6 +949,7 @@ private struct OfficialPhotoDetailView: View {
         PhotoDetailLayout {
             OfficialPhotoImage(photo: photo, maximumPixelSize: 2048, store: store,
                                isRefreshing: isRefreshing, previewImageData: previewImageData,
+                               previewCatalog: previewCatalog,
                                allowsZoom: true, onRetry: onRetry)
                 .id("\(photo.imageFilename)-\(imageRevision?.uuidString ?? "")")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1009,6 +1064,7 @@ private struct OfficialPhotoImage: View {
     let store: OfficialWindowStore
     var isRefreshing = false
     var previewImageData: Data? = nil
+    var previewCatalog: OfficialWindowCatalog? = nil
     var allowsZoom = false
     var fillsFrame = false
     var onRetry: (() -> Void)? = nil
@@ -1069,6 +1125,9 @@ private struct OfficialPhotoImage: View {
                 source = CGImageSourceCreateWithData(previewImageData as CFData, nil)
             } else if let url = store.imageURL(for: photo) {
                 source = CGImageSourceCreateWithURL(url as CFURL, nil)
+            } else if let previewCatalog,
+                      let data = try? await OfficialWindowClient.shared.previewImage(photo, catalog: previewCatalog, store: store) {
+                source = CGImageSourceCreateWithData(data as CFData, nil)
             } else {
                 source = nil
             }

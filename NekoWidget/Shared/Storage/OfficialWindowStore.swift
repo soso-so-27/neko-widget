@@ -25,24 +25,24 @@ enum OfficialWindowConfiguration {
                 .appendingPathComponent("catalog.json"))
         }
         return [
-            PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
-                                   displayName: OfficialWindowCatalog.displayName,
-                                   subtitle: "毎日18時に1枚", endpoint: endpoint),
             PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
-                                   subtitle: "黒猫の写真", endpoint: publicEndpoint("black-cats")),
-            PublicWindowDefinition(id: "weekly-theme", displayName: "今週のテーマ",
-                                   subtitle: "毎週月曜に変わる猫の写真", endpoint: publicEndpoint("weekly-theme"))
+                                   subtitle: "1日1枚、AIで作った黒猫の画像", endpoint: publicEndpoint("black-cats"))
         ]
     }
 
     // Existing subscriptions and Widget source IDs remain resolvable. New
-    // discovery offers the three current channels without rewriting old data.
+    // discovery offers only the black-cat window without rewriting old data.
     private static var legacyDefinitions: [PublicWindowDefinition] {
         func publicEndpoint(_ id: String) -> URL? {
             validatedEndpoint(feedURL?.deletingLastPathComponent().appendingPathComponent("windows")
                 .appendingPathComponent(id).appendingPathComponent("catalog.json"))
         }
         return [
+            PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
+                                   displayName: OfficialWindowCatalog.displayName,
+                                   subtitle: "運営から届く猫の写真", endpoint: feedURL),
+            PublicWindowDefinition(id: "weekly-theme", displayName: "今週のテーマ",
+                                   subtitle: "毎週月曜に変わる猫の写真", endpoint: publicEndpoint("weekly-theme")),
             PublicWindowDefinition(id: "nap-cats", displayName: "おひるね",
                                    subtitle: "お昼寝中の猫の写真", endpoint: publicEndpoint("nap-cats")),
             PublicWindowDefinition(id: "cat-tabby-nap", displayName: "キジ白のまど",
@@ -491,6 +491,25 @@ actor OfficialWindowClient {
             try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
+    }
+
+    /// Browsing recent black-cat images stays in memory and uses only the
+    /// validated catalog on this configured public feed. It never subscribes.
+    func previewImage(_ photo: OfficialCatPhoto, catalog: OfficialWindowCatalog,
+                      store: OfficialWindowStore) async throws -> Data {
+        guard store.windowID == "black-cats", let endpoint = store.endpoint else {
+            throw OfficialWindowError.notConfigured
+        }
+        try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
+        guard catalog.availablePhotos(at: Date()).contains(photo) else { throw OfficialWindowError.invalidCatalog }
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let url = endpoint.deletingLastPathComponent().appendingPathComponent(photo.imageFilename)
+        let data = try await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg")
+        try OfficialWindowImageValidator.validate(data, photo: photo)
+        try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
+        guard photo.isAvailable(at: Date()) else { throw OfficialWindowError.invalidCatalog }
+        return data
     }
 
     /// Memory-only metadata for the current theme and its bounded history.

@@ -177,6 +177,8 @@ struct OfficialWindowChecks {
         try await verifyCatWindow(catalog: active, photo: photo, image: image,
                                   root: root.appendingPathComponent("cat-window"), endpoint: endpoint)
         try await verifyProgramme(root: root, endpoint: endpoint, photo: photo)
+        try await verifyBlackCatHistory(catalog: active, photo: photo, image: image,
+                                        root: root.appendingPathComponent("black-cat-browsing"), endpoint: endpoint)
         print("Official window: \(assertions) catalog, routing, image, expiry, preview and subscription assertions passed")
     }
 
@@ -209,13 +211,13 @@ struct OfficialWindowChecks {
             rejects("invalid endpoint subscription") { try invalid.setSubscribed(true) }
         }
         let productionDefinitions = OfficialWindowConfiguration.definitions
-        check(productionDefinitions.map(\.id) == ["official-cats", "black-cats", "weekly-theme"], "Three public channels are missing")
+        check(productionDefinitions.map(\.id) == ["black-cats"], "Unavailable public windows appeared in discovery")
         check(productionDefinitions == OfficialWindowConfiguration.definitions(baseFeedURL: OfficialWindowConfiguration.feedURL),
               "Production bypassed the validated base feed configuration")
-        check(productionDefinitions[0].endpoint == OfficialWindowConfiguration.feedURL
-              && productionDefinitions[0].displayName == OfficialWindowCatalog.displayName, "Legacy definition changed")
-        check(productionDefinitions[1].displayName == "黒猫のまど" && productionDefinitions[2].id == "weekly-theme", "New channels unavailable")
-        check(productionDefinitions[0].catID == nil && productionDefinitions[1].catID == nil,
+        check(OfficialWindowConfiguration.definition(for: "official-cats")?.displayName == OfficialWindowCatalog.displayName,
+              "Legacy subscription definition was lost")
+        check(productionDefinitions[0].displayName == "黒猫のまど", "Black-cat window unavailable")
+        check(productionDefinitions[0].catID == nil,
               "Mixed public feeds gained a cat constraint")
         check(OfficialWindowConfiguration.definition(for: "nap-cats")?.displayName == "おひるね"
               && OfficialWindowConfiguration.definition(forCatID: "generated-tabby-nap")?.id == "cat-tabby-nap",
@@ -229,10 +231,7 @@ struct OfficialWindowChecks {
             ("https://official.invalid/cat%20photos/catalog.json", "https://official.invalid/cat%20photos/windows/nap-cats/catalog.json")
         ] {
             let configured = OfficialWindowConfiguration.definitions(baseFeedURL: URL(string: base))
-            check(configured[0].endpoint?.absoluteString == base, "Derivation changed the legacy endpoint")
-            check(configured[1].endpoint?.absoluteString == expected.replacingOccurrences(of: "/nap-cats/", with: "/black-cats/"), "Black-cat feed escaped its configured path base")
-            check(configured[2].endpoint?.absoluteString == expected.replacingOccurrences(of: "/nap-cats/", with: "/weekly-theme/"),
-                  "Weekly feed escaped its configured path base")
+            check(configured[0].endpoint?.absoluteString == expected.replacingOccurrences(of: "/nap-cats/", with: "/black-cats/"), "Black-cat feed escaped its configured path base")
         }
         check(OfficialWindowConfiguration.definitions(baseFeedURL: nil).allSatisfy { $0.endpoint == nil },
               "Missing base enabled a public feed")
@@ -245,18 +244,22 @@ struct OfficialWindowChecks {
         }
         let configured = OfficialWindowConfiguration.definitions(baseFeedURL: endpoint)
         let configuredRoot = root.appendingPathComponent("production-definitions")
-        let configuredLegacy = OfficialWindowStore.forWindow(configured[0], containerURL: configuredRoot)
-        let configuredNap = OfficialWindowStore.forWindow(configured[1], containerURL: configuredRoot)
+        let legacy = PublicWindowDefinition(id: OfficialWindowCatalog.sourceID, displayName: OfficialWindowCatalog.displayName,
+            subtitle: "以前のまど", endpoint: endpoint)
+        let configuredLegacy = OfficialWindowStore.forWindow(legacy, containerURL: configuredRoot)
+        let configuredNap = OfficialWindowStore.forWindow(configured[0], containerURL: configuredRoot)
         check(configuredLegacy.directory?.lastPathComponent == "official-window.v1"
               && configuredNap.directory?.lastPathComponent == "black-cats"
               && configuredNap.directory?.deletingLastPathComponent().lastPathComponent == "public-windows.v1",
               "Production stores lost legacy compatibility or nap isolation")
-        check(configured[0].widgetSourceID == "official-cats" && configured[1].widgetSourceID == "public-window:black-cats",
+        check(legacy.widgetSourceID == "official-cats" && configured[0].widgetSourceID == "public-window:black-cats",
               "Production Widget sources collide")
-        let configuredCat = OfficialWindowStore.forWindow(configured[2], containerURL: configuredRoot)
+        let weeklyDefinition = PublicWindowDefinition(id: "weekly-theme", displayName: "今週のテーマ", subtitle: "以前のまど",
+            endpoint: endpoint.deletingLastPathComponent().appendingPathComponent("windows/weekly-theme/catalog.json"))
+        let configuredCat = OfficialWindowStore.forWindow(weeklyDefinition, containerURL: configuredRoot)
         check(configuredCat.directory?.lastPathComponent == "weekly-theme"
               && configuredCat.directory != configuredNap.directory && configuredCat.directory != configuredLegacy.directory
-              && configured[2].widgetSourceID == "public-window:weekly-theme", "Cat store or Widget source collides")
+              && weeklyDefinition.widgetSourceID == "public-window:weekly-theme", "Cat store or Widget source collides")
         try configuredLegacy.setSubscribed(true)
         check(!configuredNap.snapshot().isSubscribed, "Legacy subscription enabled nap delivery")
         try configuredNap.setSubscribed(true)
@@ -579,7 +582,16 @@ struct OfficialWindowChecks {
         check(OfficialWindowCatalog.nextDailyCutover(after: cutover.addingTimeInterval(-1)) == cutover, "Next refresh missed the 18:00 boundary")
         let black = OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: true,
             generatedAt: cutover, validUntil: daily.validUntil, photos: [yesterday, today])
-        check(black.widgetPhotos(at: cutover).count == 2, "Daily rule changed another channel's fallback")
+        check(black.widgetPhotos(at: cutover).map(\.id) == ["today"], "Black-cat Widget rotated through history")
+        check(black.widgetPhotos(at: cutover.addingTimeInterval(86400)).isEmpty, "Black-cat Widget retained yesterday")
+        check(black.widgetDeadline(for: today) == cutover.addingTimeInterval(86400), "Black-cat Widget missed its daily deadline")
+        let midnight = iso.date(from: "2026-10-22T15:00:00Z")!
+        let midnightPhoto = posted(midnight, "midnight")
+        let midnightCatalog = OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: true,
+            generatedAt: midnight, validUntil: midnight.addingTimeInterval(86400), photos: [today, midnightPhoto])
+        check(midnightCatalog.widgetPhotos(at: midnight).map(\.id) == ["midnight"], "Black-cat midnight edition ignored")
+        check(midnightCatalog.widgetPhotos(at: midnight.addingTimeInterval(86400)).isEmpty, "Black-cat midnight edition outlived its day")
+        check(midnightCatalog.widgetDeadline(for: midnightPhoto) == midnight.addingTimeInterval(86400), "Black-cat deadline assumes 18:00")
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3600)!
         let now = Date(), day = calendar.startOfDay(for: now)
         let monday = calendar.date(byAdding: .day, value: -((calendar.component(.weekday, from: day) + 5) % 7), to: day)!
@@ -596,7 +608,8 @@ struct OfficialWindowChecks {
         let wrong = OfficialWeeklyThemeIndex(schemaVersion: 1, generatedAt: now, validUntil: index.validUntil,
             themes: [.init(name: "猫", weekStart: themes[0].weekStart, channelID: "private-window")])
         rejects("metadata selected a private window") { try wrong.validate(at: now) }
-        let weekly = OfficialWindowConfiguration.definitions(baseFeedURL: endpoint)[2]
+        let weekly = PublicWindowDefinition(id: "weekly-theme", displayName: "今週のテーマ", subtitle: "以前のまど",
+            endpoint: endpoint.deletingLastPathComponent().appendingPathComponent("windows/weekly-theme/catalog.json"))
         check(themes[1].definition(relativeTo: weekly)?.endpoint?.host == endpoint.host, "Theme archive escaped the configured origin")
         check(themes[1].definition(relativeTo: weekly)?.endpoint?.lastPathComponent == "catalog.json", "Theme archive lost catalog path")
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
@@ -610,6 +623,32 @@ struct OfficialWindowChecks {
         PreviewURLProtocol.configure(["themes.json": .init(data: try encoder.encode(wrong))])
         do { _ = try await client.weeklyThemes(store: store); fatalError("Unsafe weekly metadata accepted") }
         catch { assertions += 1 }
+    }
+
+    static func verifyBlackCatHistory(catalog: OfficialWindowCatalog, photo: OfficialCatPhoto, image: Data,
+                                     root: URL, endpoint: URL) async throws {
+        let definition = OfficialWindowConfiguration.definitions(baseFeedURL: endpoint)[0]
+        let store = OfficialWindowStore.forWindow(definition, containerURL: root)
+        let browsing = OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: true,
+            generatedAt: catalog.generatedAt, validUntil: catalog.validUntil, photos: [photo])
+        let loader = OfficialWindowClient(previewEndpoint: endpoint, protocolClasses: [PreviewURLProtocol.self])
+        PreviewURLProtocol.configure([photo.imageFilename: .init(data: image, type: "image/jpeg")])
+        let received = try await loader.previewImage(photo, catalog: browsing, store: store)
+        check(received == image, "History browsing changed verified image bytes")
+        check(PreviewURLProtocol.requests() == [photo.imageFilename], "History escaped the configured photo endpoint")
+        check(!FileManager.default.fileExists(atPath: root.path), "History browsing persisted a subscription or cache")
+
+        for invalid in [catalog, OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: false,
+            generatedAt: catalog.generatedAt, validUntil: catalog.validUntil, photos: [])] {
+            PreviewURLProtocol.configure([:])
+            do { _ = try await loader.previewImage(photo, catalog: invalid, store: store); fatalError("History accepted an unlisted image") }
+            catch { assertions += 1 }
+            check(PreviewURLProtocol.requests().isEmpty, "Rejected history image reached the network")
+        }
+        PreviewURLProtocol.configure([photo.imageFilename: .init(data: Data([1, 2, 3]), type: "image/jpeg")])
+        do { _ = try await loader.previewImage(photo, catalog: browsing, store: store); fatalError("History accepted an invalid JPEG") }
+        catch { assertions += 1 }
+        check(!FileManager.default.fileExists(atPath: root.path), "Failed history browsing wrote local data")
     }
 
     static func verifyPreview(catalog: OfficialWindowCatalog, photo: OfficialCatPhoto, image: Data,

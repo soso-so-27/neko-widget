@@ -74,6 +74,11 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
     /// yesterday's cached image when today's image has not arrived yet.
     func widgetPhotos(at date: Date) -> [OfficialCatPhoto] {
         let available = availablePhotos(at: date)
+        if channelID == "black-cats" {
+            guard let latest = available.first,
+                  date < latest.publishedAt.addingTimeInterval(86_400) else { return [] }
+            return [latest]
+        }
         guard channelID == Self.sourceID else { return available }
         let day: TimeInterval = 86_400
         let cutover = floor((date.timeIntervalSince1970 - 9 * 3_600) / day) * day + 9 * 3_600
@@ -83,6 +88,9 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
 
     func widgetDeadline(for photo: OfficialCatPhoto) -> Date {
         let expiry = min(photo.expiresAt, validUntil)
+        if channelID == "black-cats" {
+            return min(expiry, photo.publishedAt.addingTimeInterval(86_400))
+        }
         guard channelID == Self.sourceID else { return expiry }
         return min(expiry, Self.nextDailyCutover(after: photo.publishedAt))
     }
