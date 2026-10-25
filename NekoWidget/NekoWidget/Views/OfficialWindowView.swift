@@ -159,9 +159,10 @@ struct PublicWindowDiscoveryView: View {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(sources) { source in
                     OfficialWindowEntryCard(state: states[source.id], store: source.store, refreshFeed: source.refresh,
-                        presentation: .row, previewFeed: source.preview, relatedWindows: sources)
+                        presentation: InternalBuildPresentationAvailability.isAvailable ? .row : .discovery,
+                        previewFeed: source.preview, relatedWindows: sources)
                 }
-                PublicWindowComingSoonRows()
+                if InternalBuildPresentationAvailability.isAvailable { PublicWindowComingSoonRows() }
             }
             .padding(20)
             .frame(maxWidth: 520)
@@ -409,10 +410,10 @@ struct OfficialWindowView: View {
         return ([catalog.validUntil] + catalog.photos.map(\.expiresAt)).filter { $0 > displayDate }.min()
     }
     private var photos: [OfficialCatPhoto] {
-        if state.isSubscribed { return state.catalog?.availablePhotos(at: displayDate) ?? [] }
-        if isPreviewing, store.windowID == "black-cats" {
-            return preview.content?.catalog.availablePhotos(at: displayDate) ?? []
+        if store.windowID == "black-cats", InternalBuildPresentationAvailability.isAvailable {
+            return currentCatalog?.widgetPhotos(at: displayDate) ?? []
         }
+        if state.isSubscribed { return state.catalog?.availablePhotos(at: displayDate) ?? [] }
         if isPreviewing, let photo = preview.content?.availablePhoto(at: displayDate) { return [photo] }
         return []
     }
@@ -429,7 +430,6 @@ struct OfficialWindowView: View {
                                             imageRevision: state.imageRevision,
                                             isRefreshing: isChecking,
                                             previewImageData: previewData(for: photo),
-                                            previewCatalog: isPreviewing ? currentCatalog : nil,
                                             showsCloseButton: false,
                                             relatedWindows: relatedWindows,
                                             onRetry: { Task { await refresh(interactive: true) } })
@@ -452,7 +452,6 @@ struct OfficialWindowView: View {
                 OfficialPhotoDetailView(photo: photo, store: store,
                                         imageRevision: state.imageRevision, isRefreshing: isChecking,
                                         previewImageData: previewData(for: photo),
-                                        previewCatalog: isPreviewing ? currentCatalog : nil,
                                         relatedWindows: relatedWindows,
                                         onRetry: { Task { await refresh(interactive: true) } })
             }
@@ -541,7 +540,6 @@ struct OfficialWindowView: View {
 
                 if state.isSubscribed {
                     widgetSetupOffer
-                }
 
                     if photos.count > 1 {
                         VStack(alignment: .leading, spacing: 14) {
@@ -556,7 +554,7 @@ struct OfficialWindowView: View {
                             .accessibilityIdentifier("official-window-recent-photos")
                         }
                     }
-                if !state.isSubscribed, store.endpoint != nil {
+                } else if store.endpoint != nil {
                     Button {
                         changeSubscription(true)
                     } label: {
@@ -613,7 +611,9 @@ struct OfficialWindowView: View {
                     Text(store.definition.catID == nil
                          ? "運営が選んだ猫の写真が届きます。投稿や友だちの招待は不要です。"
                          : "この猫の写真を受け取るまどです。新しい写真がないときは、次の掲載を待ちます。")
-                    Text("提供元・掲載日は写真で確認できます。AI生成画像はその旨を表示します。")
+                    Text(store.windowID == "black-cats"
+                         ? "提供元・掲載日は画像で確認できます。毎日、日本時間の0時に新しい1枚へ切り替わります。"
+                         : "提供元・掲載日は写真で確認できます。AI生成画像はその旨を表示します。")
                     Text("新しい写真が届くと更新します。Widgetへの反映には時間がかかる場合があります。")
                 }
                 .padding(24)
@@ -768,8 +768,7 @@ struct OfficialWindowView: View {
             VStack(alignment: .leading, spacing: 10) {
                 OfficialPhotoImage(photo: photo, maximumPixelSize: latest ? 1100 : 650,
                                    store: store, isRefreshing: isChecking,
-                                   previewImageData: previewData(for: photo),
-                                   previewCatalog: isPreviewing ? currentCatalog : nil, fillsFrame: !latest)
+                                   previewImageData: previewData(for: photo), fillsFrame: !latest)
                     .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "")")
                     .aspectRatio(latest ? CGFloat(photo.width) / CGFloat(photo.height) : 1, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
@@ -882,12 +881,17 @@ struct OfficialWindowView: View {
         while !Task.isCancelled {
             let delay = min(30, max(0, nextPhotoDeadline?.timeIntervalSinceNow ?? 30))
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            // snapshot() deliberately discards expired catalogs. Capture the
+            // cutover before replacing state so a subscribed window refreshes too.
+            let dailyEditionEnded = store.windowID == "black-cats" && InternalBuildPresentationAvailability.isAvailable
+                && currentCatalog.map { $0.validUntil <= Date() } == true
             state = store.snapshot()
             displayDate = Date()
             dismissUnavailablePhoto()
-            if store.windowID == "black-cats", let catalog = currentCatalog, catalog.validUntil <= displayDate,
-               scenePhase == .active {
-                await refresh()
+            if dailyEditionEnded, scenePhase == .active {
+                // Updating state changes nextPhotoDeadline and cancels this
+                // observer task. Let the refresh finish outside that task.
+                Task { await refresh() }
             }
         }
     }
@@ -930,7 +934,6 @@ private struct OfficialPhotoDetailView: View {
     let imageRevision: UUID?
     var isRefreshing = false
     var previewImageData: Data? = nil
-    var previewCatalog: OfficialWindowCatalog? = nil
     var showsCloseButton = true
     var relatedWindows: [PublicWindowPresentationSource] = []
     var onRetry: (() -> Void)? = nil
@@ -949,7 +952,6 @@ private struct OfficialPhotoDetailView: View {
         PhotoDetailLayout {
             OfficialPhotoImage(photo: photo, maximumPixelSize: 2048, store: store,
                                isRefreshing: isRefreshing, previewImageData: previewImageData,
-                               previewCatalog: previewCatalog,
                                allowsZoom: true, onRetry: onRetry)
                 .id("\(photo.imageFilename)-\(imageRevision?.uuidString ?? "")")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1064,7 +1066,6 @@ private struct OfficialPhotoImage: View {
     let store: OfficialWindowStore
     var isRefreshing = false
     var previewImageData: Data? = nil
-    var previewCatalog: OfficialWindowCatalog? = nil
     var allowsZoom = false
     var fillsFrame = false
     var onRetry: (() -> Void)? = nil
@@ -1125,9 +1126,6 @@ private struct OfficialPhotoImage: View {
                 source = CGImageSourceCreateWithData(previewImageData as CFData, nil)
             } else if let url = store.imageURL(for: photo) {
                 source = CGImageSourceCreateWithURL(url as CFURL, nil)
-            } else if let previewCatalog,
-                      let data = try? await OfficialWindowClient.shared.previewImage(photo, catalog: previewCatalog, store: store) {
-                source = CGImageSourceCreateWithData(data as CFData, nil)
             } else {
                 source = nil
             }
@@ -1167,10 +1165,12 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let unavailable = CommandLine.arguments.contains("--official-window-unconfigured")
         store = OfficialWindowStore(
             directory: FileManager.default.temporaryDirectory.appendingPathComponent("official-fixture-" + UUID().uuidString),
-            definition: definition ?? PublicWindowDefinition(
+            definition: definition ?? (CommandLine.arguments.contains("--black-cat-daily") ? PublicWindowDefinition(
+                id: "black-cats", displayName: "黒猫のまど", subtitle: "1日1枚、きょうの黒猫",
+                endpoint: unavailable ? nil : URL(string: "https://official.invalid/windows/black-cats/catalog.json")) : PublicWindowDefinition(
                 id: OfficialWindowCatalog.sourceID, displayName: OfficialWindowCatalog.displayName,
                 subtitle: "確認用の猫の写真",
-                endpoint: unavailable ? nil : URL(string: "https://official.invalid/catalog.json"))
+                endpoint: unavailable ? nil : URL(string: "https://official.invalid/catalog.json")))
         )
         if CommandLine.arguments.contains("--official-window-linked-photo") {
             linkedPhotoID = CommandLine.arguments.contains("--official-window-missing-photo") ? "removed-photo" : "fixture-photo"
@@ -1268,9 +1268,10 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let photo = OfficialCatPhoto(
             id: index == 0 ? "fixture-photo" : "fixture-photo-\(index)",
             catID: store.definition.catID ?? (isCatWindowFlow ? "generated-tabby-nap" : "fixture-cat"),
-            catName: isCatWindowFlow ? "キジ白" : (store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫"),
-            credit: isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像",
-            caption: "窓辺でひと休み。", photographedOn: "2026-09-01",
+            catName: store.windowID == "black-cats" ? "黒猫" : (isCatWindowFlow ? "キジ白" : (store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫")),
+            credit: store.windowID == "black-cats" ? "ねこのまど" : (isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像"),
+            caption: store.windowID == "black-cats" ? nil : "窓辺でひと休み。",
+            photographedOn: store.windowID == "black-cats" ? nil : "2026-09-01",
             publishedAt: fixtureDate.addingTimeInterval(-86400 * Double(index)),
             expiresAt: fixtureDate.addingTimeInterval((CommandLine.arguments.contains("--official-window-expiring-photo") ? 30 : 86400) + renewal),
             imageFilename: hash + ".jpg", sha256: hash,

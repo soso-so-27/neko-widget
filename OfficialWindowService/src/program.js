@@ -35,9 +35,8 @@ export function validateProgram(index) {
   const from = instant(index.startsAt), end = instant(index.through);
   require(end > from && end - from <= (dailyBlackCats ? 60 : 14) * DAY);
   if (dailyBlackCats) {
-    // The selected switch time is explicit in the dated editions. Both choices
-    // under owner review (00:00 / 18:00 JST) have exact UTC-hour boundaries.
-    require(index.editions.length <= 60 && [9, 15].includes(new Date(from).getUTCHours())
+    // Daily black-cat editions always start at 00:00 JST (15:00 UTC).
+    require(index.editions.length <= 60 && new Date(from).getUTCHours() === 15
       && from % 3600000 === 0);
   }
   let next = from;

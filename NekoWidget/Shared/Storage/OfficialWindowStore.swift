@@ -15,7 +15,8 @@ enum OfficialWindowConfiguration {
         definitions(baseFeedURL: feedURL)
     }
 
-    static func definitions(baseFeedURL: URL?) -> [PublicWindowDefinition] {
+    static func definitions(baseFeedURL: URL?,
+                            blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> [PublicWindowDefinition] {
         let endpoint = validatedEndpoint(baseFeedURL)
         // Keep public feeds on the configured origin and below its catalog directory.
         func publicEndpoint(_ id: String) -> URL? {
@@ -24,9 +25,20 @@ enum OfficialWindowConfiguration {
                 .appendingPathComponent(id, isDirectory: true)
                 .appendingPathComponent("catalog.json"))
         }
+        if blackCatDailyEnabled {
+            return [PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
+                subtitle: "1日1枚、きょうの黒猫", endpoint: publicEndpoint("black-cats"))]
+        }
+        // Public builds keep the shipped discovery and existing subscriptions.
         return [
-            PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
-                                   subtitle: "1日1枚、AIで作った黒猫の画像", endpoint: publicEndpoint("black-cats"))
+            PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
+                                   displayName: OfficialWindowCatalog.displayName,
+                                   subtitle: "運営から届く猫の写真", endpoint: endpoint),
+            PublicWindowDefinition(id: "nap-cats", displayName: "おひるね",
+                                   subtitle: "お昼寝中の猫の写真", endpoint: publicEndpoint("nap-cats")),
+            PublicWindowDefinition(id: "cat-tabby-nap", displayName: "キジ白のまど",
+                                   subtitle: "この猫の写真", endpoint: publicEndpoint("cat-tabby-nap"),
+                                   catID: "generated-tabby-nap")
         ]
     }
 
@@ -38,6 +50,8 @@ enum OfficialWindowConfiguration {
                 .appendingPathComponent(id).appendingPathComponent("catalog.json"))
         }
         return [
+            PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
+                                   subtitle: "1日1枚、きょうの黒猫", endpoint: publicEndpoint("black-cats")),
             PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
                                    displayName: OfficialWindowCatalog.displayName,
                                    subtitle: "運営から届く猫の写真", endpoint: feedURL),
@@ -491,25 +505,6 @@ actor OfficialWindowClient {
             try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
-    }
-
-    /// Browsing recent black-cat images stays in memory and uses only the
-    /// validated catalog on this configured public feed. It never subscribes.
-    func previewImage(_ photo: OfficialCatPhoto, catalog: OfficialWindowCatalog,
-                      store: OfficialWindowStore) async throws -> Data {
-        guard store.windowID == "black-cats", let endpoint = store.endpoint else {
-            throw OfficialWindowError.notConfigured
-        }
-        try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
-        guard catalog.availablePhotos(at: Date()).contains(photo) else { throw OfficialWindowError.invalidCatalog }
-        let session = makeSession()
-        defer { session.invalidateAndCancel() }
-        let url = endpoint.deletingLastPathComponent().appendingPathComponent(photo.imageFilename)
-        let data = try await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg")
-        try OfficialWindowImageValidator.validate(data, photo: photo)
-        try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
-        guard photo.isAvailable(at: Date()) else { throw OfficialWindowError.invalidCatalog }
-        return data
     }
 
     /// Memory-only metadata for the current theme and its bounded history.

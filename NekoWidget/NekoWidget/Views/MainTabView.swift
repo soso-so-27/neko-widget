@@ -2947,11 +2947,22 @@ private struct WindowListView: View {
                 if let groupClient = GroupWindowClientProvider.ui {
                     // Windows people share come first (1-4); public windows follow.
                     GroupWindowListSection(client: groupClient)
+                    if !InternalBuildPresentationAvailability.isAvailable, !receivingPublicWindows.isEmpty {
+                        Text("公式のまど")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityAddTraits(.isHeader)
+                    }
                 }
-                if !connectedWindows.isEmpty || !setupWindows.isEmpty {
+                if !connectedWindows.isEmpty || !setupWindows.isEmpty
+                    || (!InternalBuildPresentationAvailability.isAvailable && !receivingPublicWindows.isEmpty) {
                     LazyVGrid(columns: cardColumns, spacing: 22) {
                         ForEach(connectedWindows) { window in
                             windowCard(window)
+                        }
+                        if !InternalBuildPresentationAvailability.isAvailable {
+                            ForEach(receivingPublicWindows) { source in publicCard(source) }
                         }
                         ForEach(setupWindows) { window in windowCard(window) }
                     }
@@ -2970,7 +2981,9 @@ private struct WindowListView: View {
                         cachedWindowWarning(message: message)
                     }
 
-                    if GroupWindowClientProvider.ui == nil, windows.isEmpty, publicWindows.isEmpty {
+                    if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {
+                        legacyPublicWindowEntry
+                    } else if !InternalBuildPresentationAvailability.isAvailable, windows.isEmpty, receivingPublicWindows.isEmpty {
                         emptyWindowCard
                     }
 
@@ -2979,7 +2992,7 @@ private struct WindowListView: View {
                     }
 
                 }
-                publicWindowEntry
+                if InternalBuildPresentationAvailability.isAvailable { publicWindowEntry }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -3119,6 +3132,30 @@ private struct WindowListView: View {
             }
             PublicWindowComingSoonRows()
         }
+        .accessibilityIdentifier("window-list-start")
+    }
+
+    private var legacyPublicWindowEntry: some View {
+        NavigationLink { discovery } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "building.2")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
+                        .font(.body.weight(.semibold))
+                    Text("猫カフェや保護猫の写真を、見るだけで受け取れます")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .frame(minHeight: 44)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("window-list-start")
     }
 

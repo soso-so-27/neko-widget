@@ -10,7 +10,7 @@ import { validatePublisherJPEG } from './prepare_maintenance.mjs';
 import { directory, file, newOutput, hash, stamp, expectedConfig, service } from './schedule_bundle.mjs';
 
 const DAY = 86400_000, HOUR = 3600_000;
-const fields = ['input', 'output', 'startDate', 'hourJST', 'credit', 'publicationApproved'];
+const fields = ['input', 'output', 'startDate', 'credit', 'publicationApproved'];
 const encoded = value => Buffer.from(JSON.stringify(value, null, 2) + '\n');
 function localAbsolute(value) {
   assert(typeof value === 'string' && path.isAbsolute(value)
@@ -30,12 +30,11 @@ async function localDirectory(value) {
   localAbsolute(actual);
   return actual;
 }
-function startTime(startDate, hourJST) {
+function startTime(startDate) {
   assert(typeof startDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(startDate), 'Explicit --start-date YYYY-MM-DD is required');
   const midnight = Date.parse(startDate + 'T00:00:00Z');
   assert(Number.isFinite(midnight) && stamp(midnight) === startDate + 'T00:00:00Z', 'Use a real calendar start date');
-  assert(hourJST === 0 || hourJST === 18, 'Explicit --hour-jst must be 0 or 18');
-  return { midnight, start: midnight + (hourJST - 9) * HOUR };
+  return { midnight, start: midnight - 9 * HOUR };
 }
 function dimensions(bytes) {
   assert(bytes.length >= 4 && bytes[0] === 255 && bytes[1] === 216, 'Invalid publisher JPEG');
@@ -61,11 +60,11 @@ function dimensions(bytes) {
 export async function prepareBlackCatDays(options) {
   assert(options && typeof options === 'object' && !Array.isArray(options)
     && Object.keys(options).length === fields.length && fields.every(name => Object.hasOwn(options, name)),
-  'Explicit input, output, startDate, hourJST, credit and publicationApproved are required');
-  const { input, output, startDate, hourJST, credit, publicationApproved } = options;
+  'Explicit input, output, startDate, credit and publicationApproved are required');
+  const { input, output, startDate, credit, publicationApproved } = options;
   assert(publicationApproved === true, 'Explicit public publication approval is required');
   assert(typeof credit === 'string' && credit.trim().length > 0, 'Explicit nonempty --credit is required');
-  const { midnight, start } = startTime(startDate, hourJST);
+  const { midnight, start } = startTime(startDate);
   const source = await localDirectory(input);
   localAbsolute(output);
   await localDirectory(path.dirname(output));
@@ -102,7 +101,7 @@ export async function prepareBlackCatDays(options) {
   validateProgram(index);
   const indexBytes = encoded(index);
   assert(indexBytes.length <= 256 * 1024, 'Program index exceeds the Worker reader limit');
-  const review = { schemaVersion: 1, kind: 'black-cat-days', startDate, hourJST, credit, publicationApproved,
+  const review = { schemaVersion: 1, kind: 'black-cat-days', startDate, hourJST: 0, credit, publicationApproved,
     startsAt: index.startsAt, through: index.through, dayCount: images.length,
     days: images.map((image, i) => ({ date: image.date, filename: image.filename, editionID: index.editions[i].id,
       publishedAt: image.photo.publishedAt, expiresAt: image.photo.expiresAt, sha256: image.photo.sha256 })) };
@@ -134,13 +133,13 @@ export async function prepareBlackCatDays(options) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const { values } = parseArgs({ options: { input: { type: 'string' }, output: { type: 'string' },
-      'start-date': { type: 'string' }, 'hour-jst': { type: 'string' }, credit: { type: 'string' },
+      'start-date': { type: 'string' }, credit: { type: 'string' },
       'publication-approved': { type: 'boolean' } } });
-    assert(values.input && values.output && values['start-date'] && ['0', '18'].includes(values['hour-jst'])
+    assert(values.input && values.output && values['start-date']
       && values.credit && values['publication-approved'],
-    'Use --input <reviewed-JPEG-folder> --output <new-local-folder> --start-date YYYY-MM-DD --hour-jst 0|18 --credit <approved-credit> --publication-approved');
+    'Use --input <reviewed-JPEG-folder> --output <new-local-folder> --start-date YYYY-MM-DD --credit <approved-credit> --publication-approved');
     console.log(JSON.stringify(await prepareBlackCatDays({ input: values.input, output: values.output,
-      startDate: values['start-date'], hourJST: Number(values['hour-jst']), credit: values.credit,
+      startDate: values['start-date'], credit: values.credit,
       publicationApproved: values['publication-approved'] }), null, 2));
     console.log('Local candidate only. Review schedule-review.json and the images before owner-approved deployment.');
   } catch (error) { console.error(error.message); process.exitCode = 1; }

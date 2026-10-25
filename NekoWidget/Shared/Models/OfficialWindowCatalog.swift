@@ -1,5 +1,17 @@
 import Foundation
 
+/// Shared by the app and Widget. Distribution intent, not receipt environment,
+/// controls internal-only UI; public TestFlight and App Review use sandbox too.
+enum InternalBuildPresentationAvailability {
+    static var isAvailable: Bool {
+#if DEBUG
+        !CommandLine.arguments.contains("--review-public-presentation")
+#else
+        (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
+#endif
+    }
+}
+
 /// The build-owned registry defines which public windows the app offers.
 /// Unknown but well-formed source IDs remain identifiable without falling back
 /// to the legacy feed; discovery does not create definitions from remote data.
@@ -70,34 +82,31 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         }
     }
 
-    /// The daily window changes at 18:00 JST (09:00 UTC). Never fall back to
-    /// yesterday's cached image when today's image has not arrived yet.
-    func widgetPhotos(at date: Date) -> [OfficialCatPhoto] {
+    /// The internal black-cat window changes at 00:00 JST.
+    /// Never fall back to yesterday when today's image has not arrived yet.
+    func widgetPhotos(at date: Date,
+                      blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> [OfficialCatPhoto] {
         let available = availablePhotos(at: date)
-        if channelID == "black-cats" {
-            guard let latest = available.first,
-                  date < latest.publishedAt.addingTimeInterval(86_400) else { return [] }
+        if channelID == "black-cats", blackCatDailyEnabled {
+            let start = Self.nextBlackCatCutover(after: date).addingTimeInterval(-86_400)
+            guard let latest = available.first, latest.publishedAt >= start else { return [] }
             return [latest]
         }
-        guard channelID == Self.sourceID else { return available }
-        let day: TimeInterval = 86_400
-        let cutover = floor((date.timeIntervalSince1970 - 9 * 3_600) / day) * day + 9 * 3_600
-        guard let latest = available.first, latest.publishedAt.timeIntervalSince1970 >= cutover else { return [] }
-        return [latest]
+        return available
     }
 
-    func widgetDeadline(for photo: OfficialCatPhoto) -> Date {
+    func widgetDeadline(for photo: OfficialCatPhoto,
+                        blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> Date {
         let expiry = min(photo.expiresAt, validUntil)
-        if channelID == "black-cats" {
-            return min(expiry, photo.publishedAt.addingTimeInterval(86_400))
+        if channelID == "black-cats", blackCatDailyEnabled {
+            return min(expiry, Self.nextBlackCatCutover(after: photo.publishedAt))
         }
-        guard channelID == Self.sourceID else { return expiry }
-        return min(expiry, Self.nextDailyCutover(after: photo.publishedAt))
+        return expiry
     }
 
-    static func nextDailyCutover(after date: Date) -> Date {
+    static func nextBlackCatCutover(after date: Date) -> Date {
         let day: TimeInterval = 86_400
-        return Date(timeIntervalSince1970: (floor((date.timeIntervalSince1970 - 9 * 3_600) / day) + 1) * day + 9 * 3_600)
+        return Date(timeIntervalSince1970: (floor((date.timeIntervalSince1970 + 9 * 3_600) / day) + 1) * day - 9 * 3_600)
     }
 
     func validate(at now: Date, expectedChannelID: String = Self.sourceID, expectedCatID: String? = nil) throws {

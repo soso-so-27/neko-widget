@@ -31,7 +31,7 @@ async function fixture(count = 1) {
     const filename = `source-${String(i).padStart(3, '0')}.jpg`, bytes = jpeg(i);
     await writeFile(path.join(input, filename), bytes); files.unshift({ filename, bytes, sha256: hash(bytes) });
   }
-  return { root, input, output, files, options: { input, output, startDate: '2026-12-01', hourJST: 0,
+  return { root, input, output, files, options: { input, output, startDate: '2026-12-01',
     credit: 'AI生成・公開確認済み', publicationApproved: true } };
 }
 const editionFolder = (output, i) => path.join(output, 'assets/__program/editions', `edition-${String(i).padStart(3, '0')}`, 'windows/black-cats');
@@ -82,11 +82,11 @@ test('60 reviewed JPEGs create 60 contiguous days with seven-day history and no 
   assert.deepEqual(await read(path.join(f.output, 'wrangler.jsonc')), config);
 });
 
-test('18 JST and leap-day dates use the explicit local calendar with ordinal filename order', async () => {
+test('JST midnight and leap-day dates use the explicit local calendar with ordinal filename order', async () => {
   const f = await fixture(0);
   for (const [i, filename] of ['10.jpeg', '2.jpg', '01.JPG'].entries()) await writeFile(path.join(f.input, filename), jpeg(i));
-  const result = await prepareBlackCatDays({ ...f.options, startDate: '2028-02-28', hourJST: 18 });
-  assert.equal(result.startsAt, '2028-02-28T09:00:00Z'); assert.equal(result.through, '2028-03-02T09:00:00Z');
+  const result = await prepareBlackCatDays({ ...f.options, startDate: '2028-02-28' });
+  assert.equal(result.startsAt, '2028-02-27T15:00:00Z'); assert.equal(result.through, '2028-03-01T15:00:00Z');
   const review = await read(result.review);
   assert.deepEqual(review.days.map(day => day.filename), ['01.JPG', '10.jpeg', '2.jpg']);
   assert.deepEqual(review.days.map(day => day.date), ['2028-02-28', '2028-02-29', '2028-03-01']);
@@ -96,7 +96,7 @@ test('missing decisions, invalid dates and hours, private extra fields and inval
   const f = await fixture();
   const variants = [
     { publicationApproved: false }, { publicationApproved: 'true' }, { startDate: '2026-02-30' },
-    { startDate: '2026-2-01' }, { startDate: '' }, { hourJST: 9 }, { hourJST: '0' },
+    { startDate: '2026-2-01' }, { startDate: '' }, { hourJST: 18 }, { hourJST: 0 },
     { credit: '' }, { credit: '   ' }, { credit: ' credit' }, { credit: 'a'.repeat(81) },
     { credit: 'owner\nprivate' }, { privateWindowID: 'must-not-be-published' },
     { input: 'relative-input' }, { output: 'relative-output' },
@@ -172,10 +172,10 @@ test('a symlinked JPEG entry is rejected before output', async () => {
 test('CLI requires every decision and creates a local candidate only with all explicit arguments', async () => {
   const f = await fixture();
   const args = ['--input', f.input, '--output', f.output, '--start-date', '2026-12-01', '--credit', f.options.credit];
-  for (const extra of [[], ['--hour-jst', '0'], ['--hour-jst', '00', '--publication-approved'], ['--hour-jst', '18', '--unknown', 'secret']]) {
+  for (const extra of [[], ['--hour-jst', '0', '--publication-approved'], ['--hour-jst', '18', '--publication-approved'], ['--unknown', 'secret', '--publication-approved']]) {
     await assert.rejects(run(process.execPath, [tool, ...args, ...extra])); await assert.rejects(access(f.output));
   }
-  const { stdout } = await run(process.execPath, [tool, ...args, '--hour-jst', '18', '--publication-approved']);
+  const { stdout } = await run(process.execPath, [tool, ...args, '--publication-approved']);
   assert.match(stdout, /Local candidate only/);
-  assert.equal((await read(path.join(f.output, 'schedule-review.json'))).hourJST, 18);
+  assert.equal((await read(path.join(f.output, 'schedule-review.json'))).hourJST, 0);
 });
