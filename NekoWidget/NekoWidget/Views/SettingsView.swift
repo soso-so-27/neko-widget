@@ -336,6 +336,19 @@ struct SettingsView: View {
                             .accessibilityIdentifier("settings-cloudy-strength")
                             .onChange(of: cloudyWindowStrength) { _, _ in saveCloudyWindowConfiguration() }
                         }
+                        if cloudyWindowEnabled {
+                            // To see the clearing again today (test builds only).
+                            Button("きょうのまどをもう一度くもらせる") {
+                                do {
+                                    try CloudyWindowStore.shared.cloudTodayAgain()
+                                    cloudyWindowError = nil
+                                    NotificationCenter.default.post(name: .cloudyWindowConfigurationChanged, object: nil)
+                                } catch {
+                                    cloudyWindowError = "くもらせられませんでした。もう一度お試しください。"
+                                }
+                            }
+                            .accessibilityIdentifier("settings-cloudy-again")
+                        }
                         if let cloudyWindowError {
                             Text(cloudyWindowError).foregroundStyle(.red)
                         }

@@ -343,6 +343,23 @@ struct CloudyWindowStore: Sendable {
         }
     }
 
+    /// Test builds only: cloud today's window again, so the clearing can be
+    /// seen again without waiting for tomorrow. The photo stays the same.
+    func cloudTodayAgain(now: Date = .now) throws {
+        guard internalPresentation else { return }
+        try authorityStore.withAuthoritySnapshot(now: now) { _ in
+            var state = try read()
+            let today = Self.calendar.startOfDay(for: now)
+            var changed = false
+            for index in state.selections.indices where state.selections[index].day == today
+                && state.selections[index].revealedAt != nil {
+                state.selections[index].revealedAt = nil
+                changed = true
+            }
+            if changed { try write(state) }
+        }
+    }
+
     /// Photos revealed in the window between the dates (read only), for the
     /// album prototype's monthly story.
     func revealedPhotos(from start: Date, to end: Date) -> [(photoID: String, revealedAt: Date)] {
