@@ -372,6 +372,8 @@ struct MonthlyStoryView: View {
     @State private var index = 0
     @State private var paused = false
     @State private var displayedPreparationKey: MonthlyStoryPreparationKey?
+    /// The last page's nine as one picture, for the share sheet.
+    @State private var cardImage: UIImage?
 
     static let pageSeconds: Double = 5
 
@@ -395,6 +397,16 @@ struct MonthlyStoryView: View {
     private var currentPageCount: Int {
         displayedPreparationKey == preparationKey ? pages.count : 0
     }
+
+    /// The card on screen now, if the last page is showing.
+    private var shownCard: (photos: [PhotoPresentation], names: String)? {
+        guard currentPageCount > 0, pages.indices.contains(index),
+              case let .card(photos, names) = pages[index] else { return nil }
+        return (photos, names)
+    }
+
+    /// 「10月の9枚」: the app's nines are named by when, the user's own by 自慢.
+    private func cardTitle(_ count: Int) -> String { "\(letter.monthNumber)月の\(count)枚" }
 
     var body: some View {
         ZStack {
@@ -438,6 +450,21 @@ struct MonthlyStoryView: View {
                     .accessibilityLabel("閉じる")
                 }
                 Spacer()
+                if let cardImage, let card = shownCard {
+                    let title = "\(card.names)の\(cardTitle(card.photos.count))"
+                    ShareLink(item: Image(uiImage: cardImage),
+                              preview: SharePreview(title, image: Image(uiImage: cardImage))) {
+                        Label("画像にして共有", systemImage: "square.and.arrow.up")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.white)
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 16)
+                    .accessibilityIdentifier("monthly-story-share")
+                }
             }
             .padding(.horizontal, 14)
         }
@@ -449,6 +476,16 @@ struct MonthlyStoryView: View {
             try? await Task.sleep(for: .seconds(Self.pageSeconds))
             guard !Task.isCancelled else { return }
             move(1)
+        }
+        .task(id: shownCard?.photos.map(\.localIdentifier)) {
+            cardImage = nil
+            guard let card = shownCard else { return }
+            var images: [UIImage] = []
+            for photo in card.photos.prefix(9) {
+                if let image = await Self.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
+            }
+            guard !Task.isCancelled else { return }
+            cardImage = ShowcasePhotoView.image(images, title: "\(card.names)　\(cardTitle(card.photos.count))")
         }
     }
 
@@ -545,14 +582,14 @@ struct MonthlyStoryView: View {
         return counts.max { $0.value < $1.value }?.key
     }
 
-    private static func thumbnail(_ identifier: String) async -> UIImage? {
+    private static func thumbnail(_ identifier: String, side: CGFloat = 160) async -> UIImage? {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = false
         options.resizeMode = .fast
         return await withCheckedContinuation { continuation in
-            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: 160, height: 160),
+            PhotoAssetImagePipeline.manager.requestImage(for: asset, targetSize: CGSize(width: side, height: side),
                                                          contentMode: .aspectFill, options: options) { image, _ in
                 continuation.resume(returning: image)
             }
@@ -640,8 +677,11 @@ struct MonthlyStoryView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 30)
         case let .card(photos, names):
-            VStack(spacing: 10) {
+            VStack(spacing: 14) {
                 Spacer(minLength: 80)
+                Text(verbatim: cardTitle(photos.count))
+                    .font(.system(size: 34, weight: .bold, design: .serif))
+                    .foregroundStyle(.white)
                 VStack(alignment: .leading, spacing: 8) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
                         ForEach(photos) { photo in
@@ -657,7 +697,7 @@ struct MonthlyStoryView: View {
                 .padding(12)
                 .background(Color(red: 0.96, green: 0.95, blue: 0.92), in: RoundedRectangle(cornerRadius: 14))
                 .padding(.horizontal, 24)
-                Spacer(minLength: 60)
+                Spacer(minLength: 110)
             }
         }
     }
