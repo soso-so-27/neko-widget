@@ -106,6 +106,11 @@ struct AlbumPrototypeView: View {
 
     private var calendar: Calendar { Calendar.current }
 
+    private var latestPreparationKey: MonthlyStoryPreparationKey? {
+        letters.first.map { .init(letter: $0, catPhotos: catPhotos,
+                                  assignments: assignments, profileNames: profileNames) }
+    }
+
     /// Wrapped: finished after the prototype was turned on and not opened yet.
     /// Earlier months are already open, so a long library is not 36 parcels.
     private func isWrapped(_ letter: MonthlyWindowPresentation) -> Bool {
@@ -188,10 +193,9 @@ struct AlbumPrototypeView: View {
             if enabledAt == 0 { enabledAt = Date().timeIntervalSince1970 }
         }
         // Ready before the tap: opening the newest work should not wait.
-        .task(id: letters.first?.periodIdentifier) {
-            guard let latest = letters.first else { return }
-            _ = await MonthlyStoryView.prepare(letter: latest, catPhotos: catPhotos,
-                                               assignments: assignments, profileNames: profileNames)
+        .task(id: latestPreparationKey) {
+            guard let key = latestPreparationKey else { return }
+            _ = await MonthlyStoryView.prepare(key)
         }
         .fullScreenCover(item: $story) { letter in
             MonthlyStoryView(letter: letter, catPhotos: catPhotos,
@@ -367,6 +371,7 @@ struct MonthlyStoryView: View {
     @State private var backdrop = Color(red: 0.11, green: 0.09, blue: 0.08)
     @State private var index = 0
     @State private var paused = false
+    @State private var displayedPreparationKey: MonthlyStoryPreparationKey?
 
     static let pageSeconds: Double = 5
 
@@ -383,14 +388,26 @@ struct MonthlyStoryView: View {
 
     private struct AdvanceKey: Hashable { let index: Int; let paused: Bool; let count: Int }
 
+    private var preparationKey: MonthlyStoryPreparationKey {
+        .init(letter: letter, catPhotos: catPhotos, assignments: assignments, profileNames: profileNames)
+    }
+
+    private var currentPageCount: Int {
+        displayedPreparationKey == preparationKey ? pages.count : 0
+    }
+
     var body: some View {
         ZStack {
             backdrop.ignoresSafeArea()
-            if pages.indices.contains(index) {
+            if displayedPreparationKey == preparationKey, pages.indices.contains(index) {
                 pageView(pages[index])
                     .id(index)
                     .transition(.opacity)
                     .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
+            } else if displayedPreparationKey == preparationKey {
+                ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
+                                       description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                    .foregroundStyle(.white)
             } else {
                 ProgressView().tint(.white)
             }
@@ -408,7 +425,7 @@ struct MonthlyStoryView: View {
             .ignoresSafeArea()
             VStack(spacing: 6) {
                 HStack(spacing: 3) {
-                    ForEach(pages.indices, id: \.self) { i in
+                    ForEach(0..<currentPageCount, id: \.self) { i in
                         Capsule().fill(i <= index ? Color.white : Color.white.opacity(0.3)).frame(height: 2.5)
                     }
                 }
@@ -426,9 +443,9 @@ struct MonthlyStoryView: View {
         }
         .statusBarHidden()
         .accessibilityIdentifier("monthly-story")
-        .task { await build() }
-        .task(id: AdvanceKey(index: index, paused: paused, count: pages.count)) {
-            guard !paused, index + 1 < pages.count else { return }
+        .task(id: preparationKey) { await build(preparationKey) }
+        .task(id: AdvanceKey(index: index, paused: paused, count: currentPageCount)) {
+            guard !paused, index + 1 < currentPageCount else { return }
             try? await Task.sleep(for: .seconds(Self.pageSeconds))
             guard !Task.isCancelled else { return }
             move(1)
@@ -437,33 +454,42 @@ struct MonthlyStoryView: View {
 
     private func move(_ step: Int) {
         let next = index + step
-        guard pages.indices.contains(next) else { return }
+        guard displayedPreparationKey == preparationKey, pages.indices.contains(next) else { return }
         withAnimation(.easeInOut(duration: 0.4)) { index = next }
     }
 
     // MARK: Building the pages
 
-    private func build() async {
-        guard pages.isEmpty else { return }
-        let prepared = await Self.prepare(letter: letter, catPhotos: catPhotos,
-                                          assignments: assignments, profileNames: profileNames)
-        if let color = prepared.backdrop { backdrop = color }
-        withAnimation(.easeOut(duration: 0.3)) { pages = prepared.pages }
+    private func build(_ key: MonthlyStoryPreparationKey) async {
+        guard let result = await Self.prepare(key), !Task.isCancelled else { return }
+        // The body also compares this key to its current inputs, so an old
+        // completion cannot expose an old photo while SwiftUI replaces a task.
+        withAnimation(.easeOut(duration: 0.3)) {
+            backdrop = result.backdrop ?? Color(red: 0.11, green: 0.09, blue: 0.08)
+            pages = result.pages
+            index = 0
+            paused = false
+            displayedPreparationKey = key
+        }
     }
 
-    /// Prepared stories, so opening a work is instant when the album already
-    /// got it ready. Keyed by month and library size (a new photo rebuilds it).
-    private static var prepared: [String: (pages: [Page], backdrop: Color?)] = [:]
+    private typealias Prepared = (pages: [Page], backdrop: Color?)
+    private static var prepared = MonthlyStoryPreparationCache<Prepared>()
 
     /// Builds (or returns) a month's pages. The album calls this ahead of time
     /// for the newest work; thumbnails are read in parallel, not one by one.
-    static func prepare(letter: MonthlyWindowPresentation, catPhotos: [PhotoPresentation],
-                        assignments: [String: Set<String>],
-                        profileNames: [String: String]) async -> (pages: [Page], backdrop: Color?) {
-        let key = "\(letter.periodIdentifier)#\(catPhotos.count)"
-        if let cached = prepared[key] { return cached }
+    static func prepare(_ key: MonthlyStoryPreparationKey) async -> (pages: [Page], backdrop: Color?)? {
+        guard !Task.isCancelled else { return nil }
+        let ticket = prepared.begin(key)
+        if let cached = prepared.cached(for: ticket) { return cached }
+        let letter = key.letter
+        let catPhotos = key.library.catPhotos
+        let assignments = key.library.assignments
+        let profileNames = key.library.profileNames
         let month = AlbumPrototype.photos(in: letter.monthStart, from: catPhotos)
-        let source = month.isEmpty ? letter.storyPhotos : month
+        // Only current scoped/readable photos may be requested. A stale route
+        // must not restore its old IDs when this month becomes unavailable.
+        let source = month
         // Look at the best candidates themselves: sharp and well lit beats blurred or dark.
         let candidates = Array(source.sorted { AlbumPrototype.score($0) > AlbumPrototype.score($1) }.prefix(24))
         var thumbnails: [String: UIImage] = [:]
@@ -473,6 +499,7 @@ struct MonthlyStoryView: View {
             }
             for await (id, image) in group { if let image { thumbnails[id] = image } }
         }
+        guard !Task.isCancelled, prepared.isCurrent(ticket) else { return nil }
         var looks: [String: Double] = [:]
         for photo in candidates {
             if let image = thumbnails[photo.localIdentifier],
@@ -483,7 +510,11 @@ struct MonthlyStoryView: View {
         let picked = AlbumPrototype.pick(candidates.isEmpty ? source : candidates, count: 9) { photo in
             AlbumPrototype.score(photo) + 6 * (looks[photo.localIdentifier] ?? 0.4)
         }
-        guard let cover = picked.first else { return ([], nil) }
+        guard let cover = picked.first else {
+            let empty: Prepared = ([], nil)
+            guard prepared.publish(empty, for: ticket) else { return nil }
+            return empty
+        }
         let backdrop = thumbnails[cover.localIdentifier].flatMap(averageColor)
         var result: [Page] = [.cover(cover, AlbumPrototype.names(for: [cover], assignments: assignments,
                                                                   profileNames: profileNames))]
@@ -503,7 +534,7 @@ struct MonthlyStoryView: View {
         result.append(.card(picked, AlbumPrototype.names(for: picked, assignments: assignments,
                                                          profileNames: profileNames)))
         let built = (pages: result, backdrop: backdrop)
-        prepared[key] = built
+        guard prepared.publish(built, for: ticket) else { return nil }
         return built
     }
 

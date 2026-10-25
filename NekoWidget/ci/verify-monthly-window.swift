@@ -649,8 +649,96 @@ private struct MonthlyWindowVerifier {
         try verifyRapidNearIdenticalShotsCollapseDeterministically()
         try verifyTimingAndFramingKeepDistinctScenesSeparate()
         try verifyBrowserCoverAndRefreshedMembership()
+        try verifyStoryCacheTracksCurrentPhotosAndNames()
+        try verifyStoryCacheRejectsOutdatedPreparation()
+        try verifyStoryCacheKeepsMultipleMonthsWithinItsBound()
         print("Monthly window proposal: PASS")
     }
+}
+
+private func storyKey(_ photos: [PhotoPresentation], month: Int = 8,
+                      current: [PhotoPresentation]? = nil,
+                      assignments: [String: Set<String>] = ["first": ["cat"]],
+                      names: [String: String] = ["cat": "ねこ"]) -> MonthlyStoryPreparationKey {
+    let letter = MonthlyWindowPresentation(monthStart: date(2026, month, 1, hour: 0),
+        yearNumber: 2026, monthNumber: month, photos: photos, availableSceneCount: photos.count)
+    return .init(letter: letter, catPhotos: current ?? photos, assignments: assignments,
+                 profileNames: names, timeZone: utc)
+}
+
+private func verifyStoryCacheTracksCurrentPhotosAndNames() throws {
+    let first = photo("first", date(2026, 8, 3))
+    let replacement = photo("replacement", date(2026, 8, 3))
+    let original = storyKey([first])
+    var cache = MonthlyStoryPreparationCache<[String]>()
+    let issued = cache.begin(original)
+    try require(cache.publish(["first"], for: issued), "initial story was not cached")
+
+    let changed = storyKey([first], current: [replacement])
+    let changedTicket = cache.begin(changed)
+    try require(cache.cached(for: changedTicket) == nil,
+                "same-count replacement reused pages containing the removed photo")
+    try require(changed.letter.photos.isEmpty && changed.library.catPhotos == [replacement],
+                "an old letter restored a photo outside the current readable/scoped inputs")
+
+    let edits = [
+        storyKey([first], current: [photo("first", date(2026, 8, 3), isMemory: true)]),
+        storyKey([first], assignments: ["first": ["other-cat"]]),
+        storyKey([first], names: ["cat": "新しい名前"]),
+        storyKey([first], current: [])
+    ]
+    for edit in edits {
+        let old = cache.begin(original)
+        cache.publish(["first"], for: old)
+        let updated = cache.begin(edit)
+        try require(cache.cached(for: updated) == nil,
+                    "photo content, assignment, name or permission change reused old pages")
+        try require(!cache.isCurrent(old), "changed story input left an older job current")
+    }
+    try require(edits.last!.letter.photos.isEmpty, "empty authority kept a remembered route's photos")
+
+    let a = storyKey([first], assignments: ["first": ["cat", "other"], "second": ["cat"]],
+                     names: ["cat": "ねこ", "other": "ほかの子"])
+    let b = storyKey([first], assignments: ["second": ["cat"], "first": ["other", "cat"]],
+                     names: ["other": "ほかの子", "cat": "ねこ"])
+    try require(a == b && Set([a, b]).count == 1, "dictionary order prevented reuse of identical inputs")
+}
+
+private func verifyStoryCacheRejectsOutdatedPreparation() throws {
+    let original = storyKey([photo("first", date(2026, 8, 3))])
+    let replacement = storyKey([photo("replacement", date(2026, 8, 3))])
+    var cache = MonthlyStoryPreparationCache<String>()
+    let oldJob = cache.begin(original)
+    let newJob = cache.begin(replacement)
+    try require(cache.publish("current pages", for: newJob), "new preparation could not finish")
+    try require(!cache.publish("old pages finished later", for: oldJob),
+                "an in-flight old preparation overwrote the new permission/source generation")
+    try require(cache.cached(for: newJob) == "current pages", "old completion changed the current result")
+
+    let restored = cache.begin(original)
+    try require(!cache.publish("old pages", for: oldJob),
+                "changing inputs back admitted an old job from before the intervening change")
+    try require(cache.publish("rebuilt pages", for: restored), "restored inputs could not prepare anew")
+    let reopened = cache.begin(original)
+    try require(cache.cached(for: reopened) == "rebuilt pages",
+                "unchanged inputs did not retain the rebuilt story for reopening")
+}
+
+private func verifyStoryCacheKeepsMultipleMonthsWithinItsBound() throws {
+    let photos = (8...10).map { photo("month-\($0)", date(2026, $0, 3)) }
+    let keys = (8...10).map { storyKey(photos, month: $0) }
+    var cache = MonthlyStoryPreparationCache<String>(maximumMonths: 2)
+    let august = cache.begin(keys[0])
+    cache.publish("August", for: august)
+    let september = cache.begin(keys[1])
+    cache.publish("September", for: september)
+    try require(cache.isCurrent(august) && cache.cached(for: august) == "August",
+                "preparing another month invalidated the unchanged library generation")
+    let october = cache.begin(keys[2])
+    cache.publish("October", for: october)
+    try require(cache.cached(for: september) == nil, "least recently opened month exceeded the cache bound")
+    try require(cache.cached(for: august) == "August" && cache.cached(for: october) == "October",
+                "bounded eviction discarded a recent month or the latest prepared work")
 }
 
 private func verifyBrowserCoverAndRefreshedMembership() throws {
