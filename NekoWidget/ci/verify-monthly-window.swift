@@ -112,8 +112,8 @@ private func verifyMinimumAndExactDuplicateBoundary() throws {
     try require(proposal.photos.count == 5, "the minimum ready proposal was not 5 scenes")
     try require(proposal.photos.map(\.localIdentifier) == (1...5).map { "photo-\($0)" },
                 "ready photos were not ordered as a story from oldest to newest")
-    try require(proposal.title == "8月の猫たち", "monthly title changed")
-    try require(proposal.accessibilityTitle == "2026年8月の猫たち",
+    try require(proposal.title == "8月のまとめ", "monthly title changed")
+    try require(proposal.accessibilityTitle == "2026年8月のまとめ",
                 "accessible monthly title lost its year")
     try require(proposal.periodIdentifier == "2026-08",
                 "monthly read receipt identifier changed")
