@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, readFile, readdir, writeFile, symlink } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, readdir, writeFile, symlink, realpath } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,9 @@ function jpeg(i) {
   const bytes = Buffer.from(JPEG); bytes.writeUInt16BE(i + 1, 14); return bytes;
 }
 async function fixture(count = 1) {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'neko-black-cat-days-'));
+  // macOS exposes its temporary directory through /var -> /private/var.
+  // Give the strict publisher tool the physical test path, without relaxing it.
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'neko-black-cat-days-')));
   const input = path.join(root, 'private-source-filenames'), output = path.join(root, 'candidate');
   await mkdir(input);
   const files = [];

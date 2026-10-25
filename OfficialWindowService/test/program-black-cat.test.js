@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import worker, { validateProgram } from '../src/program.js';
@@ -10,7 +10,7 @@ import { hash } from '../tools/schedule_bundle.mjs';
 const DAY = 86400000;
 const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AP7//2Q==', 'base64');
 async function fixture(days) {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'neko-black-worker-'));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'neko-black-worker-')));
   const input = path.join(root, 'input'), output = path.join(root, 'candidate');
   await mkdir(input);
   const hashes = [];
