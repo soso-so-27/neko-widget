@@ -173,6 +173,13 @@ private enum CloudyWindowVerifier {
         try check(f.store.albumPriorityPhotoIDs(now: closing).isEmpty, "only current or next closing accepted")
         try deliver(f, now: closing)
         let delivered = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try f.store.synchronizeAlbumArrival(enabled: true, enabledAt: baseline,
+            openedPeriods: [], arrival: nil, now: closing)
+        let unavailable = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try check(unavailable.selection.albumPeriod == nil && unavailable.photo.photoID == delivered.photo.photoID,
+                  "resolved unavailable story clears only its unrevealed label")
+        try deliver(f, now: closing)
+        _ = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)
         try deliver(f, now: closing, opened: ["2026-10"])
         let readElsewhere = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
         try check(readElsewhere.selection.albumPeriod == nil && readElsewhere.photo.photoID == delivered.photo.photoID,

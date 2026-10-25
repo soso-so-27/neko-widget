@@ -214,7 +214,8 @@ struct CloudyWindowStore: Sendable {
             }
             let oldSelections = state.selections
             for index in state.selections.indices where state.selections[index].revealedAt == nil {
-                if let period = state.selections[index].albumPeriod, openedPeriods.contains(period) {
+                if let period = state.selections[index].albumPeriod,
+                   openedPeriods.contains(period) || (enabled && period != valid?.period) {
                     state.selections[index].albumPeriod = nil
                 }
             }
