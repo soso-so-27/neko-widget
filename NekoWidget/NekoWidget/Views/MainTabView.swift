@@ -443,74 +443,95 @@ struct MainTabView: View {
             lastViewedTab = tab.rawValue
             selectedTab = tab
         })) {
-            NavigationStack(path: $memoriesPath) {
-                albumRoot
-                    .navigationDestination(for: AlbumRoute.self) { route in
-                        albumDestination(for: route, defaultScope: .everyone)
-                    }
-                    .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                    .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) }
+            // 新しいアルバム（試作）: 写真・まど・アルバム・ツール. Otherwise the shipping order.
+            if AlbumPrototype.isOn(albumPrototypeStored) {
+                photosTab
+                windowsTab
+                albumTab
+                toolsTab
+            } else {
+                albumTab
+                photosTab
+                windowsTab
+                toolsTab
             }
-            .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
-            .tabItem {
-                Label("アルバム", systemImage: "photo.stack.fill")
-                    .accessibilityIdentifier("main-tab-memories")
-            }
-            .badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)
-            .tag(AppTab.memories)
+        }
+    }
 
-            NavigationStack(path: $photosPath) {
-                photoLibrary
-                .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
-                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0, libraryContext: true) }
+    private var albumTab: some View {
+        NavigationStack(path: $memoriesPath) {
+            albumRoot
                 .navigationDestination(for: AlbumRoute.self) { route in
                     albumDestination(for: route, defaultScope: .everyone)
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-            }
-            .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
-            .environment(\.catProfilePhotoDestination, { profileID, photoID in
-                AnyView(albumPhotoDetail(for: .allCatPhotos,
-                    localIdentifier: photoID, scope: .profile(profileID)))
-            })
-            .tabItem {
-                Label("写真", systemImage: "photo.on.rectangle.angled")
-                    .accessibilityIdentifier("main-tab-photos")
-            }
-            .tag(AppTab.photos)
-
-            if SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
-                || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
-                NavigationStack {
-                    WindowListView(
-                        opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
-                        pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
-                        pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
-                        showSettings: { showsSettings = true }
-                    )
-                }
-                // The window screens start 「写真を届ける」 from these cat photos.
-                // Set on the stack: pushed screens take the stack's environment.
-                .environment(\.groupWindowCatPhotos, catPhotos)
-                .tabItem {
-                    Label("まど", systemImage: "window.vertical.closed")
-                        .accessibilityIdentifier("main-tab-windows")
-                }
-                .badge(newMadoPhotoCount)
-                .tag(AppTab.windows)
-            }
-
-            NavigationStack {
-                toolsView
-            }
-            .tabItem {
-                Label("ツール", systemImage: "wrench.and.screwdriver")
-                    .accessibilityIdentifier("main-tab-tools")
-            }
-            .tag(AppTab.tools)
+                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) }
         }
+        .environment(\.photoRelatedAlbums, relatedAlbums)
+        .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
+        .tabItem {
+            Label("アルバム", systemImage: "photo.stack.fill")
+                .accessibilityIdentifier("main-tab-memories")
+        }
+        .badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)
+        .tag(AppTab.memories)
+    }
+
+    private var photosTab: some View {
+        NavigationStack(path: $photosPath) {
+            photoLibrary
+            .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
+            .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0, libraryContext: true) }
+            .navigationDestination(for: AlbumRoute.self) { route in
+                albumDestination(for: route, defaultScope: .everyone)
+            }
+            .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
+        }
+        .environment(\.photoRelatedAlbums, relatedAlbums)
+        .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
+        .environment(\.catProfilePhotoDestination, { profileID, photoID in
+            AnyView(albumPhotoDetail(for: .allCatPhotos,
+                localIdentifier: photoID, scope: .profile(profileID)))
+        })
+        .tabItem {
+            Label("写真", systemImage: "photo.on.rectangle.angled")
+                .accessibilityIdentifier("main-tab-photos")
+        }
+        .tag(AppTab.photos)
+    }
+
+    @ViewBuilder private var windowsTab: some View {
+        if SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
+            || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
+            NavigationStack {
+                WindowListView(
+                    opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
+                    pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
+                    pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
+                    showSettings: { showsSettings = true }
+                )
+            }
+            // The window screens start 「写真を届ける」 from these cat photos.
+            // Set on the stack: pushed screens take the stack's environment.
+            .environment(\.groupWindowCatPhotos, catPhotos)
+            .tabItem {
+                Label("まど", systemImage: "window.vertical.closed")
+                    .accessibilityIdentifier("main-tab-windows")
+            }
+            .badge(newMadoPhotoCount)
+            .tag(AppTab.windows)
+        }
+    }
+
+    private var toolsTab: some View {
+        NavigationStack {
+            toolsView
+        }
+        .tabItem {
+            Label("ツール", systemImage: "wrench.and.screwdriver")
+                .accessibilityIdentifier("main-tab-tools")
+        }
+        .tag(AppTab.tools)
     }
 
     private var presentedTabContent: some View {
@@ -1220,8 +1241,47 @@ struct MainTabView: View {
                 photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
             readingPositionKey: photoLibraryPositionKey,
             showsCatProfileNavigation: false,
-            headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker)
+            headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker),
+            themeRow: AlbumPrototype.isOn(albumPrototypeStored) && hasPhotoAccess && !photoThemeAlbums.isEmpty
+                ? AnyView(photoThemeRow) : nil
         )
+    }
+
+    /// 新しいアルバム（試作）: the album keeps only works; themes, growth and
+    /// time collections are browsed from the 写真 tab instead.
+    private var photoThemeAlbums: [CuratedAlbumPresentation] {
+        (currentHouseholdAlbumCatalog?.sections ?? [])
+            .filter { $0.id != .all }
+            .flatMap(\.albums)
+            .filter { !$0.photos.isEmpty }
+    }
+
+    private var photoThemeRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(photoThemeAlbums) { album in
+                    NavigationLink(value: AlbumRoute.album(album.id)) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
+                                                catBoundingBox: album.coverPhoto.catBoundingBox,
+                                                targetPixelSize: CGSize(width: 240, height: 240))
+                                .frame(width: 88, height: 88)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            Text(album.cardTitle)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .frame(width: 88, alignment: .leading)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(album.cardTitle)
+                    .accessibilityIdentifier("photos-theme-\(album.id.title)")
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .accessibilityIdentifier("photos-theme-row")
     }
 
     private var catProfileAlbumsDestination: CatProfileAlbumsDestination {

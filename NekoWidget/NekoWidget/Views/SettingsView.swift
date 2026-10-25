@@ -353,7 +353,7 @@ struct SettingsView: View {
                             Text(cloudyWindowError).foregroundStyle(.red)
                         }
                         // The album as works that arrive, with the monthly story.
-                        Toggle("新しいアルバム（試作）", isOn: $albumPrototypeOn)
+                        Toggle("新しいアルバムとタブの並び（試作）", isOn: $albumPrototypeOn)
                             .accessibilityIdentifier("settings-album-prototype")
                         NavigationLink {
                             advancedDiagnosticsView
