@@ -39,6 +39,7 @@ struct NekoWidgetEntry: TimelineEntry {
     var officialPhoto: OfficialCatPhoto? = nil
     var personalRediscoveryAction: PersonalRediscoveryAction = .unavailable
     var personalSelectionPaused: Bool = false
+    var cloudyWindowSelection: CloudyWindowSelection? = nil
     /// The group window photo this entry shows, for its heart button.
     var groupWindowPhoto: GroupWindowPhotoReference? = nil
 
@@ -69,6 +70,7 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     var photoURL: URL? {
+        if let cloudyWindowSelection, cloudyWindowSelection.revealedAt == nil { return nil }
         if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {
             return GroupWidgetCache.openURL(windowID: groupWindowID)
         }

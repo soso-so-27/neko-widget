@@ -62,6 +62,9 @@ struct AppRootView: View {
         } photo: { opening, close in
             widgetPhotoDestination(opening, close: close)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .cloudyWindowConfigurationChanged)) { _ in
+            Task { await viewModel.refreshCloudyWindow() }
+        }
         .sheet(isPresented: $showsInvitationJoin, onDismiss: {
             if let next = invitationAfterHelp {
                 invitationAfterHelp = nil

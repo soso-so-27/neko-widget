@@ -2633,6 +2633,7 @@ struct PhotoBrowserView: View {
     let showsWidgetTiming: Bool
     let setMemorySaved: (String, Bool) -> Void
     let navigationTitleText: String
+    let legacyBirthday: Date?
     let exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)?
     let excludedCatCandidateIdentifiers: Set<String>
     let excludeFromCatCandidates: ([String]) -> Void
@@ -2690,7 +2691,8 @@ struct PhotoBrowserView: View {
         dayCollectionDate: Date? = nil,
         rediscoveryStore: PersonalRediscoveryStore? = nil,
         memoryNoteStore: PhotoMemoryNoteStore = .shared,
-        navigationTitle: String = "写真"
+        navigationTitle: String = "写真",
+        legacyBirthday: Date? = nil
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -2703,6 +2705,7 @@ struct PhotoBrowserView: View {
         )
 
         self.navigationTitleText = navigationTitle
+        self.legacyBirthday = legacyBirthday
         self.photos = photos
         self.libraryPhotos = libraryPhotos
         self.initialPhoto = initialPhoto
@@ -2747,6 +2750,11 @@ struct PhotoBrowserView: View {
                 if let selectedPhoto {
                     photoDate(selectedPhoto).frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
+                    if navigationTitleText == "この1枚", let age = cloudyPhotoAge(selectedPhoto) {
+                        Text(age).font(.subheadline).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+                            .accessibilityIdentifier("cloudy-photo-age")
+                    }
                 }
             PhotoBrowserPager(
                 photos: browserPhotos,
@@ -2801,6 +2809,12 @@ struct PhotoBrowserView: View {
         VStack(spacing: 8) {
             if let selectedPhoto {
                 quickActions(selectedPhoto)
+                if navigationTitleText == "この1枚", let date = selectedPhoto.creationDate,
+                   photos(onSameDayAs: date).count > 1 {
+                    sameDayLink(for: selectedPhoto, date: date, dateText: "同じ日の写真")
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("cloudy-photo-same-day")
+                }
                 if let note = personalNote.note(for: selectedPhoto.localIdentifier) {
                     Button {
                         personalNotePhoto = selectedPhoto
@@ -3203,6 +3217,7 @@ struct PhotoBrowserView: View {
             Text("まどから届いた写真です。写真アプリへコピーした写真は、外してもそのまま残ります。")
         }
         .task(id: selectedPhotoIdentifier) {
+            CloudyWindowStore.shared.noteViewed(photoID: selectedPhotoIdentifier)
             await personalNote.load(for: selectedPhotoIdentifier)
         }
         .sheet(item: $groupDelivery) { request in
@@ -3313,6 +3328,25 @@ struct PhotoBrowserView: View {
         return SharingAPIConfiguration.current.isMediaAvailable
             && SharingAPIConfiguration.current.isShareExtensionHandoffAvailable
             && GroupWindowClientProvider.ui == nil
+    }
+
+    private func cloudyPhotoAge(_ photo: PhotoPresentation) -> String? {
+        guard let date = photo.creationDate else { return nil }
+        func ageText(since birthday: Date) -> String? {
+            guard date >= birthday else { return nil }
+            let components = CloudyWindowStore.calendar.dateComponents([.year, .month], from: birthday, to: date)
+            let years = components.year ?? 0, months = components.month ?? 0
+            return years == 0 ? "生後\(months)か月ごろ" : "\(years)歳ごろ"
+        }
+        if profiles.isEmpty, let legacyBirthday { return ageText(since: legacyBirthday) }
+        let assigned = assignmentsByPhotoIdentifier[photo.localIdentifier] ?? []
+        let values = profiles.filter { assigned.contains($0.identifier) }.compactMap { profile -> String? in
+            let birthday = profile.lifeDates.birthday
+                ?? (profile.lifeReference?.kind == .birthday ? profile.lifeReference : nil)
+            guard let birthday, let age = ageText(since: birthday.date) else { return nil }
+            return "\(profile.displayName)・\(age)"
+        }
+        return values.isEmpty ? nil : values.joined(separator: "　")
     }
 
     private func addToShowcase(_ identifier: String, scopeID: String) {

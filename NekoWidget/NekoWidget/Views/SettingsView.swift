@@ -89,7 +89,11 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeOn = false
     @State private var showsWindowSupportPreview = false
+    @State private var cloudyWindowEnabled = CloudyWindowStore.shared.configuration().enabled
+    @State private var cloudyWindowStrength = CloudyWindowStore.shared.configuration().strength
+    @State private var cloudyWindowError: String?
 
     private var canOpenMembershipOffer: Bool {
         PlusOfferAvailability.isConfigured
@@ -198,12 +202,14 @@ struct SettingsView: View {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
-                NavigationLink {
-                    PersonalRediscoveryHistoryView()
-                } label: {
-                    Label("今日の一枚を選び直す", systemImage: "clock.arrow.circlepath")
+                if !cloudyWindowEnabled {
+                    NavigationLink {
+                        PersonalRediscoveryHistoryView()
+                    } label: {
+                        Label("今日の一枚を選び直す", systemImage: "clock.arrow.circlepath")
+                    }
+                    .accessibilityIdentifier("settings-personal-rediscovery")
                 }
-                .accessibilityIdentifier("settings-personal-rediscovery")
             } header: {
                 Text("ホーム画面")
             }
@@ -318,6 +324,37 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings-window-support-preview")
                     }
                     if InternalBuildPresentationAvailability.isAvailable {
+                        Toggle("くもりのまど", isOn: $cloudyWindowEnabled)
+                            .accessibilityIdentifier("settings-cloudy-window")
+                            .onChange(of: cloudyWindowEnabled) { _, _ in saveCloudyWindowConfiguration() }
+                        if cloudyWindowEnabled {
+                            Picker("くもりの強さ", selection: $cloudyWindowStrength) {
+                                ForEach(CloudyWindowStrength.allCases, id: \.self) { strength in
+                                    Text(strength.title).tag(strength)
+                                }
+                            }
+                            .accessibilityIdentifier("settings-cloudy-strength")
+                            .onChange(of: cloudyWindowStrength) { _, _ in saveCloudyWindowConfiguration() }
+                        }
+                        if cloudyWindowEnabled {
+                            // To see the clearing again today (test builds only).
+                            Button("きょうのまどをもう一度くもらせる") {
+                                do {
+                                    try CloudyWindowStore.shared.cloudTodayAgain()
+                                    cloudyWindowError = nil
+                                    NotificationCenter.default.post(name: .cloudyWindowConfigurationChanged, object: nil)
+                                } catch {
+                                    cloudyWindowError = "くもらせられませんでした。もう一度お試しください。"
+                                }
+                            }
+                            .accessibilityIdentifier("settings-cloudy-again")
+                        }
+                        if let cloudyWindowError {
+                            Text(cloudyWindowError).foregroundStyle(.red)
+                        }
+                        // The album as works that arrive, with the monthly story.
+                        Toggle("新しいアルバムとタブの並び（試作）", isOn: $albumPrototypeOn)
+                            .accessibilityIdentifier("settings-album-prototype")
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {
@@ -395,6 +432,19 @@ struct SettingsView: View {
                 .presentationDetents([.medium, .large])
         }
         .onDisappear(perform: cleanupVerificationExport)
+    }
+
+    private func saveCloudyWindowConfiguration() {
+        do {
+            try CloudyWindowStore.shared.configure(enabled: cloudyWindowEnabled, strength: cloudyWindowStrength)
+            cloudyWindowError = nil
+            NotificationCenter.default.post(name: .cloudyWindowConfigurationChanged, object: nil)
+        } catch {
+            let stored = CloudyWindowStore.shared.configuration()
+            cloudyWindowEnabled = stored.enabled
+            cloudyWindowStrength = stored.strength
+            cloudyWindowError = "くもりのまどの設定を保存できませんでした。もう一度お試しください。"
+        }
     }
 
     private var appVersion: String {

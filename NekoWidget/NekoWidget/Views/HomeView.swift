@@ -321,6 +321,8 @@ struct HomeView: View {
     let showsCatProfileNavigation: Bool
     /// Shown at the right of the 「猫写真」 heading (the 写真 tab's cat switch).
     let headerAccessory: AnyView?
+    /// Above the grid: themes and growth (新しいアルバム（試作）only).
+    let themeRow: AnyView?
 
     /// Rows are built lazily, so a large batch costs little; fewer appends
     /// mean fewer layout passes while the grid is moving.
@@ -351,8 +353,10 @@ struct HomeView: View {
         supplementaryPhotos: AnyView? = nil,
         readingPositionKey: String? = nil,
         showsCatProfileNavigation: Bool = true,
-        headerAccessory: AnyView? = nil
+        headerAccessory: AnyView? = nil,
+        themeRow: AnyView? = nil
     ) {
+        self.themeRow = themeRow
         self.catPhotos = catPhotos
         self.scan = scan
         self.hasPhotoAccess = hasPhotoAccess
@@ -388,6 +392,8 @@ struct HomeView: View {
                         if isLimitedAccess {
                             LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                         }
+
+                        if let themeRow { themeRow }
 
                         if showsCatProfileNavigation { catProfilesSection }
 

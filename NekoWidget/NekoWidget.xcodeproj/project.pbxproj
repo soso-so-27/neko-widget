@@ -94,6 +94,7 @@
 		100000000000000000000116 /* PhotoLibraryScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000216 /* PhotoLibraryScanner.swift */; };
 		100000000000000000000117 /* PhotoSelectors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000217 /* PhotoSelectors.swift */; };
 		100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000218 /* WidgetCacheBuilder.swift */; };
+		A261024B0000000000000005 /* CloudyWindowImagePreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000004 /* CloudyWindowImagePreparer.swift */; };
 		100000000000000000000119 /* AppLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000219 /* AppLogStore.swift */; };
 		100000000000000000000120 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000220 /* AppViewModel.swift */; };
 		100000000000000000000142 /* PairingInstallationGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021A /* PairingInstallationGuard.swift */; };
@@ -152,6 +153,7 @@
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */; };
 		100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025B /* MonthlyWindowPresentation.swift */; };
+		A261024C0000000000000002 /* AlbumPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024C0000000000000001 /* AlbumPrototypeView.swift */; };
 		10000000000000000000017A /* MonthlyWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025C /* MonthlyWindowView.swift */; };
 		10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025D /* SeasonalMoviePresentation.swift */; };
 		10000000000000000000017C /* SeasonalMovieCandidateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025E /* SeasonalMovieCandidateService.swift */; };
@@ -250,11 +252,15 @@
 		D02609100000000000000202 /* OfficialWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000200 /* OfficialWindowStore.swift */; };
 		D02609100000000000000301 /* OfficialWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000300 /* OfficialWindowView.swift */; };
 		A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000001 /* PersonalRediscoveryStore.swift */; };
+		A261024B0000000000000002 /* CloudyWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000001 /* CloudyWindowStore.swift */; };
 		A16700000000000000000070 /* PersonalRediscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000001 /* PersonalRediscoveryStore.swift */; };
+		A261024B0000000000000003 /* CloudyWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000001 /* CloudyWindowStore.swift */; };
 		A16700000000000000000079 /* PersonalWidgetBackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */; };
 		A16700000000000000000083 /* PersonalRediscoveryHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */; };
 		A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
+		A261024B0000000000000007 /* RevealCloudyWindowIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */; };
 		A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
+		A261024B0000000000000008 /* RevealCloudyWindowIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */; };
 		AA2610200000000000000002 /* GroupWindowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000001 /* GroupWindowCore.swift */; };
 		CC261020000000000000000A /* GroupWidgetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000009 /* GroupWidgetCache.swift */; };
 		CC261020000000000000000B /* GroupWidgetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000009 /* GroupWidgetCache.swift */; };
@@ -408,6 +414,7 @@
 		F00000000000000000000216 /* PhotoLibraryScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryScanner.swift; sourceTree = "<group>"; };
 		F00000000000000000000217 /* PhotoSelectors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSelectors.swift; sourceTree = "<group>"; };
 		F00000000000000000000218 /* WidgetCacheBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheBuilder.swift; sourceTree = "<group>"; };
+		A261024B0000000000000004 /* CloudyWindowImagePreparer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudyWindowImagePreparer.swift; sourceTree = "<group>"; };
 		F00000000000000000000219 /* AppLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000220 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		F0000000000000000000021A /* PairingInstallationGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingInstallationGuard.swift; sourceTree = "<group>"; };
@@ -422,6 +429,7 @@
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
 		BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HouseholdAlbumCatalogCoordinator.swift; sourceTree = "<group>"; };
 		F0000000000000000000025B /* MonthlyWindowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowPresentation.swift; sourceTree = "<group>"; };
+		A261024C0000000000000001 /* AlbumPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumPrototypeView.swift; sourceTree = "<group>"; };
 		F0000000000000000000025C /* MonthlyWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowView.swift; sourceTree = "<group>"; };
 		F0000000000000000000025D /* SeasonalMoviePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMoviePresentation.swift; sourceTree = "<group>"; };
 		F0000000000000000000025E /* SeasonalMovieCandidateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieCandidateService.swift; sourceTree = "<group>"; };
@@ -525,9 +533,11 @@
 		D02609100000000000000200 /* OfficialWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowStore.swift; sourceTree = "<group>"; };
 		D02609100000000000000300 /* OfficialWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowView.swift; sourceTree = "<group>"; };
 		A16700000000000000000001 /* PersonalRediscoveryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalRediscoveryStore.swift; sourceTree = "<group>"; };
+		A261024B0000000000000001 /* CloudyWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudyWindowStore.swift; sourceTree = "<group>"; };
 		A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetBackgroundRefresh.swift; sourceTree = "<group>"; };
 		A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalRediscoveryHistoryView.swift; sourceTree = "<group>"; };
 		A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyPersonalPhotoIntent.swift; sourceTree = "<group>"; };
+		A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RevealCloudyWindowIntent.swift; sourceTree = "<group>"; };
 		AA2610200000000000000001 /* GroupWindowCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowCore.swift; sourceTree = "<group>"; };
 		CC2610200000000000000009 /* GroupWidgetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWidgetCache.swift; sourceTree = "<group>"; };
 		AA2610200000000000000003 /* GroupWindowContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowContract.swift; sourceTree = "<group>"; };
@@ -693,6 +703,7 @@
 				F0000000000000000000010C /* AtomicJSON.swift */,
 				F0000000000000000000010E /* SharedLikeStore.swift */,
 				A16700000000000000000001 /* PersonalRediscoveryStore.swift */,
+				A261024B0000000000000001 /* CloudyWindowStore.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -786,6 +797,7 @@
 				F0000000000000000000022C /* HomeLocationClassifier.swift */,
 				F00000000000000000000217 /* PhotoSelectors.swift */,
 				F00000000000000000000218 /* WidgetCacheBuilder.swift */,
+				A261024B0000000000000004 /* CloudyWindowImagePreparer.swift */,
 				E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */,
 				F00000000000000000000219 /* AppLogStore.swift */,
 				F0000000000000000000021A /* PairingInstallationGuard.swift */,
@@ -870,6 +882,7 @@
 				E02609210000000000000004 /* MembershipOfferView.swift */,
 				BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */,
 				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
+				A261024C0000000000000001 /* AlbumPrototypeView.swift */,
 				F0000000000000000000025C /* MonthlyWindowView.swift */,
 				F0000000000000000000025D /* SeasonalMoviePresentation.swift */,
 				F0000000000000000000025F /* SeasonalMovieView.swift */,
@@ -940,6 +953,7 @@
 				F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */,
 				CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */,
 				A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */,
+				A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */,
 				F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */,
 				F00000000000000000000301 /* Info.plist */,
 				F00000000000000000000302 /* NekoWidgetWidget.entitlements */,
@@ -1174,6 +1188,7 @@
 				E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */,
 				E02609220000000000000008 /* MembershipAccessContext.swift in Sources */,
 				A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */,
+				A261024B0000000000000002 /* CloudyWindowStore.swift in Sources */,
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
 				100000000000000000000140 /* PairingCore.swift in Sources */,
 				100000000000000000000141 /* PairingKeychainStore.swift in Sources */,
@@ -1215,6 +1230,7 @@
 				10000000000000000000014E /* HomeLocationClassifier.swift in Sources */,
 				100000000000000000000117 /* PhotoSelectors.swift in Sources */,
 				100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */,
+				A261024B0000000000000005 /* CloudyWindowImagePreparer.swift in Sources */,
 				E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */,
 				100000000000000000000119 /* AppLogStore.swift in Sources */,
 				100000000000000000000120 /* AppViewModel.swift in Sources */,
@@ -1235,6 +1251,7 @@
 				E02609210000000000000003 /* MembershipOfferView.swift in Sources */,
 				BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */,
 				100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */,
+				A261024C0000000000000002 /* AlbumPrototypeView.swift in Sources */,
 				10000000000000000000017A /* MonthlyWindowView.swift in Sources */,
 				10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */,
 				10000000000000000000017C /* SeasonalMovieCandidateService.swift in Sources */,
@@ -1341,6 +1358,7 @@
 				100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */,
 				CC261020000000000000000D /* SendGroupWidgetHeartIntent.swift in Sources */,
 				A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */,
+				A261024B0000000000000007 /* RevealCloudyWindowIntent.swift in Sources */,
 				10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1366,6 +1384,7 @@
 				E02609220000000000000003 /* MembershipAccessPolicy.swift in Sources */,
 				E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */,
 				A16700000000000000000070 /* PersonalRediscoveryStore.swift in Sources */,
+				A261024B0000000000000003 /* CloudyWindowStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,
 				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
@@ -1377,6 +1396,7 @@
 				200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */,
 				CC261020000000000000000E /* SendGroupWidgetHeartIntent.swift in Sources */,
 				A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */,
+				A261024B0000000000000008 /* RevealCloudyWindowIntent.swift in Sources */,
 				E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */,
 				E0260923000000000000000C /* ShowcaseControl.swift in Sources */,
 				200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */,
