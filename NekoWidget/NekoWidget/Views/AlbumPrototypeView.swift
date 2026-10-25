@@ -8,6 +8,70 @@ enum AlbumPrototype {
     static let key = "debug.albumPrototype.v1"
     static let enabledAtKey = "debug.albumPrototype.enabledAt.v1"
     static let openedKey = "debug.albumPrototype.opened.v1"
+    /// Test only: deliver this year's work today instead of on 12/6.
+    static let yearNowKey = "debug.albumPrototype.yearNow.v1"
+
+    /// The year's work arrives on 12/6: inside the early-December wave of year
+    /// reviews, after November's work (12/1), before the holidays. December's
+    /// own photos come with December's work on 1/1.
+    static let yearArrival = (month: 12, day: 6)
+
+    static func yearArrivalDate(_ year: Int) -> Date? {
+        Calendar.current.date(from: DateComponents(year: year, month: yearArrival.month, day: yearArrival.day))
+    }
+
+    /// Years whose work has arrived, newest first: earlier years with photos,
+    /// and this year once 12/6 has come (or the test switch says now).
+    static func arrivedYears(from catPhotos: [PhotoPresentation], now: Date = Date(), deliverNow: Bool) -> [Int] {
+        let calendar = Calendar.current
+        let thisYear = calendar.component(.year, from: now)
+        var counts: [Int: Int] = [:]
+        for photo in catPhotos {
+            if let date = photo.creationDate { counts[calendar.component(.year, from: date), default: 0] += 1 }
+        }
+        return counts.filter { entry in
+            let year = entry.key
+            guard entry.value >= 9 else { return false }
+            if year < thisYear { return true }
+            guard year == thisYear else { return false }
+            return deliverNow || (yearArrivalDate(year).map { now >= $0 } ?? false)
+        }.keys.sorted(by: >)
+    }
+
+    /// Every cat photo taken in `year`.
+    static func photos(inYear year: Int, from catPhotos: [PhotoPresentation]) -> [PhotoPresentation] {
+        let calendar = Calendar.current
+        return catPhotos.filter { photo in
+            photo.creationDate.map { calendar.component(.year, from: $0) == year } ?? false
+        }
+    }
+
+    /// The year's nine: the best photos, at most two from one month, so the
+    /// nine are the whole year and not one good week.
+    static func pickYear(_ photos: [PhotoPresentation]) -> [PhotoPresentation] {
+        let calendar = Calendar.current
+        var chosen: [PhotoPresentation] = []
+        var perMonth: [Int: Int] = [:]
+        var days: Set<Date> = []
+        let ranked = photos.sorted { score($0) > score($1) }
+        for photo in ranked {
+            guard chosen.count < 9 else { break }
+            if let date = photo.creationDate {
+                let month = calendar.component(.month, from: date)
+                let day = calendar.startOfDay(for: date)
+                guard perMonth[month, default: 0] < 2, !days.contains(day) else { continue }
+                perMonth[month, default: 0] += 1
+                days.insert(day)
+            }
+            chosen.append(photo)
+        }
+        // A thin year: fill up with what is left, best first.
+        if chosen.count < 9 {
+            let ids = Set(chosen.map(\.localIdentifier))
+            chosen += ranked.filter { !ids.contains($0.localIdentifier) }.prefix(9 - chosen.count)
+        }
+        return chosen
+    }
 
     static func isOn(_ stored: Bool) -> Bool {
         stored && InternalBuildPresentationAvailability.isAvailable
@@ -98,7 +162,21 @@ struct AlbumPrototypeView: View {
 
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
+    @AppStorage(AlbumPrototype.yearNowKey) private var yearNow = false
     @State private var story: MonthlyWindowPresentation?
+    @State private var yearStory: YearStory?
+
+    struct YearStory: Identifiable { let year: Int; var id: Int { year } }
+
+    private var arrivedYears: [Int] {
+        AlbumPrototype.arrivedYears(from: catPhotos, deliverNow: yearNow)
+    }
+
+    /// This year's work, from 12/6 until December's own work arrives on 1/1.
+    private var heroYear: Int? {
+        let thisYear = calendar.component(.year, from: Date())
+        return arrivedYears.first == thisYear ? thisYear : nil
+    }
 
     private var opened: Set<String> {
         Set(openedJSON.split(separator: ",").map(String.init))
@@ -130,7 +208,9 @@ struct AlbumPrototypeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if let latest = letters.first {
+                if let heroYear {
+                    yearCard(heroYear)
+                } else if let latest = letters.first {
                     latestCard(latest)
                 }
                 if let next = nextDelivery {
@@ -145,14 +225,16 @@ struct AlbumPrototypeView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("album-prototype-next")
                 }
-                if letters.count > 1 || !movies.isEmpty {
+                let pastLetters = heroYear == nil ? Array(letters.dropFirst()) : letters
+                let pastYears = arrivedYears.filter { $0 != heroYear }
+                if !pastLetters.isEmpty || !movies.isEmpty || !pastYears.isEmpty {
                     NavigationLink {
-                        PastWorksView(letters: Array(letters.dropFirst()), movies: movies, catPhotos: catPhotos,
+                        PastWorksView(letters: pastLetters, years: pastYears, movies: movies, catPhotos: catPhotos,
                                       assignments: assignments, profileNames: profileNames, openMovie: openMovie)
                     } label: {
                         HStack(spacing: 12) {
                             HStack(spacing: -10) {
-                                ForEach(Array(letters.dropFirst().prefix(3))) { letter in
+                                ForEach(Array(pastLetters.prefix(3))) { letter in
                                     Color.clear.frame(width: 34, height: 34)
                                         .overlay {
                                             if let photo = Self.cover(of: letter, from: catPhotos) {
@@ -166,7 +248,7 @@ struct AlbumPrototypeView: View {
                                             .stroke(Color(.secondarySystemGroupedBackground), lineWidth: 2))
                                 }
                             }
-                            Text(verbatim: "これまでの作品　\(letters.count - 1 + movies.count)")
+                            Text(verbatim: "これまでの作品　\(pastLetters.count + pastYears.count + movies.count)")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                             Spacer()
@@ -201,6 +283,57 @@ struct AlbumPrototypeView: View {
             MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                              assignments: assignments, profileNames: profileNames)
         }
+        .fullScreenCover(item: $yearStory) { story in
+            YearStoryView(year: story.year, catPhotos: catPhotos,
+                          assignments: assignments, profileNames: profileNames)
+        }
+    }
+
+    /// The year's work, as large as a month's, with its own wrapping.
+    private func yearCard(_ year: Int) -> some View {
+        let wrapped = !opened.contains(YearStoryView.periodIdentifier(year))
+        let photos = AlbumPrototype.photos(inYear: year, from: catPhotos)
+        let cover = AlbumPrototype.pickYear(photos).first
+        let names = AlbumPrototype.names(for: photos, assignments: assignments, profileNames: profileNames)
+        return Button { yearStory = YearStory(year: year) } label: {
+            Color.clear
+                .aspectRatio(0.82, contentMode: .fit)
+                .overlay {
+                    if let cover {
+                        PhotoAssetImageView(localIdentifier: cover.localIdentifier,
+                                            catBoundingBox: cover.catBoundingBox,
+                                            targetPixelSize: CGSize(width: 1100, height: 1100),
+                                            targetAspectRatio: 0.82)
+                            .blur(radius: wrapped ? 18 : 0)
+                            .scaleEffect(wrapped ? 1.08 : 1)
+                    }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    HStack(alignment: .bottom) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(wrapped ? "1 年の作品がとどきました" : "1 年の作品")
+                                .font(.caption.weight(.bold)).tracking(2).opacity(0.9)
+                            Text(verbatim: String(year))
+                                .font(.system(size: 58, weight: .bold, design: .serif))
+                            Text(names).font(.footnote).opacity(0.9)
+                        }
+                        Spacer()
+                        Text(wrapped ? "開ける" : "見る")
+                            .font(.subheadline.weight(.bold))
+                            .padding(.horizontal, 16).padding(.vertical, 8)
+                            .background(.white, in: Capsule())
+                            .foregroundStyle(.black)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(16)
+                    .padding(.top, 60)
+                    .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(year)年の作品、\(wrapped ? "届きました。開ける" : "見る")")
+        .accessibilityIdentifier("album-prototype-year")
     }
 
     private func open(_ letter: MonthlyWindowPresentation) {
@@ -275,6 +408,7 @@ struct AlbumPrototypeView: View {
 /// written on each, seasonal movies after them.
 struct PastWorksView: View {
     let letters: [MonthlyWindowPresentation]
+    var years: [Int] = []
     let movies: [SeasonalMovieArchiveRecord]
     let catPhotos: [PhotoPresentation]
     let assignments: [String: Set<String>]
@@ -282,20 +416,29 @@ struct PastWorksView: View {
     let openMovie: (SeasonalMoviePeriodID) -> Void
 
     @State private var story: MonthlyWindowPresentation?
+    @State private var yearStory: AlbumPrototypeView.YearStory?
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
-    private var years: [Int] {
-        Array(Set(letters.map(\.yearNumber))).sorted(by: >)
+    private var shelves: [Int] {
+        Array(Set(letters.map(\.yearNumber)).union(years)).sorted(by: >)
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                ForEach(years, id: \.self) { year in
+                ForEach(shelves, id: \.self) { year in
                     Text(verbatim: String(year))
                         .font(.system(.title3, design: .serif).weight(.bold))
                         .accessibilityAddTraits(.isHeader)
                     LazyVGrid(columns: columns, spacing: 8) {
+                        if years.contains(year) {
+                            Button { yearStory = .init(year: year) } label: {
+                                cover(AlbumPrototype.pickYear(AlbumPrototype.photos(inYear: year, from: catPhotos)).first,
+                                      title: "\(year)年")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(year)年の作品")
+                        }
                         ForEach(letters.filter { $0.yearNumber == year }) { letter in
                             Button { story = letter } label: {
                                 cover(AlbumPrototypeView.cover(of: letter, from: catPhotos), title: "\(letter.monthNumber)月")
@@ -330,6 +473,10 @@ struct PastWorksView: View {
         .fullScreenCover(item: $story) { letter in
             MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                              assignments: assignments, profileNames: profileNames)
+        }
+        .fullScreenCover(item: $yearStory) { story in
+            YearStoryView(year: story.year, catPhotos: catPhotos,
+                          assignments: assignments, profileNames: profileNames)
         }
     }
 
@@ -582,7 +729,7 @@ struct MonthlyStoryView: View {
         return counts.max { $0.value < $1.value }?.key
     }
 
-    private static func thumbnail(_ identifier: String, side: CGFloat = 160) async -> UIImage? {
+    static func thumbnail(_ identifier: String, side: CGFloat = 160) async -> UIImage? {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
@@ -732,6 +879,243 @@ struct MonthlyStoryView: View {
 final class AlbumArrivalOpenInbox: ObservableObject {
     static let shared = AlbumArrivalOpenInbox()
     @Published var pending: CloudyWindowAlbumRoute?
+}
+
+/// The year's work: the year large, each month's own photo in turn, the year
+/// in numbers, and 「2026年の9枚」 to share. Same hands as the monthly story:
+/// pages advance by themselves, tap the sides to move, hold to pause.
+struct YearStoryView: View {
+    let year: Int
+    let catPhotos: [PhotoPresentation]
+    let assignments: [String: Set<String>]
+    let profileNames: [String: String]
+
+    static let pageSeconds: Double = 4
+    static let monthSeconds: Double = 2.2
+
+    static func periodIdentifier(_ year: Int) -> String { "Y\(year)" }
+
+    enum Page {
+        case cover(PhotoPresentation)
+        case month(Int, PhotoPresentation)
+        case stats(count: Int, bestMonth: Int?, companion: String?)
+        case card([PhotoPresentation])
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var index = 0
+    @State private var paused = false
+    @State private var cardImage: UIImage?
+    @State private var pages: [Page] = []
+    @State private var nine: [PhotoPresentation] = []
+    @State private var names = "うちの子"
+    @State private var isBuilt = false
+
+    private var cardTitle: String { "\(year)年の\(nine.count)枚" }
+
+    /// Built once when the story opens, not on every page turn.
+    private func build() {
+        let yearPhotos = AlbumPrototype.photos(inYear: year, from: catPhotos)
+        nine = AlbumPrototype.pickYear(yearPhotos)
+        names = AlbumPrototype.names(for: yearPhotos, assignments: assignments, profileNames: profileNames)
+        pages = Self.makePages(year: year, yearPhotos: yearPhotos, nine: nine, catPhotos: catPhotos,
+                           assignments: assignments, profileNames: profileNames)
+        isBuilt = true
+    }
+
+    private static func makePages(year: Int, yearPhotos: [PhotoPresentation], nine: [PhotoPresentation],
+                              catPhotos: [PhotoPresentation], assignments: [String: Set<String>],
+                              profileNames: [String: String]) -> [Page] {
+        let calendar = Calendar.current
+        guard let cover = nine.first else { return [] }
+        var result: [Page] = [.cover(cover)]
+        var monthCounts: [Int: Int] = [:]
+        for month in 1...12 {
+            guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else { continue }
+            let photos = AlbumPrototype.photos(in: start, from: catPhotos)
+            monthCounts[month] = photos.count
+            if let best = AlbumPrototype.pick(photos, count: 1).first { result.append(.month(month, best)) }
+        }
+        var counts: [String: Int] = [:]
+        for photo in yearPhotos { for id in assignments[photo.localIdentifier] ?? [] { counts[id, default: 0] += 1 } }
+        let companion = counts.max { $0.value < $1.value }.flatMap { profileNames[$0.key] }
+        let bestMonth = monthCounts.filter { $0.value > 0 }.max { $0.value < $1.value }?.key
+        result.append(.stats(count: yearPhotos.count, bestMonth: bestMonth, companion: companion))
+        result.append(.card(nine))
+        return result
+    }
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.11, green: 0.09, blue: 0.08).ignoresSafeArea()
+            if !isBuilt {
+                ProgressView().tint(.white)
+            } else if pages.indices.contains(index) {
+                pageView(pages[index])
+                    .id(index)
+                    .transition(.opacity)
+                    .onAppear { AlbumPrototype.markOpened(Self.periodIdentifier(year)) }
+            } else {
+                ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
+                                       description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                    .foregroundStyle(.white)
+            }
+            HStack(spacing: 0) {
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture { move(-1) }
+                    .accessibilityLabel("前のページ")
+                    .accessibilityAddTraits(.isButton)
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture { move(1) }
+                    .accessibilityLabel("次のページ")
+                    .accessibilityAddTraits(.isButton)
+            }
+            .onLongPressGesture(minimumDuration: 0.2, perform: {}, onPressingChanged: { paused = $0 })
+            .ignoresSafeArea()
+            VStack(spacing: 6) {
+                HStack(spacing: 3) {
+                    ForEach(0..<pages.count, id: \.self) { i in
+                        Capsule().fill(i <= index ? Color.white : Color.white.opacity(0.3)).frame(height: 2.5)
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").font(.headline).foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("閉じる")
+                }
+                Spacer()
+                if let cardImage, index == pages.count - 1 {
+                    ShareLink(item: Image(uiImage: cardImage),
+                              preview: SharePreview("\(names)の\(cardTitle)", image: Image(uiImage: cardImage))) {
+                        Label("画像にして共有", systemImage: "square.and.arrow.up")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.white)
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 16)
+                    .accessibilityIdentifier("year-story-share")
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+        .statusBarHidden()
+        .accessibilityIdentifier("year-story")
+        .onAppear { if !isBuilt { build() } }
+        .task(id: [index, paused ? 1 : 0, pages.count]) {
+            guard !paused, index + 1 < pages.count else { return }
+            let seconds: Double
+            if case .month = pages[index] { seconds = Self.monthSeconds } else { seconds = Self.pageSeconds }
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            move(1)
+        }
+        .task(id: nine.map(\.localIdentifier)) {
+            cardImage = nil
+            var images: [UIImage] = []
+            for photo in nine {
+                if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
+            }
+            guard !Task.isCancelled else { return }
+            cardImage = BestNineComposer.image(images, title: "\(names)　\(cardTitle)")
+        }
+    }
+
+    private func move(_ step: Int) {
+        let next = index + step
+        guard pages.indices.contains(next) else { return }
+        withAnimation(.easeInOut(duration: 0.4)) { index = next }
+    }
+
+    @ViewBuilder private func pageView(_ page: Page) -> some View {
+        switch page {
+        case let .cover(photo):
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer(minLength: 90)
+                Color.clear
+                    .aspectRatio(0.8, contentMode: .fit)
+                    .overlay {
+                        PhotoAssetImageView(localIdentifier: photo.localIdentifier, catBoundingBox: photo.catBoundingBox,
+                                            targetPixelSize: CGSize(width: 1000, height: 1000), targetAspectRatio: 0.8)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .shadow(color: .black.opacity(0.35), radius: 22, y: 12)
+                    .padding(.horizontal, 26)
+                Spacer(minLength: 20)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: String(year))
+                        .font(.system(size: 72, weight: .bold, design: .serif))
+                    Text(verbatim: "\(names)の 1 年")
+                        .font(.footnote.weight(.semibold)).tracking(2).opacity(0.9)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 54)
+            }
+        case let .month(month, photo):
+            KenBurnsPhoto(localIdentifier: photo.localIdentifier, reduceMotion: reduceMotion)
+                .overlay(alignment: .bottomLeading) {
+                    Text(verbatim: "\(month)月")
+                        .font(.system(size: 46, weight: .bold, design: .serif))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 44)
+                }
+        case let .stats(count, bestMonth, companion):
+            VStack(alignment: .leading, spacing: 22) {
+                Spacer()
+                stat(String(count), "\(year)年に撮った猫の写真")
+                if let bestMonth { stat("\(bestMonth)月", "いちばん撮った月") }
+                if let companion { stat(companion, "いちばん写っていた子", size: 30) }
+                Spacer()
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+        case let .card(photos):
+            VStack(spacing: 14) {
+                Spacer(minLength: 80)
+                Text(verbatim: cardTitle)
+                    .font(.system(size: 34, weight: .bold, design: .serif))
+                    .foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 8) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
+                        ForEach(photos) { photo in
+                            Color.clear.aspectRatio(1, contentMode: .fit)
+                                .overlay {
+                                    PhotoAssetImageView(localIdentifier: photo.localIdentifier,
+                                                        catBoundingBox: photo.catBoundingBox,
+                                                        targetPixelSize: CGSize(width: 400, height: 400),
+                                                        targetAspectRatio: 1)
+                                }
+                                .clipped()
+                        }
+                    }
+                    Text(verbatim: "\(names)　\(year)")
+                        .font(.system(.headline, design: .serif))
+                        .foregroundStyle(Color(red: 0.17, green: 0.14, blue: 0.12))
+                }
+                .padding(12)
+                .background(Color(red: 0.96, green: 0.95, blue: 0.92), in: RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 24)
+                Spacer(minLength: 110)
+            }
+        }
+    }
+
+    private func stat(_ value: String, _ caption: String, size: CGFloat = 46) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: value).font(.system(size: size, weight: .bold, design: .serif))
+            Text(caption).font(.caption.weight(.semibold)).tracking(1.5).opacity(0.8)
+        }
+    }
 }
 
 /// A story photo that drifts slowly closer while its page is shown.

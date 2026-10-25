@@ -90,6 +90,7 @@ struct SettingsView: View {
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
     @AppStorage(AlbumPrototype.key) private var albumPrototypeOn = false
+    @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
     @State private var showsWindowSupportPreview = false
     @State private var cloudyWindowEnabled = CloudyWindowStore.shared.configuration().enabled
     @State private var cloudyWindowStrength = CloudyWindowStore.shared.configuration().strength
@@ -360,6 +361,10 @@ struct SettingsView: View {
                                     UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: AlbumPrototype.enabledAtKey)
                                 }
                             }
+                        if albumPrototypeOn {
+                            Toggle("1 年の作品をいま届ける（12/6 を待たない）", isOn: $albumYearNow)
+                                .accessibilityIdentifier("settings-album-year-now")
+                        }
                         NavigationLink {
                             advancedDiagnosticsView
                         } label: {
