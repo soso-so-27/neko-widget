@@ -5107,7 +5107,7 @@ class WindowListOrderTests(unittest.TestCase):
     def test_shared_windows_first_and_public_windows_named(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
         self.assertLess(tab.index("GroupWindowListSection(client: groupClient)"), tab.index('.accessibilityIdentifier("window-list-receiving")'))
-        self.assertIn("if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {\n                        legacyPublicWindowEntry", tab)
+        self.assertIn("if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {\n                            legacyPublicWindowEntry", tab)
         self.assertIn("if InternalBuildPresentationAvailability.isAvailable { publicWindowEntry }", tab)
         self.assertIn('"window-list-start"', tab)
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
