@@ -175,6 +175,11 @@ struct AlbumPrototypeView: View {
     @AppStorage(AlbumPrototype.yearNowKey) private var yearNow = false
     @State private var story: MonthlyWindowPresentation?
     @State private var yearStory: YearStory?
+    @State private var clearingCard: String?
+    @Namespace private var zoom
+
+    /// How long a hold takes to clear a new work's cloud.
+    static let clearSeconds: Double = 0.9
 
     struct YearStory: Identifiable { let year: Int; var id: Int { year } }
 
@@ -283,10 +288,12 @@ struct AlbumPrototypeView: View {
         .fullScreenCover(item: $story) { letter in
             MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                              assignments: assignments, profileNames: profileNames)
+                .zoomTransition(letter.periodIdentifier, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
             YearStoryView(year: story.year, catPhotos: catPhotos,
                           assignments: assignments, profileNames: profileNames)
+                .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
         }
     }
 
@@ -295,14 +302,9 @@ struct AlbumPrototypeView: View {
     private func monthProgress(month: Int, arrives: Date, photoCount: Int) -> some View {
         let minimum = MonthlyWindowBuilder.minimumSceneCount
         let full = 9
-        let status: String
-        if photoCount < minimum {
-            status = "あと \(minimum - photoCount) 枚で届きます"
-        } else if photoCount < full {
-            status = "\(arrives.formatted(.dateTime.month().day())) に届きます・あと \(full - photoCount) 枚で 9 枚そろう"
-        } else {
-            status = "\(arrives.formatted(.dateTime.month().day())) に届きます・9 枚そろいました"
-        }
+        let status = photoCount < minimum
+            ? "あと \(minimum - photoCount) 枚"
+            : "\(arrives.formatted(.dateTime.month(.defaultDigits).day())) にとどく"
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(verbatim: "\(month)月の1冊")
@@ -313,7 +315,9 @@ struct AlbumPrototypeView: View {
             HStack(spacing: 4) {
                 ForEach(0..<full, id: \.self) { mark in
                     Capsule()
-                        .fill(mark < photoCount ? Color.primary.opacity(0.85) : Color.primary.opacity(0.15))
+                        .fill(mark < photoCount
+                              ? (photoCount >= full ? Color.accentColor : Color.primary.opacity(0.85))
+                              : Color.primary.opacity(0.15))
                         .frame(height: 4)
                 }
             }
@@ -325,51 +329,15 @@ struct AlbumPrototypeView: View {
         .accessibilityIdentifier("album-prototype-next")
     }
 
-    /// The year's work, as large as a month's, with its own wrapping.
+    /// The year's work, as large as a month's, under its own cloud.
     private func yearCard(_ year: Int) -> some View {
-        let wrapped = !opened.contains(YearStoryView.periodIdentifier(year))
+        let id = YearStoryView.periodIdentifier(year)
         let photos = AlbumPrototype.photos(inYear: year, from: catPhotos)
-        let cover = AlbumPrototype.pickYear(photos).first
-        let names = AlbumPrototype.names(for: photos, assignments: assignments, profileNames: profileNames)
-        return Button { yearStory = YearStory(year: year) } label: {
-            Color.clear
-                .aspectRatio(0.82, contentMode: .fit)
-                .overlay {
-                    if let cover {
-                        PhotoAssetImageView(localIdentifier: cover.localIdentifier,
-                                            catBoundingBox: cover.catBoundingBox,
-                                            targetPixelSize: CGSize(width: 1100, height: 1100),
-                                            targetAspectRatio: 0.82)
-                            .blur(radius: wrapped ? 18 : 0)
-                            .scaleEffect(wrapped ? 1.08 : 1)
-                    }
-                }
-                .overlay(alignment: .bottomLeading) {
-                    HStack(alignment: .bottom) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(wrapped ? "1 年の作品がとどきました" : "1 年の作品")
-                                .font(.caption.weight(.bold)).tracking(2).opacity(0.9)
-                            Text(verbatim: String(year))
-                                .font(.system(size: 40, weight: .bold, design: .serif))
-                            Text(names).font(.footnote).opacity(0.9)
-                        }
-                        Spacer()
-                        Text(wrapped ? "開ける" : "見る")
-                            .font(.subheadline.weight(.bold))
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(.white, in: Capsule())
-                            .foregroundStyle(.black)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(16)
-                    .padding(.top, 60)
-                    .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(year)年の作品、\(wrapped ? "届きました。開ける" : "見る")")
-        .accessibilityIdentifier("album-prototype-year")
+        return arrivalCard(id: id, wrapped: !opened.contains(id), cover: AlbumPrototype.pickYear(photos).first,
+                           caption: "1 年の作品", title: String(year), titleSize: 40,
+                           names: AlbumPrototype.names(for: photos, assignments: assignments, profileNames: profileNames),
+                           accessibilityTitle: "\(year)年の作品") { yearStory = YearStory(year: year) }
+            .accessibilityIdentifier("album-prototype-year")
     }
 
     private func open(_ letter: MonthlyWindowPresentation) {
@@ -381,62 +349,115 @@ struct AlbumPrototypeView: View {
     }
 
     private func latestCard(_ letter: MonthlyWindowPresentation) -> some View {
-        let wrapped = isWrapped(letter)
-        let cover = Self.cover(of: letter, from: catPhotos)
-        let names = AlbumPrototype.names(for: AlbumPrototype.photos(in: letter.monthStart, from: catPhotos),
-                                         assignments: assignments, profileNames: profileNames)
-        return Button { open(letter) } label: {
-            Color.clear
-                .aspectRatio(0.82, contentMode: .fit)
-                .overlay {
-                    if let cover {
-                        PhotoAssetImageView(localIdentifier: cover.localIdentifier,
-                                            catBoundingBox: cover.catBoundingBox,
-                                            targetPixelSize: CGSize(width: 1100, height: 1100),
-                                            targetAspectRatio: 0.82)
-                            .blur(radius: wrapped ? 18 : 0)
-                            .scaleEffect(wrapped ? 1.08 : 1)
-                    }
+        arrivalCard(id: letter.periodIdentifier, wrapped: isWrapped(letter),
+                    cover: Self.cover(of: letter, from: catPhotos), caption: nil,
+                    title: "\(letter.monthNumber)月", titleSize: 34,
+                    names: AlbumPrototype.names(for: AlbumPrototype.photos(in: letter.monthStart, from: catPhotos),
+                                                assignments: assignments, profileNames: profileNames),
+                    accessibilityTitle: letter.accessibilityTitle) { open(letter) }
+            .accessibilityIdentifier("album-prototype-latest")
+    }
+
+    /// A work that has just arrived is under cloud, as on the home-screen
+    /// window. Hold it and the cloud clears (blur and a tick; nothing drawn).
+    /// After that the whole card opens the work with a tap.
+    private func arrivalCard(id: String, wrapped: Bool, cover: PhotoPresentation?, caption: String?,
+                             title: String, titleSize: CGFloat, names: String, accessibilityTitle: String,
+                             open: @escaping () -> Void) -> some View {
+        let clouded = wrapped && clearingCard != id
+        return Color.clear
+            .aspectRatio(0.82, contentMode: .fit)
+            .overlay {
+                if let cover {
+                    PhotoAssetImageView(localIdentifier: cover.localIdentifier,
+                                        catBoundingBox: cover.catBoundingBox,
+                                        targetPixelSize: CGSize(width: 1100, height: 1100),
+                                        targetAspectRatio: 0.82)
+                        .blur(radius: clouded ? 18 : 0)
+                        .scaleEffect(clouded ? 1.08 : 1)
+                        .animation(.easeIn(duration: Self.clearSeconds), value: clouded)
                 }
-                .overlay {
+            }
+            .overlay(alignment: .bottomLeading) {
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if wrapped {
+                            Text("とどきました").font(.caption.weight(.bold)).tracking(2).opacity(0.9)
+                        } else if let caption {
+                            Text(caption).font(.caption.weight(.bold)).tracking(2).opacity(0.9)
+                        }
+                        Text(verbatim: title).font(.system(size: titleSize, weight: .bold, design: .serif))
+                        Text(names).font(.footnote).opacity(0.9)
+                    }
+                    Spacer()
                     if wrapped {
-                        // A ribbon tied around the work that has just arrived.
-                        ZStack {
-                            Rectangle().fill(Color(red: 0.95, green: 0.89, blue: 0.79).opacity(0.92)).frame(width: 22)
-                            Rectangle().fill(Color(red: 0.95, green: 0.89, blue: 0.79).opacity(0.92)).frame(height: 22)
-                                .offset(y: -40)
-                            Circle().fill(Color(red: 0.94, green: 0.86, blue: 0.72))
-                                .overlay(Circle().stroke(Color(red: 0.96, green: 0.92, blue: 0.82), lineWidth: 5))
-                                .frame(width: 54, height: 54).offset(y: -40)
-                        }
+                        Text("長押しで晴らす").font(.caption.weight(.semibold)).opacity(0.9)
                     }
                 }
-                .overlay(alignment: .bottomLeading) {
-                    HStack(alignment: .bottom) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(verbatim: wrapped ? "とどきました" : String(letter.yearNumber))
-                                .font(.caption.weight(.bold)).tracking(2).opacity(0.9)
-                            Text(verbatim: "\(letter.monthNumber)月")
-                                .font(.system(size: 34, weight: .bold, design: .serif))
-                            Text(names).font(.footnote).opacity(0.9)
-                        }
-                        Spacer()
-                        Text(wrapped ? "開ける" : "見る")
-                            .font(.subheadline.weight(.bold))
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(.white, in: Capsule())
-                            .foregroundStyle(.black)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(16)
-                    .padding(.top, 60)
-                    .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
+                .foregroundStyle(.white)
+                .padding(16)
+                .padding(.top, 60)
+                .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .zoomSource(id, in: zoom)
+            .modifier(HoldToClear(wrapped: wrapped,
+                                  clearing: Binding(get: { clearingCard == id },
+                                                    set: { clearingCard = $0 ? id : nil }),
+                                  reveal: { AlbumPrototype.markOpened(id) }, open: open))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(wrapped ? "\(accessibilityTitle)、届きました" : accessibilityTitle)
+    }
+}
+
+/// Hold to clear the cloud of a work that has just arrived; tap to open one
+/// already cleared. A light tick when the hold begins, a success when clear.
+private struct HoldToClear: ViewModifier {
+    let wrapped: Bool
+    @Binding var clearing: Bool
+    let reveal: () -> Void
+    let open: () -> Void
+    @State private var revealed = 0
+
+    func body(content: Content) -> some View {
+        Group {
+            if wrapped {
+                content.onLongPressGesture(minimumDuration: AlbumPrototypeView.clearSeconds) {
+                    reveal()
+                    revealed &+= 1
+                    clearing = false
+                } onPressingChanged: { pressing in
+                    clearing = pressing
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            } else {
+                content.onTapGesture(perform: open)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(letter.accessibilityTitle)、\(wrapped ? "届きました。開ける" : "見る")")
-        .accessibilityIdentifier("album-prototype-latest")
+        .sensoryFeedback(.impact(weight: .light), trigger: clearing) { _, isClearing in isClearing }
+        .sensoryFeedback(.success, trigger: revealed)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(wrapped ? "長押しで晴らします" : "開きます")
+        .accessibilityAction {
+            if wrapped {
+                reveal()
+                revealed &+= 1
+            } else {
+                open()
+            }
+        }
+    }
+}
+
+private extension View {
+    /// iOS 18: the card a work opens from, so it can zoom back into it.
+    @ViewBuilder func zoomSource(_ id: String, in namespace: Namespace.ID) -> some View {
+        if #available(iOS 18.0, *) { matchedTransitionSource(id: id, in: namespace) } else { self }
+    }
+
+    /// iOS 18: open out of the card and close back into it, as in Photos.
+    @ViewBuilder func zoomTransition(_ id: String, in namespace: Namespace.ID) -> some View {
+        if #available(iOS 18.0, *) { navigationTransition(.zoom(sourceID: id, in: namespace)) } else { self }
     }
 }
 
@@ -453,6 +474,7 @@ struct PastWorksView: View {
 
     @State private var story: MonthlyWindowPresentation?
     @State private var yearStory: AlbumPrototypeView.YearStory?
+    @Namespace private var zoom
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     private var shelves: [Int] {
@@ -471,6 +493,7 @@ struct PastWorksView: View {
                             Button { yearStory = .init(year: year) } label: {
                                 cover(AlbumPrototype.pickYear(AlbumPrototype.photos(inYear: year, from: catPhotos)).first,
                                       title: "\(year)年")
+                                    .zoomSource(YearStoryView.periodIdentifier(year), in: zoom)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("\(year)年の作品")
@@ -478,6 +501,7 @@ struct PastWorksView: View {
                         ForEach(letters.filter { $0.yearNumber == year }) { letter in
                             Button { story = letter } label: {
                                 cover(AlbumPrototypeView.cover(of: letter, from: catPhotos), title: "\(letter.monthNumber)月")
+                                    .zoomSource(letter.periodIdentifier, in: zoom)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(letter.accessibilityTitle)
@@ -509,10 +533,12 @@ struct PastWorksView: View {
         .fullScreenCover(item: $story) { letter in
             MonthlyStoryView(letter: letter, catPhotos: catPhotos,
                              assignments: assignments, profileNames: profileNames)
+                .zoomTransition(letter.periodIdentifier, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
             YearStoryView(year: story.year, catPhotos: catPhotos,
                           assignments: assignments, profileNames: profileNames)
+                .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
         }
     }
 
