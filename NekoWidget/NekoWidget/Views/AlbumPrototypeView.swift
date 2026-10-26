@@ -83,6 +83,17 @@ enum AlbumPrototype {
         pick(photos(in: letter.monthStart, from: catPhotos), count: 1).first ?? letter.coverPhoto
     }
 
+    /// Test only: the newest finished month (and the year's work) arrive
+    /// again under cloud, so holding to clear can be tried any day.
+    static func cloudLatestAgain(now: Date = Date()) {
+        let calendar = Calendar.current
+        guard let thisMonth = calendar.dateInterval(of: .month, for: now)?.start,
+              let lastMonth = calendar.date(byAdding: .month, value: -1, to: thisMonth) else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(lastMonth.timeIntervalSince1970, forKey: enabledAtKey)
+        defaults.removeObject(forKey: openedKey)
+    }
+
     static func markOpened(_ period: String) {
         let defaults = UserDefaults.standard
         var opened = Set((defaults.string(forKey: openedKey) ?? "").split(separator: ",").map(String.init))

@@ -367,6 +367,8 @@ struct SettingsView: View {
                                 .accessibilityIdentifier("settings-album-year-now")
                             Toggle("月の作品を本の形で見る", isOn: $albumBook)
                                 .accessibilityIdentifier("settings-album-book")
+                            Button("届いた作品をもう一度くもらせる") { AlbumPrototype.cloudLatestAgain() }
+                                .accessibilityIdentifier("settings-album-cloud-again")
                         }
                         NavigationLink {
                             advancedDiagnosticsView
