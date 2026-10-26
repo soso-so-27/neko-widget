@@ -3834,7 +3834,8 @@ final class AppViewModel: ObservableObject {
             let revision = try synchronizePersonalWidgetAuthority()
             let input = candidateSnapshot(snapshot)
             let result = try await widgetCacheBuilder.replenishPersonal(
-                from: input, eligibilityRevision: revision)
+                from: input, eligibilityRevision: revision,
+                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
             try synchronizeCloudyWindowMetadata()
             try await CloudyWindowImagePreparer.shared.prepare()
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
@@ -3859,7 +3860,8 @@ final class AppViewModel: ObservableObject {
                         do {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
-                                skippingPhotoIDs: attemptedPhotoIDs)
+                                skippingPhotoIDs: attemptedPhotoIDs,
+                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
                             try self.synchronizeCloudyWindowMetadata()
                             try await CloudyWindowImagePreparer.shared.prepare()

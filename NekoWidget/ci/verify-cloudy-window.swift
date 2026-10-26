@@ -90,7 +90,151 @@ private enum CloudyWindowVerifier {
         try permissionAndPublicBoundary()
         try preparationRaces()
         try preparationRetainsPlannedAndFrozenPhotos()
+        try albumArrival()
+        try albumArrivalGates()
+        try albumArrivalFrozenAfterExpiry()
+        try albumCoverBeyondPreparationBounds()
         print("Cloudy window: daily reveal, stale actions, restart, rotation, cats, permission, public mode and publication checks passed")
+    }
+
+    private static var closing: Date {
+        Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 1))!
+    }
+
+    private static func deliver(_ f: Fixture, photoID: String = "photo-05", now: Date = closing,
+                                enabled: Bool = true, opened: Set<String> = [],
+                                enabledAt: Date = baseline) throws {
+        try f.store.synchronizeAlbumArrival(enabled: enabled, enabledAt: enabledAt, openedPeriods: opened,
+            arrival: .init(period: "2026-10", availableAt: closing, photoID: photoID), now: now)
+    }
+
+    private static func albumArrival() throws {
+        let f = try Fixture(count: 6, cats: 2)
+        defer { f.cleanup() }
+        try deliver(f, now: baseline)
+        try check(f.store.albumPriorityPhotoIDs(now: baseline) == ["photo-05"], "prewarm throughout current month")
+        let early = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)
+        try check(early.allSatisfy { $0.selection.albumPeriod == nil }, "future parcel is never announced early")
+        let beforeClosing = closing.addingTimeInterval(-60)
+        try check(f.store.nextRefresh(after: beforeClosing) == min(closing, CloudyWindowStore.nextDay(after: beforeClosing)),
+                  "provider wakes at local-month closing even within a JST day")
+        let prior = closing.addingTimeInterval(-day)
+        _ = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: prior)
+        let arrived = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try check(arrived.photo.photoID == "photo-05" && arrived.selection.albumPeriod == "2026-10",
+                  "arrival replaces an unrevealed ordinary tomorrow selection with exact cover")
+        let route = CloudyWindowAlbumRoute(selectionID: arrived.selection.id)
+        try check(CloudyWindowAlbumRoute(url: route.url) == route, "selection route roundtrip")
+        try check(f.store.albumPeriod(for: route, now: closing) == nil, "unrevealed parcel cannot open story")
+        let cat = try f.store.timeline(scopeID: CloudyWindowStore.profilePrefix + "cat-0", now: closing)[0]
+        try check(cat.selection.albumPeriod == nil, "individual cat scope keeps its own cat")
+        try check(f.store.reveal(selectionID: arrived.selection.id, scopeID: arrived.selection.scopeID,
+            photoID: arrived.photo.photoID, now: closing), "first tap only reveals committed parcel")
+        let restarted = CloudyWindowStore(containerURL: f.directory, internalPresentation: true)
+        try check(restarted.albumPeriod(for: route, now: closing) == "2026-10", "revealed route survives process restart")
+        try deliver(f, photoID: "photo-04", now: closing)
+        let same = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try check(same.selection.id == arrived.selection.id && same.photo.photoID == "photo-05",
+                  "new album ranking cannot reroll a revealed window")
+        try deliver(f, now: closing, opened: ["2026-10"])
+        try check(restarted.albumPeriod(for: route, now: closing) == "2026-10", "opened parcel may reopen same revealed story")
+        try deliver(f, now: closing, enabled: false)
+        let ordinary = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try check(ordinary.selection.albumPeriod == nil && ordinary.selection.revealedAt != nil
+            && ordinary.photo.photoID == "photo-05", "switch off restores ordinary route without reroll")
+        try check(restarted.albumPeriod(for: route, now: closing) == nil, "switch off rejects stale parcel URL")
+        try deliver(f, now: closing)
+        try check(restarted.albumPeriod(for: route, now: closing.addingTimeInterval(day)) == nil, "yesterday route rejected")
+        try f.authority.suspend(now: closing)
+        try check(restarted.albumPeriod(for: route, now: closing) == nil, "revoked Photos authority rejects route")
+        try check(CloudyWindowAlbumRoute(url: URL(string: "nekowidget://album-arrival?month=2099-01")!) == nil,
+                  "arbitrary future month URL rejected")
+        try check(CloudyWindowAlbumRoute(url: URL(string: route.url.absoluteString + "&month=2099-01")!) == nil,
+                  "extra route input rejected")
+    }
+
+    private static func albumArrivalGates() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        try deliver(f, now: closing, enabledAt: closing)
+        try check(f.store.albumPriorityPhotoIDs(now: closing).isEmpty, "archive closed before enabling is not new")
+        try deliver(f, now: closing, opened: ["2026-10"])
+        try check(f.store.albumPriorityPhotoIDs(now: closing).isEmpty, "opened month cannot announce")
+        try deliver(f, photoID: "foreign-photo", now: closing)
+        try check(f.store.albumPriorityPhotoIDs(now: closing).isEmpty, "non-authorized cover never enters preparation")
+        let oldClosing = Calendar.current.date(byAdding: .month, value: -1, to: closing)!
+        try f.store.synchronizeAlbumArrival(enabled: true, enabledAt: baseline.addingTimeInterval(-90 * day),
+            openedPeriods: [], arrival: .init(period: "2026-09", availableAt: oldClosing, photoID: "photo-05"),
+            now: closing)
+        try check(f.store.albumPriorityPhotoIDs(now: closing).isEmpty, "unread old archive is not a new delivery")
+        let future = Calendar.current.date(byAdding: .month, value: 2, to: closing)!
+        try f.store.synchronizeAlbumArrival(enabled: true, enabledAt: baseline, openedPeriods: [],
+            arrival: .init(period: "2026-12", availableAt: future, photoID: "photo-05"), now: closing)
+        try check(f.store.albumPriorityPhotoIDs(now: closing).isEmpty, "only current or next closing accepted")
+        try deliver(f, now: closing)
+        let delivered = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try f.store.synchronizeAlbumArrival(enabled: true, enabledAt: baseline,
+            openedPeriods: [], arrival: nil, now: closing)
+        let unavailable = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try check(unavailable.selection.albumPeriod == nil && unavailable.photo.photoID == delivered.photo.photoID,
+                  "resolved unavailable story clears only its unrevealed label")
+        try deliver(f, now: closing)
+        _ = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)
+        try deliver(f, now: closing, opened: ["2026-10"])
+        let readElsewhere = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try check(readElsewhere.selection.albumPeriod == nil && readElsewhere.photo.photoID == delivered.photo.photoID,
+                  "opening in album clears unrevealed delivery label without changing photo")
+        let publicStore = CloudyWindowStore(containerURL: f.directory, internalPresentation: false)
+        try check(publicStore.albumPriorityPhotoIDs(now: closing).isEmpty, "public build cannot prepare album delivery")
+        try check(publicStore.albumPeriod(for: .init(selectionID: delivered.selection.id), now: closing) == nil,
+                  "public build cannot resolve story route")
+    }
+
+    private static func albumCoverBeyondPreparationBounds() throws {
+        let f = try Fixture(count: 100)
+        defer { f.cleanup() }
+        try deliver(f, photoID: "photo-99", now: baseline)
+        let plan = try f.store.preparation(now: baseline)!
+        try check(plan.candidates.first?.item.localIdentifier == "photo-99", "cover beyond 32 gets first preparation slot")
+        let photo = f.prepared[99]
+        let image = try Data(contentsOf: f.directory.appendingPathComponent("widget-cache")
+            .appendingPathComponent(f.candidates[0].item.cacheFilename))
+        try f.store.publish(photo, files: Dictionary(uniqueKeysWithValues: photo.filenames.map { ($0, image) }),
+            authorityRevision: plan.authorityRevision, configurationRevision: plan.configuration.revision,
+            protectedPhotoIDs: plan.protectedPhotoIDs, now: baseline)
+        let arrived = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        try check(arrived.photo.photoID == "photo-99", "prepared cover outside original 32 is actually delivered")
+
+        var added = f.candidates[0]
+        added.item.localIdentifier = "photo-100"
+        added.item.cacheFilename = "photo-100-small.jpg"
+        added.item.cacheFilenames = .init(small: "photo-100-small.jpg", medium: "photo-100-medium.jpg", large: "photo-100-large.jpg")
+        for name in added.item.allCacheFilenames {
+            try image.write(to: f.directory.appendingPathComponent("widget-cache").appendingPathComponent(name))
+        }
+        let all = f.candidates + [added]
+        let revision = try f.authority.updateEligibility(photoIDs: Set(all.map { $0.item.localIdentifier }),
+            scopeIdentifier: "fixture", isAuthorized: true, now: closing,
+            photoModificationDates: Dictionary(uniqueKeysWithValues: all.map { ($0.item.localIdentifier, baseline) }))
+        let published = try f.authority.publish(candidates: [added], expectedRevision: revision,
+            now: closing, priorityPhotoIDs: ["photo-100"])
+        try check(published.candidates.contains { $0.item.localIdentifier == "photo-100" },
+                  "exact cover beyond full 100 pool may replace an unissued candidate")
+        try check(published.candidates.contains { $0.item.localIdentifier == arrived.photo.photoID },
+                  "cover refill preserves issued photograph")
+        try check(published.candidates.count == 100, "cover priority preserves preparation budget")
+    }
+
+    private static func albumArrivalFrozenAfterExpiry() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        try deliver(f, now: closing)
+        let arrived = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing)[0]
+        let frozen = try f.store.timeline(scopeID: CloudyWindowStore.personalScope,
+            now: closing.addingTimeInterval(day), allowsSelection: false,
+            selectionValidUntil: closing.addingTimeInterval(60))
+        try check(frozen.allSatisfy { $0.selection.id == arrived.selection.id && $0.isCloudy
+            && $0.selection.albumPeriod == nil }, "membership freeze keeps photograph and reveal, not yesterday's delivery label")
     }
 
     private static func dailyReveal() throws {

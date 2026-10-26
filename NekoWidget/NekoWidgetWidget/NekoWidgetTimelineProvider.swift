@@ -326,7 +326,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         }
         return Timeline(entries: entries.isEmpty ? [.empty(at: now, imageVariant: variant,
             photoSourceIdentifier: sourceID, emptyStateReason: .needsApp)] : entries,
-            policy: .after(entries.isEmpty ? now.addingTimeInterval(20 * 60) : CloudyWindowStore.nextDay(after: now)))
+            policy: .after(entries.isEmpty ? now.addingTimeInterval(20 * 60) : CloudyWindowStore.shared.nextRefresh(after: now)))
     }
 
     private func personalRediscoveryTimeline(now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {

@@ -94,34 +94,7 @@ struct ShowcasePhotoView: View {
     /// The nine photos as one picture, for the share sheet. Built off the main
     /// thread when the set changes; nil until then or when nothing can be drawn.
     @State private var bestNineImage: UIImage?
-    /// Which nine: the chosen set, or this year's (picked on the spot, not kept).
-    @State private var nineSet: NineSet = .chosen
     @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
-
-    enum NineSet: Hashable { case chosen, thisYear }
-
-    private var thisYear: Int { Calendar.current.component(.year, from: Date()) }
-
-    /// This year's cats, favourites first, newest next: up to nine, chosen
-    /// each time from the candidates and never written to the store.
-    private var thisYearItems: [Item] {
-        let known = scopeID.isEmpty ? nil
-            : Set(profiles.first(where: { $0.identifier == scopeID })?.confirmedPhotos.map(\.localIdentifier) ?? [])
-        let calendar = Calendar.current
-        return candidates
-            .filter { photo in
-                guard let date = photo.creationDate, calendar.component(.year, from: date) == thisYear else { return false }
-                return known?.contains(photo.localIdentifier) ?? true
-            }
-            .sorted { first, second in
-                let firstFavorite = first.isLiked || first.isPhotoLibraryFavorite
-                let secondFavorite = second.isLiked || second.isPhotoLibraryFavorite
-                if firstFavorite != secondFavorite { return firstFavorite }
-                return (first.creationDate ?? .distantPast) > (second.creationDate ?? .distantPast)
-            }
-            .prefix(9)
-            .map { Item.current($0.localIdentifier) }
-    }
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
 
@@ -139,7 +112,6 @@ struct ShowcasePhotoView: View {
 
     private var visibleItems: [Item] {
         guard initialScopeID != nil else { return items }
-        if nineSet == .thisYear { return thisYearItems }
 #if DEBUG && targetEnvironment(simulator)
         if Self.layoutFixtureItems != nil { return items }
 #endif
@@ -148,13 +120,8 @@ struct ShowcasePhotoView: View {
         }
     }
 
-    /// The band under the nine: the cat's name, and the year for this year's set.
-    private var bandTitle: String? {
-        let name = scopeID.isEmpty ? nil : visibleTitle
-        let year = nineSet == .thisYear ? "\(thisYear)" : nil
-        let parts = [name, year].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " ・ ")
-    }
+    /// The band under the nine: the cat's name.
+    private var bandTitle: String? { scopeID.isEmpty ? nil : visibleTitle }
 
     private var visibleTitle: String {
         guard initialScopeID != nil else { return title }
@@ -224,19 +191,6 @@ struct ShowcasePhotoView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            if detailIndex == nil, initialScopeID != nil {
-                Picker("どの9枚", selection: $nineSet) {
-                    Text("ベストナイン").tag(NineSet.chosen)
-                    Text("今年の9枚").tag(NineSet.thisYear)
-                }
-                .pickerStyle(.segmented)
-                // The gallery is black: draw the segments for a dark background.
-                .environment(\.colorScheme, .dark)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-                .accessibilityIdentifier("showcase-nine-set")
-            }
-
             if !displayedItems.isEmpty {
                 ZStack {
                     ScrollView {
@@ -273,7 +227,7 @@ struct ShowcasePhotoView: View {
                     if detailIndex == nil, initialScopeID != nil {
                         if let bestNineImage {
                             ShareLink(item: Image(uiImage: bestNineImage),
-                                      preview: SharePreview("\(visibleTitle)のベストナイン",
+                                      preview: SharePreview("\(visibleTitle)の自慢の 9 枚",
                                                             image: Image(uiImage: bestNineImage))) {
                                 Label("画像にして共有", systemImage: "square.and.arrow.up")
                                     .font(.headline)
@@ -283,9 +237,7 @@ struct ShowcasePhotoView: View {
                             .padding(.horizontal, 16)
                             .accessibilityIdentifier("showcase-share-best-nine")
                         }
-                        Text(nineSet == .thisYear
-                             ? "今年の写真から自動で選びました。写真を押すと大きく見られます。"
-                             : "写真を押すと大きく見られます。鉛筆から差し替えられます。")
+                        Text("写真を押すと大きく見られます。鉛筆から差し替えられます。")
                             .font(.footnote)
                             .foregroundStyle(.white.opacity(0.7))
                             .padding(.top, 10)
@@ -362,10 +314,6 @@ struct ShowcasePhotoView: View {
                         }
                     }
                 }
-            } else if nineSet == .thisYear {
-                ContentUnavailableView("今年の猫写真はまだありません", systemImage: "calendar",
-                                       description: Text("今年に撮った猫の写真が見つかると、ここに9枚並びます。"))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 16) {
                     ContentUnavailableView("見せる写真がありません", systemImage: "photo")

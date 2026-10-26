@@ -85,6 +85,15 @@ xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
   ci/verify-cloudy-window.swift -o "$RUNNER_TEMP/verify-cloudy-window"
 "$RUNNER_TEMP/verify-cloudy-window"
 
+xcrun --sdk macosx swiftc -parse-as-library \
+  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift \
+  Shared/Models/CatDetection.swift Shared/Models/AssetRecord.swift \
+  Shared/Models/ScanState.swift Shared/Models/LibrarySnapshot.swift \
+  NekoWidget/Views/GrowthAlbumSelector.swift NekoWidget/Views/AppPresentationModels.swift \
+  NekoWidget/Views/MonthlyWindowPresentation.swift ci/verify-monthly-window.swift \
+  -o "$RUNNER_TEMP/verify-monthly-window"
+"$RUNNER_TEMP/verify-monthly-window"
+
 # ADR-027 5章: the one Plus screen opens only from its entry places. A new
 # caller of the sheet (or of the prompt that opens it) must be added here on
 # purpose; photo access, invitations, receiving, hearts, and favorites never are.

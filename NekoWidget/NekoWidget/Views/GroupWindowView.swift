@@ -1431,11 +1431,19 @@ final class GroupWindowListModel: ObservableObject {
 
     init(client: any GroupWindowMediaClient) { self.client = client }
 
+    /// Test builds only: how long the last list load took, to find where the wait is.
+    @Published private(set) var lastLoadTiming: String?
+
     func load() async {
+        let started = Date()
         do {
             windows = try await client.windows()
             message = nil
             hasLoaded = true
+            if InternalBuildPresentationAvailability.isAvailable {
+                let seconds = Date().timeIntervalSince(started)
+                lastLoadTiming = String(format: "一覧の読み込み %.1f 秒・まど %d 個", seconds, windows.count)
+            }
         } catch is CancellationError {
             // The screen went away mid-request: nothing to tell.
         } catch {
@@ -1513,7 +1521,7 @@ struct GroupWindowCreateScreen: View {
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
         }
-        .navigationTitle("家族・友だちとまどを作る")
+        .navigationTitle("まどを作る")
         .navigationBarTitleDisplayMode(.inline)
         .announcesWhenShown(model.message)
         .sheet(isPresented: $model.needsPlus, onDismiss: {
@@ -1546,7 +1554,7 @@ struct GroupWindowListSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("家族・友だちのまど")
+            Text("みんなのまど")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
@@ -1576,6 +1584,13 @@ struct GroupWindowListSection: View {
                         .accessibilityLabel("まどを読み込んでいます")
                         .accessibilityIdentifier("group-window-list-loading")
                 }
+            }
+            if let timing = model.lastLoadTiming {
+                // Test builds only: where the wait is (relay vs. this iPhone).
+                Text(verbatim: timing)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .accessibilityIdentifier("group-window-list-timing")
             }
             if let message = model.message {
                 if model.windows.isEmpty && known.isEmpty {

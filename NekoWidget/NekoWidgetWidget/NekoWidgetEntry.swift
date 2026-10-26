@@ -71,6 +71,9 @@ struct NekoWidgetEntry: TimelineEntry {
 
     var photoURL: URL? {
         if let cloudyWindowSelection, cloudyWindowSelection.revealedAt == nil { return nil }
+        if let selection = cloudyWindowSelection, selection.albumPeriod != nil {
+            return CloudyWindowAlbumRoute(selectionID: selection.id).url
+        }
         if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {
             return GroupWidgetCache.openURL(windowID: groupWindowID)
         }

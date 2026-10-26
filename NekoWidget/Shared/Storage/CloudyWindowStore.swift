@@ -56,6 +56,39 @@ struct CloudyWindowSelection: Codable, Equatable, Sendable {
     var photoID: String
     var profileID: String?
     var revealedAt: Date? = nil
+    var albumPeriod: String? = nil
+}
+
+/// The host supplies the album's actual cover and closing time, never image
+/// bytes or a second source of photo permission. Only this day's parcel may win.
+struct CloudyWindowAlbumArrival: Codable, Equatable, Sendable {
+    var period: String
+    var availableAt: Date
+    var photoID: String
+    var day: Date { CloudyWindowStore.calendar.startOfDay(for: availableAt) }
+}
+
+/// Links name a committed reveal, not a user-supplied month or photo.
+struct CloudyWindowAlbumRoute: Equatable, Sendable {
+    let selectionID: String
+    var url: URL {
+        var components = URLComponents()
+        components.scheme = "nekowidget"
+        components.host = "album-arrival"
+        components.queryItems = [.init(name: "selection", value: selectionID)]
+        return components.url!
+    }
+    init(selectionID: String) { self.selectionID = selectionID }
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme == "nekowidget", components.host == "album-arrival",
+              components.path.isEmpty, components.fragment == nil,
+              components.user == nil, components.password == nil, components.port == nil,
+              let items = components.queryItems, items.count == 1,
+              items[0].name == "selection", let value = items[0].value,
+              let id = UUID(uuidString: value) else { return nil }
+        selectionID = id.uuidString
+    }
 }
 
 struct CloudyWindowEntry: Sendable {
@@ -82,6 +115,8 @@ private struct CloudyWindowState: Codable {
     var selections: [CloudyWindowSelection] = []
     var frozenSelectionIDs: [String: String]? = nil
     var seenPhotoIDs: Set<String> = []
+    var albumPrototypeEnabled: Bool? = nil
+    var albumArrival: CloudyWindowAlbumArrival? = nil
 }
 
 /// All experiment metadata and derived files are local. Every operation is
@@ -149,12 +184,100 @@ struct CloudyWindowStore: Sendable {
             guard state.configuration.enabled else { return }
             let relevant = Set(authority?.candidates.map { $0.item.localIdentifier } ?? [])
                 .union(state.photos.map(\.photoID))
+                .union(state.albumArrival.map { [$0.photoID] } ?? [])
             state.profiles = profiles
             state.metadata = metadata.filter { relevant.contains($0.key) }
             reconcile(&state, authority: authority, now: now)
             try write(state)
             collectFiles(keeping: Set(state.photos.flatMap(\.filenames)))
         }
+    }
+
+    /// Called after the host resolves current album inputs. Unread old archives
+    /// and months closed before enabling the prototype are never deliveries.
+    @discardableResult
+    func synchronizeAlbumArrival(enabled: Bool, enabledAt: Date?, openedPeriods: Set<String>,
+                                 arrival: CloudyWindowAlbumArrival?, now: Date = .now) throws -> Bool {
+        guard internalPresentation else { return false }
+        return try authorityStore.withAuthoritySnapshot(now: now) { authority in
+            var state = try read()
+            let today = Self.calendar.startOfDay(for: now)
+            let nextClosing = Calendar.current.dateInterval(of: .month, for: now)?.end
+            let valid = arrival.flatMap { value -> CloudyWindowAlbumArrival? in
+                guard enabled, let enabledAt, enabledAt < value.availableAt,
+                      !openedPeriods.contains(value.period),
+                      value.day == today || value.availableAt == nextClosing,
+                      Self.validPeriod(value.period, closingAt: value.availableAt),
+                      authority?.isAuthorized == true,
+                      authority?.eligiblePhotoIDs.contains(value.photoID) == true else { return nil }
+                return value
+            }
+            let oldSelections = state.selections
+            for index in state.selections.indices where state.selections[index].revealedAt == nil {
+                if let period = state.selections[index].albumPeriod,
+                   openedPeriods.contains(period) || (enabled && period != valid?.period) {
+                    state.selections[index].albumPeriod = nil
+                }
+            }
+            guard state.albumPrototypeEnabled != enabled || state.albumArrival != valid
+                || state.selections != oldSelections else { return false }
+            state.albumPrototypeEnabled = enabled
+            state.albumArrival = valid
+            try write(state)
+            return true
+        }
+    }
+
+    func albumPriorityPhotoIDs(now: Date = .now) -> Set<String> {
+        guard internalPresentation else { return [] }
+        return (try? authorityStore.withAuthoritySnapshot(now: now) { authority in
+            let state = try read()
+            guard state.configuration.enabled, state.albumPrototypeEnabled == true, let arrival = state.albumArrival,
+                  arrival.day >= Self.calendar.startOfDay(for: now),
+                  arrival.availableAt <= (Calendar.current.dateInterval(of: .month, for: now)?.end ?? now),
+                  authority?.isAuthorized == true,
+                  authority?.eligiblePhotoIDs.contains(arrival.photoID) == true else { return [] }
+            return Set([arrival.photoID])
+        }) ?? []
+    }
+
+    func albumPeriod(for route: CloudyWindowAlbumRoute, now: Date = .now) -> String? {
+        guard internalPresentation else { return nil }
+        return try? authorityStore.withAuthoritySnapshot(now: now) { authority in
+            let state = try read()
+            guard state.configuration.enabled, state.albumPrototypeEnabled == true,
+                  let selection = state.selections.first(where: { $0.id == route.selectionID }),
+                  selection.scopeID == Self.personalScope, selection.day == Self.calendar.startOfDay(for: now),
+                  selection.revealedAt != nil, let period = selection.albumPeriod,
+                  let photo = state.photos.first(where: { $0.photoID == selection.photoID }),
+                  valid(photo, in: state, authority: authority), filesExist(photo) else { return nil }
+            return period
+        }
+    }
+
+    /// Album months use the device calendar, while cloudy days use JST. A
+    /// closing time inside a JST day must wake the provider at that time too.
+    func nextRefresh(after now: Date) -> Date {
+        let tomorrow = Self.nextDay(after: now)
+        guard internalPresentation else { return tomorrow }
+        return (try? authorityStore.withAuthoritySnapshot(now: now) { authority in
+            let state = try read()
+            guard state.configuration.enabled, state.albumPrototypeEnabled == true,
+                  let arrival = state.albumArrival, arrival.availableAt > now,
+                  arrival.availableAt < tomorrow, authority?.isAuthorized == true,
+                  let photo = state.photos.first(where: { $0.photoID == arrival.photoID }),
+                  valid(photo, in: state, authority: authority), filesExist(photo) else { return tomorrow }
+            return arrival.availableAt
+        }) ?? tomorrow
+    }
+
+    private static func validPeriod(_ period: String, closingAt date: Date) -> Bool {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        guard let interval = calendar.dateInterval(of: .month, for: date), interval.start == date,
+              let previous = calendar.date(byAdding: .month, value: -1, to: date) else { return false }
+        return period == String(format: "%04d-%02d", calendar.component(.year, from: previous),
+                                calendar.component(.month, from: previous))
     }
 
     func profiles() -> [(id: String, name: String)] {
@@ -199,7 +322,12 @@ struct CloudyWindowStore: Sendable {
             // Interleave known cats before filling the bounded preparation pool.
             // Keep already-issued images even when a new batch arrives.
             let pinned = protectedSelections(in: state, now: now)
-            var ordered = candidates.filter { pinned.contains($0.item.localIdentifier) }
+            let arrivalID = state.albumPrototypeEnabled == true
+                && (state.albumArrival?.day ?? .distantPast) >= Self.calendar.startOfDay(for: now)
+                ? state.albumArrival?.photoID : nil
+            var ordered = candidates.filter { $0.item.localIdentifier == arrivalID }
+            ordered += candidates.filter { pinned.contains($0.item.localIdentifier)
+                && $0.item.localIdentifier != arrivalID }
             let groups = state.profiles.keys.sorted()
             var queues = groups.map { profile in
                 candidates.filter { state.metadata[$0.item.localIdentifier]?.profileIDs.contains(profile) == true }
@@ -291,6 +419,17 @@ struct CloudyWindowStore: Sendable {
                 } else if date == today {
                     state.frozenSelectionIDs?[scopeID] = nil
                 }
+                if maySelect, scopeID == Self.personalScope, selection?.revealedAt == nil,
+                   state.albumPrototypeEnabled == true, let arrival = state.albumArrival,
+                   arrival.day == date, arrival.availableAt <= max(now, date),
+                   let cover = state.photos.first(where: { $0.photoID == arrival.photoID }), filesExist(cover),
+                   selection?.albumPeriod != arrival.period {
+                    if let old = selection { state.selections.removeAll { $0.id == old.id } }
+                    let chosen = CloudyWindowSelection(scopeID: scopeID, day: date,
+                        photoID: cover.photoID, profileID: nil, albumPeriod: arrival.period)
+                    selection = chosen
+                    state.selections.append(chosen)
+                }
                 if selection == nil && maySelect,
                    let chosen = choose(state: state, scopeID: scopeID, date: date) {
                     selection = chosen
@@ -300,7 +439,11 @@ struct CloudyWindowStore: Sendable {
                       let photo = state.photos.first(where: { $0.photoID == selection.photoID }),
                       filesExist(photo) else { continue }
                 if date <= now, state.seenPhotoIDs.count < 100_000 { state.seenPhotoIDs.insert(photo.photoID) }
-                entries.append(.init(date: date == today ? now : date, selection: selection, photo: photo))
+                var visibleSelection = selection
+                if state.albumPrototypeEnabled != true || selection.day != date {
+                    visibleSelection.albumPeriod = nil
+                }
+                entries.append(.init(date: date == today ? now : date, selection: visibleSelection, photo: photo))
             }
             try write(state)
             return entries

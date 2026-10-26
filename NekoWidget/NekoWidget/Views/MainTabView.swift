@@ -95,10 +95,12 @@ private enum ToolTint {
     static let everyday = Color.accentColor
     static let everydayLight = Color(red: 0.36, green: 0.62, blue: 0.86)
     static let everydayDeep = Color(red: 0.22, green: 0.42, blue: 0.70)
-    static let emergency = Color.orange
-    static let emergencyWarm = Color(red: 0.93, green: 0.56, blue: 0.19)
-    static let emergencyDeep = Color.red
-    static let emergencyBrown = Color(red: 0.78, green: 0.36, blue: 0.26)
+    // もしも: one warm family in steps of depth (10/26: four unrelated colours
+    // read as four different apps). Red is no longer used for a tool.
+    static let emergency = Color(red: 0.95, green: 0.58, blue: 0.24)
+    static let emergencyWarm = Color(red: 0.89, green: 0.50, blue: 0.22)
+    static let emergencyDeep = Color(red: 0.80, green: 0.42, blue: 0.20)
+    static let emergencyBrown = Color(red: 0.68, green: 0.36, blue: 0.19)
 }
 
 /// A cat in the row above the tools: round photo with a ring of twelve
@@ -245,6 +247,7 @@ struct MainTabView: View {
     var savedPhotoIdentifiers: Set<String>? = nil
     var savedPhotoStateReadFailed: Bool = false
     var readablePhotoIdentifiers: Set<String>? = nil
+    var photoLibraryLoadSucceeded: Bool? = nil
     let photoPresentationVersion: LibraryPresentationVersion
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
@@ -429,6 +432,12 @@ struct MainTabView: View {
     private var growthPhotoOverridesJSON = ""
     /// Test builds only: 設定 → テスト用「新しいアルバム（試作）」.
     @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
+    @State private var showsFamilyNotebook = false
+    @AppStorage(AlbumPrototype.enabledAtKey) private var albumPrototypeEnabledAt: Double = 0
+    @AppStorage(AlbumPrototype.openedKey) private var albumPrototypeOpened = ""
+    @ObservedObject private var albumArrivalInbox = AlbumArrivalOpenInbox.shared
+    @State private var arrivalStory: MonthlyWindowPresentation?
+    @State private var arrivalUnavailable = false
 
     private var tabContent: some View {
         TabView(selection: Binding(get: { selectedTab }, set: { tab in
@@ -660,6 +669,31 @@ struct MainTabView: View {
             showsSettings = false
             selectedTab = .windows
         }
+        .onChange(of: albumArrivalInbox.pending, initial: true) { _, _ in openAlbumArrivalIfReady() }
+        .onChange(of: albumPrototypeStored, initial: true) { _, enabled in
+            if AlbumPrototype.isOn(enabled), albumPrototypeEnabledAt == 0 {
+                albumPrototypeEnabledAt = Date().timeIntervalSince1970
+            }
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
+        }
+        .onChange(of: albumPrototypeOpened) { _, _ in synchronizeAlbumArrival() }
+        .onChange(of: photoLibraryLoadSucceeded) { _, _ in openAlbumArrivalIfReady() }
+        .fullScreenCover(item: $arrivalStory) { letter in
+            if AlbumPrototype.isOn(albumPrototypeStored), hasPhotoAccess,
+               let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
+                MonthlyStoryView(letter: current, catPhotos: catPhotos,
+                    assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
+            } else {
+                NavigationStack {
+                    ContentUnavailableView("この作品は開けません", systemImage: "photo.stack")
+                        .toolbar { Button("閉じる") { arrivalStory = nil } }
+                }
+            }
+        }
+        .alert("この作品は開けません", isPresented: $arrivalUnavailable) {
+            Button("閉じる", role: .cancel) { }
+        } message: { Text("写真へのアクセスとアルバムの設定を確認してください。") }
         .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
             guard route != nil else { return }
             relatedPhotoUsesLibraryScope = false
@@ -837,6 +871,9 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                if AlbumPrototype.isOn(albumPrototypeStored) {
+                    familyNotebookRow
+                }
                 // The cats are the door, but small: a row of faces above the
                 // tools, each opening the cat's page. The tools stay tools.
                 catStrip
@@ -902,6 +939,33 @@ struct MainTabView: View {
         }
     }
 
+    /// Test builds only: one family for every tool, chosen here, above the
+    /// tools it shares. Nothing is sent yet; the sheet explains the idea.
+    private var familyNotebookRow: some View {
+        Button { showsFamilyNotebook = true } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "person.2.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(ToolTint.everydayLight)
+                    .frame(width: 36, height: 36)
+                    .background(ToolTint.everydayLight.opacity(0.15), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("家族と一緒に書く").font(.subheadline.weight(.semibold))
+                    Text("この子のこと・病院・預けるときを、家族で同じものに")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tools-family-notebook")
+        .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookIntroView() }
+    }
+
     private var showcaseToolCard: some View {
         Button {
             if showcaseStore.availableEntries(in: "").isEmpty && (!hasPhotoAccess || showcaseCandidates.isEmpty) {
@@ -909,7 +973,7 @@ struct MainTabView: View {
             } else { openPreparedShowcase(scopeID: "") }
         } label: {
             ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
-                     subtitle: "ベストナインを作る", tint: ToolTint.everydayLight)
+                     subtitle: "自慢の 9 枚を作る", tint: ToolTint.everydayLight)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
@@ -2284,9 +2348,15 @@ struct MainTabView: View {
                 monthlyWindowCollection = nil
                 completedMonthlyWindowCollectionKey = nil
             }
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
             return
         }
-        guard completedMonthlyWindowCollectionKey != key else { return }
+        guard completedMonthlyWindowCollectionKey != key else {
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
+            return
+        }
 
         let photos = albumEligibleCatPhotos
         let referenceDate = Date()
@@ -2306,6 +2376,80 @@ struct MainTabView: View {
         }
         monthlyWindowCollection = collection
         completedMonthlyWindowCollectionKey = key
+        synchronizeAlbumArrival()
+        openAlbumArrivalIfReady()
+    }
+
+    private func synchronizeAlbumArrival() {
+        let enabled = AlbumPrototype.isOn(albumPrototypeStored)
+        if enabled, photoLibraryLoadSucceeded != false,
+           photoLibraryLoadSucceeded == nil || isScanning
+            || (monthlyWindowCollectionKey.canBuild
+                && completedMonthlyWindowCollectionKey != monthlyWindowCollectionKey) {
+            // Cold loading is not evidence that the previously prepared month
+            // disappeared. Current Photos authority still protects every read.
+            return
+        }
+        let now = Date()
+        let calendar = Calendar.current
+        var arrival: CloudyWindowAlbumArrival?
+        if enabled, monthlyWindowCollectionKey.canBuild,
+           completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey {
+            // Prewarm this month's actual cover whenever the album becomes
+            // ready, so no launch on the last day or at midnight is needed.
+            let nextClosing = calendar.dateInterval(of: .month, for: now)?.end ?? now
+            for delivery in [now, nextClosing] {
+                guard let interval = calendar.dateInterval(of: .month, for: delivery),
+                      CloudyWindowStore.calendar.startOfDay(for: interval.start)
+                        == CloudyWindowStore.calendar.startOfDay(for: delivery),
+                      let previous = calendar.date(byAdding: .month, value: -1, to: interval.start) else { continue }
+                guard case let .ready(letter) = MonthlyWindowBuilder().build(
+                    from: albumEligibleCatPhotos, monthContaining: previous),
+                    albumPrototypeEnabledAt > 0, interval.start.timeIntervalSince1970 > albumPrototypeEnabledAt,
+                    !Set(albumPrototypeOpened.split(separator: ",").map(String.init)).contains(letter.periodIdentifier),
+                    let cover = AlbumPrototype.cover(of: letter, from: catPhotos),
+                    !receivedPhotoIdentifiers.contains(cover.localIdentifier) else { continue }
+                arrival = .init(period: letter.periodIdentifier, availableAt: interval.start,
+                                photoID: cover.localIdentifier)
+                break
+            }
+        }
+        if (try? CloudyWindowStore.shared.synchronizeAlbumArrival(enabled: enabled,
+            enabledAt: albumPrototypeEnabledAt > 0 ? Date(timeIntervalSince1970: albumPrototypeEnabledAt) : nil,
+            openedPeriods: Set(albumPrototypeOpened.split(separator: ",").map(String.init)), arrival: arrival)) == true {
+            if CloudyWindowStore.shared.configuration().enabled {
+                NotificationCenter.default.post(name: .cloudyWindowConfigurationChanged, object: nil)
+            }
+        }
+    }
+
+    private func openAlbumArrivalIfReady() {
+        guard let route = albumArrivalInbox.pending else { return }
+        guard AlbumPrototype.isOn(albumPrototypeStored) else {
+            albumArrivalInbox.pending = nil
+            arrivalUnavailable = true
+            return
+        }
+        guard let photoLibraryLoadSucceeded else { return }
+        if !photoLibraryLoadSucceeded || (!monthlyWindowCollectionKey.canBuild && !isScanning) {
+            albumArrivalInbox.pending = nil
+            arrivalUnavailable = true
+            return
+        }
+        // A cold start has no collection yet. Keep the exact route until the
+        // current permission/source/scan projection has finished rebuilding it.
+        guard completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey else { return }
+        albumArrivalInbox.pending = nil
+        guard hasPhotoAccess, photoPresentationVersion.canPresent,
+              let period = CloudyWindowStore.shared.albumPeriod(for: route),
+              let letter = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == period }),
+              !letter.photos.isEmpty else {
+            arrivalUnavailable = true
+            return
+        }
+        showsSettings = false
+        selectedTab = .memories
+        arrivalStory = letter
     }
 
     private var seasonalMoviePreparationKey: SeasonalMoviePreparationKey {
@@ -3080,7 +3224,7 @@ private struct WindowListView: View {
     private func unavailableWindowContent(message: String) -> some View {
         VStack(spacing: 16) {
             ContentUnavailableView(
-                "家族・友だちのまどを確認できません",
+                "みんなのまどを確認できません",
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text(message)
             )
@@ -3230,7 +3374,7 @@ private struct WindowListView: View {
             setupAction("以前のまどにこのiPhoneを追加", path: .recover, identifier: "window-list-recover")
         }
         if pausesWindowChanges {
-            Text(availabilityMessage ?? "家族・友だちのまどを確認しています…")
+            Text(availabilityMessage ?? "みんなのまどを確認しています…")
                 .font(.footnote).foregroundStyle(.secondary)
             if availabilityMessage != nil {
                 Button("もう一度確認する") { Task { await reload() } }
@@ -3804,5 +3948,62 @@ private struct GrowingSummaryGate: ViewModifier {
 private extension View {
     func growingSummaryFeature(_ context: PlusOfferContext, hasContent: Bool) -> some View {
         modifier(GrowingSummaryGate(context: context, hasContent: hasContent))
+    }
+}
+
+/// Test builds only: what writing the tools together with the family will be.
+/// The family is one group for every tool; people outside it get a tool
+/// handed to them (PDF, image) instead. Nothing here sends anything yet.
+struct FamilyNotebookIntroView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("一緒にお世話する人（家族・同居の人）と、この子のことを同じ手帳に書けます。")
+                        .font(.body)
+                    VStack(alignment: .leading, spacing: 14) {
+                        point("syringe", "だれかが書いたワクチンの日を、ほかの家族も見られる")
+                        point("house", "預けるとき、実家の親が自分の iPhone で食事の量を確かめられる")
+                        point("clock.arrow.circlepath", "どの項目も、だれがいつ書いたかが残る")
+                        point("lock", "健康や家の情報は、iPhone の中で暗号にしてから送る")
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("一緒に書けるもの").font(.subheadline.weight(.semibold))
+                        Text("この子のこと（基本・健康・暮らし）、病院で見せる、預けるとき。迷子のチラシも、いつも最新の内容で作れます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("家族の外の人には").font(.subheadline.weight(.semibold))
+                        Text("ペットシッターや病院には、道具ごとに PDF や画像で渡せます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("料金").font(.subheadline.weight(.semibold))
+                        Text("家族を作る人は Plus。招待された人はずっと無料です。Plus をやめても、書いたことはみんなの iPhone に残ります。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Button {} label: {
+                        Text("家族を作る").font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(true)
+                    Text("テスト用の版の試作です。まだ家族を作ることはできません。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(20)
+            }
+            .navigationTitle("家族と一緒に書く")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+        }
+    }
+
+    private func point(_ systemImage: String, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: systemImage).foregroundStyle(.secondary).frame(width: 22)
+            Text(text).font(.subheadline)
+        }
     }
 }
