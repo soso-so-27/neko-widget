@@ -139,6 +139,7 @@ enum AlbumPrototype {
     }
 
     /// The cats actually in these photos, most often first, at most two.
+    /// When no photo is assigned, the registered cats (two names, or 「うちの3匹」).
     static func names(for photos: [PhotoPresentation], assignments: [String: Set<String>],
                       profileNames: [String: String]) -> String {
         var counts: [String: Int] = [:]
@@ -148,7 +149,14 @@ enum AlbumPrototype {
         let names = counts.sorted { $0.value > $1.value }
             .compactMap { profileNames[$0.key] }
             .prefix(2)
-        return names.isEmpty ? "うちの子" : names.joined(separator: "と")
+        if !names.isEmpty { return names.joined(separator: "と") }
+        // No photo says which cat: name the household instead of 「うちの子」.
+        let registered = profileNames.values.sorted()
+        switch registered.count {
+        case 0: return "うちの子"
+        case 1, 2: return registered.joined(separator: "と")
+        default: return "うちの\(registered.count)匹"
+        }
     }
 }
 
