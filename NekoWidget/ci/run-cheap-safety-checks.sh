@@ -50,6 +50,26 @@ xcrun swiftc -parse-as-library \
   ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-veterinary-visits"
 "$RUNNER_TEMP/verify-veterinary-visits"
 
+# Family notebook stage 1: isolated stores and synthetic data only. The same
+# source files are compiled into the app, with no UI or network connection.
+notebook_common=(
+  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift
+  Shared/Models/CatCandidateCuration.swift Shared/Models/CatHouseholdIdentity.swift
+  Shared/Models/CatProfileTransfer.swift Shared/Models/NekoWidgetError.swift
+  Shared/Models/WidgetRenderPlan.swift Shared/Models/WidgetManifest.swift
+  Shared/Storage/AtomicJSON.swift Shared/AppGroup/SharedContainer.swift
+  NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookStore.swift
+)
+xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
+  ci/verify-family-notebook.swift -o "$RUNNER_TEMP/verify-family-notebook"
+"$RUNNER_TEMP/verify-family-notebook"
+xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
+  NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
+  NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift \
+  NekoWidget/Services/FamilyNotebookMigration.swift \
+  ci/verify-family-notebook-migration.swift -o "$RUNNER_TEMP/verify-family-notebook-migration"
+"$RUNNER_TEMP/verify-family-notebook-migration"
+
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   ci/verify-membership-access.swift -o "$RUNNER_TEMP/verify-membership-access"
 "$RUNNER_TEMP/verify-membership-access"
