@@ -91,6 +91,7 @@ struct SettingsView: View {
     @State private var showsMembershipPreview = false
     @AppStorage(AlbumPrototype.key) private var albumPrototypeOn = false
     @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
+    @AppStorage(AlbumPrototype.bookKey) private var albumBook = false
     @State private var showsWindowSupportPreview = false
     @State private var cloudyWindowEnabled = CloudyWindowStore.shared.configuration().enabled
     @State private var cloudyWindowStrength = CloudyWindowStore.shared.configuration().strength
@@ -364,6 +365,8 @@ struct SettingsView: View {
                         if albumPrototypeOn {
                             Toggle("1 年の作品をいま届ける（12/6 を待たない）", isOn: $albumYearNow)
                                 .accessibilityIdentifier("settings-album-year-now")
+                            Toggle("月の作品を本の形で見る", isOn: $albumBook)
+                                .accessibilityIdentifier("settings-album-book")
                         }
                         NavigationLink {
                             advancedDiagnosticsView
