@@ -1314,13 +1314,18 @@ private struct GroupPhotoDetail: View {
                 } label: {
                     VStack(spacing: 3) {
                         Image(systemName: mine ? "heart.fill" : "heart").font(.title2)
+                            .contentTransition(.symbolEffect(.replace))
+                            .symbolEffect(.bounce, value: mine)
                         Text(heartCount > 0 ? heartCount.formatted() : "ハート").font(.caption2.monospacedDigit())
+                            .contentTransition(.numericText())
+                            .animation(.snappy, value: heartCount)
                     }
                     .frame(maxWidth: .infinity, minHeight: 56)
                     .foregroundStyle(mine ? Color.red : Color.secondary)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .sensoryFeedback(.impact(weight: .light), trigger: mine) { _, sent in sent }
                 .accessibilityLabel(mine ? "ハートを送りました" : "ハートを送る")
                 .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
                 .accessibilityIdentifier("group-photo-heart")

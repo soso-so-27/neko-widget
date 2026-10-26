@@ -1,4 +1,5 @@
 import Photos
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -322,6 +323,8 @@ struct AlbumPrototypeView: View {
                     .font(.subheadline.weight(.semibold))
                 Spacer(minLength: 8)
                 Text(status).font(.footnote).foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: photoCount)
             }
             HStack(spacing: 4) {
                 ForEach(0..<full, id: \.self) { mark in
@@ -554,6 +557,15 @@ struct PastWorksView: View {
     }
 
     private func cover(_ photo: PhotoPresentation?, title: String, isMovie: Bool = false) -> some View {
+        shelfCover(photo, title: title, isMovie: isMovie)
+            .scrollTransition(.animated(.smooth)) { content, phase in
+                content
+                    .opacity(phase.isIdentity ? 1 : 0.55)
+                    .scaleEffect(phase.isIdentity ? 1 : 0.94)
+            }
+    }
+
+    private func shelfCover(_ photo: PhotoPresentation?, title: String, isMovie: Bool) -> some View {
         Color.clear
             .aspectRatio(0.75, contentMode: .fit)
             .overlay {
@@ -1370,6 +1382,7 @@ struct MonthlyBookView: View {
         case let .photo(photo, caption):
             VStack(alignment: .leading, spacing: 10) {
                 BookPhotoView(localIdentifier: photo.localIdentifier)
+                    .modifier(LivePhotoHold(localIdentifier: photo.localIdentifier))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 captionText(caption)
             }
@@ -1515,6 +1528,104 @@ struct PageCurlView<Page: View>: UIViewControllerRepresentable {
             guard completed, let shown = pageViewController.viewControllers?.first,
                   let shownIndex = position(of: shown) else { return }
             parent.index = shownIndex
+        }
+    }
+}
+
+/// Hold a Live Photo and it plays, as in Photos: the moment around the shot.
+/// Still photos are left alone. The movie loads on the first hold only, so a
+/// book of many pages does not read every video up front.
+struct LivePhotoHold: ViewModifier {
+    let localIdentifier: String
+    @State private var isLive = false
+    @State private var livePhoto: PHLivePhoto?
+    @State private var playing = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if playing, let livePhoto {
+                    LivePhotoPlayer(livePhoto: livePhoto) { playing = false }
+                        .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if isLive, !playing {
+                    Image(systemName: "livephoto")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.4), radius: 2)
+                        .padding(8)
+                        .accessibilityHidden(true)
+                }
+            }
+            .onLongPressGesture(minimumDuration: 0.25, perform: {}, onPressingChanged: { pressing in
+                guard pressing, isLive, !playing else { return }
+                Task {
+                    if livePhoto == nil { livePhoto = await Self.livePhoto(localIdentifier) }
+                    if livePhoto != nil { withAnimation(.easeOut(duration: 0.15)) { playing = true } }
+                }
+            })
+            .sensoryFeedback(.impact(weight: .light), trigger: playing) { _, isPlaying in isPlaying }
+            .accessibilityAction(named: "動かす") {
+                guard isLive else { return }
+                Task {
+                    if livePhoto == nil { livePhoto = await Self.livePhoto(localIdentifier) }
+                    if livePhoto != nil { playing = true }
+                }
+            }
+            .task(id: localIdentifier) {
+                isLive = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+                    .firstObject?.mediaSubtypes.contains(.photoLive) ?? false
+            }
+    }
+
+    private static func livePhoto(_ identifier: String) async -> PHLivePhoto? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+        let options = PHLivePhotoRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.isNetworkAccessAllowed = true
+        return await withCheckedContinuation { continuation in
+            var resumed = false
+            PHImageManager.default().requestLivePhoto(for: asset, targetSize: CGSize(width: 1600, height: 1600),
+                                                      contentMode: .aspectFit, options: options) { photo, info in
+                if (info?[PHImageResultIsDegradedKey] as? Bool) == true { return }
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(returning: photo)
+            }
+        }
+    }
+}
+
+/// The system's Live Photo view, played once, silent, then handed back.
+struct LivePhotoPlayer: UIViewRepresentable {
+    let livePhoto: PHLivePhoto
+    let onEnd: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onEnd: onEnd) }
+
+    func makeUIView(context: Context) -> PHLivePhotoView {
+        let view = PHLivePhotoView()
+        view.contentMode = .scaleAspectFit
+        view.isMuted = true
+        view.delegate = context.coordinator
+        view.livePhoto = livePhoto
+        view.startPlayback(with: .full)
+        return view
+    }
+
+    func updateUIView(_ view: PHLivePhotoView, context: Context) {
+        context.coordinator.onEnd = onEnd
+    }
+
+    final class Coordinator: NSObject, PHLivePhotoViewDelegate {
+        var onEnd: () -> Void
+        init(onEnd: @escaping () -> Void) { self.onEnd = onEnd }
+
+        func livePhotoView(_ livePhotoView: PHLivePhotoView,
+                           didEndPlaybackWith playbackStyle: PHLivePhotoViewPlaybackStyle) {
+            onEnd()
         }
     }
 }
