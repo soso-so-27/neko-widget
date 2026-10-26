@@ -935,7 +935,7 @@ private struct YearStoryContentView: View {
     enum Page {
         case cover(PhotoPresentation)
         case month(Int, PhotoPresentation)
-        case stats(count: Int, bestMonth: Int?, companion: String?)
+        case stats(count: Int, companion: String?)
         case card([PhotoPresentation])
     }
 
@@ -973,18 +973,15 @@ private struct YearStoryContentView: View {
         let calendar = Calendar.current
         guard let cover = nine.first else { return [] }
         var result: [Page] = [.cover(cover)]
-        var monthCounts: [Int: Int] = [:]
         for month in 1...12 {
             guard let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else { continue }
             let photos = AlbumPrototype.photos(in: start, from: catPhotos)
-            monthCounts[month] = photos.count
             if let best = AlbumPrototype.pick(photos, count: 1).first { result.append(.month(month, best)) }
         }
         var counts: [String: Int] = [:]
         for photo in yearPhotos { for id in assignments[photo.localIdentifier] ?? [] { counts[id, default: 0] += 1 } }
         let companion = counts.max { $0.value < $1.value }.flatMap { profileNames[$0.key] }
-        let bestMonth = monthCounts.filter { $0.value > 0 }.max { $0.value < $1.value }?.key
-        result.append(.stats(count: yearPhotos.count, bestMonth: bestMonth, companion: companion))
+        result.append(.stats(count: yearPhotos.count, companion: companion))
         result.append(.card(nine))
         return result
     }
@@ -1113,11 +1110,10 @@ private struct YearStoryContentView: View {
                         .padding(.horizontal, 24)
                         .padding(.bottom, 44)
                 }
-        case let .stats(count, bestMonth, companion):
+        case let .stats(count, companion):
             VStack(alignment: .leading, spacing: 22) {
                 Spacer()
                 stat(String(count), "\(year)年に撮った猫の写真")
-                if let bestMonth { stat("\(bestMonth)月", "いちばん撮った月") }
                 if let companion { stat(companion, "いちばん写っていた子", size: 30) }
                 Spacer()
             }
@@ -1240,12 +1236,12 @@ struct MonthlyBookView: View {
         ZStack {
             Self.paper.ignoresSafeArea()
             if isShown, !leaves.isEmpty {
-                TabView(selection: $index) {
-                    ForEach(Array(leaves.enumerated()), id: \.offset) { position, leaf in
-                        leafView(leaf).tag(position)
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
+                PageCurlView(pages: leaves.map { leaf in
+                    leafView(leaf)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Self.paper)
+                }, index: $index)
+                .ignoresSafeArea()
                 .sensoryFeedback(.selection, trigger: index)
                 .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
             } else if isShown {
@@ -1328,7 +1324,7 @@ struct MonthlyBookView: View {
                     .clipped()
                 Spacer(minLength: 20)
                 Text(verbatim: "\(letter.monthNumber)月")
-                    .font(.system(size: 64, weight: .regular, design: .serif))
+                    .font(.system(size: 40, weight: .light, design: .serif))
                 Text(verbatim: "\(names)　\(letter.yearNumber)")
                     .font(.footnote).tracking(2)
                     .foregroundStyle(Self.ink.opacity(0.6))
@@ -1407,6 +1403,82 @@ private extension View {
     /// The same margins on every page, like a printed book.
     func leafMargins(bottom: CGFloat = 60) -> some View {
         padding(.horizontal, 28).padding(.top, 64).padding(.bottom, bottom)
+    }
+}
+
+/// Pages that turn like paper: the system's own page curl (as in Books),
+/// nothing drawn by us. Swipe or tap the edge to turn.
+struct PageCurlView<Page: View>: UIViewControllerRepresentable {
+    let pages: [Page]
+    @Binding var index: Int
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let controller = UIPageViewController(transitionStyle: .pageCurl, navigationOrientation: .horizontal)
+        controller.dataSource = context.coordinator
+        controller.delegate = context.coordinator
+        controller.view.backgroundColor = .clear
+        context.coordinator.rebuild(pages)
+        if let first = context.coordinator.page(at: index) {
+            controller.setViewControllers([first], direction: .forward, animated: false)
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIPageViewController, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.parent = self
+        if coordinator.pages.count != pages.count {
+            coordinator.rebuild(pages)
+        } else {
+            for (position, page) in pages.enumerated() { coordinator.pages[position].rootView = page }
+        }
+        guard let target = coordinator.page(at: index) else { return }
+        if let shown = controller.viewControllers?.first, shown === target { return }
+        let shownIndex = controller.viewControllers?.first.flatMap(coordinator.position(of:)) ?? 0
+        controller.setViewControllers([target], direction: index >= shownIndex ? .forward : .reverse, animated: false)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+        var parent: PageCurlView
+        var pages: [UIHostingController<Page>] = []
+
+        init(_ parent: PageCurlView) { self.parent = parent }
+
+        func rebuild(_ views: [Page]) {
+            pages = views.map { view in
+                let host = UIHostingController(rootView: view)
+                host.view.backgroundColor = UIColor(MonthlyBookView.paper)
+                return host
+            }
+        }
+
+        func page(at position: Int) -> UIHostingController<Page>? {
+            pages.indices.contains(position) ? pages[position] : nil
+        }
+
+        func position(of controller: UIViewController) -> Int? {
+            pages.firstIndex { $0 === controller }
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController,
+                                viewControllerBefore viewController: UIViewController) -> UIViewController? {
+            position(of: viewController).flatMap { page(at: $0 - 1) }
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController,
+                                viewControllerAfter viewController: UIViewController) -> UIViewController? {
+            position(of: viewController).flatMap { page(at: $0 + 1) }
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController, didFinishAnimating finished: Bool,
+                                previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
+            guard completed, let shown = pageViewController.viewControllers?.first,
+                  let shownIndex = position(of: shown) else { return }
+            parent.index = shownIndex
+        }
     }
 }
 
