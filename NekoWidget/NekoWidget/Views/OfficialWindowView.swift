@@ -159,8 +159,10 @@ struct PublicWindowDiscoveryView: View {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(sources) { source in
                     OfficialWindowEntryCard(state: states[source.id], store: source.store, refreshFeed: source.refresh,
-                        presentation: .discovery, previewFeed: source.preview, relatedWindows: sources)
+                        presentation: InternalBuildPresentationAvailability.isAvailable ? .row : .discovery,
+                        previewFeed: source.preview, relatedWindows: sources)
                 }
+                if InternalBuildPresentationAvailability.isAvailable { PublicWindowComingSoonRows() }
             }
             .padding(20)
             .frame(maxWidth: 520)
@@ -183,9 +185,33 @@ struct PublicWindowDiscoveryView: View {
     }
 }
 
+struct PublicWindowComingSoonRows: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            row("猫カフェ", icon: "cup.and.saucer", id: "cat-cafe")
+            Divider()
+            row("保護猫", icon: "house", id: "rescue-cats")
+        }
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func row(_ title: String, icon: String, id: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon).frame(width: 28)
+            Text(title)
+            Spacer()
+            Text("近日").font(.caption)
+        }
+        .foregroundStyle(.secondary)
+        .padding(16)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("official-window-coming-soon-\(id)")
+    }
+}
+
 @MainActor
 struct OfficialWindowEntryCard: View {
-    enum Presentation: Equatable { case list, discovery }
+    enum Presentation: Equatable { case list, discovery, row }
     let state: OfficialWindowState
     let store: OfficialWindowStore
     let refreshFeed: () async throws -> Void
@@ -236,6 +262,23 @@ struct OfficialWindowEntryCard: View {
         } label: {
             if presentation == .list {
                 WindowPhotoCard(title: store.displayName, kind: .official) { cover(photo: photo, status: status) }
+            } else if presentation == .row {
+                HStack(spacing: 14) {
+                    cover(photo: photo, status: status)
+                        .frame(width: 76, height: 76)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(store.displayName).font(.headline)
+                        Text(store.definition.subtitle).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+                .contentShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     Color(.tertiarySystemFill).aspectRatio(16.0 / 9.0, contentMode: .fit)
@@ -267,7 +310,7 @@ struct OfficialWindowEntryCard: View {
             .compactMap { $0 }.joined(separator: "。"))
         .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "まどの内容を確認します")
         .task {
-            guard presentation == .discovery, !state.isSubscribed, store.endpoint != nil else { return }
+            guard presentation != .list, !state.isSubscribed, store.endpoint != nil else { return }
             await preview.load(using: previewFeed)
         }
     }
@@ -367,6 +410,9 @@ struct OfficialWindowView: View {
         return ([catalog.validUntil] + catalog.photos.map(\.expiresAt)).filter { $0 > displayDate }.min()
     }
     private var photos: [OfficialCatPhoto] {
+        if store.windowID == "black-cats", InternalBuildPresentationAvailability.isAvailable {
+            return currentCatalog?.widgetPhotos(at: displayDate) ?? []
+        }
         if state.isSubscribed { return state.catalog?.availablePhotos(at: displayDate) ?? [] }
         if isPreviewing, let photo = preview.content?.availablePhoto(at: displayDate) { return [photo] }
         return []
@@ -565,7 +611,9 @@ struct OfficialWindowView: View {
                     Text(store.definition.catID == nil
                          ? "運営が選んだ猫の写真が届きます。投稿や友だちの招待は不要です。"
                          : "この猫の写真を受け取るまどです。新しい写真がないときは、次の掲載を待ちます。")
-                    Text("提供元・掲載日は写真で確認できます。AI生成画像はその旨を表示します。")
+                    Text(store.windowID == "black-cats"
+                         ? "提供元・掲載日は画像で確認できます。毎日、日本時間の0時に新しい1枚へ切り替わります。"
+                         : "提供元・掲載日は写真で確認できます。AI生成画像はその旨を表示します。")
                     Text("新しい写真が届くと更新します。Widgetへの反映には時間がかかる場合があります。")
                 }
                 .padding(24)
@@ -833,9 +881,18 @@ struct OfficialWindowView: View {
         while !Task.isCancelled {
             let delay = min(30, max(0, nextPhotoDeadline?.timeIntervalSinceNow ?? 30))
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            // snapshot() deliberately discards expired catalogs. Capture the
+            // cutover before replacing state so a subscribed window refreshes too.
+            let dailyEditionEnded = store.windowID == "black-cats" && InternalBuildPresentationAvailability.isAvailable
+                && currentCatalog.map { $0.validUntil <= Date() } == true
             state = store.snapshot()
             displayDate = Date()
             dismissUnavailablePhoto()
+            if dailyEditionEnded, scenePhase == .active {
+                // Updating state changes nextPhotoDeadline and cancels this
+                // observer task. Let the refresh finish outside that task.
+                Task { await refresh() }
+            }
         }
     }
 
@@ -1108,10 +1165,12 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let unavailable = CommandLine.arguments.contains("--official-window-unconfigured")
         store = OfficialWindowStore(
             directory: FileManager.default.temporaryDirectory.appendingPathComponent("official-fixture-" + UUID().uuidString),
-            definition: definition ?? PublicWindowDefinition(
+            definition: definition ?? (CommandLine.arguments.contains("--black-cat-daily") ? PublicWindowDefinition(
+                id: "black-cats", displayName: "黒猫のまど", subtitle: "1日1枚、きょうの黒猫",
+                endpoint: unavailable ? nil : URL(string: "https://official.invalid/windows/black-cats/catalog.json")) : PublicWindowDefinition(
                 id: OfficialWindowCatalog.sourceID, displayName: OfficialWindowCatalog.displayName,
                 subtitle: "確認用の猫の写真",
-                endpoint: unavailable ? nil : URL(string: "https://official.invalid/catalog.json"))
+                endpoint: unavailable ? nil : URL(string: "https://official.invalid/catalog.json")))
         )
         if CommandLine.arguments.contains("--official-window-linked-photo") {
             linkedPhotoID = CommandLine.arguments.contains("--official-window-missing-photo") ? "removed-photo" : "fixture-photo"
@@ -1209,9 +1268,10 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let photo = OfficialCatPhoto(
             id: index == 0 ? "fixture-photo" : "fixture-photo-\(index)",
             catID: store.definition.catID ?? (isCatWindowFlow ? "generated-tabby-nap" : "fixture-cat"),
-            catName: isCatWindowFlow ? "キジ白" : (store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫"),
-            credit: isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像",
-            caption: "窓辺でひと休み。", photographedOn: "2026-09-01",
+            catName: store.windowID == "black-cats" ? "黒猫" : (isCatWindowFlow ? "キジ白" : (store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫")),
+            credit: store.windowID == "black-cats" ? "ねこのまど（AI で作った画像）" : (isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像"),
+            caption: store.windowID == "black-cats" ? nil : "窓辺でひと休み。",
+            photographedOn: store.windowID == "black-cats" ? nil : "2026-09-01",
             publishedAt: fixtureDate.addingTimeInterval(-86400 * Double(index)),
             expiresAt: fixtureDate.addingTimeInterval((CommandLine.arguments.contains("--official-window-expiring-photo") ? 30 : 86400) + renewal),
             imageFilename: hash + ".jpg", sha256: hash,

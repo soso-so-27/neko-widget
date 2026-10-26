@@ -715,18 +715,6 @@ struct PlusSettingsSection: View {
     }
 }
 
-/// Distribution intent, not receipt environment, controls internal-only UI.
-/// TestFlight and App Review both use sandbox receipts in public builds.
-enum InternalBuildPresentationAvailability {
-    static var isAvailable: Bool {
-#if DEBUG
-        !CommandLine.arguments.contains("--review-public-presentation")
-#else
-        (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
-#endif
-    }
-}
-
 /// Read-only, no-charge entry. This flag never grants purchase authority.
 enum MembershipOfferPreviewAvailability {
     static var isAvailable: Bool {

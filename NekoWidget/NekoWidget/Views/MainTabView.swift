@@ -3091,7 +3091,7 @@ private struct WindowListView: View {
                 if let groupClient = GroupWindowClientProvider.ui {
                     // Windows people share come first (1-4); public windows follow.
                     GroupWindowListSection(client: groupClient)
-                    if !receivingPublicWindows.isEmpty {
+                    if !InternalBuildPresentationAvailability.isAvailable, !receivingPublicWindows.isEmpty {
                         Text("公式のまど")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
@@ -3099,12 +3099,15 @@ private struct WindowListView: View {
                             .accessibilityAddTraits(.isHeader)
                     }
                 }
-                if !connectedWindows.isEmpty || !receivingPublicWindows.isEmpty || !setupWindows.isEmpty {
+                if !connectedWindows.isEmpty || !setupWindows.isEmpty
+                    || (!InternalBuildPresentationAvailability.isAvailable && !receivingPublicWindows.isEmpty) {
                     LazyVGrid(columns: cardColumns, spacing: 22) {
                         ForEach(connectedWindows) { window in
                             windowCard(window)
                         }
-                        ForEach(receivingPublicWindows) { source in publicCard(source) }
+                        if !InternalBuildPresentationAvailability.isAvailable {
+                            ForEach(receivingPublicWindows) { source in publicCard(source) }
+                        }
                         ForEach(setupWindows) { window in windowCard(window) }
                     }
                     .accessibilityIdentifier("window-list-receiving")
@@ -3122,9 +3125,9 @@ private struct WindowListView: View {
                         cachedWindowWarning(message: message)
                     }
 
-                    if GroupWindowClientProvider.ui != nil {
-                        publicWindowEntry
-                    } else if windows.isEmpty, receivingPublicWindows.isEmpty {
+                    if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {
+                        legacyPublicWindowEntry
+                    } else if !InternalBuildPresentationAvailability.isAvailable, windows.isEmpty, receivingPublicWindows.isEmpty {
                         emptyWindowCard
                     }
 
@@ -3133,6 +3136,7 @@ private struct WindowListView: View {
                     }
 
                 }
+                if InternalBuildPresentationAvailability.isAvailable { publicWindowEntry }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -3261,8 +3265,21 @@ private struct WindowListView: View {
         .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    /// With group windows on, public windows are a small second entry below them.
     private var publicWindowEntry: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("公式のまど")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(publicWindows) { source in
+                publicCard(source, presentation: .row)
+            }
+            PublicWindowComingSoonRows()
+        }
+        .accessibilityIdentifier("window-list-start")
+    }
+
+    private var legacyPublicWindowEntry: some View {
         NavigationLink { discovery } label: {
             HStack(spacing: 12) {
                 Image(systemName: "building.2")

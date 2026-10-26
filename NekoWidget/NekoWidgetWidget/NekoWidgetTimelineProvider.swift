@@ -157,12 +157,19 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             if let photo = entry.officialPhoto, let catalog = state.catalog {
                 // A terminal empty entry bounds the photo even when iOS delays
                 // the next network refresh. Never loop expired public photos.
-                let expiry = min(photo.expiresAt, catalog.validUntil)
+                let expiry = catalog.widgetDeadline(for: photo)
                 entries.append(.empty(at: expiry, imageVariant: variant,
                                       photoSourceIdentifier: source.id,
                                       windowDisplayName: store.displayName))
             }
-            return Timeline(entries: entries, policy: .after(date.addingTimeInterval(60 * 60)))
+            var refresh = date.addingTimeInterval(60 * 60)
+            if windowID == "black-cats", InternalBuildPresentationAvailability.isAvailable {
+                refresh = min(refresh, OfficialWindowCatalog.nextBlackCatCutover(after: date))
+                if let deadline = state.catalog?.validUntil, deadline > date {
+                    refresh = min(refresh, deadline)
+                }
+            }
+            return Timeline(entries: entries, policy: .after(refresh))
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled,
@@ -392,7 +399,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
         // A failed new-image download need not blank a valid older photo that
         // the current catalog still permits. The entry keeps that photo's ID.
-        guard let photo = state.photos.first(where: {
+        guard let photo = state.widgetPhotos(at: now).first(where: {
             store.imageURL(for: $0) != nil
         }) else { return entry }
         entry = NekoWidgetEntry(
