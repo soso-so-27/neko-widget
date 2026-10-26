@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import worker from '../src/program.js';
 import { BLACK_CAT_CREDIT } from '../src/black-cat-loop.js';
 import { prepareBlackCatLoop } from '../tools/prepare_black_cat_days.mjs';
@@ -141,7 +142,8 @@ test('version/pointer changes or JST midnight during the check cannot be accepte
 
 test('CLI pending failure uses selected receipt, deduplicates, and never invokes deployment or version lookup', async t => {
   const f = await fixture(t); await writeFile(path.join(f.runtime, 'pending.json'), '{}');
-  const args = [path.resolve('tools/check_black_cat_loop.mjs'), '--current', f.current, '--receipt', f.receipt];
+  const tool = fileURLToPath(new URL('../tools/check_black_cat_loop.mjs', import.meta.url));
+  const args = [tool, '--current', f.current, '--receipt', f.receipt];
   const invoke = async () => {
     try { await promisify(execFile)(process.execPath, args); assert.fail('Pending must exit nonzero'); }
     catch (error) { assert.equal(error.code, 1); assert.equal(error.stderr, ''); return JSON.parse(error.stdout); }

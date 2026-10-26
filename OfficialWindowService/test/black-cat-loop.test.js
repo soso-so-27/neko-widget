@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, realpath, mkdir, writeFile, readFile, access, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import worker, { validateProgram } from '../src/program.js';
@@ -187,7 +187,7 @@ test('invalid append, expired cutover, unapproved inputs and modified schedules 
 test('single config CLI is explicit and public assets omit input names and local paths', async t => {
   const f = await fixture(t), configPath = path.join(f.root, 'operator.json'), output = path.join(f.root, 'cli');
   await writeFile(configPath, JSON.stringify(f.config));
-  const tool = path.resolve('tools/prepare_black_cat_days.mjs');
+  const tool = fileURLToPath(new URL('../tools/prepare_black_cat_days.mjs', import.meta.url));
   const args = [tool, '--loop-config', configPath, '--input', f.input, '--output', output];
   await assert.rejects(run(process.execPath, args));
   await run(process.execPath, [...args, '--publication-approved']);
