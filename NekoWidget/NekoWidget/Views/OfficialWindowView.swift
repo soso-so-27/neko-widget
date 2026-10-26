@@ -4,6 +4,12 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
+private extension OfficialCatPhoto {
+    func displayCredit(in windowID: String) -> String {
+        windowID == "black-cats" ? "ねこのまど" : credit
+    }
+}
+
 /// Keep identity above the changing photo. Setup uses the same shelf footprint
 /// without pretending that an unfinished connection already contains photos.
 @MainActor
@@ -306,7 +312,7 @@ struct OfficialWindowEntryCard: View {
         .accessibilityIdentifier(store.windowID == OfficialWindowCatalog.sourceID ? "official-window-entry" : "public-window-entry-\(store.windowID)")
         .accessibilityLabel("\(store.displayName)、写真を受け取るまど、公式")
         .accessibilityValue([state.isSubscribed ? "受け取り中" : "まだ受け取っていません",
-                             photo?.credit ?? status.title]
+                             photo?.displayCredit(in: store.windowID) ?? status.title]
             .compactMap { $0 }.joined(separator: "。"))
         .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "まどの内容を確認します")
         .task {
@@ -782,7 +788,7 @@ struct OfficialWindowView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("official-window-photo-\(photo.id)")
         .accessibilityLabel("\(photo.catName)の写真。掲載日、\(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
-        .accessibilityValue("提供元、\(photo.credit)。\(photo.caption ?? "")")
+        .accessibilityValue("提供元、\(photo.displayCredit(in: store.windowID))。\(photo.caption ?? "")")
         .accessibilityHint("写真を拡大します")
     }
 
@@ -985,7 +991,7 @@ private struct OfficialPhotoDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         if let caption = photo.caption { Text(verbatim: caption).font(.body) }
-                        Text("提供元：\(photo.credit)")
+                        Text("提供元：\(photo.displayCredit(in: store.windowID))")
                         if let date = photo.photographedOn { Text("撮影日：\(date)") }
                         Text("掲載日：\(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
                     }
@@ -1043,9 +1049,9 @@ private struct OfficialPhotoDetailView: View {
                     if let caption = photo.caption {
                         Text(verbatim: caption).font(.subheadline).lineLimit(2)
                     }
-                    // Keep provenance, including AI disclosure, next to the
-                    // photo. Full caption and dates remain in its information.
-                    Text(verbatim: photo.credit).font(.caption).lineLimit(2)
+                    // Keep the display credit next to the photo. Full caption
+                    // and dates remain in its information.
+                    Text(verbatim: photo.displayCredit(in: store.windowID)).font(.caption).lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.right").font(.caption2).accessibilityHidden(true)
