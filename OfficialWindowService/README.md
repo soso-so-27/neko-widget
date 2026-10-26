@@ -97,11 +97,11 @@ node tools/prepare_bundle.mjs --assets C:/official-window-review/official-001 --
 - 現在の版は2026-09-13 07:34 JSTで期限切れになる。自動更新は設定していない。
 - `C:/dev/neko-widget-official-local-proof-20260910/preview-20260911-{first,updated}/http-result.json` に記録。実機Widgetで取得・更新したという証拠ではない。
 
-## 黒猫のまどを1日1枚で準備する（1025e・未配備）
+## 黒猫のまどを1日1枚でループする（ローカル候補）
 
-現在の候補は `tools/prepare_black_cat_days.mjs`。公開用JPEGのフォルダーから1〜60日分を作り、日本時間0時に切り替える。手順・画像の形式・サイズ・順序は [黒猫の画像の受け渡しと準備](tools/README-black-cat-days.md) を参照。
+現在の候補は `tools/prepare_black_cat_days.mjs --loop-config ...`。最初は確認済み10枚を日本時間0時に1枚ずつ切り替え、010の次は001へ戻る。開始日と並びは1つの設定にまとめる。確認後の末尾追加は現在の周回を保持し、明示したリセットだけ指定日の001へ戻す。Workerがその日の24時間catalogを生成するので、毎日の編集・cron・D1・期限延長の定期配備は不要。手順・入力条件・追加/リセットの境界は [黒猫の画像の受け渡しと準備](tools/README-black-cat-days.md) を参照。
 
-内部版のアプリとWidgetは今日の黒猫1枚を表示する。`InternalBuildPresentationAvailability` が利用可能なときだけ黒猫の行を出し、猫カフェ・保護猫は灰色の「近日」行にする。公開版の一覧とWidgetの選び方・期限は従来どおり。表示クレジットは所有者指定の「ねこのまど」。画像の受領・このローカル準備は、素材の公開や配備の承認を意味しない。
+内部版のアプリとWidgetは今日の黒猫1枚を表示する。`InternalBuildPresentationAvailability` が利用可能なときだけ黒猫の行を出し、猫カフェ・保護猫は灰色の「近日」行にする。公開版の一覧とWidgetの選び方・期限は従来どおり。表示クレジットは「ねこのまど（AI で作った画像）」。生成候補は既存staging用で、画像の受領・このローカル準備は素材の公開や配備の承認を意味しない。追加50枚は所有者確認後に扱う。
 
 ## 以前の3チャンネル候補の形式（1021f・互換用）
 

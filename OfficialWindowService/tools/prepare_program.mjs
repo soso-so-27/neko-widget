@@ -116,7 +116,7 @@ export async function prepareProgram(input, output, choose = randomInt) {
     }
   }
   await writeFile(path.join(target, 'assets' + PROGRAM_PATH), encoded, { flag: 'wx' });
-  for (const name of ['index.js', 'program.js', 'scheduled.js']) await writeFile(path.join(target, name), await file(path.join(service, 'src', name)), { flag: 'wx' });
+  for (const name of ['index.js', 'program.js', 'scheduled.js', 'black-cat-loop.js']) await writeFile(path.join(target, name), await file(path.join(service, 'src', name)), { flag: 'wx' });
   const config = await expectedConfig(); config.main = './program.js';
   await writeFile(path.join(target, 'wrangler.jsonc'), JSON.stringify(config, null, 2) + '\n', { flag: 'wx' });
   return { directory: target, editions: index.editions.length, startsAt: index.startsAt, through: index.through };

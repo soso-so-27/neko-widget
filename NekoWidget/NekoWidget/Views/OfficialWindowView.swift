@@ -1269,7 +1269,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
             id: index == 0 ? "fixture-photo" : "fixture-photo-\(index)",
             catID: store.definition.catID ?? (isCatWindowFlow ? "generated-tabby-nap" : "fixture-cat"),
             catName: store.windowID == "black-cats" ? "黒猫" : (isCatWindowFlow ? "キジ白" : (store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫")),
-            credit: store.windowID == "black-cats" ? "ねこのまど" : (isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像"),
+            credit: store.windowID == "black-cats" ? "ねこのまど（AI で作った画像）" : (isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像"),
             caption: store.windowID == "black-cats" ? nil : "窓辺でひと休み。",
             photographedOn: store.windowID == "black-cats" ? nil : "2026-09-01",
             publishedAt: fixtureDate.addingTimeInterval(-86400 * Double(index)),

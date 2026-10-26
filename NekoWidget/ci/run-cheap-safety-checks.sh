@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 # Public programme boundaries: local publisher/Worker and native metadata.
 # No UI suite, remote calls or publication.
-node --test ../OfficialWindowService/test/program.test.js ../OfficialWindowService/test/black-cat-days.test.js ../OfficialWindowService/test/program-black-cat.test.js
+node --test ../OfficialWindowService/test/program.test.js ../OfficialWindowService/test/black-cat-days.test.js ../OfficialWindowService/test/program-black-cat.test.js ../OfficialWindowService/test/black-cat-loop.test.js ../OfficialWindowService/test/black-cat-loop-monitor.test.js
 xcrun swiftc -parse-as-library -D OFFICIAL_WINDOW_CHECKS \
   Shared/Models/OfficialWindowCatalog.swift Shared/Storage/AtomicJSON.swift \
   Shared/Storage/OfficialWindowStore.swift ci/verify-official-window.swift \

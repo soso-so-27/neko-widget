@@ -1,6 +1,7 @@
 // A finite, reviewed public programme. No private bindings, cron, uploads or renewal.
 import worker from './index.js';
 import { instant } from './scheduled.js';
+import { validateBlackCatLoop, serveBlackCatLoop } from './black-cat-loop.js';
 
 export const PROGRAM_PATH = '/__program/index.json';
 const DAY = 86400000, HASH = /^[a-f0-9]{64}$/;
@@ -29,6 +30,7 @@ export function validateThemes(v, now) {
   return v;
 }
 export function validateProgram(index) {
+  if (index?.schemaVersion === 3) return validateBlackCatLoop(index);
   require(keys(index, ['schemaVersion', 'startsAt', 'through', 'editions']) && [1, 2].includes(index.schemaVersion)
     && Array.isArray(index.editions) && index.editions.length >= 1 && index.editions.length <= 512);
   const dailyBlackCats = index.schemaVersion === 2;
@@ -92,6 +94,7 @@ export default {
     try {
       const raw = await read(env.OFFICIAL_ASSETS, new URL(PROGRAM_PATH, url));
       const index = validateProgram(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw)));
+      if (index.schemaVersion === 3) return await serveBlackCatLoop(request, env, index);
       const now = Date.now(), selected = index.editions.find(e => instant(e.startsAt) <= now && now < instant(e.endsAt));
       if (!selected) return reply(503, head);
       const channel = root ? 'official-cats' : route[1];

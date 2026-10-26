@@ -603,6 +603,36 @@ struct OfficialWindowChecks {
               "Black-cat Widget kept a previous-day image across JST midnight")
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3600)!
         let now = Date(), day = calendar.startOfDay(for: now)
+        // Repeating JPEG bytes must arrive as a NEW daily publication. A cached
+        // catalog from the previous cycle remains expired and cannot roll back
+        // the current day, even though both photos have the same content hash.
+        func loopCatalog(_ start: Date, _ id: String) -> OfficialWindowCatalog {
+            let end = start.addingTimeInterval(86400)
+            let item = OfficialCatPhoto(id: id, catID: photo.catID, catName: "黒猫",
+                credit: "ねこのまど（AI で作った画像）", caption: nil, photographedOn: nil,
+                publishedAt: start, expiresAt: end, imageFilename: photo.imageFilename,
+                sha256: photo.sha256, width: photo.width, height: photo.height)
+            return .init(schemaVersion: 1, channelID: "black-cats", enabled: true,
+                         generatedAt: start, validUntil: end, photos: [item])
+        }
+        let firstCycle = loopCatalog(day.addingTimeInterval(-10 * 86400), "black-first-cycle")
+        let nextCycle = loopCatalog(day, "black-next-cycle")
+        try firstCycle.validate(at: firstCycle.generatedAt, expectedChannelID: "black-cats")
+        try nextCycle.validate(at: now, expectedChannelID: "black-cats")
+        let loopStore = OfficialWindowStore(directory: root.appendingPathComponent("black-cat-loop"),
+            definition: .init(id: "black-cats", displayName: "黒猫のまど", subtitle: "今日の1枚",
+                endpoint: endpoint.deletingLastPathComponent().appendingPathComponent("windows/black-cats/catalog.json")))
+        try loopStore.setSubscribed(true)
+        let request = loopStore.snapshot()
+        var oldState = request; oldState.catalog = firstCycle
+        try AtomicJSON.write(oldState, to: loopStore.directory!.appendingPathComponent("state.json"))
+        check(loopStore.snapshot().photos.isEmpty, "Expired previous cycle was shown before refreshing")
+        try loopStore.accept(nextCycle, for: request)
+        check(loopStore.snapshot().photos == nextCycle.photos, "New daily publication with a repeated hash was rejected")
+        try loopStore.accept(nextCycle, for: request)
+        rejects("old cycle cannot replace the current daily edition") { try loopStore.accept(firstCycle, for: request) }
+        check(nextCycle.widgetPhotos(at: nextCycle.validUntil, blackCatDailyEnabled: true).isEmpty,
+              "Repeating delivery weakened the midnight Widget deadline")
         let monday = calendar.date(byAdding: .day, value: -((calendar.component(.weekday, from: day) + 5) % 7), to: day)!
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
