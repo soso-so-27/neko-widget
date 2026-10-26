@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 // An opt-in, isolated local prototype. There is no singleton, network client,
 // account lookup, Plus validation, encryption claim or automatic migration.
@@ -33,13 +38,13 @@ final class FamilyNotebookStore: @unchecked Sendable {
     }
 
     init(directory: URL, familyID: UUID, deviceID: String,
-         write: @escaping Writer = FamilyNotebookStore.secureWrite) throws {
+         write: @escaping Writer = { data, url in try FamilyNotebookStore.secureWrite(data, to: url) }) throws {
         guard directory.isFileURL, directory.path.hasPrefix("/"), FamilyNotebookCore.validIdentifier(deviceID)
         else { throw FamilyNotebookError.unsafePath }
-        // Apple container/temp URLs commonly use /var -> /private/var. Resolve
-        // that legitimate directory alias, while rejecting a symlink at the
-        // state-file boundary during each load.
-        self.directory = directory.standardizedFileURL.resolvingSymlinksInPath()
+        // Resolve an existing ancestor before restoring the missing suffix.
+        // Resolving a not-yet-created full path is not a reliable way to turn
+        // Apple's /var alias into /private/var.
+        self.directory = try Self.canonicalDirectory(directory)
         self.stateURL = self.directory.appendingPathComponent("family-notebook.json")
         self.familyID = familyID; self.deviceID = deviceID; self.write = write
         // Validate any existing original before permitting an edit. Never
@@ -227,20 +232,60 @@ final class FamilyNotebookStore: @unchecked Sendable {
 
     private func checkPath() throws {
         var current = stateURL
+        var isStateFile = true
         while current.path != "/" && !current.path.isEmpty {
             do {
                 let attributes = try FileManager.default.attributesOfItem(atPath: current.path)
                 guard attributes[.type] as? FileAttributeType != .typeSymbolicLink else { throw FamilyNotebookError.unsafePath }
-                if current != stateURL {
-                    guard attributes[.type] as? FileAttributeType == .typeDirectory else { throw FamilyNotebookError.unsafePath }
-                } else {
+                if isStateFile {
                     guard attributes[.type] as? FileAttributeType == .typeRegular else { throw FamilyNotebookError.unsafePath }
+                } else {
+                    guard attributes[.type] as? FileAttributeType == .typeDirectory else { throw FamilyNotebookError.unsafePath }
                 }
             } catch let error as NSError where error.domain == NSCocoaErrorDomain && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError) {
                 // Only missing components are allowed; all existing ancestors
                 // are still inspected before treating state as uninitialized.
             }
+            isStateFile = false
             current = current.deletingLastPathComponent()
+        }
+    }
+
+    private static func canonicalDirectory(_ requested: URL) throws -> URL {
+        var existing = requested.standardizedFileURL
+        var missing: [String] = []
+        while true {
+            do {
+                let attributes = try FileManager.default.attributesOfItem(atPath: existing.path)
+                let type = attributes[.type] as? FileAttributeType
+                // System ancestor aliases are resolved below. A supplied
+                // directory that itself is a link remains outside the contract.
+                guard type == .typeDirectory || (type == .typeSymbolicLink && !missing.isEmpty)
+                else { throw FamilyNotebookError.unsafePath }
+                // Foundation URL normalization can strip /private again on
+                // Apple platforms. Keep the physical path returned by realpath
+                // so the subsequent ancestor checks do not encounter /var.
+#if canImport(Darwin) || canImport(Glibc)
+                guard let physical = realpath(existing.path, nil) else { throw FamilyNotebookError.storageUnavailable }
+                defer { free(physical) }
+                var canonical = URL(fileURLWithPath: String(cString: physical), isDirectory: true)
+#else
+                throw FamilyNotebookError.storageUnavailable
+#endif
+                let resolved = try FileManager.default.attributesOfItem(atPath: canonical.path)
+                guard resolved[.type] as? FileAttributeType == .typeDirectory else { throw FamilyNotebookError.unsafePath }
+                for component in missing.reversed() {
+                    canonical.appendPathComponent(component, isDirectory: true)
+                }
+                return canonical
+            } catch let error as NSError where error.domain == NSCocoaErrorDomain
+                && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError) {
+                // Only ENOENT-style errors mean an uncreated component.
+                // Access failures and every other error propagate unchanged.
+                guard existing.path != "/", !existing.lastPathComponent.isEmpty else { throw error }
+                missing.append(existing.lastPathComponent)
+                existing.deleteLastPathComponent()
+            }
         }
     }
 

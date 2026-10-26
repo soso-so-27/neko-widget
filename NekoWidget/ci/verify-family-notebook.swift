@@ -41,8 +41,20 @@ struct VerifyFamilyNotebook {
     }
 
     private static func store(_ path: URL, _ device: String, writer: Writer = Writer()) throws -> FamilyNotebookStore {
-        try FamilyNotebookStore(directory: path, familyID: family, deviceID: device,
-            write: { data, url in try writer.write(data, url) })
+        do {
+            return try FamilyNotebookStore(directory: path, familyID: family, deviceID: device,
+                write: { data, url in try writer.write(data, url) })
+        } catch FamilyNotebookError.unsafePath {
+            // Synthetic fixture paths only. No production logging is added.
+            print("Fixture path rejected: \(path.path); resolved: \(path.resolvingSymlinksInPath().path)")
+            var parent = path
+            while parent.path != "/" && !parent.path.isEmpty {
+                let attributes = try? FileManager.default.attributesOfItem(atPath: parent.path)
+                print("Fixture ancestor \(parent.path): \(String(describing: attributes?[.type]))")
+                parent = parent.deletingLastPathComponent()
+            }
+            throw FamilyNotebookError.unsafePath
+        }
     }
 
     static func convergence(_ path: URL) throws {
@@ -170,6 +182,14 @@ struct VerifyFamilyNotebook {
         try futureSchema.write(to: stateFile, options: .atomic)
         try rejects("a future schema is never reset to an empty notebook") { _ = try store(path, "device-a") }
         try check(try Data(contentsOf: stateFile) == futureSchema, "unsupported source bytes remain untouched")
+        let linkDirectory = path.appendingPathComponent("linked-state")
+        try FileManager.default.createDirectory(at: linkDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: linkDirectory.appendingPathComponent("family-notebook.json"),
+                                                  withDestinationURL: stateFile)
+        try rejects("a state-file symlink cannot be opened or replaced") {
+            _ = try FamilyNotebookStore(directory: linkDirectory, familyID: family, deviceID: "device-a")
+        }
+        try check(try Data(contentsOf: stateFile) == futureSchema, "rejected link leaves its destination untouched")
         let encoded = try JSONEncoder().encode(original)
         let text = String(decoding: encoded, as: UTF8.self)
         for forbidden in ["profileID", "toolCatID", "photoFile", "sourceNoteID", "ownerContact", "meetingPlace"] {
