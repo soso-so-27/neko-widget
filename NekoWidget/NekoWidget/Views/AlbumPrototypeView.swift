@@ -1241,6 +1241,8 @@ struct MonthlyBookView: View {
                                   preview: SharePreview(input.title, image: Image(uiImage: image))) {
                             Label("画像にして共有", systemImage: "square.and.arrow.up")
                                 .font(.subheadline.weight(.semibold))
+                                // The page sets ink for everything; the button's own text is paper.
+                                .foregroundStyle(Self.paper)
                                 .frame(maxWidth: .infinity, minHeight: 46)
                         }
                         .buttonStyle(.borderedProminent)
