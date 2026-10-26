@@ -224,16 +224,7 @@ struct AlbumPrototypeView: View {
                     latestCard(latest)
                 }
                 if let next = nextDelivery {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("\(next.month)月のまとめは \(next.arrives.formatted(.dateTime.month().day())) に届きます")
-                            .font(.footnote)
-                        Spacer(minLength: 8)
-                        Text(verbatim: "いま \(next.photoCount) 枚").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("album-prototype-next")
+                    monthProgress(month: next.month, arrives: next.arrives, photoCount: next.photoCount)
                 }
                 let pastLetters = heroYear == nil ? Array(letters.dropFirst()) : letters
                 let pastYears = arrivedYears.filter { $0 != heroYear }
@@ -299,6 +290,41 @@ struct AlbumPrototypeView: View {
         }
     }
 
+    /// This month's book filling up: nine marks, one per photo. Five make a
+    /// book; nine fill 「10月の9枚」. Counts photos, so bursts may count more.
+    private func monthProgress(month: Int, arrives: Date, photoCount: Int) -> some View {
+        let minimum = MonthlyWindowBuilder.minimumSceneCount
+        let full = 9
+        let status: String
+        if photoCount < minimum {
+            status = "あと \(minimum - photoCount) 枚で届きます"
+        } else if photoCount < full {
+            status = "\(arrives.formatted(.dateTime.month().day())) に届きます・あと \(full - photoCount) 枚で 9 枚そろう"
+        } else {
+            status = "\(arrives.formatted(.dateTime.month().day())) に届きます・9 枚そろいました"
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(verbatim: "\(month)月の1冊")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                Text(status).font(.footnote).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 4) {
+                ForEach(0..<full, id: \.self) { mark in
+                    Capsule()
+                        .fill(mark < photoCount ? Color.primary.opacity(0.85) : Color.primary.opacity(0.15))
+                        .frame(height: 4)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(month)月の1冊、いま \(photoCount) 枚。\(status)")
+        .accessibilityIdentifier("album-prototype-next")
+    }
+
     /// The year's work, as large as a month's, with its own wrapping.
     private func yearCard(_ year: Int) -> some View {
         let wrapped = !opened.contains(YearStoryView.periodIdentifier(year))
@@ -324,7 +350,7 @@ struct AlbumPrototypeView: View {
                             Text(wrapped ? "1 年の作品がとどきました" : "1 年の作品")
                                 .font(.caption.weight(.bold)).tracking(2).opacity(0.9)
                             Text(verbatim: String(year))
-                                .font(.system(size: 58, weight: .bold, design: .serif))
+                                .font(.system(size: 40, weight: .bold, design: .serif))
                             Text(names).font(.footnote).opacity(0.9)
                         }
                         Spacer()
@@ -391,7 +417,7 @@ struct AlbumPrototypeView: View {
                             Text(verbatim: wrapped ? "とどきました" : String(letter.yearNumber))
                                 .font(.caption.weight(.bold)).tracking(2).opacity(0.9)
                             Text(verbatim: "\(letter.monthNumber)月")
-                                .font(.system(size: 46, weight: .bold, design: .serif))
+                                .font(.system(size: 34, weight: .bold, design: .serif))
                             Text(names).font(.footnote).opacity(0.9)
                         }
                         Spacer()
@@ -1220,6 +1246,7 @@ struct MonthlyBookView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .sensoryFeedback(.selection, trigger: index)
                 .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
             } else if isShown {
                 ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
