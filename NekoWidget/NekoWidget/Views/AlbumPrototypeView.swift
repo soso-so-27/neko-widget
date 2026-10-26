@@ -10,6 +10,8 @@ enum AlbumPrototype {
     static let openedKey = "debug.albumPrototype.opened.v1"
     /// Test only: deliver this year's work today instead of on 12/6.
     static let yearNowKey = "debug.albumPrototype.yearNow.v1"
+    /// Test only: open a month's work as a book instead of the story.
+    static let bookKey = "debug.albumPrototype.book.v1"
 
     /// The year's work arrives on 12/6: inside the early-December wave of year
     /// reviews, after November's work (12/1), before the holidays. December's
@@ -521,6 +523,7 @@ struct MonthlyStoryView: View {
     @State private var displayedPreparationKey: MonthlyStoryPreparationKey?
     /// The last page's nine as one picture, for the share sheet.
     @State private var cardShare = StoryCardShareState<UIImage>()
+    @AppStorage(AlbumPrototype.bookKey) private var opensAsBook = false
 
     static let pageSeconds: Double = 5
 
@@ -562,6 +565,15 @@ struct MonthlyStoryView: View {
     private func cardTitle(_ count: Int) -> String { "\(letter.monthNumber)月の\(count)枚" }
 
     var body: some View {
+        if opensAsBook {
+            MonthlyBookView(letter: letter, catPhotos: catPhotos,
+                            assignments: assignments, profileNames: profileNames)
+        } else {
+            storyBody
+        }
+    }
+
+    private var storyBody: some View {
         ZStack {
             backdrop.ignoresSafeArea()
             if displayedPreparationKey == preparationKey, pages.indices.contains(index) {
@@ -1149,6 +1161,268 @@ private struct YearStoryContentView: View {
     }
 }
 
+/// Test builds only: the month's work as a book. Nothing is drawn to look
+/// like paper or cloth: the photos, white space and one serif. The pages are
+/// the story's own, laid out flat, and turn sideways at the reader's pace.
+struct MonthlyBookView: View {
+    let letter: MonthlyWindowPresentation
+    let catPhotos: [PhotoPresentation]
+    let assignments: [String: Set<String>]
+    let profileNames: [String: String]
+
+    enum Leaf: Hashable {
+        case cover(PhotoPresentation, String)
+        case photo(PhotoPresentation, String?)
+        case pair(PhotoPresentation, String?, PhotoPresentation, String?)
+        case words(count: Int, bestDay: Date?, companion: String?)
+        case nine([PhotoPresentation], String)
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var leaves: [Leaf] = []
+    @State private var shownKey: MonthlyStoryPreparationKey?
+    @State private var index = 0
+    @State private var cardShare = StoryCardShareState<UIImage>()
+
+    static let paper = Color(red: 0.985, green: 0.98, blue: 0.97)
+    static let ink = Color(red: 0.11, green: 0.10, blue: 0.09)
+
+    private var key: MonthlyStoryPreparationKey {
+        .init(letter: letter, catPhotos: catPhotos, assignments: assignments, profileNames: profileNames)
+    }
+
+    private var isShown: Bool { shownKey == key }
+
+    private var shareInput: StoryCardShareInput? {
+        guard isShown, case let .nine(photos, names)? = leaves.last else { return nil }
+        return .init(library: key.library, periodIdentifier: letter.periodIdentifier, photos: photos,
+                     title: "\(names)　\(letter.monthNumber)月の\(photos.count)枚")
+    }
+
+    /// The story's pages as a book: a trio becomes a page and a spread, and
+    /// last year sits beside this year on one page.
+    static func leaves(from pages: [MonthlyStoryView.Page], month: Int) -> [Leaf] {
+        var result: [Leaf] = []
+        var lastYear: PhotoPresentation?
+        for page in pages {
+            switch page {
+            case let .cover(photo, names): result.append(.cover(photo, names))
+            case let .single(photo): result.append(.photo(photo, date(photo)))
+            case let .pair(first, second): result.append(.pair(first, date(first), second, date(second)))
+            case let .trio(big, top, bottom):
+                result.append(.photo(big, date(big)))
+                result.append(.pair(top, date(top), bottom, date(bottom)))
+            case let .lastYear(photo, _): lastYear = photo
+            case let .thisYear(photo, _):
+                if let lastYear {
+                    result.append(.pair(lastYear, "1 年前の\(month)月", photo, "ことしの\(month)月"))
+                } else {
+                    result.append(.photo(photo, date(photo)))
+                }
+            case let .stats(count, bestDay, companion):
+                result.append(.words(count: count, bestDay: bestDay, companion: companion))
+            case let .card(photos, names): result.append(.nine(photos, names))
+            }
+        }
+        return result
+    }
+
+    private static func date(_ photo: PhotoPresentation) -> String? {
+        photo.creationDate?.formatted(.dateTime.month(.defaultDigits).day())
+    }
+
+    var body: some View {
+        ZStack {
+            Self.paper.ignoresSafeArea()
+            if isShown, !leaves.isEmpty {
+                TabView(selection: $index) {
+                    ForEach(Array(leaves.enumerated()), id: \.offset) { position, leaf in
+                        leafView(leaf).tag(position)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
+            } else if isShown {
+                ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
+                                       description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+            } else {
+                ProgressView()
+            }
+            VStack(spacing: 0) {
+                HStack {
+                    Color.clear.frame(width: 44, height: 44)
+                    Spacer()
+                    Text(verbatim: "\(letter.monthNumber)月の1冊")
+                        .font(.system(.footnote, design: .serif))
+                        .foregroundStyle(Self.ink.opacity(0.55))
+                    Spacer()
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").font(.headline).foregroundStyle(Self.ink)
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("閉じる")
+                }
+                .padding(.horizontal, 8)
+                Spacer()
+                if isShown, !leaves.isEmpty {
+                    if index == leaves.count - 1, let image = cardShare.image(for: shareInput), let input = shareInput {
+                        ShareLink(item: Image(uiImage: image),
+                                  preview: SharePreview(input.title, image: Image(uiImage: image))) {
+                            Label("画像にして共有", systemImage: "square.and.arrow.up")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Self.ink)
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 10)
+                        .accessibilityIdentifier("monthly-book-share")
+                    }
+                    Text(verbatim: "\(index + 1) / \(leaves.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(Self.ink.opacity(0.45))
+                        .padding(.bottom, 6)
+                }
+            }
+        }
+        .foregroundStyle(Self.ink)
+        .environment(\.colorScheme, .light)
+        .statusBarHidden()
+        .accessibilityIdentifier("monthly-book")
+        .task(id: key) {
+            guard let result = await MonthlyStoryView.prepare(key), !Task.isCancelled else { return }
+            leaves = Self.leaves(from: result.pages, month: letter.monthNumber)
+            index = 0
+            shownKey = key
+        }
+        .task(id: shareInput) {
+            guard let request = cardShare.begin(shareInput) else { return }
+            var images: [UIImage] = []
+            for photo in request.input.photos.prefix(9) {
+                guard !Task.isCancelled else { return }
+                if let image = await MonthlyStoryView.thumbnail(photo.localIdentifier, side: 600) { images.append(image) }
+            }
+            guard !Task.isCancelled else { return }
+            cardShare.complete(BestNineComposer.image(images, title: request.input.title),
+                               for: request, isCancelled: Task.isCancelled)
+        }
+    }
+
+    // MARK: Leaves
+
+    @ViewBuilder private func leafView(_ leaf: Leaf) -> some View {
+        switch leaf {
+        case let .cover(photo, names):
+            VStack(alignment: .leading, spacing: 0) {
+                Color.clear
+                    .aspectRatio(0.8, contentMode: .fit)
+                    .overlay { crop(photo, aspect: 0.8, pixels: 1200) }
+                    .clipped()
+                Spacer(minLength: 20)
+                Text(verbatim: "\(letter.monthNumber)月")
+                    .font(.system(size: 64, weight: .regular, design: .serif))
+                Text(verbatim: "\(names)　\(letter.yearNumber)")
+                    .font(.footnote).tracking(2)
+                    .foregroundStyle(Self.ink.opacity(0.6))
+            }
+            .leafMargins()
+        case let .photo(photo, caption):
+            VStack(alignment: .leading, spacing: 10) {
+                BookPhotoView(localIdentifier: photo.localIdentifier)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                captionText(caption)
+            }
+            .leafMargins()
+        case let .pair(first, firstCaption, second, secondCaption):
+            VStack(alignment: .leading, spacing: 8) {
+                Color.clear.overlay { crop(first, aspect: 1.25, pixels: 900) }.clipped()
+                captionText(firstCaption)
+                Spacer(minLength: 10)
+                Color.clear.overlay { crop(second, aspect: 1.25, pixels: 900) }.clipped()
+                captionText(secondCaption)
+            }
+            .leafMargins()
+        case let .words(count, bestDay, companion):
+            VStack(alignment: .leading, spacing: 30) {
+                Spacer()
+                figure(String(count), "\(letter.monthNumber)月に撮った猫の写真")
+                if let bestDay {
+                    figure(bestDay.formatted(.dateTime.month(.defaultDigits).day()), "いちばん撮った日")
+                }
+                if let companion {
+                    figure(companion, "いちばん写っていた子", size: 32)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .leafMargins()
+        case let .nine(photos, names):
+            VStack(alignment: .leading, spacing: 14) {
+                Spacer(minLength: 0)
+                Text(verbatim: "\(letter.monthNumber)月の\(photos.count)枚")
+                    .font(.system(size: 30, weight: .regular, design: .serif))
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
+                    ForEach(photos) { photo in
+                        Color.clear.aspectRatio(1, contentMode: .fit)
+                            .overlay { crop(photo, aspect: 1, pixels: 400) }
+                            .clipped()
+                    }
+                }
+                Text(verbatim: "\(names)　\(letter.yearNumber)")
+                    .font(.footnote).tracking(2)
+                    .foregroundStyle(Self.ink.opacity(0.6))
+                Spacer(minLength: 0)
+            }
+            .leafMargins(bottom: 120)
+        }
+    }
+
+    private func crop(_ photo: PhotoPresentation, aspect: CGFloat, pixels: CGFloat) -> some View {
+        PhotoAssetImageView(localIdentifier: photo.localIdentifier, catBoundingBox: photo.catBoundingBox,
+                            targetPixelSize: CGSize(width: pixels, height: pixels), targetAspectRatio: aspect)
+    }
+
+    @ViewBuilder private func captionText(_ caption: String?) -> some View {
+        if let caption {
+            Text(verbatim: caption)
+                .font(.system(.caption, design: .serif))
+                .foregroundStyle(Self.ink.opacity(0.6))
+        }
+    }
+
+    private func figure(_ value: String, _ caption: String, size: CGFloat = 52) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: value).font(.system(size: size, weight: .regular, design: .serif))
+            Text(caption).font(.caption).tracking(1.5).foregroundStyle(Self.ink.opacity(0.6))
+        }
+    }
+}
+
+private extension View {
+    /// The same margins on every page, like a printed book.
+    func leafMargins(bottom: CGFloat = 60) -> some View {
+        padding(.horizontal, 28).padding(.top, 64).padding(.bottom, bottom)
+    }
+}
+
+/// A whole photo, never cropped: a book page shows what was taken.
+struct BookPhotoView: View {
+    let localIdentifier: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else {
+                MonthlyBookView.ink.opacity(0.04)
+            }
+        }
+        .accessibilityLabel("猫の写真")
+        .task(id: localIdentifier) { image = await StoryPhotoView.load(localIdentifier) }
+    }
+}
+
 /// A story photo that drifts slowly closer while its page is shown.
 struct KenBurnsPhoto: View {
     let localIdentifier: String
@@ -1197,7 +1471,7 @@ struct StoryPhotoView: View {
         .task(id: localIdentifier) { image = await Self.load(localIdentifier) }
     }
 
-    private static func load(_ identifier: String) async -> UIImage? {
+    static func load(_ identifier: String) async -> UIImage? {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
