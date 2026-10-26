@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WidgetKit
 import ImageIO
 import Photos
 
@@ -3010,6 +3011,10 @@ private struct WindowListView: View {
     @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
     @State private var coverClock: Date = .now
     @State private var windowErrors: Set<String> = []
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
+    @State private var addingPublicWindowID: String?
+    @State private var addedPublicWindows = 0
+    @State private var addPublicWindowError: String?
 
     let supportsPrivateWindows: Bool
     let publicWindows: [PublicWindowPresentationSource]
@@ -3047,6 +3052,83 @@ private struct WindowListView: View {
 
     private var receivingPublicWindows: [PublicWindowPresentationSource] {
         publicWindows.filter { publicStates[$0.id]?.isSubscribed == true }
+    }
+
+    // MARK: Test builds: the まど tab as what arrives to me
+
+    private var usesArrivalLayout: Bool {
+        AlbumPrototype.isOn(albumPrototypeStored) && GroupWindowClientProvider.ui != nil
+    }
+
+    /// 「わたしのまど」: the windows I share and the official ones I added, each
+    /// as its latest photo. 「見つける」: official windows not added yet, with
+    /// 「加える」. Adding moves the window up into mine. Nothing 「近日」.
+    @ViewBuilder private var arrivalLayout: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let groupClient = GroupWindowClientProvider.ui {
+                GroupWindowListSection(client: groupClient, compactHeader: true)
+            }
+            ForEach(receivingPublicWindows) { source in
+                publicCard(source)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                            removal: .opacity))
+            }
+        }
+        let discoverable = publicWindows.filter { publicStates[$0.id]?.isSubscribed != true }
+        if !discoverable.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("見つける")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(discoverable) { source in
+                    publicCard(source, presentation: .row)
+                        .overlay(alignment: .trailing) { addButton(source) }
+                        .transition(.opacity)
+                }
+            }
+            .accessibilityIdentifier("window-list-discover-section")
+        }
+        if let addPublicWindowError {
+            Text(addPublicWindowError).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private func addButton(_ source: PublicWindowPresentationSource) -> some View {
+        Button { add(source) } label: {
+            Text("加える")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(Color.accentColor.opacity(0.15), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.accentColor)
+        .padding(.trailing, 12)
+        .disabled(addingPublicWindowID != nil)
+        .accessibilityIdentifier("public-window-add-\(source.id)")
+    }
+
+    /// The same saved setting as 「このまどを受け取る」 in the window itself,
+    /// then the move up and a light tick; the first photo follows.
+    private func add(_ source: PublicWindowPresentationSource) {
+        addingPublicWindowID = source.id
+        do {
+            try source.store.setSubscribed(true)
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            addPublicWindowError = nil
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { reloadPublicStates() }
+            addedPublicWindows &+= 1
+            Task {
+                try? await source.refresh()
+                reloadPublicStates()
+                addingPublicWindowID = nil
+            }
+        } catch {
+            reloadPublicStates()
+            addPublicWindowError = "加えられませんでした。もう一度お試しください。"
+            addingPublicWindowID = nil
+        }
     }
 
     private func publicCard(_ source: PublicWindowPresentationSource,
@@ -3088,56 +3170,61 @@ private struct WindowListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
-                if let groupClient = GroupWindowClientProvider.ui {
-                    // Windows people share come first (1-4); public windows follow.
-                    GroupWindowListSection(client: groupClient)
-                    if !InternalBuildPresentationAvailability.isAvailable, !receivingPublicWindows.isEmpty {
-                        Text("公式のまど")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityAddTraits(.isHeader)
-                    }
-                }
-                if !connectedWindows.isEmpty || !setupWindows.isEmpty
-                    || (!InternalBuildPresentationAvailability.isAvailable && !receivingPublicWindows.isEmpty) {
-                    LazyVGrid(columns: cardColumns, spacing: 22) {
-                        ForEach(connectedWindows) { window in
-                            windowCard(window)
-                        }
-                        if !InternalBuildPresentationAvailability.isAvailable {
-                            ForEach(receivingPublicWindows) { source in publicCard(source) }
-                        }
-                        ForEach(setupWindows) { window in windowCard(window) }
-                    }
-                    .accessibilityIdentifier("window-list-receiving")
-                }
-                if isLoading, windows.isEmpty {
-                    ProgressView("まどを確認しています…")
-                        .frame(maxWidth: .infinity, minHeight: 240)
-                } else if windows.isEmpty, let message = availabilityMessage {
-                    unavailableWindowContent(message: message)
+                if usesArrivalLayout {
+                    arrivalLayout
                 } else {
-                    if isLoading {
-                        ProgressView("まどを更新しています…")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if let message = availabilityMessage {
-                        cachedWindowWarning(message: message)
+                    if let groupClient = GroupWindowClientProvider.ui {
+                        // Windows people share come first (1-4); public windows follow.
+                        GroupWindowListSection(client: groupClient)
+                        if !InternalBuildPresentationAvailability.isAvailable, !receivingPublicWindows.isEmpty {
+                            Text("公式のまど")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                     }
-
-                    if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {
-                        legacyPublicWindowEntry
-                    } else if !InternalBuildPresentationAvailability.isAvailable, windows.isEmpty, receivingPublicWindows.isEmpty {
-                        emptyWindowCard
+                    if !connectedWindows.isEmpty || !setupWindows.isEmpty
+                        || (!InternalBuildPresentationAvailability.isAvailable && !receivingPublicWindows.isEmpty) {
+                        LazyVGrid(columns: cardColumns, spacing: 22) {
+                            ForEach(connectedWindows) { window in
+                                windowCard(window)
+                            }
+                            if !InternalBuildPresentationAvailability.isAvailable {
+                                ForEach(receivingPublicWindows) { source in publicCard(source) }
+                            }
+                            ForEach(setupWindows) { window in windowCard(window) }
+                        }
+                        .accessibilityIdentifier("window-list-receiving")
                     }
+                    if isLoading, windows.isEmpty {
+                        ProgressView("まどを確認しています…")
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                    } else if windows.isEmpty, let message = availabilityMessage {
+                        unavailableWindowContent(message: message)
+                    } else {
+                        if isLoading {
+                            ProgressView("まどを更新しています…")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if let message = availabilityMessage {
+                            cachedWindowWarning(message: message)
+                        }
 
-                    if let message = model.operationErrorMessage {
-                        Text(message).font(.footnote).foregroundStyle(.red)
+                        if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {
+                            legacyPublicWindowEntry
+                        } else if !InternalBuildPresentationAvailability.isAvailable, windows.isEmpty, receivingPublicWindows.isEmpty {
+                            emptyWindowCard
+                        }
+
+                        if let message = model.operationErrorMessage {
+                            Text(message).font(.footnote).foregroundStyle(.red)
+                        }
+
                     }
-
+                    if InternalBuildPresentationAvailability.isAvailable { publicWindowEntry }
                 }
-                if InternalBuildPresentationAvailability.isAvailable { publicWindowEntry }
             }
+            .sensoryFeedback(.success, trigger: addedPublicWindows)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }

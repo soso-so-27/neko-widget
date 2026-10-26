@@ -1548,16 +1548,41 @@ struct GroupWindowListSection: View {
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
 
-    init(client: any GroupWindowMediaClient) {
+    /// Test builds' new まど layout: 「わたしのまど」 with a small 「＋」, and no
+    /// large create button (making a window is rare; seeing them is daily).
+    let compactHeader: Bool
+
+    init(client: any GroupWindowMediaClient, compactHeader: Bool = false) {
         _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
+        self.compactHeader = compactHeader
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("みんなのまど")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
+            if compactHeader {
+                HStack {
+                    Text("わたしのまど")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    NavigationLink {
+                        GroupWindowCreateScreen(client: model.client)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 32)
+                    }
+                    .disabled(model.isWorking)
+                    .accessibilityLabel("まどを作る")
+                    .accessibilityIdentifier("group-window-create")
+                }
+            } else {
+                Text("みんなのまど")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+            }
             ForEach(model.windows) { window in
                 NavigationLink {
                     GroupWindowScreen(client: model.client, windowID: window.id)
@@ -1606,16 +1631,18 @@ struct GroupWindowListSection: View {
                     .accessibilityIdentifier("group-window-list-stale")
                 }
             }
-            NavigationLink {
-                GroupWindowCreateScreen(client: model.client)
-            } label: {
-                Label("まどを作る", systemImage: "plus")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            if !compactHeader {
+                NavigationLink {
+                    GroupWindowCreateScreen(client: model.client)
+                } label: {
+                    Label("まどを作る", systemImage: "plus")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isWorking)
+                .accessibilityIdentifier("group-window-create")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(model.isWorking)
-            .accessibilityIdentifier("group-window-create")
             if !formerWindows.isEmpty {
                 Text("前のまど")
                     .font(.subheadline.weight(.semibold))
