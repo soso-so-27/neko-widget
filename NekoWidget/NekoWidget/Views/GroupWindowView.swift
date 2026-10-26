@@ -1521,7 +1521,7 @@ struct GroupWindowCreateScreen: View {
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
         }
-        .navigationTitle("家族・友だちとまどを作る")
+        .navigationTitle("まどを作る")
         .navigationBarTitleDisplayMode(.inline)
         .announcesWhenShown(model.message)
         .sheet(isPresented: $model.needsPlus, onDismiss: {
@@ -1554,7 +1554,7 @@ struct GroupWindowListSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("家族・友だちのまど")
+            Text("みんなのまど")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
