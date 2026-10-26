@@ -532,9 +532,7 @@ struct MonthlyStoryView: View {
         case single(PhotoPresentation)
         case pair(PhotoPresentation, PhotoPresentation)
         case trio(PhotoPresentation, PhotoPresentation, PhotoPresentation)
-        case lastYear(PhotoPresentation, Int)
-        case thisYear(PhotoPresentation, Int)
-        case stats(count: Int, bestDay: Date?, companion: String?)
+        case stats(count: Int, companion: String?)
         case card([PhotoPresentation], String)
     }
 
@@ -725,27 +723,17 @@ struct MonthlyStoryView: View {
         if rest.count >= 1 { result.append(.single(rest[0])) }
         if rest.count >= 3 { result.append(.pair(rest[1], rest[2])) }
         if rest.count >= 6 { result.append(.trio(rest[3], rest[4], rest[5])) }
-        if let start = Calendar.current.date(byAdding: .year, value: -1, to: letter.monthStart),
-           let lastYear = AlbumPrototype.pick(AlbumPrototype.photos(in: start, from: catPhotos), count: 1).first {
-            result.append(.lastYear(lastYear, letter.yearNumber - 1))
-            result.append(.thisYear(rest.last ?? cover, letter.yearNumber))
-        }
+        // The month's own photos only: last year belongs to another work.
+        if rest.count >= 8 { result.append(.pair(rest[6], rest[7])) }
         var counts: [String: Int] = [:]
         for photo in source { for id in assignments[photo.localIdentifier] ?? [] { counts[id, default: 0] += 1 } }
         let companion = counts.max { $0.value < $1.value }.flatMap { profileNames[$0.key] }
-        result.append(.stats(count: source.count, bestDay: busiestDay(source), companion: companion))
+        result.append(.stats(count: source.count, companion: companion))
         result.append(.card(picked, AlbumPrototype.names(for: picked, assignments: assignments,
                                                          profileNames: profileNames)))
         let built = (pages: result, backdrop: backdrop)
         guard prepared.publish(built, for: ticket) else { return nil }
         return built
-    }
-
-    private static func busiestDay(_ photos: [PhotoPresentation]) -> Date? {
-        let calendar = Calendar.current
-        var counts: [Date: Int] = [:]
-        for photo in photos { if let date = photo.creationDate { counts[calendar.startOfDay(for: date), default: 0] += 1 } }
-        return counts.max { $0.value < $1.value }?.key
     }
 
     static func thumbnail(_ identifier: String, side: CGFloat = 160) async -> UIImage? {
@@ -821,19 +809,10 @@ struct MonthlyStoryView: View {
                 }
             }
             .padding(.horizontal, 16).padding(.top, 100).padding(.bottom, 80)
-        case let .lastYear(photo, year):
-            KenBurnsPhoto(localIdentifier: photo.localIdentifier, reduceMotion: reduceMotion)
-                .overlay(alignment: .bottomLeading) { label("1 年前のこの月", String(year)) }
-        case let .thisYear(photo, year):
-            KenBurnsPhoto(localIdentifier: photo.localIdentifier, reduceMotion: reduceMotion)
-                .overlay(alignment: .bottomLeading) { label("ことし", String(year)) }
-        case let .stats(count, bestDay, companion):
+        case let .stats(count, companion):
             VStack(alignment: .leading, spacing: 22) {
                 Spacer()
                 stat(String(count), "\(letter.monthNumber)月に撮った猫の写真")
-                if let bestDay {
-                    stat(bestDay.formatted(.dateTime.month(.defaultDigits).day()), "いちばん撮った日")
-                }
                 if let companion {
                     stat(companion, "いちばん写っていた子", size: 30)
                 }
@@ -872,17 +851,6 @@ struct MonthlyStoryView: View {
         PhotoAssetImageView(localIdentifier: photo.localIdentifier, catBoundingBox: photo.catBoundingBox,
                             targetPixelSize: CGSize(width: pixels, height: pixels), targetAspectRatio: aspect)
             .clipShape(RoundedRectangle(cornerRadius: rounded ? 6 : 0, style: .continuous))
-    }
-
-    private func label(_ caption: String, _ title: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(caption).font(.footnote.weight(.semibold)).opacity(0.9)
-            Text(verbatim: title).font(.system(size: 34, weight: .bold, design: .serif))
-        }
-        .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 44)
     }
 
     private func stat(_ value: String, _ caption: String, size: CGFloat = 46) -> some View {
@@ -1174,8 +1142,9 @@ struct MonthlyBookView: View {
         case cover(PhotoPresentation, String)
         case photo(PhotoPresentation, String?)
         case pair(PhotoPresentation, String?, PhotoPresentation, String?)
-        case words(count: Int, bestDay: Date?, companion: String?)
         case nine([PhotoPresentation], String)
+        /// The last page, like a printed book's colophon: title, cats, how many photos.
+        case colophon(count: Int, names: String)
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -1193,37 +1162,39 @@ struct MonthlyBookView: View {
 
     private var isShown: Bool { shownKey == key }
 
+    private var isNinePage: Bool {
+        guard leaves.indices.contains(index), case .nine = leaves[index] else { return false }
+        return true
+    }
+
     private var shareInput: StoryCardShareInput? {
-        guard isShown, case let .nine(photos, names)? = leaves.last else { return nil }
+        guard isShown, let nine = leaves.first(where: { if case .nine = $0 { return true } else { return false } }),
+              case let .nine(photos, names) = nine else { return nil }
         return .init(library: key.library, periodIdentifier: letter.periodIdentifier, photos: photos,
                      title: "\(names)　\(letter.monthNumber)月の\(photos.count)枚")
     }
 
     /// The story's pages as a book: a trio becomes a page and a spread, and
-    /// last year sits beside this year on one page.
+    /// the month's numbers become the colophon at the end.
     static func leaves(from pages: [MonthlyStoryView.Page], month: Int) -> [Leaf] {
         var result: [Leaf] = []
-        var lastYear: PhotoPresentation?
+        var count = 0
+        var names = "うちの子"
         for page in pages {
             switch page {
-            case let .cover(photo, names): result.append(.cover(photo, names))
+            case let .cover(photo, coverNames): result.append(.cover(photo, coverNames))
             case let .single(photo): result.append(.photo(photo, date(photo)))
             case let .pair(first, second): result.append(.pair(first, date(first), second, date(second)))
             case let .trio(big, top, bottom):
                 result.append(.photo(big, date(big)))
                 result.append(.pair(top, date(top), bottom, date(bottom)))
-            case let .lastYear(photo, _): lastYear = photo
-            case let .thisYear(photo, _):
-                if let lastYear {
-                    result.append(.pair(lastYear, "1 年前の\(month)月", photo, "ことしの\(month)月"))
-                } else {
-                    result.append(.photo(photo, date(photo)))
-                }
-            case let .stats(count, bestDay, companion):
-                result.append(.words(count: count, bestDay: bestDay, companion: companion))
-            case let .card(photos, names): result.append(.nine(photos, names))
+            case let .stats(photoCount, _): count = photoCount
+            case let .card(photos, cardNames):
+                names = cardNames
+                result.append(.nine(photos, cardNames))
             }
         }
+        if !result.isEmpty { result.append(.colophon(count: count, names: names)) }
         return result
     }
 
@@ -1265,7 +1236,7 @@ struct MonthlyBookView: View {
                 .padding(.horizontal, 8)
                 Spacer()
                 if isShown, !leaves.isEmpty {
-                    if index == leaves.count - 1, let image = cardShare.image(for: shareInput), let input = shareInput {
+                    if isNinePage, let image = cardShare.image(for: shareInput), let input = shareInput {
                         ShareLink(item: Image(uiImage: image),
                                   preview: SharePreview(input.title, image: Image(uiImage: image))) {
                             Label("画像にして共有", systemImage: "square.and.arrow.up")
@@ -1342,20 +1313,6 @@ struct MonthlyBookView: View {
                 captionText(secondCaption)
             }
             .leafMargins()
-        case let .words(count, bestDay, companion):
-            VStack(alignment: .leading, spacing: 30) {
-                Spacer()
-                figure(String(count), "\(letter.monthNumber)月に撮った猫の写真")
-                if let bestDay {
-                    figure(bestDay.formatted(.dateTime.month(.defaultDigits).day()), "いちばん撮った日")
-                }
-                if let companion {
-                    figure(companion, "いちばん写っていた子", size: 32)
-                }
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .leafMargins()
         case let .nine(photos, names):
             VStack(alignment: .leading, spacing: 14) {
                 Spacer(minLength: 0)
@@ -1374,6 +1331,24 @@ struct MonthlyBookView: View {
                 Spacer(minLength: 0)
             }
             .leafMargins(bottom: 120)
+        case let .colophon(count, names):
+            VStack(alignment: .leading, spacing: 6) {
+                Spacer()
+                Text(verbatim: "\(letter.monthNumber)月の1冊")
+                    .font(.system(size: 22, weight: .regular, design: .serif))
+                Text(verbatim: names)
+                    .font(.footnote)
+                    .foregroundStyle(Self.ink.opacity(0.6))
+                Rectangle().fill(Self.ink.opacity(0.25)).frame(width: 40, height: 1).padding(.vertical, 10)
+                Text(verbatim: "\(letter.monthNumber)月に撮った猫の写真　\(count)枚")
+                    .font(.caption)
+                    .foregroundStyle(Self.ink.opacity(0.6))
+                Text(verbatim: "\(letter.yearNumber)年\(letter.monthNumber)月")
+                    .font(.caption)
+                    .foregroundStyle(Self.ink.opacity(0.6))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .leafMargins(bottom: 90)
         }
     }
 
@@ -1387,13 +1362,6 @@ struct MonthlyBookView: View {
             Text(verbatim: caption)
                 .font(.system(.caption, design: .serif))
                 .foregroundStyle(Self.ink.opacity(0.6))
-        }
-    }
-
-    private func figure(_ value: String, _ caption: String, size: CGFloat = 52) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: value).font(.system(size: size, weight: .regular, design: .serif))
-            Text(caption).font(.caption).tracking(1.5).foregroundStyle(Self.ink.opacity(0.6))
         }
     }
 }
