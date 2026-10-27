@@ -26,6 +26,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         let window: GroupWindow
         let encryptedName: Data
         let rosterHash: Data
+        let keyHash: Data
         let personID: String
         let deviceID: String
     }
@@ -234,7 +235,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
               identity.personID == entry.personID, try identity.deviceID == entry.deviceID,
               stored.pinnedRevision == cached.revision, stored.pinnedHash == entry.rosterHash,
               stored.minimumAdmissionRevision <= cached.revision,
-              stored.keys[String(cached.keyEpoch)]?.count == 32 else { return nil }
+              let savedKey = stored.keys[String(cached.keyEpoch)], savedKey.count == 32,
+              GroupCanonical.hash(savedKey) == entry.keyHash else { return nil }
         var current = cached
         // Payment can change independently of the roster. Only the fresh list
         // supplies policy, and its owner must belong to the verified snapshot.
@@ -316,7 +318,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             ownerParticipantID: reply.window.ownerParticipantID)
         verifiedWindows[windowID] = result
         verifiedListEntries[windowID] = .init(window: result, encryptedName: reply.window.encryptedName,
-            rosterHash: head.hash, personID: identity.personID, deviceID: myDeviceID)
+            rosterHash: head.hash, keyHash: GroupCanonical.hash(key.withUnsafeBytes { Data($0) }),
+            personID: identity.personID, deviceID: myDeviceID)
         return result
     }
 

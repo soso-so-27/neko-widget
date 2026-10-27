@@ -512,6 +512,16 @@ private struct GroupAdapterChecks {
         await relay.configureList()
         _ = try await client.windows()
         try check(await relay.requestPaths() == [list, root, root + "/keys/1", root + "/members/list"], "missing saved key requires verified HPKE retrieval")
+        record = try GroupWire.decode(GroupLocalWindow.self, saved)
+        record.keys[String(room.keyEpoch)] = Data(repeating: 9, count: 32)
+        try memory.write(GroupWire.encode(record), account: account, createOnly: false)
+        await relay.configureList()
+        var replacedKeyRejected = false
+        do { _ = try await client.windows() } catch { replacedKeyRejected = true }
+        let replacedKeyPaths = await relay.requestPaths()
+        try check(replacedKeyRejected && replacedKeyPaths == full, "same-epoch replacement key cannot reuse decrypted cache")
+        try memory.write(saved, account: account, createOnly: false)
+        _ = try await client.windows()
         let changedIdentity = GroupDeviceIdentity(personPrivateKey: nil, personPublicKey: Data(repeating: 8, count: 32),
             signingPrivateKey: identity.signingPrivateKey, agreementPrivateKey: identity.agreementPrivateKey,
             windowCertificates: [:], registered: true)
