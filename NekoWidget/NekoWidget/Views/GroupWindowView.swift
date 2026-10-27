@@ -1627,14 +1627,6 @@ struct GroupWindowListSection: View {
                         .accessibilityIdentifier("group-window-list-loading")
                 }
             }
-            if InternalBuildPresentationAvailability.isAvailable, let timing = model.lastLoadTiming {
-                // Test builds only: where the wait is (relay vs. this iPhone).
-                Text(verbatim: timing)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("group-window-list-timing")
-            }
             if let message = model.message {
                 if model.windows.isEmpty && known.isEmpty {
                     Text(message).font(.footnote).foregroundStyle(.red)

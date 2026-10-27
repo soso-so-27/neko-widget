@@ -40,6 +40,23 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 }
 
+/// Decides whether a sideways swipe on the photo list changes the section.
+/// Only a clear horizontal swipe counts, and not one that started on the
+/// theme row (that row scrolls sideways itself).
+final class PhotoSectionSwipeGuard {
+    static let space = "photo-library-content"
+    var themeRow: CGRect = .zero
+
+    func section(after drag: DragGesture.Value, from current: PhotoLibrarySection) -> PhotoLibrarySection? {
+        let dx = drag.translation.width, dy = drag.translation.height
+        guard abs(dx) > 70, abs(dx) > abs(dy) * 2, !themeRow.contains(drag.startLocation) else { return nil }
+        let all = PhotoLibrarySection.allCases
+        guard let index = all.firstIndex(of: current) else { return nil }
+        let next = dx < 0 ? all.index(after: index) : index - 1
+        return all.indices.contains(next) ? all[next] : nil
+    }
+}
+
 /// Thin underline tabs under the title, the way Photos lists its albums:
 /// no box, no fill, the chosen one underlined.
 struct PhotoLibrarySectionPicker: View {
@@ -399,6 +416,9 @@ struct MainTabView: View {
         }
     }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
+    /// Where the theme row sits, so a swipe on it scrolls the row instead of
+    /// changing the section. A plain box: moving it never redraws the tab.
+    @State private var photoSwipeGuard = PhotoSectionSwipeGuard()
     @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
@@ -808,6 +828,16 @@ struct MainTabView: View {
             PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
                 .padding(.horizontal, 16)
             photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
+                .coordinateSpace(.named(PhotoSectionSwipeGuard.space))
+                // A sideways swipe moves between すべて・お気に入り・メモ, as the
+                // tabs are laid out. Scrolling up and down is left alone.
+                .simultaneousGesture(DragGesture(minimumDistance: 24, coordinateSpace: .named(PhotoSectionSwipeGuard.space))
+                    .onEnded { value in
+                        guard let next = photoSwipeGuard.section(after: value, from: photoLibrarySelection.selection)
+                        else { return }
+                        withAnimation(.snappy) { photoLibrarySelection.select(next) }
+                    })
+                .sensoryFeedback(.selection, trigger: photoLibrarySelection.selection)
         }
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
@@ -1318,6 +1348,9 @@ struct MainTabView: View {
             .padding(.horizontal, 16)
         }
         .accessibilityIdentifier("photos-theme-row")
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(PhotoSectionSwipeGuard.space)) } action: { frame in
+            photoSwipeGuard.themeRow = frame
+        }
     }
 
     private var catProfileAlbumsDestination: CatProfileAlbumsDestination {
