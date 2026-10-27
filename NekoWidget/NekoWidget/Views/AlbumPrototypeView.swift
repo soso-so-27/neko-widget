@@ -1234,8 +1234,8 @@ struct MonthlyBookView: View {
         ZStack {
             Self.paper.ignoresSafeArea()
             if isShown, !leaves.isEmpty {
-                PageCurlView(pages: leaves.map { leaf in
-                    leafView(leaf)
+                PageCurlView(pages: leaves.enumerated().map { position, leaf in
+                    leafView(leaf, shown: position == index)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Self.paper)
                 }, index: $index)
@@ -1312,7 +1312,7 @@ struct MonthlyBookView: View {
 
     // MARK: Leaves
 
-    @ViewBuilder private func leafView(_ leaf: Leaf) -> some View {
+    @ViewBuilder private func leafView(_ leaf: Leaf, shown: Bool) -> some View {
         switch leaf {
         case let .cover(photo, names):
             VStack(alignment: .leading, spacing: 0) {
@@ -1331,7 +1331,7 @@ struct MonthlyBookView: View {
         case let .photo(photo, caption):
             VStack(alignment: .leading, spacing: 10) {
                 BookPhotoView(localIdentifier: photo.localIdentifier)
-                    .modifier(LivePhotoHold(localIdentifier: photo.localIdentifier))
+                    .modifier(LivePhotoHold(localIdentifier: photo.localIdentifier, shown: shown))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 captionText(caption)
             }
@@ -1482,24 +1482,26 @@ struct PageCurlView<Page: View>: UIViewControllerRepresentable {
 }
 
 /// Hold a Live Photo and it plays, as in Photos: the moment around the shot.
-/// Still photos are left alone. The movie loads on the first hold only, so a
-/// book of many pages does not read every video up front.
+/// When its page turns up it stirs for a moment (the system's hint, as Photos
+/// does on a swipe), so it is plain which photos move. Still photos are left
+/// alone. The movie loads only for the page being shown.
 struct LivePhotoHold: ViewModifier {
     let localIdentifier: String
+    var shown = false
     @State private var isLive = false
     @State private var livePhoto: PHLivePhoto?
-    @State private var playing = false
+    @State private var playing: PHLivePhotoViewPlaybackStyle?
 
     func body(content: Content) -> some View {
         content
             .overlay {
-                if playing, let livePhoto {
-                    LivePhotoPlayer(livePhoto: livePhoto) { playing = false }
+                if let playing, let livePhoto {
+                    LivePhotoPlayer(livePhoto: livePhoto, style: playing) { self.playing = nil }
                         .transition(.opacity)
                 }
             }
             .overlay(alignment: .topLeading) {
-                if isLive, !playing {
+                if isLive, playing == nil {
                     Image(systemName: "livephoto")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
@@ -1509,23 +1511,32 @@ struct LivePhotoHold: ViewModifier {
                 }
             }
             .onLongPressGesture(minimumDuration: 0.25, perform: {}, onPressingChanged: { pressing in
-                guard pressing, isLive, !playing else { return }
+                guard pressing, isLive, playing != .full else { return }
                 Task {
                     if livePhoto == nil { livePhoto = await Self.livePhoto(localIdentifier) }
-                    if livePhoto != nil { withAnimation(.easeOut(duration: 0.15)) { playing = true } }
+                    if livePhoto != nil { withAnimation(.easeOut(duration: 0.15)) { playing = .full } }
                 }
             })
-            .sensoryFeedback(.impact(weight: .light), trigger: playing) { _, isPlaying in isPlaying }
+            .sensoryFeedback(.impact(weight: .light), trigger: playing) { _, style in style == .full }
             .accessibilityAction(named: "動かす") {
                 guard isLive else { return }
                 Task {
                     if livePhoto == nil { livePhoto = await Self.livePhoto(localIdentifier) }
-                    if livePhoto != nil { playing = true }
+                    if livePhoto != nil { playing = .full }
                 }
             }
             .task(id: localIdentifier) {
                 isLive = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
                     .firstObject?.mediaSubtypes.contains(.photoLive) ?? false
+            }
+            .task(id: shown) {
+                guard shown else { playing = nil; return }
+                // Let the page finish turning first.
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled, isLive, playing == nil else { return }
+                if livePhoto == nil { livePhoto = await Self.livePhoto(localIdentifier) }
+                guard !Task.isCancelled, livePhoto != nil, playing == nil else { return }
+                withAnimation(.easeOut(duration: 0.15)) { playing = .hint }
             }
     }
 
@@ -1547,9 +1558,10 @@ struct LivePhotoHold: ViewModifier {
     }
 }
 
-/// The system's Live Photo view, played once, silent, then handed back.
+/// The system's Live Photo view, played once (in full, or just the hint), silent, then handed back.
 struct LivePhotoPlayer: UIViewRepresentable {
     let livePhoto: PHLivePhoto
+    var style: PHLivePhotoViewPlaybackStyle = .full
     let onEnd: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onEnd: onEnd) }
@@ -1560,20 +1572,29 @@ struct LivePhotoPlayer: UIViewRepresentable {
         view.isMuted = true
         view.delegate = context.coordinator
         view.livePhoto = livePhoto
-        view.startPlayback(with: .full)
+        view.startPlayback(with: style)
+        context.coordinator.style = style
         return view
     }
 
     func updateUIView(_ view: PHLivePhotoView, context: Context) {
         context.coordinator.onEnd = onEnd
+        // A hold during the hint plays the whole moment.
+        if style != context.coordinator.style {
+            context.coordinator.style = style
+            view.startPlayback(with: style)
+        }
     }
 
     final class Coordinator: NSObject, PHLivePhotoViewDelegate {
         var onEnd: () -> Void
+        var style: PHLivePhotoViewPlaybackStyle = .full
         init(onEnd: @escaping () -> Void) { self.onEnd = onEnd }
 
         func livePhotoView(_ livePhotoView: PHLivePhotoView,
                            didEndPlaybackWith playbackStyle: PHLivePhotoViewPlaybackStyle) {
+            // The hint cut short by a hold is not the end.
+            guard playbackStyle == style else { return }
             onEnd()
         }
     }
