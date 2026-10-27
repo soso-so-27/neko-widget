@@ -254,30 +254,11 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     // MARK: Reading
 
-    struct Cat: Identifiable {
-        let id: UUID
-        let name: String
-        let latest: FamilyNotebookOperation?
-        let hasConflict: Bool
-    }
-
     struct Record: Identifiable {
         let id: UUID
         let states: [FamilyNotebookField: FamilyNotebookFieldState]
         var latest: FamilyNotebookOperation? { states.values.map(\.operation).max { $0.version < $1.version } }
         func value(_ field: FamilyNotebookField) -> FamilyNotebookValue? { states[field]?.operation.value }
-    }
-
-    var cats: [Cat] {
-        guard let snapshot else { return [] }
-        var seen = Set<UUID>()
-        let ids = snapshot.operations.map(\.target.familyCatID).filter { seen.insert($0).inserted }
-        return ids.compactMap { id -> Cat? in
-            if snapshot.fieldState(for: .init(familyCatID: id, field: nil))?.isDeleted == true { return nil }
-            let latest = snapshot.operations.filter { $0.target.familyCatID == id }.max { $0.version < $1.version }
-            let conflict = Self.catFields.contains { state(id, $0)?.status == .conflict }
-            return Cat(id: id, name: name(of: id), latest: latest, hasConflict: conflict)
-        }
     }
 
     /// The cat's name here, or the one written on a visit or a care plan.
@@ -320,6 +301,21 @@ final class FamilyNotebookPrototype: ObservableObject {
             }
             return states.isEmpty ? nil : Record(id: id, states: states)
         }
+    }
+
+    /// What others wrote lately, newest first, one line per item.
+    var recentFromFamily: [FamilyNotebookOperation] {
+        guard let snapshot else { return [] }
+        var seen = Set<FamilyNotebookTarget>()
+        return Array(snapshot.operations.filter { $0.author != Self.me && $0.target.field != nil }
+            .sorted { $0.version > $1.version }
+            .filter { seen.insert($0.target).inserted }
+            .prefix(5))
+    }
+
+    /// 「ミケ・接し方」
+    func place(of operation: FamilyNotebookOperation) -> String {
+        name(of: operation.target.familyCatID) + "・" + FamilyNotebookWords.label(operation.target.field ?? .note)
     }
 
     /// The people who have written in this notebook, you first.
@@ -491,249 +487,111 @@ struct FamilyNotebookView: View {
         .onDisappear { model.markSeen() }
     }
 
+    /// Who is in the family, and what they wrote lately. The writing itself
+    /// lives in 「この子のこと」, 病院で見せる and 預けるとき.
     private var notebook: some View {
         List {
             Section {
                 ForEach(model.writers, id: \.self) { name in
-                    HStack {
-                        Image(systemName: "person.crop.circle.fill").font(.title2).foregroundStyle(.secondary)
-                        Text(name)
-                        Spacer()
-                        if name == FamilyNotebookPrototype.me.displayName {
-                            Text("支払う人").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Button {} label: { Label("家族を招待する", systemImage: "person.badge.plus") }
-                    .disabled(true)
-            } header: {
-                Text("家族")
-            } footer: {
-                Text("招待された人はずっと無料。だれでも、どの項目でも書けます。家族とつなぐのは次の段階で、いまはこのiPhoneの中だけです。")
-            }
-            Section {
-                ForEach(model.cats) { cat in
-                    NavigationLink {
-                        FamilyNotebookCatView(catID: cat.id)
+                    LabeledContent {
+                        if name == FamilyNotebookPrototype.me.displayName { Text("支払う人") }
                     } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Text(cat.name).font(.headline)
-                                if cat.hasConflict {
-                                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                                        .accessibilityLabel("選んでほしい項目があります")
-                                }
-                            }
-                            if let latest = cat.latest {
-                                Text(FamilyNotebookFieldRow.byline(latest)).font(.caption).foregroundStyle(.secondary)
-                            }
+                        Label(name, systemImage: "person.crop.circle.fill")
+                    }
+                }
+                Button {} label: { Label("招待する", systemImage: "person.badge.plus") }
+                    .disabled(true)
+            } footer: {
+                Text("招待はまだできません（試作）。")
+            }
+            if !model.recentFromFamily.isEmpty {
+                Section("最近の書き込み") {
+                    ForEach(model.recentFromFamily) { operation in
+                        LabeledContent {
+                            Text(operation.editedAt.formatted(.dateTime.month(.defaultDigits).day()))
+                        } label: {
+                            Text(model.place(of: operation))
+                            Text(operation.author.displayName)
                         }
                     }
                 }
-                if model.cats.isEmpty {
-                    Text("「この子のこと」に猫がいません。猫のプロフィールから入れると、ここに並びます。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("猫")
-            } footer: {
-                Text("書くのは、いつもどおり「この子のこと」「病院で見せる」「預けるとき」から。書いたことは、この手帳にも入ります。")
             }
             Section {
-                Button("家族が書いたときを試す") { model.tryFamilyWrite() }
-                Button("2 人が同時に直したときを試す") { model.tryConflict() }
-                Button("試した家族を消す", role: .destructive) { confirmsRemove = true }
-            } header: {
-                Text("テスト用")
+                DisclosureGroup("テスト用") {
+                    Button("家族が書いたときを試す") { model.tryFamilyWrite() }
+                    Button("2 人が同時に直したときを試す") { model.tryConflict() }
+                    Button("試した家族を消す", role: .destructive) { confirmsRemove = true }
+                }
             } footer: {
-                Text("「家族（試し）」は本物の家族ではありません。試すと「この子のこと」の「接し方」「トイレ」に（試し）の文が入ります。試した家族を消すと元に戻ります。")
+                Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。消すと元に戻ります。")
             }
         }
         .confirmationDialog("試した家族を消しますか？", isPresented: $confirmsRemove, titleVisibility: .visible) {
             Button("消す", role: .destructive) { model.remove() }
         } message: {
-            Text("家族の手帳が消えます。「この子のこと」に入った（試し）の文は元に戻し、ほかは消えません。")
+            Text("（試し）の文は元に戻します。ほかは消えません。")
         }
     }
 }
 
-/// What the family notebook is, and the button that makes one.
+/// Before there is a family: what it is, in a sentence, and the button.
 struct FamilyNotebookIntroView: View {
     var creating = false
     var create: (@MainActor () -> Void)?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("一緒にお世話する人（家族・同居の人）と、この子のことを同じ手帳に書けます。")
-                    .font(.body)
-                VStack(alignment: .leading, spacing: 14) {
-                    point("syringe", "だれかが書いたワクチンの日を、ほかの家族も見られる")
-                    point("house", "預けるとき、実家の親が自分の iPhone で食事の量を確かめられる")
-                    point("clock.arrow.circlepath", "どの項目も、だれがいつ書いたかが残る")
-                    point("lock", "健康や家の情報は、iPhone の中で暗号にしてから送る")
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("一緒に書けるもの").font(.subheadline.weight(.semibold))
-                    Text("この子のこと（基本・健康・暮らし）、病院で見せる、預けるとき。迷子のチラシも、いつも最新の内容で作れます。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("家族の外の人には").font(.subheadline.weight(.semibold))
-                    Text("ペットシッターや病院には、道具ごとに PDF や画像で渡せます。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("料金").font(.subheadline.weight(.semibold))
-                    Text("家族を作る人は Plus。招待された人はずっと無料です。Plus をやめても、書いたことはみんなの iPhone に残ります。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Button { create?() } label: {
-                    Group {
-                        if creating { ProgressView() } else { Text("家族を作る").font(.headline) }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 50)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(create == nil || creating)
-                Text("テスト用の版の試作です。このiPhoneの中だけで動き、何も送りません。「この子のこと」「病院で見せる」「預けるとき」を写して始めます（元の記録はそのまま）。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(20)
-        }
-    }
-
-    private func point(_ systemImage: String, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: systemImage).foregroundStyle(.secondary).frame(width: 22)
-            Text(text).font(.subheadline)
-        }
-    }
-}
-
-// MARK: - One cat, as the family sees it
-
-/// Every item with who wrote it and whether the family has it. Writing
-/// happens in the tools; here an item two people changed at once is settled.
-struct FamilyNotebookCatView: View {
-    let catID: UUID
-    @ObservedObject private var model = FamilyNotebookPrototype.shared
-
-    var body: some View {
-        List {
-            fields("基本", [.name, .sex, .neutered, .indoorOnly, .birthday, .coat, .marks, .microchip])
-            fields("健康", [.conditions, .allergyStatus, .allergyText])
-            records("体重", .weight, [.measuredOn, .grams], newestBy: .measuredOn)
-            records("飲んでいる薬", .medication, [.medicationName, .dose, .schedule])
-            records("ワクチン", .vaccination, [.kind, .givenOn, .nextDueOn], newestBy: .givenOn)
-            records("ごはん", .meal, [.time, .food, .amount], inOrderOf: .order)
-            fields("暮らし", [.specialDiet, .water, .litter, .temperament])
-            fields("かかりつけ", [.vetName, .vetPhone, .vetNote])
-            records("病院で見せる", .visit, [.startedOn, .observations, .questions], newestBy: .startedOn)
-            records("預けるとき", .handoff, [.recipient, .period, .usualFood, .important])
-        }
-        .navigationTitle(model.cats.first { $0.id == catID }?.name ?? "")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func fields(_ title: String, _ fields: [FamilyNotebookField]) -> some View {
-        Section(title) {
-            ForEach(fields, id: \.self) { field in
-                FamilyNotebookFieldRow(state: model.state(catID, field), field: field)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func records(_ title: String, _ collection: FamilyNotebookCollection, _ fields: [FamilyNotebookField],
-                         newestBy newest: FamilyNotebookField? = nil, inOrderOf ordered: FamilyNotebookField? = nil) -> some View {
-        let records = model.records(catID, collection).sorted { first, second in
-            if let newest { return Self.sortKey(first.value(newest)) > Self.sortKey(second.value(newest)) }
-            if let ordered { return Self.sortKey(first.value(ordered)) < Self.sortKey(second.value(ordered)) }
-            return false
-        }
-        if !records.isEmpty {
-            Section(title) {
-                ForEach(records) { record in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(fields.compactMap { field in
-                            FamilyNotebookFieldRow.text(record.value(field), field).map { field == .grams ? $0 + "g" : $0 }
-                        }.joined(separator: "　"))
-                        .lineLimit(3)
-                        if let latest = record.latest {
-                            Text(FamilyNotebookFieldRow.byline(latest)).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static func sortKey(_ value: FamilyNotebookValue?) -> String {
-        switch value {
-        case let .day(day)?: day
-        case let .integer(number)?: String(format: "%08d", number)
-        case let .text(text)?: text
-        default: ""
-        }
-    }
-}
-
-/// One item: its value, who wrote it and when, and whether the family has it.
-struct FamilyNotebookFieldRow: View {
-    let state: FamilyNotebookFieldState?
-    let field: FamilyNotebookField
-    @State private var choosing = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(Self.label(field)).foregroundStyle(.secondary)
-                Spacer(minLength: 12)
-                Text(Self.text(state?.operation.value, field) ?? "未記入")
-                    .foregroundStyle(Self.text(state?.operation.value, field) == nil ? .tertiary : .primary)
-                    .multilineTextAlignment(.trailing)
-            }
-            if let state {
-                HStack(spacing: 6) {
-                    Text(Self.byline(state.operation))
-                    Spacer(minLength: 8)
-                    Label(Self.statusText(state.status), systemImage: Self.statusSymbol(state.status))
-                        .foregroundStyle(state.status == .conflict ? Color.orange : Color.secondary)
-                }
-                .font(.caption)
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "person.2.fill")
+                .font(.system(size: 44))
                 .foregroundStyle(.secondary)
+            Text("家族と一緒に書く").font(.title2.bold())
+            Text("この子のこと・病院・預けるときを、\n一緒にお世話する人と同じものにします。")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button { create?() } label: {
+                Group {
+                    if creating { ProgressView() } else { Text("家族を作る").font(.headline) }
+                }
+                .frame(maxWidth: .infinity, minHeight: 50)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(create == nil || creating)
+            Text("Plus の機能。招待された人は無料です。")
+                .font(.footnote).foregroundStyle(.secondary)
         }
-        .contentShape(Rectangle())
-        .onTapGesture { if state?.status == .conflict { choosing = true } }
-        .sheet(isPresented: $choosing) {
-            if let state { FamilyNotebookConflictChooser(state: state) }
-        }
+        .padding(24)
     }
+}
 
+/// The toolbar button on 「この子のこと」: the way into the family notebook,
+/// out of the way for anyone who keeps it to themselves (test builds only).
+struct FamilyNotebookButton: View {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @State private var shows = false
+
+    var body: some View {
+        Button { shows = true } label: {
+            Image(systemName: model.hasFamily ? "person.2.fill" : "person.badge.plus")
+                .overlay(alignment: .topTrailing) {
+                    if model.hasNewFromFamily {
+                        Circle().fill(Color.accentColor).frame(width: 7, height: 7).offset(x: 3, y: -3)
+                    }
+                }
+        }
+        .accessibilityLabel(model.hasFamily ? "家族の手帳" : "家族と一緒に書く")
+        .accessibilityIdentifier("cat-care-family-notebook")
+        .sheet(isPresented: $shows) { FamilyNotebookView() }
+    }
+}
+
+/// How the notebook's items read on screen.
+enum FamilyNotebookWords {
     static func byline(_ operation: FamilyNotebookOperation) -> String {
         let date = (operation.importedSourceEditedAt ?? operation.editedAt)
             .formatted(.dateTime.month(.defaultDigits).day())
-        return "\(operation.author.displayName)が \(date) に書きました"
-    }
-
-    static func statusText(_ status: FamilyNotebookStatus) -> String {
-        switch status {
-        case .localSaved: "このiPhoneだけ"
-        case .pendingShared: "家族にまだ届いていない"
-        case .shared: "家族と同じ"
-        case .conflict: "同時に直されました"
-        }
-    }
-
-    static func statusSymbol(_ status: FamilyNotebookStatus) -> String {
-        switch status {
-        case .localSaved: "iphone"
-        case .pendingShared: "arrow.up.circle"
-        case .shared: "checkmark.circle"
-        case .conflict: "exclamationmark.triangle.fill"
-        }
+        return "\(operation.author.displayName)・\(date)"
     }
 
     static func label(_ field: FamilyNotebookField) -> String {
@@ -811,19 +669,19 @@ struct FamilyNotebookConflictChooser: View {
                             dismiss()
                         } label: {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(FamilyNotebookFieldRow.text(operation.value, state.operation.target.field ?? .note) ?? "未記入")
+                                Text(FamilyNotebookWords.text(operation.value, state.operation.target.field ?? .note) ?? "未記入")
                                     .foregroundStyle(.primary)
-                                Text(FamilyNotebookFieldRow.byline(operation)).font(.caption).foregroundStyle(.secondary)
+                                Text(FamilyNotebookWords.byline(operation)).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                     }
                 } header: {
                     Text("2 人が同時に直しました")
                 } footer: {
-                    Text("残すほうを選んでください。いまは新しいほうを表示しています。選んだほうが「この子のこと」にも入ります。")
+                    Text("残すほうを選んでください。")
                 }
             }
-            .navigationTitle(FamilyNotebookFieldRow.label(state.operation.target.field ?? .note))
+            .navigationTitle(FamilyNotebookWords.label(state.operation.target.field ?? .note))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } } }
         }
@@ -854,13 +712,13 @@ struct FamilyNotebookNote: ViewModifier {
                 if shows, let state {
                     if state.status == .conflict {
                         Button { choosing = true } label: {
-                            Label("2 人が同時に直しました。押して選ぶ", systemImage: "exclamationmark.triangle.fill")
+                            Label("同時に直されました・選ぶ", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption).foregroundStyle(.orange)
                         }
                         .buttonStyle(.borderless)
                         .sheet(isPresented: $choosing) { FamilyNotebookConflictChooser(state: state) }
                     } else {
-                        Label(FamilyNotebookFieldRow.byline(state.operation), systemImage: "person.2")
+                        Label(FamilyNotebookWords.byline(state.operation), systemImage: "person.2")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
