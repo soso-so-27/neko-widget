@@ -187,11 +187,7 @@ struct AlbumPrototypeView: View {
     @AppStorage(AlbumPrototype.yearNowKey) private var yearNow = false
     @State private var story: MonthlyWindowPresentation?
     @State private var yearStory: YearStory?
-    @State private var clearingCard: String?
     @Namespace private var zoom
-
-    /// How long a hold takes to clear a new work's cloud.
-    static let clearSeconds: Double = 0.9
 
     struct YearStory: Identifiable { let year: Int; var id: Int { year } }
 
@@ -372,14 +368,13 @@ struct AlbumPrototypeView: View {
             .accessibilityIdentifier("album-prototype-latest")
     }
 
-    /// A work that has just arrived is under cloud, as on the home-screen
-    /// window. Hold it and the cloud clears (blur and a tick; nothing drawn).
-    /// After that the whole card opens the work with a tap.
+    /// The newest work as its cover. Just arrived: 「とどきました」 over it.
+    /// A tap opens it (out of the card, and back into it, on iOS 18).
     private func arrivalCard(id: String, wrapped: Bool, cover: PhotoPresentation?, caption: String?,
                              title: String, titleSize: CGFloat, names: String, accessibilityTitle: String,
                              open: @escaping () -> Void) -> some View {
-        let clouded = wrapped && clearingCard != id
-        return Color.clear
+        Button(action: open) {
+            Color.clear
             .aspectRatio(0.82, contentMode: .fit)
             .overlay {
                 if let cover {
@@ -387,9 +382,6 @@ struct AlbumPrototypeView: View {
                                         catBoundingBox: cover.catBoundingBox,
                                         targetPixelSize: CGSize(width: 1100, height: 1100),
                                         targetAspectRatio: 0.82)
-                        .blur(radius: clouded ? 18 : 0)
-                        .scaleEffect(clouded ? 1.08 : 1)
-                        .animation(.easeIn(duration: Self.clearSeconds), value: clouded)
                 }
             }
             .overlay(alignment: .bottomLeading) {
@@ -404,9 +396,6 @@ struct AlbumPrototypeView: View {
                         Text(names).font(.footnote).opacity(0.9)
                     }
                     Spacer()
-                    if wrapped {
-                        Text("長押しで晴らす").font(.caption.weight(.semibold)).opacity(0.9)
-                    }
                 }
                 .foregroundStyle(.white)
                 .padding(16)
@@ -416,50 +405,9 @@ struct AlbumPrototypeView: View {
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .zoomSource(id, in: zoom)
-            .modifier(HoldToClear(wrapped: wrapped,
-                                  clearing: Binding(get: { clearingCard == id },
-                                                    set: { clearingCard = $0 ? id : nil }),
-                                  reveal: { AlbumPrototype.markOpened(id) }, open: open))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(wrapped ? "\(accessibilityTitle)、届きました" : accessibilityTitle)
-    }
-}
-
-/// Hold to clear the cloud of a work that has just arrived; tap to open one
-/// already cleared. A light tick when the hold begins, a success when clear.
-private struct HoldToClear: ViewModifier {
-    let wrapped: Bool
-    @Binding var clearing: Bool
-    let reveal: () -> Void
-    let open: () -> Void
-    @State private var revealed = 0
-
-    func body(content: Content) -> some View {
-        Group {
-            if wrapped {
-                content.onLongPressGesture(minimumDuration: AlbumPrototypeView.clearSeconds) {
-                    reveal()
-                    revealed &+= 1
-                    clearing = false
-                } onPressingChanged: { pressing in
-                    clearing = pressing
-                }
-            } else {
-                content.onTapGesture(perform: open)
-            }
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: clearing) { _, isClearing in isClearing }
-        .sensoryFeedback(.success, trigger: revealed)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(wrapped ? "長押しで晴らします" : "開きます")
-        .accessibilityAction {
-            if wrapped {
-                reveal()
-                revealed &+= 1
-            } else {
-                open()
-            }
-        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(wrapped ? "\(accessibilityTitle)、届きました" : accessibilityTitle)
     }
 }
 
