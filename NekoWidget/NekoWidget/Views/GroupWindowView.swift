@@ -1443,24 +1443,27 @@ final class GroupWindowListModel: ObservableObject {
 
     func load() async {
         let started = ProcessInfo.processInfo.systemUptime
-        do {
-            windows = try await client.windows()
-            message = nil
-            hasLoaded = true
-            if InternalBuildPresentationAvailability.isAvailable {
+        let trace = InternalBuildPresentationAvailability.isAvailable ? GroupListTrace() : nil
+        var outcome = "完了"
+        defer {
+            if let trace {
                 let seconds = ProcessInfo.processInfo.systemUptime - started
                 completedLoads += 1
-                if let firstLoadSeconds {
-                    lastLoadTiming = String(format: "一覧の読み込み %.1f 秒（%d 回目・初回 %.1f 秒）・まど %d 個",
-                        seconds, completedLoads, firstLoadSeconds, windows.count)
-                } else {
-                    firstLoadSeconds = seconds
-                    lastLoadTiming = String(format: "一覧の読み込み %.1f 秒（初回）・まど %d 個", seconds, windows.count)
-                }
+                if firstLoadSeconds == nil { firstLoadSeconds = seconds }
+                lastLoadTiming = String(format: "一覧の読み込み %.1f 秒（%d 回目・初回 %.1f 秒）・まど %d 個・%@",
+                    seconds, completedLoads, firstLoadSeconds ?? seconds, windows.count, outcome)
+                    + "\n" + trace.snapshot().text(total: seconds)
             }
+        }
+        do {
+            windows = try await GroupListMeasurement.$current.withValue(trace) { try await client.windows() }
+            message = nil
+            hasLoaded = true
         } catch is CancellationError {
+            outcome = "中断"
             // The screen went away mid-request: nothing to tell.
         } catch {
+            outcome = "失敗"
             message = GroupWindowPresentation.message(for: error)
             hasLoaded = true
         }
@@ -1624,11 +1627,12 @@ struct GroupWindowListSection: View {
                         .accessibilityIdentifier("group-window-list-loading")
                 }
             }
-            if let timing = model.lastLoadTiming {
+            if InternalBuildPresentationAvailability.isAvailable, let timing = model.lastLoadTiming {
                 // Test builds only: where the wait is (relay vs. this iPhone).
                 Text(verbatim: timing)
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("group-window-list-timing")
             }
             if let message = model.message {

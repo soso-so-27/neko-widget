@@ -55,7 +55,8 @@ private actor EchoTransport: GroupHTTPTransport {
     private var paths: [String] = []
     private var heartBodies: [Data] = []
     private var listMode = "normal"
-    func configureList(_ mode: String = "normal") { listMode = mode; paths = [] }
+    private var listDelay: UInt64 = 0
+    func configureList(_ mode: String = "normal", delay: UInt64 = 0) { listMode = mode; listDelay = delay; paths = [] }
     func requestPaths() -> [String] { paths }
     func advanceRoster(identity: GroupDeviceIdentity, includeMember: Bool) throws {
         let old = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation!))
@@ -96,6 +97,7 @@ private actor EchoTransport: GroupHTTPTransport {
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         let path = request.url!.path, body = request.httpBody ?? Data()
         paths.append(path)
+        if path == "/v3/group-windows/list", listDelay > 0 { try await Task.sleep(nanoseconds: listDelay) }
         let object = body.isEmpty ? [:] : try JSONSerialization.jsonObject(with: body) as! [String: Any]
         func text(_ key: String) throws -> String {
             guard let value = object[key] as? String else { throw Failure.check("native wire key: " + key) }; return value
@@ -435,13 +437,65 @@ private struct GroupAdapterChecks {
         let list = "/v3/group-windows/list", root = "/v3/group-windows/" + room.id
         let full = [list, root, root + "/members/list"]
         await relay.configureList()
-        let cold = try await client.windows()
+        let coldTrace = GroupListTrace()
+        let cold = try await GroupListMeasurement.$current.withValue(coldTrace) { try await client.windows() }
         let coldPaths = await relay.requestPaths()
         try check(cold == [room] && coldPaths == full, "first list verifies detail and members: THREE requests")
-        await relay.configureList()
-        let warm = try await client.windows()
+        try check(coldTrace.snapshot().requests.map(\.kind) == ["一覧", "詳細", "メンバー"]
+                  && coldTrace.snapshot().cache == ["不採用・検証済みデータなし"], "cold trace matches actual transport")
+        await relay.configureList(delay: 30_000_000)
+        let warmTrace = GroupListTrace()
+        let warm = try await GroupListMeasurement.$current.withValue(warmTrace) { try await client.windows() }
         let warmPaths = await relay.requestPaths()
         try check(warm == cold && warmPaths == [list], "repeat list keeps identical verified names/members: ONE request")
+        let measured = warmTrace.snapshot()
+        try check(measured.requests.count == 1 && measured.cache == ["採用"] && measured.networkSeconds >= 0.025,
+                  "slow single list is counted and timed separately from a cache hit")
+        try check(measured.storageSeconds >= 0 && measured.cacheSeconds >= 0 && measured.entryWaitSeconds >= 0,
+                  "monotonic local stages")
+        let presentation = measured.text(total: 0.1)
+        try check(presentation.contains("通信 1回") && presentation.contains("採用")
+                  && !presentation.contains(room.id) && !presentation.contains(identity.personID)
+                  && !presentation.contains(endpoint.absoluteString), "diagnostic contains only labels/counts/times")
+
+        let traceA = GroupListTrace(), traceB = GroupListTrace()
+        async let loadA = GroupListMeasurement.$current.withValue(traceA) { try await client.windows() }
+        async let loadB = GroupListMeasurement.$current.withValue(traceB) { try await client.windows() }
+        let (valueA, valueB) = try await (loadA, loadB)
+        try check(valueA == cold && valueB == cold && traceA.snapshot().requests.count == 1
+                  && traceB.snapshot().requests.count == 1 && traceA.snapshot().cache == ["採用"]
+                  && traceB.snapshot().cache == ["採用"], "interleaved actor calls have independent traces")
+        _ = try await client.windows()
+        try check(traceA.snapshot().requests.count == 1 && traceB.snapshot().requests.count == 1,
+                  "ordinary untraced calls do not retain a prior trace")
+
+        for mode in ["offline", "denied"] {
+            await relay.configureList(mode, delay: 30_000_000)
+            let failureTrace = GroupListTrace()
+            do {
+                _ = try await GroupListMeasurement.$current.withValue(failureTrace) { try await client.windows() }
+                throw Failure.check("diagnosed failure was accepted")
+            } catch GroupClientError.offline { try check(mode == "offline", "offline trace") }
+              catch GroupClientError.notMember { try check(mode == "denied", "denied trace") }
+            let failed = failureTrace.snapshot()
+            try check(failed.requests.count == 1 && failed.networkSeconds >= 0.025 && failed.cache.isEmpty,
+                      "failure retains attempted request timing, not a previous success")
+            try check(failed.requests[0].outcome == (mode == "denied" ? "HTTP 404" : "失敗"), "bounded failure label")
+        }
+        await relay.configureList(delay: 10_000_000_000)
+        let cancelledTrace = GroupListTrace()
+        let cancelledLoad = Task {
+            try await GroupListMeasurement.$current.withValue(cancelledTrace) { try await client.windows() }
+        }
+        while await relay.requestPaths().isEmpty { await Task.yield() }
+        cancelledLoad.cancel()
+        do { _ = try await cancelledLoad.value; throw Failure.check("cancelled list completed") }
+        catch is CancellationError { }
+        try check(cancelledTrace.snapshot().requests.count == 1 && cancelledTrace.snapshot().requests[0].outcome == "中断",
+                  "actual cancellation retains its own request attempt")
+        await relay.configureList()
+        _ = try await client.windows()
+        print("Window list transport fixture: diagnostic cold=3/warm=1, delayed list, concurrent isolation and failures passed")
 
         for delivery in ["paused", "legacy", "active"] {
             await relay.setDelivery(delivery); await relay.configureList()

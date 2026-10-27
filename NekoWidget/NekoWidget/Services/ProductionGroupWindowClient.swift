@@ -60,6 +60,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             .appendingPathComponent("outbox", isDirectory: true)
     }
     private func load<T: Decodable>(_ type: T.Type, _ account: String) throws -> T? {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { GroupListMeasurement.current?.recordStorage(seconds: ProcessInfo.processInfo.systemUptime - started) }
         guard let bytes = try (account.hasPrefix("op:") ? operations : secrets).read(account) else { return nil }
         return try GroupWire.decode(type, bytes)
     }
@@ -87,7 +89,18 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                   headers["Neko-Billing-Protocol-Version"] == "1" else { throw GroupClientError.invalidResponse }
             for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         }
-        return try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 1_048_576))
+        let trace = GroupListMeasurement.current
+        let started = ProcessInfo.processInfo.systemUptime
+        var outcome = "失敗"
+        defer { trace?.recordRequest(path: path, seconds: ProcessInfo.processInfo.systemUptime - started, outcome: outcome) }
+        do {
+            let reply = try await transport.send(request, maximumBytes: 1_048_576)
+            outcome = "HTTP \(reply.status)"
+            return try GroupHTTPRequest.check(reply)
+        } catch is CancellationError {
+            outcome = "中断"
+            throw CancellationError()
+        }
     }
     private func registeredIdentity() async throws -> GroupDeviceIdentity {
         let value = try identity()
@@ -195,6 +208,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
 
     func windows() async throws -> [GroupWindow] {
+        GroupListMeasurement.current?.enteredClient()
         do {
             // The signed list request still checks current person AND device
             // membership on the relay. Never display cached entries on failure.
@@ -223,20 +237,29 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         }
     }
     private func cachedListWindow(_ item: GroupAPIModel.WindowItem, identity: GroupDeviceIdentity) throws -> GroupWindow? {
-        guard let entry = verifiedListEntries[item.windowID] else { return nil }
+        let started = ProcessInfo.processInfo.systemUptime
+        var outcome = "不採用・検証エラー"
+        defer { GroupListMeasurement.current?.recordCache(outcome, seconds: ProcessInfo.processInfo.systemUptime - started) }
+        guard let entry = verifiedListEntries[item.windowID] else { outcome = "不採用・検証済みデータなし"; return nil }
         let stored = try local(item.windowID), cached = entry.window
-        // Leaving changes member state without changing the roster revision.
-        // rotationRequired therefore ALWAYS needs a fresh members read, even
-        // when the cached snapshot itself was already rotationRequired.
-        guard item.rotationRequired == false, cached.state == .active,
-              item.revision == cached.revision, item.keyEpoch == cached.keyEpoch,
-              item.encryptedName == entry.encryptedName,
-              item.myParticipantID == cached.myParticipantID, item.myRole == cached.myRole,
-              identity.personID == entry.personID, try identity.deviceID == entry.deviceID,
-              stored.pinnedRevision == cached.revision, stored.pinnedHash == entry.rosterHash,
+        // Keep every authorization/key/pin check. Only the diagnostic reason is new.
+        guard item.rotationRequired == false, cached.state == .active else {
+            outcome = "不採用・鍵更新待ちまたは旧応答"; return nil
+        }
+        guard item.revision == cached.revision, item.keyEpoch == cached.keyEpoch,
+              item.encryptedName == entry.encryptedName else {
+            outcome = "不採用・版／鍵世代／名前の変更または欠落"; return nil
+        }
+        guard item.myParticipantID == cached.myParticipantID, item.myRole == cached.myRole,
+              identity.personID == entry.personID, try identity.deviceID == entry.deviceID else {
+            outcome = "不採用・本人／端末／役割の不一致"; return nil
+        }
+        guard stored.pinnedRevision == cached.revision, stored.pinnedHash == entry.rosterHash,
               stored.minimumAdmissionRevision <= cached.revision,
               let savedKey = stored.keys[String(cached.keyEpoch)], savedKey.count == 32,
-              GroupCanonical.hash(savedKey) == entry.keyHash else { return nil }
+              GroupCanonical.hash(savedKey) == entry.keyHash else {
+            outcome = "不採用・保存済みの版／鍵の不一致"; return nil
+        }
         var current = cached
         // Payment can change independently of the roster. Only the fresh list
         // supplies policy, and its owner must belong to the verified snapshot.
@@ -251,9 +274,18 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         current.deliveryStatus = item.deliveryStatus
         current.deliveryReason = item.deliveryReason
         current.ownerParticipantID = item.ownerParticipantID
+        outcome = "採用"
         return current
     }
     func window(id windowID: String) async throws -> GroupWindow {
+        let trace = GroupListMeasurement.current
+        let started = ProcessInfo.processInfo.systemUptime, networkBefore = trace?.snapshot().networkSeconds ?? 0
+        defer {
+            if let trace {
+                trace.recordDetail(seconds: ProcessInfo.processInfo.systemUptime - started
+                    - (trace.snapshot().networkSeconds - networkBefore))
+            }
+        }
         verifiedListEntries.removeValue(forKey: windowID)
         let identity = try await registeredIdentity(), stored = try local(windowID), path = "/v3/group-windows/" + windowID
         let myDeviceID = try identity.deviceID
