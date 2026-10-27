@@ -42,6 +42,7 @@ struct CatProfileDetailView: View {
     @State private var nameSaveFailed = false
     @State private var deleteFailed = false
     @State private var page: CatPage = .photos
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
 
     enum CatPage: Hashable { case photos, care }
 
@@ -80,6 +81,14 @@ struct CatProfileDetailView: View {
         }
         .navigationTitle(profile.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // この子のこと brings its own; 写真 shows the same at the same place.
+            if page == .photos, AlbumPrototype.isOn(albumPrototypeStored) || FamilyNotebookPrototype.shared.hasFamily {
+                ToolbarItem(placement: .topBarTrailing) {
+                    FamilyNotebookButton(accessibilityIdentifier: "cat-profile-family-notebook")
+                }
+            }
+        }
     }
 
     private var profileForm: some View {
