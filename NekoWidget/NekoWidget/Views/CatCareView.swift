@@ -123,6 +123,7 @@ struct CatCareDetailView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = CatCareDraft()
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     @State private var savedDraft = CatCareDraft()
     @State private var catID: UUID?
     @State private var autosave: Task<Void, Never>?
@@ -168,7 +169,12 @@ struct CatCareDetailView: View {
             folded("household", "家の情報", householdCount) { householdSection }
             Section {
                 Text("書いた内容は自動で保存します。")
-                Text("このiPhoneの中だけに保存し、外には送りません。")
+                if familyNotebook.hasFamily {
+                    // Test builds only (a family can be made only there).
+                    Text("家族の手帳に入っています（\(familyNotebook.writers.joined(separator: "・"))）。いまは試しで、家族にはまだ送りません。")
+                } else {
+                    Text("このiPhoneの中だけに保存し、外には送りません。")
+                }
             }
             .font(.footnote)
             .foregroundStyle(.secondary)
@@ -186,6 +192,7 @@ struct CatCareDetailView: View {
             if phase != .active { autosave?.cancel(); save() }
         }
         .onDisappear { autosave?.cancel(); save() }
+        .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
@@ -302,19 +309,24 @@ struct CatCareDetailView: View {
                 Text("オス").tag(CatCareSex.male)
                 Text("メス").tag(CatCareSex.female)
             }
+            .familyNotebookNote(catID, .sex)
             Picker("去勢・避妊", selection: $draft.neutered) {
                 Text("未記入").tag(CatCareTriState.unknown)
                 Text("済み").tag(CatCareTriState.yes)
                 Text("まだ").tag(CatCareTriState.no)
             }
+            .familyNotebookNote(catID, .neutered)
             Picker("室内飼い", selection: $draft.indoorOnly) {
                 Text("未記入").tag(CatCareTriState.unknown)
                 Text("室内だけ").tag(CatCareTriState.yes)
                 Text("外にも出る").tag(CatCareTriState.no)
             }
+            .familyNotebookNote(catID, .indoorOnly)
             TextField("毛色・柄（例：キジトラ）", text: $draft.coat)
+                .familyNotebookNote(catID, .coat)
             TextField("見分ける特徴（例：しっぽが短い、右耳に切れ込み）", text: $draft.marks, axis: .vertical)
                 .lineLimit(2...4)
+                .familyNotebookNote(catID, .marks)
             VStack(alignment: .leading, spacing: 4) {
                 TextField("マイクロチップ番号（15桁）", text: $draft.microchip)
                     .keyboardType(.numberPad)
@@ -325,6 +337,7 @@ struct CatCareDetailView: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
+            .familyNotebookNote(catID, .microchip)
         } header: {
             Text("基本")
         } footer: {
@@ -397,13 +410,16 @@ struct CatCareDetailView: View {
         Section {
             TextField("持病（例：腎臓の療法食中）", text: $draft.conditions, axis: .vertical)
                 .lineLimit(1...4)
+                .familyNotebookNote(catID, .conditions)
             Picker("アレルギー", selection: $draft.allergyStatus) {
                 Text("未確認").tag(CatCareAllergy.Status.unknown)
                 Text("なし").tag(CatCareAllergy.Status.none)
                 Text("あり").tag(CatCareAllergy.Status.recorded)
             }
+            .familyNotebookNote(catID, .allergyStatus)
             if draft.allergyStatus == .recorded {
                 TextField("アレルギーの内容", text: $draft.allergyText)
+                    .familyNotebookNote(catID, .allergyText)
             }
             listRow(title: "体重", detail: weightSummary, kind: .weight)
             listRow(title: "飲んでいる薬", detail: "\(currentRecord?.activeMedications.count ?? 0)件", kind: .medication)
@@ -420,10 +436,14 @@ struct CatCareDetailView: View {
             listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
             TextField("療法食・別々に与えるなど（何匹もいるとき大事）", text: $draft.specialDiet, axis: .vertical)
                 .lineLimit(1...3)
+                .familyNotebookNote(catID, .specialDiet)
             TextField("水", text: $draft.water)
+                .familyNotebookNote(catID, .water)
             TextField("トイレ", text: $draft.litter)
+                .familyNotebookNote(catID, .litter)
             TextField("接し方・苦手なこと", text: $draft.temperament, axis: .vertical)
                 .lineLimit(1...4)
+                .familyNotebookNote(catID, .temperament)
         }
     }
 
@@ -432,8 +452,10 @@ struct CatCareDetailView: View {
             TextField("飼い主の連絡先", text: $draft.ownerContact)
             TextField("予備の連絡先", text: $draft.backupContact)
             TextField("かかりつけ病院の名前", text: $draft.vetName)
+                .familyNotebookNote(catID, .vetName)
             TextField("かかりつけ病院の電話", text: $draft.vetPhone)
                 .keyboardType(.phonePad)
+                .familyNotebookNote(catID, .vetPhone)
             TextField("避難のときの家族の集合場所", text: $draft.meetingPlace)
         } header: {
             Text("家の情報")
@@ -501,6 +523,24 @@ struct CatCareDetailView: View {
         }
         // What was actually stored: an unfinished chip number stays out of it.
         if saved { savedDraft = value } else { saveFailed = true }
+    }
+
+    /// The family's writing came into 「この子のこと」 (test builds): show it.
+    /// Items typed here and not saved yet stay as typed and are saved after.
+    private func takeFamilyWrites() {
+        guard let catID, let state = store.state, let record = state.record(catID: catID) else { return }
+        let fresh = CatCareDraft(record: record, household: state.household)
+        var next = draft
+        func take<Value: Equatable>(_ path: WritableKeyPath<CatCareDraft, Value>) {
+            if draft[keyPath: path] == savedDraft[keyPath: path] { next[keyPath: path] = fresh[keyPath: path] }
+        }
+        take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus)
+        let texts: [WritableKeyPath<CatCareDraft, String>] = [
+            \.coat, \.marks, \.microchip, \.conditions, \.allergyText, \.specialDiet, \.water, \.litter,
+            \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone, \.meetingPlace]
+        for path in texts { take(path) }
+        savedDraft = fresh
+        draft = next
     }
 
     private func apply(_ result: CatCareListEditor.Result) {

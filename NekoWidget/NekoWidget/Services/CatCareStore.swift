@@ -51,9 +51,14 @@ final class CatCareStore: ObservableObject {
 
     /// Applies a change and saves it. Refuses when another writer saved first
     /// (the revision on disk moved) or when part of the file is unreadable.
+    /// Told after every save (what it was, what it is now). Test builds use
+    /// it to hand changes to the family notebook; nothing else listens.
+    var didSave: (@MainActor (CatCareState, CatCareState) -> Void)?
+
     @discardableResult
     func update(_ change: (inout CatCareState) -> Void) -> Bool {
         guard canSave, var next = state, let fileURL else { return false }
+        let previous = next
         let expected = next.mutationRevision
         change(&next)
         guard next != state else { return true }
@@ -76,6 +81,7 @@ final class CatCareStore: ObservableObject {
             try CatCareDecoding.encode(next).write(to: fileURL, options: .atomic)
 #endif
             state = next
+            didSave?(previous, next)
             return true
         } catch {
             reload()

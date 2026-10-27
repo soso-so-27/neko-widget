@@ -1,10 +1,13 @@
 import SwiftUI
 
 /// Test builds only: the family notebook, working on this iPhone alone.
-/// It copies 「この子のこと」 once (the original stays as it is) into
-/// Codex's local model, and shows per item who wrote it, when, and whether
-/// it has reached the family. Nothing is sent: there is no server yet, so
-/// "the family" can be tried with the test buttons at the bottom.
+///
+/// 「この子のこと」 stays the record every tool reads. The notebook is the
+/// family's layer over it (Codex's local model): making the family copies
+/// 「この子のこと」, 病院で見せる and 預けるとき in once (the originals stay as
+/// they are); after that every save of 「この子のこと」 goes into the notebook,
+/// and what the family writes comes back into 「この子のこと」. Nothing is sent:
+/// there is no server yet, so "the family" is tried with the test buttons.
 @MainActor
 final class FamilyNotebookPrototype: ObservableObject {
     static let shared = FamilyNotebookPrototype()
@@ -12,9 +15,13 @@ final class FamilyNotebookPrototype: ObservableObject {
     private static let familyKey = "debug.familyNotebook.familyID.v1"
     private static let deviceKey = "debug.familyNotebook.deviceID.v1"
     private static let seenKey = "debug.familyNotebook.seenClock.v1"
+    private static let undoKey = "debug.familyNotebook.tryoutUndo.v1"
 
     @Published private(set) var snapshot: FamilyNotebookSnapshot?
     @Published var message: String?
+    /// Counts each time the family's writing was put into 「この子のこと」,
+    /// so an open page can show it instead of keeping what it had.
+    @Published private(set) var familyWritesToCatCare = 0
 
     private var store: FamilyNotebookStore?
 
@@ -23,11 +30,17 @@ final class FamilyNotebookPrototype: ObservableObject {
     static let tryout = FamilyNotebookAuthor(personID: "tryout-family", displayName: "家族（試し）")
     private static let tryoutDevice = "tryout-device"
 
+    /// The items of 「この子のこと」 that go back and forth one by one.
+    static let catFields: [FamilyNotebookField] = [
+        .name, .sex, .neutered, .indoorOnly, .birthday, .coat, .marks, .microchip,
+        .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter, .temperament,
+        .vetName, .vetPhone, .vetNote]
+
     var hasFamily: Bool { snapshot != nil }
 
     private init() {
-        guard let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) else { return }
-        open(id)
+        if let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
+        CatCareStore.shared.didSave = { [weak self] before, after in self?.catCareDidSave(before, after) }
     }
 
     private static var root: URL? {
@@ -59,49 +72,183 @@ final class FamilyNotebookPrototype: ObservableObject {
         catch { message = "家族の手帳を読み込めませんでした。記録は消していません。" }
     }
 
-    // MARK: Making the family
+    // MARK: Making the family, and copying the tools in
 
-    /// Makes the family and copies 「この子のこと」 into it. The source file
-    /// is only read; a cat is linked by its tool ID and profile, never by name.
-    func create() {
+    func create() async {
         let familyID = UUID()
         open(familyID)
-        guard let store else { return }
+        guard store != nil else { return }
         do {
-            let fileURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-                .appendingPathComponent("CatCare", isDirectory: true).appendingPathComponent("state.json")
-            var data: Data?
-            if let fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
-                data = try Data(contentsOf: fileURL)
-            }
-            let source = try FamilyNotebookMigrationSource.decode(catCareData: data)
-            let mappings = (source.catCare?.cats ?? []).map { cat in
-                FamilyNotebookLocalMapping(sourceKey: "cat:" + cat.catID.uuidString.lowercased(), familyCatID: UUID(),
-                                           profileID: cat.profileID, toolCatID: cat.catID)
-            }
-            let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: familyID, mappings: mappings)
-            try store.applyImport(prepared.plan, author: Self.me)
+            try await copyTools()
             UserDefaults.standard.set(familyID.uuidString, forKey: Self.familyKey)
             markSeen()
-            reload()
         } catch {
             discard(familyID)
             message = "「この子のこと」を写せませんでした。元の記録はそのままです。"
         }
     }
 
-    /// Test builds only: forget the tried family. 「この子のこと」 is not touched.
+    /// Copies what the notebook does not have yet: new cats, entries, visits
+    /// and care plans. Safe to run again: nothing is copied twice, and a cat
+    /// is linked by its tool ID and profile, never by its name.
+    func copyTools() async throws {
+        let catCare = CatCareStore.shared
+        guard catCare.loadError == nil, catCare.unreadableCatCount == 0 else { throw FamilyNotebookMigrationError.unreadableSource }
+        let care = catCare.state
+        let handoff = CareHandoffStore.shared.loadError == nil ? CareHandoffStore.shared.plan : nil
+        let visits = try await VeterinaryVisitStore.shared.visits()
+        guard let store, let snapshot else { return }
+        let source = try FamilyNotebookMigrationSource(
+            catCare: care.map { CatCareDecoding.Result(state: $0, unreadableCatCount: 0) }, handoff: handoff, visits: visits)
+        let mappings = Self.catMappings(snapshot.mappings, care: care, handoff: handoff, visits: visits)
+        let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings)
+        try store.applyImport(prepared.plan, author: Self.me)
+        reload()
+    }
+
+    /// One family cat per cat the tools know, reusing the links already made.
+    private static func catMappings(_ existing: [FamilyNotebookLocalMapping], care: CatCareState?,
+                                    handoff: CareHandoffPlan?, visits: [VeterinaryVisit]) -> [FamilyNotebookLocalMapping] {
+        var mappings = existing
+        func link(_ toolID: UUID, profile: UUID?) {
+            let known = mappings.contains { mapping in
+                mapping.recordID == nil && (mapping.toolCatID == toolID || mapping.profileID == toolID
+                    || (profile != nil && (mapping.profileID == profile || mapping.toolCatID == profile)))
+            }
+            guard !known else { return }
+            mappings.append(.init(sourceKey: "cat:" + toolID.uuidString.lowercased(), familyCatID: UUID(),
+                                  profileID: profile, toolCatID: toolID))
+        }
+        for cat in care?.cats ?? [] { link(cat.catID, profile: cat.profileID) }
+        for cat in handoff?.cats ?? [] { link(cat.toolCatID ?? cat.id, profile: cat.profileID.flatMap(UUID.init(uuidString:))) }
+        for visit in visits { link(visit.catID, profile: nil) }
+        return mappings
+    }
+
+    /// Test builds only: forget the tried family. What the test buttons
+    /// changed in 「この子のこと」 is put back; nothing else is touched.
     func remove() {
         guard let familyID = snapshot?.familyID else { return }
+        undoTryouts()
         discard(familyID)
     }
 
     private func discard(_ familyID: UUID) {
         store = nil; snapshot = nil
-        UserDefaults.standard.removeObject(forKey: Self.familyKey)
-        UserDefaults.standard.removeObject(forKey: Self.seenKey)
+        for key in [Self.familyKey, Self.seenKey, Self.undoKey] { UserDefaults.standard.removeObject(forKey: key) }
         if let directory = Self.root?.appendingPathComponent(familyID.uuidString.lowercased(), isDirectory: true) {
             try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    // MARK: 「この子のこと」 → the notebook
+
+    /// Every save of 「この子のこと」 (the page, its lists, what the tools fill
+    /// in) goes into the notebook as the items that changed.
+    private func catCareDidSave(_ before: CatCareState, _ after: CatCareState) {
+        guard let store, let snapshot else { return }
+        do {
+            let mappings = Self.catMappings(snapshot.mappings, care: after, handoff: nil, visits: [])
+            let now = try Self.plan(after, family: snapshot.familyID, mappings: mappings)
+            // New cats, new entries and newly filled items come in whole.
+            try store.applyImport(now, author: Self.me)
+            let then = try Self.plan(before, family: snapshot.familyID, mappings: now.mappings)
+            var oldValues: [FamilyNotebookTarget: FamilyNotebookValue] = [:]
+            for entry in then.entries { if let value = entry.value { oldValues[entry.target] = value } }
+            let oldDeleted = Set(then.entries.filter { $0.target.field == nil }.map(\.target))
+            for entry in now.entries {
+                let current = try store.snapshot().fieldState(for: entry.target)
+                if entry.target.field == nil {
+                    guard !oldDeleted.contains(entry.target), current?.isDeleted != true else { continue }
+                } else {
+                    guard let value = entry.value, let old = oldValues[entry.target], old != value,
+                          current?.operation.value != value else { continue }
+                }
+                do { try store.edit(target: entry.target, value: entry.value, author: Self.me) }
+                catch FamilyNotebookError.deletedTarget { continue }
+            }
+            reload()
+        } catch {
+            // 「この子のこと」 itself is saved; only the notebook fell behind.
+            message = "「この子のこと」の一部を家族の手帳に入れられませんでした。"
+        }
+    }
+
+    private static func plan(_ state: CatCareState, family: UUID,
+                             mappings: [FamilyNotebookLocalMapping]) throws -> FamilyNotebookImportPlan {
+        let source = try FamilyNotebookMigrationSource(catCare: CatCareDecoding.Result(state: state, unreadableCatCount: 0))
+        return try FamilyNotebookMigration.prepare(source: source, familyID: family, mappings: mappings).plan
+    }
+
+    // MARK: The notebook → 「この子のこと」
+
+    /// Puts what someone else wrote into 「この子のこと」, so every tool reads it.
+    /// Your own writes are already there; `chosen` is one you picked between two.
+    func applyFamilyWrites(chosen: FamilyNotebookTarget? = nil) {
+        guard let snapshot, let care = CatCareStore.shared.state,
+              let here = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.mappings) else { return }
+        var current: [FamilyNotebookTarget: FamilyNotebookValue] = [:]
+        for entry in here.entries { if let value = entry.value { current[entry.target] = value } }
+        var changes: [(UUID, FamilyNotebookField, FamilyNotebookValue, FamilyNotebookOperation)] = []
+        for mapping in snapshot.mappings where mapping.recordID == nil {
+            guard let toolID = mapping.toolCatID, care.record(catID: toolID) != nil else { continue }
+            for field in Self.catFields {
+                let target = FamilyNotebookTarget(familyCatID: mapping.familyCatID, field: field)
+                guard let state = snapshot.fieldState(for: target), !state.isDeleted, let value = state.operation.value,
+                      state.operation.author != Self.me || target == chosen, current[target] != value else { continue }
+                changes.append((toolID, field, value, state.operation))
+            }
+        }
+        guard !changes.isEmpty else { return }
+        CatCareStore.shared.update { state in
+            for (toolID, field, value, operation) in changes {
+                guard let index = state.cats.firstIndex(where: { $0.catID == toolID }) else { continue }
+                Self.put(value, field, into: &state.cats[index], household: &state.household,
+                         by: "family:" + operation.author.personID, at: operation.editedAt)
+            }
+        }
+        familyWritesToCatCare += 1
+    }
+
+    private static func put(_ value: FamilyNotebookValue, _ field: FamilyNotebookField, into record: inout CatCareRecord,
+                            household: inout CatCareHousehold, by author: String, at date: Date) {
+        var text = ""
+        if case let .text(written) = value { text = written }
+        func stamp<Value: Codable & Equatable & Sendable>(_ value: Value) -> CatCareStamped<Value> { CatCareStamped(value: value, editedAt: date, editedBy: author) }
+        switch field {
+        case .name: record.name = stamp(text)
+        case .coat: record.coat = stamp(text)
+        case .marks: record.marks = stamp(text)
+        case .microchip: record.microchip = stamp(text)
+        case .conditions: record.conditions = stamp(text)
+        case .specialDiet: record.specialDiet = stamp(text)
+        case .water: record.water = stamp(text)
+        case .litter: record.litter = stamp(text)
+        case .temperament: record.temperament = stamp(text)
+        case .sex: record.sex = stamp(CatCareSex(rawValue: text) ?? .unknown)
+        case .neutered: record.neutered = stamp(CatCareTriState(rawValue: text) ?? .unknown)
+        case .indoorOnly: record.indoorOnly = stamp(CatCareTriState(rawValue: text) ?? .unknown)
+        case .birthday:
+            var day: CatCareDay?
+            if case let .day(written) = value {
+                let parts = written.split(separator: "-").compactMap { Int($0) }
+                if parts.count == 3 { day = CatCareDay(year: parts[0], month: parts[1], day: parts[2]) }
+            }
+            record.birthday = stamp(day)
+        case .allergyStatus, .allergyText:
+            var allergy = record.allergy?.value ?? CatCareAllergy()
+            if field == .allergyStatus { allergy.status = CatCareAllergy.Status(rawValue: text) ?? .unknown } else { allergy.text = text }
+            record.allergy = stamp(allergy)
+        case .vetName, .vetPhone, .vetNote:
+            // The page writes the household's vet; a cat with its own keeps its own.
+            var vet = (record.vetOverride?.value ?? nil) ?? household.vet?.value ?? CatCareVet()
+            switch field {
+            case .vetName: vet.name = text
+            case .vetPhone: vet.phone = text
+            default: vet.note = text
+            }
+            if record.vetOverride != nil { record.vetOverride = stamp(Optional(vet)) } else { household.vet = stamp(vet) }
+        default: break
         }
     }
 
@@ -114,31 +261,65 @@ final class FamilyNotebookPrototype: ObservableObject {
         let hasConflict: Bool
     }
 
+    struct Record: Identifiable {
+        let id: UUID
+        let states: [FamilyNotebookField: FamilyNotebookFieldState]
+        var latest: FamilyNotebookOperation? { states.values.map(\.operation).max { $0.version < $1.version } }
+        func value(_ field: FamilyNotebookField) -> FamilyNotebookValue? { states[field]?.operation.value }
+    }
+
     var cats: [Cat] {
         guard let snapshot else { return [] }
-        let ids = snapshot.operations.filter { $0.target.collection == .cat }.map(\.target.familyCatID)
         var seen = Set<UUID>()
-        return ids.filter { seen.insert($0).inserted }.compactMap { id -> Cat? in
+        let ids = snapshot.operations.map(\.target.familyCatID).filter { seen.insert($0).inserted }
+        return ids.compactMap { id -> Cat? in
             if snapshot.fieldState(for: .init(familyCatID: id, field: nil))?.isDeleted == true { return nil }
-            let name: String
-            if case let .text(text)? = state(id, .name)?.operation.value, !text.isEmpty { name = text } else { name = "名前なし" }
             let latest = snapshot.operations.filter { $0.target.familyCatID == id }.max { $0.version < $1.version }
-            let conflict = FamilyNotebookCatView.allFields.contains { state(id, $0)?.status == .conflict }
-            return Cat(id: id, name: name, latest: latest, hasConflict: conflict)
+            let conflict = Self.catFields.contains { state(id, $0)?.status == .conflict }
+            return Cat(id: id, name: name(of: id), latest: latest, hasConflict: conflict)
         }
+    }
+
+    /// The cat's name here, or the one written on a visit or a care plan.
+    private func name(of cat: UUID) -> String {
+        if case let .text(text)? = state(cat, .name)?.operation.value, !text.isEmpty { return text }
+        for collection in [FamilyNotebookCollection.handoff, .visit] {
+            for record in records(cat, collection) {
+                if case let .text(text)? = record.value(.catName), !text.isEmpty { return text }
+            }
+        }
+        return "名前なし"
     }
 
     func state(_ cat: UUID, _ field: FamilyNotebookField) -> FamilyNotebookFieldState? {
         snapshot?.fieldState(for: .init(familyCatID: cat, field: field))
     }
 
-    func count(_ cat: UUID, _ collection: FamilyNotebookCollection) -> Int {
-        guard let snapshot else { return 0 }
-        let records = Set(snapshot.operations.filter { $0.target.familyCatID == cat && $0.target.collection == collection }
-            .compactMap(\.target.recordID))
-        return records.filter { id in
-            snapshot.fieldState(for: .init(familyCatID: cat, collection: collection, recordID: id, field: nil))?.isDeleted != true
-        }.count
+    /// The same item, from 「この子のこと」's side (a tool cat ID).
+    func state(toolCatID: UUID?, _ field: FamilyNotebookField) -> FamilyNotebookFieldState? {
+        guard let toolCatID, let cat = snapshot?.mappings.first(where: { $0.recordID == nil && $0.toolCatID == toolCatID })?.familyCatID
+        else { return nil }
+        return state(cat, field)
+    }
+
+    /// The entries of one list (weights, visits, …) that are not deleted.
+    func records(_ cat: UUID, _ collection: FamilyNotebookCollection) -> [Record] {
+        guard let snapshot else { return [] }
+        let operations = snapshot.operations.filter { $0.target.familyCatID == cat && $0.target.collection == collection }
+        var seen = Set<UUID>()
+        let ids = operations.compactMap(\.target.recordID).filter { seen.insert($0).inserted }
+        return ids.compactMap { id -> Record? in
+            let mine = operations.filter { $0.target.recordID == id }
+            let parent = mine.first?.target.parentRecordID
+            if snapshot.fieldState(for: .init(familyCatID: cat, collection: collection, recordID: id,
+                                              parentRecordID: parent, field: nil))?.isDeleted == true { return nil }
+            var states: [FamilyNotebookField: FamilyNotebookFieldState] = [:]
+            for field in Set(mine.compactMap(\.target.field)) {
+                states[field] = snapshot.fieldState(for: .init(familyCatID: cat, collection: collection, recordID: id,
+                                                               parentRecordID: parent, field: field))
+            }
+            return states.isEmpty ? nil : Record(id: id, states: states)
+        }
     }
 
     /// The people who have written in this notebook, you first.
@@ -162,35 +343,62 @@ final class FamilyNotebookPrototype: ObservableObject {
         objectWillChange.send()
     }
 
-    // MARK: Writing
-
-    func write(_ cat: UUID, _ field: FamilyNotebookField, _ value: FamilyNotebookValue) {
+    /// Two people changed an item at once: keep this one, everywhere.
+    func choose(_ operation: FamilyNotebookOperation) {
+        guard let value = operation.value else { return }
         do {
-            try store?.edit(target: .init(familyCatID: cat, field: field), value: value, author: Self.me)
+            try store?.edit(target: operation.target, value: value, author: Self.me)
             reload()
+            applyFamilyWrites(chosen: operation.target)
         } catch {
-            message = "書けませんでした。もう一度お試しください。"
+            message = "選べませんでした。もう一度お試しください。"
         }
     }
 
     // MARK: Test buttons: what the family's writing will look like
 
-    /// Another iPhone in the family writes to one item; it arrives as shared.
-    func tryFamilyWrite() {
-        guard let cat = cats.first?.id else { message = "猫がいないので試せません。"; return }
-        let target = FamilyNotebookTarget(familyCatID: cat, field: .temperament)
-        let observed = snapshot?.operations.filter { $0.target == target }.map(\.id) ?? []
-        arrive(target: target, value: .text("抱っこは短めに。夜はよく鳴きます"), observing: observed)
+    private struct Undo: Codable {
+        let toolCatID: UUID
+        let field: FamilyNotebookField
+        let previous: FamilyNotebookValue?
+        var written: [FamilyNotebookValue]
     }
 
-    /// Two people change the same item at once (each without seeing the other).
+    /// Another iPhone in the family writes one item; it arrives as shared and
+    /// shows up in 「この子のこと」.
+    func tryFamilyWrite() {
+        guard let linked = firstLinkedCat() else { message = "「この子のこと」に猫がいないので試せません。"; return }
+        let (cat, toolID) = linked
+        let target = FamilyNotebookTarget(familyCatID: cat, field: .temperament)
+        let value = FamilyNotebookValue.text("（試し）抱っこは短めに。夜はよく鳴きます")
+        remember(toolID, .temperament, written: [value])
+        let observed = snapshot?.operations.filter { $0.target == target }.map(\.id) ?? []
+        arrive(target: target, value: value, observing: observed)
+        applyFamilyWrites()
+    }
+
+    /// Two people change the same item at once, each without seeing the other.
     func tryConflict() {
-        guard let cat = cats.first?.id else { message = "猫がいないので試せません。"; return }
+        guard let linked = firstLinkedCat() else { message = "「この子のこと」に猫がいないので試せません。"; return }
+        let (cat, toolID) = linked
         let target = FamilyNotebookTarget(familyCatID: cat, field: .litter)
-        // The other person saw everything up to now, but not what you write next.
+        let mine = FamilyNotebookValue.text("（試し）砂は週に 1 回、全部かえる")
+        let theirs = FamilyNotebookValue.text("（試し）砂は 2 週に 1 回、全部かえる")
+        remember(toolID, .litter, written: [mine, theirs])
         let before = snapshot?.operations.filter { $0.target == target }.map(\.id) ?? []
-        write(cat, .litter, .text("砂は週に 1 回、全部かえる"))
-        arrive(target: target, value: .text("砂は 2 週に 1 回、全部かえる"), observing: before)
+        do { try store?.edit(target: target, value: mine, author: Self.me); reload() }
+        catch { message = "試しの書き込みを入れられませんでした。"; return }
+        arrive(target: target, value: theirs, observing: before)
+        applyFamilyWrites()
+    }
+
+    private func firstLinkedCat() -> (UUID, UUID)? {
+        guard let care = CatCareStore.shared.state else { return nil }
+        for mapping in snapshot?.mappings ?? [] where mapping.recordID == nil {
+            if let toolID = mapping.toolCatID, care.record(catID: toolID) != nil,
+               state(mapping.familyCatID, .name)?.isDeleted != true { return (mapping.familyCatID, toolID) }
+        }
+        return nil
     }
 
     private func arrive(target: FamilyNotebookTarget, value: FamilyNotebookValue, observing: [UUID]) {
@@ -207,6 +415,43 @@ final class FamilyNotebookPrototype: ObservableObject {
             message = "試しの書き込みを入れられませんでした。"
         }
     }
+
+    /// Keeps what 「この子のこと」 said before a test button, to put it back.
+    private func remember(_ toolID: UUID, _ field: FamilyNotebookField, written: [FamilyNotebookValue]) {
+        var undos = loadUndos()
+        if let index = undos.firstIndex(where: { $0.toolCatID == toolID && $0.field == field }) {
+            undos[index].written += written
+        } else {
+            undos.append(Undo(toolCatID: toolID, field: field, previous: catCareValue(toolID, field), written: written))
+        }
+        if let data = try? JSONEncoder().encode(undos) { UserDefaults.standard.set(data, forKey: Self.undoKey) }
+    }
+
+    private func loadUndos() -> [Undo] {
+        guard let data = UserDefaults.standard.data(forKey: Self.undoKey) else { return [] }
+        return (try? JSONDecoder().decode([Undo].self, from: data)) ?? []
+    }
+
+    private func catCareValue(_ toolID: UUID, _ field: FamilyNotebookField) -> FamilyNotebookValue? {
+        guard let snapshot, let care = CatCareStore.shared.state,
+              let cat = snapshot.mappings.first(where: { $0.recordID == nil && $0.toolCatID == toolID })?.familyCatID,
+              let plan = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.mappings) else { return nil }
+        return plan.entries.first { $0.target == FamilyNotebookTarget(familyCatID: cat, field: field) }?.value
+    }
+
+    /// Only items still showing a test value go back; anything you wrote stays.
+    private func undoTryouts() {
+        let undos = loadUndos().filter { undo in catCareValue(undo.toolCatID, undo.field).map { undo.written.contains($0) } ?? false }
+        guard !undos.isEmpty else { return }
+        CatCareStore.shared.update { state in
+            for undo in undos {
+                guard let index = state.cats.firstIndex(where: { $0.catID == undo.toolCatID }) else { continue }
+                Self.put(undo.previous ?? .clear, undo.field, into: &state.cats[index], household: &state.household,
+                         by: state.deviceID, at: Date())
+            }
+        }
+        familyWritesToCatCare += 1
+    }
 }
 
 // MARK: - The notebook
@@ -215,11 +460,19 @@ struct FamilyNotebookView: View {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsRemove = false
+    @State private var creating = false
 
     var body: some View {
         NavigationStack {
             Group {
-                if model.hasFamily { notebook } else { FamilyNotebookIntroView(create: { model.create() }) }
+                if model.hasFamily {
+                    notebook
+                } else {
+                    FamilyNotebookIntroView(creating: creating) {
+                        creating = true
+                        Task { await model.create(); creating = false }
+                    }
+                }
             }
             .navigationTitle("家族の手帳")
             .navigationBarTitleDisplayMode(.inline)
@@ -227,6 +480,12 @@ struct FamilyNotebookView: View {
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(model.message ?? "") }
+        }
+        .task {
+            guard model.hasFamily else { return }
+            // Visits and care plans written since: into the notebook.
+            try? await model.copyTools()
+            model.applyFamilyWrites()
         }
         .onAppear { model.markSeen() }
         .onDisappear { model.markSeen() }
@@ -252,7 +511,7 @@ struct FamilyNotebookView: View {
             } footer: {
                 Text("招待された人はずっと無料。だれでも、どの項目でも書けます。家族とつなぐのは次の段階で、いまはこのiPhoneの中だけです。")
             }
-            Section("猫") {
+            Section {
                 ForEach(model.cats) { cat in
                     NavigationLink {
                         FamilyNotebookCatView(catID: cat.id)
@@ -262,7 +521,7 @@ struct FamilyNotebookView: View {
                                 Text(cat.name).font(.headline)
                                 if cat.hasConflict {
                                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                                        .accessibilityLabel("見てほしい項目があります")
+                                        .accessibilityLabel("選んでほしい項目があります")
                                 }
                             }
                             if let latest = cat.latest {
@@ -275,6 +534,10 @@ struct FamilyNotebookView: View {
                     Text("「この子のこと」に猫がいません。猫のプロフィールから入れると、ここに並びます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("猫")
+            } footer: {
+                Text("書くのは、いつもどおり「この子のこと」「病院で見せる」「預けるとき」から。書いたことは、この手帳にも入ります。")
             }
             Section {
                 Button("家族が書いたときを試す") { model.tryFamilyWrite() }
@@ -283,19 +546,20 @@ struct FamilyNotebookView: View {
             } header: {
                 Text("テスト用")
             } footer: {
-                Text("「家族（試し）」は本物の家族ではありません。消しても「この子のこと」はそのままです。")
+                Text("「家族（試し）」は本物の家族ではありません。試すと「この子のこと」の「接し方」「トイレ」に（試し）の文が入ります。試した家族を消すと元に戻ります。")
             }
         }
         .confirmationDialog("試した家族を消しますか？", isPresented: $confirmsRemove, titleVisibility: .visible) {
             Button("消す", role: .destructive) { model.remove() }
         } message: {
-            Text("家族の手帳に写した内容が消えます。「この子のこと」は消えません。")
+            Text("家族の手帳が消えます。「この子のこと」に入った（試し）の文は元に戻し、ほかは消えません。")
         }
     }
 }
 
 /// What the family notebook is, and the button that makes one.
 struct FamilyNotebookIntroView: View {
+    var creating = false
     var create: (@MainActor () -> Void)?
 
     var body: some View {
@@ -325,11 +589,14 @@ struct FamilyNotebookIntroView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Button { create?() } label: {
-                    Text("家族を作る").font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    Group {
+                        if creating { ProgressView() } else { Text("家族を作る").font(.headline) }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(create == nil)
-                Text("テスト用の版の試作です。このiPhoneの中だけで動き、何も送りません。いまの「この子のこと」を写して始めます（元の記録はそのまま）。")
+                .disabled(create == nil || creating)
+                Text("テスト用の版の試作です。このiPhoneの中だけで動き、何も送りません。「この子のこと」「病院で見せる」「預けるとき」を写して始めます（元の記録はそのまま）。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(20)
@@ -344,82 +611,104 @@ struct FamilyNotebookIntroView: View {
     }
 }
 
-// MARK: - One cat
+// MARK: - One cat, as the family sees it
 
+/// Every item with who wrote it and whether the family has it. Writing
+/// happens in the tools; here an item two people changed at once is settled.
 struct FamilyNotebookCatView: View {
     let catID: UUID
     @ObservedObject private var model = FamilyNotebookPrototype.shared
 
-    static let basics: [FamilyNotebookField] = [.name, .sex, .neutered, .indoorOnly, .birthday, .coat, .marks, .microchip]
-    static let health: [FamilyNotebookField] = [.conditions, .allergyStatus, .allergyText]
-    static let living: [FamilyNotebookField] = [.specialDiet, .water, .litter, .temperament]
-    static let vet: [FamilyNotebookField] = [.vetName, .vetPhone, .vetNote]
-    static var allFields: [FamilyNotebookField] { basics + health + living + vet }
-
     var body: some View {
         List {
-            section("基本", Self.basics)
-            Section("健康") {
-                rows(Self.health)
-                LabeledContent("体重", value: "\(model.count(catID, .weight))件")
-                LabeledContent("飲んでいる薬", value: "\(model.count(catID, .medication))件")
-                LabeledContent("ワクチン", value: "\(model.count(catID, .vaccination))件")
-            }
-            Section("暮らし") {
-                LabeledContent("ごはん", value: "\(model.count(catID, .meal))回")
-                rows(Self.living)
-            }
-            section("かかりつけ", Self.vet)
+            fields("基本", [.name, .sex, .neutered, .indoorOnly, .birthday, .coat, .marks, .microchip])
+            fields("健康", [.conditions, .allergyStatus, .allergyText])
+            records("体重", .weight, [.measuredOn, .grams], newestBy: .measuredOn)
+            records("飲んでいる薬", .medication, [.medicationName, .dose, .schedule])
+            records("ワクチン", .vaccination, [.kind, .givenOn, .nextDueOn], newestBy: .givenOn)
+            records("ごはん", .meal, [.time, .food, .amount], inOrderOf: .order)
+            fields("暮らし", [.specialDiet, .water, .litter, .temperament])
+            fields("かかりつけ", [.vetName, .vetPhone, .vetNote])
+            records("病院で見せる", .visit, [.startedOn, .observations, .questions], newestBy: .startedOn)
+            records("預けるとき", .handoff, [.recipient, .period, .usualFood, .important])
         }
         .navigationTitle(model.cats.first { $0.id == catID }?.name ?? "")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func section(_ title: String, _ fields: [FamilyNotebookField]) -> some View {
-        Section(title) { rows(fields) }
+    private func fields(_ title: String, _ fields: [FamilyNotebookField]) -> some View {
+        Section(title) {
+            ForEach(fields, id: \.self) { field in
+                FamilyNotebookFieldRow(state: model.state(catID, field), field: field)
+            }
+        }
     }
 
-    private func rows(_ fields: [FamilyNotebookField]) -> some View {
-        ForEach(fields, id: \.self) { field in
-            FamilyNotebookFieldRow(catID: catID, field: field)
+    @ViewBuilder
+    private func records(_ title: String, _ collection: FamilyNotebookCollection, _ fields: [FamilyNotebookField],
+                         newestBy newest: FamilyNotebookField? = nil, inOrderOf ordered: FamilyNotebookField? = nil) -> some View {
+        let records = model.records(catID, collection).sorted { first, second in
+            if let newest { return Self.sortKey(first.value(newest)) > Self.sortKey(second.value(newest)) }
+            if let ordered { return Self.sortKey(first.value(ordered)) < Self.sortKey(second.value(ordered)) }
+            return false
+        }
+        if !records.isEmpty {
+            Section(title) {
+                ForEach(records) { record in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(fields.compactMap { field in
+                            FamilyNotebookFieldRow.text(record.value(field), field).map { field == .grams ? $0 + "g" : $0 }
+                        }.joined(separator: "　"))
+                        .lineLimit(3)
+                        if let latest = record.latest {
+                            Text(FamilyNotebookFieldRow.byline(latest)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static func sortKey(_ value: FamilyNotebookValue?) -> String {
+        switch value {
+        case let .day(day)?: day
+        case let .integer(number)?: String(format: "%08d", number)
+        case let .text(text)?: text
+        default: ""
         }
     }
 }
 
 /// One item: its value, who wrote it and when, and whether the family has it.
 struct FamilyNotebookFieldRow: View {
-    let catID: UUID
+    let state: FamilyNotebookFieldState?
     let field: FamilyNotebookField
-    @ObservedObject private var model = FamilyNotebookPrototype.shared
-    @State private var editing = false
+    @State private var choosing = false
 
     var body: some View {
-        let state = model.state(catID, field)
-        Button { editing = true } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(Self.label(field)).foregroundStyle(.secondary)
-                    Spacer(minLength: 12)
-                    Text(Self.text(state?.operation.value, field) ?? "未記入")
-                        .foregroundStyle(Self.text(state?.operation.value, field) == nil ? .tertiary : .primary)
-                        .multilineTextAlignment(.trailing)
-                }
-                if let state {
-                    HStack(spacing: 6) {
-                        Text(Self.byline(state.operation))
-                        Spacer(minLength: 8)
-                        Label(Self.statusText(state.status), systemImage: Self.statusSymbol(state.status))
-                            .foregroundStyle(state.status == .conflict ? Color.orange : Color.secondary)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(Self.label(field)).foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                Text(Self.text(state?.operation.value, field) ?? "未記入")
+                    .foregroundStyle(Self.text(state?.operation.value, field) == nil ? .tertiary : .primary)
+                    .multilineTextAlignment(.trailing)
             }
-            .contentShape(Rectangle())
+            if let state {
+                HStack(spacing: 6) {
+                    Text(Self.byline(state.operation))
+                    Spacer(minLength: 8)
+                    Label(Self.statusText(state.status), systemImage: Self.statusSymbol(state.status))
+                        .foregroundStyle(state.status == .conflict ? Color.orange : Color.secondary)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
-        .foregroundStyle(.primary)
-        .sheet(isPresented: $editing) {
-            FamilyNotebookFieldEditor(catID: catID, field: field)
+        .contentShape(Rectangle())
+        .onTapGesture { if state?.status == .conflict { choosing = true } }
+        .sheet(isPresented: $choosing) {
+            if let state { FamilyNotebookConflictChooser(state: state) }
         }
     }
 
@@ -471,7 +760,7 @@ struct FamilyNotebookFieldRow: View {
         }
     }
 
-    /// Choices for the items that are picked, not typed: (stored value, shown).
+    /// The picked (not typed) items: what is stored, and what is shown.
     static func choices(_ field: FamilyNotebookField) -> [(String, String)]? {
         switch field {
         case .sex: [(CatCareSex.unknown.rawValue, "未記入"), (CatCareSex.male.rawValue, "オス"), (CatCareSex.female.rawValue, "メス")]
@@ -495,114 +784,93 @@ struct FamilyNotebookFieldRow: View {
         case let .day(day)?:
             let parts = day.split(separator: "-").compactMap { Int($0) }
             return parts.count == 3 ? "\(parts[0])年\(parts[1])月\(parts[2])日" : day
-        case let .integer(number)?: return "\(number)"
-        default: return nil
+        case let .date(date)?:
+            return date.formatted(.dateTime.year().month(.defaultDigits).day())
+        case let .integer(number)?:
+            return field == .order ? nil : "\(number)"
+        default:
+            return nil
         }
     }
 }
 
-/// Writing one item. When two people changed it at once, both are shown
-/// and one is kept; the other stays in the item's history.
-struct FamilyNotebookFieldEditor: View {
-    let catID: UUID
-    let field: FamilyNotebookField
+/// Two people changed an item at once: both are shown, one is kept (the
+/// other stays in the item's history).
+struct FamilyNotebookConflictChooser: View {
+    let state: FamilyNotebookFieldState
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
-    @State private var day = Date()
-    @State private var hasDay = false
 
     var body: some View {
-        let state = model.state(catID, field)
         NavigationStack {
-            Form {
-                if state?.status == .conflict, let state {
-                    Section {
-                        ForEach([state.operation] + state.history.filter(\.isConcurrentConflict).map(\.operation)) { operation in
-                            Button {
-                                if let value = operation.value { model.write(catID, field, value) }
-                                dismiss()
-                            } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(FamilyNotebookFieldRow.text(operation.value, field) ?? "未記入").foregroundStyle(.primary)
-                                    Text(FamilyNotebookFieldRow.byline(operation)).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    } header: {
-                        Text("2 人が同時に直しました")
-                    } footer: {
-                        Text("残すほうを選んでください。いまは新しいほうを表示しています。")
-                    }
-                }
+            List {
                 Section {
-                    if let choices = FamilyNotebookFieldRow.choices(field) {
-                        Picker(FamilyNotebookFieldRow.label(field), selection: $text) {
-                            ForEach(choices.indices, id: \.self) { index in
-                                Text(choices[index].1).tag(choices[index].0)
+                    ForEach([state.operation] + state.history.filter(\.isConcurrentConflict).map(\.operation)) { operation in
+                        Button {
+                            model.choose(operation)
+                            dismiss()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(FamilyNotebookFieldRow.text(operation.value, state.operation.target.field ?? .note) ?? "未記入")
+                                    .foregroundStyle(.primary)
+                                Text(FamilyNotebookFieldRow.byline(operation)).font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        .pickerStyle(.inline)
-                        .labelsHidden()
-                    } else if field == .birthday {
-                        Toggle("誕生日を書く", isOn: $hasDay)
-                        if hasDay {
-                            DatePicker("誕生日", selection: $day, in: ...Date(), displayedComponents: .date)
-                                .datePickerStyle(.graphical)
-                        }
-                    } else {
-                        TextField(FamilyNotebookFieldRow.label(field), text: $text, axis: .vertical)
-                            .lineLimit(1...6)
-                            .keyboardType(field == .microchip ? .numberPad : field == .vetPhone ? .phonePad : .default)
                     }
+                } header: {
+                    Text("2 人が同時に直しました")
                 } footer: {
-                    if field == .microchip, CatCareLimits.normalizedMicrochip(text) == nil {
-                        Text("15桁の数字で入れると保存します。").foregroundStyle(.orange)
-                    } else if let state {
-                        Text(FamilyNotebookFieldRow.byline(state.operation))
+                    Text("残すほうを選んでください。いまは新しいほうを表示しています。選んだほうが「この子のこと」にも入ります。")
+                }
+            }
+            .navigationTitle(FamilyNotebookFieldRow.label(state.operation.target.field ?? .note))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } } }
+        }
+    }
+}
+
+// MARK: - In 「この子のこと」
+
+/// Under an item of 「この子のこと」: who in the family wrote it, or, when two
+/// people changed it at once, a way to choose. Nothing when you wrote it or
+/// there is no family; the item itself stays where it is either way.
+struct FamilyNotebookNote: ViewModifier {
+    let toolCatID: UUID?
+    let field: FamilyNotebookField
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @State private var choosing = false
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let state = model.state(toolCatID: toolCatID, field)
+        let shows = state.map { $0.status == .conflict || $0.operation.author != FamilyNotebookPrototype.me } ?? false
+        if !model.hasFamily {
+            // No family (always so outside test builds): the item exactly as before.
+            content
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                content
+                if shows, let state {
+                    if state.status == .conflict {
+                        Button { choosing = true } label: {
+                            Label("2 人が同時に直しました。押して選ぶ", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                        .buttonStyle(.borderless)
+                        .sheet(isPresented: $choosing) { FamilyNotebookConflictChooser(state: state) }
+                    } else {
+                        Label(FamilyNotebookFieldRow.byline(state.operation), systemImage: "person.2")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
-            .navigationTitle(FamilyNotebookFieldRow.label(field))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("書く") { save(); dismiss() }
-                        .disabled(field == .microchip && CatCareLimits.normalizedMicrochip(text) == nil)
-                }
-            }
-            .onAppear { fill(state?.operation.value) }
         }
     }
+}
 
-    private func fill(_ value: FamilyNotebookValue?) {
-        switch value {
-        case let .text(value)?: text = value
-        case let .day(value)?:
-            let parts = value.split(separator: "-").compactMap { Int($0) }
-            if parts.count == 3, let date = Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) {
-                day = date; hasDay = true
-            }
-        default:
-            text = FamilyNotebookFieldRow.choices(field)?.first?.0 ?? ""
-        }
-    }
-
-    private func save() {
-        let value: FamilyNotebookValue
-        if field == .birthday {
-            guard hasDay else { model.write(catID, field, .clear); return }
-            let parts = Calendar.current.dateComponents([.year, .month, .day], from: day)
-            value = .day(String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0))
-        } else if field == .microchip {
-            guard let digits = CatCareLimits.normalizedMicrochip(text) else { return }
-            value = digits.isEmpty ? .clear : .text(digits)
-        } else {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            value = trimmed.isEmpty ? .clear : .text(trimmed)
-        }
-        guard value != model.state(catID, field)?.operation.value else { return }
-        model.write(catID, field, value)
+extension View {
+    func familyNotebookNote(_ toolCatID: UUID?, _ field: FamilyNotebookField) -> some View {
+        modifier(FamilyNotebookNote(toolCatID: toolCatID, field: field))
     }
 }
