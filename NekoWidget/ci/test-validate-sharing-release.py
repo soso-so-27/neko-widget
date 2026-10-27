@@ -188,7 +188,7 @@ def share_info_from(app_info: dict) -> dict:
         value.pop(key, None)
     activation_rule: object
     if app_info.get("SharingReleaseMode") == "disabled":
-        activation_rule = "FALSEPREDICATE"
+        activation_rule = "extensionItems.@count == 0"
     else:
         activation_rule = {
             "NSExtensionActivationSupportsImageWithMaxCount": 1,
@@ -502,7 +502,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             share_info_value=disabled_share,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("must be FALSEPREDICATE", result.stderr)
+        self.assertIn("must be extensionItems.@count == 0", result.stderr)
 
         media = info("YES", "YES", ENDPOINT, release_mode="media-staging")
         media_share = share_info_from(media)

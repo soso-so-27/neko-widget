@@ -22,11 +22,11 @@ struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
     }
 
     var title: String {
-        "\(monthNumber)月の猫たち"
+        "\(monthNumber)月のまとめ"
     }
 
     var accessibilityTitle: String {
-        "\(yearNumber)年\(monthNumber)月の猫たち"
+        "\(yearNumber)年\(monthNumber)月のまとめ"
     }
 
     var coverPhoto: PhotoPresentation? {
@@ -85,6 +85,155 @@ struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
         photos.filter(\.isLiked).count
     }
 
+}
+
+/// Current, already permission/scoped photo inputs for every month's story.
+/// The count alone cannot distinguish a limited-library or source replacement.
+struct MonthlyStoryLibraryInput: Hashable, Sendable {
+    let catPhotos: [PhotoPresentation]
+    let assignments: [String: Set<String>]
+    let profileNames: [String: String]
+    let timeZoneIdentifier: String
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.catPhotos == rhs.catPhotos && lhs.assignments == rhs.assignments
+            && lhs.profileNames == rhs.profileNames && lhs.timeZoneIdentifier == rhs.timeZoneIdentifier
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(catPhotos)
+        hasher.combine(timeZoneIdentifier)
+        for id in assignments.keys.sorted() {
+            hasher.combine(id)
+            hasher.combine(assignments[id]!.sorted())
+        }
+        for id in profileNames.keys.sorted() {
+            hasher.combine(id)
+            hasher.combine(profileNames[id]!)
+        }
+    }
+}
+
+struct MonthlyStoryPreparationKey: Hashable, Sendable {
+    let library: MonthlyStoryLibraryInput
+    let letter: MonthlyWindowPresentation
+
+    init(letter: MonthlyWindowPresentation, catPhotos: [PhotoPresentation],
+         assignments: [String: Set<String>], profileNames: [String: String],
+         timeZone: TimeZone = .current) {
+        library = .init(catPhotos: catPhotos, assignments: assignments,
+                        profileNames: profileNames, timeZoneIdentifier: timeZone.identifier)
+        // A remembered route is not permission to read its former photos.
+        self.letter = letter.refreshed(from: catPhotos, hasPhotoAccess: true, timeZone: timeZone)
+    }
+}
+
+struct YearStoryPreparationKey: Hashable, Sendable {
+    let year: Int
+    let library: MonthlyStoryLibraryInput
+
+    init(year: Int, catPhotos: [PhotoPresentation], assignments: [String: Set<String>],
+         profileNames: [String: String], timeZone: TimeZone = .current) {
+        self.year = year
+        library = .init(catPhotos: catPhotos, assignments: assignments,
+                        profileNames: profileNames, timeZoneIdentifier: timeZone.identifier)
+    }
+}
+
+/// The exact inputs represented by one exported card, including its caption.
+struct StoryCardShareInput: Hashable, Sendable {
+    let library: MonthlyStoryLibraryInput
+    let periodIdentifier: String
+    let photos: [PhotoPresentation]
+    let title: String
+}
+
+/// Both story views use the same guard before offering a generated image to
+/// ShareLink. Input changes hide it immediately, before the next task starts.
+struct StoryCardShareState<Image> {
+    struct Request {
+        let input: StoryCardShareInput
+        fileprivate let generation: UInt64
+    }
+
+    private var generation: UInt64 = 0
+    private var request: Request?
+    private var prepared: Image?
+
+    mutating func begin(_ input: StoryCardShareInput?) -> Request? {
+        generation &+= 1
+        prepared = nil
+        request = input.map { Request(input: $0, generation: generation) }
+        return request
+    }
+
+    @discardableResult
+    mutating func complete(_ image: Image?, for completed: Request, isCancelled: Bool) -> Bool {
+        guard !isCancelled, let request, request.generation == completed.generation,
+              request.input == completed.input else { return false }
+        prepared = image
+        return true
+    }
+
+    func image(for currentInput: StoryCardShareInput?) -> Image? {
+        guard let currentInput, request?.input == currentInput else { return nil }
+        return prepared
+    }
+}
+
+/// Multiple months share one current library generation. An older async job
+/// cannot repopulate the cache after that input changed, even if it changes back.
+struct MonthlyStoryPreparationCache<Value> {
+    struct Ticket {
+        let key: MonthlyStoryPreparationKey
+        fileprivate let generation: UInt64
+    }
+
+    private let maximumMonths: Int
+    private var library: MonthlyStoryLibraryInput?
+    private var generation: UInt64 = 0
+    private var values: [MonthlyWindowPresentation: Value] = [:]
+    private var order: [MonthlyWindowPresentation] = []
+
+    init(maximumMonths: Int = 12) {
+        precondition(maximumMonths > 0)
+        self.maximumMonths = maximumMonths
+    }
+
+    mutating func begin(_ key: MonthlyStoryPreparationKey) -> Ticket {
+        if library != key.library {
+            library = key.library
+            generation &+= 1
+            values.removeAll()
+            order.removeAll()
+        }
+        return Ticket(key: key, generation: generation)
+    }
+
+    func isCurrent(_ ticket: Ticket) -> Bool {
+        ticket.generation == generation && ticket.key.library == library
+    }
+
+    mutating func cached(for ticket: Ticket) -> Value? {
+        guard isCurrent(ticket), let value = values[ticket.key.letter] else { return nil }
+        order.removeAll { $0 == ticket.key.letter }
+        order.append(ticket.key.letter)
+        return value
+    }
+
+    @discardableResult
+    mutating func publish(_ value: Value, for ticket: Ticket) -> Bool {
+        guard isCurrent(ticket) else { return false }
+        // Keep one result per month, and a bounded set of recently opened works.
+        for old in order where old.periodIdentifier == ticket.key.letter.periodIdentifier {
+            values.removeValue(forKey: old)
+        }
+        order.removeAll { $0.periodIdentifier == ticket.key.letter.periodIdentifier }
+        order.append(ticket.key.letter)
+        values[ticket.key.letter] = value
+        while order.count > maximumMonths { values.removeValue(forKey: order.removeFirst()) }
+        return true
+    }
 }
 
 /// Keeps the latest monthly letter discoverable without introducing an

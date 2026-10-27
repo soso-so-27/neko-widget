@@ -3,12 +3,108 @@ import Foundation
 import StoreKit
 import SwiftUI
 
+/// Where the one Plus screen was opened from (ADR-027 5章). The sheet cannot
+/// be created without one, so a new entry point is a deliberate code change
+/// here and in `ci/run-cheap-safety-checks.sh`, never an accidental reuse.
+/// Photo access, invitations, receiving, hearts, and favorites have no case.
+///
+/// Connected now: onboarding, Settings, a new memo, a monthly summary or
+/// seasonal movie, and preservation. `widgetResume` (AppRootView's Widget
+/// deep link) and `createWindow` / `continueWindow` (PairingView,
+/// FamilyWindowView) are connected in a separate change (plan PR 6).
+enum PlusOfferContext: Equatable, Sendable {
+    /// The last, skippable page of the first run.
+    case onboarding
+    /// The app was opened from a personal Widget that kept its last photo.
+    case widgetResume
+    /// A monthly summary (1...12) or a seasonal movie (`nil`).
+    case monthlySummary(month: Int?)
+    case newMemo
+    case createWindow
+    /// The person who made a window opened it after it stopped.
+    case continueWindow
+    case preservation
+    case settings
+
+    /// The label of the control that opens the sheet at this place.
+    var entryTitle: String {
+        switch self {
+        case .onboarding: "Plusについて見る"
+        case .widgetResume: "ウィジェットの写真を、毎日新しくする"
+        case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月のまとめを見る"
+        case .monthlySummary: "月のまとめ・ムービーを見る"
+        case .newMemo: "メモを書く"
+        case .createWindow: "まどを作る"
+        case .continueWindow: "このまどを続ける"
+        case .preservation: "保存を始める"
+        case .settings: "Plusについて"
+        }
+    }
+
+    /// One line above the heading saying why the screen appeared here.
+    var reason: String? {
+        switch self {
+        case .onboarding, .settings: nil
+        case .widgetResume: "ホーム画面の写真を毎日新しくするのは、Plusの機能です。"
+        case .monthlySummary: "月のまとめと季節のムービーは、Plusで見られます。"
+        case .newMemo: "新しいメモはPlusで書けます。書いたメモは、いつでも読めます。"
+        case .createWindow: "まどを作るのは、Plusの機能です。"
+        case .continueWindow: "このまどは、作った人のPlusで続きます。"
+        case .preservation: "保存は、Plusの機能です。"
+        }
+    }
+
+    /// Stable suffix for accessibility identifiers and UI fixtures.
+    var identifier: String {
+        switch self {
+        case .onboarding: "onboarding"
+        case .widgetResume: "widget-resume"
+        case .monthlySummary: "monthly-summary"
+        case .newMemo: "new-memo"
+        case .createWindow: "create-window"
+        case .continueWindow: "continue-window"
+        case .preservation: "preservation"
+        case .settings: "settings"
+        }
+    }
+}
+
+/// The live sheet is offered only when the product and billing client are
+/// both configured. Otherwise every entry stays hidden, as Settings did before.
+enum PlusOfferAvailability {
+    static var isConfigured: Bool {
+        PlusPurchaseConfiguration.current.isConfigured
+            && BillingClientConfiguration.current.isConfigured
+    }
+}
+
+/// Every price and trial string comes from StoreKit (`displayPrice`,
+/// `introductoryOffer`). The app never counts trial days itself.
 struct MembershipOfferPresentation: Equatable {
+    /// "月額¥980" — the billed amount, always shown.
     let priceText: String
     let renewalText: String
+    /// "14日間無料" only when StoreKit reports introductory-offer eligibility.
     let trialText: String?
     let purchaseTitle: String
+    /// "その後は月額¥980" under the trial button; `nil` without a trial.
+    let afterTrialText: String?
     let isPreview: Bool
+
+    /// One formatting path for the live offer and its previews.
+    /// `displayPrice` and `trialPeriod` are StoreKit's values as given.
+    static func monthly(displayPrice: String, trialPeriod: String?, isPreview: Bool) -> Self {
+        let price = "月額\(displayPrice)"
+        guard let trialPeriod else {
+            return Self(priceText: price, renewalText: "1か月ごとに自動更新されます。",
+                        trialText: nil, purchaseTitle: "Plusを始める（\(price)）",
+                        afterTrialText: nil, isPreview: isPreview)
+        }
+        return Self(priceText: price,
+                    renewalText: "無料期間が終わると、1か月ごとに自動更新されます。終わる前にやめれば請求されません。",
+                    trialText: "\(trialPeriod)無料", purchaseTitle: "\(trialPeriod)無料で始める",
+                    afterTrialText: "その後は\(price)", isPreview: isPreview)
+    }
 }
 
 enum MembershipOfferActionResult: Equatable {
@@ -189,7 +285,7 @@ final class MembershipOfferModel: ObservableObject {
     private func updateMembershipState() {
         expiryTask?.cancel()
         if let purchases {
-            isMember = purchases.entitlementState.grantsPlus
+            isMember = purchases.entitlementState.permitsPersonalPlus
             isWaiting = purchases.pendingProductID != nil || purchases.awaitingServerConfirmation
             verificationRequired = !isMember && !isWaiting && !purchases.canStartNewPurchase
             if isMember, let expiry = purchases.entitlementState.lastServerConfirmed?.expirationDate {
@@ -220,16 +316,16 @@ final class MembershipOfferModel: ObservableObject {
             fixtureAllowsPurchase = fixtureStatus == .fresh
         } else { return }
         if isMember {
-            purchaseTitle = "加入中です"
+            purchaseTitle = "Plusを利用中です"
             message = nil
         } else if isWaiting {
             purchaseTitle = "購入の確認待ちです"
             message = purchases?.pendingProductID != nil || fixtureStatus == .applePending
                 ? "Appleの購入確認を待っています。追加の申し込みはしないでください。"
-                : "購入の確認を待っています。追加の申し込みはせず、会員情報を再確認してください。"
+                : "購入の確認を待っています。追加の申し込みはせず、購入状況を再確認してください。"
         } else if verificationRequired {
-            purchaseTitle = "会員情報の確認が必要です"
-            message = "会員情報を確認できません。追加の申し込みはせず、会員情報を再確認してください。"
+            purchaseTitle = "購入状況の確認が必要です"
+            message = "購入状況を確認できません。追加の申し込みはせず、購入状況を再確認してください。"
         } else {
             purchaseTitle = nil
             message = nil
@@ -237,7 +333,7 @@ final class MembershipOfferModel: ObservableObject {
     }
 
     static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil) -> MembershipOfferModel {
-        let model = preview()
+        let model = preview(eligibleForIntroOffer: false)
         model.fixtureStatus = state
         if state == .active, let expiresAfter {
             model.fixtureExpiresAt = .now.addingTimeInterval(expiresAfter)
@@ -248,18 +344,19 @@ final class MembershipOfferModel: ObservableObject {
 
     /// The preview has no StoreKit/session/Keychain dependency. Its results
     /// only dismiss the preview and can never change purchase authority.
+    /// The sample price and trial stand in for StoreKit's `displayPrice` and
+    /// introductory offer, formatted by the same function as the live offer.
     static func preview(
         purchaseResult: MembershipOfferActionResult = .completed,
-        restoreResult: MembershipOfferActionResult = .completed
+        restoreResult: MembershipOfferActionResult = .completed,
+        eligibleForIntroOffer: Bool = true
     ) -> MembershipOfferModel {
         MembershipOfferModel(
             isPreview: true,
             load: {
-                MembershipOfferPresentation(
-                    priceText: "月額980円（検討中）",
-                    renewalText: "無料期間終了後は月ごとに自動更新する案です。",
-                    trialText: "初回7日間無料（検討中）",
-                    purchaseTitle: "申し込みの流れを確認",
+                MembershipOfferPresentation.monthly(
+                    displayPrice: "¥980",
+                    trialPeriod: eligibleForIntroOffer ? "14日間" : nil,
                     isPreview: true
                 )
             },
@@ -276,11 +373,10 @@ final class MembershipOfferModel: ObservableObject {
         return MembershipOfferModel(
             isPreview: true,
             load: {
-                MembershipOfferPresentation(
-                    priceText: hasRefreshed ? "¥980 / 月" : "$5.99 / 月",
-                    renewalText: "月ごとに自動更新されます。",
-                    trialText: hasRefreshed ? "1週間無料" : nil,
-                    purchaseTitle: "会員プランを始める", isPreview: true
+                MembershipOfferPresentation.monthly(
+                    displayPrice: hasRefreshed ? "¥980" : "$5.99",
+                    trialPeriod: hasRefreshed ? "1週間" : nil,
+                    isPreview: true
                 )
             },
             purchase: { _ in
@@ -300,12 +396,11 @@ final class MembershipOfferModel: ObservableObject {
         while pending.count < 1 { await Task.yield() }
         let current = Task { await model.reloadOfferPresentation() }
         while pending.count < 2 { await Task.yield() }
-        let latest = MembershipOfferPresentation(priceText: "¥980 / 月", renewalText: "monthly",
-            trialText: "1週間無料", purchaseTitle: "start", isPreview: true)
+        let latest = MembershipOfferPresentation.monthly(displayPrice: "¥980", trialPeriod: "1週間", isPreview: true)
         pending[1].resume(returning: latest)
         await current.value
-        pending[0].resume(returning: MembershipOfferPresentation(priceText: "$5.99 / 月",
-            renewalText: "monthly", trialText: nil, purchaseTitle: "start", isPreview: true))
+        pending[0].resume(returning: MembershipOfferPresentation.monthly(
+            displayPrice: "$5.99", trialPeriod: nil, isPreview: true))
         await old.value
         guard model.offer == latest else { return false }
         let failed = Task { await model.reloadOfferPresentation() }
@@ -346,22 +441,19 @@ private final class MembershipStoreKitClient {
            subscription.subscriptionPeriod.unit == .month,
            subscription.subscriptionPeriod.value == 1 else { return nil }
 
-        var trial: String?
+        // Eligibility (one introductory offer per Apple ID) and the trial
+        // length both come from StoreKit. No local day count exists.
+        var trialPeriod: String?
         if await subscription.isEligibleForIntroOffer,
            let introductory = subscription.introductoryOffer,
            introductory.paymentMode == .freeTrial,
            let period = Self.periodText(introductory.period, count: introductory.periodCount) {
-            trial = "\(period)無料"
+            trialPeriod = period
         }
         guard purchases.productCatalogRevision == revision,
               purchases.productAvailability == .available else { return nil }
-        return MembershipOfferPresentation(
-            priceText: "\(product.displayPrice) / 月",
-            renewalText: trial == nil ? "月ごとに自動更新されます。" : "無料期間終了後、月ごとに自動更新されます。",
-            trialText: trial,
-            purchaseTitle: trial.map { "\($0)で試す" } ?? "会員プランを始める",
-            isPreview: false
-        )
+        return MembershipOfferPresentation.monthly(
+            displayPrice: product.displayPrice, trialPeriod: trialPeriod, isPreview: false)
     }
 
     func purchase(presentedOffer: MembershipOfferPresentation) async -> MembershipOfferActionResult {
@@ -428,16 +520,22 @@ private final class MembershipStoreKitClient {
 }
 
 @MainActor
+/// The one Plus screen. Every entry passes its `PlusOfferContext`; the only
+/// difference between entries is the one-line reason above the heading.
+/// A completed purchase or restore closes the sheet at once, without a
+/// completion page, so the caller's screen continues where it was.
 struct MembershipOfferSheet: View {
     @StateObject private var model: MembershipOfferModel
     @State private var showsSubscriptionManagement = false
     @State private var showsManagementPreview = false
+    let context: PlusOfferContext
     let photo: UIImage?
     let onFinish: (MembershipOfferActionResult) -> Void
 
-    init(model: MembershipOfferModel, photo: UIImage? = nil,
+    init(model: MembershipOfferModel, context: PlusOfferContext, photo: UIImage? = nil,
          onFinish: @escaping (MembershipOfferActionResult) -> Void) {
         _model = StateObject(wrappedValue: model)
+        self.context = context
         self.photo = photo
         self.onFinish = onFinish
     }
@@ -445,6 +543,7 @@ struct MembershipOfferSheet: View {
     var body: some View {
         NavigationStack {
             MembershipOfferView(
+                context: context,
                 photo: photo, offer: model.offer, isWorking: model.isWorking,
                 canPurchase: model.canPurchase, canRestore: model.canRestore,
                 message: model.message,
@@ -461,13 +560,15 @@ struct MembershipOfferSheet: View {
                 onPurchase: {
                     Task {
                         let result = await model.purchase()
-                        if model.isPreview && (result == .completed || result == .cancelled) { onFinish(result) }
+                        // No completion page: a purchase closes the sheet and the
+                        // caller re-reads membership through its dismissal.
+                        if result == .completed || (model.isPreview && result == .cancelled) { onFinish(result) }
                     }
                 },
                 onRestore: {
                     Task {
                         let result = await model.restore()
-                        if model.isPreview && result == .completed { onFinish(result) }
+                        if result == .completed { onFinish(result) }
                     }
                 },
                 onClose: { onFinish(model.isMember ? .completed : .cancelled) }
@@ -489,21 +590,141 @@ struct MembershipOfferSheet: View {
     }
 }
 
-/// Read-only, no-charge entry for the current internal builds. App Store
-/// production receipts never expose it; no authority is derived from this flag.
+/// Shown in place of a Plus feature at one of the entry places. A confirmed
+/// "not a member" opens the one Plus screen directly (once per appearance);
+/// closing it leaves this short line with the place's own button. An unknown
+/// state never offers a purchase: it shows the restore-only notice instead.
+@MainActor
+struct PlusOfferPrompt: View {
+    let context: PlusOfferContext
+    let decision: MembershipAccessDecision
+    var presentsImmediately = true
+    @State private var showsOffer = false
+    @State private var didPresent = false
+
+    var body: some View {
+        if decision == .membershipRequired {
+            VStack(spacing: 14) {
+                if let reason = context.reason {
+                    Text(reason)
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button(context.entryTitle) { showsOffer = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("plus-offer-entry-\(context.identifier)")
+            }
+            .multilineTextAlignment(.center).padding(24)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier("plus-offer-prompt")
+            .onAppear {
+                guard presentsImmediately, !didPresent else { return }
+                didPresent = true
+                showsOffer = true
+            }
+            .sheet(isPresented: $showsOffer, onDismiss: {
+                NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            }) {
+                MembershipOfferSheet(model: .live(), context: context) { _ in showsOffer = false }
+            }
+        } else {
+            MembershipAccessNotice(decision: decision)
+        }
+    }
+}
+
+/// The Plus row in Settings: "Plusについて" before joining, "Plus利用中" with
+/// Apple's subscription management after, and a recheck when the purchase
+/// state cannot be confirmed. "購入を復元" stays inside this section.
+/// Hidden entirely (by the caller) while the product is not configured.
+@MainActor
+struct PlusSettingsSection: View {
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    @State private var showsOffer = false
+    @State private var showsRestore = false
+    @State private var showsManagement = false
+    @State private var isRechecking = false
+
+    private enum Status { case notMember, member, unknown }
+
+    private var status: Status {
+        if purchases.entitlementState.permitsPersonalPlus { return .member }
+        if case .indeterminate = purchases.entitlementState { return .unknown }
+        if purchases.pendingProductID != nil || purchases.awaitingServerConfirmation { return .unknown }
+        return .notMember
+    }
+
+    var body: some View {
+        Section {
+            switch status {
+            case .notMember:
+                Button {
+                    showsOffer = true
+                } label: {
+                    Label(PlusOfferContext.settings.entryTitle, systemImage: "sparkles")
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .buttonStyle(.borderedProminent)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+                .accessibilityIdentifier("settings-membership-offer")
+            case .member:
+                SettingsActionRow("サブスクリプションを管理", systemImage: "checkmark.seal") { showsManagement = true }
+                    .accessibilityIdentifier("settings-membership-manage")
+            case .unknown:
+                SettingsActionRow(isRechecking ? "確認しています…" : "購入状況を再確認",
+                                  systemImage: "exclamationmark.arrow.circlepath") {
+                    isRechecking = true
+                    Task {
+                        await purchases.refreshAfterForegroundEntry()
+                        isRechecking = false
+                    }
+                }
+                .disabled(isRechecking)
+                .accessibilityIdentifier("settings-membership-recheck")
+            }
+            if status != .member {
+                Button("購入を復元") { showsRestore = true }
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .accessibilityIdentifier("settings-membership-restore")
+            }
+        } header: {
+            // Presenters live on the header, which stays while the rows switch
+            // between states (a list Section would copy them onto every row).
+            Text(status == .member ? "Plus（利用中）" : status == .unknown ? "Plus（購入状況を確認できません）" : "Plus")
+                .accessibilityIdentifier(status == .member ? "settings-membership-active"
+                                         : status == .unknown ? "settings-membership-unknown" : "settings-membership-header")
+                .sheet(isPresented: $showsOffer, onDismiss: refreshMembership) {
+                    MembershipOfferSheet(model: .live(), context: .settings) { _ in showsOffer = false }
+                }
+                .sheet(isPresented: $showsRestore, onDismiss: refreshMembership) {
+                    MembershipRestoreSheet()
+                }
+                .manageSubscriptionsSheet(isPresented: $showsManagement)
+                .onChange(of: showsManagement) { _, isPresented in
+                    // Closing Apple's sheet is not evidence of a cancellation.
+                    if !isPresented { refreshMembership() }
+                }
+        }
+    }
+
+    private func refreshMembership() {
+        NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+    }
+}
+
+/// Read-only, no-charge entry. This flag never grants purchase authority.
 enum MembershipOfferPreviewAvailability {
     static var isAvailable: Bool {
-#if DEBUG
-        true
-#else
-        Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
-#endif
+        InternalBuildPresentationAvailability.isAvailable
     }
 }
 
 @MainActor
 struct MembershipOfferPreviewView: View {
-    @State private var showsOffer = false
+    @State private var offerContext: PlusOfferContext?
     @State private var resultText: String?
     var purchaseResult: MembershipOfferActionResult = .completed
     var membershipState: MembershipOfferFixtureStatus?
@@ -512,33 +733,49 @@ struct MembershipOfferPreviewView: View {
     var body: some View {
         List {
             Section {
-                Button("会員案内を開く") { showsOffer = true }
+                Button("Plusの画面を開く") { offerContext = .settings }
                     .accessibilityIdentifier("membership-preview-open")
             } footer: {
                 Text("操作の確認用です。申し込み・請求・現在の機能の制限は行いません。")
+            }
+            Section("入口ごとの確認") {
+                ForEach(Self.entryContexts, id: \.identifier) { context in
+                    Button(context.entryTitle) { offerContext = context }
+                        .accessibilityIdentifier("membership-preview-open-\(context.identifier)")
+                }
             }
             if let resultText {
                 Text(resultText).accessibilityIdentifier("membership-preview-result")
             }
 
         }
-        .navigationTitle("会員案内の確認")
-        .sheet(isPresented: $showsOffer) {
-            MembershipOfferSheet(model: previewModel) { result in
-                showsOffer = false
-                resultText = result == .completed
-                    ? "確認を終えて、元の画面に戻りました。契約は変更していません。"
-                    : "取り消して、元の画面に戻りました。"
+        .navigationTitle("Plusの画面の確認")
+        .sheet(isPresented: Binding(get: { offerContext != nil },
+                                    set: { if !$0 { offerContext = nil } })) {
+            if let offerContext {
+                MembershipOfferSheet(model: previewModel, context: offerContext) { result in
+                    self.offerContext = nil
+                    resultText = result == .completed
+                        ? "確認を終えて、元の画面に戻りました。契約は変更していません。"
+                        : "取り消して、元の画面に戻りました。"
+                }
             }
         }
     }
+
+    /// Every case, so a fixture run shows each entry opens the same screen.
+    static let entryContexts: [PlusOfferContext] = [
+        .onboarding, .widgetResume, .monthlySummary(month: 10), .newMemo,
+        .createWindow, .continueWindow, .preservation, .settings,
+    ]
 
     private var previewModel: MembershipOfferModel {
 #if DEBUG
         if CommandLine.arguments.contains("--membership-catalog-refresh") { return .catalogRefreshPreview() }
 #endif
         return membershipState.map { .preview(state: $0, expiresAfter: expiresAfter) }
-            ?? .preview(purchaseResult: purchaseResult)
+            ?? .preview(purchaseResult: purchaseResult,
+                        eligibleForIntroOffer: !CommandLine.arguments.contains("--membership-offer-no-trial"))
     }
 }
 

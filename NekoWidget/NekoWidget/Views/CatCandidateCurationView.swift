@@ -34,7 +34,7 @@ struct CatCandidateCurationView: View {
                     ContentUnavailableView(
                         "除外した写真はありません",
                         systemImage: "cat",
-                        description: Text("写真の大表示メニューやアルバムの長押しから「表示候補から外す」を選べます。")
+                        description: Text("写真を開いた「…」や、アルバムの長押しから「猫の写真から外す」を選べます。")
                     )
                     .frame(maxWidth: .infinity, minHeight: 230)
                     .listRowBackground(Color.clear)
@@ -51,14 +51,14 @@ struct CatCandidateCurationView: View {
                         showsRestoreAllConfirmation = true
                     } label: {
                         Label(
-                            isRestoringAll ? "復元中…" : "すべて候補に戻す",
+                            isRestoringAll ? "復元中…" : "すべて猫の写真に戻す",
                             systemImage: "arrow.uturn.backward.circle"
                         )
                     }
                     .disabled(isRestoringAll)
                 }
             } header: {
-                Text("「表示候補から外す」")
+                Text("猫の写真から外した写真")
             } footer: {
                 Text("ここでの除外や復元は、アプリの「写真」・ウィジェット・「自動アルバム」の候補だけに影響します。写真アプリの写真は削除・変更されません。")
             }
@@ -70,7 +70,7 @@ struct CatCandidateCurationView: View {
             isPresented: $showsRestoreAllConfirmation,
             titleVisibility: .visible
         ) {
-            Button("すべて候補に戻す") {
+            Button("すべて猫の写真に戻す") {
                 Task {
                     isRestoringAll = true
                     await restoreCatCandidates(excludedPhotos.map(\.localIdentifier))
@@ -106,12 +106,12 @@ struct CatCandidateCurationView: View {
             }
 
             if isLimitedAccess {
-                Button("アクセスできる写真を選び直す", action: chooseMorePhotos)
+                Button("写真を追加で選ぶ", action: chooseMorePhotos)
             }
         } header: {
             Text("写真の対象・上級設定")
         } footer: {
-            Text("初期値は写真ライブラリ全体です。アルバムを選ぶと、その中の写真だけを次回スキャンの対象にします。アルバム名を変えても選択は維持されます。写真へのアクセスが制限されている場合は、許可済みの写真だけを確認します。")
+            Text("ふつうは写真全体から探します。アルバムを選ぶと、その中だけを探します。")
         }
     }
 
@@ -153,7 +153,7 @@ private struct ExcludedCatPhotoRow: View {
 
             Button("戻す", action: restore)
                 .buttonStyle(.bordered)
-                .accessibilityLabel("この写真を候補に戻す")
+                .accessibilityLabel("この写真を猫の写真に戻す")
         }
         .accessibilityElement(children: .contain)
     }
@@ -183,7 +183,7 @@ struct PhotoSourceAlbumSelectionView: View {
                         .foregroundStyle(.orange)
                     }
                     if isLimitedAccess {
-                        Button("アクセスできる写真を選び直す", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", action: chooseMorePhotos)
                     }
                 }
             }
@@ -210,7 +210,7 @@ struct PhotoSourceAlbumSelectionView: View {
                         .foregroundStyle(.secondary)
                 }
             } footer: {
-                Text("対象を変えるとスキャンを行います。選択したアルバムが削除された場合は、写真ライブラリ全体へ勝手に戻さず、以前の結果を保持します。")
+                Text("対象を変えると、写真を探し直します。選んだアルバムが消えたときは、前の結果を残します。")
             }
         }
         .navigationTitle("写真の対象")

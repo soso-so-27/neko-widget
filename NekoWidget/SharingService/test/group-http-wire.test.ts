@@ -1,0 +1,28 @@
+import { env } from 'cloudflare:workers';
+import { expect,it,vi } from 'vitest';
+import vector from '../../ci/fixtures/group-http-v3.json';
+import { authenticateGroupRequest,groupNonceStatements } from '../src/group-auth';
+import type { Env } from '../src/env';
+
+it('accepts the shared HTTP canonical vector without requiring deterministic signature generation',async()=>{
+  const settings=env as unknown as Env,db=settings.DB;
+  // Synthetic public keys only. Registration proofs are exercised by the HTTP
+  // integration suite; this vector fixes the cross-language request transcript.
+  await db.prepare("INSERT INTO group_people VALUES (?,?,'active',?)").bind(vector.personId,vector.personPublicKey,Number(vector.request.timestamp)).run();
+  await db.prepare("INSERT INTO group_person_devices VALUES (?,?,?,?,?,'active',?,NULL)")
+    .bind(vector.deviceId,vector.personId,vector.signingPublicKey,vector.hpkePublicKey,'synthetic-vector',Number(vector.request.timestamp)).run();
+  const clock=vi.spyOn(Date,'now').mockReturnValue(Number(vector.request.timestamp)*1000);
+  const request=()=>new Request('https://group.invalid'+vector.request.path,{method:vector.request.method,body:vector.request.bodyUTF8,
+    headers:{'content-type':'application/json','neko-protocol-version':'3','neko-device-id':vector.deviceId,
+      'neko-timestamp':vector.request.timestamp,'neko-nonce':vector.request.nonce,'neko-signature':vector.request.signature}});
+  try {
+    const accepted=await authenticateGroupRequest(request(),settings);
+    expect(accepted.actor.deviceId).toBe(vector.deviceId);
+    expect(new TextDecoder().decode(accepted.body)).toBe(vector.request.bodyUTF8);
+    await db.batch(groupNonceStatements(settings,accepted.actor));
+    await expect(authenticateGroupRequest(request(),settings)).rejects.toMatchObject({code:'replay'});
+    const wrong=request();
+    const altered=new Request(wrong.url,{method:wrong.method,headers:wrong.headers,body:'{"after":null,"limit":49}'});
+    await expect(authenticateGroupRequest(altered,settings)).rejects.toMatchObject({code:'invalid_authentication'});
+  } finally { clock.mockRestore(); }
+});

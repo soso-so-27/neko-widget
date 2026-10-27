@@ -101,7 +101,7 @@ struct WindowSupportResumeView: View {
                 }
             }
         }) {
-            MembershipOfferSheet(model: model.isPreview ? .preview() : .live()) { result in
+            MembershipOfferSheet(model: model.isPreview ? .preview() : .live(), context: .continueWindow) { result in
                 membershipOfferResult = result
                 showsMembership = false
             }

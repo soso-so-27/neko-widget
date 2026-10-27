@@ -10,13 +10,22 @@ enum MembershipOperation: String, CaseIterable, Sendable {
     case receivePhotos
     case reactToPhoto
     case browseOfficialWindow
-    case automaticAlbums
+    /// アルバム一覧（猫別・年別・月別の一覧）を見る。無料。
+    case browseAlbums
+    /// 月のまとめ・季節のムービーを開く。「育つもの」なので会員。
+    case openGrowingSummary
     case refreshPersonalWidget
     case createPersonalMemo
-    case createWindow
+    /// 自分のまどを作る（`maximumOwnWindowCount` まで）。購読中（App Store の
+    /// お試し中を含む `verified`）だけ。購読なしでは1つ目から作れない（ADR-027）。
+    case createOwnWindow
+    /// 作った人として、自分のまどへ届ける。会員。まどは作った人のPlusで続く。
+    case addContentToOwnWindow
+    /// ツール5つ（見せる・預ける・病院・迷子・避難）は無料。
     case presentCatPhotos
     case createCareMemo
     case createVeterinaryVisit
+    /// 招待されたまどでの送信。入る人はずっと無料なので常に許可。
     case addSharedContent
     case continueAcceptedDelivery
 }
@@ -25,6 +34,8 @@ enum MembershipAccessDecision: Equatable, Sendable {
     case allowed
     case membershipRequired
     case verificationRequired
+    /// ADR-027 でまどの支援（sponsorship）はゲートとして停止した。Policy は
+    /// この値を返さない。表示コードとの互換のために残している。
     case windowSupportRequired
 }
 
@@ -40,6 +51,8 @@ enum MembershipPersonalState: Equatable, Sendable {
 
 /// Authority for the particular window being operated on, never the viewer's
 /// personal subscription. Adapters must validate its identity and generation.
+/// ADR-027 以降、Policy はこの状態で判定を変えない（まどの支援は停止）。
+/// 引数と `withWindow` は既存の呼出との互換のために残している。
 enum MembershipWindowState: Equatable, Sendable {
     case inactive
     case checking
@@ -54,6 +67,11 @@ enum MembershipWindowState: Equatable, Sendable {
 /// was accepted before choosing the corresponding operation. This policy neither
 /// accepts a delivery nor permits an unaccepted attempt to be labeled a retry.
 enum MembershipAccessPolicy {
+    /// 自分で作れるまどの数（ADR-027）。作るのは購読中（お試し中を含む）で5つまで。
+    /// 招待で入ったまどは数えない。まどの合計上限は
+    /// `PrivateWindowCatalogState.maximumProductWindowCount`。
+    static let maximumOwnWindowCount = 5
+
     static func decision(
         for operation: MembershipOperation,
         enforcementEnabled: Bool,
@@ -67,11 +85,12 @@ enum MembershipAccessPolicy {
         switch operation {
         case .browsePhotos, .manageFavorites, .readExistingMemo,
              .editExistingMemo, .deleteOwnedContent, .exportExistingContent,
-             .receivePhotos, .reactToPhoto, .browseOfficialWindow,
-             .continueAcceptedDelivery:
+             .receivePhotos, .reactToPhoto, .browseOfficialWindow, .browseAlbums,
+             .presentCatPhotos, .createCareMemo, .createVeterinaryVisit,
+             .addSharedContent, .continueAcceptedDelivery:
             return .allowed
-        case .automaticAlbums, .refreshPersonalWidget, .createPersonalMemo,
-             .createWindow, .presentCatPhotos, .createCareMemo, .createVeterinaryVisit:
+        case .openGrowingSummary, .refreshPersonalWidget, .createPersonalMemo,
+             .createOwnWindow, .addContentToOwnWindow:
             guard now.timeIntervalSinceReferenceDate.isFinite else {
                 return .verificationRequired
             }
@@ -83,22 +102,6 @@ enum MembershipAccessPolicy {
             case let .verified(validUntil):
                 return verifiedDecision(
                     until: validUntil, now: now, expired: .membershipRequired
-                )
-            case let .indeterminate(lastVerifiedUntil):
-                return lastVerifiedDecision(until: lastVerifiedUntil, now: now)
-            }
-        case .addSharedContent:
-            guard now.timeIntervalSinceReferenceDate.isFinite else {
-                return .verificationRequired
-            }
-            switch window {
-            case .inactive:
-                return .windowSupportRequired
-            case .checking:
-                return .verificationRequired
-            case let .verified(validUntil):
-                return verifiedDecision(
-                    until: validUntil, now: now, expired: .windowSupportRequired
                 )
             case let .indeterminate(lastVerifiedUntil):
                 return lastVerifiedDecision(until: lastVerifiedUntil, now: now)

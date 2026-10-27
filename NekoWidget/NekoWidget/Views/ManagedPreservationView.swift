@@ -16,6 +16,7 @@ struct ManagedPreservationView: View {
     @State private var confirmsMembershipLink = false
     @State private var confirmsDraftDiscard = false
     @State private var confirmsToolDiscard = false
+    @State private var showsPlusOffer = false
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
     private let allowsManualSaving: Bool
@@ -312,6 +313,23 @@ struct ManagedPreservationView: View {
         }
     }
 
+    /// The "保存" entry of the one Plus screen (ADR-027 5章). Shown only
+    /// while saving is unavailable, Plus is configured, and this device has
+    /// no Plus purchase, so an existing member is never asked to buy again.
+    @ViewBuilder private var plusOfferEntry: some View {
+        if coordinator.membership?.access != .pilot, PlusOfferAvailability.isConfigured,
+           !PlusPurchaseStore.productionShared.entitlementState.grantsPlus {
+            Button(PlusOfferContext.preservation.entryTitle) { showsPlusOffer = true }
+                .accessibilityIdentifier("plus-offer-entry-preservation")
+                .sheet(isPresented: $showsPlusOffer, onDismiss: {
+                    NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+                    coordinator.checkMembership()
+                }) {
+                    MembershipOfferSheet(model: .live(), context: .preservation) { _ in showsPlusOffer = false }
+                }
+        }
+    }
+
     private var membershipSection: some View {
         Section {
             if coordinator.membershipLoading { ProgressView("保管できるか確認しています…") }
@@ -340,6 +358,7 @@ struct ManagedPreservationView: View {
                 Text("新しく保管する前に、会員情報を確認します。")
                     .font(.subheadline)
             }
+            plusOfferEntry
             Button(coordinator.membership?.access == .pilot ? "保管枠を確認"
                    : coordinator.membershipMessage == nil ? "会員情報を確認" : "接続状況を確認") {
                 coordinator.checkMembership()
@@ -506,7 +525,7 @@ struct ManagedPreservationView: View {
         } header: { Text("今回選んだ記録") }
         footer: {
             Text(coordinator.membership?.access == .pilot
-                 ? "内部テスト中は購入なしで保管できます。期限後も保管済みの記録を開き、書き出せます。写真原本や端末の元メモは変更しません。"
+                 ? "利用期間内は購入なしで保管できます。期限後も保管済みの記録を開き、書き出せます。写真原本や端末の元メモは変更しません。"
                  : "新しい保管には会員資格が必要です。保管済みの記録の閲覧・メモ編集・削除・持ち出しに会員資格は必要ありません。写真原本や端末の元メモは変更しません。")
         }
     }
@@ -521,6 +540,7 @@ struct ManagedPreservationView: View {
             Button("もう一度確認") { coordinator.checkMembership() }
                 .accessibilityIdentifier("preservation-eligibility-retry")
         } else if coordinator.membership?.canSave != true {
+            plusOfferEntry
             if coordinator.membership?.linked == false {
                 Text("新しく保管するには、会員情報の接続が必要です。")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -638,7 +658,7 @@ struct ManagedPreservationView: View {
                         .accessibilityIdentifier("preservation-resume-tool-deletion")
                 }
             }
-            Text("うちの子を見せる・預けるとき・病院で見せる・迷子のとき・避難に備える、の入力内容と添付写真をまとめて保管します。")
+            Text("写真を見せる・預けるとき・病院で見せる・迷子のとき・避難に備える、の入力内容と添付写真をまとめて保管します。")
             Text("連絡先や健康の情報を含みます。共有相手には送られません。端末に保存済みの内容が対象です。")
                 .font(.footnote).foregroundStyle(.secondary)
             Text("変わっていない添付写真は前の保管コピーと共用し、重複して送信しません。コピーを削除しても、ほかのコピーに必要な写真は残ります。")

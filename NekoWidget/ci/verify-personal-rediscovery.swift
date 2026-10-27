@@ -114,8 +114,9 @@ private enum PersonalRediscoveryVerifier {
         try upgradeBootstrap()
         try bootstrapRejections()
         try membershipSelectionBoundary()
+        try frozenPhotoOutlivesPoolAndCleanup()
         try concurrentProcesses()
-        print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, cross-process race.")
+        print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, frozen last photo across pool replacement/30 days/cleanup, frozen release on resume and source deletion, cross-process race.")
     }
 
     private static func membershipSelectionBoundary() throws {
@@ -172,9 +173,11 @@ private enum PersonalRediscoveryVerifier {
         _ = try restarted.updateEligibility(
             photoIDs: Set(fixture.candidates.map { $0.item.localIdentifier }).subtracting([original.localIdentifier]),
             scopeIdentifier: "excluded-held-photo", isAuthorized: true, now: cutoff, timeZone: utc)
+        // Scope exclusion is not deletion: the frozen photo stays, and no
+        // replacement is selected.
         try require(try restarted.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
-            allowsSelection: false, selectionValidUntil: cutoff)?.entries.isEmpty == true,
-            "paused membership bypassed exclusion or selected a replacement")
+            allowsSelection: false, selectionValidUntil: cutoff)?.entries.compactMap(\.item) == [original],
+            "paused membership lost the frozen photo on scope exclusion or selected a replacement")
         try restarted.invalidate(now: cutoff)
         try require(try restarted.issueTimeline(now: cutoff, variant: .small,
             allowsSelection: false)?.entries.isEmpty == true, "paused membership bypassed photo revocation")
@@ -228,6 +231,107 @@ private enum PersonalRediscoveryVerifier {
         try require(try unseen.store.issueTimeline(now: baseline, variant: .small,
             sourceID: "official-default", allowsSelection: false) == nil,
             "personal membership gate intercepted an official source")
+    }
+
+    private static func frozenPhotoOutlivesPoolAndCleanup() throws {
+        let fixture = try Fixture(5)
+        defer { fixture.cleanup() }
+        let cutoff = baseline.addingTimeInterval(3_600)
+        let shown = try fixture.store.issueTimeline(now: baseline, variant: .small, timeZone: utc,
+            selectionValidUntil: cutoff)!.entries[0].item!
+        let paused = try fixture.store.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
+            allowsSelection: false, selectionValidUntil: cutoff)!
+        try require(paused.entries.count == 1 && paused.entries[0].item == shown
+            && paused.entries[0].action == .unavailable
+            && paused.reloadDate >= cutoff.addingTimeInterval(PersonalRediscoveryStore.pausedReloadInterval),
+            "first paused timeline lost the shown photo or reloads too often")
+        try require(try fixture.store.snapshot(now: cutoff)?.frozenPhotoID == shown.localIdentifier,
+            "paused timeline did not journal the frozen photo")
+
+        // A journal written before the frozen keys existed must still load, and
+        // the next paused timeline freezes the same photo again.
+        let stateURL = fixture.directory.appendingPathComponent("personal-rediscovery.v1")
+            .appendingPathComponent("state.json")
+        guard var legacy = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any],
+              legacy["frozenItem"] != nil else { throw CheckFailure.failed("frozen keys were not written") }
+        legacy.removeValue(forKey: "frozenItem")
+        legacy.removeValue(forKey: "frozenAt")
+        try JSONSerialization.data(withJSONObject: legacy).write(to: stateURL, options: .atomic)
+        try require(try fixture.store.snapshot(now: cutoff)?.frozenPhotoID == nil, "legacy journal rewrite failed")
+        try require(try fixture.store.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
+            allowsSelection: false, selectionValidUntil: cutoff)?.entries.first?.item == shown,
+            "a journal without frozen keys lost the last photo")
+
+        // Replace the whole pool: the shown photo leaves the eligible set and
+        // the candidates, then 30 days pass and cleanup runs.
+        let replacements = (100..<105).map { index -> PersonalRediscoveryCandidate in
+            let files = WidgetCacheFilenames(small: "photo-\(index)-small.jpg",
+                medium: "photo-\(index)-medium.jpg", large: "photo-\(index)-large.jpg")
+            return PersonalRediscoveryCandidate(item: WidgetManifestItem(
+                localIdentifier: "photo-\(index)", cacheFilename: files.small, cacheFilenames: files,
+                scheduledDate: cutoff, sourceModificationDate: cutoff
+            ), creationDate: cutoff.addingTimeInterval(-Double(index) * 3_600), preparedAt: cutoff)
+        }
+        try Fixture.writeImages(replacements, directory: fixture.directory)
+        let replaced = try fixture.store.updateEligibility(
+            photoIDs: Set(replacements.map { $0.item.localIdentifier }), scopeIdentifier: "replaced",
+            isAuthorized: true, now: cutoff, timeZone: utc)
+        try fixture.store.publish(candidates: replacements, expectedRevision: replaced, now: cutoff,
+            discardCandidateIDs: Set(fixture.candidates.map { $0.item.localIdentifier }), timeZone: utc)
+        let late = cutoff.addingTimeInterval(30 * 86_400)
+        let cache = fixture.directory.appendingPathComponent("widget-cache")
+        try fixture.store.withProtectedCacheFiles(expectedRevision: replaced, now: late) { protected in
+            try require(Set(shown.allCacheFilenames).isSubset(of: protected),
+                "frozen photo files were not protected after pool replacement and 30 days")
+            for url in try FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)
+                where !protected.contains(url.lastPathComponent) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+        let restarted = PersonalRediscoveryStore(containerURL: fixture.directory)
+        try require(try restarted.snapshot(now: late)?.candidates
+            .contains(where: { $0.item.localIdentifier == shown.localIdentifier }) == false,
+            "fixture did not remove the frozen photo from the pool")
+        for variant in WidgetImageVariant.allCases {
+            let kept = try restarted.issueTimeline(now: late, variant: variant, timeZone: utc,
+                allowsSelection: false, selectionValidUntil: cutoff)!
+            try require(kept.entries.count == 1 && kept.entries[0].item == shown
+                && kept.entries[0].action == .unavailable,
+                "frozen photo (\(variant.rawValue)) went blank after pool replacement and cleanup")
+        }
+
+        // Selection resumes (Plus): the plan chooses from the new pool and the
+        // frozen photo and its files are released.
+        let resumed = try restarted.issueTimeline(now: late, variant: .small, timeZone: utc,
+            allowsSelection: true, selectionValidUntil: late.addingTimeInterval(30 * 86_400))!
+        try require(resumed.entries.first?.item != nil
+            && resumed.entries.first?.item?.localIdentifier != shown.localIdentifier,
+            "resumed selection kept showing the frozen photo")
+        try require(try restarted.snapshot(now: late)?.frozenPhotoID == nil,
+            "resumed selection kept the frozen journal")
+        try restarted.withProtectedCacheFiles(now: late) { protected in
+            try require(Set(shown.allCacheFilenames).isDisjoint(with: protected),
+                "released frozen files stayed protected")
+        }
+
+        // The source photo is gone from the library: the frozen copy goes too.
+        let deleted = try Fixture(3)
+        defer { deleted.cleanup() }
+        let before = try deleted.store.issueTimeline(now: baseline, variant: .small, timeZone: utc)!.entries[0].item!
+        _ = try deleted.store.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
+            allowsSelection: false, selectionValidUntil: cutoff)
+        let allIDs = Set(deleted.candidates.map { $0.item.localIdentifier })
+        _ = try deleted.store.restrictEligibility(to: allIDs, expectedRevision: deleted.revision,
+            now: cutoff, frozenPhotoAccessible: true)
+        try require(try deleted.store.snapshot(now: cutoff)?.frozenPhotoID == before.localIdentifier,
+            "an accessible source photo released the freeze")
+        _ = try deleted.store.restrictEligibility(to: allIDs.subtracting([before.localIdentifier]),
+            expectedRevision: deleted.revision, now: cutoff, frozenPhotoAccessible: false)
+        try require(try deleted.store.snapshot(now: cutoff)?.frozenPhotoID == nil,
+            "a deleted source photo kept its frozen copy")
+        try require(try deleted.store.issueTimeline(now: cutoff, variant: .small, timeZone: utc,
+            allowsSelection: false, selectionValidUntil: cutoff)?.entries.isEmpty == true,
+            "a deleted source photo was replaced or kept while paused")
     }
 
     private static func upgradeBootstrap() throws {

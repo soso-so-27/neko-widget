@@ -51,7 +51,7 @@ struct InitialScanView: View {
                                 Label("途中までの写真を表示しています", systemImage: "exclamationmark.triangle")
                                     .font(.headline)
                                 Text(scanErrorMessage).font(.subheadline)
-                                Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                                Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                                     .frame(minHeight: 44)
                                     .accessibilityIdentifier("onboarding-partial-scan-retry")
                             }
@@ -87,20 +87,16 @@ struct InitialScanView: View {
         .safeAreaInset(edge: .bottom) {
             if scan.hasPreliminaryResult {
                 VStack(spacing: 8) {
-                    Button(action: continueToApp) {
-                        Text(continueButtonTitle)
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 5)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("initial-scan-continue")
                     if let widgetGuideAction, scan.displayedCatCount > 0 {
-                        Button("ウィジェットの置き方", action: widgetGuideAction)
-                            .font(.subheadline.weight(.semibold))
-                            .frame(minHeight: 44)
+                        Button("ウィジェットを置く", action: widgetGuideAction)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
                             .accessibilityIdentifier("initial-scan-widget-guide")
+                        continueAction.buttonStyle(.plain)
+                    } else {
+                        continueAction.buttonStyle(.borderedProminent)
                     }
                 }
                 .padding(.horizontal, 28)
@@ -109,6 +105,15 @@ struct InitialScanView: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: scan.hasPreliminaryResult)
+    }
+
+    private var continueAction: some View {
+        Button(action: continueToApp) {
+            Text(continueButtonTitle).font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .controlSize(.large)
+        .accessibilityIdentifier("initial-scan-continue")
     }
 
     private var result: some View {
@@ -124,7 +129,7 @@ struct InitialScanView: View {
                         .font(.title2.bold())
                         .multilineTextAlignment(.center)
 
-                    Text("スキャンは正常に完了しました。猫が主役に写った写真を写真アプリに追加するか、写真へのアクセス範囲を確認して、もう一度スキャンしてください。")
+                    Text("写真を探し終えました。猫が大きく写った写真を写真アプリに入れるか、写真へのアクセスの範囲を確かめて、もう一度探してください。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -134,7 +139,7 @@ struct InitialScanView: View {
                         .multilineTextAlignment(.center)
 
                     Text(scan.displayedCatCount.formatted())
-                        .font(.system(size: 62, weight: .bold, design: .rounded))
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
                         .contentTransition(.numericText())
 
                     Text(scan.hasFinalResult ? "枚ありました" : "枚見つかっています")
@@ -173,6 +178,18 @@ struct InitialScanView: View {
                 }
             }
 
+            if widgetGuideAction != nil, scan.displayedCatCount > 0 {
+                Label {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("ホーム画面に猫写真を").font(.headline)
+                        Text("ウィジェットを置くと、見つけた写真が時間とともに入れ替わります。")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                } icon: { Image(systemName: "rectangle.on.rectangle") }
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+            }
+
             if OnboardingPartialScanRecovery.showsProgress(hasFinalResult: scan.hasFinalResult,
                 hasPreliminaryResult: scan.hasPreliminaryResult, error: scanErrorMessage) {
                 VStack(spacing: 7) {
@@ -192,7 +209,7 @@ struct InitialScanView: View {
                 .foregroundStyle(.secondary)
             } else if scan.hasDeferredAssets {
                 Label(
-                    "端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。必要なら設定の「最初から再スキャン」で再試行できます。",
+                    "このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度調べられます。",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
@@ -202,10 +219,10 @@ struct InitialScanView: View {
             if isFinalZero {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
-                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                         .buttonStyle(.bordered)
                 }
             }
@@ -244,7 +261,7 @@ struct ScanProgressCard: View {
             HStack {
                 Text(scan.isPreparingGroupedAlbums
                     ? "新しいアルバムを準備中"
-                    : "スキャン")
+                    : "写真を探す")
                     .font(.headline)
                 Spacer()
                 ResultBadge(
@@ -274,7 +291,7 @@ struct ScanProgressCard: View {
                 }
 
                 if scan.isPreparingGroupedAlbums {
-                    Text("スキャンはアプリを開いている間に進みます。")
+                    Text("写真を探すのは、アプリを開いている間に進みます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -288,8 +305,8 @@ struct ScanProgressCard: View {
             }
 
             if scan.hasFinalResult, scan.hasDeferredAssets {
-                Text("端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。必要なら設定の「最初から再スキャン」で再試行できます。")
-                    .font(.caption)
+                Text("このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度調べられます。")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
@@ -302,7 +319,7 @@ struct ScanProgressCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("再スキャン", systemImage: "arrow.clockwise", action: rescan)
+                Button("最初から探し直す", systemImage: "arrow.clockwise", action: rescan)
                     .font(.subheadline)
             }
         }
@@ -316,8 +333,8 @@ private struct ResultBadge: View {
     let deferredAssets: Int
 
     private var label: String {
-        if !isFinal { return "速報" }
-        return deferredAssets > 0 ? "端末内確定" : "確定"
+        if !isFinal { return "探している途中" }
+        return deferredAssets > 0 ? "読めた分は済み" : "探し終えた"
     }
 
     var body: some View {
@@ -333,9 +350,9 @@ private struct ResultBadge: View {
             .accessibilityLabel(
                 isFinal
                     ? (deferredAssets > 0
-                        ? "現行品質で取得できる写真はスキャン済み。未解析写真があります"
-                        : "全件スキャン済みの確定値")
-                    : "スキャン途中の速報値"
+                        ? "読み込めた写真は探し終えました。まだ調べていない写真があります"
+                        : "すべて探し終えた数")
+                    : "探している途中の数"
             )
     }
 }

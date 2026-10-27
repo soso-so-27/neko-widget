@@ -6,6 +6,14 @@ import Vision
 /// Device-local photos deliberately prepared for showing in person.
 @MainActor
 final class ShowcasePhotoStore: ObservableObject {
+    private static var sharedCache: (URL, ShowcasePhotoStore)?
+    static var shared: ShowcasePhotoStore {
+        let root = AppRecordDataset.directory("ShowcasePhotos")
+        if let cached = sharedCache, cached.0 == root { return cached.1 }
+        let value = ShowcasePhotoStore(directory: root)
+        sharedCache = (root, value)
+        return value
+    }
     static let maximumCount = 9
 
     struct Entry: Codable, Equatable, Identifiable {
@@ -387,8 +395,10 @@ enum ShowcaseRecommender {
                 quality = cached
             } else {
                 let thumbnail = await image(for: asset)
-                quality = Quality(aesthetic: thumbnail.flatMap(aestheticScore),
-                                  imageHash: thumbnail.flatMap(imageHash))
+                // iOS 17 has no aesthetics score; judge sharpness, light and cat size instead.
+                let aesthetic = thumbnail.flatMap(aestheticScore)
+                    ?? thumbnail.flatMap { lookScore($0, catArea: photo.largestCatAreaRatio) }
+                quality = Quality(aesthetic: aesthetic, imageHash: thumbnail.flatMap(imageHash))
                 qualityCache[key] = quality
             }
             ranked.append(Ranked(photo: photo, aesthetic: quality.aesthetic,
@@ -480,6 +490,45 @@ enum ShowcaseRecommender {
             return request.results?.first?.overallScore
         }
         return nil
+    }
+
+    /// 0...1 from a 64×64 gray copy: sharpness (Laplacian variance), how far the
+    /// light is from too dark or too bright, and how large the cat is. Only orders
+    /// photos on one iPhone; it is never shown or compared with the iOS 18 score.
+    static func lookScore(_ image: UIImage, catArea: Double?) -> Float? {
+        guard let cgImage = image.cgImage else { return nil }
+        let side = 64
+        var pixels = [UInt8](repeating: 0, count: side * side)
+        let drawn = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(
+                data: bytes.baseAddress, width: side, height: side,
+                bitsPerComponent: 8, bytesPerRow: side,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+            ) else { return false }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard drawn else { return nil }
+        return lookScore(gray: pixels, side: side, catArea: catArea)
+    }
+
+    static func lookScore(gray pixels: [UInt8], side: Int, catArea: Double?) -> Float {
+        let mean = Float(pixels.reduce(0) { $0 + Int($1) }) / Float(pixels.count)
+        let light = 1 - min(abs(mean - 128) / 128, 1)
+        var sum: Float = 0, squares: Float = 0, count: Float = 0
+        for y in 1..<(side - 1) {
+            for x in 1..<(side - 1) {
+                let center = Float(pixels[y * side + x]) * 4
+                let around = Float(pixels[(y - 1) * side + x]) + Float(pixels[(y + 1) * side + x])
+                    + Float(pixels[y * side + x - 1]) + Float(pixels[y * side + x + 1])
+                let value = center - around
+                sum += value; squares += value * value; count += 1
+            }
+        }
+        let variance = count > 0 ? squares / count - (sum / count) * (sum / count) : 0
+        let sharp = min(variance / 400, 1)
+        let size = Float(min(max(catArea ?? 0, 0) / 0.25, 1))
+        return sharp * 0.45 + light * 0.3 + size * 0.25
     }
 
     private static func imageHash(_ image: UIImage) -> UInt64? {

@@ -43,9 +43,19 @@ on:
         required: true
         default: false
         type: boolean
+      group_windows:
+        description: "グループのまどを本人の内部media-stagingで確認。protected承認と内部専用IPAが必要。既定OFF"
+        required: false
+        default: false
+        type: boolean
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
+        default: false
+        type: boolean
+      legacy_release_evidence:
+        description: "従来の証拠書き出しを手動で有効にする（通常は不要）"
+        required: false
         default: false
         type: boolean
       retain_signed_artifacts:
@@ -72,8 +82,22 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       PROJECT_DIRECTORY: NekoWidget
       RELEASE_SOURCE_SHA: ${{ inputs.expected_main_sha || github.sha }}
+      GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
+      GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
 
     steps:
+      - name: Require signed artifact retention for TestFlight uploads
+        shell: bash
+        env:
+          UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
+          RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
+        run: |
+          set -euo pipefail
+          if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" && "$RETAIN_SIGNED_ARTIFACTS" != "true" ]]; then
+            echo "TestFlight uploads require retain_signed_artifacts=true." >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -246,7 +270,7 @@ jobs:
               info = plistlib.load(stream)
           rule = info["NSExtension"]["NSExtensionAttributes"]["NSExtensionActivationRule"]
           if sys.argv[2] == "disabled":
-              if rule != "FALSEPREDICATE":
+              if rule != "extensionItems.@count == 0":
                   raise SystemExit("Disabled Share Extension plist is not fail closed.")
           elif not isinstance(rule, dict) or rule.get(
               "NSExtensionActivationSupportsImageWithMaxCount"
@@ -698,6 +722,16 @@ jobs:
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
 
+      - name: Prepare internal group window switch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
+            --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --env-file "$GITHUB_ENV"
+
       - name: Validate the exact runtime embedded in the limited external beta
         if: ${{ inputs.release_mode == 'media-staging' }}
         working-directory: NekoWidget/SharingService
@@ -708,7 +742,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
-          if [[ "$INTERNAL_REPORTS_REQUESTED" == "true" ]]; then
+          if [[ "$INTERNAL_REPORTS_REQUESTED" == "true" && "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
+            NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+              node scripts/check-staging-runtime.mjs --expected internal-purchase-sandbox-report-ui-continuation
+          elif [[ "$INTERNAL_REPORTS_REQUESTED" == "true" ]]; then
             NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
               node scripts/check-staging-runtime.mjs --expected internal-report-first-connection
           elif [[ "$BILLING_SANDBOX_REQUESTED" == "true" ]]; then
@@ -844,10 +881,6 @@ jobs:
           fi
 
           if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" ]]; then
-            if [[ "$RETAIN_SIGNED_ARTIFACTS" != "true" ]]; then
-              echo "TestFlight upload requires retain_signed_artifacts=true so the matching archive is preserved." >&2
-              exit 1
-            fi
             upload_required=(
               APP_STORE_CONNECT_KEY_ID
               APP_STORE_CONNECT_ISSUER_ID
@@ -1216,6 +1249,7 @@ jobs:
             SHARING_RELEASE_MODE="$RELEASE_SHARING_RELEASE_MODE" \
             OFFICIAL_WINDOW_FEED_URL="$RELEASE_OFFICIAL_WINDOW_FEED_URL" \
             SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
+            GROUP_WINDOWS_ENABLED="$RELEASE_GROUP_WINDOWS_ENABLED" \
             SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             PERSONAL_ARCHIVE_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             MANAGED_PRESERVATION_ENABLED="$RELEASE_MANAGED_PRESERVATION_ENABLED" \
@@ -1444,6 +1478,12 @@ jobs:
             --billing-requested "${BILLING_REQUESTED:-false}" \
             --settings-file "$RUNNER_TEMP/internal-report-settings.json" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
+          python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
+            --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --app-info-plist "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist" \
+            --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Export IPA
@@ -1463,8 +1503,15 @@ jobs:
             exit 1
           fi
           echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
+          python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
+            --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --mode "$SHARING_EXPECTED_MODE" \
+            --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --ipa "$ipa_path" \
+            --verify-export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Generate build-bound moderation release metadata
+        if: ${{ inputs.retain_signed_artifacts }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1569,7 +1616,7 @@ jobs:
           trap - EXIT
 
       - name: Upload encrypted signed app and symbols
-        if: ${{ inputs.retain_signed_artifacts && (inputs.release_mode != 'disabled' || !inputs.upload_to_testflight) }}
+        if: ${{ inputs.retain_signed_artifacts }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1607,23 +1654,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Re-authenticate the retained evidence immediately before checking the
-          # exact IPA bytes that altool will receive. Authentication must precede
-          # digest comparison so a rewritten metadata file cannot bless a new IPA.
-          python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
-            --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
-            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
-            --authentication "$RUNNER_TEMP/signed-artifact-authentication.json"
-          python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
-            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
-            --ipa "$IPA_PATH" \
-            --expected-source-commit "$RELEASE_SOURCE_SHA" \
-            --expected-build-number "$RELEASE_BUILD_NUMBER" \
-            --expected-github-run-id "$GITHUB_RUN_ID" \
-            --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --expected-release-mode "$SHARING_EXPECTED_MODE" \
-            --expected-internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
-            --expected-internal-report-scope "$RELEASE_INTERNAL_REPORTS_SCOPE"
+          if [[ "${{ inputs.retain_signed_artifacts }}" == "true" ]]; then
+            # Re-authenticate the retained evidence immediately before checking the
+            # exact IPA bytes that altool will receive. Authentication must precede
+            # digest comparison so a rewritten metadata file cannot bless a new IPA.
+            python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
+              --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+              --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+              --authentication "$RUNNER_TEMP/signed-artifact-authentication.json"
+            python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
+              --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+              --ipa "$IPA_PATH" \
+              --expected-source-commit "$RELEASE_SOURCE_SHA" \
+              --expected-build-number "$RELEASE_BUILD_NUMBER" \
+              --expected-github-run-id "$GITHUB_RUN_ID" \
+              --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --expected-release-mode "$SHARING_EXPECTED_MODE" \
+              --expected-internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
+              --expected-internal-report-scope "$RELEASE_INTERNAL_REPORTS_SCOPE"
+          fi
 
           run_altool_stage() {
             local stage="$1"
@@ -1669,7 +1718,7 @@ jobs:
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
 
       - name: Write local-only signed release evidence
-        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
+        if: ${{ inputs.legacy_release_evidence && success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
         shell: bash
         env:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
@@ -1700,7 +1749,7 @@ jobs:
             --retain-signed-artifacts "$RETAIN_SIGNED_ARTIFACTS"
 
       - name: Upload local-only signed release evidence
-        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
+        if: ${{ inputs.legacy_release_evidence && success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-local-only-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1710,7 +1759,7 @@ jobs:
           retention-days: 14
 
       - name: Stage authenticated local-only evidence after failure
-        if: ${{ failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
+        if: ${{ inputs.legacy_release_evidence && failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
         shell: bash
         env:
           SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
@@ -1738,7 +1787,7 @@ jobs:
           /bin/cp "$ciphertext" "$metadata" "$authentication" "$evidence_directory/"
 
       - name: Preserve authenticated local-only evidence after failure
-        if: ${{ failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
+        if: ${{ inputs.legacy_release_evidence && failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-failed-local-only-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}

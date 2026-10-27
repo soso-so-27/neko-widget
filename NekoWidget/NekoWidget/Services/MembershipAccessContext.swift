@@ -13,8 +13,10 @@ struct MembershipAccessContext: Equatable {
 
     static let beta = MembershipAccessContext()
 
+    /// Info.plist `MembershipAccessEnforced`（xcconfig `MEMBERSHIP_ACCESS_ENFORCED`）。
+    /// App と Widget の両 Info.plist が同じ変数を参照する。
     static var enforcementConfigured: Bool {
-        Bundle.main.object(forInfoDictionaryKey: "MembershipAccessEnforced") as? Bool == true
+        MembershipAccessFlag.isOn(Bundle.main.object(forInfoDictionaryKey: "MembershipAccessEnforced"))
     }
 
     init(enforcementEnabled: Bool = false,
@@ -32,7 +34,9 @@ struct MembershipAccessContext: Equatable {
         case .disabled, .checking: personal = .checking
         case .inactive: personal = .inactive
         case let .serverConfirmed(value):
-            if !value.status.grantsAccess || value.accessUntilDate <= now {
+            if now < value.serverEvaluatedAt {
+                personal = .checking
+            } else if !value.status.grantsAccess || value.accessUntilDate <= now {
                 personal = .inactive
             } else if value.authorityStaleAt <= now {
                 personal = .indeterminate(lastVerifiedUntil: nil)
@@ -41,7 +45,7 @@ struct MembershipAccessContext: Equatable {
             }
         case let .indeterminate(value):
             personal = .indeterminate(lastVerifiedUntil:
-                value?.status.grantsAccess == true ? value?.expirationDate : nil)
+                value?.isUsable(at: now) == true ? value?.expirationDate : nil)
         }
     }
 
@@ -52,6 +56,8 @@ struct MembershipAccessContext: Equatable {
 
     /// Call only with this window's participant-scoped, validated state.
     /// A personal subscription never authorizes someone else's window.
+    /// ADR-027: まどの支援（sponsorship）はゲートとして停止した。`addSharedContent`
+    /// は常に許可で、この状態は判定に使われない。呼出との互換のために残す。
     func withWindow(_ access: BillingWindowPlusAccessState, now: Date = .now) -> Self {
         var result = self
         switch access {
@@ -94,50 +100,66 @@ extension EnvironmentValues {
     }
 }
 
-/// Shows an offer only for a confirmed membership boundary. Unknown state has
-/// its own refresh/restore route, without telling an existing member to buy again.
+/// A status notice, never a purchase route (ADR-027 5章). The one Plus
+/// screen opens only from a `PlusOfferContext` entry (`PlusOfferPrompt`,
+/// Settings, onboarding); this notice is for "確認できません" and offers only
+/// the restore check, so an existing member is never told to buy again.
 struct MembershipAccessNotice: View {
     let decision: MembershipAccessDecision
-    @State private var showsOffer = false
+    @Environment(\.membershipAccess) private var access
+    @State private var showsRestore = false
 
     var body: some View {
+        if decision == .verificationRequired, access.personal == .checking {
+            // Just after launch: the answer is on its way. Nothing to do yet.
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Plus を確認しています…").font(.subheadline).foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("membership-access-checking")
+        } else {
+            notice
+        }
+    }
+
+    private var notice: some View {
         VStack(spacing: 14) {
             Image(systemName: decision == .verificationRequired ? "arrow.clockwise" : "cat")
                 .font(.title).foregroundStyle(.tint).accessibilityHidden(true)
             Text(title).font(.headline)
-            if decision == .verificationRequired {
+            switch decision {
+            case .verificationRequired:
                 Text("写真やメモはそのままです。接続を確認して、購入を復元できます。")
                     .font(.subheadline).foregroundStyle(.secondary)
-            }
-            if decision == .windowSupportRequired {
+                Button("購入を確認する") { showsRestore = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("membership-access-restore")
+            case .windowSupportRequired:
                 Text("届いている写真は引き続き見られます。")
                     .font(.subheadline).foregroundStyle(.secondary)
-            } else {
-                Button(decision == .verificationRequired ? "購入を確認する" : "会員プランを見る") {
-                    showsOffer = true
-                }.buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("membership-access-offer")
+            case .membershipRequired, .allowed:
+                Text("写真やメモはそのままです。")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
         }
         .multilineTextAlignment(.center).padding(24)
         .frame(maxWidth: .infinity)
         .accessibilityIdentifier("membership-access-notice")
-        .sheet(isPresented: $showsOffer, onDismiss: {
+        .sheet(isPresented: $showsRestore, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
         }) {
-            if decision == .verificationRequired {
-                MembershipRestoreSheet()
-            } else {
-                MembershipOfferSheet(model: .live()) { _ in showsOffer = false }
-            }
+            MembershipRestoreSheet()
         }
     }
 
     private var title: String {
         switch decision {
         case .allowed: ""
-        case .membershipRequired: "会員プランで、うちの子との時間を楽しむ"
-        case .verificationRequired: "会員情報を確認できません"
+        case .membershipRequired: "Plusの機能です"
+        case .verificationRequired: "購入状況を確認できません"
         case .windowSupportRequired: "このまどへの送信はお休み中です"
         }
     }
@@ -150,7 +172,7 @@ struct MembershipRestoreSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                Text("購入済みの会員プランを確認します。")
+                Text("購入済みのPlusを確認します。")
                 Button("購入を復元") {
                     Task {
                         if await model.restore() == .completed { dismiss() }
@@ -179,21 +201,6 @@ private struct MembershipFeatureGate: ViewModifier {
 }
 
 extension View {
-    func membershipActionNotice(_ decision: Binding<MembershipAccessDecision?>) -> some View {
-        sheet(isPresented: Binding(get: { decision.wrappedValue != nil },
-            set: { if !$0 { decision.wrappedValue = nil } })) {
-            NavigationStack {
-                if let value = decision.wrappedValue {
-                    MembershipAccessNotice(decision: value)
-                        .navigationTitle("会員プラン").navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .cancellationAction) {
-                            Button("閉じる") { decision.wrappedValue = nil }
-                        } }
-                }
-            }
-        }
-    }
-
     func membershipFeature(_ operation: MembershipOperation, hasContent: Bool = true) -> some View {
         modifier(MembershipFeatureGate(operation: operation, hasContent: hasContent))
     }
@@ -202,6 +209,8 @@ extension View {
 #if DEBUG
 /// Exercises the real editor against an isolated local store. No purchase,
 /// CloudKit enrollment, or photo-library mutation is part of this fixture.
+/// ADR-027: ツール（預ける・病院・見せる）は無料なので、`inactive` でも
+/// 新しい記録を作れることをこの fixture で確認する。新しいメモは会員。
 @MainActor
 struct MembershipAccessFixture: View {
     private let store = PhotoMemoryNoteStore(fileURL: FileManager.default.temporaryDirectory
@@ -219,6 +228,14 @@ struct MembershipAccessFixture: View {
     private let veterinary = VeterinaryVisitStore(directory: FileManager.default.temporaryDirectory
         .appendingPathComponent("membership-veterinary-\(UUID().uuidString)"))
     private let catID = UUID(uuidString: "AB000000-0000-0000-0000-000000000001")!
+    /// ツールの「猫のプロフィール」から新しい記録を作る経路。既存の記録
+    /// （ミケ）はプロフィール未登録のままにして、既存と新規を分けて確認する。
+    private let toolProfiles: [CatProfilePresentation] = [
+        ("AB000000-0000-0000-0000-000000000002", "ソラ"),
+        ("AB000000-0000-0000-0000-000000000003", "ハナ"),
+        ("AB000000-0000-0000-0000-000000000004", "クロ")
+    ].map { CatProfilePresentation(identifier: $0.0, name: $0.1, coverPhoto: nil,
+        confirmedPhotos: [], lifeReference: nil) }
     private var context: MembershipAccessContext {
         .init(enforcementEnabled: !beta, personal: state)
     }
@@ -227,10 +244,10 @@ struct MembershipAccessFixture: View {
         NavigationStack {
             List {
                 NavigationLink("お世話メモの確認") {
-                    CareHandoffView(profiles: [], unregisteredPhotos: [], store: care, reuseStore: evacuation)
+                    CareHandoffView(profiles: toolProfiles, unregisteredPhotos: [], store: care, reuseStore: evacuation)
                 }.accessibilityIdentifier("membership-care")
                 NavigationLink("診察メモの確認") {
-                    VeterinaryVisitsView(photos: [], noteStore: store, store: veterinary,
+                    VeterinaryVisitsView(profiles: toolProfiles, photos: [], noteStore: store, store: veterinary,
                         careStore: care, evacuationStore: evacuation)
                 }.accessibilityIdentifier("membership-veterinary")
                 NavigationLink("ツール一覧の確認") { AppStoreScreenshotFixtureRootView() }

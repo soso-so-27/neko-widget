@@ -58,10 +58,9 @@ struct EvacuationDestination: Codable, Equatable, Identifiable {
 struct EvacuationPlan: Codable, Equatable {
     var schemaVersion = 1
     var cats: [EvacuationCat] = []
-    var supplies: [EvacuationSupply] = [
-        .init(title: "キャリー"), .init(title: "フード・水・食器"),
-        .init(title: "トイレ用品"), .init(title: "この子の情報の控え")
-    ]
+    var supplies: [EvacuationSupply] = EvacuationPlan.recommendedSupplies.map {
+        EvacuationSupply(title: $0, quantity: EvacuationPlan.recommendedQuantity($0, cats: 1))
+    }
     var destinations: [EvacuationDestination] = []
     var contact = ""
     var familyMeetingMemo = ""
@@ -69,6 +68,36 @@ struct EvacuationPlan: Codable, Equatable {
     var checkStartedAt: Date?
 
     var photoNames: Set<String> { Set(cats.flatMap { $0.photos.values }) }
+
+    /// A starting point, not a judgement that the list is complete.
+    static let recommendedSupplies = [
+        "キャリー", "フード・水・食器", "トイレ用品", "この子の情報の控え",
+        "猫砂・ペットシーツ", "薬・療法食", "ワクチン証明の控え", "首輪・迷子札",
+        "ハーネス・リード", "洗濯ネット", "タオル・毛布", "ゴミ袋・ウェットティッシュ"
+    ]
+
+    /// Amounts scale with the number of cats: one carrier each, food for each.
+    static func recommendedQuantity(_ title: String, cats: Int) -> String {
+        switch title {
+        case "キャリー": cats > 1 ? "\(cats)個（1匹に1つ）" : "1個"
+        case "フード・水・食器": cats > 1 ? "5日分以上×\(cats)匹" : "5日分以上"
+        case "猫砂・ペットシーツ": "5日分以上"
+        default: ""
+        }
+    }
+
+    /// Adds recommended items that are not on the list yet. Existing items,
+    /// their amounts and places are never changed. Returns how many were added.
+    @discardableResult
+    mutating func addRecommendedSupplies() -> Int {
+        let titles = Set(supplies.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) })
+        var added = 0
+        for title in Self.recommendedSupplies where !titles.contains(title) && supplies.count < 200 {
+            supplies.append(EvacuationSupply(title: title, quantity: Self.recommendedQuantity(title, cats: max(cats.count, 1))))
+            added += 1
+        }
+        return added
+    }
 
     mutating func removeCat(_ id: UUID) {
         cats.removeAll { $0.id == id }
@@ -218,6 +247,9 @@ struct EvacuationDisclosure: Equatable {
     var medical = false
     var contact = false
     var withOwnerPhoto = false
+    /// Vaccinations with their proofs and the microchip, from 「この子のこと」.
+    /// Off at first: proofs often show the owner's name and address.
+    var catCare = false
 
     func fields(cat: EvacuationCat, plan: EvacuationPlan) -> [(String, String)] {
         var result: [(String, String)] = []

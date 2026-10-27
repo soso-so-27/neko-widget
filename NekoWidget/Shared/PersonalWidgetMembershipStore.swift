@@ -41,9 +41,23 @@ struct PersonalWidgetMembershipSnapshot: Codable, Equatable {
     }
 }
 
+/// Info.plist の会員フラグ。xcconfig 変数の展開結果（"YES"/"NO" の文字列）と
+/// Bool の両方を読む。App と Widget で同じ読み方にする。
+enum MembershipAccessFlag {
+    static func isOn(_ value: Any?) -> Bool {
+        if let bool = value as? Bool { return bool }
+        if let string = value as? String {
+            return ["1", "true", "yes"].contains(
+                string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
+        return false
+    }
+}
+
 enum PersonalWidgetMembershipStore {
+    /// `MEMBERSHIP_ACCESS_ENFORCED`。App 側 `MembershipAccessContext.enforcementConfigured` と同じ変数。
     static var isEnforced: Bool {
-        Bundle.main.object(forInfoDictionaryKey: "MembershipAccessEnforced") as? Bool == true
+        MembershipAccessFlag.isOn(Bundle.main.object(forInfoDictionaryKey: "MembershipAccessEnforced"))
     }
 
     private static var url: URL? {

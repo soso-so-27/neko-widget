@@ -48,14 +48,9 @@ struct GrowthAlbumDetailView: View {
                         canReplacePhoto(for: $0.period, in: groups)
                     }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(timelineRangeLabel(from: first.period, to: last.period))
-                            .font(.title.bold())
-                            .monospacedDigit()
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        timelineIntroduction(replaceableItems: replaceableItems)
-                    }
+                    // The screen title already names the album; no second big heading.
+                    timelineIntroduction(replaceableItems: replaceableItems)
+                        .accessibilityLabel(timelineRangeLabel(from: first.period, to: last.period))
 
                     scrapbookTimeline(items: resolvedItems)
                 }
@@ -69,17 +64,17 @@ struct GrowthAlbumDetailView: View {
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
-        .alert("このまとめについて", isPresented: $showsAboutSelection) {
+        .alert("この比べ方について", isPresented: $showsAboutSelection) {
             Button("閉じる", role: .cancel) {}
         } message: {
             Text(aboutSelectionMessage)
         }
         .confirmationDialog(
-            "表示候補から外しますか？",
+            "候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("すべてから除外", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])
@@ -88,7 +83,7 @@ struct GrowthAlbumDetailView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("アプリの「写真」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("アプリの「写真」・ウィジェット・「アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             if let identifier = pendingAssignmentIdentifier {
@@ -158,7 +153,7 @@ struct GrowthAlbumDetailView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel("このまとめについて")
+        .accessibilityLabel("この比べ方について")
     }
 
     @ViewBuilder
@@ -253,14 +248,14 @@ struct GrowthAlbumDetailView: View {
                     pendingAssignmentIdentifier = item.photo.localIdentifier
                     showsAssignmentSheet = true
                 } label: {
-                    Label("写っている子を修正", systemImage: "person.crop.circle.badge.checkmark")
+                    Label("写っている猫を選ぶ", systemImage: "person.crop.circle.badge.checkmark")
                 }
             }
             Button {
                 pendingExclusionIdentifier = item.photo.localIdentifier
                 showsExclusionConfirmation = true
             } label: {
-                Label("表示候補から外す", systemImage: "cat.circle")
+                Label("猫の写真から外す", systemImage: "eye.slash")
             }
         }
     }
@@ -273,7 +268,7 @@ struct GrowthAlbumDetailView: View {
                 }
             }
         } label: {
-            Label("選び直す", systemImage: "photo.on.rectangle.angled")
+            Label("写真を変える", systemImage: "photo.on.rectangle.angled")
                 .font(.subheadline.weight(.semibold))
         }
         .buttonStyle(.plain)

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>MembershipAccessEnforced</key>
-	<false/>
+	<string>$(MEMBERSHIP_ACCESS_ENFORCED)</string>
 	<key>OfficialWindowFeedURL</key>
 	<string>$(OFFICIAL_WINDOW_FEED_URL)</string>
 	<key>AppGroupIdentifier</key>

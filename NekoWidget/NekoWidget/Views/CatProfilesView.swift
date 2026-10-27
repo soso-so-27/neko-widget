@@ -266,7 +266,7 @@ struct CatProfilesView: View {
                 Button {
                     organizationDestination = .unassigned
                 } label: {
-                    Label("猫を選んでいない写真", systemImage: "photo.on.rectangle")
+                    Label("どの猫か決めていない写真", systemImage: "photo.on.rectangle")
                 }
                 .accessibilityIdentifier("cat-profiles-unassigned")
             }
@@ -515,7 +515,7 @@ struct CatProfileScopePicker: View {
             HStack(spacing: 10) {
                 scopeButton(
                     scope: .everyone,
-                    title: "みんな",
+                    title: "すべての猫",
                     photo: nil,
                     systemImage: "square.stack.3d.up.fill"
                 )
@@ -713,5 +713,202 @@ private struct AddCatProfileView: View {
 
     private var selectedPhoto: CatProfilePhotoPresentation? {
         referenceCandidates.first { $0.localIdentifier == draft.referencePhotoIdentifier }
+    }
+}
+
+private struct ToolProfileActionsKey: EnvironmentKey {
+    static let defaultValue = CatProfilesViewActions.noOp
+}
+extension EnvironmentValues {
+    var toolProfileActions: CatProfilesViewActions {
+        get { self[ToolProfileActionsKey.self] }
+        set { self[ToolProfileActionsKey.self] = newValue }
+    }
+}
+
+/// Every tool reads the same ordered profile list. Creation is an explicit user action.
+struct ToolCatPicker<Legacy: View>: View {
+    let profiles: [CatProfilePresentation]
+    let select: (CatProfilePresentation) -> Void
+    @ViewBuilder var legacy: () -> Legacy
+    @Environment(\.toolProfileActions) private var actions
+    @State private var addsCat = false
+    @State private var name = ""
+    @State private var failed = false
+    @State private var busy = false
+    var body: some View {
+        Group {
+            Section("猫のプロフィール") {
+                ForEach(profiles) { profile in
+                    // A row that opens the cat's page: black text and a chevron, like a link.
+                    Button { select(profile) } label: {
+                        HStack {
+                            Label(profile.displayName, systemImage: "cat")
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("tool-profile-\(profile.identifier)")
+                }
+                Button("猫を追加", systemImage: "plus") { name = ""; addsCat = true }
+                    .accessibilityIdentifier("tool-profile-add").disabled(busy)
+            }
+            legacy()
+        }
+        .alert("猫を追加", isPresented: $addsCat) {
+            TextField("名前", text: $name)
+            Button("追加") {
+                busy = true
+                Task {
+                    let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let id = await actions.createProfile(CatProfileDraftPresentation(name: value))
+                    busy = false
+                    if let id {
+                        select(CatProfilePresentation(identifier: id, name: value, coverPhoto: nil,
+                            confirmedPhotos: [], lifeReference: nil))
+                    } else { failed = true }
+                }
+            }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("キャンセル", role: .cancel) {}
+        } message: { Text("名前だけで登録できます。写真や日付はあとから設定できます。") }
+        .alert("プロフィールを追加できませんでした", isPresented: $failed) {
+            Button("閉じる", role: .cancel) {}
+        } message: { Text("入力は残っています。もう一度お試しください。") }
+    }
+}
+
+/// A cat in the row at the top of a もしも tool.
+struct ToolStripCat: Identifiable, Equatable {
+    let id: String
+    let name: String
+    /// nil for a cat without a profile (one written only in a tool).
+    let profile: CatProfilePresentation?
+    /// Kept from the old lists, so the same identifier still finds the cat.
+    let accessibilityIdentifier: String
+}
+
+/// The row of cats at the top of a もしも tool: round photo and name, the
+/// chosen one ringed. Tapping switches the page in place. With one cat
+/// there is nothing to choose, so the row stays away.
+struct ToolCatStrip: View {
+    let cats: [ToolStripCat]
+    let selectedID: String?
+    let select: (ToolStripCat) -> Void
+
+    var body: some View {
+        if cats.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(cats) { cat in
+                        Button { select(cat) } label: { chip(cat) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(cat.name)
+                            .accessibilityAddTraits(cat.id == selectedID ? .isSelected : [])
+                            .accessibilityIdentifier(cat.accessibilityIdentifier)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .background(Color(.systemGroupedBackground))
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("tool-cat-strip")
+        }
+    }
+
+    private func chip(_ cat: ToolStripCat) -> some View {
+        let chosen = cat.id == selectedID
+        return VStack(spacing: 4) {
+            Group {
+                if let profile = cat.profile {
+                    CatProfileThumbnail(photo: profile.coverPhoto)
+                } else {
+                    Image(systemName: "cat")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(.tertiarySystemFill))
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(chosen ? Color.accentColor : Color.clear, lineWidth: 3))
+            .padding(3)
+            Text(cat.name)
+                .font(.caption.weight(chosen ? .bold : .regular))
+                .foregroundStyle(chosen ? .primary : .secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .frame(width: 72)
+        .contentShape(Rectangle())
+    }
+}
+
+struct ToolCatProfileInfo: View {
+    let profile: CatProfilePresentation
+    let profiles: [CatProfilePresentation]
+    @Environment(\.toolProfileActions) private var actions
+    var body: some View {
+        Section("猫のプロフィール") {
+            LabeledContent("名前", value: profile.displayName)
+            if let birthday = profile.lifeDates.birthday {
+                LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
+            }
+            if let adoption = profile.lifeDates.adoptionDay {
+                LabeledContent("迎えた日", value: adoption.date.formatted(date: .abbreviated, time: .omitted))
+            }
+            NavigationLink("猫のプロフィールで編集") {
+                CatProfileDetailView(profile: profile, allProfiles: profiles,
+                    manualCandidatePhotos: profile.manualCandidatePhotos, photoAlbumOptions: [], actions: actions)
+            }
+        }
+    }
+}
+
+struct ToolPromoteCatButton: View {
+    let name: String
+    let link: (String) -> Bool
+    @Environment(\.toolProfileActions) private var actions
+    @State private var busy = false
+    @State private var failed = false
+    @State private var createdID: String?
+    var body: some View {
+        Button(createdID == nil ? "プロフィールにする" : "プロフィールとの接続を再試行") {
+            busy = true
+            Task {
+                let id: String?
+                if let createdID { id = createdID }
+                else { id = await actions.createProfile(CatProfileDraftPresentation(name: name.isEmpty ? "名前未設定の猫" : name)) }
+                createdID = id
+                failed = id.map { !link($0) } ?? true
+                busy = false
+            }
+        }.disabled(busy)
+        .alert("プロフィールとの接続を完了できませんでした", isPresented: $failed) {
+            Button("閉じる", role: .cancel) {}
+        } message: { Text("元の記録と写真は残っています。保存状態を確認して再試行してください。") }
+    }
+}
+
+@MainActor
+enum ToolCatProfileLinker {
+    static func care(_ id: UUID, profileID: String, care: CareHandoffStore, evacuation: EvacuationStore) -> Bool {
+        guard let cat = care.plan.cats.first(where: { $0.id == id }),
+              care.loadError == nil, care.saveError == nil, evacuation.loadError == nil, evacuation.saveError == nil else { return false }
+        let matches = evacuation.plan.cats.filter { ($0.toolCatID ?? $0.id) == (cat.toolCatID ?? cat.id) }
+        guard matches.count <= 1, matches.allSatisfy({ $0.profileID == nil || $0.profileID == cat.profileID || $0.profileID == profileID }) else { return false }
+        if let counterpart = matches.first, !evacuation.linkProfile(profileID, to: counterpart.id) { return false }
+        return care.linkProfile(profileID, to: id)
+    }
+    static func evacuation(_ id: UUID, profileID: String, care: CareHandoffStore, evacuation: EvacuationStore) -> Bool {
+        guard let cat = evacuation.plan.cats.first(where: { $0.id == id }),
+              care.loadError == nil, care.saveError == nil, evacuation.loadError == nil, evacuation.saveError == nil else { return false }
+        let matches = care.plan.cats.filter { ($0.toolCatID ?? $0.id) == (cat.toolCatID ?? cat.id) }
+        guard matches.count <= 1, matches.allSatisfy({ $0.profileID == nil || $0.profileID == cat.profileID || $0.profileID == profileID }) else { return false }
+        if let counterpart = matches.first, !care.linkProfile(profileID, to: counterpart.id) { return false }
+        return evacuation.linkProfile(profileID, to: id)
     }
 }

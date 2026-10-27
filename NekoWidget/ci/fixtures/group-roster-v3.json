@@ -1,0 +1,36 @@
+{
+  "fixture": "synthetic-interoperability-vector-not-release-evidence",
+  "anchor": {
+    "windowId": "vector-room",
+    "ownerPersonId": "owner-person",
+    "ownerIdentityPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+  },
+  "packet": {
+    "roster": {
+      "windowId": "vector-room",
+      "revision": 1,
+      "keyEpoch": 1,
+      "previousHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "ownerPersonId": "owner-person",
+      "members": [
+        {
+          "participantId": "owner-member",
+          "personId": "owner-person",
+          "identityPublicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "role": "owner",
+          "devices": [
+            {
+              "id": "owner-device",
+              "signingPublicKey": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc",
+              "hpkePublicKey": "eaYx7t4b-cmPEgMs3q3Q56B5OY_HhriMyEbsia-FpRo",
+              "personAuthorization": "ByGXveaBrN_ADUQ4jf3_UB9BV0L7quoWK8G9Sslphwod9HCPF5h8Ay2SwY9HGmeDfX9LQ5by4b2Z28-MACkeBQ"
+            }
+          ]
+        }
+      ]
+    },
+    "signerDeviceId": "owner-device",
+    "signature": "Vxfiz8b67bNOVMHe56X5AxNK4DXcn6CAuQkuAk467HtPKbfxtdK_fZWtSIOTKFQotbOaxyTQXs-XH4By0HvwBA"
+  },
+  "canonicalSHA256": "O-OQ_uS8YjEkf0LZFQCZwYgXqjXUX_yFLLF-1InG3ac"
+}

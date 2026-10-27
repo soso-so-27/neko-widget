@@ -91,7 +91,7 @@ struct LimitedAccessBanner: View {
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("選んだ写真だけをスキャン中")
+                Text("選んだ写真だけを探しています")
                     .font(.subheadline.weight(.semibold))
                 Text("後からいつでも対象を増やせます。")
                     .font(.caption)
@@ -100,7 +100,7 @@ struct LimitedAccessBanner: View {
 
             Spacer(minLength: 4)
 
-            Button("もっと選ぶ", action: chooseMorePhotos)
+            Button("写真を追加で選ぶ", action: chooseMorePhotos)
                 .font(.subheadline.weight(.semibold))
         }
         .padding(14)

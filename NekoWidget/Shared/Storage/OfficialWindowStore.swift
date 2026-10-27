@@ -15,7 +15,8 @@ enum OfficialWindowConfiguration {
         definitions(baseFeedURL: feedURL)
     }
 
-    static func definitions(baseFeedURL: URL?) -> [PublicWindowDefinition] {
+    static func definitions(baseFeedURL: URL?,
+                            blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> [PublicWindowDefinition] {
         let endpoint = validatedEndpoint(baseFeedURL)
         // Keep public feeds on the configured origin and below its catalog directory.
         func publicEndpoint(_ id: String) -> URL? {
@@ -24,6 +25,11 @@ enum OfficialWindowConfiguration {
                 .appendingPathComponent(id, isDirectory: true)
                 .appendingPathComponent("catalog.json"))
         }
+        if blackCatDailyEnabled {
+            return [PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
+                subtitle: "1日1枚、きょうの黒猫", endpoint: publicEndpoint("black-cats"))]
+        }
+        // Public builds keep the shipped discovery and existing subscriptions.
         return [
             PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
                                    displayName: OfficialWindowCatalog.displayName,
@@ -36,12 +42,35 @@ enum OfficialWindowConfiguration {
         ]
     }
 
+    // Existing subscriptions and Widget source IDs remain resolvable. New
+    // discovery offers only the black-cat window without rewriting old data.
+    private static var legacyDefinitions: [PublicWindowDefinition] {
+        func publicEndpoint(_ id: String) -> URL? {
+            validatedEndpoint(feedURL?.deletingLastPathComponent().appendingPathComponent("windows")
+                .appendingPathComponent(id).appendingPathComponent("catalog.json"))
+        }
+        return [
+            PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
+                                   subtitle: "1日1枚、きょうの黒猫", endpoint: publicEndpoint("black-cats")),
+            PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
+                                   displayName: OfficialWindowCatalog.displayName,
+                                   subtitle: "運営から届く猫の写真", endpoint: feedURL),
+            PublicWindowDefinition(id: "weekly-theme", displayName: "今週のテーマ",
+                                   subtitle: "毎週月曜に変わる猫の写真", endpoint: publicEndpoint("weekly-theme")),
+            PublicWindowDefinition(id: "nap-cats", displayName: "おひるね",
+                                   subtitle: "お昼寝中の猫の写真", endpoint: publicEndpoint("nap-cats")),
+            PublicWindowDefinition(id: "cat-tabby-nap", displayName: "キジ白のまど",
+                                   subtitle: "この猫の写真", endpoint: publicEndpoint("cat-tabby-nap"),
+                                   catID: "generated-tabby-nap")
+        ]
+    }
+
     static func definition(for windowID: String) -> PublicWindowDefinition? {
-        definitions.first { $0.id == windowID }
+        (definitions + legacyDefinitions).first { $0.id == windowID }
     }
 
     static func definition(forCatID catID: String) -> PublicWindowDefinition? {
-        definitions.first { $0.catID == catID }
+        (definitions + legacyDefinitions).first { $0.catID == catID }
     }
 
     static func validatedEndpoint(_ url: URL?) -> URL? {
@@ -51,6 +80,19 @@ enum OfficialWindowConfiguration {
               parts.query == nil, parts.fragment == nil,
               parts.path.hasSuffix("/catalog.json") else { return nil }
         return parts.url
+    }
+}
+
+extension OfficialWeeklyThemeIndex.Theme {
+    func definition(relativeTo current: PublicWindowDefinition) -> PublicWindowDefinition? {
+        guard current.id == "weekly-theme", weekStart.utf8.count == 10,
+              channelID == "weekly-theme" || channelID == "weekly-theme-" + weekStart.replacingOccurrences(of: "-", with: ""),
+              OfficialWindowCatalog.isIdentifier(channelID),
+              let base = OfficialWindowConfiguration.validatedEndpoint(current.endpoint) else { return nil }
+        let endpoint = channelID == current.id ? base : base.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(channelID).appendingPathComponent("catalog.json")
+        return PublicWindowDefinition(id: channelID, displayName: name, subtitle: weekStart,
+            endpoint: OfficialWindowConfiguration.validatedEndpoint(endpoint))
     }
 }
 
@@ -72,6 +114,11 @@ struct OfficialWindowState: Codable, Sendable {
         guard isSubscribed, let catalog,
               (try? catalog.validate(at: Date(), expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
         return catalog.availablePhotos(at: Date())
+    }
+    func widgetPhotos(at date: Date) -> [OfficialCatPhoto] {
+        guard isSubscribed, let catalog,
+              (try? catalog.validate(at: date, expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
+        return catalog.widgetPhotos(at: date)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -458,6 +505,20 @@ actor OfficialWindowClient {
             try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
+    }
+
+    /// Memory-only metadata for the current theme and its bounded history.
+    /// No subscription, cache write, private identity or remote URL discovery.
+    func weeklyThemes(store: OfficialWindowStore) async throws -> OfficialWeeklyThemeIndex {
+        guard store.windowID == "weekly-theme", let endpoint = store.endpoint else { throw OfficialWindowError.notConfigured }
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let url = endpoint.deletingLastPathComponent().appendingPathComponent("themes.json")
+        let data = try await fetch(url, session: session, limit: 16 * 1024, contentType: "application/json")
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let result = try decoder.decode(OfficialWeeklyThemeIndex.self, from: data)
+        try result.validate(at: Date())
+        return result
     }
 
     private func fetchCatalog(_ endpoint: URL, expectedChannelID: String, expectedCatID: String?, session: URLSession) async throws -> OfficialWindowCatalog {

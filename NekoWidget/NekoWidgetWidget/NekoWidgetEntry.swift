@@ -12,6 +12,13 @@ enum FamilyWidgetHeartStatus: Equatable, Sendable {
 /// decoded images. WidgetKit may render
 /// every future entry while accepting a timeline, so the provider also bounds
 /// each timeline to two entries instead of relying on lazy view evaluation.
+struct GroupWindowPhotoReference: Equatable, Sendable {
+    let windowID: String
+    let photoID: String
+    /// A photo this iPhone sent: no heart to send, as in the app.
+    var isOwn = false
+}
+
 struct NekoWidgetEntry: TimelineEntry {
     let date: Date
     let localIdentifier: String?
@@ -32,6 +39,9 @@ struct NekoWidgetEntry: TimelineEntry {
     var officialPhoto: OfficialCatPhoto? = nil
     var personalRediscoveryAction: PersonalRediscoveryAction = .unavailable
     var personalSelectionPaused: Bool = false
+    var cloudyWindowSelection: CloudyWindowSelection? = nil
+    /// The group window photo this entry shows, for its heart button.
+    var groupWindowPhoto: GroupWindowPhotoReference? = nil
 
     static func empty(
         at date: Date,
@@ -60,6 +70,13 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     var photoURL: URL? {
+        if let cloudyWindowSelection, cloudyWindowSelection.revealedAt == nil { return nil }
+        if let selection = cloudyWindowSelection, selection.albumPeriod != nil {
+            return CloudyWindowAlbumRoute(selectionID: selection.id).url
+        }
+        if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {
+            return GroupWidgetCache.openURL(windowID: groupWindowID)
+        }
         if let windowID = PublicWindowDefinition.windowID(from: photoSourceIdentifier) {
             return OfficialWindowRoute(windowID: windowID, photoID: officialPhoto?.id).url
         }

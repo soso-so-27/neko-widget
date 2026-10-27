@@ -1,15 +1,26 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {verifyReadiness} from './verify-moderation-readiness.mjs';
+import {verifyReadiness,canonical,codeHashes,codePaths} from './verify-moderation-readiness.mjs';
 
 const evidence=JSON.parse(await readFile(new URL('./moderation-v2-readiness.json',import.meta.url),'utf8'));
 const policy=JSON.parse(await readFile(new URL('./moderation-client-rollout-policy.json',import.meta.url),'utf8'));
 // Test the signed artifact at its issue time. The production CLI always uses
 // the actual clock; tests remain useful after this one release window expires.
 const observed=evidence.payload.issuedAtMs+1;
-test('two operational signatures bind the real cloud drill, owner and current code',async()=>{
- assert.equal((await verifyReadiness(evidence,policy,observed)).verified,true);
+test('the recorded release is accepted only for its reviewed code',async()=>{
+ // This is a historical signed release, not permission to ship every future PR.
+ // Keep the real production verifier fail-closed after any reviewed input changes.
+ if(canonical(evidence.payload.codeSHA256)===canonical(await codeHashes())){
+  assert.equal((await verifyReadiness(evidence,policy,observed)).verified,true);
+ }else{
+  await assert.rejects(verifyReadiness(evidence,policy,observed),/reviewed_code_changed|unexpected_fields/);
+ }
+});
+
+test('signed review covers the human review UI and its database authorization rules',()=>{
+ assert.ok(codePaths.includes('NekoWidget/SharingService/src/moderation-owner-console.ts'));
+ assert.ok(codePaths.includes('NekoWidget/SharingService/migrations/0049_moderation_review_duration.sql'));
 });
 test('rejects stale evidence, a different key/policy/target, changed evidence, unsigned permission and tampered code',async()=>{
  await assert.rejects(verifyReadiness(evidence,policy,evidence.payload.expiresAtMs),/stale_readiness/);

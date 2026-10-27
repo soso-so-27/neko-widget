@@ -487,7 +487,9 @@ struct PhotoMemoryNoteEditor: View {
             }
         } else if isLoaded && createsNewMemo && membershipAccess.decision(for: .createPersonalMemo) != .allowed {
             Section {
-                MembershipAccessNotice(decision: membershipAccess.decision(for: .createPersonalMemo))
+                // A new memo opens the one Plus screen; existing memos stay
+                // editable for free and typed text is never discarded here.
+                PlusOfferPrompt(context: .newMemo, decision: membershipAccess.decision(for: .createPersonalMemo))
             }
         } else if isLoaded {
             Section {

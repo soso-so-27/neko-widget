@@ -176,7 +176,7 @@ struct PairingView: View {
             Button("戻る", role: .cancel) {}
                 .accessibilityIdentifier("pairing-reset-cancel")
         } message: {
-            Text("このまどの接続を終了して、招待から設定し直します。このまど内の写真と接続情報は、このiPhoneから削除されます。写真アプリの写真や、ほかのまどは残ります。")
+            Text("このまどを、招待からやり直します。このまどの写真は、このiPhoneから消えます。写真アプリの写真と、ほかのまどは残ります。")
         }
         .confirmationDialog(
             "このiPhoneの追加をやめますか？",
@@ -312,7 +312,7 @@ struct PairingView: View {
                     NavigationLink {
                         BlockedSharingView()
                     } label: {
-                        Label("ブロックした共有を確認", systemImage: "hand.raised")
+                        Label("ブロックした相手を確認", systemImage: "hand.raised")
                     }
                 }
             }
@@ -343,7 +343,7 @@ struct PairingView: View {
             }
         case .creatingInvitation:
             progressSection("招待を作成しています…")
-            retrySection("招待作成を再試行") {
+            retrySection("もう一度招待を作る") {
                 await model.createInvitation(dailyBoundaryMinuteUTC: utcBoundaryMinute)
             }
         case .awaitingInvitee:
@@ -351,13 +351,13 @@ struct PairingView: View {
             cancelSection
         case .joining:
             progressSection("招待を確認しています…")
-            retrySection("参加を再試行") {
+            retrySection("もう一度参加する") {
                 await model.joinInvitation()
                 await saveWindowNameIfPossible()
             }
         case .claimingRecovery:
             progressSection("追加コードを確認しています…")
-            retrySection("追加を再試行") {
+            retrySection("もう一度追加する") {
                 await model.joinDeviceRecovery()
             }
             localRecoveryAbandonSection
@@ -373,7 +373,7 @@ struct PairingView: View {
             refreshSection(state)
             cancelSection
         case .approvalRequired:
-            phraseSection(state, title: "確認フレーズを照合")
+            phraseSection(state, title: "確認の言葉を照らし合わせる")
             Section {
                 Toggle("相手の画面と同じフレーズです", isOn: $model.hasConfirmedPhrase)
                 Button {
@@ -384,11 +384,11 @@ struct PairingView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.hasConfirmedPhrase || model.isWorking)
             } footer: {
-                Text("一致しない場合は承認せず、招待をやり直してください。確認前に写真の復号鍵は相手へ渡りません。")
+                Text("言葉が違うときは承認せず、招待をやり直してください。承認するまで、相手は写真を見られません。")
             }
             cancelSection
         case .awaitingCompletion:
-            progressSection("相手の端末で完了するのを待っています")
+            progressSection("相手のiPhoneで終わるのを待っています")
             refreshSection(state)
             cancelSection
         case .paired:
@@ -396,7 +396,7 @@ struct PairingView: View {
                 Label("相手と接続済み", systemImage: "checkmark.seal.fill")
                     .foregroundStyle(.green)
                 if let phrase = state.verificationPhrase {
-                    DisclosureGroup("確認フレーズ") {
+                    DisclosureGroup("確認の言葉") {
                         Text(phrase)
                             .font(.caption)
                             .lineLimit(nil)
@@ -535,13 +535,17 @@ struct PairingView: View {
 
     private var setupChoiceSection: some View {
         Section {
-            Button {
-                setupPath = .create
-            } label: {
-                Label("新しいまどを作る", systemImage: "rectangle.badge.plus")
-                    .font(.headline)
+            // With group windows on, new windows are made there; this screen
+            // keeps joining and adding an iPhone for existing two-person windows.
+            if GroupWindowClientProvider.ui == nil {
+                Button {
+                    setupPath = .create
+                } label: {
+                    Label("新しいまどを作る", systemImage: "rectangle.badge.plus")
+                        .font(.headline)
+                }
+                .accessibilityHint("このiPhoneが、まどの名前と招待を管理します")
             }
-            .accessibilityHint("このiPhoneが、まどの名前と招待を管理します")
 
             Button {
                 setupPath = .join
@@ -650,31 +654,46 @@ struct PairingView: View {
             if state.localDeviceIsAdditional == true, state.spaceID != nil {
                 Text("追加したiPhoneでは名前を変更できません。最初のiPhoneで変更すると、暗号化してこのiPhoneにも届きます。")
             } else if state.role == .invitee, state.spaceID != nil {
-                Text("名前は暗号化して共有されています。変更は、まどを作った人のiPhoneで行います。")
+                Text("名前は、まどを作った人のiPhoneで変えられます。")
             } else if state.phase == .unpaired, setupPath == nil {
                 Text("このiPhoneだけで使う仮の名前です。新しく作ると正式名になり、招待に参加すると作成者が付けた名前に変わります。")
             } else if state.phase == .unpaired, setupPath == .create {
-                Text("この名前でまどを作ると、暗号化して招待相手にも表示します。")
+                Text("この名前は、招待した相手にも表示されます。")
             } else if model.windowNameIsLocalDraft {
-                Text("このiPhoneに保存できます。招待作成が完了すると、暗号化して相手にも表示します。")
+                Text("招待を作ると、この名前が相手にも表示されます。")
             } else if state.spaceID == nil {
-                Text("名前は暗号化して、招待した相手にも表示します。")
+                Text("名前は、招待した相手にも表示されます。")
             } else {
-                Text("名前は暗号化して相手にも表示します。変更しても、相手や届いた写真は変わりません。")
+                Text("名前は相手にも表示されます。変えても、届いた写真はそのままです。")
             }
         }
     }
 
     private var createSection: some View {
         Section {
-            if membershipAccess.decision(for: .createWindow) != .allowed {
-                MembershipAccessNotice(decision: membershipAccess.decision(for: .createWindow))
+            // まどを作るのは購読中（App Store のお試し中を含む）。自分のまどは
+            // 5つまで（ADR-027）。招待で入ったまどは数えない。
+            if model.ownWindowLimitReached {
+                Text("自分で作るまどは\(MembershipAccessPolicy.maximumOwnWindowCount)個までです。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("pairing-own-window-limit")
+            } else if membershipAccess.decision(for: .createOwnWindow) != .allowed {
+                // ADR-027 5章 "まどを作る": the one Plus screen, opened only
+                // when tapped (14-day trial through App Store). A status that
+                // cannot be confirmed still shows the restore notice.
+                PlusOfferPrompt(
+                    context: .createWindow,
+                    decision: membershipAccess.decision(for: .createOwnWindow),
+                    presentsImmediately: false
+                )
             } else {
             Button {
                 Task {
-                    guard membershipAccess.decision(for: .createWindow) == .allowed else { return }
+                    guard !model.ownWindowLimitReached,
+                          membershipAccess.decision(for: .createOwnWindow) == .allowed else { return }
                     guard await saveWindowNameIfPossible() else { return }
-                    guard membershipAccess.decision(for: .createWindow) == .allowed else { return }
+                    guard !model.ownWindowLimitReached,
+                          membershipAccess.decision(for: .createOwnWindow) == .allowed else { return }
                     if model.isMediaSyncEnabled {
                         guard model.recordMediaSharingConsent() else { return }
                         hasAcceptedPairingTerms = false
@@ -781,8 +800,8 @@ struct PairingView: View {
             Text("まどを作る・参加する前の確認")
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "確認した1枚だけを暗号化して届け、位置情報は送りません。相手が保存したコピーは、共有解除後も回収できません。"
-                : "この段階では共有鍵だけを設定し、写真は送りません。相手が保存したコピーは、共有解除後も回収できません。")
+                ? "選んだ写真だけを、場所の情報を消して届けます。相手が保存した写真は、あとから消せません。"
+                : "いまは相手とつなぐだけで、写真は届けません。相手が保存した写真は、あとから消せません。")
         }
     }
 
@@ -797,7 +816,7 @@ struct PairingView: View {
             Toggle(isOn: $hasAcceptedPairingTerms) {
                 Text("写真共有の内容と限界を確認しました")
             }
-            Button("写真共有に同意する") {
+            Button("写真を届け合うことに同意する") {
                 guard model.recordMediaSharingConsent() else { return }
                 hasAcceptedPairingTerms = false
             }
@@ -828,7 +847,7 @@ struct PairingView: View {
                 }
 
                 if showsCopyConfirmation {
-                    Label("この端末内にコピーしました（最長10分で消去）", systemImage: "checkmark")
+                    Label("コピーしました（10分で消えます）", systemImage: "checkmark")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -845,12 +864,12 @@ struct PairingView: View {
                         )
                     }
 
-                    Text("コードだけでは写真を見られません。12語を照合して承認するまで、共有鍵は渡りません。")
+                    Text("コードだけでは写真は見られません。確認の言葉（12語）を比べて承認すると、つながります。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("招待コードを安全な保存領域から読み込めませんでした。")
+                Text("招待コードを読み込めませんでした。もう一度お試しください。")
                     .foregroundStyle(.secondary)
             }
 
@@ -883,7 +902,7 @@ struct PairingView: View {
         } header: {
             Text(title)
         } footer: {
-            Text("12語すべてを相手の端末と比べてください。")
+            Text("12語すべてを、相手のiPhoneと比べてください。")
         }
     }
 
@@ -894,7 +913,7 @@ struct PairingView: View {
                     .font(.title3.weight(.semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel(
-                        "端末追加の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
+                        "iPhoneを追加するときの確認の言葉、\(phrase.replacingOccurrences(of: "・", with: "、"))"
                     )
             }
         } header: {
@@ -987,7 +1006,7 @@ struct PairingView: View {
 
     private var pairedCancelSection: some View {
         Section {
-            Button("まどの共有を解除してやり直す", role: .destructive) {
+            Button("このまどをやめて、やり直す", role: .destructive) {
                 showsCancelConfirmation = true
             }
             .disabled(model.isWorking)
@@ -1004,10 +1023,10 @@ struct PairingView: View {
         let currentDeviceDetail: String
         switch currentDevice {
         case .newIPhone:
-            currentDeviceTitle = "この端末：追加するiPhone"
+            currentDeviceTitle = "このiPhone：追加するiPhone"
             currentDeviceDetail = "相手のiPhoneから追加コードを受け取ります。"
         case .partnerIPhone:
-            currentDeviceTitle = "この端末：相手のiPhone"
+            currentDeviceTitle = "このiPhone：相手のiPhone"
             currentDeviceDetail = "相手が使うiPhoneの追加を承認します。"
         }
         return Section {
@@ -1040,7 +1059,7 @@ struct PairingView: View {
                     detail: guidance.partnerIPhoneDetail,
                     systemImage: "person.crop.circle.badge.checkmark"
                 )
-                Text("追加コードだけでは共有鍵を取得できません。12語の照合と相手の承認が必要です。")
+                Text("追加コードだけではつながりません。確認の言葉（12語）を比べて、相手が承認するとつながります。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -1093,7 +1112,7 @@ struct PairingView: View {
                     if let code = model.recoveryInvitationCode {
                         Text(code)
                             .font(.system(.caption2, design: .monospaced))
-                            .accessibilityLabel("端末の追加コード")
+                            .accessibilityLabel("iPhoneの追加コード")
 
                         ShareLink(item: code) {
                             primaryActionLabel(
@@ -1111,7 +1130,7 @@ struct PairingView: View {
                         .font(.footnote)
 
                         if showsCopyRecoveryConfirmation {
-                            Label("この端末内にコピーしました（最長10分で消去）", systemImage: "checkmark")
+                            Label("コピーしました（10分で消えます）", systemImage: "checkmark")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1145,7 +1164,7 @@ struct PairingView: View {
                     Text(phrase)
                         .font(.title3.weight(.semibold))
                         .accessibilityLabel(
-                            "端末追加の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
+                            "iPhoneを追加するときの確認の言葉、\(phrase.replacingOccurrences(of: "・", with: "、"))"
                         )
                     Toggle(
                         "追加するiPhoneと同じ12語です",
@@ -1246,18 +1265,18 @@ struct PairingView: View {
 
     private var cancelConfirmationButtonTitle: String {
         model.state?.phase == .paired
-            ? "まどの共有を解除する"
+            ? "このまどをやめる"
             : "まどの設定を取り消してやり直す"
     }
 
     private var cancelConfirmationMessage: String {
         if model.state?.phase == .paired {
             if model.isMediaSyncEnabled {
-                return "共有をやめると、このiPhoneから「このまどの写真」にある写真とメモを開けなくなります。共有を停止できた場合にだけ、このiPhoneの接続情報と一時的な届いた写真を削除します。自分が追加した写真やメモを取り下げるなら、先に操作してください。相手が写真アプリに保存したコピーは削除できません。"
+                return "やめると、このiPhoneでこのまどの写真とメモを開けなくなり、一時的な届いた写真も消えます。届けた写真を取り下げたいときは、先に取り下げてください。相手が写真アプリに保存した写真は消せません。"
             }
-            return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と接続情報を削除します。通信に失敗した場合は削除しません。"
+            return "相手とのつながりを止めてから、このiPhoneのつながりの情報を消します。うまく止められないときは、何も消しません。"
         }
-        return "サーバー側の参加状態を先に取り消し、確認できた場合だけこの端末の共有鍵を削除します。通信に失敗した場合は鍵を残して再試行できます。"
+        return "まどから抜けたことを確かめてから、このiPhoneのつながりの情報を消します。うまくいかないときは、そのまま残して、もう一度試せます。"
     }
 
     private func progressSection(_ text: String) -> some View {

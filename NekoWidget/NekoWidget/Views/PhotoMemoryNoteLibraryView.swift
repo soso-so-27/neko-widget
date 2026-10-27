@@ -310,7 +310,6 @@ struct PhotoMemoryNotesListView: View {
                     yearSections(visible, account: displayedAccount)
                 }
             }
-            .scrollTargetLayout(isEnabled: isEmbedded)
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
         }
@@ -347,6 +346,7 @@ struct PhotoMemoryNotesListView: View {
                     }
             }
             .id(item.id)
+            .photoLibraryReadingRow(item.id, index: index)
         }
     }
 
@@ -375,7 +375,7 @@ struct PhotoMemoryNotesListView: View {
         readingList
         .background(Color(.systemGroupedBackground))
         .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
                 MemoryNotesSearchBar(text: $search, isFocused: $isSearchFocused)
                     .frame(height: 56)
                 Menu {
@@ -387,7 +387,7 @@ struct PhotoMemoryNotesListView: View {
                 } label: { Label(sort.title, systemImage: "arrow.up.arrow.down") }
                 .accessibilityLabel("メモの並び、\(sort.title)")
                 .accessibilityIdentifier("memory-notes-sort")
-                .padding(.horizontal, 16).padding(.bottom, 8)
+                .padding(.trailing, 8)
             }
             .padding(.horizontal, 8)
             .background(Color(.systemGroupedBackground))
@@ -491,7 +491,7 @@ struct PhotoMemoryNotesListView: View {
                     Text("記録時：" + item.cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
                 }
                 if identifiers(for: item).isEmpty {
-                    Text("猫の所属未指定").font(.caption).foregroundStyle(.secondary)
+                    Text("写っている猫は未指定").font(.caption).foregroundStyle(.secondary)
                 }
                 Text("\(sort == .updated ? "更新" : item.dateLabel) \(sortingDate(item).formatted(.dateTime.month().day()))")
                     .font(.caption).foregroundStyle(.secondary)
@@ -1140,7 +1140,6 @@ struct PhotoMemoryNoteLibraryFixture: View {
                     _ = try await PhotoMemoCoordinator(noteStore: Self.store, archiveStore: Self.archiveStore)
                         .enableUpdates(for: existing, jpegData: jpeg, expectedAccount: account)
                 }
-                await selection.resolveInitialSelection(noteStore: Self.store, archiveStore: Self.archiveStore)
                 ready = true
             } catch { failure = true }
         }

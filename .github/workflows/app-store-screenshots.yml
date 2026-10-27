@@ -2,6 +2,11 @@ name: Capture privacy-safe App Store screenshots
 
 on:
   workflow_dispatch:
+    inputs:
+      review_test:
+        description: "対象のtestReviewメソッド。空欄は従来のApp Store用セット"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -13,6 +18,7 @@ concurrency:
 jobs:
   capture-local-only-iphone:
     name: Capture Japanese local-only iPhone set
+    if: inputs.review_test == ''
     runs-on: macos-15
     timeout-minutes: 40
     env:
@@ -265,3 +271,57 @@ jobs:
             ${{ runner.temp }}/neko-app-store-screenshots/failure-xcresulttool-export.log
           if-no-files-found: error
           retention-days: 7
+
+  capture-review:
+    name: Capture changed screens
+    if: inputs.review_test != ''
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      REVIEW_TEST: ${{ inputs.review_test }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Run the targeted screen check
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REVIEW_TEST" =~ ^testReview[A-Za-z0-9_]+$ ]]
+          grep -Fq "func ${REVIEW_TEST}(" NekoWidgetUITests/AppStoreScreenshotUITests.swift
+          runtime=$(xcrun simctl list runtimes -j | python3 -c '
+          import json,sys
+          print(next(r["identifier"] for r in json.load(sys.stdin)["runtimes"]
+                     if r.get("isAvailable") and r.get("version") == "26.2" and ".iOS-" in r["identifier"]))
+          ')
+          device=$(xcrun simctl create NekoUIReview com.apple.CoreSimulator.SimDeviceType.iPhone-16 "$runtime")
+          trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simctl delete "$device" >/dev/null 2>&1 || true' EXIT
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
+            -configuration Debug -xcconfig Config.Disabled.xcconfig \
+            -destination "platform=iOS Simulator,id=$device" \
+            -derivedDataPath "$RUNNER_TEMP/ReviewBuild" \
+            -resultBundlePath "$RUNNER_TEMP/UIReview.xcresult" \
+            "-only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/$REVIEW_TEST" \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            ONLY_ACTIVE_ARCH=YES test
+      - name: Export the captured screens
+        if: always()
+        shell: bash
+        run: |
+          if [[ -d "$RUNNER_TEMP/UIReview.xcresult" ]]; then
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/UIReview.xcresult" \
+              --output-path "$RUNNER_TEMP/ui-review-screenshots"
+          fi
+      - name: Attach screenshots for review
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ui-review-screenshots
+          path: ${{ runner.temp }}/ui-review-screenshots/**/*.png
+          if-no-files-found: warn
+          retention-days: 14

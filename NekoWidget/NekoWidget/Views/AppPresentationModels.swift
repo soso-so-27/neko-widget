@@ -732,7 +732,7 @@ enum AlbumPresentationState: Equatable {
     case failed(message: String)
 }
 
-enum AppTab: Hashable {
+enum AppTab: String, Hashable {
     case photos
     case memories
     case windows
@@ -1111,5 +1111,30 @@ final class AlbumHighlightRecommendationStore {
         guard state != previous, let data = try? JSONEncoder().encode(state),
               data.count <= Self.maximumStoredBytes else { return }
         defaults.set(data, forKey: storageKey)
+    }
+}
+
+/// Device-local navigation preference; never a delivery/read receipt.
+enum MainTabStartupPolicy {
+    static func selection(lastTab: String?, hasNewPhotos: Bool, showsMado: Bool) -> AppTab {
+        if showsMado && hasNewPhotos { return .windows }
+        let previous = lastTab.flatMap(AppTab.init(rawValue:)) ?? .memories
+        return previous == .windows && !showsMado ? .memories : previous
+    }
+}
+
+enum FavoritePhotoOrigin: String, CaseIterable {
+    case all, ownCats, received
+    var title: String {
+        switch self { case .all: "すべて"; case .ownCats: "自分の猫"; case .received: "まどから届いた" }
+    }
+    func includes(isReceived: Bool, hasOwnCat: Bool = false) -> Bool {
+        switch self { case .all: true; case .ownCats: !isReceived || hasOwnCat; case .received: isReceived }
+    }
+}
+
+enum ReceivedPhotoAlbumPolicy {
+    static func includes(isReceived: Bool, hasExplicitCat: Bool) -> Bool {
+        !isReceived || hasExplicitCat
     }
 }

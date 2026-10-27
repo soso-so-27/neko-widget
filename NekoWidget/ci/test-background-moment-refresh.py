@@ -407,10 +407,12 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
 
     def test_local_notification_contains_no_shared_identity_or_media(self) -> None:
         notification = self.service.split(
-            "private func postPrivacyMinimizedNewMomentNotification(count: Int)", 1
+            "private func postPrivacyMinimizedNewMomentNotification(count: Int, windowName: String)", 1
         )[1].split("private static func familyWidgetManifest", 1)[0]
         self.assertIn("UNMutableNotificationContent", notification)
         self.assertIn("新しい一枚が届きました", notification)
+        # Owner decision (2026-10-20): the local window name is shown; nothing else.
+        self.assertIn("Self.notificationWindowPhrase(windowName)", notification)
         self.assertIn("新しい写真が\\(count)枚届きました", notification)
         self.assertIn(
             "content.userInfo = MomentNotificationRoutePayload.userInfo(for: .newMoment)",
@@ -695,7 +697,7 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
 
     def test_heart_notification_is_text_only_and_privacy_minimized(self) -> None:
         notification = self.service.split(
-            "private func postPrivacyMinimizedPawNotification()", 1
+            "private func postPrivacyMinimizedPawNotification(windowName: String)", 1
         )[1].split("private static func familyWidgetManifest", 1)[0]
         self.assertIn("届けた写真にハートが届きました。", notification)
         self.assertIn("UNMutableNotificationContent", notification)

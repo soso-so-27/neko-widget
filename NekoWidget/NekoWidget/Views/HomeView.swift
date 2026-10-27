@@ -33,11 +33,31 @@ enum PhotoLibraryReadingPosition {
 #endif
     }
 
+    /// Positions read while scrolling, kept in memory until the list goes
+    /// away or the app leaves the screen. Writing UserDefaults on every row
+    /// woke every @AppStorage view above the grid (the app root and the tab
+    /// view), so the whole screen was rebuilt row by row while scrolling.
+    private static var unsaved: [String: String] = [:]
+
     static func identifier(for section: String) -> String? {
-        defaults.string(forKey: "photoLibrary.position.\(section).v1")
+        unsaved[section] ?? defaults.string(forKey: "photoLibrary.position.\(section).v1")
+    }
+
+    /// While scrolling: memory only.
+    static func remember(_ identifier: String, section: String) {
+        unsaved[section] = identifier
+    }
+
+    /// Writes what was read while scrolling. Called when the list disappears
+    /// and when the app goes to the background.
+    static func flush() {
+        let pending = unsaved
+        unsaved = [:]
+        for (section, identifier) in pending { save(identifier, section: section) }
     }
 
     static func save(_ identifier: String?, section: String) {
+        unsaved[section] = nil
         let key = "photoLibrary.position.\(section).v1"
         guard defaults.string(forKey: key) != identifier else { return }
         diagnose("save \(section): \(defaults.string(forKey: key) ?? "nil") -> \(identifier ?? "nil")")
@@ -98,83 +118,173 @@ struct PhotoLibraryGridRowView<Cell: View>: View {
     }
 }
 
-/// Let SwiftUI track and restore scroll targets through lazy layout/data changes.
-/// Persist only reading positions, never a search result or a disappearing view's reset.
+/// Remembers and restores where the person was reading.
+///
+/// 10/23: `scrollPosition(id:)` with `scrollTargetLayout` tracked the top row
+/// on every frame and made the photo grid stutter all the way down (proved on
+/// a real iPhone in 284 by turning it off). Now rows report when they come and
+/// go to a plain object (no SwiftUI state, so scrolling re-renders nothing),
+/// the top row is saved as it changes, and a restore is one `scrollTo`.
 private struct PhotoLibraryPositionRestoration: ViewModifier {
     let section: String?
     let isSearching: Bool
     let normalize: (String) -> String
-    @State private var position: String?
-    @State private var userScrolled = false
-    @State private var isVisible = false
-    @State private var restorationGeneration = 0
+    @State private var tracker = PhotoLibraryRowTracker()
 
     init(section: String?, isSearching: Bool, normalize: @escaping (String) -> String) {
         self.section = section
         self.isSearching = isSearching
         self.normalize = normalize
-        // A saved preference becomes a scroll command when this view appears.
-        // Let the native binding observe state directly instead of intercepting
-        // its setter or treating an initial getter value as an applied command.
-        _position = State(initialValue: nil)
     }
 
     @ViewBuilder func body(content: Content) -> some View {
         if let section {
-            content
-                .scrollPosition(id: $position, anchor: .top)
-                .onChange(of: position) { previous, value in
-                    PhotoLibraryReadingPosition.diagnose("position \(section): \(previous ?? "nil") -> \(value ?? "nil") drag=\(userScrolled) visible=\(isVisible) active=\(PhotoLibraryReadingPosition.activeSection ?? "nil")")
-                    if isVisible, userScrolled, !isSearching,
-                       PhotoLibraryReadingPosition.activeSection == section, let value {
-                        PhotoLibraryReadingPosition.save(value, section: section)
-                    }
-                }
-                .onAppear {
-                    let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
-                    userScrolled = false
-                    position = saved
-                    isVisible = true
-                    PhotoLibraryReadingPosition.activeSection = section
-                    PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
-                }
-                .onDisappear { isVisible = false; restorationGeneration += 1 }
-                .onChange(of: self.section) { _, newSection in
-                    restorationGeneration += 1
-                    if isVisible { PhotoLibraryReadingPosition.activeSection = newSection }
-                    userScrolled = false
-                    position = newSection.flatMap { PhotoLibraryReadingPosition.identifier(for: $0) }.map(normalize)
-                }
-                .simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
-                    userScrolled = true
-                })
-                .onChange(of: isSearching) { _, searching in
-                    if !searching {
+            ScrollViewReader { proxy in
+                content
+                    .environment(\.photoLibraryRowTracker, tracker)
+                    .modifier(PhotoLibraryUserScrollDetector(tracker: tracker))
+                    .onAppear {
+                        tracker.isVisible = true
+                        PhotoLibraryReadingPosition.activeSection = section
+                        configure(section: section)
                         let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
-                        userScrolled = false
-                        position = saved
+                        PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
+                        restore(saved, with: proxy)
                     }
-                }
-                .onReceive(NotificationCenter.default.publisher(
-                    for: PhotoLibraryReadingPosition.returnToPhotoNotification)) { notification in
-                    guard isVisible, (notification.userInfo?["section"] as? String ?? "all") == section,
-                          let identifier = notification.object as? String else { return }
-                    // Navigation's final layout may update the scroll binding
-                    // after the destination disappears. Reissue the exact row
-                    // once the root list is laid out, without treating it as a
-                    // user drag or persisting that transient position.
-                    userScrolled = false
-                    position = nil
-                    PhotoLibraryReadingPosition.diagnose("restore return \(identifier)")
-                    restorationGeneration += 1
-                    let generation = restorationGeneration
-                    DispatchQueue.main.async {
-                        guard isVisible, generation == restorationGeneration else { return }
-                        position = normalize(identifier)
+                    .onDisappear {
+                        tracker.isVisible = false
+                        tracker.generation &+= 1
+                        PhotoLibraryReadingPosition.flush()
                     }
-                }
+                    .onReceive(NotificationCenter.default.publisher(
+                        for: UIApplication.willResignActiveNotification)) { _ in
+                        PhotoLibraryReadingPosition.flush()
+                    }
+                    .onChange(of: self.section) { _, newSection in
+                        if tracker.isVisible { PhotoLibraryReadingPosition.activeSection = newSection }
+                        guard let newSection else { return }
+                        configure(section: newSection)
+                        restore(PhotoLibraryReadingPosition.identifier(for: newSection).map(normalize), with: proxy)
+                    }
+                    .onChange(of: isSearching) { _, searching in
+                        tracker.isSearching = searching
+                        if !searching {
+                            restore(PhotoLibraryReadingPosition.identifier(for: section).map(normalize), with: proxy)
+                        }
+                    }
+                    .onReceive(NotificationCenter.default.publisher(
+                        for: PhotoLibraryReadingPosition.returnToPhotoNotification)) { notification in
+                        guard tracker.isVisible, (notification.userInfo?["section"] as? String ?? "all") == section,
+                              let identifier = notification.object as? String else { return }
+                        // Navigation's final layout may still be settling; scroll once it is done.
+                        PhotoLibraryReadingPosition.diagnose("restore return \(identifier)")
+                        restore(normalize(identifier), with: proxy)
+                    }
+            }
         } else {
             content
+        }
+    }
+
+    private func configure(section: String) {
+        tracker.section = section
+        tracker.isSearching = isSearching
+        tracker.onTopChange = { [tracker] top in
+            guard tracker.isVisible, tracker.userScrolled, !tracker.isSearching,
+                  let section = tracker.section,
+                  PhotoLibraryReadingPosition.activeSection == section else { return }
+            PhotoLibraryReadingPosition.remember(top, section: section)
+        }
+    }
+
+    /// One jump, after layout. Rows that appear because of the jump are not
+    /// the person's reading, so saving waits for their next touch.
+    private func restore(_ identifier: String?, with proxy: ScrollViewProxy) {
+        tracker.userScrolled = false
+        tracker.generation &+= 1
+        let generation = tracker.generation
+        guard let identifier else { return }
+        DispatchQueue.main.async {
+            guard tracker.isVisible, generation == tracker.generation else { return }
+            proxy.scrollTo(identifier, anchor: .top)
+        }
+    }
+}
+
+/// Which rows of a photo list are on screen. A plain object on purpose:
+/// rows coming and going while scrolling must not re-render the list.
+@MainActor
+final class PhotoLibraryRowTracker {
+    var section: String?
+    var isVisible = false
+    var isSearching = false
+    var userScrolled = false
+    var generation: UInt64 = 0
+    var onTopChange: (@MainActor (String) -> Void)?
+    private var visible: [String: Int] = [:]
+    private var lastTop: String?
+
+    func appear(_ id: String, index: Int) {
+        visible[id] = index
+        report()
+    }
+
+    func disappear(_ id: String) {
+        visible[id] = nil
+        report()
+    }
+
+    private func report() {
+        guard let top = visible.min(by: { $0.value < $1.value })?.key, top != lastTop else { return }
+        lastTop = top
+        onTopChange?(top)
+    }
+}
+
+private struct PhotoLibraryRowTrackerKey: EnvironmentKey {
+    static let defaultValue: PhotoLibraryRowTracker? = nil
+}
+
+extension EnvironmentValues {
+    var photoLibraryRowTracker: PhotoLibraryRowTracker? {
+        get { self[PhotoLibraryRowTrackerKey.self] }
+        set { self[PhotoLibraryRowTrackerKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// A row of a photo list that remembers where the person was reading.
+    func photoLibraryReadingRow(_ id: String, index: Int) -> some View {
+        modifier(PhotoLibraryReadingRow(id: id, index: index))
+    }
+}
+
+private struct PhotoLibraryReadingRow: ViewModifier {
+    let id: String
+    let index: Int
+    @Environment(\.photoLibraryRowTracker) private var tracker
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { tracker?.appear(id, index: index) }
+            .onDisappear { tracker?.disappear(id) }
+    }
+}
+
+/// Marks that the person, not a restore, moved the list. On iOS 18 the scroll
+/// view reports it directly; a DragGesture over the ScrollView remains on iOS 17.
+private struct PhotoLibraryUserScrollDetector: ViewModifier {
+    let tracker: PhotoLibraryRowTracker
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                if phase == .interacting { tracker.userScrolled = true }
+            }
+        } else {
+            content.simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
+                tracker.userScrolled = true
+            })
         }
     }
 }
@@ -209,8 +319,14 @@ struct HomeView: View {
     let supplementaryPhotos: AnyView?
     let readingPositionKey: String?
     let showsCatProfileNavigation: Bool
+    /// Shown at the right of the 「猫写真」 heading (the 写真 tab's cat switch).
+    let headerAccessory: AnyView?
+    /// Above the grid: themes and growth (新しいアルバム（試作）only).
+    let themeRow: AnyView?
 
-    @State private var visibleDetectedPhotoCount = 24
+    /// Rows are built lazily, so a large batch costs little; fewer appends
+    /// mean fewer layout passes while the grid is moving.
+    @State private var visibleDetectedPhotoCount = 120
     @State private var openedCatProfileIdentifier: String?
     @State private var initialReadingIdentifier: String?
 
@@ -236,8 +352,11 @@ struct HomeView: View {
         isEmbedded: Bool = false,
         supplementaryPhotos: AnyView? = nil,
         readingPositionKey: String? = nil,
-        showsCatProfileNavigation: Bool = true
+        showsCatProfileNavigation: Bool = true,
+        headerAccessory: AnyView? = nil,
+        themeRow: AnyView? = nil
     ) {
+        self.themeRow = themeRow
         self.catPhotos = catPhotos
         self.scan = scan
         self.hasPhotoAccess = hasPhotoAccess
@@ -260,6 +379,7 @@ struct HomeView: View {
         self.supplementaryPhotos = supplementaryPhotos
         self.readingPositionKey = readingPositionKey
         self.showsCatProfileNavigation = showsCatProfileNavigation
+        self.headerAccessory = headerAccessory
         _initialReadingIdentifier = State(initialValue: isEmbedded
             ? PhotoLibraryReadingPosition.identifier(for: readingPositionKey ?? "all") : nil)
     }
@@ -272,6 +392,8 @@ struct HomeView: View {
                         if isLimitedAccess {
                             LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                         }
+
+                        if let themeRow { themeRow }
 
                         if showsCatProfileNavigation { catProfilesSection }
 
@@ -300,8 +422,7 @@ struct HomeView: View {
                 supplementaryPhotos.padding(.top, 16)
                     .id("photo-library-all-archive")
             }
-            .scrollTargetLayout(isEnabled: isEmbedded)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, isEmbedded ? 0 : 16)
             .padding(.vertical, 12)
         }
         .accessibilityIdentifier("photo-library-all-scroll")
@@ -362,11 +483,34 @@ struct HomeView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
+    /// The first card on the tab until WidgetKit sees a Widget: a small
+    /// preview of what the Widget shows, and the three words of the gesture.
     private var widgetPlacementCard: some View {
         Button(action: showWidgetPlacementGuide) {
-            Label("ウィジェットを置く", systemImage: "rectangle.on.rectangle.angled")
-                .font(.subheadline)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            HStack(spacing: 12) {
+                if let photo = catPhotos.first {
+                    PhotoAssetImageView(
+                        localIdentifier: photo.localIdentifier,
+                        catBoundingBox: photo.catBoundingBox,
+                        targetPixelSize: CGSize(width: 160, height: 160),
+                        networkAccessAllowed: false
+                    )
+                    .aspectRatio(1, contentMode: .fill)
+                    .frame(width: 52, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ホーム画面にまどを置く").font(.headline)
+                    Text("長押し → ＋ → ねこのまど").font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("home-widget-placement-guide")
@@ -381,7 +525,7 @@ struct HomeView: View {
                   systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
                 .font(.subheadline)
             if scan.hasFailed || scan.hasDeferredAssets || scan.isPaused {
-                Button("もう一度確認", action: rescan)
+                Button("もう一度探す", action: rescan)
                     .frame(minHeight: 44)
                     .disabled(scan.isScanning)
                     .accessibilityIdentifier("photo-library-partial-retry")
@@ -406,7 +550,7 @@ struct HomeView: View {
 
     private func moveToMonth(_ identifier: String) {
         guard let index = catPhotos.firstIndex(where: { $0.localIdentifier == identifier }) else { return }
-        visibleDetectedPhotoCount = max(visibleDetectedPhotoCount, index + 24)
+        visibleDetectedPhotoCount = max(visibleDetectedPhotoCount, index + 120)
         initialReadingIdentifier = identifier
         PhotoLibraryReadingPosition.returnToOpenedPhoto(
             PhotoLibraryGridRow.identifier(containing: identifier, in: catPhotos),
@@ -414,10 +558,18 @@ struct HomeView: View {
     }
 
     @ViewBuilder private var detectedPhotosSection: some View {
-            HStack(alignment: .firstTextBaseline) {
-                Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")
-                    .font(.title3.bold())
-                    .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .center, spacing: 10) {
+                if let headerAccessory {
+                    // The cat switch is the heading: 「ミケの写真 ▾」.
+                    headerAccessory
+                } else {
+                    Text(showsCatProfileNavigation ? "すべての猫写真" : "猫写真")
+                        .font(.title3.bold())
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Text("\(catPhotos.count.formatted())枚")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
                     .accessibilityIdentifier("photo-hub-detected-grid")
                 Spacer()
                 if isEmbedded, !monthDestinations.isEmpty {
@@ -426,21 +578,21 @@ struct HomeView: View {
                             Button(month.label) { moveToMonth(month.identifier) }
                         }
                     } label: {
-                        Image(systemName: "calendar")
-                            .frame(minWidth: 44, minHeight: 44)
+                        Label("日付", systemImage: "calendar")
+                            .font(.subheadline.weight(.medium))
+                            .frame(minHeight: 44)
                     }
                     .accessibilityLabel("年月へ移動")
                     .accessibilityIdentifier("photo-library-month-jump")
                 }
-                Text("\(catPhotos.count.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
             }
             .padding(.top, 2)
             .padding(.bottom, 8)
+            .padding(.horizontal, isEmbedded ? 16 : 0)
             .id("photo-library-all-heading")
 
-            ForEach(PhotoLibraryGridRow.rows(Array(catPhotos.prefix(restoredDetectedPhotoCount)))) { row in
+            ForEach(Array(PhotoLibraryGridRow.rows(Array(catPhotos.prefix(restoredDetectedPhotoCount))).enumerated()),
+                    id: \.element.id) { index, row in
                 PhotoLibraryGridRowView(row: row, spacing: 2) { photo in
                     NavigationLink(value: PhotosRoute.collectionPhoto(photo.localIdentifier)) {
                         PhotoAssetImageView(
@@ -457,6 +609,7 @@ struct HomeView: View {
                     .accessibilityHint("写真を大きく表示します")
                 }
                 .id(row.id)
+                .photoLibraryReadingRow(row.id, index: index)
                 .onAppear {
                     if let last = row.photos.last { revealNextDetectedPhotos(after: last.localIdentifier) }
                 }
@@ -469,7 +622,7 @@ struct HomeView: View {
               catPhotos[displayedCount - 1].localIdentifier == localIdentifier else { return }
         // Append to the same grid. Reappearing cells from an earlier batch
         // cannot reveal another page or replace the user's scroll position.
-        visibleDetectedPhotoCount = min(catPhotos.count, displayedCount + 24)
+        visibleDetectedPhotoCount = min(catPhotos.count, displayedCount + 120)
     }
 
     private var restoredDetectedPhotoCount: Int {
@@ -477,7 +630,7 @@ struct HomeView: View {
               let index = catPhotos.firstIndex(where: { $0.localIdentifier == initialReadingIdentifier }) else {
             return visibleDetectedPhotoCount
         }
-        return max(visibleDetectedPhotoCount, index + 24)
+        return max(visibleDetectedPhotoCount, index + 120)
     }
 
     @ViewBuilder private var catProfilesSection: some View {
@@ -571,14 +724,14 @@ struct HomeView: View {
             ContentUnavailableView {
                 Label("写真の確認を完了できませんでした", systemImage: "exclamationmark.triangle")
             } description: {
-                Text("写真へのアクセスや通信を確認して、もう一度スキャンしてください。")
+                Text("写真へのアクセスを確認して、もう一度探してください。")
             } actions: {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
-                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                         .buttonStyle(.bordered)
                 }
             }
@@ -586,21 +739,21 @@ struct HomeView: View {
             .accessibilityIdentifier("photo-hub-scan-failed")
         } else if let readingPositionKey, readingPositionKey != "all", !scan.isScanning {
             ContentUnavailableView("この表示の写真がありません", systemImage: "photo.on.rectangle",
-                description: Text("猫の選択、写真の所属、写真へのアクセス範囲を確認してください。"))
+                description: Text("猫の選択と写真の許可を確認してください。"))
                 .frame(maxWidth: .infinity, minHeight: 280)
                 .accessibilityIdentifier("photo-library-scoped-empty")
         } else if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
                 Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")
             } description: {
-                Text("スキャンは正常に完了しました。猫が主役に写った写真を写真アプリに追加するか、写真へのアクセス範囲を確認して、もう一度スキャンしてください。")
+                Text("猫の写真を追加するか、写真の許可を確認してください。")
             } actions: {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
-                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                        Button("写真を追加で選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                    Button("もう一度探す", systemImage: "arrow.clockwise", action: rescan)
                         .buttonStyle(.bordered)
                 }
             }
@@ -619,7 +772,7 @@ struct HomeView: View {
                 Label("猫の写真を探しています", systemImage: "photo.on.rectangle")
             } description: {
                 Text(scan.isPaused
-                    ? "アプリへ戻るとスキャンを再開します。"
+                    ? "アプリに戻ると、探すのを続けます。"
                     : "見つかるとここに表示します。")
             }
             .frame(maxWidth: .infinity, minHeight: 280)
@@ -692,7 +845,7 @@ struct PhotoShuffleGuideView: View {
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
 
                     Label {
-                        Text("写真シャッフルは設定時のアルバム内容を使います。アルバム更新後の写真を反映するには、壁紙で写真アプリの「うちの子」アルバムを選び直してください。")
+                        Text("写真シャッフルは、設定したときの写真を使います。新しい写真を出すには、壁紙でアルバムを選び直してください。")
                             .font(.subheadline)
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")

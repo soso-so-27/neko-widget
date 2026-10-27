@@ -1,6 +1,7 @@
 import { resolveReportRuntimeExpected } from '../scripts/check-staging-runtime.mjs';
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { execFileSync } from 'node:child_process';
 import test from "node:test";
 
 import {
@@ -498,4 +499,68 @@ test('CLI selects report continuation only from verified current source readines
   await assert.rejects(resolveReportRuntimeExpected('internal-report-first-connection',verified('public-release')), /purpose/u);
   await assert.rejects(resolveReportRuntimeExpected('internal-report-first-connection',{evidence,policy,verify:async()=>{throw Error('invalid signature or expired code binding')}}), /invalid signature/u);
   assert.equal(await resolveReportRuntimeExpected('off',{verify:()=>assert.fail('Ordinary mode must not read owner readiness')}), 'off');
+});
+
+test('combined purchase/report mode preserves Sandbox billing and every auth boundary', async () => {
+  const headers = { 'neko-runtime-billing-gate-generation':'7',
+    'neko-runtime-billing-apple-notification-rate-limiter':'READY', 'neko-runtime-billing-owner-admission':'READY',
+    'neko-runtime-billing-apple-notification-history-recovery':'OFF',
+    ...Object.fromEntries(['account-bootstrap','transaction-ingestion','apple-notification-ingestion',
+      'subscription-reconciliation','effective-entitlement','account-recovery','window-sponsorship']
+      .map(name => [`neko-runtime-billing-${name}`, 'ON'])) };
+  const expected = 'internal-purchase-sandbox-report-ui-continuation';
+  const run = (options = {}, mode = expected) => checkStagingRuntime({ origin, expected:mode,
+    fetchImpl: runtimeFetch({ momentStatus:401, momentCode:'invalid_authentication',
+      healthMediaRuntime:'ON', healthReportRuntime:'ON', billingHeaders:headers, ...options }) });
+  assert.equal((await run()).checks.length, 13);
+  await assert.rejects(run({healthReportRuntime:'OFF'}), /runtime gate state/u);
+  await assert.rejects(run({}, 'internal-purchase-sandbox'), /runtime gate state/u);
+  await assert.rejects(run({}, 'internal-report-ui-continuation'), /internal billing runtime state/u);
+  for (const name of Object.keys(headers)) {
+    const missing = {...headers}; delete missing[name];
+    await assert.rejects(run({billingHeaders:missing}), /internal billing runtime state/u);
+    await assert.rejects(run({billingHeaders:{...headers,[name]:'invalid'}}), /internal billing runtime state/u);
+  }
+  for (const route of ['moment','reaction','push','targetedPush','report','windowName','legacy']) {
+    await assert.rejects(run({[route+'Status']:200}), /returned HTTP/u);
+  }
+});
+
+test('combined mode requires verified UI-continuation readiness and cannot downgrade', async () => {
+  const expected = 'internal-purchase-sandbox-report-ui-continuation';
+  const evidence = {}, policy = {};
+  let verified = false;
+  assert.equal(await resolveReportRuntimeExpected(expected, {evidence,policy,verify:async(e,p)=>{
+    assert.equal(e,evidence); assert.equal(p,policy); verified=true;
+    return {purpose:'testflight-owner-report-ui-continuation'};
+  }}), expected);
+  assert.equal(verified,true);
+  for (const purpose of ['testflight-owner-first-connection','public-release',undefined]) {
+    await assert.rejects(resolveReportRuntimeExpected(expected,{evidence,policy,verify:async()=>({purpose})}), /purpose/u);
+  }
+  for (const reason of ['invalid signature','stale_readiness','code hash mismatch','wrong scope']) {
+    await assert.rejects(resolveReportRuntimeExpected(expected,{evidence,policy,verify:async()=>{throw Error(reason)}}),
+      error => error.message === reason);
+  }
+});
+
+test('release workflow chooses combined preflight only when both requests are true', async () => {
+  const workflow = await readFile(new URL('../../../.github/workflows/testflight.yml', import.meta.url),'utf8');
+  const step = workflow.split('      - name: Validate the exact runtime embedded in the limited external beta')[1]
+    .split('\n      - name:')[0];
+  const script = step.split('        run: |')[1].trimEnd().split(/\r?\n/u).slice(1)
+    .map(line => line.replace(/^          /u,'')).join('\n');
+  const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
+  for (const [reports,billing,expected] of [
+    ['true','true','internal-purchase-sandbox-report-ui-continuation'],
+    ['true','false','internal-report-first-connection'],
+    ['false','true','internal-purchase-sandbox'],
+    ['false','false','limited-external-beta'],
+  ]) {
+    const output = execFileSync(bash,['--noprofile','--norc','-c',`node() { printf '%s\\n' "$*"; }\n${script}`],{
+      encoding:'utf8', env:{...process.env, INTERNAL_REPORTS_REQUESTED:reports, BILLING_SANDBOX_REQUESTED:billing,
+        RELEASE_SHARING_API_ORIGIN:'https://neko-window-sharing-staging.nakanishisoya.workers.dev'},
+    });
+    assert.equal(output.trim(),`scripts/check-staging-runtime.mjs --expected ${expected}`);
+  }
 });

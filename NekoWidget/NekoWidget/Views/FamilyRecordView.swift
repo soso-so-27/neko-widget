@@ -136,6 +136,8 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
     let canShowRecords: Bool
     let hasImageLessHistory: Bool
     let addPhotoAction: AnyView?
+    /// The host shows its own fixed "写真を届ける" button below this collection.
+    let canSendPhoto: Bool
     let showInformation: () -> Void
     let deliveryCard: (MomentSharedPhoto, CaptionSource) -> DeliveryCard
     private let fixturePhoto: MomentShareIngressPhoto?
@@ -169,11 +171,12 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     init(spaceID: String, windowName: String, photos: [MomentSharedPhoto], canShowRecords: Bool,
          client: (any FamilyRecordServing)? = nil, fixturePhoto: MomentShareIngressPhoto? = nil,
-         addPhotoAction: AnyView? = nil, hasImageLessHistory: Bool = false,
+         addPhotoAction: AnyView? = nil, canSendPhoto: Bool = false, hasImageLessHistory: Bool = false,
          showInformation: @escaping () -> Void,
          deliveryCard: @escaping (MomentSharedPhoto, CaptionSource) -> DeliveryCard) {
         self.spaceID = spaceID; self.windowName = windowName; self.photos = photos
         self.canShowRecords = canShowRecords; self.addPhotoAction = addPhotoAction
+        self.canSendPhoto = canSendPhoto
         self.hasImageLessHistory = hasImageLessHistory
         self.showInformation = showInformation
         self.deliveryCard = deliveryCard
@@ -276,7 +279,9 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     .accessibilityIdentifier("family-collection-unavailable")
             } else if model.error != nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("写真を読み込めませんでした", systemImage: "wifi.exclamationmark")
+                    Label(value.items.isEmpty && value.withdrawn.isEmpty
+                          ? "写真を読み込めませんでした" : "最新の写真を確認できませんでした",
+                          systemImage: "wifi.exclamationmark")
                         .font(.subheadline).foregroundStyle(.secondary)
                         .accessibilityIdentifier("family-collection-load-failed")
                     Button("写真を読み込み直す", systemImage: "arrow.clockwise") { Task { await reload() } }
@@ -291,9 +296,11 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                         .font(.headline)
                     Text(hasImageLessHistory
                         ? "写真のない送信履歴で、以前の送信状況を確認できます。"
-                        : addPhotoAction != nil
-                            ? "相手からの写真はここに届きます。＋から写真を1枚選び、相手と共有することもできます。"
-                            : "相手からの写真はここに届きます。")
+                        : canSendPhoto
+                            ? "まどに届いた写真はここに並びます。下の「写真を届ける」から、1枚選んで届けられます。"
+                            : addPhotoAction != nil
+                                ? "相手からの写真はここに届きます。＋から写真を1枚選び、相手と共有することもできます。"
+                                : "相手からの写真はここに届きます。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -354,7 +361,10 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
 
     var body: some View {
         collectionContent(projection)
-        .task(id: canShowRecords) { await reload() }
+        .task(id: canShowRecords) {
+            restoreRememberedTombstones()
+            await reload()
+        }
         .onChange(of: snapshot?.catalog.records) { _, rows in
             // Tombstones are irreversible. Keep only their opaque IDs while
             // reloading, so a delivered copy cannot flash back into this grid.
@@ -397,7 +407,13 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     case .sent: Text("自分")
                     }
                     if !retained && photo.senderPolicyVersion == 1 {
-                        Text("· 表示期限あり")
+                        switch photo {
+                        case let .received(item):
+                            // Same absolute 90-day boundary as the Widget and the inbox.
+                            Text("· \(item.receivedAt.addingTimeInterval(FamilyWidgetManifestItem.maximumDisplayDuration).formatted(.dateTime.month().day()))まで")
+                        case .sent:
+                            Text("· 表示期限あり")
+                        }
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)
@@ -427,6 +443,24 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
             }.map(\.id))
             catalogResolved = true
         }
+        // Remember the unfiltered, validated catalog's tombstones for the next
+        // open that cannot reach the server.
+        if remembersTombstones, let loaded = model.snapshot, loaded.catalog.spaceID == spaceID {
+            FamilyRecordTombstoneCache().remember(loaded.catalog)
+        }
+    }
+
+    /// Only the real server client confirms withdrawals. Injected fixtures
+    /// reset their catalog on every launch, so they never read or write this.
+    private var remembersTombstones: Bool { model.client is FamilyRecordClient }
+
+    /// Delivered photos already on this iPhone stay visible offline only after
+    /// the server has confirmed this window's withdrawals at least once.
+    private func restoreRememberedTombstones() {
+        guard canShowRecords, !catalogResolved, remembersTombstones,
+              let remembered = FamilyRecordTombstoneCache().load(spaceID: spaceID) else { return }
+        withdrawnIDs.formUnion(remembered)
+        catalogResolved = true
     }
 
     private func invalidateExport() {
@@ -1035,7 +1069,7 @@ struct FamilyRecordView: View {
                     Text("新しくまどに追加した写真とメモを、一緒に保管します。一覧の日付は、まどへ追加した日です。鑑賞用の写真コピーなので、写真アプリの原本はそのままにしてください。")
                     Text("参加資格と共有鍵がある端末で利用します。二人のすべての端末を失ったときの復元や、無期限の保存には対応していません。")
                 }
-                Section("内部テストで使える範囲") {
+                Section("残せる量") {
                     Text("一つのまどに写真100件・メモ1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
                 }
             }

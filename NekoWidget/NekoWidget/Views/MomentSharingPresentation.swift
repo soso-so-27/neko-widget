@@ -13,7 +13,7 @@ struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
 
     func title(at now: Date) -> String {
         switch phase {
-        case .accepted: return "送信しました"
+        case .accepted: return "届けました"
         case .supportRequired: return "このまどへの送信はお休み中です"
         case .supportUnverified: return "送信条件を確認できません"
         case .quotaWaiting: return "送信できる時刻を待っています"
@@ -22,7 +22,7 @@ struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
         case .waiting: return "時間がかかっています"
         default:
             if now.timeIntervalSince(startedAt) >= 10 { return "時間がかかっています" }
-            return phase == .preparing ? "写真を準備中" : "送信中"
+            return phase == .preparing ? "写真を準備しています" : "届けています"
         }
     }
 
@@ -55,6 +55,8 @@ struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
 /// session and then found in the committed ledger. Disappearance alone is not
 /// success (cancel, expiry, revocation and a failed snapshot can also remove it).
 struct MomentPhotoDeliveryProgressTracker {
+    /// Long enough to notice "届けました" after the confirmation sheet closes.
+    static let completionDisplayDuration: TimeInterval = 4
     private var previous: [String: MomentPhotoDeliveryProgress] = [:]
     private var completions: [String: (photo: MomentPhotoDeliveryProgress, until: Date)] = [:]
 
@@ -65,7 +67,7 @@ struct MomentPhotoDeliveryProgressTracker {
         for (id, photo) in previous where current[id] == nil && acceptedIDs.contains(id) {
             completions[id] = (MomentPhotoDeliveryProgress(id: id,
                 thumbnailJPEG: photo.thumbnailJPEG, startedAt: photo.startedAt, phase: .accepted),
-                now.addingTimeInterval(2))
+                now.addingTimeInterval(Self.completionDisplayDuration))
         }
         previous = current
         completions = completions.filter {

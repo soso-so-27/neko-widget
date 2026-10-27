@@ -34,14 +34,19 @@ struct AppRootView: View {
     @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
+    @State private var showsInvitationJoin = false
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
+    @State private var onboardingInvitation: GroupInvitationLink?
+    /// An invitation that arrived while the help sheet was open. It opens
+    /// after that sheet has closed, so two sheets never switch at once.
+    @State private var invitationAfterHelp: GroupInvitationLink?
     @State private var firstRunPhoto: PhotoPresentation?
+    @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
     @State private var officialWindowPresentationID = UUID()
     @State private var onboardingScanErrorMessage: String?
-    @StateObject private var widgetShowcaseStore = ShowcasePhotoStore()
+    @StateObject private var widgetShowcaseStore = ShowcasePhotoStore.shared
     @State private var widgetShowcasePhoto: WidgetShowcasePhoto?
-    @Environment(\.membershipActions) private var showcaseAccess
-    @State private var showcaseMembershipNotice: MembershipAccessDecision?
 
     var body: some View {
         WidgetPhotoPresentationHost(onOtherURL: handleNonPhotoURL) {
@@ -56,6 +61,60 @@ struct AppRootView: View {
             }
         } photo: { opening, close in
             widgetPhotoDestination(opening, close: close)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cloudyWindowConfigurationChanged)) { _ in
+            Task { await viewModel.refreshCloudyWindow() }
+        }
+        .sheet(isPresented: $showsInvitationJoin, onDismiss: {
+            if let next = invitationAfterHelp {
+                invitationAfterHelp = nil
+                onboardingInvitation = next
+                return
+            }
+            // Completion follows a successful pairing, never merely a tap.
+            if (try? PairingStateStore.load())?.phase == .paired {
+                completeOnboardingWithoutPhotoAccess()
+                viewModel.isFamilyWindowPresented = true
+            }
+        }) {
+            NavigationStack {
+                Group {
+                    if GroupWindowClientProvider.ui != nil {
+                        OnboardingInvitationHelpView()
+                    } else {
+                        PairingView(initialSetupPath: .join)
+                    }
+                }
+                .toolbar { ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { showsInvitationJoin = false }
+                } }
+            }
+        }
+        // An invitation link opened before the first-run guide ends: join at once,
+        // then land in the まど tab. The guide can be finished later from 設定.
+        .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in
+            guard OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
+                  let invitation = invitationInbox.pending else { return }
+            if showsInvitationJoin {
+                invitationAfterHelp = invitation
+                showsInvitationJoin = false
+            } else {
+                onboardingInvitation = invitation
+            }
+        }
+        .sheet(item: $onboardingInvitation, onDismiss: {
+            // Joined, or the invitation was settled (the sheet then cleared it).
+            // Closed before applying: the guide stays, and the invitation waits.
+            guard GroupWindowOpenInbox.shared.pendingWindowID != nil || invitationInbox.pending == nil else { return }
+            invitationInbox.discard()
+            // The まど tab opens the joined window from GroupWindowOpenInbox.
+            completeOnboardingWithoutPhotoAccess()
+        }) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .onboardingInvitationReceived)) { _ in
+            guard SharingAPIConfiguration.current.isReviewVisible else { return }
+            showsInvitationJoin = true
         }
         .task {
             widgetInstallationChecker.refresh()
@@ -145,14 +204,16 @@ struct AppRootView: View {
             )
         }
         .sheet(item: $firstRunPhoto) { photo in
-            NavigationStack {
-                mainTabContent.firstRunPhotoDestination(for: photo.localIdentifier)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("閉じる") { firstRunPhoto = nil }
-                                .accessibilityIdentifier("first-run-photo-close")
+            personalPhotoActions {
+                NavigationStack {
+                    mainTabContent.firstRunPhotoDestination(for: photo.localIdentifier)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("閉じる") { firstRunPhoto = nil }
+                                    .accessibilityIdentifier("first-run-photo-close")
+                            }
                         }
-                    }
+                }
             }
         }
         .sheet(item: $officialWindowRoute) { route in
@@ -176,6 +237,11 @@ struct AppRootView: View {
     }
 
     private func handleNonPhotoURL(_ url: URL) {
+        if let route = CloudyWindowAlbumRoute(url: url) {
+            guard AlbumPrototype.isOn(UserDefaults.standard.bool(forKey: AlbumPrototype.key)) else { return }
+            AlbumArrivalOpenInbox.shared.pending = route
+            return
+        }
         if let route = OfficialWindowRoute(url: url) {
             officialWindowPresentationID = UUID()
             officialWindowRoute = route
@@ -208,34 +274,51 @@ struct AppRootView: View {
                 }
             }
         case let .personal(localIdentifier, shownAt):
-            NavigationStack {
-                Group {
-                    switch viewModel.widgetPhotoLibraryLoadSucceeded {
-                    case nil:
-                        ProgressView("写真を確認しています…")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    case .some(false):
-                        ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                               description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
-                    case .some(true):
-                        mainTabContent.widgetPhotoDestination(
-                            for: localIdentifier, shownAt: shownAt
-                        )
+            personalPhotoActions {
+                NavigationStack {
+                    Group {
+                        switch viewModel.widgetPhotoLibraryLoadSucceeded {
+                        case nil:
+                            ProgressView("写真を確認しています…")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        case .some(false):
+                            ContentUnavailableView("この写真は開けません", systemImage: "photo",
+                                                   description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                        case .some(true):
+                            mainTabContent.widgetPhotoDestination(
+                                for: localIdentifier, shownAt: shownAt
+                            )
+                        }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) }
                     }
                 }
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) }
-                }
             }
+            .task {
+                // Refresh an App Intent's saved state in place; opening the
+                // photograph no longer waits for this independent update.
+                await viewModel.syncLikesForPresentation(trigger: "deeplink")
+            }
+        }
+    }
+
+    private func personalPhotoActions<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
             .environment(\.showcaseOpenOne, { identifier in
-                let decision = showcaseAccess.decision(for: .presentCatPhotos)
-                guard decision == .allowed else {
-                    showcaseMembershipNotice = decision
-                    return
-                }
                 widgetShowcasePhoto = WidgetShowcasePhoto(photoIdentifier: identifier)
             })
-            .membershipActionNotice($showcaseMembershipNotice)
+            .environment(\.showcaseAddPhoto, { identifier, scope in
+                guard mainTabContent.catPhotos.contains(where: { $0.localIdentifier == identifier }) else {
+                    throw ShowcasePhotoStore.Error.unavailable
+                }
+                try await widgetShowcaseStore.add(photoIdentifier: identifier, to: scope)
+            })
+            .environment(\.showcaseAddTargets,
+                [ShowcaseAddTarget(id: "", title: "すべての猫")]
+                + (viewModel.catHouseholdIdentity?.profiles ?? []).map {
+                    ShowcaseAddTarget(id: $0.id.uuidString, title: $0.displayName)
+                })
             .fullScreenCover(item: $widgetShowcasePhoto) { selected in
                 ShowcasePhotoView(
                     store: widgetShowcaseStore,
@@ -245,12 +328,6 @@ struct AppRootView: View {
                     onManage: nil
                 )
             }
-            .task {
-                // Refresh an App Intent's saved state in place; opening the
-                // photograph no longer waits for this independent update.
-                await viewModel.syncLikesForPresentation(trigger: "deeplink")
-            }
-        }
     }
 
     @ViewBuilder
@@ -269,7 +346,7 @@ struct AppRootView: View {
             isPhotoRequestReady: viewModel.catHouseholdIdentity != nil,
             scan: scanPresentation(records: viewModel.catAssets),
             resultPhotos: hasPhotoAccess
-                ? viewModel.catAssets.prefix(3).map(photoPresentation)
+                ? viewModel.catAssets.prefix(9).map(photoPresentation)
                 : [],
             scanErrorMessage: onboardingScanErrorMessage,
             isLimitedAccess: viewModel.isLimitedAccess,
@@ -286,6 +363,7 @@ struct AppRootView: View {
             },
             finishWithoutWidgetPhoto: completeOnboardingWithoutWidgetPhoto,
             finish: completeOnboarding,
+            skipPlusOffer: skipOnboardingPlusOffer,
             openPhoto: { photo in
                 // Ignore queued taps after completion or a Widget-guide choice.
                 // A repeated tap must not replace the photo already presented.
@@ -295,7 +373,9 @@ struct AppRootView: View {
                 // Widget placement remains available in Settings and Home.
                 completeOnboardingWithoutWidgetPhoto()
                 firstRunPhoto = photo
-            }
+            },
+            joinInvitation: SharingAPIConfiguration.current.isReviewVisible
+                ? { showsInvitationJoin = true } : nil
         )
     }
 
@@ -371,9 +451,11 @@ struct AppRootView: View {
                     (profile.id.uuidString, profile.displayName)
                 })
             },
+            receivedPhotoIdentifiers: viewModel.receivedPhotoIdentifiers,
             savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
             savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
             readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
+            photoLibraryLoadSucceeded: viewModel.widgetPhotoLibraryLoadSucceeded,
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
                 ? scanPresentation(records: visibleCatAssets)
@@ -428,10 +510,10 @@ struct AppRootView: View {
                 )
             },
             exportMemoryPhoto: { identifier in
-                try await MemoryPhotoJPEGExporter().export(
-                    from: viewModel.likedAssets,
-                    localIdentifier: identifier
-                )
+                guard readableSnapshot.assets.contains(where: { $0.localIdentifier == identifier }) else {
+                    throw MemoryPhotoJPEGExportError.photoUnavailable
+                }
+                return try await PhotoLibraryJPEGExporter().export(localIdentifier: identifier)
             },
             albumOpened: { key, group in
                 Task {
@@ -472,7 +554,8 @@ struct AppRootView: View {
             exportJSON: {
                 await viewModel.exportJSON()
             },
-            personalArchiveStore: personalArchiveStore
+            personalArchiveStore: personalArchiveStore,
+            startsInPhotos: startsInPhotosAfterOnboarding
         )
     }
 
@@ -1141,7 +1224,8 @@ struct AppRootView: View {
     private var onboardingState: OnboardingPresentationState {
         OnboardingPresentationState(
             persistedResumePageIndex: onboardingResumePageIndex,
-            persistedCompletedVersion: onboardingCompletedVersion
+            persistedCompletedVersion: onboardingCompletedVersion,
+            offersPlus: PlusOfferAvailability.isConfigured
         )
     }
 
@@ -1158,7 +1242,8 @@ struct AppRootView: View {
                 switch (currentPage, page) {
                 case (.purpose, .photoPermission),
                      (.photoPermission, .scanResult),
-                     (.scanResult, .widgetGuide):
+                     (.scanResult, .widgetGuide),
+                     (.widgetGuide, .plusOffer):
                     state.advance()
                 case (.photoPermission, .widgetGuide):
                     state.skipPhotoPermission()
@@ -1186,6 +1271,13 @@ struct AppRootView: View {
         widgetInstallationChecker.refresh()
     }
 
+    /// One tap past the last, optional Plus page. Nothing is purchased.
+    private func skipOnboardingPlusOffer() {
+        var state = onboardingState
+        state.skipPlusOffer()
+        persistOnboardingState(state)
+    }
+
     private func completeOnboardingWithoutPhotoAccess() {
         var state = onboardingState
         state.skipPhotoPermission()
@@ -1200,6 +1292,7 @@ struct AppRootView: View {
     }
 
     private func completeOnboardingWithoutWidgetPhoto() {
+        startsInPhotosAfterOnboarding = hasPhotoAccess
         // Also used when the person chooses to see a photo first and defers
         // placement. Completion does not mark a Widget as installed.
         var state = onboardingState

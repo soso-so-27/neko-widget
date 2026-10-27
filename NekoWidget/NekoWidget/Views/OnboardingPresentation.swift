@@ -12,14 +12,18 @@ enum OnboardingPartialScanRecovery {
     }
 }
 
-/// The onboarding is deliberately limited to these four moments. Adding a
-/// case changes the product flow, so the standalone verifier locks the count
-/// and order.
+/// The onboarding is deliberately limited to these moments. Adding a case
+/// changes the product flow, so the standalone verifier locks the count and
+/// order. `plusOffer` (ADR-027) is appended so persisted indices keep their
+/// meaning, and it is reachable only when the caller says Plus is offered.
 enum OnboardingPresentationPage: Int, CaseIterable, Identifiable, Sendable {
     case purpose
     case photoPermission
     case scanResult
     case widgetGuide
+    /// The last, skippable page introducing Plus. It follows the Widget guide
+    /// only; skipping Photos access or finishing without a photo never shows it.
+    case plusOffer
 
     var id: Int { rawValue }
 }
@@ -59,13 +63,13 @@ enum WidgetInstallationState: Equatable, Sendable {
 /// privacy variant. Keeping it outside the SwiftUI view makes both modes
 /// independently verifiable.
 enum OnboardingPresentationCopy {
-    static let purposeBodyLines = [
-        "撮りためた猫写真が、",
-        "毎日会える思い出に。",
-        "猫だけを端末内で見つけて、",
-        "自動アルバムとホーム画面へ。"
-    ]
-    static let purposeAction = "はじめる"
+    /// Page one has one job: the Photos permission. People come from the
+    /// site knowing what the app is, so it says what happens next, answers
+    /// the one worry (the photos stay on the iPhone), and asks. No feature list.
+    static let purposeTitle = "このiPhoneの中の猫を、全部見つけます。"
+    static let purposeBody = "写真はiPhoneの中だけで探します。外には送りません。"
+    static let purposeAction = "猫を探す"
+    static let purposeFootnote = ""
 
     static let permissionTitleLines = [
         "このiPhoneの猫の写真や動画を",
@@ -96,20 +100,18 @@ enum OnboardingPresentationCopy {
     static let permissionAction = "写真へのアクセスを許可"
     static let permissionSkipAction = "あとで（スキップ）"
 
-    static let scanTitle = "このiPhoneの猫写真を探しています"
+    /// Page three shows the cats as they are found: a grid that fills, a count,
+    /// and the one next step (place the Widget). The count reads 「いま 32枚」
+    /// while the scan runs and 「128枚」 once it is final.
+    static let scanTitle = "猫を探しています"
+    static let scanFoundTitle = "猫の写真が見つかりました"
     static let scanBodyLines = [
-        "新しい写真から先に見ています。",
-        "全部の集計は、",
-        "次にひらいたときに続きます。"
+        "アプリを開いている間、新しい写真から順に調べます。"
     ]
-    static let scanContinueAction = "先に進む（スキャンは続きます）"
-    static let resultLeadLines = [
-        "このiPhoneで見つけた",
-        "猫写真は"
-    ]
-    static let resultCountSuffix = "枚"
-    static let resultClosing = "ありました"
-    static let resultOldestLead = "一番古い1枚は"
+    static let scanCountLead = "いま"
+    static let scanWidgetAction = "まどを置く"
+    /// The quiet way past the Widget: straight into the 写真 tab.
+    static let scanContinueAction = "あとで"
 
     static let widgetTitleLines = [
         "ホーム画面に、",
@@ -144,17 +146,24 @@ struct OnboardingPresentationState: Equatable, Sendable {
     }
 
     let mode: Mode
+    /// Whether the skippable Plus page ends the first run. The caller passes
+    /// the product configuration; while Plus is not offered the flow is the
+    /// original four pages.
+    let offersPlus: Bool
     private(set) var currentPage: OnboardingPresentationPage?
     private(set) var resumePageIndex: Int
     private(set) var completedVersion: Int
 
     init(
         persistedResumePageIndex: Int = 0,
-        persistedCompletedVersion: Int = 0
+        persistedCompletedVersion: Int = 0,
+        offersPlus: Bool = false
     ) {
         mode = .firstRun
+        self.offersPlus = offersPlus
         completedVersion = max(0, persistedCompletedVersion)
-        resumePageIndex = Self.clampedPageIndex(persistedResumePageIndex)
+        resumePageIndex = Self.clampedPageIndex(persistedResumePageIndex,
+            lastPage: offersPlus ? .plusOffer : .widgetGuide)
         if completedVersion >= OnboardingPresentationPersistence.currentCompletedVersion {
             currentPage = nil
         } else {
@@ -167,8 +176,9 @@ struct OnboardingPresentationState: Equatable, Sendable {
         persistedCompletedVersion completedVersion: Int
     ) {
         mode = .widgetGuideReplay
+        offersPlus = false
         currentPage = .widgetGuide
-        self.resumePageIndex = Self.clampedPageIndex(resumePageIndex)
+        self.resumePageIndex = Self.clampedPageIndex(resumePageIndex, lastPage: .plusOffer)
         self.completedVersion = max(0, completedVersion)
     }
 
@@ -206,9 +216,24 @@ struct OnboardingPresentationState: Equatable, Sendable {
         case .scanResult:
             routeFirstRun(to: .widgetGuide)
         case .widgetGuide:
+            if offersPlus {
+                routeFirstRun(to: .plusOffer)
+            } else {
+                completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+                self.currentPage = nil
+            }
+        case .plusOffer:
             completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
             self.currentPage = nil
         }
+    }
+
+    /// "あとで" on the Plus page: one tap enters the app. Nothing is bought,
+    /// and nothing about Photos access or the scan depends on this choice.
+    mutating func skipPlusOffer() {
+        guard mode == .firstRun, currentPage == .plusOffer else { return }
+        completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+        currentPage = nil
     }
 
     /// "あとで" enters the app without Photos access. Widget placement depends
@@ -240,12 +265,15 @@ struct OnboardingPresentationState: Equatable, Sendable {
         routeFirstRun(to: .photoPermission)
     }
 
-    /// "あとで" completes the first-run handoff. In a Settings replay it
+    /// "あとで" completes the Widget handoff: the first run ends, or moves to
+    /// the optional Plus page when it is offered. In a Settings replay it
     /// simply dismisses the guide without touching saved first-run progress.
     mutating func skipWidgetGuide() {
         guard currentPage == .widgetGuide else { return }
         if mode == .widgetGuideReplay {
             currentPage = nil
+        } else if offersPlus {
+            routeFirstRun(to: .plusOffer)
         } else {
             completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
             currentPage = nil
@@ -257,8 +285,13 @@ struct OnboardingPresentationState: Equatable, Sendable {
         resumePageIndex = page.rawValue
     }
 
-    private static func clampedPageIndex(_ value: Int) -> Int {
-        let lastPageIndex = max(0, OnboardingPresentationPage.allCases.count - 1)
-        return min(max(0, value), lastPageIndex)
+    private static func clampedPageIndex(_ value: Int, lastPage: OnboardingPresentationPage) -> Int {
+        min(max(0, value), lastPage.rawValue)
     }
+}
+
+// Invitation receivers post this only after their own route validation and
+// staging. No invitation token, URL, or participant identity is carried here.
+extension Notification.Name {
+    static let onboardingInvitationReceived = Notification.Name("OnboardingInvitationReceived")
 }

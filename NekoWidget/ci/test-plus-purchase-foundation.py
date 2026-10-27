@@ -30,7 +30,10 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("980", live)
         self.assertNotIn("7日", live)
         self.assertIn("case .pending, .awaitingServerConfirmation: return .waiting", live)
-        self.assertIn("if model.isPreview && (result == .completed || result == .cancelled)", model)
+        # A completed purchase closes the sheet without a completion page.
+        self.assertIn("if result == .completed || (model.isPreview && result == .cancelled)", model)
+        self.assertIn("init(model: MembershipOfferModel, context: PlusOfferContext", model)
+        self.assertNotIn("検討中", model)
         self.assertIn("onClose: { onFinish(model.isMember ? .completed : .cancelled) }", model)
         self.assertIn("!isWorking && !isWaiting", model)
 
@@ -44,6 +47,25 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertRegex(config, r"(?m)^PLUS_MONTHLY_PRODUCT_ID =$")
         self.assertRegex(config, r"(?m)^PLUS_ANNUAL_PRODUCT_ID =$")
         self.assertRegex(config, r"(?m)^PLUS_BILLING_API_BASE_URL =$")
+        # ADR-027: the membership gate is one xcconfig variable read by both the
+        # App and the Widget Info.plist, and it stays off in source.
+        self.assertRegex(config, r"(?m)^MEMBERSHIP_ACCESS_ENFORCED = NO$")
+        for relative in ("NekoWidget/Info.plist", "NekoWidgetWidget/Info.plist"):
+            with (ROOT / relative).open("rb") as handle:
+                self.assertEqual(
+                    plistlib.load(handle)["MembershipAccessEnforced"],
+                    "$(MEMBERSHIP_ACCESS_ENFORCED)",
+                    relative,
+                )
+        for relative in (
+            "NekoWidget/Services/MembershipAccessContext.swift",
+            "Shared/PersonalWidgetMembershipStore.swift",
+        ):
+            self.assertIn(
+                'MembershipAccessFlag.isOn(Bundle.main.object(forInfoDictionaryKey: "MembershipAccessEnforced"))',
+                source(relative),
+                relative,
+            )
 
         with (ROOT / "NekoWidget/Info.plist").open("rb") as handle:
             info = plistlib.load(handle)
@@ -291,7 +313,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertNotIn("restorePurchases", refresh)
         self.assertNotIn("purchaseAction", refresh)
         self.assertIn("if isMember {", view)
-        self.assertLess(view.index("if isMember {"), view.index("Text(offer.priceText)"))
+        self.assertLess(view.index("if isMember {"), view.index("Text(offer.afterTrialText ?? offer.priceText)"))
         self.assertIn(".disabled(isWorking || !canPurchase || offer == nil)", view)
 
     def test_new_purchase_presentation_never_uses_network_failure_or_incomplete_identity_as_fresh(self) -> None:

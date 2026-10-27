@@ -31,6 +31,8 @@ struct CareCat: Codable, Equatable, Identifiable {
     var toilet = ""
     var handling = ""
     var important = ""
+    /// 「こんな時は連絡を」: when the sitter should call. Optional so older memos still open.
+    var callWhen: String?
     var healthStatus = HealthStatus.unknown
     var healthDetails = ""
     var updatedAt = Date()
@@ -92,7 +94,7 @@ enum CareHandoffError: LocalizedError {
         switch self {
         case .unreadable: "お世話メモを開けません。元の記録は変更していません。"
         case .photoUnavailable: "写真を開けません。写真を選び直してください。"
-        case .tooLarge: "メモが長すぎます。内容を分けてください。"
+        case .tooLarge: "メモが長すぎます。長い欄を短くしてから、もう一度お試しください。"
         case .noSelection: "渡す猫を選んでください。"
         }
     }
@@ -212,6 +214,9 @@ struct CareHandoffDisclosure {
 
     func fields(cat: CareCat) -> [(String, String)] {
         var fields: [(String, String)] = [("まず伝えたいこと", Self.value(cat.important))]
+        if let callWhen = cat.callWhen, !callWhen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fields.append(("こんな時は連絡を", callWhen))
+        }
         if let food = cat.usualFood, !food.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             fields.append(("いつものごはん", food))
         }
@@ -226,5 +231,36 @@ struct CareHandoffDisclosure {
     }
     static func value(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未記入・飼い主に確認" : text
+    }
+
+    /// The handed-over copy for one cat: this time's notes from the tool, then
+    /// everyday care (and health, when chosen) from 「この子のこと」.
+    func fields(cat: CareCat, everyday: [(String, String)], health healthLines: [(String, String)]) -> [(String, String)] {
+        var fields: [(String, String)] = [("まず伝えたいこと", Self.value(cat.important))]
+        if let callWhen = cat.callWhen, !callWhen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fields.append(("こんな時は連絡を", callWhen))
+        }
+        fields += everyday
+        if health { fields += healthLines }
+        return fields
+    }
+
+    /// Contacts from 「この子のこと」's household; the tool's older entry only
+    /// where that is still empty.
+    func commonFields(plan: CareHandoffPlan, household: CatCareHousehold?) -> [(String, String)] {
+        var withoutContacts = self
+        withoutContacts.contacts = false
+        var fields = withoutContacts.commonFields(plan: plan)
+        guard contacts else { return fields }
+        func pick(_ value: String?, _ legacy: String) -> String {
+            let text = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return Self.value(text.isEmpty ? legacy : text)
+        }
+        let vet = household?.vet?.value
+        let vetText = [vet?.name ?? "", vet?.phone ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
+        fields.append(("飼い主の連絡先", pick(household?.ownerContact?.value, plan.contact)))
+        fields.append(("つながらないときの連絡先", pick(household?.backupContact?.value, plan.backupContact)))
+        fields.append(("かかりつけの動物病院", pick(vetText, plan.veterinarian)))
+        return fields
     }
 }

@@ -15,6 +15,11 @@ on:
       - "docs/**"
       - ".github/workflows/**"
   workflow_dispatch:
+    inputs:
+      extended_checks:
+        description: "従来の長時間UI・Widget回帰検査と証拠選別を手動で実行する"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,10 +29,47 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  quick-check:
+    name: Build, unit tests, and launch
+    # Same-repository push already validates the PR head; forks use PR CI.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build, run unit tests, and launch once
+        run: bash NekoWidget/ci/run-quick-ios-checks.sh
+      - name: Attach launch screenshot
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: launch-screenshot
+          path: ${{ runner.temp }}/ci-screenshots/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  safety-check:
+    name: Privacy, saved data, and sharing checks
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check privacy, saved data, and sharing contracts
+        run: bash NekoWidget/ci/run-cheap-safety-checks.sh
+
   plan:
     name: Select iOS checks and verify reusable evidence
     # Same-repository branches already have push CI. Forks need PR CI.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    if: github.event_name == 'workflow_dispatch' && inputs.extended_checks
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

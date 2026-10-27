@@ -1,4 +1,5 @@
 import CoreTransferable
+import CryptoKit
 import SwiftUI
 import ImageIO
 import PhotosUI
@@ -126,7 +127,18 @@ struct FamilyWindowView: View {
     @State private var showsTerminalResultDismissConfirmation = false
     @State private var showsOutgoingDetails = false
     @State private var pendingOutgoingConfirmation: OutgoingConfirmation?
+    @State private var showsReplacementPhotoPicker = false
+    @State private var showsBlockCompleted = false
+    @Environment(\.dismiss) private var dismissWindow
+    @Environment(\.membershipAccess) private var membershipAccess
     @State private var showsWidgetGuide = false
+    @State private var showsWindowWidgetGuide = false
+    @State private var widgetGuideIsFirstPlacement = true
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
+    /// The page shown while swiping through received photos; nil means the
+    /// photo that was opened. Kept apart from `selectedSharedPhoto` so paging
+    /// never re-presents the viewer.
+    @State private var pagedReceivedMomentID: String?
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 20
     @State private var showsSharedPhotoInformation = false
@@ -148,6 +160,14 @@ struct FamilyWindowView: View {
     @State private var clearsWidgetFocusAfterMemorySave = false
     @State private var notificationRouteResolutionFailed = false
     @State private var showsStaleWidgetPhotoAlert = false
+    // Per-viewer convenience only: "あとで" hides the prompt; settings still
+    // offer the same switch.
+    @AppStorage("familyWindow.notificationPromptDismissed.v1")
+    private var notificationPromptDismissed = false
+    // Per-viewer convenience only: short digests of windows whose
+    // home-screen card was opened or dismissed (M22). Never a space ID.
+    @AppStorage("familyWindow.homeScreenGuideSeen.v1")
+    private var homeScreenGuideSeenKeys = ""
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -225,7 +245,9 @@ struct FamilyWindowView: View {
     }
 #endif
 
-    private enum OutgoingConfirmation { case preparations, deliveries, terminalResults }
+    /// `.choosePhoto` is not a confirmation: it reopens the photo picker after
+    /// the status sheet closes, so an unsent photo always has a next step.
+    private enum OutgoingConfirmation { case preparations, deliveries, terminalResults, choosePhoto }
 
     // One presentation owns both photo kinds. A notification can replace the
     // current target without competing received/sent full-screen covers.
@@ -303,6 +325,10 @@ struct FamilyWindowView: View {
             pairedContent
         } else if Self.isInternalReportFixture {
             internalReportFixtureContent
+        } else if GroupWindowUIFixture.isRequested {
+            // Group member/invitation screens on the in-memory fixture, without
+            // baseContent's bootstrap. No relay, Keychain, or saved state.
+            GroupWindowUIFixtureRoot()
         } else if Self.isSettingsFixture {
             // The shipping settings view, without baseContent's bootstrap,
             // notification queries, or subscriptions. No account is loaded.
@@ -323,7 +349,24 @@ struct FamilyWindowView: View {
 #endif
         }
         }
+        .sheet(item: receivedInvitationSheetItem) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
+        }
         .appRecordEditing(retainWhileHidden: showsNameEditor || isPreparingNameEditor || preparedDelivery != nil || selectedPhotoItem != nil || isPreparingSelectedPhoto || isDeliveringSelectedPhoto || !deliveryCaption.isEmpty || deliveryPersonalMemo != nil)
+    }
+
+    /// Only the まど tab's own screen presents an opened invitation link, so a
+    /// pushed settings screen or the widget photo viewer never doubles it.
+    private var receivedInvitationSheetItem: Binding<GroupInvitationLink?> {
+        Binding(
+            get: {
+                guard initialPresentation == .content, widgetPhotoRequest == nil else { return nil }
+                return invitationInbox.pending
+            },
+            set: { value in
+                if value == nil { invitationInbox.discard() }
+            }
+        )
     }
 
     private var widgetPhotoContent: some View {
@@ -512,6 +555,11 @@ struct FamilyWindowView: View {
                 : model.windowDisplayName
         )
         .navigationBarTitleDisplayMode(.inline)
+        .alert("ブロックしました", isPresented: $showsBlockCompleted) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("この相手との写真共有を終了しました。ブロックは、設定の「ブロックした相手」から解除できます。")
+        }
         .task {
             await model.bootstrap()
             consumePendingMemoryTargetIfReady()
@@ -733,6 +781,8 @@ struct FamilyWindowView: View {
                     safetyResultMessage = model.errorMessage
                     if model.errorMessage == nil, !model.isPaired {
                         selectedMomentForDetail = nil
+                        // The window switches to setup; say what just happened.
+                        showsBlockCompleted = true
                     }
                 }
             }
@@ -852,7 +902,7 @@ struct FamilyWindowView: View {
         .alert("この写真は更新されました", isPresented: $showsStaleWidgetPhotoAlert) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ウィジェットの新しい写真で、もう一度お試しください。")
+            Text("ホーム画面の新しい写真で、もう一度お試しください。")
         }
         .sheet(item: $preparedDelivery, onDismiss: {
             deliveryCaption = ""
@@ -864,6 +914,15 @@ struct FamilyWindowView: View {
         .sheet(isPresented: $showsOutgoingDetails, onDismiss: presentPendingOutgoingConfirmation) {
             outgoingDetails
         }
+        // Same selection as the fixed "写真を届ける" button, so the existing
+        // preparation path handles the replacement photo.
+        .photosPicker(
+            isPresented: $showsReplacementPhotoPicker,
+            selection: $selectedPhotoItem,
+            matching: .images,
+            preferredItemEncoding: .compatible,
+            photoLibrary: .shared()
+        )
         .sheet(item: $windowSupportTarget) { target in
             WindowSupportResumeView(windowName: target.name,
                 model: WindowSupportResumeModel(client: LiveWindowSupportResumeClient(expectedSpaceID: target.id)),
@@ -877,6 +936,7 @@ struct FamilyWindowView: View {
             onDismiss: {
                 notificationAccessibilityFocus = nil
                 pendingDetailMemoryConfirmationID = nil
+                pagedReceivedMomentID = nil
                 widgetMemoryTarget = nil
                 memoryRemovalTarget = nil
                 reportTarget = nil
@@ -907,69 +967,7 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoDetail(_ momentID: String) -> some View {
         NavigationStack {
-            Group {
-                if let item = model.receivedMoments.first(where: { $0.id == momentID }),
-                   !model.isShowingLastKnownState {
-                    FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
-                        source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
-                        caption: model.caption(for: item), captionIsOwn: false,
-                        allowsLegacyCaptionWithoutCatalog: (item.senderPolicyVersion ?? 1) == 1,
-                        captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
-                    MomentPhotoDetailBody(
-                        imageURL: widgetPhotoRequest == nil
-                            ? model.imageURL(for: item) : widgetPhotoTarget?.imageURL,
-                        caption: nil,
-                        captionIdentifier: "family-window-received-caption-full"
-                    ) {
-                        VStack(spacing: 0) {
-                            memo
-                            if !model.isReportOnly {
-                                receivedPhotoActionControls(item)
-                                if memoryResultMomentID == item.id,
-                                   let message = memoryResultMessage {
-                                    Text(message).font(.footnote).foregroundStyle(.secondary)
-                                        .padding(.horizontal, 16).padding(.bottom, 8)
-                                        .accessibilityIdentifier("family-window-bookmark-result")
-                                }
-                                if heartResultMomentID == item.id,
-                                   let message = heartResultMessage {
-                                    Text(message).font(.footnote).foregroundStyle(.secondary)
-                                        .padding(.horizontal, 16).padding(.bottom, 8)
-                                        .accessibilityIdentifier("family-window-paw-result")
-                                }
-                            }
-                            if safetyResultMomentID == item.id, let message = safetyResultMessage {
-                                Label(message, systemImage: "exclamationmark.circle")
-                                    .font(.footnote).foregroundStyle(.orange)
-                                    .padding(16)
-                                    .accessibilityIdentifier("family-window-safety-result")
-                            } else if let status = model.reportStatusText(item) {
-                                Text(status).font(.footnote).foregroundStyle(.secondary)
-                                    .padding(16)
-                            }
-                        }
-                    }
-                    }
-                    .id("\(model.pairingState?.spaceID ?? "")-\(item.id)")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Menu {
-                                Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
-                                receivedReportAction(item)
-                                Button("このiPhoneから削除", role: .destructive) { deleteReceivedTarget = item }
-                                if !model.isReportOnly {
-                                    Button("この相手をブロック", role: .destructive) { blockTarget = item }
-                                }
-                            } label: { Image(systemName: "ellipsis.circle") }
-                            .accessibilityLabel("写真の情報と操作")
-                            .disabled(model.isWorking || model.isShowingLastKnownState)
-                        }
-                    }
-                } else {
-                    ContentUnavailableView("この写真は表示できません", systemImage: "photo",
-                        description: Text(model.errorMessage ?? "写真が削除されたか、表示期間が終了しました。"))
-                }
-            }
+            receivedPhotoPages(momentID)
             .background(.black)
             .navigationTitle(model.windowDisplayName)
             .navigationBarTitleDisplayMode(.inline)
@@ -986,6 +984,105 @@ struct FamilyWindowView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    /// Received photos page left and right in the list's order (M14). A photo
+    /// opened from the Widget stays single: its image comes from the Widget
+    /// cache, not from the inbox.
+    @ViewBuilder
+    private func receivedPhotoPages(_ momentID: String) -> some View {
+        let pages = widgetPhotoRequest == nil ? orderedReceivedMoments : []
+        if pages.contains(where: { $0.id == momentID }) {
+            TabView(selection: receivedPageSelection(initial: momentID)) {
+                ForEach(pages) { item in
+                    receivedPhotoDetailPage(item.id)
+                        .tag(item.id)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .onChange(of: pages.map(\.id)) { _, ids in
+                // The open page was deleted or expired: close the viewer
+                // instead of silently showing a different photo.
+                if !ids.contains(pagedReceivedMomentID ?? momentID) {
+                    selectedMomentForDetail = nil
+                }
+            }
+        } else {
+            receivedPhotoDetailPage(momentID)
+        }
+    }
+
+    private func receivedPageSelection(initial momentID: String) -> Binding<String> {
+        Binding(
+            get: { pagedReceivedMomentID ?? momentID },
+            set: { pagedReceivedMomentID = $0 }
+        )
+    }
+
+    private func receivedPhotoDetailPage(_ momentID: String) -> some View {
+        Group {
+            if let item = model.receivedMoments.first(where: { $0.id == momentID }),
+               !model.isShowingLastKnownState {
+                FamilyPhotoMemoView(spaceID: model.pairingState?.spaceID ?? "",
+                    source: !model.isReportOnly ? (model.pairingState?.spaceID).map { receivedFamilyRecordSource(item, spaceID: $0) } : nil,
+                    caption: model.caption(for: item), captionIsOwn: false,
+                    allowsLegacyCaptionWithoutCatalog: (item.senderPolicyVersion ?? 1) == 1,
+                    captionIdentifier: "family-window-received-caption-full", windowName: model.windowDisplayName) { memo in
+                MomentPhotoDetailBody(
+                    imageURL: widgetPhotoRequest == nil
+                        ? model.imageURL(for: item) : widgetPhotoTarget?.imageURL,
+                    caption: nil,
+                    captionIdentifier: "family-window-received-caption-full"
+                ) {
+                    VStack(spacing: 0) {
+                        memo
+                        if !model.isReportOnly {
+                            receivedPhotoActionControls(item)
+                            if memoryResultMomentID == item.id,
+                               let message = memoryResultMessage {
+                                Text(message).font(.footnote).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 16).padding(.bottom, 8)
+                                    .accessibilityIdentifier("family-window-bookmark-result")
+                            }
+                            if heartResultMomentID == item.id,
+                               let message = heartResultMessage {
+                                Text(message).font(.footnote).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 16).padding(.bottom, 8)
+                                    .accessibilityIdentifier("family-window-paw-result")
+                            }
+                        }
+                        if safetyResultMomentID == item.id, let message = safetyResultMessage {
+                            Label(message, systemImage: "exclamationmark.circle")
+                                .font(.footnote).foregroundStyle(.orange)
+                                .padding(16)
+                                .accessibilityIdentifier("family-window-safety-result")
+                        } else if let status = model.reportStatusText(item) {
+                            Text(status).font(.footnote).foregroundStyle(.secondary)
+                                .padding(16)
+                        }
+                    }
+                }
+                }
+                .id("\(model.pairingState?.spaceID ?? "")-\(item.id)")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Menu {
+                            Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
+                            receivedReportAction(item)
+                            Button("このiPhoneから削除", role: .destructive) { deleteReceivedTarget = item }
+                            if !model.isReportOnly {
+                                Button("この相手をブロック", role: .destructive) { blockTarget = item }
+                            }
+                        } label: { Image(systemName: "ellipsis.circle") }
+                        .accessibilityLabel("写真の情報と操作")
+                        .disabled(model.isWorking || model.isShowingLastKnownState)
+                    }
+                }
+            } else {
+                ContentUnavailableView("この写真は表示できません", systemImage: "photo",
+                    description: Text(model.errorMessage ?? "写真が削除されたか、表示期間が終了しました。"))
+            }
+        }
     }
 
     private var pairedContent: some View {
@@ -1029,6 +1126,11 @@ struct FamilyWindowView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
+                    if showsNotificationPrompt {
+                        notificationPromptCard
+                    } else if showsHomeScreenPrompt {
+                        homeScreenPromptCard
+                    }
                     outgoingStatusSection
                 }
 
@@ -1045,9 +1147,20 @@ struct FamilyWindowView: View {
             .padding(16)
         }
         .background(Color(uiColor: .systemGroupedBackground))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if canShowSendPhotoAction {
+                sendPhotoAction
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.bar)
+            }
+        }
         .refreshable { await model.synchronize() }
         .sheet(isPresented: $showsSharedPhotoInformation) {
             sharedPhotoInformation
+        }
+        .sheet(isPresented: $showsWindowWidgetGuide) {
+            familyWidgetGuide
         }
         .sheet(isPresented: $showsReportResponses) {
             MomentReportResponsesView(model: model)
@@ -1076,8 +1189,9 @@ struct FamilyWindowView: View {
         if let spaceID = model.pairingState?.spaceID {
             FamilyWindowPhotoCollection<AnyView>(spaceID: spaceID, windowName: model.windowDisplayName,
                 photos: photos, canShowRecords: !model.isShowingLastKnownState && !model.isReportOnly,
-                addPhotoAction: !model.isReportOnly && !model.isShowingLastKnownState
-                    && pendingNotificationRoute?.target == nil ? AnyView(sendPhotoAction) : nil,
+                // The send button is fixed at the bottom of the window (pairedContent).
+                addPhotoAction: nil,
+                canSendPhoto: canShowSendPhotoAction,
                 hasImageLessHistory: !unavailable.isEmpty,
                 showInformation: { showsSharedPhotoInformation = true }) { photo, captionSource in
                 let caption: String? = switch captionSource {
@@ -1140,7 +1254,7 @@ struct FamilyWindowView: View {
                     Text("＋から写真を1枚選び、確認して相手と共有します。写真や自分だけのメモが自動で共有されることはありません。")
                 }
                 Section("追加した写真") {
-                    Text("新しい写真とメモはこのまどに残り、二人で見返せます。Widgetにも届きます。")
+                    Text("新しい写真とメモはこのまどに残り、まどのメンバーで見返せます。ホーム画面の写真（ウィジェット）にも届きます。")
                 }
                 Section("以前に送った写真") {
                     Text("「表示期限あり」の写真は以前の期限のままです。写真を開いてメモを追加すると、このまどに残せます。期限のある写真は書き出しに含まれません。")
@@ -1149,7 +1263,7 @@ struct FamilyWindowView: View {
                     Text("写真とメモは「このまどの写真」の…から書き出せます。共有を終了すると、このまどの写真とメモは開けなくなります。")
                     Text("無期限の保管や、二人の全端末を失った場合の復元は保証していません。")
                 }
-                Section("内部テスト中") {
+                Section("残せる量") {
                     Text("まどごとに写真100枚・メモ1,000件まで。上限に達しても古い写真は自動で消しません。")
                 }
             }
@@ -1255,6 +1369,11 @@ struct FamilyWindowView: View {
         }
     }
 
+    private var canShowSendPhotoAction: Bool {
+        !model.isReportOnly && !model.isShowingLastKnownState
+            && pendingNotificationRoute?.target == nil
+    }
+
     private var sendPhotoAction: some View {
         PhotosPicker(
             selection: $selectedPhotoItem,
@@ -1262,16 +1381,22 @@ struct FamilyWindowView: View {
             preferredItemEncoding: .compatible,
             photoLibrary: .shared()
         ) {
-            Group {
+            // The window's primary action: a full-width, labelled button fixed
+            // above the tab bar, never an icon beside a section heading.
+            HStack(spacing: 10) {
                 if isPreparingSelectedPhoto {
                     ProgressView()
-                        .tint(.accentColor)
+                        .tint(.white)
                 } else {
-                    Image(systemName: "photo.badge.plus")
+                    Image(systemName: "paperplane.fill")
                 }
+                Text(isPreparingSelectedPhoto ? "写真を準備しています" : "写真を届ける")
             }
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .disabled(
             model.isWorking
@@ -1279,9 +1404,9 @@ struct FamilyWindowView: View {
                 || isPreparingSelectedPhoto
                 || isDeliveringSelectedPhoto
         )
-        .accessibilityLabel(isPreparingSelectedPhoto ? "写真を準備しています" : "写真を追加")
+        .accessibilityLabel(isPreparingSelectedPhoto ? "写真を準備しています" : "写真を届ける")
         .accessibilityIdentifier("family-window-photo-picker")
-        .accessibilityHint("写真を1枚選び、共有先を確認します")
+        .accessibilityHint("写真を1枚選び、届け先を確認します")
         .onChange(of: selectedPhotoItem) { _, item in
             prepareSelectedPhoto(item)
         }
@@ -1363,8 +1488,20 @@ struct FamilyWindowView: View {
         return "選んだ写真を確認しています。"
     }
 
+    /// ADR-027: まどは作った人がPlusで続ける。作った人（`inviter`。追加した
+    /// iPhone も同じ人）の送信は `addContentToOwnWindow`、招待された人の送信は
+    /// 常に許可の `addSharedContent`。止まっているまどの案内と「このまどを
+    /// 続ける」の入口は、まどの画面を担当するセッションが足す。
+    private var deliveryMembershipOperation: MembershipOperation {
+        model.pairingState?.role == .inviter ? .addContentToOwnWindow : .addSharedContent
+    }
+
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
         guard let item else { return }
+        guard membershipAccess.decision(for: deliveryMembershipOperation) == .allowed else {
+            selectedPhotoItem = nil
+            return
+        }
         let generation = UUID()
         deliverySelectionGeneration = generation
         photoSelectionMessage = nil
@@ -1583,6 +1720,7 @@ struct FamilyWindowView: View {
                     Text("まどの管理")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
+                    windowMembersLink
                     sharingManagementLink
                     if WindowSupportResumeAvailability.isEnabled {
                         Button(action: openWindowSupport) {
@@ -1619,10 +1757,72 @@ struct FamilyWindowView: View {
         } message: {
             Text("名前は相手のまどにも表示されます。")
         }
-        .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「表示する写真」で「\(model.windowDisplayName)」を選びます。")
+        .sheet(isPresented: $showsWidgetGuide) {
+            familyWidgetGuide
+        }
+    }
+
+    /// The same four steps as the official window guide, naming this window
+    /// as the source to pick. Shown from settings and from the window card.
+    private var familyWidgetGuide: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Label("ホーム画面にも、このまどを。", systemImage: "rectangle.on.rectangle")
+                        .font(.title2)
+                    Text("ホーム画面の写真（ウィジェット）に、このまどに届いた写真が出ます。アプリを開かなくても、写真の下からハートを送れます。")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    widgetGuidePlacementPicker
+                    VStack(alignment: .leading, spacing: 16) {
+                        if widgetGuideIsFirstPlacement {
+                            Text("1. ホーム画面の何もないところを長押しします。")
+                            Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
+                            Text("3. 置いた写真を長押しして、「ウィジェットを編集」を開きます。")
+                            Text("4. 「表示する写真」で、次のまどを選びます。")
+                        } else {
+                            Text("1. ホーム画面にある「ねこのまど」の写真を長押しして、「ウィジェットを編集」を開きます。")
+                            Text("2. 「表示する写真」で、次のまどを選びます。")
+                        }
+                        Label(model.windowDisplayName, systemImage: "person.2.fill")
+                            .font(.headline)
+                            .accessibilityIdentifier("family-window-widget-guide-source")
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    Text("中・大のサイズなら、写真の右下のしおりから、お気に入りにも入れられます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("ホーム画面に置く")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("閉じる") {
+                        showsWidgetGuide = false
+                        showsWindowWidgetGuide = false
+                    }
+                }
+            }
+        }
+    }
+
+    /// Segments truncate at accessibility sizes; a menu keeps both choices.
+    @ViewBuilder
+    private var widgetGuidePlacementPicker: some View {
+        let picker = Picker("ホーム画面の写真", selection: $widgetGuideIsFirstPlacement) {
+            Text("初めて置く").tag(true)
+            Text("すでに置いている").tag(false)
+        }
+        if dynamicTypeSize.isAccessibilitySize {
+            picker.pickerStyle(.menu)
+                .accessibilityIdentifier("family-window-widget-guide-placement")
+        } else {
+            picker.pickerStyle(.segmented)
+                .accessibilityIdentifier("family-window-widget-guide-placement")
         }
     }
 
@@ -1691,7 +1891,7 @@ struct FamilyWindowView: View {
             HStack(spacing: 12) {
                 settingsSymbol("rectangle.on.rectangle")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("ウィジェットの表示")
+                    Text("ホーム画面に置く")
                         .font(.subheadline.weight(.semibold))
                     if model.isReportOnly {
                         Text("共有が終了したため、写真は表示されません")
@@ -1778,6 +1978,94 @@ struct FamilyWindowView: View {
             .accessibilityHidden(true)
     }
 
+    /// Without this, notifications stay "quiet" (provisional) and an arriving
+    /// photo is easy to miss (M20). Ask once, in the window, in plain words.
+    private var showsNotificationPrompt: Bool {
+        !notificationPromptDismissed
+            && (notificationAuthorizationState == .notRequested
+                || notificationAuthorizationState == .quiet)
+    }
+
+    private var notificationPromptCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("写真が届いたら知らせる", systemImage: "bell.badge")
+                .font(.headline)
+            Text("まどに写真やハートが届いたとき、ロック画面に知らせます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button {
+                    Task { await requestVisibleNotificationAuthorization() }
+                } label: {
+                    Text("通知をオンにする").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("family-window-notification-prompt-enable")
+                Button("あとで") { notificationPromptDismissed = true }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("family-window-notification-prompt-later")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-notification-prompt")
+    }
+
+    /// A paired window's photos reach the home screen only after the person
+    /// picks this window in the Widget's settings (M22). Offer the guide once
+    /// per window, after the notification prompt has been handled.
+    private var showsHomeScreenPrompt: Bool {
+        guard model.isPaired, notificationAuthorizationState != .checking,
+              let key = homeScreenGuideKey else { return false }
+        return !homeScreenGuideSeenKeys.split(separator: "\n").contains(Substring(key))
+    }
+
+    private var homeScreenGuideKey: String? {
+        guard let spaceID = model.pairingState?.spaceID else { return nil }
+        let digest = SHA256.hash(data: Data("home-screen-guide|\(spaceID)".utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func markHomeScreenGuideSeen() {
+        guard let key = homeScreenGuideKey else { return }
+        var keys = homeScreenGuideSeenKeys.split(separator: "\n").map(String.init)
+        guard !keys.contains(key) else { return }
+        keys.append(key)
+        homeScreenGuideSeenKeys = keys.suffix(20).joined(separator: "\n")
+    }
+
+    private var homeScreenPromptCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("ホーム画面にこのまどを置く", systemImage: "rectangle.on.rectangle")
+                .font(.headline)
+            Text("届いた写真が、アプリを開かなくてもホーム画面に出ます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button {
+                    markHomeScreenGuideSeen()
+                    showsWindowWidgetGuide = true
+                } label: {
+                    Text("置き方を見る").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("family-window-home-screen-prompt-open")
+                Button("あとで") { markHomeScreenGuideSeen() }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("family-window-home-screen-prompt-later")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-home-screen-prompt")
+    }
+
     @ViewBuilder
     private var notificationAction: some View {
         switch notificationAuthorizationState {
@@ -1856,6 +2144,49 @@ struct FamilyWindowView: View {
         UIApplication.shared.open(url)
     }
 
+    /// Today's two people, shown through the group members screen (1-5) so
+    /// the same place lists everyone once windows hold more than two.
+    private var legacyMembersSnapshot: LegacyPairingGroupWindowClient.Snapshot {
+        let state = model.pairingState
+        return LegacyPairingGroupWindowClient.Snapshot(
+            windowID: state?.spaceID ?? "legacy-window",
+            name: model.windowDisplayName,
+            myParticipantID: state?.participantID ?? "this-iphone",
+            peerParticipantID: state?.peerParticipantID,
+            isOwner: state?.role == .inviter,
+            isClosed: model.isReportOnly
+        )
+    }
+
+    private var windowMembersLink: some View {
+        NavigationLink {
+            LegacyWindowMembersScreen(snapshot: legacyMembersSnapshot)
+        } label: {
+            HStack(spacing: 12) {
+                settingsSymbol("person.2")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("メンバー")
+                        .font(.subheadline.weight(.semibold))
+                    Text(legacyMembersSnapshot.peerParticipantID == nil ? "あなただけ" : "2人")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                settingsChevron
+            }
+            .frame(minHeight: 44)
+            .padding(14)
+            .background(
+                Color(uiColor: .secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 16)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("このまどに参加している人を確認します")
+        .accessibilityIdentifier("family-window-members")
+    }
+
     private var sharingManagementLink: some View {
         NavigationLink {
 #if DEBUG
@@ -1909,7 +2240,7 @@ struct FamilyWindowView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Text("新しい送受信は行いません。安全上の問題は、写真や招待秘密を添付せずTestFlightのベータ版フィードバックから連絡してください。")
+                Text("新しい送受信は行いません。安全上の問題は、写真や招待のリンクを添付せずに、サポートから連絡してください。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if let url = SharingAPIConfiguration.current.supportURL {
@@ -1917,6 +2248,12 @@ struct FamilyWindowView: View {
                         .font(.subheadline.weight(.semibold))
                 }
             }
+            // A finished window still has a next step: back to the list,
+            // where another window can be opened or a new one created.
+            Button("まどの一覧に戻る", systemImage: "chevron.left") { dismissWindow() }
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("family-window-report-only-back")
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2008,6 +2345,9 @@ struct FamilyWindowView: View {
         case .terminalResults:
             guard model.outgoingPresentation.terminalDeliveryResultCount > 0 else { return }
             showsTerminalResultDismissConfirmation = true
+        case .choosePhoto:
+            guard canShowSendPhotoAction else { return }
+            showsReplacementPhotoPicker = true
         case nil:
             break
         }
@@ -2220,6 +2560,15 @@ struct FamilyWindowView: View {
                 Text(outcome.latestCreatedAt.formatted(.dateTime.month().day().hour().minute()))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if canShowSendPhotoAction {
+                    Button("別の写真を選ぶ", systemImage: "photo.on.rectangle") {
+                        requestOutgoingConfirmation(.choosePhoto)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
+                    .disabled(model.isPerformingAction || model.isShowingLastKnownState)
+                    .accessibilityIdentifier("family-window-outgoing-outcome-choose-photo")
+                }
             }
             Spacer(minLength: 0)
         }
@@ -2412,6 +2761,11 @@ struct FamilyWindowView: View {
         } else {
             canSendHeart ? .ready : nil
         }
+        // Only older deliveries without a shared record leave this window.
+        // Saying when, next to the way to keep it, removes the surprise.
+        let expiryNotice: String? = item.senderPolicyVersion == 1 && !model.isSavedMemory(item)
+            ? "\(item.receivedAt.addingTimeInterval(FamilyWidgetManifestItem.maximumDisplayDuration).formatted(.dateTime.month().day()))まで表示されます。お気に入りに入れると、期限後も残ります。"
+            : nil
         return MomentReceivedPhotoActions(
             isSaved: model.isSavedMemory(item),
             hasImportedMemory: model.hasImportedMemory(item),
@@ -2438,7 +2792,8 @@ struct FamilyWindowView: View {
                     heartResultFailed = model.heartActionMessage == nil
                     heartResultMomentID = item.id
                 }
-            }
+            },
+            expiryNotice: expiryNotice
         )
     }
 
@@ -2776,7 +3131,7 @@ struct FamilyWindowView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MiBまで保持します。")
+            Text("写真は公開されません。届けるために預かる暗号化した写真は、受け取られてから7日（受け取られないときは30日）でサーバーから消します。届いた写真は、このiPhoneに最長90日・500枚まで残ります。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。別のiPhoneや再インストール後には表示されません。")
@@ -2860,6 +3215,19 @@ struct MomentPhotoActionsLayout<Content: View>: View {
 
 /// The shipping received-photo controls. Owners supply presentation state and
 /// callbacks; this view never changes a subscription, PhotoKit, or the outbox.
+/// A ready heart is filled red; after sending (or when unavailable) it steps back.
+private struct MomentHeartButtonStyle: ViewModifier {
+    let isReady: Bool
+
+    func body(content: Content) -> some View {
+        if isReady {
+            content.buttonStyle(.borderedProminent).tint(.red)
+        } else {
+            content.buttonStyle(.bordered).tint(.red)
+        }
+    }
+}
+
 struct MomentReceivedPhotoActions: View {
     enum HeartState {
         case ready, retry, unavailable, sent
@@ -2869,7 +3237,7 @@ struct MomentReceivedPhotoActions: View {
             case .ready: "ハートを送る"
             case .retry: "ハートを再送"
             case .unavailable: "ハートを送れません"
-            case .sent: "ハート送信済み"
+            case .sent: "ハートを送りました"
             }
         }
 
@@ -2903,10 +3271,26 @@ struct MomentReceivedPhotoActions: View {
     let requestMemorySave: () -> Void
     let requestMemoryRemoval: () -> Void
     let sendHeart: () -> Void
+    /// When this photo will leave the window, and how to keep it (M15).
+    var expiryNotice: String? = nil
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let expiryNotice {
+                Label(expiryNotice, systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("family-window-received-expiry")
+            }
+            actionControls
+        }
+    }
+
+    private var actionControls: some View {
         MomentPhotoActionsLayout {
-            memoryControl
+            // The heart is the reaction this photo is for, so it comes first,
+            // always shows its words and uses the strongest style while ready.
             if let heartState {
                 Button(action: sendHeart) {
                     HStack(spacing: 6) {
@@ -2916,20 +3300,19 @@ struct MomentReceivedPhotoActions: View {
                         } else {
                             Image(systemName: heartState.icon).font(.body)
                         }
-                        if heartState == .retry || heartState == .unavailable {
-                            Text(heartState.title)
-                        }
+                        Text(heartState.title)
                     }
-                    .font(.caption.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.bordered)
-                .tint(.accentColor)
+                .modifier(MomentHeartButtonStyle(isReady: heartState == .ready))
                 .disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)
                 .accessibilityLabel(heartState.accessibilityLabel)
                 .accessibilityIdentifier("family-window-send-paw")
+                .sensoryFeedback(trigger: heartState == .sent) { _, isSent in isSent ? .success : nil }
             }
+            memoryControl
         }
     }
 

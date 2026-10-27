@@ -308,6 +308,12 @@ final class AppViewModel: ObservableObject {
     private var managedOutputMutationSequence = 0
     private var successfulImageLoadCount = 0
     private var sharedLikeRecords: [String: SharedLikeRecord] = [:]
+
+    /// Existing import provenance survives removal from Favorites and rescans.
+    var receivedPhotoIdentifiers: Set<String> {
+        Set(sharedLikeRecords.compactMap { $0.value.isReceivedMemoryImport == true ? $0.key : nil })
+    }
+
     private var isManualRescanRequestPending = false
     private var sharingSyncObserver: NSObjectProtocol?
     private var momentPresentationRefreshObserver: NSObjectProtocol?
@@ -2371,6 +2377,25 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleURL(_ url: URL) {
+        // A group window's home-screen photo opens that window in the まど tab.
+        if let groupWindowID = GroupWidgetCache.windowID(fromOpenURL: url) {
+            GroupWindowOpenInbox.shared.open(windowID: groupWindowID)
+            SharedLog.app.info("deeplink", "Opened group window from Widget")
+            return
+        }
+        // An invitation link carries its keys in the fragment. Keep the link
+        // out of logs and messages; only the parsed value goes to the まど tab.
+        if GroupInvitationLink.isCandidate(url) {
+            guard let invitation = GroupInvitationLink(url: url) else {
+                SharedLog.app.warning("deeplink", "Rejected malformed group invitation link")
+                errorMessage = "招待リンクを読み取れませんでした。新しい招待を受け取ってください。"
+                return
+            }
+            GroupInvitationInbox.shared.receive(invitation)
+            isFamilyWindowPresented = true
+            SharedLog.app.info("deeplink", "Opened group invitation link")
+            return
+        }
         guard let link = DeepLink(url: url) else {
             SharedLog.app.warning(
                 "deeplink",
@@ -3792,6 +3817,10 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func refreshCloudyWindow() async {
+        await rebuildWidgetCache(reportErrors: true)
+    }
+
     private func performRebuildWidgetCache(reportErrors: Bool) async {
         SharedLog.app.info(
             "widget-cache",
@@ -3805,7 +3834,10 @@ final class AppViewModel: ObservableObject {
             let revision = try synchronizePersonalWidgetAuthority()
             let input = candidateSnapshot(snapshot)
             let result = try await widgetCacheBuilder.replenishPersonal(
-                from: input, eligibilityRevision: revision)
+                from: input, eligibilityRevision: revision,
+                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
+            try synchronizeCloudyWindowMetadata()
+            try await CloudyWindowImagePreparer.shared.prepare()
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
             // unchanged; the shared journal records issued slots separately.
             WidgetCenter.shared.reloadAllTimelines()
@@ -3828,8 +3860,11 @@ final class AppViewModel: ObservableObject {
                         do {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
-                                skippingPhotoIDs: attemptedPhotoIDs)
+                                skippingPhotoIDs: attemptedPhotoIDs,
+                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
+                            try self.synchronizeCloudyWindowMetadata()
+                            try await CloudyWindowImagePreparer.shared.prepare()
                             if batch.addedCount > 0 { WidgetCenter.shared.reloadAllTimelines() }
                             if !batch.hasMore { return }
                         } catch { return } // Next foreground/BG opportunity can resume.
@@ -3963,8 +3998,26 @@ final class AppViewModel: ObservableObject {
             isAuthorized: authorized, now: now, photoModificationDates: dates,
             bootstrapCandidates: bootstrap,
             interval: TimeInterval(curated.settings.widgetEntryIntervalMinutes * 60))
+        try synchronizeCloudyWindowMetadata(input: curated)
         if !bootstrap.isEmpty { WidgetCenter.shared.reloadAllTimelines() }
         return revision
+    }
+
+    private func synchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
+        guard InternalBuildPresentationAvailability.isAvailable,
+              CloudyWindowStore.shared.configuration().enabled else { return }
+        let records = (input ?? candidateSnapshot(snapshot)).assets
+        let received = receivedPhotoIdentifiers
+        var metadata: [String: CloudyWindowPhotoMetadata] = [:]
+        for record in records where !received.contains(record.localIdentifier) {
+            let profiles = catHouseholdIdentity?.confirmedProfileIDs(for: record.localIdentifier) ?? []
+            metadata[record.localIdentifier] = .init(creationDate: record.creationDate,
+                burstIdentifier: record.burstIdentifier,
+                profileIDs: Set(profiles.map { $0.uuidString.lowercased() }),
+                previouslyShown: record.shownCount > 0 || record.lastShownAt != nil)
+        }
+        try CloudyWindowStore.shared.synchronize(metadata: metadata,
+            profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }))
     }
 
     private func reconcilePersonalWidgetReadAuthority() async {

@@ -94,6 +94,7 @@
 		100000000000000000000116 /* PhotoLibraryScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000216 /* PhotoLibraryScanner.swift */; };
 		100000000000000000000117 /* PhotoSelectors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000217 /* PhotoSelectors.swift */; };
 		100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000218 /* WidgetCacheBuilder.swift */; };
+		A261024B0000000000000005 /* CloudyWindowImagePreparer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000004 /* CloudyWindowImagePreparer.swift */; };
 		100000000000000000000119 /* AppLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000219 /* AppLogStore.swift */; };
 		100000000000000000000120 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000220 /* AppViewModel.swift */; };
 		100000000000000000000142 /* PairingInstallationGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021A /* PairingInstallationGuard.swift */; };
@@ -152,12 +153,14 @@
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */; };
 		100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025B /* MonthlyWindowPresentation.swift */; };
+		A261024C0000000000000002 /* AlbumPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024C0000000000000001 /* AlbumPrototypeView.swift */; };
 		10000000000000000000017A /* MonthlyWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025C /* MonthlyWindowView.swift */; };
 		10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025D /* SeasonalMoviePresentation.swift */; };
 		10000000000000000000017C /* SeasonalMovieCandidateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025E /* SeasonalMovieCandidateService.swift */; };
 		10000000000000000000017D /* SeasonalMovieView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025F /* SeasonalMovieView.swift */; };
 		10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */; };
 		10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000261 /* SeasonalMovieExportService.swift */; };
+		E02310230000000000000001 /* PlusAuthorityCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02310230000000000000002 /* PlusAuthorityCache.swift */; };
 		100000000000000000000180 /* PlusPurchaseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000262 /* PlusPurchaseStore.swift */; };
 		100000000000000000000181 /* BillingClientCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000263 /* BillingClientCore.swift */; };
 		100000000000000000000182 /* BillingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000264 /* BillingKeychainStore.swift */; };
@@ -174,7 +177,18 @@
 		100000000000000000000137 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000237 /* SettingsView.swift */; };
 		100000000000000000000138 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000238 /* LogView.swift */; };
 		100000000000000000000145 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000239 /* PairingView.swift */; };
+		CC2610200000000000000012 /* CatCareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000011 /* CatCareCore.swift */; };
+		CC2610200000000000000014 /* CatCareStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000013 /* CatCareStore.swift */; };
+		FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000001 /* FamilyNotebookCore.swift */; };
+		FA2610260000000000000004 /* FamilyNotebookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000003 /* FamilyNotebookStore.swift */; };
+		FA2610260000000000000006 /* FamilyNotebookMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000005 /* FamilyNotebookMigration.swift */; };
+		CC2610200000000000000016 /* CatCareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000015 /* CatCareView.swift */; };
+		CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000001 /* GroupWindowSetupView.swift */; };
+		CC2610200000000000000006 /* GroupWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000005 /* GroupWindowView.swift */; };
+		CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */; };
 		100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */; };
+		CC261020000000000000000D /* SendGroupWidgetHeartIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */; };
+		CC261020000000000000000E /* SendGroupWidgetHeartIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */; };
 		10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
 		200000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		200000000000000000000002 /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
@@ -241,11 +255,28 @@
 		D02609100000000000000202 /* OfficialWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000200 /* OfficialWindowStore.swift */; };
 		D02609100000000000000301 /* OfficialWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000300 /* OfficialWindowView.swift */; };
 		A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000001 /* PersonalRediscoveryStore.swift */; };
+		A261024B0000000000000002 /* CloudyWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000001 /* CloudyWindowStore.swift */; };
 		A16700000000000000000070 /* PersonalRediscoveryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000001 /* PersonalRediscoveryStore.swift */; };
+		A261024B0000000000000003 /* CloudyWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000001 /* CloudyWindowStore.swift */; };
 		A16700000000000000000079 /* PersonalWidgetBackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */; };
 		A16700000000000000000083 /* PersonalRediscoveryHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */; };
 		A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
+		A261024B0000000000000007 /* RevealCloudyWindowIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */; };
 		A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */; };
+		A261024B0000000000000008 /* RevealCloudyWindowIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */; };
+		AA2610200000000000000002 /* GroupWindowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000001 /* GroupWindowCore.swift */; };
+		CC261020000000000000000A /* GroupWidgetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000009 /* GroupWidgetCache.swift */; };
+		CC261020000000000000000B /* GroupWidgetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000009 /* GroupWidgetCache.swift */; };
+		AA2610200000000000000004 /* GroupWindowContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000003 /* GroupWindowContract.swift */; };
+		CC2610200000000000000004 /* GroupInvitationLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000003 /* GroupInvitationLink.swift */; };
+		AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000005 /* GroupWindowFixture.swift */; };
+		AB2610200000000000000066 /* GroupWindowWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000065 /* GroupWindowWire.swift */; };
+		AB2610200000000000000068 /* GroupWindowStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000067 /* GroupWindowStorage.swift */; };
+		AB261020000000000000006A /* GroupWindowTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000069 /* GroupWindowTransport.swift */; };
+		AB261020000000000000006C /* GroupWindowAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006B /* GroupWindowAPIModels.swift */; };
+		AB261020000000000000006E /* ProductionGroupWindowClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006D /* ProductionGroupWindowClient.swift */; };
+		AB2610200000000000000070 /* GroupWindowPhotoValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006F /* GroupWindowPhotoValidation.swift */; };
+		AB2610200000000000000072 /* GroupWindowOperationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000071 /* GroupWindowOperationStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -386,6 +417,7 @@
 		F00000000000000000000216 /* PhotoLibraryScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryScanner.swift; sourceTree = "<group>"; };
 		F00000000000000000000217 /* PhotoSelectors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSelectors.swift; sourceTree = "<group>"; };
 		F00000000000000000000218 /* WidgetCacheBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheBuilder.swift; sourceTree = "<group>"; };
+		A261024B0000000000000004 /* CloudyWindowImagePreparer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudyWindowImagePreparer.swift; sourceTree = "<group>"; };
 		F00000000000000000000219 /* AppLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000220 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		F0000000000000000000021A /* PairingInstallationGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingInstallationGuard.swift; sourceTree = "<group>"; };
@@ -400,12 +432,14 @@
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
 		BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HouseholdAlbumCatalogCoordinator.swift; sourceTree = "<group>"; };
 		F0000000000000000000025B /* MonthlyWindowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowPresentation.swift; sourceTree = "<group>"; };
+		A261024C0000000000000001 /* AlbumPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlbumPrototypeView.swift; sourceTree = "<group>"; };
 		F0000000000000000000025C /* MonthlyWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowView.swift; sourceTree = "<group>"; };
 		F0000000000000000000025D /* SeasonalMoviePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMoviePresentation.swift; sourceTree = "<group>"; };
 		F0000000000000000000025E /* SeasonalMovieCandidateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieCandidateService.swift; sourceTree = "<group>"; };
 		F0000000000000000000025F /* SeasonalMovieView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieView.swift; sourceTree = "<group>"; };
 		F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieArchiveStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000261 /* SeasonalMovieExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieExportService.swift; sourceTree = "<group>"; };
+		E02310230000000000000002 /* PlusAuthorityCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusAuthorityCache.swift; sourceTree = "<group>"; };
 		F00000000000000000000262 /* PlusPurchaseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusPurchaseStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000263 /* BillingClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingClientCore.swift; sourceTree = "<group>"; };
 		F00000000000000000000264 /* BillingKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingKeychainStore.swift; sourceTree = "<group>"; };
@@ -422,6 +456,15 @@
 		F00000000000000000000237 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000238 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		F00000000000000000000239 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		CC2610200000000000000011 /* CatCareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareCore.swift; sourceTree = "<group>"; };
+		CC2610200000000000000013 /* CatCareStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareStore.swift; sourceTree = "<group>"; };
+		FA2610260000000000000001 /* FamilyNotebookCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookCore.swift; sourceTree = "<group>"; };
+		FA2610260000000000000003 /* FamilyNotebookStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookStore.swift; sourceTree = "<group>"; };
+		FA2610260000000000000005 /* FamilyNotebookMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookMigration.swift; sourceTree = "<group>"; };
+		CC2610200000000000000015 /* CatCareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareView.swift; sourceTree = "<group>"; };
+		CC2610200000000000000001 /* GroupWindowSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowSetupView.swift; sourceTree = "<group>"; };
+		CC2610200000000000000005 /* GroupWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowView.swift; sourceTree = "<group>"; };
+		CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowLocalPhotoStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000023A /* GrowthAlbumSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthAlbumSelector.swift; sourceTree = "<group>"; };
 		F0000000000000000000023B /* GrowthAlbumView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthAlbumView.swift; sourceTree = "<group>"; };
 		F0000000000000000000022D /* CatCandidateCurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCandidateCurationStore.swift; sourceTree = "<group>"; };
@@ -468,6 +511,7 @@
 		F00000000000000000000315 /* WidgetCacheImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheImageLoader.swift; sourceTree = "<group>"; };
 		F00000000000000000000316 /* WidgetManifestReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetManifestReader.swift; sourceTree = "<group>"; };
 		F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToggleWidgetLikeIntent.swift; sourceTree = "<group>"; };
+		CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendGroupWidgetHeartIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetConfigurationIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000350 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		F00000000000000000000352 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -495,9 +539,23 @@
 		D02609100000000000000200 /* OfficialWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowStore.swift; sourceTree = "<group>"; };
 		D02609100000000000000300 /* OfficialWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowView.swift; sourceTree = "<group>"; };
 		A16700000000000000000001 /* PersonalRediscoveryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalRediscoveryStore.swift; sourceTree = "<group>"; };
+		A261024B0000000000000001 /* CloudyWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudyWindowStore.swift; sourceTree = "<group>"; };
 		A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetBackgroundRefresh.swift; sourceTree = "<group>"; };
 		A16700000000000000000003 /* PersonalRediscoveryHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalRediscoveryHistoryView.swift; sourceTree = "<group>"; };
 		A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyPersonalPhotoIntent.swift; sourceTree = "<group>"; };
+		A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RevealCloudyWindowIntent.swift; sourceTree = "<group>"; };
+		AA2610200000000000000001 /* GroupWindowCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowCore.swift; sourceTree = "<group>"; };
+		CC2610200000000000000009 /* GroupWidgetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWidgetCache.swift; sourceTree = "<group>"; };
+		AA2610200000000000000003 /* GroupWindowContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowContract.swift; sourceTree = "<group>"; };
+		CC2610200000000000000003 /* GroupInvitationLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupInvitationLink.swift; sourceTree = "<group>"; };
+		AA2610200000000000000005 /* GroupWindowFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowFixture.swift; sourceTree = "<group>"; };
+		AB2610200000000000000065 /* GroupWindowWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowWire.swift; sourceTree = "<group>"; };
+		AB2610200000000000000067 /* GroupWindowStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowStorage.swift; sourceTree = "<group>"; };
+		AB2610200000000000000069 /* GroupWindowTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowTransport.swift; sourceTree = "<group>"; };
+		AB261020000000000000006B /* GroupWindowAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowAPIModels.swift; sourceTree = "<group>"; };
+		AB261020000000000000006D /* ProductionGroupWindowClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionGroupWindowClient.swift; sourceTree = "<group>"; };
+		AB261020000000000000006F /* GroupWindowPhotoValidation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowPhotoValidation.swift; sourceTree = "<group>"; };
+		AB2610200000000000000071 /* GroupWindowOperationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowOperationStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -651,6 +709,7 @@
 				F0000000000000000000010C /* AtomicJSON.swift */,
 				F0000000000000000000010E /* SharedLikeStore.swift */,
 				A16700000000000000000001 /* PersonalRediscoveryStore.swift */,
+				A261024B0000000000000001 /* CloudyWindowStore.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -680,6 +739,8 @@
 				F000000000000000000001A1 /* PairingKeychainStore.swift */,
 				F000000000000000000001A2 /* DailySharingCore.swift */,
 				F000000000000000000001A3 /* MomentSharingCore.swift */,
+				AA2610200000000000000001 /* GroupWindowCore.swift */,
+				CC2610200000000000000009 /* GroupWidgetCache.swift */,
 				F000000000000000000001A4 /* MomentSharingStore.swift */,
 				F000000000000000000001A5 /* MomentShareHandoffStore.swift */,
 				F000000000000000000001A6 /* SharingAPIConfiguration.swift */,
@@ -742,6 +803,7 @@
 				F0000000000000000000022C /* HomeLocationClassifier.swift */,
 				F00000000000000000000217 /* PhotoSelectors.swift */,
 				F00000000000000000000218 /* WidgetCacheBuilder.swift */,
+				A261024B0000000000000004 /* CloudyWindowImagePreparer.swift */,
 				E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */,
 				F00000000000000000000219 /* AppLogStore.swift */,
 				F0000000000000000000021A /* PairingInstallationGuard.swift */,
@@ -757,6 +819,22 @@
 				F00000000000000000000244 /* CatSimilarityGroupingCore.swift */,
 				F00000000000000000000245 /* CatSimilarityGroupingService.swift */,
 				F00000000000000000000249 /* PhotoBookPolicy.swift */,
+				AA2610200000000000000005 /* GroupWindowFixture.swift */,
+				AA2610200000000000000003 /* GroupWindowContract.swift */,
+				CC2610200000000000000011 /* CatCareCore.swift */,
+				CC2610200000000000000013 /* CatCareStore.swift */,
+				FA2610260000000000000001 /* FamilyNotebookCore.swift */,
+				FA2610260000000000000003 /* FamilyNotebookStore.swift */,
+				FA2610260000000000000005 /* FamilyNotebookMigration.swift */,
+				AB2610200000000000000071 /* GroupWindowOperationStore.swift */,
+				AB261020000000000000006F /* GroupWindowPhotoValidation.swift */,
+				AB261020000000000000006D /* ProductionGroupWindowClient.swift */,
+				AB261020000000000000006B /* GroupWindowAPIModels.swift */,
+				AB2610200000000000000069 /* GroupWindowTransport.swift */,
+				AB2610200000000000000067 /* GroupWindowStorage.swift */,
+				AB2610200000000000000065 /* GroupWindowWire.swift */,
+				CC2610200000000000000003 /* GroupInvitationLink.swift */,
+				CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */,
 				F0000000000000000000024A /* PhotoBookPDFExporter.swift */,
 				E02609230000000000000002 /* ShowcasePhotoStore.swift */,
 				E02609230000000000000006 /* CatPreparednessStore.swift */,
@@ -781,6 +859,7 @@
 				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
 				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
 				F00000000000000000000262 /* PlusPurchaseStore.swift */,
+				E02310230000000000000002 /* PlusAuthorityCache.swift */,
 				D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */,
 				94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */,
 				E02609210000000000000002 /* MembershipOfferModel.swift */,
@@ -812,6 +891,7 @@
 				E02609210000000000000004 /* MembershipOfferView.swift */,
 				BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */,
 				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
+				A261024C0000000000000001 /* AlbumPrototypeView.swift */,
 				F0000000000000000000025C /* MonthlyWindowView.swift */,
 				F0000000000000000000025D /* SeasonalMoviePresentation.swift */,
 				F0000000000000000000025F /* SeasonalMovieView.swift */,
@@ -855,6 +935,9 @@
 				F00000000000000000000248 /* CatSimilarityReviewCoordinatorView.swift */,
 				F0000000000000000000024E /* CatIdentityExperimentView.swift */,
 				F00000000000000000000255 /* FamilyWindowView.swift */,
+				CC2610200000000000000015 /* CatCareView.swift */,
+				CC2610200000000000000001 /* GroupWindowSetupView.swift */,
+				CC2610200000000000000005 /* GroupWindowView.swift */,
 				E02609080000000000000002 /* MomentDeliveryComposer.swift */,
 				E02609090000000000000012 /* PhotoWindowDeliveryView.swift */,
 				E02609090000000000000022 /* MomentPhotoDeliveryProgressView.swift */,
@@ -877,7 +960,9 @@
 				F00000000000000000000315 /* WidgetCacheImageLoader.swift */,
 				F00000000000000000000316 /* WidgetManifestReader.swift */,
 				F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */,
+				CC261020000000000000000C /* SendGroupWidgetHeartIntent.swift */,
 				A16700000000000000000004 /* DailyPersonalPhotoIntent.swift */,
+				A261024B0000000000000006 /* RevealCloudyWindowIntent.swift */,
 				F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */,
 				F00000000000000000000301 /* Info.plist */,
 				F00000000000000000000302 /* NekoWidgetWidget.entitlements */,
@@ -1112,6 +1197,7 @@
 				E02609220000000000000005 /* PersonalWidgetMembershipStore.swift in Sources */,
 				E02609220000000000000008 /* MembershipAccessContext.swift in Sources */,
 				A1670000000000000000006F /* PersonalRediscoveryStore.swift in Sources */,
+				A261024B0000000000000002 /* CloudyWindowStore.swift in Sources */,
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
 				100000000000000000000140 /* PairingCore.swift in Sources */,
 				100000000000000000000141 /* PairingKeychainStore.swift in Sources */,
@@ -1153,6 +1239,7 @@
 				10000000000000000000014E /* HomeLocationClassifier.swift in Sources */,
 				100000000000000000000117 /* PhotoSelectors.swift in Sources */,
 				100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */,
+				A261024B0000000000000005 /* CloudyWindowImagePreparer.swift in Sources */,
 				E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */,
 				100000000000000000000119 /* AppLogStore.swift in Sources */,
 				100000000000000000000120 /* AppViewModel.swift in Sources */,
@@ -1173,6 +1260,7 @@
 				E02609210000000000000003 /* MembershipOfferView.swift in Sources */,
 				BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */,
 				100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */,
+				A261024C0000000000000002 /* AlbumPrototypeView.swift in Sources */,
 				10000000000000000000017A /* MonthlyWindowView.swift in Sources */,
 				10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */,
 				10000000000000000000017C /* SeasonalMovieCandidateService.swift in Sources */,
@@ -1180,6 +1268,7 @@
 				10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */,
 				10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */,
 				100000000000000000000180 /* PlusPurchaseStore.swift in Sources */,
+				E02310230000000000000001 /* PlusAuthorityCache.swift in Sources */,
 				C09D345411BC400BBB805EB4 /* WindowSupportResumeClient.swift in Sources */,
 				05282243C4C04065AD6112F7 /* WindowSupportResumeModel.swift in Sources */,
 				E02609210000000000000001 /* MembershipOfferModel.swift in Sources */,
@@ -1221,6 +1310,18 @@
 				100000000000000000000166 /* CatIdentityExperimentExporter.swift in Sources */,
 				100000000000000000000167 /* CatIdentityExperimentView.swift in Sources */,
 				100000000000000000000168 /* MomentSharingCore.swift in Sources */,
+				AA2610200000000000000006 /* GroupWindowFixture.swift in Sources */,
+				AA2610200000000000000004 /* GroupWindowContract.swift in Sources */,
+				AB2610200000000000000072 /* GroupWindowOperationStore.swift in Sources */,
+				AB2610200000000000000070 /* GroupWindowPhotoValidation.swift in Sources */,
+				AB261020000000000000006E /* ProductionGroupWindowClient.swift in Sources */,
+				AB261020000000000000006C /* GroupWindowAPIModels.swift in Sources */,
+				AB261020000000000000006A /* GroupWindowTransport.swift in Sources */,
+				AB2610200000000000000068 /* GroupWindowStorage.swift in Sources */,
+				AB2610200000000000000066 /* GroupWindowWire.swift in Sources */,
+				CC2610200000000000000004 /* GroupInvitationLink.swift in Sources */,
+				AA2610200000000000000002 /* GroupWindowCore.swift in Sources */,
+				CC261020000000000000000A /* GroupWidgetCache.swift in Sources */,
 				100000000000000000000169 /* MomentSharingStore.swift in Sources */,
 				100000000000000000000170 /* MomentShareHandoffStore.swift in Sources */,
 				100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */,
@@ -1257,8 +1358,19 @@
 				100000000000000000000137 /* SettingsView.swift in Sources */,
 				100000000000000000000138 /* LogView.swift in Sources */,
 				100000000000000000000145 /* PairingView.swift in Sources */,
+				CC2610200000000000000012 /* CatCareCore.swift in Sources */,
+				CC2610200000000000000014 /* CatCareStore.swift in Sources */,
+				FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */,
+				FA2610260000000000000004 /* FamilyNotebookStore.swift in Sources */,
+				FA2610260000000000000006 /* FamilyNotebookMigration.swift in Sources */,
+				CC2610200000000000000016 /* CatCareView.swift in Sources */,
+				CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */,
+				CC2610200000000000000006 /* GroupWindowView.swift in Sources */,
+				CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */,
 				100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */,
+				CC261020000000000000000D /* SendGroupWidgetHeartIntent.swift in Sources */,
 				A1670000000000000000008D /* DailyPersonalPhotoIntent.swift in Sources */,
+				A261024B0000000000000007 /* RevealCloudyWindowIntent.swift in Sources */,
 				10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1268,6 +1380,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D02609100000000000000202 /* OfficialWindowStore.swift in Sources */,
+				CC261020000000000000000B /* GroupWidgetCache.swift in Sources */,
 				D02609100000000000000102 /* OfficialWindowCatalog.swift in Sources */,
 				200000000000000000000001 /* SharedContainer.swift in Sources */,
 				200000000000000000000002 /* WidgetManifest.swift in Sources */,
@@ -1283,6 +1396,7 @@
 				E02609220000000000000003 /* MembershipAccessPolicy.swift in Sources */,
 				E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */,
 				A16700000000000000000070 /* PersonalRediscoveryStore.swift in Sources */,
+				A261024B0000000000000003 /* CloudyWindowStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,
 				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
@@ -1292,7 +1406,9 @@
 				200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */,
 				200000000000000000000016 /* WidgetManifestReader.swift in Sources */,
 				200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */,
+				CC261020000000000000000E /* SendGroupWidgetHeartIntent.swift in Sources */,
 				A1670000000000000000008E /* DailyPersonalPhotoIntent.swift in Sources */,
+				A261024B0000000000000008 /* RevealCloudyWindowIntent.swift in Sources */,
 				E0260923000000000000000B /* OpenShowcaseIntent.swift in Sources */,
 				E0260923000000000000000C /* ShowcaseControl.swift in Sources */,
 				200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */,

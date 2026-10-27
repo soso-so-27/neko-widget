@@ -67,10 +67,29 @@ final class CareHandoffStore: ObservableObject {
             plan.cats[index].updatedAt = Date()
         }
     }
+    @discardableResult
+    func linkProfile(_ profileID: String, to id: UUID) -> Bool {
+        guard UUID(uuidString: profileID) != nil, loadError == nil, saveError == nil, let repository,
+              let index = plan.cats.firstIndex(where: { $0.id == id }) else { return false }
+        var next = plan
+        next.cats[index].profileID = profileID
+        do {
+            try repository.commit(next)
+            plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+            return true
+        } catch {
+            saveError = "登録した猫とのつながりを保存できませんでした。もう一度保存してから、猫を選び直してください。"
+            return false
+        }
+    }
     func addCat(profileID: String? = nil, name: String = "",
                 using source: EvacuationStore? = nil, sourceCatID: UUID? = nil,
                 access: MembershipActionAccess) -> UUID? {
-        if let profileID, let found = plan.cats.first(where: { $0.profileID == profileID }) { return found.id }
+        if let profileID {
+            let matches = plan.cats.filter { $0.profileID == profileID }
+            if matches.count > 1 { return nil }
+            if let found = matches.first { return found.id }
+        }
         guard plan.cats.count < 20, loadError == nil, saveError == nil, let repository else { return nil }
         // A selected saved cat, or one unambiguous profile ID. Names are not identity.
         let candidates = source?.loadError == nil && source?.saveError == nil ? source?.plan.cats ?? [] : []
@@ -111,7 +130,7 @@ final class CareHandoffStore: ObservableObject {
             return cat.id
         } catch {
             if error is MembershipActionDenied { return nil }
-            saveError = "猫の情報を保存できませんでした。元の記録は残っています。保存を再試行してから、もう一度この子を選んでください。"
+            saveError = "猫の情報を保存できませんでした。元の記録は残っています。もう一度保存してから、この子を選び直してください。"
             return nil
         }
     }
@@ -179,10 +198,16 @@ final class CareHandoffStore: ObservableObject {
                 guard let loaded = image(name) else { throw CareHandoffError.photoUnavailable }
                 photo = loaded
             }
+            // Everyday care and health come from 「この子のこと」, one place for each cat.
+            let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
+            let fields = disclosure.fields(cat: cat,
+                everyday: CatCareSummary.careHandoffLines(care, legacy: cat),
+                health: CatCareSummary.careHandoffHealthLines(care, legacy: cat))
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
-                fields: disclosure.fields(cat: cat), updatedAt: cat.updatedAt)
+                fields: fields, updatedAt: cat.updatedAt)
         }
-        return CareHandoffShareRecord(cats: cats, commonFields: disclosure.commonFields(plan: plan),
+        return CareHandoffShareRecord(cats: cats,
+            commonFields: disclosure.commonFields(plan: plan, household: CatCareStore.shared.state?.household),
             includesHealth: disclosure.health, includesContacts: disclosure.contacts, createdAt: Date())
     }
     private static func normalizedJPEG(_ data: Data) throws -> Data {

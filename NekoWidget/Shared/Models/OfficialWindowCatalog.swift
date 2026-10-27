@@ -1,5 +1,17 @@
 import Foundation
 
+/// Shared by the app and Widget. Distribution intent, not receipt environment,
+/// controls internal-only UI; public TestFlight and App Review use sandbox too.
+enum InternalBuildPresentationAvailability {
+    static var isAvailable: Bool {
+#if DEBUG
+        !CommandLine.arguments.contains("--review-public-presentation")
+#else
+        (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
+#endif
+    }
+}
+
 /// The build-owned registry defines which public windows the app offers.
 /// Unknown but well-formed source IDs remain identifiable without falling back
 /// to the legacy feed; discovery does not create definitions from remote data.
@@ -70,6 +82,33 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         }
     }
 
+    /// The internal black-cat window changes at 00:00 JST.
+    /// Never fall back to yesterday when today's image has not arrived yet.
+    func widgetPhotos(at date: Date,
+                      blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> [OfficialCatPhoto] {
+        let available = availablePhotos(at: date)
+        if channelID == "black-cats", blackCatDailyEnabled {
+            let start = Self.nextBlackCatCutover(after: date).addingTimeInterval(-86_400)
+            guard let latest = available.first, latest.publishedAt >= start else { return [] }
+            return [latest]
+        }
+        return available
+    }
+
+    func widgetDeadline(for photo: OfficialCatPhoto,
+                        blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> Date {
+        let expiry = min(photo.expiresAt, validUntil)
+        if channelID == "black-cats", blackCatDailyEnabled {
+            return min(expiry, Self.nextBlackCatCutover(after: photo.publishedAt))
+        }
+        return expiry
+    }
+
+    static func nextBlackCatCutover(after date: Date) -> Date {
+        let day: TimeInterval = 86_400
+        return Date(timeIntervalSince1970: (floor((date.timeIntervalSince1970 + 9 * 3_600) / day) + 1) * day - 9 * 3_600)
+    }
+
     func validate(at now: Date, expectedChannelID: String = Self.sourceID, expectedCatID: String? = nil) throws {
         guard schemaVersion == 1, Self.isIdentifier(expectedChannelID), channelID == expectedChannelID,
               expectedCatID.map(Self.isIdentifier) ?? true,
@@ -119,6 +158,42 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         formatter.isLenient = false
         guard text.count == 10, let date = formatter.date(from: text) else { return false }
         return formatter.string(from: date) == text
+    }
+}
+
+/// Public presentation metadata, fetched separately from the v1 photo catalog.
+/// Only the current week and two preceding Mondays can name archive channels.
+struct OfficialWeeklyThemeIndex: Codable, Equatable, Sendable {
+    struct Theme: Codable, Equatable, Sendable {
+        let name: String
+        let weekStart: String
+        let channelID: String
+
+    }
+    let schemaVersion: Int
+    let generatedAt: Date
+    let validUntil: Date
+    let themes: [Theme]
+
+    func validate(at now: Date) throws {
+        guard schemaVersion == 1, generatedAt <= now.addingTimeInterval(300), validUntil > now,
+              validUntil > generatedAt, validUntil.timeIntervalSince(generatedAt) <= OfficialWindowCatalog.maximumLifetime,
+              (1...3).contains(themes.count) else { throw OfficialWindowError.invalidCatalog }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3_600)!
+        let day = calendar.startOfDay(for: now)
+        let monday = calendar.date(byAdding: .day, value: -((calendar.component(.weekday, from: day) + 5) % 7), to: day)!
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = calendar; formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
+        for (index, theme) in themes.enumerated() {
+            let date = formatter.string(from: calendar.date(byAdding: .day, value: -7 * index, to: monday)!)
+            guard theme.weekStart == date, !theme.name.isEmpty, theme.name.count <= 30,
+                  theme.name == theme.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !theme.name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || $0.value == 0x2028 || $0.value == 0x2029 }),
+                  theme.channelID == (index == 0 ? "weekly-theme" : "weekly-theme-" + date.replacingOccurrences(of: "-", with: ""))
+            else { throw OfficialWindowError.invalidCatalog }
+        }
     }
 }
 
