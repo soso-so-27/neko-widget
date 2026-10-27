@@ -217,7 +217,7 @@ struct PublicWindowComingSoonRows: View {
 
 @MainActor
 struct OfficialWindowEntryCard: View {
-    enum Presentation: Equatable { case list, discovery, row }
+    enum Presentation: Equatable { case list, discovery, row, wide }
     let state: OfficialWindowState
     let store: OfficialWindowStore
     let refreshFeed: () async throws -> Void
@@ -268,6 +268,28 @@ struct OfficialWindowEntryCard: View {
         } label: {
             if presentation == .list {
                 WindowPhotoCard(title: store.displayName, kind: .official) { cover(photo: photo, status: status) }
+            } else if presentation == .wide {
+                // The same card as a shared window (16:10, the name over the photo).
+                ZStack(alignment: .bottomLeading) {
+                    Color(uiColor: .secondarySystemGroupedBackground)
+                        .aspectRatio(16 / 10, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .overlay { cover(photo: photo, status: status) }
+                        .clipped()
+                        .overlay(alignment: .bottom) {
+                            LinearGradient(colors: [.clear, .black.opacity(0.62)], startPoint: .top, endPoint: .bottom)
+                                .frame(height: 96)
+                        }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(store.displayName).font(.title3.bold())
+                        Text(store.definition.subtitle).font(.footnote)
+                    }
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 4, y: 1)
+                    .padding(14)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             } else if presentation == .row {
                 HStack(spacing: 14) {
                     cover(photo: photo, status: status)

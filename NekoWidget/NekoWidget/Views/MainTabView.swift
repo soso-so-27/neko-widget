@@ -3069,7 +3069,7 @@ private struct WindowListView: View {
                 GroupWindowListSection(client: groupClient, compactHeader: true)
             }
             ForEach(receivingPublicWindows) { source in
-                publicCard(source)
+                publicCard(source, presentation: .wide)
                     .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                             removal: .opacity))
             }
