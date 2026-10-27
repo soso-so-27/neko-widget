@@ -16,6 +16,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     private static let deviceKey = "debug.familyNotebook.deviceID.v1"
     private static let seenKey = "debug.familyNotebook.seenClock.v1"
     private static let undoKey = "debug.familyNotebook.tryoutUndo.v1"
+    private static let removedKey = "debug.familyNotebook.removedMembers.v1"
 
     @Published private(set) var snapshot: FamilyNotebookSnapshot?
     @Published var message: String?
@@ -135,7 +136,7 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     private func discard(_ familyID: UUID) {
         store = nil; snapshot = nil
-        for key in [Self.familyKey, Self.seenKey, Self.undoKey] { UserDefaults.standard.removeObject(forKey: key) }
+        for key in [Self.familyKey, Self.seenKey, Self.undoKey, Self.removedKey] { UserDefaults.standard.removeObject(forKey: key) }
         if let directory = Self.root?.appendingPathComponent(familyID.uuidString.lowercased(), isDirectory: true) {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -183,8 +184,10 @@ final class FamilyNotebookPrototype: ObservableObject {
     // MARK: The notebook → 「この子のこと」
 
     /// Puts what someone else wrote into 「この子のこと」, so every tool reads it.
-    /// Your own writes are already there; `chosen` is one you picked between two.
-    func applyFamilyWrites(chosen: FamilyNotebookTarget? = nil) {
+    /// Your own writes are already there. When two people changed an item at
+    /// once, the newer one is kept without asking, as in shared Notes; the
+    /// other stays in the item's history.
+    func applyFamilyWrites() {
         guard let snapshot, let care = CatCareStore.shared.state,
               let here = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.mappings) else { return }
         var current: [FamilyNotebookTarget: FamilyNotebookValue] = [:]
@@ -195,7 +198,7 @@ final class FamilyNotebookPrototype: ObservableObject {
             for field in Self.catFields {
                 let target = FamilyNotebookTarget(familyCatID: mapping.familyCatID, field: field)
                 guard let state = snapshot.fieldState(for: target), !state.isDeleted, let value = state.operation.value,
-                      state.operation.author != Self.me || target == chosen, current[target] != value else { continue }
+                      state.operation.author != Self.me, current[target] != value else { continue }
                 changes.append((toolID, field, value, state.operation))
             }
         }
@@ -318,13 +321,25 @@ final class FamilyNotebookPrototype: ObservableObject {
         name(of: operation.target.familyCatID) + "・" + FamilyNotebookWords.label(operation.target.field ?? .note)
     }
 
-    /// The people who have written in this notebook, you first.
-    var writers: [String] {
-        var names = [Self.me.displayName]
-        for operation in snapshot?.operations ?? [] where !names.contains(operation.author.displayName) {
-            names.append(operation.author.displayName)
+    /// The family, you first. Like Apple's family and shared lists, nobody
+    /// is labelled; who can do what shows only on a person's own page.
+    var members: [FamilyNotebookAuthor] {
+        let removed = Set(UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? [])
+        var people = [Self.me]
+        for operation in snapshot?.operations ?? []
+        where !people.contains(operation.author) && !removed.contains(operation.author.personID) {
+            people.append(operation.author)
         }
-        return names
+        return people
+    }
+
+    /// Takes someone out of the family: what they wrote stays (test builds:
+    /// the tried family member only).
+    func removeMember(_ member: FamilyNotebookAuthor) {
+        guard member != Self.me else { return }
+        let removed = (UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? []) + [member.personID]
+        UserDefaults.standard.set(removed, forKey: Self.removedKey)
+        objectWillChange.send()
     }
 
     /// Someone else wrote after you last looked: a small dot on the tools tab.
@@ -337,18 +352,6 @@ final class FamilyNotebookPrototype: ObservableObject {
         guard let clock = snapshot?.clock else { return }
         UserDefaults.standard.set(Int(clock), forKey: Self.seenKey)
         objectWillChange.send()
-    }
-
-    /// Two people changed an item at once: keep this one, everywhere.
-    func choose(_ operation: FamilyNotebookOperation) {
-        guard let value = operation.value else { return }
-        do {
-            try store?.edit(target: operation.target, value: value, author: Self.me)
-            reload()
-            applyFamilyWrites(chosen: operation.target)
-        } catch {
-            message = "選べませんでした。もう一度お試しください。"
-        }
     }
 
     // MARK: Test buttons: what the family's writing will look like
@@ -455,7 +458,6 @@ final class FamilyNotebookPrototype: ObservableObject {
 struct FamilyNotebookView: View {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var confirmsRemove = false
     @State private var creating = false
 
     var body: some View {
@@ -487,22 +489,22 @@ struct FamilyNotebookView: View {
         .onDisappear { model.markSeen() }
     }
 
-    /// Who is in the family, and what they wrote lately. The writing itself
-    /// lives in 「この子のこと」, 病院で見せる and 預けるとき.
+    /// Who is in the family, and what they wrote lately (like the activity of
+    /// a shared note). The writing itself lives in 「この子のこと」 and the tools.
     private var notebook: some View {
         List {
             Section {
-                ForEach(model.writers, id: \.self) { name in
-                    LabeledContent {
-                        if name == FamilyNotebookPrototype.me.displayName { Text("支払う人") }
+                ForEach(model.members, id: \.personID) { member in
+                    NavigationLink {
+                        FamilyNotebookMemberView(member: member)
                     } label: {
-                        Label(name, systemImage: "person.crop.circle.fill")
+                        Label(member.displayName, systemImage: "person.crop.circle.fill")
                     }
                 }
                 Button {} label: { Label("招待する", systemImage: "person.badge.plus") }
                     .disabled(true)
             } footer: {
-                Text("招待はまだできません（試作）。")
+                Text("招待された人は無料で使えます。招待はまだできません（試作）。")
             }
             if !model.recentFromFamily.isEmpty {
                 Section("最近の書き込み") {
@@ -520,16 +522,53 @@ struct FamilyNotebookView: View {
                 DisclosureGroup("テスト用") {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
                     Button("2 人が同時に直したときを試す") { model.tryConflict() }
-                    Button("試した家族を消す", role: .destructive) { confirmsRemove = true }
                 }
             } footer: {
-                Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。消すと元に戻ります。")
+                Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。あなたのページの「家族の共有をやめる」で元に戻ります。")
             }
         }
-        .confirmationDialog("試した家族を消しますか？", isPresented: $confirmsRemove, titleVisibility: .visible) {
-            Button("消す", role: .destructive) { model.remove() }
-        } message: {
-            Text("（試し）の文は元に戻します。ほかは消えません。")
+    }
+}
+
+/// One person's page, as in Apple's family settings: what can be done about
+/// this person, and what happens. You end the sharing for everyone; someone
+/// else is taken out. (A member who did not make the family would leave.)
+struct FamilyNotebookMemberView: View {
+    let member: FamilyNotebookAuthor
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirms = false
+
+    private var isMe: Bool { member == FamilyNotebookPrototype.me }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 64))
+                        .foregroundStyle(.secondary)
+                    Text(member.displayName).font(.title2.bold())
+                }
+                .frame(maxWidth: .infinity)
+                .listRowBackground(Color.clear)
+            }
+            Section {
+                Button(isMe ? "家族の共有をやめる" : "家族から外す", role: .destructive) { confirms = true }
+            } footer: {
+                Text(isMe
+                     ? "家族全員の共有が止まります。それまでに書いたことは、それぞれの iPhone に残ります。"
+                     : "これから書いたことは届かなくなります。それまでに書いたことは残ります。")
+            }
+        }
+        .navigationTitle(member.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(isMe ? "家族の共有をやめますか？" : "\(member.displayName)を家族から外しますか？",
+                            isPresented: $confirms, titleVisibility: .visible) {
+            Button(isMe ? "共有をやめる" : "外す", role: .destructive) {
+                if isMe { model.remove() } else { model.removeMember(member) }
+                dismiss()
+            }
         }
     }
 }
@@ -652,75 +691,27 @@ enum FamilyNotebookWords {
     }
 }
 
-/// Two people changed an item at once: both are shown, one is kept (the
-/// other stays in the item's history).
-struct FamilyNotebookConflictChooser: View {
-    let state: FamilyNotebookFieldState
-    @ObservedObject private var model = FamilyNotebookPrototype.shared
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach([state.operation] + state.history.filter(\.isConcurrentConflict).map(\.operation)) { operation in
-                        Button {
-                            model.choose(operation)
-                            dismiss()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(FamilyNotebookWords.text(operation.value, state.operation.target.field ?? .note) ?? "未記入")
-                                    .foregroundStyle(.primary)
-                                Text(FamilyNotebookWords.byline(operation)).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("2 人が同時に直しました")
-                } footer: {
-                    Text("残すほうを選んでください。")
-                }
-            }
-            .navigationTitle(FamilyNotebookWords.label(state.operation.target.field ?? .note))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } } }
-        }
-    }
-}
-
 // MARK: - In 「この子のこと」
 
-/// Under an item of 「この子のこと」: who in the family wrote it, or, when two
-/// people changed it at once, a way to choose. Nothing when you wrote it or
-/// there is no family; the item itself stays where it is either way.
+/// Under an item of 「この子のこと」: who in the family wrote it. Nothing when
+/// you wrote it or there is no family; the item itself stays where it is.
 struct FamilyNotebookNote: ViewModifier {
     let toolCatID: UUID?
     let field: FamilyNotebookField
     @ObservedObject private var model = FamilyNotebookPrototype.shared
-    @State private var choosing = false
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        let state = model.state(toolCatID: toolCatID, field)
-        let shows = state.map { $0.status == .conflict || $0.operation.author != FamilyNotebookPrototype.me } ?? false
         if !model.hasFamily {
             // No family (always so outside test builds): the item exactly as before.
             content
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 content
-                if shows, let state {
-                    if state.status == .conflict {
-                        Button { choosing = true } label: {
-                            Label("同時に直されました・選ぶ", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption).foregroundStyle(.orange)
-                        }
-                        .buttonStyle(.borderless)
-                        .sheet(isPresented: $choosing) { FamilyNotebookConflictChooser(state: state) }
-                    } else {
-                        Label(FamilyNotebookWords.byline(state.operation), systemImage: "person.2")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                if let state = model.state(toolCatID: toolCatID, field),
+                   state.operation.author != FamilyNotebookPrototype.me {
+                    Label(FamilyNotebookWords.byline(state.operation), systemImage: "person.2")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
