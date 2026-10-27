@@ -607,6 +607,7 @@ struct FamilyNotebookIntroView: View {
 /// The toolbar button on 「この子のこと」: the way into the family notebook,
 /// out of the way for anyone who keeps it to themselves (test builds only).
 struct FamilyNotebookButton: View {
+    var accessibilityIdentifier = "cat-care-family-notebook"
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @State private var shows = false
 
@@ -620,7 +621,7 @@ struct FamilyNotebookButton: View {
                 }
         }
         .accessibilityLabel(model.hasFamily ? "家族の手帳" : "家族と一緒に書く")
-        .accessibilityIdentifier("cat-care-family-notebook")
+        .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
     }
 }

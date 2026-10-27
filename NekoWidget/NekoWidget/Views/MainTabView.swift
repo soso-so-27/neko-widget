@@ -40,20 +40,16 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 }
 
-/// Decides whether a sideways swipe on the photo list changes the section.
-/// Only a clear horizontal swipe counts, and not one that started on the
-/// theme row (that row scrolls sideways itself).
-final class PhotoSectionSwipeGuard {
-    static let space = "photo-library-content"
-    var themeRow: CGRect = .zero
+/// Whether this page of the 写真 tab is the one on screen. All three pages
+/// stay alive side by side, so only the shown one puts buttons in the bar.
+private struct PhotoLibraryPageIsCurrentKey: EnvironmentKey {
+    static let defaultValue = true
+}
 
-    func section(after drag: DragGesture.Value, from current: PhotoLibrarySection) -> PhotoLibrarySection? {
-        let dx = drag.translation.width, dy = drag.translation.height
-        guard abs(dx) > 70, abs(dx) > abs(dy) * 2, !themeRow.contains(drag.startLocation) else { return nil }
-        let all = PhotoLibrarySection.allCases
-        guard let index = all.firstIndex(of: current) else { return nil }
-        let next = dx < 0 ? all.index(after: index) : index - 1
-        return all.indices.contains(next) ? all[next] : nil
+extension EnvironmentValues {
+    var photoLibraryPageIsCurrent: Bool {
+        get { self[PhotoLibraryPageIsCurrentKey.self] }
+        set { self[PhotoLibraryPageIsCurrentKey.self] = newValue }
     }
 }
 
@@ -63,6 +59,7 @@ struct PhotoLibrarySectionPicker: View {
     @Binding var selection: PhotoLibrarySection
     var isCompact = false
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Namespace private var underline
 
     var body: some View {
         let layout = typeSize.isAccessibilitySize
@@ -76,9 +73,12 @@ struct PhotoLibrarySectionPicker: View {
                             .foregroundStyle(selection == section ? .primary : .secondary)
                             .frame(minHeight: 44)
                             .overlay(alignment: .bottom) {
-                                Rectangle()
-                                    .fill(selection == section ? Color.primary : .clear)
-                                    .frame(height: 2)
+                                if selection == section {
+                                    Rectangle()
+                                        .fill(Color.primary)
+                                        .frame(height: 2)
+                                        .matchedGeometryEffect(id: "underline", in: underline)
+                                }
                             }
                             .contentShape(Rectangle())
                     }
@@ -416,9 +416,6 @@ struct MainTabView: View {
         }
     }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
-    /// Where the theme row sits, so a swipe on it scrolls the row instead of
-    /// changing the section. A plain box: moving it never redraws the tab.
-    @State private var photoSwipeGuard = PhotoSectionSwipeGuard()
     @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
@@ -825,23 +822,30 @@ struct MainTabView: View {
     private var photoLibrary: some View {
         VStack(spacing: 0) {
             // One row, one kind of control: which photos (all / favorites / memos).
-            PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
+            PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding.animation(.snappy), isCompact: true)
                 .padding(.horizontal, 16)
-            photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
-                .coordinateSpace(.named(PhotoSectionSwipeGuard.space))
-                // A sideways swipe moves between すべて・お気に入り・メモ, as the
-                // tabs are laid out. Scrolling up and down is left alone.
-                .simultaneousGesture(DragGesture(minimumDistance: 24, coordinateSpace: .named(PhotoSectionSwipeGuard.space))
-                    .onEnded { value in
-                        guard let next = photoSwipeGuard.section(after: value, from: photoLibrarySelection.selection)
-                        else { return }
-                        withAnimation(.snappy) { photoLibrarySelection.select(next) }
-                    })
-                .sensoryFeedback(.selection, trigger: photoLibrarySelection.selection)
+            // すべて・お気に入り・メモ are pages side by side, as in Instagram:
+            // the next one follows the finger and settles where it is let go.
+            TabView(selection: photoLibrarySelection.binding) {
+                ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
+                    photoLibraryContent(section)
+                        .id("\(photoLibraryRevision)-\(photoLibraryPositionKey(section))")
+                        .environment(\.photoLibraryPageIsCurrent, section == photoLibrarySelection.selection)
+                        .tag(section)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
         }
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
+        .toolbar {
+            if AlbumPrototype.isOn(albumPrototypeStored) || FamilyNotebookPrototype.shared.hasFamily {
+                ToolbarItem(placement: .topBarTrailing) {
+                    FamilyNotebookButton(accessibilityIdentifier: "photos-family-notebook")
+                }
+            }
+        }
         .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
             PhotoLibraryReadingPosition.activeSection = key
         }
@@ -1167,7 +1171,11 @@ struct MainTabView: View {
     }
 
     private var photoLibraryPositionKey: String {
-        let mode = photoLibrarySelection.selection.rawValue
+        photoLibraryPositionKey(photoLibrarySelection.selection)
+    }
+
+    private func photoLibraryPositionKey(_ section: PhotoLibrarySection) -> String {
+        let mode = section.rawValue
         return photoLibraryProfileIdentifier.map { "\(mode)-\($0)" } ?? mode
     }
 
@@ -1261,14 +1269,14 @@ struct MainTabView: View {
         .accessibilityIdentifier("photos-cat-\(identifier ?? "all")")
     }
 
-    @ViewBuilder private var photoLibraryContent: some View {
-        switch photoLibrarySelection.selection {
+    @ViewBuilder private func photoLibraryContent(_ section: PhotoLibrarySection) -> some View {
+        switch section {
         case .all:
             allPhotosView
         case .favorites:
             SavedMemoriesGalleryView(photos: hasPhotoAccess ? photoLibraryLikedPhotos : [], startsInExportMode: false,
                                     isEmbedded: true,
-                                    readingPositionKey: photoLibraryPositionKey,
+                                    readingPositionKey: photoLibraryPositionKey(.favorites),
                                     unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount,
                                     hasPhotoAccess: hasPhotoAccess,
                                     savedStateReadFailed: savedPhotoStateReadFailed,
@@ -1284,8 +1292,8 @@ struct MainTabView: View {
                                      currentPhotoAssignments: currentPhotoLibraryAssignments,
                                      registeredProfileIdentifiers: photoLibraryRegisteredIdentifiers,
                                      currentProfileNames: currentPhotoLibraryProfileNames,
-                                     readingPositionKey: photoLibraryPositionKey) {
-                photoLibrarySelection.select(.all)
+                                     readingPositionKey: photoLibraryPositionKey(.notes)) {
+                withAnimation(.snappy) { photoLibrarySelection.select(.all) }
             }
         }
     }
@@ -1305,7 +1313,7 @@ struct MainTabView: View {
             isEmbedded: true,
             supplementaryPhotos: photoLibraryProfileIdentifier == nil ? AnyView(PersonalArchivePhotosSection(
                 photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
-            readingPositionKey: photoLibraryPositionKey,
+            readingPositionKey: photoLibraryPositionKey(.all),
             showsCatProfileNavigation: false,
             headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker),
             themeRow: AlbumPrototype.isOn(albumPrototypeStored) && hasPhotoAccess && !photoThemeAlbums.isEmpty
@@ -1348,9 +1356,6 @@ struct MainTabView: View {
             .padding(.horizontal, 16)
         }
         .accessibilityIdentifier("photos-theme-row")
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(PhotoSectionSwipeGuard.space)) } action: { frame in
-            photoSwipeGuard.themeRow = frame
-        }
     }
 
     private var catProfileAlbumsDestination: CatProfileAlbumsDestination {
