@@ -1747,7 +1747,6 @@ private func memoryPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String
 }
 
 struct SavedMemoriesGalleryView: View {
-    @Environment(\.photoLibraryPageIsCurrent) private var isCurrentPhotoLibraryPage
     @Environment(\.dismiss) private var dismiss
 
     private enum CreationOutput: Equatable {
@@ -1900,6 +1899,7 @@ struct SavedMemoriesGalleryView: View {
                     }
                 }
                 .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") + "." + originFilter.rawValue : nil,
+                    firstRow: visiblePhotos.first?.localIdentifier,
                     normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: visiblePhotos) })
             }
         }
@@ -1911,7 +1911,7 @@ struct SavedMemoriesGalleryView: View {
         .accessibilityIdentifier("saved-memories-gallery")
         .accessibilityValue(galleryAccessibilityValue)
         .toolbar {
-            if isCurrentPhotoLibraryPage && hasPhotoAccess && !photos.isEmpty {
+            if hasPhotoAccess && !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(isSelectingForExport ? "キャンセル" : "PDFを作る") {
                         toggleExportMode()
