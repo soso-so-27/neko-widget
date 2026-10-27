@@ -2,8 +2,8 @@
   "payload": {
     "schema": "jp.nekowidget.moderation-owner-v2-readiness.v1",
     "purpose": "testflight-owner-report-ui-continuation",
-    "issuedAtMs": 1792978260492,
-    "expiresAtMs": 1793063847944,
+    "issuedAtMs": 1793081125265,
+    "expiresAtMs": 1793166104202,
     "policyRevision": 2,
     "keyID": "moderation-v2",
     "publicKeySHA256": "8ba7d15c6e8a2fda952d22f1ed9735cc3d648bec3bb8a9321065052320e2674d",
@@ -46,7 +46,7 @@
       "cloudObservation": "58b077f0c32b693e5671df135e4fb2495266b7f068ab352e6ea29f4e0d065421",
       "photoScreenshot": "eed75a264ce77816e9770f9d029bcbc22d0edd93bd199851da6d8abde7c44889",
       "decisionScreenshot": "b7a4ad9f72e03e255383ac7134de38056c31518942eb86ba93de03b13e56e0d6",
-      "custodyProbe": "e238519a63c371bef113ab936ea13360936f93b1ec130ac44e8409c8eccb07e9",
+      "custodyProbe": "8b8287d4e0c425c762710d903e32ef6b59ebb137113c79f87be9c53bbaf75852",
       "scopeApply": "f2b88cecb32530411da8cc86e2a457cd7209e407d193ddf89fa730175035b024",
       "keyPolicyApply": "5e32b9a21bcbd4add53d2fa42f114556b29fdbbba0fcd68ea01c6c79050a7e9d"
     },
@@ -88,12 +88,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "LlCmCrV5e21iHAWhCHuAfnTs93ZHznr2IW2XDaFc8gZTfa73YBTZiF_229VGuD4N51-ZTlRqK6RA5lQGEFjDBg"
+      "signatureBase64url": "t3ZTGSDV_LNh4MoLPuM6BTVtoGwdypJmTScAJCl9lsOE7wLBTNFaVE6oZz12HQ-DeYOacLDZ2X1dFiHmxKbJAg"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "B1A1qNCWmlnv4tkdTnf4UauStPBB6MMF9DoRdQOyAQiKKgBn8TxIwK1mWF0ML1aQ1yRynzuph_IGRroZl7v1BQ"
+      "signatureBase64url": "9bVWtiMTtXqqQjFU2m1J-X4GIW8QWNv5L1DcIGEfay_AnFjlNYMLkhNtGsyAvvlr2t1HGD8okhpRRPYzE6CmAg"
     }
   ]
 }
