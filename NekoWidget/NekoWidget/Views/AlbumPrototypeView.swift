@@ -11,8 +11,9 @@ enum AlbumPrototype {
     static let openedKey = "debug.albumPrototype.opened.v1"
     /// Test only: deliver this year's work today instead of on 12/6.
     static let yearNowKey = "debug.albumPrototype.yearNow.v1"
-    /// Test only: open a month's work as a book instead of the story.
-    static let bookKey = "debug.albumPrototype.book.v1"
+    /// Test only: a month's work opens as a book; this switch goes back to
+    /// the earlier slideshow story instead.
+    static let slideshowKey = "debug.albumPrototype.slideshow.v1"
 
     /// The year's work arrives on 12/6: inside the early-December wave of year
     /// reviews, after November's work (12/1), before the holidays. December's
@@ -554,7 +555,7 @@ struct MonthlyStoryView: View {
     @State private var displayedPreparationKey: MonthlyStoryPreparationKey?
     /// The last page's nine as one picture, for the share sheet.
     @State private var cardShare = StoryCardShareState<UIImage>()
-    @AppStorage(AlbumPrototype.bookKey) private var opensAsBook = false
+    @AppStorage(AlbumPrototype.slideshowKey) private var opensAsSlideshow = false
 
     static let pageSeconds: Double = 5
 
@@ -594,7 +595,7 @@ struct MonthlyStoryView: View {
     private func cardTitle(_ count: Int) -> String { "\(letter.monthNumber)月の\(count)枚" }
 
     var body: some View {
-        if opensAsBook {
+        if !opensAsSlideshow {
             MonthlyBookView(letter: letter, catPhotos: catPhotos,
                             assignments: assignments, profileNames: profileNames)
         } else {
