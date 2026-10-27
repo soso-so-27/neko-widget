@@ -283,32 +283,30 @@ struct AlbumPrototypeView: View {
         }
     }
 
-    /// 「2026年の本棚」 (案 A, 10/27): this year's twelve books in one row,
-    /// January first, like the books of the year under a reading goal. A
-    /// finished month is its cover; this month fills with its own photos
-    /// instead of a gauge; a month that passed without a book says お休み,
-    /// quietly. 「すべて見る」 opens every year, the year works and movies.
+    /// This year's twelve books in one row (案 A, 10/27), January first, like
+    /// the books of the year under a reading goal. A finished month is its
+    /// cover; this month fills with its own photos instead of a gauge; the
+    /// rest are empty places. No counts or dates: the row already shows them.
+    /// The year opens every year, the year works and movies.
     private var yearShelf: some View {
         let year = calendar.component(.year, from: Date())
         let thisMonth = calendar.component(.month, from: Date())
         let books = letters.filter { $0.yearNumber == year }
         let next = nextDelivery
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(verbatim: "\(year)年の本棚").font(.subheadline.weight(.semibold))
-                Text(verbatim: books.count >= 12 ? "12 冊そろいました" : "\(books.count) / 12 冊")
-                    .font(.footnote)
-                    .foregroundStyle(books.count >= 12 ? Color.accentColor : Color.secondary)
-                Spacer()
-                NavigationLink {
-                    PastWorksView(letters: letters, years: arrivedYears.filter { $0 != heroYear }, movies: movies,
-                                  catPhotos: catPhotos, assignments: assignments, profileNames: profileNames,
-                                  openMovie: openMovie)
-                } label: {
-                    Text("すべて見る").font(.footnote.weight(.semibold))
+            NavigationLink {
+                PastWorksView(letters: letters, years: arrivedYears.filter { $0 != heroYear }, movies: movies,
+                              catPhotos: catPhotos, assignments: assignments, profileNames: profileNames,
+                              openMovie: openMovie)
+            } label: {
+                HStack(spacing: 4) {
+                    Text(verbatim: String(year)).font(.system(.title3, design: .serif).weight(.bold))
+                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                 }
-                .accessibilityIdentifier("album-prototype-past")
+                .foregroundStyle(.primary)
             }
+            .accessibilityLabel("\(year)年の本、すべて見る")
+            .accessibilityIdentifier("album-prototype-past")
             ScrollViewReader { reader in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -322,19 +320,6 @@ struct AlbumPrototypeView: View {
                 .onAppear { reader.scrollTo(thisMonth, anchor: .center) }
             }
             if let next {
-                let minimum = MonthlyWindowBuilder.minimumSceneCount
-                let status = next.photoCount < minimum
-                    ? "あと \(minimum - next.photoCount) 枚で 1 冊"
-                    : "\(next.arrives.formatted(.dateTime.month(.defaultDigits).day())) にとどく"
-                HStack(spacing: 6) {
-                    Text(verbatim: "\(next.month)月の1冊").font(.footnote.weight(.semibold))
-                    Text(status).font(.footnote).foregroundStyle(.secondary)
-                        .contentTransition(.numericText())
-                        .animation(.snappy, value: next.photoCount)
-                    Spacer(minLength: 0)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("album-prototype-next")
                 let candidates = coverCandidates(monthStart: next.start, arrives: next.arrives, photoCount: next.photoCount)
                 if !candidates.isEmpty {
                     // Which one is the cover stays a surprise until the 1st.
@@ -415,14 +400,13 @@ struct AlbumPrototypeView: View {
             .frame(width: Self.slotSize.width, height: Self.slotSize.height, alignment: .top)
             .overlay(shape.stroke(Color.accentColor.opacity(0.8), lineWidth: 1.5))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(month)月の1冊、いま \(next.photoCount) 枚")
+            .accessibilityLabel(next.photoCount < MonthlyWindowBuilder.minimumSceneCount
+                ? "\(month)月の1冊、いま \(next.photoCount) 枚"
+                : "\(month)月の1冊、\(next.arrives.formatted(.dateTime.month(.defaultDigits).day()))にとどきます")
         } else {
             let ahead = month > thisMonth
             shape.fill(Color(.tertiarySystemFill))
                 .frame(width: Self.slotSize.width, height: Self.slotSize.height)
-                .overlay {
-                    if !ahead { Text("お休み").font(.caption2).foregroundStyle(.tertiary) }
-                }
                 .overlay(alignment: .bottomLeading) {
                     Text(verbatim: "\(month)月")
                         .font(.system(.footnote, design: .serif).weight(.bold))
@@ -431,7 +415,7 @@ struct AlbumPrototypeView: View {
                 }
                 .opacity(ahead ? 0.5 : 1)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(ahead ? "\(month)月、これから" : "\(month)月、お休み")
+                .accessibilityLabel(ahead ? "\(month)月、これから" : "\(month)月、本はありません")
         }
     }
 
@@ -547,15 +531,9 @@ struct PastWorksView: View {
             VStack(alignment: .leading, spacing: 18) {
                 ForEach(shelves, id: \.self) { year in
                     let books = letters.filter { $0.yearNumber == year }
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(verbatim: String(year))
-                            .font(.system(.title3, design: .serif).weight(.bold))
-                            .accessibilityAddTraits(.isHeader)
-                        Spacer()
-                        Text(books.count >= 12 ? "12 冊そろいました" : "\(books.count) / 12 冊")
-                            .font(.footnote)
-                            .foregroundStyle(books.count >= 12 ? Color.accentColor : Color.secondary)
-                    }
+                    Text(verbatim: String(year))
+                        .font(.system(.title3, design: .serif).weight(.bold))
+                        .accessibilityAddTraits(.isHeader)
                     if years.contains(year) {
                         Button { yearStory = .init(year: year) } label: {
                             yearRow(year)
