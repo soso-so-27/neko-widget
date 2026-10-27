@@ -124,6 +124,7 @@ struct CatCareDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = CatCareDraft()
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
     @State private var savedDraft = CatCareDraft()
     @State private var catID: UUID?
     @State private var autosave: Task<Void, Never>?
@@ -171,7 +172,7 @@ struct CatCareDetailView: View {
                 Text("書いた内容は自動で保存します。")
                 if familyNotebook.hasFamily {
                     // Test builds only (a family can be made only there).
-                    Text("家族の手帳に入っています（\(familyNotebook.writers.joined(separator: "・"))）。いまは試しで、家族にはまだ送りません。")
+                    Text("家族と書いています（試作・まだ送りません）。")
                 } else {
                     Text("このiPhoneの中だけに保存し、外には送りません。")
                 }
@@ -193,6 +194,13 @@ struct CatCareDetailView: View {
         }
         .onDisappear { autosave?.cancel(); save() }
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
+        .toolbar {
+            // Test builds only: the family, at the top right like sharing in
+            // Notes, so it is out of the way for anyone who keeps to themselves.
+            if AlbumPrototype.isOn(albumPrototypeStored) || familyNotebook.hasFamily {
+                ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
+            }
+        }
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
