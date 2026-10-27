@@ -1438,16 +1438,25 @@ final class GroupWindowListModel: ObservableObject {
 
     /// Test builds only: how long the last list load took, to find where the wait is.
     @Published private(set) var lastLoadTiming: String?
+    private var completedLoads = 0
+    private var firstLoadSeconds: TimeInterval?
 
     func load() async {
-        let started = Date()
+        let started = ProcessInfo.processInfo.systemUptime
         do {
             windows = try await client.windows()
             message = nil
             hasLoaded = true
             if InternalBuildPresentationAvailability.isAvailable {
-                let seconds = Date().timeIntervalSince(started)
-                lastLoadTiming = String(format: "一覧の読み込み %.1f 秒・まど %d 個", seconds, windows.count)
+                let seconds = ProcessInfo.processInfo.systemUptime - started
+                completedLoads += 1
+                if let firstLoadSeconds {
+                    lastLoadTiming = String(format: "一覧の読み込み %.1f 秒（%d 回目・初回 %.1f 秒）・まど %d 個",
+                        seconds, completedLoads, firstLoadSeconds, windows.count)
+                } else {
+                    firstLoadSeconds = seconds
+                    lastLoadTiming = String(format: "一覧の読み込み %.1f 秒（初回）・まど %d 個", seconds, windows.count)
+                }
             }
         } catch is CancellationError {
             // The screen went away mid-request: nothing to tell.

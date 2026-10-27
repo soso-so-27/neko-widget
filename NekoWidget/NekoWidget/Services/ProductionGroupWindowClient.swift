@@ -22,6 +22,14 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     // Only fully verified, in-process snapshots. The relay still authorizes
     // every heart against its current membership and epoch.
     private var verifiedWindows: [String: GroupWindow] = [:]
+    private struct VerifiedListEntry {
+        let window: GroupWindow
+        let encryptedName: Data
+        let rosterHash: Data
+        let personID: String
+        let deviceID: String
+    }
+    private var verifiedListEntries: [String: VerifiedListEntry] = [:]
     private var heartOperations = Set<UUID>()
 
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
@@ -186,13 +194,65 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
 
     func windows() async throws -> [GroupWindow] {
-        let items = try await page(GroupAPIModel.WindowItem.self, path: "/v3/group-windows/list")
-        guard items.count <= 10, Set(items.map(\.windowID)).count == items.count else { throw GroupClientError.invalidResponse }
-        var result: [GroupWindow] = []
-        for item in items { result.append(try await window(id: item.windowID)) }
-        return result
+        do {
+            // The signed list request still checks current person AND device
+            // membership on the relay. Never display cached entries on failure.
+            let items = try await page(GroupAPIModel.WindowItem.self, path: "/v3/group-windows/list")
+            let ids = Set(items.map(\.windowID))
+            guard items.count <= 10, ids.count == items.count else { throw GroupClientError.invalidResponse }
+            verifiedListEntries = verifiedListEntries.filter { ids.contains($0.key) }
+            verifiedWindows = verifiedWindows.filter { ids.contains($0.key) }
+            let identity = try await registeredIdentity()
+            var result: [GroupWindow] = []
+            for item in items {
+                if let cached = try cachedListWindow(item, identity: identity) {
+                    result.append(cached)
+                } else {
+                    let fresh = try await window(id: item.windowID)
+                    guard fresh.revision >= (item.revision ?? 0), fresh.keyEpoch >= (item.keyEpoch ?? 0) else {
+                        throw GroupClientError.invalidResponse
+                    }
+                    result.append(fresh)
+                }
+            }
+            return result
+        } catch {
+            verifiedListEntries.removeAll()
+            throw error
+        }
+    }
+    private func cachedListWindow(_ item: GroupAPIModel.WindowItem, identity: GroupDeviceIdentity) throws -> GroupWindow? {
+        guard let entry = verifiedListEntries[item.windowID] else { return nil }
+        let stored = try local(item.windowID), cached = entry.window
+        // Leaving changes member state without changing the roster revision.
+        // rotationRequired therefore ALWAYS needs a fresh members read, even
+        // when the cached snapshot itself was already rotationRequired.
+        guard item.rotationRequired == false, cached.state == .active,
+              item.revision == cached.revision, item.keyEpoch == cached.keyEpoch,
+              item.encryptedName == entry.encryptedName,
+              item.myParticipantID == cached.myParticipantID, item.myRole == cached.myRole,
+              identity.personID == entry.personID, try identity.deviceID == entry.deviceID,
+              stored.pinnedRevision == cached.revision, stored.pinnedHash == entry.rosterHash,
+              stored.minimumAdmissionRevision <= cached.revision,
+              stored.keys[String(cached.keyEpoch)]?.count == 32 else { return nil }
+        var current = cached
+        // Payment can change independently of the roster. Only the fresh list
+        // supplies policy, and its owner must belong to the verified snapshot.
+        switch (item.deliveryStatus, item.deliveryReason, item.ownerParticipantID) {
+        case (nil, nil, nil): break
+        case (.active?, .ownerPlus?, let owner?), (.paused?, .ownerPlusRequired?, let owner?):
+            guard cached.members.contains(where: { $0.id == owner && $0.role == .owner && $0.state == .active }) else {
+                throw GroupClientError.invalidResponse
+            }
+        default: throw GroupClientError.invalidResponse
+        }
+        current.deliveryStatus = item.deliveryStatus
+        current.deliveryReason = item.deliveryReason
+        current.ownerParticipantID = item.ownerParticipantID
+        return current
     }
     func window(id windowID: String) async throws -> GroupWindow {
+        verifiedListEntries.removeValue(forKey: windowID)
         let identity = try await registeredIdentity(), stored = try local(windowID), path = "/v3/group-windows/" + windowID
         let myDeviceID = try identity.deviceID
         let reply = try GroupWire.decode(GroupAPIModel.WindowReply.self, await raw(path, body: nil, identity: identity))
@@ -255,6 +315,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             deliveryStatus: reply.window.deliveryStatus, deliveryReason: reply.window.deliveryReason,
             ownerParticipantID: reply.window.ownerParticipantID)
         verifiedWindows[windowID] = result
+        verifiedListEntries[windowID] = .init(window: result, encryptedName: reply.window.encryptedName,
+            rosterHash: head.hash, personID: identity.personID, deviceID: myDeviceID)
         return result
     }
 
