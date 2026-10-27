@@ -92,6 +92,7 @@ struct SettingsView: View {
     @AppStorage(AlbumPrototype.key) private var albumPrototypeOn = false
     @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
     @AppStorage(AlbumPrototype.slideshowKey) private var albumSlideshow = false
+    @AppStorage(AlbumPrototype.teaserNowKey) private var albumTeaserNow = false
     @State private var showsWindowSupportPreview = false
     @State private var cloudyWindowEnabled = CloudyWindowStore.shared.configuration().enabled
     @State private var cloudyWindowStrength = CloudyWindowStore.shared.configuration().strength
@@ -367,6 +368,8 @@ struct SettingsView: View {
                                 .accessibilityIdentifier("settings-album-year-now")
                             Toggle("月の作品をスライドショーで見る（前の形）", isOn: $albumSlideshow)
                                 .accessibilityIdentifier("settings-album-slideshow")
+                            Toggle("表紙の予告をいま見る（月末を待たない）", isOn: $albumTeaserNow)
+                                .accessibilityIdentifier("settings-album-teaser-now")
                             Button("届いた作品を、届いたばかりに戻す") { AlbumPrototype.cloudLatestAgain() }
                                 .accessibilityIdentifier("settings-album-cloud-again")
                         }

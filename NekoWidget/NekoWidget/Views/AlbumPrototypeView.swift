@@ -14,6 +14,8 @@ enum AlbumPrototype {
     /// Test only: a month's work opens as a book; this switch goes back to
     /// the earlier slideshow story instead.
     static let slideshowKey = "debug.albumPrototype.slideshow.v1"
+    /// Test only: show the month-end cover teaser now, not only in the last days.
+    static let teaserNowKey = "debug.albumPrototype.teaserNow.v1"
 
     /// The year's work arrives on 12/6: inside the early-December wave of year
     /// reviews, after November's work (12/1), before the holidays. December's
@@ -186,6 +188,7 @@ struct AlbumPrototypeView: View {
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
     @AppStorage(AlbumPrototype.yearNowKey) private var yearNow = false
+    @AppStorage(AlbumPrototype.teaserNowKey) private var teaserNow = false
     @State private var story: MonthlyWindowPresentation?
     @State private var yearStory: YearStory?
     @Namespace private var zoom
@@ -222,10 +225,20 @@ struct AlbumPrototypeView: View {
     }
 
     /// This month's summary arrives on the 1st of next month; nothing to do meanwhile.
-    private var nextDelivery: (month: Int, arrives: Date, photoCount: Int)? {
+    private var nextDelivery: (month: Int, start: Date, arrives: Date, photoCount: Int)? {
         guard let interval = calendar.dateInterval(of: .month, for: Date()) else { return nil }
-        return (calendar.component(.month, from: interval.start), interval.end,
+        return (calendar.component(.month, from: interval.start), interval.start, interval.end,
                 AlbumPrototype.photos(in: interval.start, from: catPhotos).count)
+    }
+
+    /// The last days of the month: three photos, blurred, one of them the cover.
+    private func coverCandidates(monthStart: Date, arrives: Date, photoCount: Int) -> [PhotoPresentation] {
+        guard photoCount >= MonthlyWindowBuilder.minimumSceneCount else { return [] }
+        let daysLeft = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date()), to: arrives).day ?? 99
+        guard teaserNow || daysLeft <= 4 else { return [] }
+        // The cover is the best photo; a fixed shuffle keeps it from always being first.
+        return AlbumPrototype.pick(AlbumPrototype.photos(in: monthStart, from: catPhotos), count: 3)
+            .sorted { $0.localIdentifier < $1.localIdentifier }
     }
 
 
@@ -238,13 +251,16 @@ struct AlbumPrototypeView: View {
                     latestCard(latest)
                 }
                 if let next = nextDelivery {
-                    monthProgress(month: next.month, arrives: next.arrives, photoCount: next.photoCount)
+                    monthProgress(month: next.month, arrives: next.arrives, photoCount: next.photoCount,
+                                  candidates: coverCandidates(monthStart: next.start, arrives: next.arrives,
+                                                              photoCount: next.photoCount))
                 }
                 let pastLetters = heroYear == nil ? Array(letters.dropFirst()) : letters
                 let pastYears = arrivedYears.filter { $0 != heroYear }
                 if !pastLetters.isEmpty || !movies.isEmpty || !pastYears.isEmpty {
                     NavigationLink {
-                        PastWorksView(letters: pastLetters, years: pastYears, movies: movies, catPhotos: catPhotos,
+                        // The shelf holds every month, the newest too, so a year reads as 12 books.
+                        PastWorksView(letters: letters, years: pastYears, movies: movies, catPhotos: catPhotos,
                                       assignments: assignments, profileNames: profileNames, openMovie: openMovie)
                     } label: {
                         HStack(spacing: 12) {
@@ -308,7 +324,8 @@ struct AlbumPrototypeView: View {
 
     /// This month's book filling up: nine marks, one per photo. Five make a
     /// book; nine fill 「10月の9枚」. Counts photos, so bursts may count more.
-    private func monthProgress(month: Int, arrives: Date, photoCount: Int) -> some View {
+    private func monthProgress(month: Int, arrives: Date, photoCount: Int,
+                               candidates: [PhotoPresentation]) -> some View {
         let minimum = MonthlyWindowBuilder.minimumSceneCount
         let full = 9
         let status = photoCount < minimum
@@ -331,6 +348,25 @@ struct AlbumPrototypeView: View {
                               : Color.primary.opacity(0.15))
                         .frame(height: 4)
                 }
+            }
+            if !candidates.isEmpty {
+                // Which one is the cover stays a surprise until the 1st.
+                HStack(spacing: 6) {
+                    ForEach(candidates) { photo in
+                        Color.clear.frame(width: 40, height: 40)
+                            .overlay {
+                                PhotoAssetImageView(localIdentifier: photo.localIdentifier,
+                                                    catBoundingBox: photo.catBoundingBox,
+                                                    targetPixelSize: CGSize(width: 120, height: 120))
+                            }
+                            .blur(radius: 5)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    Text("表紙はこの中から").font(.footnote).foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("表紙はこの 3 枚の中から")
             }
         }
         .padding(12)
@@ -444,30 +480,44 @@ struct PastWorksView: View {
         Array(Set(letters.map(\.yearNumber)).union(years)).sorted(by: >)
     }
 
+    private var calendar: Calendar { Calendar.current }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 ForEach(shelves, id: \.self) { year in
-                    Text(verbatim: String(year))
-                        .font(.system(.title3, design: .serif).weight(.bold))
-                        .accessibilityAddTraits(.isHeader)
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        if years.contains(year) {
-                            Button { yearStory = .init(year: year) } label: {
-                                cover(AlbumPrototype.pickYear(AlbumPrototype.photos(inYear: year, from: catPhotos)).first,
-                                      title: "\(year)年")
-                                    .zoomSource(YearStoryView.periodIdentifier(year), in: zoom)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(year)年の作品")
+                    let books = letters.filter { $0.yearNumber == year }
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(verbatim: String(year))
+                            .font(.system(.title3, design: .serif).weight(.bold))
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer()
+                        Text(books.count >= 12 ? "12 冊そろいました" : "\(books.count) / 12 冊")
+                            .font(.footnote)
+                            .foregroundStyle(books.count >= 12 ? Color.accentColor : Color.secondary)
+                    }
+                    if years.contains(year) {
+                        Button { yearStory = .init(year: year) } label: {
+                            yearRow(year)
+                                .zoomSource(YearStoryView.periodIdentifier(year), in: zoom)
                         }
-                        ForEach(letters.filter { $0.yearNumber == year }) { letter in
-                            Button { story = letter } label: {
-                                cover(AlbumPrototypeView.cover(of: letter, from: catPhotos), title: "\(letter.monthNumber)月")
-                                    .zoomSource(letter.periodIdentifier, in: zoom)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(year)年の作品")
+                    }
+                    // Twelve places, January first: months still to come and the
+                    // ones without a book stay as empty places on the shelf.
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(1...12, id: \.self) { month in
+                            if let letter = books.first(where: { $0.monthNumber == month }) {
+                                Button { story = letter } label: {
+                                    cover(AlbumPrototypeView.cover(of: letter, from: catPhotos), title: "\(month)月")
+                                        .zoomSource(letter.periodIdentifier, in: zoom)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(letter.accessibilityTitle)
+                            } else {
+                                emptyPlace(month, isAhead: isAhead(year: year, month: month))
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(letter.accessibilityTitle)
                         }
                     }
                 }
@@ -503,6 +553,47 @@ struct PastWorksView: View {
                           assignments: assignments, profileNames: profileNames)
                 .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
         }
+    }
+
+    /// A month still to come (this one included: its book comes on the 1st)
+    /// is fainter than one that passed without a book.
+    private func isAhead(year: Int, month: Int) -> Bool {
+        let now = calendar.dateComponents([.year, .month], from: Date())
+        return year > (now.year ?? 0) || (year == now.year && month >= (now.month ?? 0))
+    }
+
+    private func emptyPlace(_ month: Int, isAhead: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color(.tertiarySystemFill))
+            .aspectRatio(0.75, contentMode: .fit)
+            .overlay(alignment: .bottomLeading) {
+                Text(verbatim: "\(month)月")
+                    .font(.system(.headline, design: .serif).weight(.bold))
+                    .foregroundStyle(.tertiary)
+                    .padding(8)
+            }
+            .opacity(isAhead ? 0.5 : 1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(isAhead ? "\(month)月、これから" : "\(month)月、本はありません")
+    }
+
+    /// The year's work above its shelf: one row, not a thirteenth book.
+    private func yearRow(_ year: Int) -> some View {
+        HStack(spacing: 12) {
+            Color.clear.frame(width: 44, height: 44)
+                .overlay {
+                    if let photo = AlbumPrototype.pickYear(AlbumPrototype.photos(inYear: year, from: catPhotos)).first {
+                        PhotoAssetImageView(localIdentifier: photo.localIdentifier, catBoundingBox: photo.catBoundingBox,
+                                            targetPixelSize: CGSize(width: 140, height: 140))
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text(verbatim: "\(year)年の1冊").font(.system(.subheadline, design: .serif).weight(.bold))
+            Spacer()
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func cover(_ photo: PhotoPresentation?, title: String, isMovie: Bool = false) -> some View {
@@ -1226,8 +1317,11 @@ struct MonthlyBookView: View {
         return result
     }
 
+    /// 「10月3日」, as a book prints it (not 「10/3」).
     private static func date(_ photo: PhotoPresentation) -> String? {
-        photo.creationDate?.formatted(.dateTime.month(.defaultDigits).day())
+        guard let date = photo.creationDate else { return nil }
+        let parts = Calendar.current.dateComponents([.month, .day], from: date)
+        return "\(parts.month ?? 0)月\(parts.day ?? 0)日"
     }
 
     var body: some View {
@@ -1364,24 +1458,45 @@ struct MonthlyBookView: View {
             }
             .leafMargins(bottom: 120)
         case let .colophon(count, names):
-            VStack(alignment: .leading, spacing: 6) {
+            // Like a printed book's last page: title, then the facts in two columns.
+            VStack(alignment: .leading, spacing: 0) {
                 Spacer()
                 Text(verbatim: "\(letter.monthNumber)月の1冊")
                     .font(.system(size: 22, weight: .regular, design: .serif))
                 Text(verbatim: names)
                     .font(.footnote)
                     .foregroundStyle(Self.ink.opacity(0.6))
-                Rectangle().fill(Self.ink.opacity(0.25)).frame(width: 40, height: 1).padding(.vertical, 10)
-                Text(verbatim: "\(letter.monthNumber)月に撮った猫の写真　\(count)枚")
-                    .font(.caption)
-                    .foregroundStyle(Self.ink.opacity(0.6))
-                Text(verbatim: "\(letter.yearNumber)年\(letter.monthNumber)月")
-                    .font(.caption)
-                    .foregroundStyle(Self.ink.opacity(0.6))
+                    .padding(.top, 4)
+                Rectangle().fill(Self.ink.opacity(0.25)).frame(height: 0.5).padding(.vertical, 14)
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                    colophonRow("写真", "\(count)枚")
+                    colophonRow("撮った月", "\(letter.yearNumber)年\(letter.monthNumber)月")
+                    colophonRow("届いた日", arrivalDay)
+                }
+                .font(.system(.caption, design: .serif))
+                Rectangle().fill(Self.ink.opacity(0.25)).frame(height: 0.5).padding(.vertical, 14)
+                Text("ねこのまど")
+                    .font(.system(.caption2, design: .serif))
+                    .tracking(2)
+                    .foregroundStyle(Self.ink.opacity(0.45))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .leafMargins(bottom: 90)
         }
+    }
+
+    private func colophonRow(_ title: String, _ value: String) -> some View {
+        GridRow {
+            Text(title).foregroundStyle(Self.ink.opacity(0.5))
+            Text(verbatim: value)
+        }
+    }
+
+    /// The 1st of the next month: the day the book arrives.
+    private var arrivalDay: String {
+        let next = Calendar.current.date(byAdding: .month, value: 1, to: letter.monthStart) ?? letter.monthStart
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: next)
+        return "\(parts.year ?? 0)年\(parts.month ?? 0)月\(parts.day ?? 0)日"
     }
 
     private func crop(_ photo: PhotoPresentation, aspect: CGFloat, pixels: CGFloat) -> some View {
