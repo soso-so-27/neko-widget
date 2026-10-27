@@ -14,8 +14,6 @@ enum AlbumPrototype {
     /// Test only: a month's work opens as a book; this switch goes back to
     /// the earlier slideshow story instead.
     static let slideshowKey = "debug.albumPrototype.slideshow.v1"
-    /// Test only: show the month-end cover teaser now, not only in the last days.
-    static let teaserNowKey = "debug.albumPrototype.teaserNow.v1"
 
     /// The year's work arrives on 12/6: inside the early-December wave of year
     /// reviews, after November's work (12/1), before the holidays. December's
@@ -188,7 +186,6 @@ struct AlbumPrototypeView: View {
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
     @AppStorage(AlbumPrototype.yearNowKey) private var yearNow = false
-    @AppStorage(AlbumPrototype.teaserNowKey) private var teaserNow = false
     @State private var story: MonthlyWindowPresentation?
     /// The card the open work came out of (the top card or a book on the shelf).
     @State private var storySource = ""
@@ -231,16 +228,6 @@ struct AlbumPrototypeView: View {
         guard let interval = calendar.dateInterval(of: .month, for: Date()) else { return nil }
         return (calendar.component(.month, from: interval.start), interval.start, interval.end,
                 AlbumPrototype.photos(in: interval.start, from: catPhotos).count)
-    }
-
-    /// The last days of the month: three photos, blurred, one of them the cover.
-    private func coverCandidates(monthStart: Date, arrives: Date, photoCount: Int) -> [PhotoPresentation] {
-        guard photoCount >= MonthlyWindowBuilder.minimumSceneCount else { return [] }
-        let daysLeft = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date()), to: arrives).day ?? 99
-        guard teaserNow || daysLeft <= 4 else { return [] }
-        // The cover is the best photo; a fixed shuffle keeps it from always being first.
-        return AlbumPrototype.pick(AlbumPrototype.photos(in: monthStart, from: catPhotos), count: 3)
-            .sorted { $0.localIdentifier < $1.localIdentifier }
     }
 
 
@@ -318,27 +305,6 @@ struct AlbumPrototypeView: View {
                     }
                 }
                 .onAppear { reader.scrollTo(thisMonth, anchor: .center) }
-            }
-            if let next {
-                let candidates = coverCandidates(monthStart: next.start, arrives: next.arrives, photoCount: next.photoCount)
-                if !candidates.isEmpty {
-                    // Which one is the cover stays a surprise until the 1st.
-                    HStack(spacing: 6) {
-                        ForEach(candidates) { photo in
-                            Color.clear.frame(width: 32, height: 32)
-                                .overlay {
-                                    PhotoAssetImageView(localIdentifier: photo.localIdentifier,
-                                                        catBoundingBox: photo.catBoundingBox,
-                                                        targetPixelSize: CGSize(width: 100, height: 100))
-                                }
-                                .blur(radius: 4)
-                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        }
-                        Text("表紙はこの中から").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("表紙はこの 3 枚の中から")
-                }
             }
         }
         .padding(12)
