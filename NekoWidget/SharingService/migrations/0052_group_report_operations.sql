@@ -36,7 +36,7 @@ CREATE TABLE group_report_mail_outbox (
 ) STRICT;
 CREATE INDEX group_report_mail_due ON group_report_mail_outbox(state,available_at);
 CREATE TRIGGER group_report_mail_identity BEFORE UPDATE ON group_report_mail_outbox BEGIN
- SELECT CASE WHEN NEW.id<>OLD.id OR NEW.report_id<>OLD.report_id OR NEW.kind<>OLD.kind THEN RAISE(ABORT,'mail_identity_immutable') END;
+ SELECT (CASE WHEN NEW.id<>OLD.id OR NEW.report_id<>OLD.report_id OR NEW.kind<>OLD.kind THEN RAISE(ABORT,'mail_identity_immutable') END);
 END;
 
 -- Existing reports get an unissued placeholder. JS crypto.getRandomValues
@@ -46,14 +46,14 @@ INSERT INTO group_report_numbers(report_id)
 INSERT INTO group_report_records(report_id,space_id,moment_id,reporter_person_id,reporter_device_id,committed_at,evidence_expires_at,revision,outcome,decided_at,retention_until)
  SELECT r.id,r.space_id,r.moment_id,r.reporter_person_id,r.reporter_device_id,r.committed_at,r.content_expires_at,
  COALESCE(c.revision,0),COALESCE(c.outcome,'received'),d.created_at,
- CASE WHEN c.outcome IN('no_action','release') THEN unixepoch(d.created_at,'unixepoch','+1 year') END
+ (CASE WHEN c.outcome IN('no_action','release') THEN unixepoch(d.created_at,'unixepoch','+1 year') END)
  FROM group_reports r LEFT JOIN group_moderation_cases c ON c.report_id=r.id
  LEFT JOIN group_moderation_decisions d ON d.case_reference=c.case_reference AND d.revision=c.revision
  WHERE r.committed_at IS NOT NULL;
 -- Never invent the reporter or original commit time for already purged cases.
 INSERT INTO group_report_records(report_id,revision,outcome,decided_at,retention_until)
  SELECT c.report_id,c.revision,c.outcome,d.created_at,
- CASE WHEN c.outcome IN('no_action','release') THEN unixepoch(d.created_at,'unixepoch','+1 year') END
+ (CASE WHEN c.outcome IN('no_action','release') THEN unixepoch(d.created_at,'unixepoch','+1 year') END)
  FROM group_moderation_cases c LEFT JOIN group_moderation_decisions d ON d.case_reference=c.case_reference AND d.revision=c.revision
  WHERE NOT EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=c.report_id);
 -- An undecided historical case with no remaining target cannot be safely
@@ -65,19 +65,19 @@ INSERT INTO group_report_events(report_id,revision,origin,manual_decision_id,out
  FROM group_moderation_decisions d JOIN group_moderation_cases c USING(case_reference);
 
 CREATE TRIGGER group_report_number_insert BEFORE INSERT ON group_report_numbers BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_reports WHERE id=NEW.report_id)
- THEN RAISE(ABORT,'report_number_target_missing') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_reports WHERE id=NEW.report_id)
+ THEN RAISE(ABORT,'report_number_target_missing') END);
 END;
 CREATE TRIGGER group_report_number_immutable BEFORE UPDATE ON group_report_numbers BEGIN
- SELECT CASE WHEN NEW.report_id<>OLD.report_id OR NEW.created_at<>OLD.created_at
-  OR OLD.receipt_number IS NOT NULL OR NEW.receipt_number IS NULL THEN RAISE(ABORT,'append_only') END;
+ SELECT (CASE WHEN NEW.report_id<>OLD.report_id OR NEW.created_at<>OLD.created_at
+  OR OLD.receipt_number IS NOT NULL OR NEW.receipt_number IS NULL THEN RAISE(ABORT,'append_only') END);
 END;
 CREATE TRIGGER group_report_record_insert BEFORE INSERT ON group_report_records BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_reports r WHERE r.id=NEW.report_id AND r.committed_at IS NOT NULL
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_reports r WHERE r.id=NEW.report_id AND r.committed_at IS NOT NULL
   AND r.space_id=NEW.space_id AND r.moment_id=NEW.moment_id AND r.reporter_person_id=NEW.reporter_person_id
   AND r.reporter_device_id=NEW.reporter_device_id AND r.committed_at=NEW.committed_at AND r.content_expires_at=NEW.evidence_expires_at)
   OR NEW.revision<>0 OR NEW.outcome<>'received' OR NEW.decided_at IS NOT NULL OR NEW.retention_until IS NOT NULL
- THEN RAISE(ABORT,'report_record_binding') END;
+ THEN RAISE(ABORT,'report_record_binding') END);
 END;
 -- Commit and the notification obligation are the same transaction. Historical
 -- imports above intentionally do not send a burst of arrival notifications.
@@ -88,23 +88,23 @@ CREATE TRIGGER group_report_commit_record AFTER UPDATE OF state ON group_reports
  INSERT INTO group_report_mail_outbox(id,report_id,kind,available_at) VALUES(lower(hex(randomblob(16))),NEW.id,'received',unixepoch());
 END;
 CREATE TRIGGER group_report_record_update BEFORE UPDATE ON group_report_records BEGIN
- SELECT CASE WHEN NEW.report_id<>OLD.report_id OR NEW.space_id IS NOT OLD.space_id OR NEW.moment_id IS NOT OLD.moment_id
+ SELECT (CASE WHEN NEW.report_id<>OLD.report_id OR NEW.space_id IS NOT OLD.space_id OR NEW.moment_id IS NOT OLD.moment_id
   OR NEW.reporter_person_id IS NOT OLD.reporter_person_id OR NEW.reporter_device_id IS NOT OLD.reporter_device_id
   OR NEW.committed_at IS NOT OLD.committed_at OR NEW.evidence_expires_at IS NOT OLD.evidence_expires_at
   OR NEW.revision<>OLD.revision+1 OR NOT EXISTS(SELECT 1 FROM group_report_events e WHERE e.report_id=OLD.report_id
     AND e.revision=NEW.revision AND e.outcome=NEW.outcome AND e.created_at=NEW.decided_at)
   OR NEW.retention_until IS NOT (CASE WHEN NEW.outcome IN('release','no_action') THEN unixepoch(NEW.decided_at,'unixepoch','+1 year') END)
- THEN RAISE(ABORT,'report_record_immutable') END;
+ THEN RAISE(ABORT,'report_record_immutable') END);
 END;
 CREATE TRIGGER group_report_event_guard BEFORE INSERT ON group_report_events BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=NEW.report_id AND NEW.revision=r.revision+1)
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=NEW.report_id AND NEW.revision=r.revision+1)
   OR NEW.created_at<>unixepoch()
   OR (NEW.origin='deadline' AND NOT EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=NEW.report_id
       AND r.outcome='received' AND r.revision=0 AND r.evidence_expires_at<=unixepoch() AND r.moment_id IS NOT NULL))
   OR (NEW.origin='operator' AND NOT EXISTS(SELECT 1 FROM group_moderation_decisions d JOIN group_moderation_cases c USING(case_reference)
       WHERE d.id=NEW.manual_decision_id AND c.report_id=NEW.report_id AND d.revision=NEW.revision
        AND d.outcome=NEW.outcome AND d.reply_template=NEW.reply_template AND d.created_at=NEW.created_at))
- THEN RAISE(ABORT,'report_event_not_current') END;
+ THEN RAISE(ABORT,'report_event_not_current') END);
 END;
 CREATE TRIGGER group_report_event_apply AFTER INSERT ON group_report_events BEGIN
  UPDATE group_report_records SET revision=NEW.revision,outcome=NEW.outcome,decided_at=NEW.created_at,
@@ -126,14 +126,14 @@ END;
 -- normal photo metadata has already expired. It never widens to a person/window.
 DROP TRIGGER group_moderation_target;
 CREATE TRIGGER group_moderation_target BEFORE INSERT ON group_moderation_restrictions BEGIN
- SELECT CASE WHEN NOT (
+ SELECT (CASE WHEN NOT (
   (NEW.case_reference NOT LIKE 'deadline:%' AND ((NEW.target_kind='window' AND NEW.target_id=NEW.space_id)
   OR (NEW.target_kind='person' AND EXISTS(SELECT 1 FROM group_members WHERE space_id=NEW.space_id AND person_id=NEW.target_id))
   OR (NEW.target_kind='photo' AND EXISTS(SELECT 1 FROM group_moments WHERE space_id=NEW.space_id AND id=NEW.target_id))))
   OR (NEW.target_kind='photo' AND EXISTS(SELECT 1 FROM group_report_records r JOIN group_report_events e ON e.report_id=r.report_id AND e.revision=r.revision
     WHERE NEW.case_reference='deadline:'||r.report_id AND r.space_id=NEW.space_id AND r.moment_id=NEW.target_id
      AND e.origin='deadline' AND r.outcome='photo' AND r.evidence_expires_at<=unixepoch())))
- THEN RAISE(ABORT,'group_moderation_invalid_target') END;
+ THEN RAISE(ABORT,'group_moderation_invalid_target') END);
 END;
 
 -- Retention authority can only be created for an elapsed terminal decision.
@@ -145,62 +145,62 @@ CREATE VIEW group_report_purge_allowed AS SELECT p.report_id FROM group_report_p
  AND NOT EXISTS(SELECT 1 FROM group_moderation_restrictions x WHERE x.active=1 AND
   (x.case_reference='deadline:'||r.report_id OR x.case_reference IN(SELECT case_reference FROM group_moderation_cases WHERE report_id=r.report_id)));
 CREATE TRIGGER group_report_purge_ticket_guard BEFORE INSERT ON group_report_purge_tickets BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=NEW.report_id AND r.revision=NEW.revision
-  AND r.outcome IN('no_action','release') AND r.retention_until<=unixepoch()) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=NEW.report_id AND r.revision=NEW.revision
+  AND r.outcome IN('no_action','release') AND r.retention_until<=unixepoch()) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE TRIGGER group_report_purge_ticket_no_update BEFORE UPDATE ON group_report_purge_tickets BEGIN SELECT RAISE(ABORT,'append_only'); END;
 CREATE TRIGGER group_report_event_delete BEFORE DELETE ON group_report_events BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed WHERE report_id=OLD.report_id) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed WHERE report_id=OLD.report_id) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE TRIGGER group_report_record_delete BEFORE DELETE ON group_report_records BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed WHERE report_id=OLD.report_id) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed WHERE report_id=OLD.report_id) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE TRIGGER group_report_number_delete BEFORE DELETE ON group_report_numbers BEGIN
- SELECT CASE WHEN EXISTS(SELECT 1 FROM group_report_records WHERE report_id=OLD.report_id)
-  OR EXISTS(SELECT 1 FROM group_reports WHERE id=OLD.report_id) THEN RAISE(ABORT,'report_number_in_use') END;
+ SELECT (CASE WHEN EXISTS(SELECT 1 FROM group_report_records WHERE report_id=OLD.report_id)
+  OR EXISTS(SELECT 1 FROM group_reports WHERE id=OLD.report_id) THEN RAISE(ABORT,'report_number_in_use') END);
 END;
 DROP TRIGGER group_moderation_decisions_no_delete;
 CREATE TRIGGER group_moderation_decisions_no_delete BEFORE DELETE ON group_moderation_decisions BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed p JOIN group_moderation_cases c USING(report_id)
-  WHERE c.case_reference=OLD.case_reference) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed p JOIN group_moderation_cases c USING(report_id)
+  WHERE c.case_reference=OLD.case_reference) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 DROP TRIGGER group_moderation_challenges_no_delete;
 CREATE TRIGGER group_moderation_challenges_no_delete BEFORE DELETE ON group_moderation_challenges BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed p JOIN group_moderation_cases c USING(report_id)
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed p JOIN group_moderation_cases c USING(report_id)
   WHERE c.case_reference=OLD.case_reference) AND NOT (OLD.case_reference IS NULL AND OLD.expires_at+172800<=unixepoch())
- THEN RAISE(ABORT,'retention_not_due') END;
+ THEN RAISE(ABORT,'retention_not_due') END);
 END;
 DROP TRIGGER group_moderation_consumptions_no_delete;
 CREATE TRIGGER group_moderation_consumptions_no_delete BEFORE DELETE ON group_moderation_consumptions BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_challenges q WHERE q.id=OLD.challenge_id AND (
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_challenges q WHERE q.id=OLD.challenge_id AND (
   EXISTS(SELECT 1 FROM group_report_purge_allowed p JOIN group_moderation_cases c USING(report_id) WHERE c.case_reference=q.case_reference)
-  OR (q.case_reference IS NULL AND q.expires_at+172800<=unixepoch()))) THEN RAISE(ABORT,'retention_not_due') END;
+  OR (q.case_reference IS NULL AND q.expires_at+172800<=unixepoch()))) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE TRIGGER group_moderation_case_delete BEFORE DELETE ON group_moderation_cases BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed WHERE report_id=OLD.report_id) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_report_purge_allowed WHERE report_id=OLD.report_id) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE VIEW group_moderation_purge_challenges AS SELECT q.id FROM group_moderation_challenges q
  WHERE (q.case_reference IS NULL AND q.expires_at+172800<=unixepoch()) OR EXISTS(
   SELECT 1 FROM group_report_purge_allowed p JOIN group_moderation_cases c USING(report_id) WHERE c.case_reference=q.case_reference);
 CREATE TRIGGER group_moderation_attempt_retention BEFORE DELETE ON group_moderation_attempts BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_purge_challenges WHERE id=OLD.challenge_id) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_purge_challenges WHERE id=OLD.challenge_id) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE TRIGGER group_moderation_read_retention BEFORE DELETE ON group_moderation_read_events BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_purge_challenges WHERE id=OLD.challenge_id) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_purge_challenges WHERE id=OLD.challenge_id) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE TRIGGER group_moderation_receipt_retention BEFORE DELETE ON group_moderation_receipts BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_purge_challenges WHERE id=OLD.challenge_id) THEN RAISE(ABORT,'retention_not_due') END;
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_moderation_purge_challenges WHERE id=OLD.challenge_id) THEN RAISE(ABORT,'retention_not_due') END);
 END;
 CREATE TRIGGER group_moderation_restriction_retention BEFORE DELETE ON group_moderation_restrictions BEGIN
- SELECT CASE WHEN OLD.active=1 OR NOT EXISTS(SELECT 1 FROM group_report_purge_allowed p WHERE
+ SELECT (CASE WHEN OLD.active=1 OR NOT EXISTS(SELECT 1 FROM group_report_purge_allowed p WHERE
   OLD.case_reference='deadline:'||p.report_id OR OLD.case_reference IN(SELECT case_reference FROM group_moderation_cases WHERE report_id=p.report_id))
- THEN RAISE(ABORT,'retention_not_due') END;
+ THEN RAISE(ABORT,'retention_not_due') END);
 END;
 -- Keep only a per-credential high-water counter when case-specific proofs
 -- expire, so deleting an old case cannot re-admit an old authenticator counter.
 CREATE TABLE group_operator_counter_floors(credential_id_sha256 TEXT PRIMARY KEY,sign_count INTEGER NOT NULL CHECK(sign_count>=0)) STRICT;
 CREATE TRIGGER group_operator_counter_floor_update BEFORE UPDATE ON group_operator_counter_floors BEGIN
- SELECT CASE WHEN NEW.credential_id_sha256<>OLD.credential_id_sha256 OR NEW.sign_count<OLD.sign_count THEN RAISE(ABORT,'counter_regression') END;
+ SELECT (CASE WHEN NEW.credential_id_sha256<>OLD.credential_id_sha256 OR NEW.sign_count<OLD.sign_count THEN RAISE(ABORT,'counter_regression') END);
 END;
 CREATE TRIGGER group_operator_counter_floor_delete BEFORE DELETE ON group_operator_counter_floors BEGIN SELECT RAISE(ABORT,'counter_regression'); END;
 CREATE TRIGGER group_operator_counter_floor_capture BEFORE DELETE ON group_moderation_consumptions BEGIN
