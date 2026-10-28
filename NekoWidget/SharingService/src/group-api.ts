@@ -13,6 +13,7 @@ import { listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
 import { groupReportAPI,isGroupReportPath } from './group-reports';
 import { registerGroupPush } from './group-push';
 import { groupReportStatus,groupReplyPath } from './group-moderation-replies';
+import { groupReportingAvailability,groupReportingAvailabilityPath } from './group-reporting-availability';
 
 export async function groupAPI(request:Request,env:Env):Promise<Response> {
   try { return await dispatchGroup(request,env); }
@@ -55,6 +56,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
 }
 async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const path=new URL(request.url).pathname;
+  if(path===groupReportingAvailabilityPath)return groupReportingAvailability(request,env);
   if(groupReplyPath.test(path))return groupReportStatus(request,env);
   if(isGroupReportPath(path))return groupReportAPI(request,env);
   if(request.method==='POST' && path==='/v3/group-identities/challenges') return createGroupIdentityChallenge(request,env);

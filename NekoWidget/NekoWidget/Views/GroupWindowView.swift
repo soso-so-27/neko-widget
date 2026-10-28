@@ -1172,7 +1172,7 @@ private struct GroupPhotoDetail: View {
     @State private var showsHideConfirmation = false
     @State private var reportTarget: GroupWindowLocalPhotoStore.Entry?
     @State private var showsBlockConfirmation = false
-    private var safety: GroupSafety { .shared }
+    @ObservedObject private var safety = GroupSafety.shared
 
     init(model: GroupWindowScreenModel, startID: String) {
         self.model = model
@@ -1241,6 +1241,9 @@ private struct GroupPhotoDetail: View {
                     }
                     .accessibilityLabel("この写真の操作")
                     .accessibilityIdentifier("group-photo-menu")
+                    .simultaneousGesture(TapGesture().onEnded {
+                        Task { await safety.load(windowID: model.windowID) }
+                    })
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("閉じる", systemImage: "xmark") { dismiss() }
@@ -1292,6 +1295,7 @@ private struct GroupPhotoDetail: View {
         }
         .preferredColorScheme(.dark)
         .onAppear { model.actionMessage = nil }
+        .task(id: selection) { await safety.load(windowID: model.windowID) }
         .onChange(of: selection) { _, _ in model.actionMessage = nil }
     }
 

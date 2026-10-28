@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 // Reporting a photo and blocking someone in a group window, as the screens
 // see it (ねこのまど_通報と返答の画面との約束_1028d). The screens hand over what
@@ -63,6 +64,7 @@ enum GroupSafetyError: Error, Equatable, Sendable {
     case disabled, unknownOutcome, offline
     case authenticationRequired, invalidResponse
     case blockSelf
+    case storageUnavailable, evidenceUnavailable
 
     var message: String {
         switch self {
@@ -79,6 +81,8 @@ enum GroupSafetyError: Error, Equatable, Sendable {
         case .authenticationRequired: "もう一度サインインしてください。"
         case .invalidResponse: "いまは使えません。少し待ってから、もう一度お試しください。"
         case .blockSelf: "自分はブロックできません。"
+        case .storageUnavailable: "送信内容をこのiPhoneに保存できませんでした。空き容量などを確認してください。"
+        case .evidenceUnavailable: "選んだ写真を確認できませんでした。写真を開き直してください。"
         }
     }
 }
@@ -87,6 +91,7 @@ enum GroupSafetyError: Error, Equatable, Sendable {
 protocol GroupReportingService: AnyObject {
     /// False hides reporting and blocking (the server flags are off by default).
     var isAvailable: Bool { get }
+    func refreshAvailability() async
     /// Fixes the photo, reason and consent, encrypts and keeps the draft. Nothing is sent yet.
     func prepareReport(windowID: String, photoID: String, senderName: String,
                        reason: GroupReportReason, consent: GroupReportConsent) async throws -> String
@@ -101,10 +106,14 @@ protocol GroupReportingService: AnyObject {
     func setBlock(windowID: String, participantID: String, active: Bool, operationID: UUID) async throws
 }
 
+extension GroupReportingService {
+    func refreshAvailability() async {}
+}
+
 /// What the screens hold.
 @MainActor
 final class GroupSafety: ObservableObject {
-    static let shared = GroupSafety(service: GroupReportingPrototype())
+    static let shared = GroupSafety(service: GroupReportingProvider.make())
 
     @Published private(set) var records: [String: [GroupReportRecord]] = [:]
     @Published var failure: GroupSafetyError?
@@ -116,13 +125,14 @@ final class GroupSafety: ObservableObject {
     }
 
     func load(windowID: String) async {
+        await service.refreshAvailability()
         records[windowID] = await service.reports(windowID: windowID)
     }
 
     /// Asks again for every report that can still change.
     func refresh(windowID: String) async {
         for record in await service.reports(windowID: windowID)
-        where record.progress == .received && record.reply == .none {
+        where record.progress == .received {
             _ = try? await service.refreshReport(draftID: record.id)
         }
         await load(windowID: windowID)

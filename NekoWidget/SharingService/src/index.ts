@@ -113,6 +113,7 @@ import { groupAPI } from './group-api';
 import { runGroupRelayCleanup } from './group-cleanup';
 import { isGroupReportPath } from './group-reports';
 import { groupReplyPath } from './group-moderation-replies';
+import { groupReportingAvailabilityPath } from './group-reporting-availability';
 import { drainGroupNotifications } from './group-push';
 
 export async function route(
@@ -140,7 +141,7 @@ export async function route(
       || pathname === '/v3/group-windows' || pathname.startsWith('/v3/group-windows/')) {
     // Reporting is independent of media reception and creator Plus. Only this
     // narrow router can authenticate a revoked device's scoped report grant.
-    if (isGroupReportPath(pathname) || groupReplyPath.test(pathname)) return groupAPI(request, env);
+    if (isGroupReportPath(pathname) || groupReplyPath.test(pathname) || pathname===groupReportingAvailabilityPath) return groupAPI(request, env);
     if (env.GROUP_RUNTIME_ENABLED !== 'YES' || !momentRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate())) {
       throw new ApiError(503, 'group_runtime_disabled', 'Group windows are unavailable.');
     }
