@@ -14,9 +14,9 @@ CREATE TABLE group_push_checks (
 ) STRICT;
 CREATE TRIGGER group_push_check BEFORE INSERT ON group_push_checks
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM personal_staging_runtime_gate
+  SELECT (CASE WHEN NOT EXISTS (SELECT 1 FROM personal_staging_runtime_gate
     WHERE singleton=1 AND generation=NEW.gate_generation AND media_enabled=1 AND apns_enabled=1)
-    THEN RAISE(ABORT,'group_push_gate_closed') END;
+    THEN RAISE(ABORT,'group_push_gate_closed') END);
 END;
 
 -- This live view is re-read AFTER token decryption, immediately before APNs.
