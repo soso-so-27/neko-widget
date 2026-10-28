@@ -178,7 +178,7 @@ final class GroupReportingPrototype: GroupReportingService {
     }
 
     func resumeReport(draftID: String) async throws -> GroupReportRecord {
-        try submitReport(draftID: draftID)
+        try await submitReport(draftID: draftID)
     }
 
     func reports(windowID: String) async -> [GroupReportRecord] {

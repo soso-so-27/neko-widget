@@ -1172,7 +1172,7 @@ private struct GroupPhotoDetail: View {
     @State private var showsHideConfirmation = false
     @State private var reportTarget: GroupWindowLocalPhotoStore.Entry?
     @State private var showsBlockConfirmation = false
-    @ObservedObject private var safety = GroupSafety.shared
+    private var safety: GroupSafety { .shared }
 
     init(model: GroupWindowScreenModel, startID: String) {
         self.model = model
@@ -1269,33 +1269,12 @@ private struct GroupPhotoDetail: View {
             } message: {
                 Text("このまどで、この人から届いた写真がこのiPhoneで見えなくなります。相手には知らせません。設定の「表示しないようにした人」から戻せます。")
             }
-            .sheet(item: $reportTarget) { entry in
-                GroupReportSheet(windowID: model.windowID, entry: entry)
-            }
-            // Blocking stops photos both ways in this window. What already
-            // arrived stays; the other person is not told.
-            .confirmationDialog(current.map { "\(GroupDisplayName.withSan($0.senderDisplayName))をブロックしますか？" } ?? "",
-                                isPresented: $showsBlockConfirmation, titleVisibility: .visible) {
-                Button("ブロックする", role: .destructive) {
-                    guard let current else { return }
-                    let windowID = model.windowID
-                    Task {
-                        let done = await safety.run(windowID: windowID) {
-                            try await safety.service.setBlock(windowID: windowID, participantID: current.senderParticipantID,
-                                                              active: true, operationID: UUID())
-                        }
-                        guard done != nil else { return }
-                        await model.hideSender(of: current)
-                        if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
-                    }
-                }
-                Button("戻る", role: .cancel) {}
-            } message: {
-                Text("このまどで、お互いの写真が届かなくなります。届いた写真はこのiPhoneに残ります。相手には知らせません。")
-            }
-            .alert("まど", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: { Text(safety.failure?.message ?? "") }
+            .modifier(GroupPhotoSafetyDialogs(windowID: model.windowID, current: current,
+                                              reportTarget: $reportTarget,
+                                              showsBlockConfirmation: $showsBlockConfirmation) { blocked in
+                await model.hideSender(of: blocked)
+                if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
+            })
             .confirmationDialog("この写真を、このiPhoneから消しますか？",
                                 isPresented: $showsRemoveConfirmation, titleVisibility: .visible) {
                 Button("消す", role: .destructive) {
@@ -2212,6 +2191,57 @@ struct GroupReportsView: View {
         case .restricted: return "確認し、このまどでの配信を止める対応をしました。"
         case .released: return "この通報で止めていた配信を、もとに戻しました。"
         case .unknown: return "運営から返答があります。アプリを最新にすると読めます。"
+        }
+    }
+}
+
+/// The photo's report sheet and block question, kept apart from the photo
+/// screen so its long chain of modifiers stays quick to compile.
+private struct GroupPhotoSafetyDialogs: ViewModifier {
+    let windowID: String
+    let current: GroupWindowLocalPhotoStore.Entry?
+    @Binding var reportTarget: GroupWindowLocalPhotoStore.Entry?
+    @Binding var showsBlockConfirmation: Bool
+    let afterBlock: (GroupWindowLocalPhotoStore.Entry) async -> Void
+    @ObservedObject private var safety = GroupSafety.shared
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $reportTarget) { entry in
+                GroupReportSheet(windowID: windowID, entry: entry)
+            }
+            // Blocking stops photos both ways in this window. What already
+            // arrived stays; the other person is not told.
+            .confirmationDialog(blockQuestion, isPresented: $showsBlockConfirmation, titleVisibility: .visible) {
+                Button("ブロックする", role: .destructive) { block() }
+                Button("戻る", role: .cancel) {}
+            } message: {
+                Text("このまどで、お互いの写真が届かなくなります。届いた写真はこのiPhoneに残ります。相手には知らせません。")
+            }
+            .alert("まど", isPresented: failureShown) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(safety.failure?.message ?? "") }
+    }
+
+    private var blockQuestion: String {
+        guard let current else { return "" }
+        return GroupDisplayName.withSan(current.senderDisplayName) + "をブロックしますか？"
+    }
+
+    private var failureShown: Binding<Bool> {
+        Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })
+    }
+
+    private func block() {
+        guard let current else { return }
+        let service = safety.service
+        let windowID = windowID
+        Task {
+            let done: Void? = await safety.run(windowID: windowID) {
+                try await service.setBlock(windowID: windowID, participantID: current.senderParticipantID,
+                                           active: true, operationID: UUID())
+            }
+            if done != nil { await afterBlock(current) }
         }
     }
 }
