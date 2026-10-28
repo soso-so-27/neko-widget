@@ -126,7 +126,18 @@ final class GroupSafety: ObservableObject {
 
     func load(windowID: String) async {
         await service.refreshAvailability()
+        await loadRecords(windowID: windowID)
+    }
+
+    /// This iPhone's own records only, without asking the server.
+    func loadRecords(windowID: String) async {
         records[windowID] = await service.reports(windowID: windowID)
+    }
+
+    /// A photo this person reported stays covered on their iPhone, whatever
+    /// the team decides; the others in the window still see it until then.
+    func hasReported(_ photoID: String, in windowID: String) -> Bool {
+        records[windowID]?.contains { $0.photoID == photoID } ?? false
     }
 
     /// Asks again for every report that can still change.
