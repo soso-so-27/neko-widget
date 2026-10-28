@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WidgetKit
 import ImageIO
 import Photos
 
@@ -39,32 +40,155 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 }
 
+/// Whether this page of the 写真 tab is the one on screen. The pages sit side
+/// by side, so only the shown one puts buttons in the bar.
+private struct PhotoLibraryPageIsCurrentKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var photoLibraryPageIsCurrent: Bool {
+        get { self[PhotoLibraryPageIsCurrentKey.self] }
+        set { self[PhotoLibraryPageIsCurrentKey.self] = newValue }
+    }
+}
+
+/// While the pages move: the tabs follow from the scroll offset (iOS 18), and
+/// the chosen section is kept only once the pages rest, so nothing above the
+/// pages redraws mid-swipe. iOS 17 has no offset to follow; the line moves
+/// when the page changes.
+private struct PhotoLibraryPageSettling: ViewModifier {
+    let page: PhotoLibrarySection?
+    let pager: PhotoLibraryPagerProgress
+    let settle: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    let width = geometry.containerSize.width + PhotoLibraryPagerProgress.gap
+                    return width > 0 ? geometry.contentOffset.x / width : 0
+                } action: { _, position in
+                    pager.position = position
+                }
+                .onScrollPhaseChange { _, phase in
+                    if phase == .idle { settle() }
+                }
+        } else {
+            content.onChange(of: page) { _, page in
+                guard let page else { return }
+                withAnimation(.snappy) { pager.position = PhotoLibraryPagerProgress.index(of: page) }
+                settle()
+            }
+        }
+    }
+}
+
+/// Where the 写真 tab's pages are while they move: 0 is すべて, 1 お気に入り,
+/// 2 メモ, and 0.4 is part way. Only the tabs above read it, so following the
+/// finger redraws three words and a line, never the tab with its photos.
+@MainActor
+final class PhotoLibraryPagerProgress: ObservableObject {
+    /// The gap between pages, so where one ends is plain while it moves.
+    nonisolated static let gap: CGFloat = 8
+
+    @Published var position: CGFloat = 0
+
+    nonisolated static func index(of section: PhotoLibrarySection) -> CGFloat {
+        CGFloat(PhotoLibrarySection.allCases.firstIndex(of: section) ?? 0)
+    }
+}
+
+/// Thin underline tabs under the title, the way Photos lists its albums:
+/// no box, no fill, the chosen one underlined. With a pager the line moves
+/// with the finger, as in Instagram and X, and the nearer title darkens.
 struct PhotoLibrarySectionPicker: View {
     @Binding var selection: PhotoLibrarySection
     var isCompact = false
+    var pager: PhotoLibraryPagerProgress? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Namespace private var underline
+    @State private var titleFrames: [PhotoLibrarySection: CGRect] = [:]
+
+    private var follows: PhotoLibraryPagerProgress? {
+        typeSize.isAccessibilitySize ? nil : pager
+    }
 
     var body: some View {
         let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
-        layout {
-            ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
-                Button { selection = section } label: {
-                    Text(section.title)
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) : AnyLayout(HStackLayout(spacing: 20))
+        VStack(spacing: 0) {
+            layout {
+                ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
+                    Button { selection = section } label: {
+                        Group {
+                            if let follows {
+                                PhotoLibraryPagerTitle(section: section, pager: follows)
+                            } else {
+                                Text(section.title)
+                                    .foregroundStyle(selection == section ? .primary : .secondary)
+                            }
+                        }
                         .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(selection == section ? Color.accentColor : .clear,
-                                    in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(selection == section ? .white : .primary)
+                        .frame(minHeight: 44)
+                        .overlay(alignment: .bottom) {
+                            if follows == nil, selection == section {
+                                Rectangle()
+                                    .fill(Color.primary)
+                                    .frame(height: 2)
+                                    .matchedGeometryEffect(id: "underline", in: underline)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("photos-section-\(section.rawValue)")
+                    .accessibilityAddTraits(selection == section ? .isSelected : [])
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("photo-section-titles")) } action: { frame in
+                        titleFrames[section] = frame
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("photos-section-\(section.rawValue)")
-                .accessibilityAddTraits(selection == section ? .isSelected : [])
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
             }
+            .coordinateSpace(.named("photo-section-titles"))
+            .overlay(alignment: .topLeading) {
+                if let follows { PhotoLibraryPagerUnderline(pager: follows, frames: titleFrames) }
+            }
+            Divider()
         }
-        .padding(4)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, isCompact ? 0 : 16).padding(.vertical, 8)
+        .padding(.horizontal, isCompact ? 0 : 16)
+    }
+}
+
+private struct PhotoLibraryPagerTitle: View {
+    let section: PhotoLibrarySection
+    @ObservedObject var pager: PhotoLibraryPagerProgress
+
+    var body: some View {
+        let distance = abs(pager.position - PhotoLibraryPagerProgress.index(of: section))
+        Text(section.title)
+            .foregroundStyle(distance < 0.5 ? .primary : .secondary)
+    }
+}
+
+/// The line under the titles, between two of them while the pages move.
+private struct PhotoLibraryPagerUnderline: View {
+    @ObservedObject var pager: PhotoLibraryPagerProgress
+    let frames: [PhotoLibrarySection: CGRect]
+
+    var body: some View {
+        let all = PhotoLibrarySection.allCases
+        let position = min(max(pager.position, 0), CGFloat(all.count - 1))
+        let lower = Int(position.rounded(.down)), upper = min(lower + 1, all.count - 1)
+        let t = position - CGFloat(lower)
+        if let from = frames[all[lower]], let to = frames[all[upper]] {
+            Rectangle()
+                .fill(Color.primary)
+                .frame(width: from.width + (to.width - from.width) * t, height: 2)
+                .offset(x: from.minX + (to.minX - from.minX) * t, y: from.maxY - 2)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -81,63 +205,92 @@ private struct ShowcaseSession: Identifiable {
     let scopeID: String
 }
 
+/// The app's one accent is blue: 「いつも」 tools take its shades. Only the
+/// 「もしも」 tools are warm, so colour itself means "in case".
+private enum ToolTint {
+    static let everyday = Color.accentColor
+    static let everydayLight = Color(red: 0.36, green: 0.62, blue: 0.86)
+    static let everydayDeep = Color(red: 0.22, green: 0.42, blue: 0.70)
+    // もしも: one warm family in steps of depth (10/26: four unrelated colours
+    // read as four different apps). Red is no longer used for a tool.
+    static let emergency = Color(red: 0.95, green: 0.58, blue: 0.24)
+    static let emergencyWarm = Color(red: 0.89, green: 0.50, blue: 0.22)
+    static let emergencyDeep = Color(red: 0.80, green: 0.42, blue: 0.20)
+    static let emergencyBrown = Color(red: 0.68, green: 0.36, blue: 0.19)
+}
+
+/// A cat in the row above the tools: round photo with a ring of twelve
+/// marks around it (one per entry in この子のこと), and the name. The ring
+/// fills as entries go in; no numbers.
+private struct CatChip: View {
+    let profile: CatProfilePresentation
+    let progress: CatCareProgress
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                let total = max(progress.total, 1)
+                let gap: CGFloat = 0.015
+                ForEach(0 ..< total, id: \.self) { index in
+                    Circle()
+                        .trim(from: CGFloat(index) / CGFloat(total) + gap, to: CGFloat(index + 1) / CGFloat(total) - gap)
+                        .stroke(index < progress.filled ? Color.accentColor : Color(.tertiarySystemFill),
+                                style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
+                        .rotationEffect(.degrees(-90))
+                }
+                CatProfileThumbnail(photo: profile.coverPhoto)
+                    .frame(width: 52, height: 52)
+                    .clipShape(Circle())
+            }
+            .frame(width: 64, height: 64)
+            .accessibilityHidden(true)
+            Text(profile.displayName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+        .frame(width: 72)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(profile.displayName)、この子のこと \(progress.filled)／\(progress.total)")
+    }
+}
+
+/// A tool is a card you can see is a button: a big coloured symbol, the
+/// name, one line of what it makes. No cat art, no small icons.
 private struct ToolTile: View {
     let title: String
     let systemImage: String
     let subtitle: String
-    let catPose: String
+    let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer(minLength: 0)
-                ToolCatArtwork(pose: catPose, systemImage: systemImage)
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(tint, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.top, 2)
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+        .padding(14)
         .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 16))
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title)、\(subtitle)")
-    }
-}
-
-/// The approved window-cat artwork stays black on its original pale background
-/// in either appearance. The small blue symbol explains the tool, not a status.
-private struct ToolCatArtwork: View {
-    let pose: String
-    let systemImage: String
-
-    var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            Image("ToolCat-\(pose)")
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: 48, height: 48)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.leading, 14)
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 28, height: 28)
-                .background(Color(.secondarySystemGroupedBackground), in: Circle())
-                .overlay(Circle().strokeBorder(Color(.separator).opacity(0.3), lineWidth: 1))
-                .offset(y: 3)
-        }
-        .padding(.bottom, 3)
-        .accessibilityHidden(true)
     }
 }
 
@@ -153,13 +306,11 @@ enum MemoriesRoute: Hashable {
     case memoryNote(UUID)
     case memoryNotePhoto(UUID)
     case reflectionsArchive
-    case highlightsArchive
     case highlight(AlbumHighlightPresentation)
     case photo(String)
     case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
     case catAlbums(String)
-    case catHighlightsArchive(String)
     case catHighlight(String, AlbumHighlightPresentation)
 }
 
@@ -212,6 +363,7 @@ struct MainTabView: View {
     var savedPhotoIdentifiers: Set<String>? = nil
     var savedPhotoStateReadFailed: Bool = false
     var readablePhotoIdentifiers: Set<String>? = nil
+    var photoLibraryLoadSucceeded: Bool? = nil
     let photoPresentationVersion: LibraryPresentationVersion
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
@@ -258,6 +410,7 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .memories
     @Environment(\.membershipAccess) private var membershipAccess
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
+    @ObservedObject private var careStore = CatCareStore.shared
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
@@ -266,7 +419,7 @@ struct MainTabView: View {
     @State private var arrivalRefreshSequence = 0
 
     private var showsMadoTab: Bool {
-        SharingAPIConfiguration.current.isReviewVisible
+        SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
             || OfficialWindowConfiguration.definitions.contains { $0.endpoint != nil }
     }
 
@@ -291,7 +444,17 @@ struct MainTabView: View {
                 return labels
             }) ?? [:]
         }.value
-        receivedPhotoSourceLabels = sources
+        // Group window photos kept with 「自分のお気に入りに追加」: 「ゆかさんから」.
+        var labels = sources
+        let store = GroupWindowLocalPhotoStore.shared
+        for window in await store.knownWindows() {
+            for entry in await store.entries(windowID: window.id) {
+                if let identifier = entry.favoriteLocalIdentifier {
+                    labels[identifier] = GroupDisplayName.withSan(entry.senderDisplayName) + "から"
+                }
+            }
+        }
+        receivedPhotoSourceLabels = labels
     }
 
     private func rememberMadoVisit() {
@@ -310,12 +473,13 @@ struct MainTabView: View {
         guard showsMadoTab else { return }
         arrivalRefreshSequence &+= 1
         let sequence = arrivalRefreshSequence
+        let countsPrivateWindows = GroupWindowClientProvider.ui == nil
         let result = await Task.detached(priority: .utility) { () -> [String: [Date]]? in
             try? SharingLifecycleGate.withExclusive {
                 let catalog = try PrivateWindowCatalogStore.load()
                 var dates: [String: [Date]] = [:]
                 let now = Date()
-                for window in catalog?.windows ?? [] where window.spaceID != nil {
+                for window in (countsPrivateWindows ? catalog?.windows ?? [] : []) where window.spaceID != nil {
                     let state = try MomentSharingStateStore.loadWhileLifecycleLocked(localWindowID: window.localWindowID)
                     guard state.reportOnlyUntil == nil else { continue }
                     dates[window.localWindowID] = state.inbox.compactMap { item in
@@ -350,6 +514,10 @@ struct MainTabView: View {
         }
     }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
+    /// A plain box on purpose: the pages moving never redraw this view.
+    @State private var photoPager = PhotoLibraryPagerProgress()
+    /// The page the pager rests on or is heading to.
+    @State private var photoPage: PhotoLibrarySection?
     @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
@@ -382,6 +550,13 @@ struct MainTabView: View {
     private var readMonthlyWindowPeriodIdentifier = ""
     @AppStorage(GrowthAlbumPhotoOverrides.storageKey)
     private var growthPhotoOverridesJSON = ""
+    /// Test builds only: 設定 → テスト用「新しいアルバム（試作）」.
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
+    @AppStorage(AlbumPrototype.enabledAtKey) private var albumPrototypeEnabledAt: Double = 0
+    @AppStorage(AlbumPrototype.openedKey) private var albumPrototypeOpened = ""
+    @ObservedObject private var albumArrivalInbox = AlbumArrivalOpenInbox.shared
+    @State private var arrivalStory: MonthlyWindowPresentation?
+    @State private var arrivalUnavailable = false
 
     private var tabContent: some View {
         TabView(selection: Binding(get: { selectedTab }, set: { tab in
@@ -396,75 +571,101 @@ struct MainTabView: View {
             lastViewedTab = tab.rawValue
             selectedTab = tab
         })) {
-            NavigationStack(path: $memoriesPath) {
-                albumsView()
-                    .navigationDestination(for: AlbumRoute.self) { route in
-                        albumDestination(for: route, defaultScope: .everyone)
-                    }
-                    .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                    .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) }
+            // 新しいアルバム（試作）: 写真・まど・アルバム・ツール. Otherwise the shipping order.
+            if AlbumPrototype.isOn(albumPrototypeStored) {
+                photosTab
+                windowsTab
+                albumTab
+                toolsTab
+            } else {
+                albumTab
+                photosTab
+                windowsTab
+                toolsTab
             }
-            .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
-            .tabItem {
-                Label("アルバム", systemImage: "photo.stack.fill")
-                    .accessibilityIdentifier("main-tab-memories")
-            }
-            .badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)
-            .tag(AppTab.memories)
+        }
+    }
 
-            NavigationStack(path: $photosPath) {
-                photoLibrary
-                .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
-                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0, libraryContext: true) }
+    private var albumTab: some View {
+        NavigationStack(path: $memoriesPath) {
+            albumRoot
                 .navigationDestination(for: AlbumRoute.self) { route in
                     albumDestination(for: route, defaultScope: .everyone)
                 }
                 .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-            }
-            .environment(\.photoRelatedAlbums, relatedAlbums)
-            .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
-            .environment(\.catProfilePhotoDestination, { profileID, photoID in
-                AnyView(albumPhotoDetail(for: .allCatPhotos,
-                    localIdentifier: photoID, scope: .profile(profileID)))
-            })
-            .tabItem {
-                Label("写真", systemImage: "photo.on.rectangle.angled")
-                    .accessibilityIdentifier("main-tab-photos")
-            }
-            .tag(AppTab.photos)
-
-            if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
-                NavigationStack {
-                    WindowListView(
-                        opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
-                        pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
-                        pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
-                        showSettings: { showsSettings = true }
-                    )
-                }
-                .tabItem {
-                    Label("まど", systemImage: "rectangle.split.2x2")
-                        .accessibilityIdentifier("main-tab-windows")
-                }
-                .badge(newMadoPhotoCount)
-                .tag(AppTab.windows)
-            }
-
-            NavigationStack {
-                toolsView
-            }
-            .tabItem {
-                Label("ツール", systemImage: "wrench.and.screwdriver")
-                    .accessibilityIdentifier("main-tab-tools")
-            }
-            .tag(AppTab.tools)
+                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) }
         }
+        .environment(\.photoRelatedAlbums, relatedAlbums)
+        .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
+        .tabItem {
+            Label("アルバム", systemImage: "photo.stack.fill")
+                .accessibilityIdentifier("main-tab-memories")
+        }
+        .badge(hasUnreadMemoriesSummary && summaryOpens ? 1 : 0)
+        .tag(AppTab.memories)
+    }
+
+    private var photosTab: some View {
+        NavigationStack(path: $photosPath) {
+            photoLibrary
+            .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
+            .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0, libraryContext: true) }
+            .navigationDestination(for: AlbumRoute.self) { route in
+                albumDestination(for: route, defaultScope: .everyone)
+            }
+            .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
+        }
+        .environment(\.photoRelatedAlbums, relatedAlbums)
+        .environment(\.openPhotoRelatedAlbum, { relatedPhotoUsesLibraryScope = false; relatedPhotoRoute = $0 })
+        .environment(\.catProfilePhotoDestination, { profileID, photoID in
+            AnyView(albumPhotoDetail(for: .allCatPhotos,
+                localIdentifier: photoID, scope: .profile(profileID)))
+        })
+        .tabItem {
+            Label("写真", systemImage: "photo.on.rectangle.angled")
+                .accessibilityIdentifier("main-tab-photos")
+        }
+        .tag(AppTab.photos)
+    }
+
+    @ViewBuilder private var windowsTab: some View {
+        if SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
+            || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
+            NavigationStack {
+                WindowListView(
+                    opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
+                    pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
+                    pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
+                    showSettings: { showsSettings = true }
+                )
+            }
+            // The window screens start 「写真を届ける」 from these cat photos.
+            // Set on the stack: pushed screens take the stack's environment.
+            .environment(\.groupWindowCatPhotos, catPhotos)
+            .tabItem {
+                Label("まど", systemImage: "window.vertical.closed")
+                    .accessibilityIdentifier("main-tab-windows")
+            }
+            .badge(newMadoPhotoCount)
+            .tag(AppTab.windows)
+        }
+    }
+
+    private var toolsTab: some View {
+        NavigationStack {
+            toolsView
+        }
+        .tabItem {
+            Label("ツール", systemImage: "wrench.and.screwdriver")
+                .accessibilityIdentifier("main-tab-tools")
+        }
+        .tag(AppTab.tools)
     }
 
     private var presentedTabContent: some View {
         tabContent
         .environment(\.toolProfileActions, catProfilesActions)
+        .environment(\.receivedPhotoIdentifiers, receivedPhotoIdentifiers)
         .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
@@ -556,6 +757,7 @@ struct MainTabView: View {
                 widgetShownAt = nil
                 showsSettings = false
                 selectedTab = .photos
+                photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 photosPath.append(PhotosRoute.unavailableWidgetPhoto)
                 deepLinkedPhotoIdentifier = nil
@@ -566,6 +768,7 @@ struct MainTabView: View {
             widgetShownAt = selection.shownAt
             showsSettings = false
             selectedTab = .photos
+            photoLibrarySelection.select(.all)
             photosPath = NavigationPath()
             photosPath.append(PhotosRoute.photo(identifier))
             deepLinkedPhotoIdentifier = nil
@@ -578,13 +781,40 @@ struct MainTabView: View {
             showsSettings = false
             selectedTab = .windows
         }
-        .onChange(of: groupWindowOpenInbox.pendingWindowID) { _, windowID in
+        .onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true) { _, windowID in
             // A group window's home-screen photo: show the まど tab, where
             // the group list opens that window.
             guard windowID != nil else { return }
             showsSettings = false
             selectedTab = .windows
         }
+        .onChange(of: albumArrivalInbox.pending, initial: true) { _, _ in openAlbumArrivalIfReady() }
+        .onChange(of: albumPrototypeStored, initial: true) { _, enabled in
+            // Test builds: the family notebook listens to 「この子のこと」 from the start.
+            if AlbumPrototype.isOn(enabled) { _ = FamilyNotebookPrototype.shared }
+            if AlbumPrototype.isOn(enabled), albumPrototypeEnabledAt == 0 {
+                albumPrototypeEnabledAt = Date().timeIntervalSince1970
+            }
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
+        }
+        .onChange(of: albumPrototypeOpened) { _, _ in synchronizeAlbumArrival() }
+        .onChange(of: photoLibraryLoadSucceeded) { _, _ in openAlbumArrivalIfReady() }
+        .fullScreenCover(item: $arrivalStory) { letter in
+            if AlbumPrototype.isOn(albumPrototypeStored), hasPhotoAccess,
+               let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
+                MonthlyStoryView(letter: current, catPhotos: catPhotos,
+                    assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
+            } else {
+                NavigationStack {
+                    ContentUnavailableView("この作品は開けません", systemImage: "photo.stack")
+                        .toolbar { Button("閉じる") { arrivalStory = nil } }
+                }
+            }
+        }
+        .alert("この作品は開けません", isPresented: $arrivalUnavailable) {
+            Button("閉じる", role: .cancel) { }
+        } message: { Text("写真へのアクセスとアルバムの設定を確認してください。") }
         .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
             guard route != nil else { return }
             relatedPhotoUsesLibraryScope = false
@@ -693,14 +923,13 @@ struct MainTabView: View {
 
     private var photoLibrary: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
-                photoLibraryCatPicker
-            }.padding(.horizontal, 16)
-            photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
+            // One row, one kind of control: which photos (all / favorites / memos).
+            PhotoLibrarySectionPicker(selection: photoLibrarySectionBinding, isCompact: true, pager: photoPager)
+                .padding(.horizontal, 16)
+            photoLibraryPager
         }
         .navigationTitle("写真")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
             PhotoLibraryReadingPosition.activeSection = key
@@ -711,14 +940,23 @@ struct MainTabView: View {
                 photoLibraryProfileIdentifier = nil
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { showsSettings = true } label: { Image(systemName: "gearshape") }
-                    .accessibilityLabel("設定")
-                    .accessibilityIdentifier("window-settings-button")
-            }
-        }
+        // Settings lives in one place (the ツール tab), as in Apple's own apps.
 
+    }
+
+    @ViewBuilder private var albumRoot: some View {
+        if AlbumPrototype.isOn(albumPrototypeStored) {
+            AlbumPrototypeView(
+                letters: hasPhotoAccess ? currentMonthlyWindowCollection?.letters ?? [] : [],
+                movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
+                catPhotos: hasPhotoAccess ? catPhotos : [],
+                assignments: currentPhotoLibraryAssignments,
+                profileNames: currentPhotoLibraryProfileNames,
+                openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) }
+            )
+        } else {
+            albumsView()
+        }
     }
 
     private var showcaseCandidates: [PhotoPresentation] {
@@ -753,48 +991,17 @@ struct MainTabView: View {
 
     private var toolsView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                NavigationLink {
-                    CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
-                                    opensProfileSettings: true)
-                } label: {
-                    Label("猫のプロフィール", systemImage: "cat.fill")
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            VStack(alignment: .leading, spacing: 22) {
+                // The cats are the door, but small: a row of faces above the
+                // tools, each opening the cat's page. The tools stay tools.
+                catStrip
+                toolSection("いつも") {
+                    showcaseToolCard
                 }
-                .accessibilityIdentifier("tools-cat-profiles")
-                NavigationLink {
-                    CatCareEntryView(profiles: catProfilesPresentation.profiles)
-                } label: {
-                    Label("この子のこと（体重・薬・ワクチン・連絡先）", systemImage: "heart.text.square")
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }
-                .accessibilityIdentifier("tools-cat-care")
-                showcaseToolCard
                 if !preparingShowcaseScopes.isEmpty {
                     ProgressView("見せる写真を準備中")
                 }
-                toolSection("ふだんの準備") {
-                        NavigationLink {
-                            CareHandoffView(profiles: catProfilesPresentation.profiles,
-                                            unregisteredPhotos: unregisteredCatPhotos)
-                        } label: {
-                            ToolTile(title: "預けるとき", systemImage: "list.clipboard",
-                                     subtitle: "お世話メモを渡す", catPose: "snug")
-                        }
-                        .buttonStyle(ToolCardButtonStyle())
-                        .accessibilityIdentifier("tools-care-open")
-                        NavigationLink {
-                            VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
-                                photos: memoryNotePhotos, noteStore: memoStore)
-                        } label: {
-                            ToolTile(title: "病院で見せる", systemImage: "cross.case",
-                                     subtitle: "写真とメモで伝える", catPose: "hide")
-                        }
-                        .buttonStyle(ToolCardButtonStyle())
-                        .accessibilityIdentifier("tools-vet-open")
-                }
-
-                toolSection("もしものとき") {
+                toolSection("もしも") {
                     NavigationLink {
                         LostCatEmergencyEntryView(
                             profiles: catProfilesPresentation.profiles,
@@ -802,28 +1009,45 @@ struct MainTabView: View {
                         )
                     } label: {
                         ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
-                                 subtitle: "画像・チラシを作る", catPose: "peek")
+                                 subtitle: "探す画像を作る", tint: ToolTint.emergency)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-lost-cat-open")
-
+                    NavigationLink {
+                        CareHandoffView(profiles: catProfilesPresentation.profiles,
+                                        unregisteredPhotos: unregisteredCatPhotos)
+                    } label: {
+                        ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
+                                 subtitle: "お世話を渡す", tint: ToolTint.emergencyWarm)
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-care-open")
+                    NavigationLink {
+                        VeterinaryVisitsView(profiles: catProfilesPresentation.profiles,
+                            photos: memoryNotePhotos, noteStore: memoStore)
+                    } label: {
+                        ToolTile(title: "病院で見せる", systemImage: "cross.case.fill",
+                                 subtitle: "診察メモ", tint: ToolTint.emergencyDeep)
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-vet-open")
                     NavigationLink {
                         EvacuationPreparationView(profiles: catProfilesPresentation.profiles,
                                                   unregisteredPhotos: unregisteredCatPhotos)
                     } label: {
-                        ToolTile(title: "避難に備える", systemImage: "backpack",
-                                 subtitle: "持ち物と猫の情報", catPose: "side-eye")
+                        ToolTile(title: "避難に備える", systemImage: "backpack.fill",
+                                 subtitle: "持ち物と行き先", tint: ToolTint.emergencyBrown)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-evacuation-open")
                 }
-
             }
-            .padding(12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("ツール")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showsSettings = true } label: { Image(systemName: "gearshape") }
@@ -839,28 +1063,75 @@ struct MainTabView: View {
                 showsShowcaseNoPhotos = true
             } else { openPreparedShowcase(scopeID: "") }
         } label: {
-            HStack(spacing: 20) {
-                ToolCatArtwork(pose: "tilt", systemImage: "photo.on.rectangle.angled")
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("写真を見せる").font(.title2.bold())
-                    Text("お気に入りの写真を、さっと見せる").font(.subheadline).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-            }.padding(20).frame(maxWidth: .infinity, minHeight: 140)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+            ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
+                     subtitle: "自慢の 9 枚を作る", tint: ToolTint.everydayLight)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
         .alert(hasPhotoAccess ? "猫の写真を準備しましょう" : "写真の許可が必要です", isPresented: $showsShowcaseNoPhotos) {
             Button(hasPhotoAccess ? "写真を開く" : "写真の許可を確認") {
                 selectedTab = .photos
+                photoLibrarySelection.select(.all)
                 if !hasPhotoAccess { requestPhotoAccess() }
             }
             Button("閉じる", role: .cancel) {}
         } message: {
             Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」で猫の写真とアクセス範囲を確認してください。")
         }
+    }
+
+    /// A row of the cats (face and name) and 「＋」. One tap opens the cat's page.
+    private var catStrip: some View {
+        // Large type: the same chips, one under the other, so names stay on a line.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+        return ScrollView(dynamicTypeSize.isAccessibilitySize ? .vertical : .horizontal, showsIndicators: false) {
+            layout {
+                ForEach(catProfilesPresentation.profiles) { profile in
+                    NavigationLink {
+                        CatProfileDetailView(
+                            profile: profile,
+                            allProfiles: catProfilesPresentation.profiles,
+                            manualCandidatePhotos: profile.manualCandidatePhotos,
+                            photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+                            actions: catProfilesActions
+                        )
+                    } label: {
+                        CatChip(profile: profile, progress: careProgress(for: profile))
+                    }
+                    .buttonStyle(ToolCardButtonStyle())
+                    .accessibilityIdentifier("tools-cat-\(profile.identifier)")
+                }
+                NavigationLink {
+                    CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
+                                    opensProfileSettings: true)
+                } label: {
+                    // 「＋」 alone: adding a cat needs no caption.
+                    Image(systemName: "plus")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 64, height: 64)
+                        .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                        .overlay(Circle().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
+                        .frame(width: 72, alignment: .top)
+                }
+                .buttonStyle(ToolCardButtonStyle())
+                .accessibilityLabel(catProfilesPresentation.profiles.isEmpty ? "猫を追加" : "猫を追加・整理")
+                .accessibilityIdentifier("tools-cat-profiles")
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 4)
+        }
+        .accessibilityIdentifier("tools-cat-strip")
+    }
+
+    /// How far this cat's この子のこと is, for the chip's small line.
+    private func careProgress(for profile: CatProfilePresentation) -> CatCareProgress {
+        let record = careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier }
+        let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
+            ?? CatCareDraft()
+        return CatCareProgress(draft: draft, record: record)
     }
 
     private func toolSection<Content: View>(_ title: String,
@@ -880,6 +1151,7 @@ struct MainTabView: View {
         guard ShowcaseLaunchRequest.hasPending else { return }
         guard hasPhotoAccess || !showcaseStore.availableEntries(in: effectiveShowcaseScopeID).isEmpty else {
             selectedTab = .photos
+            photoLibrarySelection.select(.all)
             return
         }
         guard ShowcaseLaunchRequest.consume() else { return }
@@ -984,7 +1256,60 @@ struct MainTabView: View {
     }
 
     private var photoLibraryPositionKey: String {
-        let mode = photoLibrarySelection.selection.rawValue
+        photoLibraryPositionKey(photoLibrarySelection.selection)
+    }
+
+    /// すべて・お気に入り・メモ side by side, as in Instagram and X (10/28):
+    /// the next page is already there, follows the finger with a gap between
+    /// pages, and a short flick is enough. One page per swipe.
+    private var photoLibraryPager: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: PhotoLibraryPagerProgress.gap) {
+                ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
+                    ZStack {
+                        photoLibraryContent(section)
+                            .id("\(photoLibraryRevision)-\(photoLibraryPositionKey(section))")
+                    }
+                    .background(Color(.systemGroupedBackground))
+                    .environment(\.photoLibraryPageIsCurrent, section == photoLibrarySelection.selection)
+                    .containerRelativeFrame(.horizontal)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollIndicators(.hidden)
+        .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+        .scrollPosition(id: $photoPage)
+        .background(Color(.systemGray5))
+        .modifier(PhotoLibraryPageSettling(page: photoPage, pager: photoPager) {
+            guard let photoPage, photoPage != photoLibrarySelection.selection else { return }
+            photoLibrarySelection.select(photoPage)
+        })
+        .onAppear {
+            guard photoPage == nil else { return }
+            photoPage = photoLibrarySelection.selection
+            photoPager.position = PhotoLibraryPagerProgress.index(of: photoLibrarySelection.selection)
+        }
+        // Chosen elsewhere (a link, a closed photo): the pages go there too.
+        .onChange(of: photoLibrarySelection.selection) { _, section in
+            guard photoPage != section else { return }
+            photoPage = section
+            photoPager.position = PhotoLibraryPagerProgress.index(of: section)
+        }
+    }
+
+    private var photoLibrarySectionBinding: Binding<PhotoLibrarySection> {
+        Binding(get: { photoLibrarySelection.selection }, set: { showPhotoLibrarySection($0) })
+    }
+
+    /// The pages slide there; the section is kept when they rest.
+    private func showPhotoLibrarySection(_ section: PhotoLibrarySection) {
+        guard section != photoLibrarySelection.selection else { return }
+        withAnimation(.snappy(duration: 0.35)) { photoPage = section }
+    }
+
+    private func photoLibraryPositionKey(_ section: PhotoLibrarySection) -> String {
+        let mode = section.rawValue
         return photoLibraryProfileIdentifier.map { "\(mode)-\($0)" } ?? mode
     }
 
@@ -1054,9 +1379,15 @@ struct MainTabView: View {
             Button("猫のプロフィール", systemImage: "cat.fill") { showsCatProfiles = true }
                 .accessibilityIdentifier("photos-cat-profiles")
         } label: {
-            Label(photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" }
-                    ?? "すべての猫", systemImage: "chevron.down")
-                .font(.subheadline).lineLimit(1).frame(minHeight: 44)
+            HStack(spacing: 6) {
+                Text((photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" } ?? "すべての猫") + "の写真")
+                    .font(.title3.bold())
+                Image(systemName: "chevron.down").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .foregroundStyle(.primary)
+            .frame(minHeight: 44)
+            .accessibilityAddTraits(.isHeader)
         }
         .accessibilityIdentifier("photos-cat-picker")
     }
@@ -1072,14 +1403,14 @@ struct MainTabView: View {
         .accessibilityIdentifier("photos-cat-\(identifier ?? "all")")
     }
 
-    @ViewBuilder private var photoLibraryContent: some View {
-        switch photoLibrarySelection.selection {
+    @ViewBuilder private func photoLibraryContent(_ section: PhotoLibrarySection) -> some View {
+        switch section {
         case .all:
             allPhotosView
         case .favorites:
             SavedMemoriesGalleryView(photos: hasPhotoAccess ? photoLibraryLikedPhotos : [], startsInExportMode: false,
                                     isEmbedded: true,
-                                    readingPositionKey: photoLibraryPositionKey,
+                                    readingPositionKey: photoLibraryPositionKey(.favorites),
                                     unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount,
                                     hasPhotoAccess: hasPhotoAccess,
                                     savedStateReadFailed: savedPhotoStateReadFailed,
@@ -1095,8 +1426,8 @@ struct MainTabView: View {
                                      currentPhotoAssignments: currentPhotoLibraryAssignments,
                                      registeredProfileIdentifiers: photoLibraryRegisteredIdentifiers,
                                      currentProfileNames: currentPhotoLibraryProfileNames,
-                                     readingPositionKey: photoLibraryPositionKey) {
-                photoLibrarySelection.select(.all)
+                                     readingPositionKey: photoLibraryPositionKey(.notes)) {
+                showPhotoLibrarySection(.all)
             }
         }
     }
@@ -1116,9 +1447,49 @@ struct MainTabView: View {
             isEmbedded: true,
             supplementaryPhotos: photoLibraryProfileIdentifier == nil ? AnyView(PersonalArchivePhotosSection(
                 photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
-            readingPositionKey: photoLibraryPositionKey,
-            showsCatProfileNavigation: false
+            readingPositionKey: photoLibraryPositionKey(.all),
+            showsCatProfileNavigation: false,
+            headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker),
+            themeRow: AlbumPrototype.isOn(albumPrototypeStored) && hasPhotoAccess && !photoThemeAlbums.isEmpty
+                ? AnyView(photoThemeRow) : nil
         )
+    }
+
+    /// 新しいアルバム（試作）: the album keeps only works; themes, growth and
+    /// time collections are browsed from the 写真 tab instead.
+    private var photoThemeAlbums: [CuratedAlbumPresentation] {
+        (currentHouseholdAlbumCatalog?.sections ?? [])
+            .filter { $0.id != .all }
+            .flatMap(\.albums)
+            .filter { !$0.photos.isEmpty }
+    }
+
+    private var photoThemeRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(photoThemeAlbums) { album in
+                    NavigationLink(value: AlbumRoute.album(album.id)) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            PhotoAssetImageView(localIdentifier: album.coverPhoto.localIdentifier,
+                                                catBoundingBox: album.coverPhoto.catBoundingBox,
+                                                targetPixelSize: CGSize(width: 240, height: 240))
+                                .frame(width: 88, height: 88)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            Text(album.cardTitle)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .frame(width: 88, alignment: .leading)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(album.cardTitle)
+                    .accessibilityIdentifier("photos-theme-\(album.id.title)")
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .accessibilityIdentifier("photos-theme-row")
     }
 
     private var catProfileAlbumsDestination: CatProfileAlbumsDestination {
@@ -1303,7 +1674,9 @@ struct MainTabView: View {
                 assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                 replaceProfileAssignments: { values in
                     await catProfilesActions.replacePhotoAssignments(values)
-                }
+                },
+                navigationTitle: openedFromWidget && CloudyWindowStore.shared.configuration().enabled ? "この1枚" : "写真",
+                legacyBirthday: settings.catLifeReference?.kind == .birthday ? settings.catLifeReference?.date.date() : nil
             )
             .environment(\.photoRediscoveryScope, libraryContext ? photoLibraryRediscoveryScope : .everyone)
             .environment(\.photoRediscoveryEnabled, !libraryContext || permitsPhotoLibraryRediscovery)
@@ -1646,12 +2019,8 @@ struct MainTabView: View {
             )
         case .reflectionsArchive:
             albumsView(showsReflectionArchive: true)
-        case .highlightsArchive:
-            albumsView(showsHighlightArchive: true)
         case let .catAlbums(identifier):
             catAlbumsDestination(identifier, showsHighlightArchive: false)
-        case let .catHighlightsArchive(identifier):
-            catAlbumsDestination(identifier, showsHighlightArchive: true)
         case let .catHighlight(identifier, snapshot):
             highlightDestination(snapshot, scope: .profile(identifier))
         case let .highlight(snapshot):
@@ -1794,6 +2163,7 @@ struct MainTabView: View {
             showsProfilePicker: false
         )
         .navigationTitle("アルバム")
+        .navigationBarTitleDisplayMode(.inline)
         .membershipFeature(.browseAlbums, hasContent: hasAutomaticAlbumContent)
     }
 
@@ -2122,9 +2492,15 @@ struct MainTabView: View {
                 monthlyWindowCollection = nil
                 completedMonthlyWindowCollectionKey = nil
             }
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
             return
         }
-        guard completedMonthlyWindowCollectionKey != key else { return }
+        guard completedMonthlyWindowCollectionKey != key else {
+            synchronizeAlbumArrival()
+            openAlbumArrivalIfReady()
+            return
+        }
 
         let photos = albumEligibleCatPhotos
         let referenceDate = Date()
@@ -2144,6 +2520,80 @@ struct MainTabView: View {
         }
         monthlyWindowCollection = collection
         completedMonthlyWindowCollectionKey = key
+        synchronizeAlbumArrival()
+        openAlbumArrivalIfReady()
+    }
+
+    private func synchronizeAlbumArrival() {
+        let enabled = AlbumPrototype.isOn(albumPrototypeStored)
+        if enabled, photoLibraryLoadSucceeded != false,
+           photoLibraryLoadSucceeded == nil || isScanning
+            || (monthlyWindowCollectionKey.canBuild
+                && completedMonthlyWindowCollectionKey != monthlyWindowCollectionKey) {
+            // Cold loading is not evidence that the previously prepared month
+            // disappeared. Current Photos authority still protects every read.
+            return
+        }
+        let now = Date()
+        let calendar = Calendar.current
+        var arrival: CloudyWindowAlbumArrival?
+        if enabled, monthlyWindowCollectionKey.canBuild,
+           completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey {
+            // Prewarm this month's actual cover whenever the album becomes
+            // ready, so no launch on the last day or at midnight is needed.
+            let nextClosing = calendar.dateInterval(of: .month, for: now)?.end ?? now
+            for delivery in [now, nextClosing] {
+                guard let interval = calendar.dateInterval(of: .month, for: delivery),
+                      CloudyWindowStore.calendar.startOfDay(for: interval.start)
+                        == CloudyWindowStore.calendar.startOfDay(for: delivery),
+                      let previous = calendar.date(byAdding: .month, value: -1, to: interval.start) else { continue }
+                guard case let .ready(letter) = MonthlyWindowBuilder().build(
+                    from: albumEligibleCatPhotos, monthContaining: previous),
+                    albumPrototypeEnabledAt > 0, interval.start.timeIntervalSince1970 > albumPrototypeEnabledAt,
+                    !Set(albumPrototypeOpened.split(separator: ",").map(String.init)).contains(letter.periodIdentifier),
+                    let cover = AlbumPrototype.cover(of: letter, from: catPhotos),
+                    !receivedPhotoIdentifiers.contains(cover.localIdentifier) else { continue }
+                arrival = .init(period: letter.periodIdentifier, availableAt: interval.start,
+                                photoID: cover.localIdentifier)
+                break
+            }
+        }
+        if (try? CloudyWindowStore.shared.synchronizeAlbumArrival(enabled: enabled,
+            enabledAt: albumPrototypeEnabledAt > 0 ? Date(timeIntervalSince1970: albumPrototypeEnabledAt) : nil,
+            openedPeriods: Set(albumPrototypeOpened.split(separator: ",").map(String.init)), arrival: arrival)) == true {
+            if CloudyWindowStore.shared.configuration().enabled {
+                NotificationCenter.default.post(name: .cloudyWindowConfigurationChanged, object: nil)
+            }
+        }
+    }
+
+    private func openAlbumArrivalIfReady() {
+        guard let route = albumArrivalInbox.pending else { return }
+        guard AlbumPrototype.isOn(albumPrototypeStored) else {
+            albumArrivalInbox.pending = nil
+            arrivalUnavailable = true
+            return
+        }
+        guard let photoLibraryLoadSucceeded else { return }
+        if !photoLibraryLoadSucceeded || (!monthlyWindowCollectionKey.canBuild && !isScanning) {
+            albumArrivalInbox.pending = nil
+            arrivalUnavailable = true
+            return
+        }
+        // A cold start has no collection yet. Keep the exact route until the
+        // current permission/source/scan projection has finished rebuilding it.
+        guard completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey else { return }
+        albumArrivalInbox.pending = nil
+        guard hasPhotoAccess, photoPresentationVersion.canPresent,
+              let period = CloudyWindowStore.shared.albumPeriod(for: route),
+              let letter = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == period }),
+              !letter.photos.isEmpty else {
+            arrivalUnavailable = true
+            return
+        }
+        showsSettings = false
+        selectedTab = .memories
+        arrivalStory = letter
     }
 
     private var seasonalMoviePreparationKey: SeasonalMoviePreparationKey {
@@ -2587,7 +3037,7 @@ struct MainTabView: View {
         ContentUnavailableView(
             "アルバムを更新しています",
             systemImage: "rectangle.stack",
-            description: Text("スキャン結果が更新されました。アルバムの一覧へ戻って、もう一度開いてください。")
+            description: Text("写真を探し終えました。アルバムの一覧に戻って、もう一度開いてください。")
         )
     }
 
@@ -2684,6 +3134,7 @@ private struct WindowListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = PairingViewModel()
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
 
     @Binding var opensActiveWindow: Bool
     @Binding var pendingFamilyMomentSourceDigest: String?
@@ -2703,6 +3154,10 @@ private struct WindowListView: View {
     @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
     @State private var coverClock: Date = .now
     @State private var windowErrors: Set<String> = []
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
+    @State private var addingPublicWindowID: String?
+    @State private var addedPublicWindows = 0
+    @State private var addPublicWindowError: String?
 
     let supportsPrivateWindows: Bool
     let publicWindows: [PublicWindowPresentationSource]
@@ -2711,7 +3166,9 @@ private struct WindowListView: View {
     init(opensActiveWindow: Binding<Bool>,
          pendingFamilyMomentSourceDigest: Binding<String?>,
          pendingFamilyNotificationRoute: Binding<MomentNotificationRoute?>,
-         supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible,
+         // With group windows on, the two-person window is not shown anywhere (10/21).
+         supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible
+             && GroupWindowClientProvider.ui == nil,
          officialStore: OfficialWindowStore = .shared,
          refreshOfficialFeed: (() async throws -> Void)? = nil,
          previewOfficialFeed: (() async throws -> OfficialWindowPreview)? = nil,
@@ -2740,6 +3197,83 @@ private struct WindowListView: View {
         publicWindows.filter { publicStates[$0.id]?.isSubscribed == true }
     }
 
+    // MARK: Test builds: the まど tab as what arrives to me
+
+    private var usesArrivalLayout: Bool {
+        AlbumPrototype.isOn(albumPrototypeStored) && GroupWindowClientProvider.ui != nil
+    }
+
+    /// 「わたしのまど」: the windows I share and the official ones I added, each
+    /// as its latest photo. 「見つける」: official windows not added yet, with
+    /// 「加える」. Adding moves the window up into mine. Nothing 「近日」.
+    @ViewBuilder private var arrivalLayout: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let groupClient = GroupWindowClientProvider.ui {
+                GroupWindowListSection(client: groupClient, compactHeader: true)
+            }
+            ForEach(receivingPublicWindows) { source in
+                publicCard(source, presentation: .wide)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                            removal: .opacity))
+            }
+        }
+        let discoverable = publicWindows.filter { publicStates[$0.id]?.isSubscribed != true }
+        if !discoverable.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("見つける")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(discoverable) { source in
+                    publicCard(source, presentation: .row)
+                        .overlay(alignment: .trailing) { addButton(source) }
+                        .transition(.opacity)
+                }
+            }
+            .accessibilityIdentifier("window-list-discover-section")
+        }
+        if let addPublicWindowError {
+            Text(addPublicWindowError).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private func addButton(_ source: PublicWindowPresentationSource) -> some View {
+        Button { add(source) } label: {
+            Text("加える")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(Color.accentColor.opacity(0.15), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.accentColor)
+        .padding(.trailing, 12)
+        .disabled(addingPublicWindowID != nil)
+        .accessibilityIdentifier("public-window-add-\(source.id)")
+    }
+
+    /// The same saved setting as 「このまどを受け取る」 in the window itself,
+    /// then the move up and a light tick; the first photo follows.
+    private func add(_ source: PublicWindowPresentationSource) {
+        addingPublicWindowID = source.id
+        do {
+            try source.store.setSubscribed(true)
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            addPublicWindowError = nil
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) { reloadPublicStates() }
+            addedPublicWindows &+= 1
+            Task {
+                try? await source.refresh()
+                reloadPublicStates()
+                addingPublicWindowID = nil
+            }
+        } catch {
+            reloadPublicStates()
+            addPublicWindowError = "加えられませんでした。もう一度お試しください。"
+            addingPublicWindowID = nil
+        }
+    }
+
     private func publicCard(_ source: PublicWindowPresentationSource,
                             presentation: OfficialWindowEntryCard.Presentation = .list) -> some View {
         OfficialWindowEntryCard(state: publicStates[source.id], store: source.store,
@@ -2762,7 +3296,7 @@ private struct WindowListView: View {
             VStack(alignment: .leading, spacing: 12) {
                 windowAdditionControl
                 if let message = model.operationErrorMessage {
-                    Text(message).font(.footnote).foregroundStyle(.orange)
+                    Text(message).font(.footnote).foregroundStyle(.red)
                         .accessibilityIdentifier("window-add-error")
                 }
             }
@@ -2779,65 +3313,78 @@ private struct WindowListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
-                if !connectedWindows.isEmpty || !receivingPublicWindows.isEmpty || !setupWindows.isEmpty {
-                    LazyVGrid(columns: cardColumns, spacing: 22) {
-                        ForEach(connectedWindows) { window in
-                            windowCard(window)
-                        }
-                        ForEach(receivingPublicWindows) { source in publicCard(source) }
-                        ForEach(setupWindows) { window in windowCard(window) }
-                    }
-                    .accessibilityIdentifier("window-list-receiving")
-                }
-                if let groupClient = GroupWindowClientProvider.production {
-                    // Group windows, only in builds that turn them on.
-                    GroupWindowListSection(client: groupClient)
-                }
-                if isLoading, windows.isEmpty {
-                    ProgressView("まどを確認しています…")
-                        .frame(maxWidth: .infinity, minHeight: 240)
-                } else if windows.isEmpty, let message = availabilityMessage {
-                    unavailableWindowContent(message: message)
+                if usesArrivalLayout {
+                    arrivalLayout
                 } else {
-                    if isLoading {
-                        ProgressView("まどを更新しています…")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if let message = availabilityMessage {
-                        cachedWindowWarning(message: message)
+                    if let groupClient = GroupWindowClientProvider.ui {
+                        // Windows people share come first (1-4); public windows follow.
+                        GroupWindowListSection(client: groupClient)
+                        if !InternalBuildPresentationAvailability.isAvailable, !receivingPublicWindows.isEmpty {
+                            Text("公式のまど")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                     }
-
-                    if windows.isEmpty, receivingPublicWindows.isEmpty {
-                        emptyWindowCard
+                    if !connectedWindows.isEmpty || !setupWindows.isEmpty
+                        || (!InternalBuildPresentationAvailability.isAvailable && !receivingPublicWindows.isEmpty) {
+                        LazyVGrid(columns: cardColumns, spacing: 22) {
+                            ForEach(connectedWindows) { window in
+                                windowCard(window)
+                            }
+                            if !InternalBuildPresentationAvailability.isAvailable {
+                                ForEach(receivingPublicWindows) { source in publicCard(source) }
+                            }
+                            ForEach(setupWindows) { window in windowCard(window) }
+                        }
+                        .accessibilityIdentifier("window-list-receiving")
                     }
+                    if isLoading, windows.isEmpty {
+                        ProgressView("まどを確認しています…")
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                    } else if windows.isEmpty, let message = availabilityMessage {
+                        unavailableWindowContent(message: message)
+                    } else {
+                        if isLoading {
+                            ProgressView("まどを更新しています…")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if let message = availabilityMessage {
+                            cachedWindowWarning(message: message)
+                        }
 
-                    if let message = model.operationErrorMessage {
-                        Text(message).font(.footnote).foregroundStyle(.orange)
+                        if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {
+                            legacyPublicWindowEntry
+                        } else if !InternalBuildPresentationAvailability.isAvailable, windows.isEmpty, receivingPublicWindows.isEmpty {
+                            emptyWindowCard
+                        }
+
+                        if let message = model.operationErrorMessage {
+                            Text(message).font(.footnote).foregroundStyle(.red)
+                        }
+
                     }
-
+                    if InternalBuildPresentationAvailability.isAvailable { publicWindowEntry }
                 }
             }
+            .sensoryFeedback(.success, trigger: addedPublicWindows)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .navigationTitle("まど")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let showSettings {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: showSettings) { Image(systemName: "gearshape") }
-                        .accessibilityLabel("設定")
-                        .accessibilityIdentifier("windows-settings-button")
-                }
-            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if supportsPrivateWindows {
                     connectionEntry
+                    // Without group windows, the public list is reached from here.
+                    NavigationLink { discovery } label: {
+                        Label("公式のまど", systemImage: "safari")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .accessibilityLabel("公式のまどを探す")
+                    .accessibilityIdentifier("window-list-discover")
                 }
-                NavigationLink { discovery } label: {
-                    Image(systemName: "safari")
-                }
-                .accessibilityLabel("まどを探す")
-                .accessibilityIdentifier("window-list-discover")
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -2845,9 +3392,23 @@ private struct WindowListView: View {
         .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
             reloadPublicStates()
         }
-        .navigationDestination(isPresented: $opensActiveWindow) {
+        .navigationDestination(isPresented: Binding(
+            get: { supportsPrivateWindows && opensActiveWindow },
+            set: { opensActiveWindow = $0 }
+        )) {
             activeWindowDestination
                 .id(activeWindowID ?? "no-active-window")
+        }
+        .onChange(of: opensActiveWindow, initial: true) { _, opens in
+            // Links that used to open the two-person window only show this tab.
+            if opens && !supportsPrivateWindows { opensActiveWindow = false }
+        }
+        // A group invitation link joins here, in the まど tab itself.
+        .sheet(item: Binding(
+            get: { GroupWindowClientProvider.ui != nil ? invitationInbox.pending : nil },
+            set: { if $0 == nil { invitationInbox.discard() } }
+        )) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -2893,7 +3454,7 @@ private struct WindowListView: View {
     private func unavailableWindowContent(message: String) -> some View {
         VStack(spacing: 16) {
             ContentUnavailableView(
-                "身近な人とのまどを確認できません",
+                "みんなのまどを確認できません",
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text(message)
             )
@@ -2919,7 +3480,7 @@ private struct WindowListView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Text("更新が完了するまで、身近な人とのまどの切り替えや追加は行いません。")
+            Text("更新が終わるまで、まどの切り替えや追加はできません。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -2934,6 +3495,44 @@ private struct WindowListView: View {
         .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
     }
 
+    private var publicWindowEntry: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("公式のまど")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(publicWindows) { source in
+                publicCard(source, presentation: .row)
+            }
+            PublicWindowComingSoonRows()
+        }
+        .accessibilityIdentifier("window-list-start")
+    }
+
+    private var legacyPublicWindowEntry: some View {
+        NavigationLink { discovery } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "building.2")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
+                        .font(.body.weight(.semibold))
+                    Text("猫カフェや保護猫の写真を、見るだけで受け取れます")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .frame(minHeight: 44)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("window-list-start")
+    }
+
     private var emptyWindowCard: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("まどをはじめる").font(.title2)
@@ -2946,7 +3545,7 @@ private struct WindowListView: View {
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("window-list-start-private")
-                    Text("身近な相手と写真を送り合います。送る写真と相手を確認してから届けます。")
+                    Text("家族や友だちと写真を届け合います。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
@@ -2988,7 +3587,7 @@ private struct WindowListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("window-list-product-limit")
         } else {
-            if let groupClient = GroupWindowClientProvider.production {
+            if let groupClient = GroupWindowClientProvider.ui {
                 // One place to start a window. New windows are group windows,
                 // also for two people; existing two-person windows keep working.
                 NavigationLink { GroupWindowCreateScreen(client: groupClient) } label: {
@@ -3005,7 +3604,7 @@ private struct WindowListView: View {
             setupAction("以前のまどにこのiPhoneを追加", path: .recover, identifier: "window-list-recover")
         }
         if pausesWindowChanges {
-            Text(availabilityMessage ?? "身近な人とのまどを確認しています…")
+            Text(availabilityMessage ?? "みんなのまどを確認しています…")
                 .font(.footnote).foregroundStyle(.secondary)
             if availabilityMessage != nil {
                 Button("もう一度確認する") { Task { await reload() } }
@@ -3115,7 +3714,7 @@ private struct WindowListView: View {
                             } else if windowErrors.contains(window.localWindowID) {
                                 Label("開けませんでした", systemImage: "exclamationmark.circle.fill")
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.red)
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }
                         }
@@ -3542,7 +4141,7 @@ struct WindowListNavigationFixture: View {
                                publicWindows: sources)
                     .frame(maxWidth: CommandLine.arguments.contains("--window-list-narrow") ? 320 : .infinity)
             }
-            .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
+            .tabItem { Label("まど", systemImage: "window.vertical.closed") }.tag(2)
         }
         .environment(\.dynamicTypeSize,
                      CommandLine.arguments.contains("--window-list-largest-text") ? .accessibility5 :
@@ -3581,3 +4180,4 @@ private extension View {
         modifier(GrowingSummaryGate(context: context, hasContent: hasContent))
     }
 }
+

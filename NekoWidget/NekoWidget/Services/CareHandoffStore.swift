@@ -198,14 +198,16 @@ final class CareHandoffStore: ObservableObject {
                 guard let loaded = image(name) else { throw CareHandoffError.photoUnavailable }
                 photo = loaded
             }
-            var fields = disclosure.fields(cat: cat)
+            // Everyday care and health come from 「この子のこと」, one place for each cat.
             let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
-            if let about = CatCareSummary.ageAndWeight(care) { fields.insert(("年齢・体重", about), at: min(1, fields.count)) }
-            if disclosure.health { fields += CatCareSummary.careHandoffHealthFields(care) }
+            let fields = disclosure.fields(cat: cat,
+                everyday: CatCareSummary.careHandoffLines(care, legacy: cat),
+                health: CatCareSummary.careHandoffHealthLines(care, legacy: cat))
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
                 fields: fields, updatedAt: cat.updatedAt)
         }
-        return CareHandoffShareRecord(cats: cats, commonFields: disclosure.commonFields(plan: plan),
+        return CareHandoffShareRecord(cats: cats,
+            commonFields: disclosure.commonFields(plan: plan, household: CatCareStore.shared.state?.household),
             includesHealth: disclosure.health, includesContacts: disclosure.contacts, createdAt: Date())
     }
     private static func normalizedJPEG(_ data: Data) throws -> Data {

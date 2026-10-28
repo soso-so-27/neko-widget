@@ -1126,7 +1126,7 @@ enum MainTabStartupPolicy {
 enum FavoritePhotoOrigin: String, CaseIterable {
     case all, ownCats, received
     var title: String {
-        switch self { case .all: "すべて"; case .ownCats: "自分の猫"; case .received: "まどから" }
+        switch self { case .all: "すべて"; case .ownCats: "自分の猫"; case .received: "まどから届いた" }
     }
     func includes(isReceived: Bool, hasOwnCat: Bool = false) -> Bool {
         switch self { case .all: true; case .ownCats: !isReceived || hasOwnCat; case .received: isReceived }

@@ -187,6 +187,7 @@ struct PhotoMemoryNotesListView: View {
     let readingPositionKey: String?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.photoLibraryPageIsCurrent) private var isCurrentPhotoLibraryPage
     @StateObject private var library: PhotoMemoryNoteLibraryPresentation
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var sort: PhotoMemoryNoteLibraryPolicy.Sort = .captured
@@ -310,7 +311,6 @@ struct PhotoMemoryNotesListView: View {
                     yearSections(visible, account: displayedAccount)
                 }
             }
-            .scrollTargetLayout(isEnabled: isEmbedded)
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
         }
@@ -347,6 +347,7 @@ struct PhotoMemoryNotesListView: View {
                     }
             }
             .id(item.id)
+            .photoLibraryReadingRow(item.id, index: index)
         }
     }
 
@@ -394,7 +395,7 @@ struct PhotoMemoryNotesListView: View {
         }
         .refreshable { await library.reload() }
         .navigationTitle(isEmbedded ? "写真" : "メモあり")
-        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { readingToolbar }
         .navigationDestination(isPresented: Binding(
             get: { selectedArchive != nil }, set: { if !$0 { selectedArchive = nil } }
@@ -432,7 +433,7 @@ struct PhotoMemoryNotesListView: View {
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
-        if archiveEnabled || openCatPreparedness != nil {
+        if isCurrentPhotoLibraryPage, archiveEnabled || openCatPreparedness != nil {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
                     if archiveEnabled {

@@ -558,7 +558,7 @@ struct FamilyWindowView: View {
         .alert("ブロックしました", isPresented: $showsBlockCompleted) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("この相手との写真共有を終了しました。ブロックは、設定の「ブロックした共有」から解除できます。")
+            Text("この相手との写真共有を終了しました。ブロックは、設定の「ブロックした相手」から解除できます。")
         }
         .task {
             await model.bootstrap()
@@ -1263,7 +1263,7 @@ struct FamilyWindowView: View {
                     Text("写真とメモは「このまどの写真」の…から書き出せます。共有を終了すると、このまどの写真とメモは開けなくなります。")
                     Text("無期限の保管や、二人の全端末を失った場合の復元は保証していません。")
                 }
-                Section("内部テスト中") {
+                Section("残せる量") {
                     Text("まどごとに写真100枚・メモ1,000件まで。上限に達しても古い写真は自動で消しません。")
                 }
             }
@@ -3131,7 +3131,7 @@ struct FamilyWindowView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MiBまで保持します。")
+            Text("写真は公開されません。届けるために預かる暗号化した写真は、受け取られてから7日（受け取られないときは30日）でサーバーから消します。届いた写真は、このiPhoneに最長90日・500枚まで残ります。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。別のiPhoneや再インストール後には表示されません。")

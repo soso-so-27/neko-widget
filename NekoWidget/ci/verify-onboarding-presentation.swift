@@ -106,17 +106,17 @@ enum OnboardingPresentationVerifier {
 
     private static func verifiesApprovedJapaneseCopy() throws {
         try require(
-            OnboardingPresentationCopy.purposeBodyLines == [
-                "撮りためた猫写真が、",
-                "毎日会える思い出に。",
-                "猫だけを端末内で見つけて、",
-                "自動アルバムとホーム画面へ。"
-            ],
-            "page-one product promise changed"
+            OnboardingPresentationCopy.purposeTitle == "このiPhoneの中の猫を、全部見つけます。"
+                && OnboardingPresentationCopy.purposeBody == "写真はiPhoneの中だけで探します。外には送りません。",
+            "page-one promise changed"
         )
         try require(
-            OnboardingPresentationCopy.purposeAction == "自分で始める",
+            OnboardingPresentationCopy.purposeAction == "猫を探す",
             "page-one action changed"
+        )
+        try require(
+            OnboardingPresentationCopy.purposeFootnote.isEmpty,
+            "page-one grew a footnote again"
         )
         try require(
             OnboardingPresentationCopy.permissionTitleLines == [
@@ -162,8 +162,14 @@ enum OnboardingPresentationVerifier {
             "Photos permission stopped offering the approved skip action"
         )
         try require(
-            OnboardingPresentationCopy.scanTitle == "このiPhoneの猫写真を探しています",
+            OnboardingPresentationCopy.scanTitle == "猫を探しています"
+                && OnboardingPresentationCopy.scanFoundTitle == "猫の写真が見つかりました"
+                && OnboardingPresentationCopy.scanCountLead == "いま",
             "scan title changed"
+        )
+        try require(
+            OnboardingPresentationCopy.scanWidgetAction == "まどを置く",
+            "scan page stopped offering Widget placement"
         )
         try require(
             OnboardingPresentationCopy.scanBodyLines == [
@@ -172,22 +178,8 @@ enum OnboardingPresentationVerifier {
             "scan manuscript copy changed"
         )
         try require(
-            OnboardingPresentationCopy.scanContinueAction
-                == "写真を見る",
+            OnboardingPresentationCopy.scanContinueAction == "あとで",
             "scan page stopped offering a non-blocking continuation"
-        )
-        try require(
-            OnboardingPresentationCopy.resultLeadLines == [
-                "このiPhoneで見つけた",
-                "猫写真は"
-            ],
-            "scan-result lead changed"
-        )
-        try require(
-            OnboardingPresentationCopy.resultCountSuffix == "枚"
-                && OnboardingPresentationCopy.resultClosing == "ありました"
-                && OnboardingPresentationCopy.resultOldestLead == "一番古い1枚は",
-            "scan-result count or oldest-photo copy changed"
         )
         try require(
             OnboardingPresentationCopy.widgetTitleLines == [

@@ -325,6 +325,7 @@ struct PersonalRediscoveryStore: Sendable {
         now: Date = .now,
         interval: TimeInterval = 20 * 60,
         discardCandidateIDs: Set<String> = [],
+        priorityPhotoIDs: Set<String> = [],
         timeZone: TimeZone = .current,
         prepareFiles: (Set<String>) throws -> Void = { _ in }
     ) throws -> PersonalRediscoverySnapshot {
@@ -364,6 +365,22 @@ struct PersonalRediscoveryStore: Sendable {
                         && !incomingIDs.contains($0.item.localIdentifier)
                         && pinned.isDisjoint(with: $0.item.allCacheFilenames)
                 }) {
+                    proposed.remove(at: index)
+                } else if !incomingIDs.isDisjoint(with: priorityPhotoIDs),
+                          let index = proposed.lastIndex(where: { candidate in
+                    incomingIDs.contains(candidate.item.localIdentifier)
+                        && !priorityPhotoIDs.contains(candidate.item.localIdentifier)
+                        && !state.candidates.contains(where: { old in old.item.localIdentifier == candidate.item.localIdentifier })
+                }) {
+                    proposed.remove(at: index)
+                } else if !incomingIDs.isDisjoint(with: priorityPhotoIDs),
+                          let index = proposed.firstIndex(where: {
+                    !incomingIDs.contains($0.item.localIdentifier)
+                        && !priorityPhotoIDs.contains($0.item.localIdentifier)
+                        && pinned.isDisjoint(with: $0.item.allCacheFilenames)
+                }) {
+                    // A local album cover can replace an unissued preparation,
+                    // but never the current, issued or manually retained photo.
                     proposed.remove(at: index)
                 } else if let index = proposed.lastIndex(where: { candidate in
                     incomingIDs.contains(candidate.item.localIdentifier)
@@ -425,6 +442,36 @@ struct PersonalRediscoveryStore: Sendable {
         try locked {
             guard let state = try read() else { return nil }
             return snapshot(state, now: now)
+        }
+    }
+
+    /// Experiments use the same cross-process lock as permission publication.
+    /// The callback must not re-enter this store. This prevents a reveal or
+    /// derived-image publication from racing a revoked Photos permission.
+    func withAuthoritySnapshot<Value>(
+        now: Date = .now,
+        _ operation: (PersonalRediscoverySnapshot?) throws -> Value
+    ) throws -> Value {
+        try locked {
+            try operation(try read().map { snapshot($0, now: now) })
+        }
+    }
+
+    /// A separately rendered internal Widget still consumes the shared
+    /// preparation pool. Recording its issued slots lets used images retire
+    /// so newly scanned photos can enter the next bounded refill.
+    func recordExternalWidgetIssue(slotID: String, photoID: String, scheduledAt: Date, now: Date = .now) throws {
+        try locked {
+            guard var state = try read(), state.isAuthorized,
+                  Self.validIdentifier(slotID), scheduledAt <= now.addingTimeInterval(86_400),
+                  let candidate = state.candidates.first(where: { $0.item.localIdentifier == photoID }),
+                  eligible(candidate.item, in: state),
+                  !state.issues.contains(where: { $0.slotID == slotID }) else { return }
+            state.issues.append(.init(slotID: slotID, photoID: photoID, scheduledAt: scheduledAt,
+                issuedAt: now, leaseUntil: max(now, scheduledAt).addingTimeInterval(Self.leaseDuration),
+                cacheFilenames: candidate.item.allCacheFilenames))
+            prune(&state, now: now)
+            try write(state)
         }
     }
 

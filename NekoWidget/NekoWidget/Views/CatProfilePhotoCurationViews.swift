@@ -33,7 +33,6 @@ struct CatProfileDetailView: View {
     let actions: CatProfilesViewActions
 
     @Environment(\.dismiss) private var dismiss
-    @State private var showsLifeReferenceEditor = false
     @State private var showsKeyPhotoPicker = false
     @State private var showsDeleteConfirmation = false
     @State private var showsNameEditor = false
@@ -42,32 +41,95 @@ struct CatProfileDetailView: View {
     @State private var isDeleting = false
     @State private var nameSaveFailed = false
     @State private var deleteFailed = false
+    @State private var page: CatPage = .photos
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
 
+    enum CatPage: Hashable { case photos, care }
+
+    /// One page per cat. 写真: what the app found in Photos (name, face, which
+    /// photos are this cat). この子のこと: the facts people write (dates,
+    /// health, daily life, household), read by the tools and the album.
     var body: some View {
+        VStack(spacing: 0) {
+            // The same underline tabs as the 写真 tab, full width under the title.
+            HStack(spacing: 24) {
+                ForEach([CatPage.photos, CatPage.care], id: \.self) { candidate in
+                    Button { page = candidate } label: {
+                        Text(candidate == .photos ? "写真" : "この子のこと")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(page == candidate ? .primary : .secondary)
+                            .frame(minHeight: 44)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(page == candidate ? Color.primary : .clear).frame(height: 2)
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(page == candidate ? .isSelected : [])
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+            .background(Color(.systemGroupedBackground))
+            .accessibilityIdentifier("cat-profile-page")
+            Divider()
+            if page == .care {
+                CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))
+            } else {
+                profileForm
+            }
+        }
+        .navigationTitle(profile.displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // この子のこと brings its own; 写真 shows the same at the same place.
+            if page == .photos, AlbumPrototype.isOn(albumPrototypeStored) || FamilyNotebookPrototype.shared.hasFamily {
+                ToolbarItem(placement: .topBarTrailing) {
+                    FamilyNotebookButton(accessibilityIdentifier: "cat-profile-family-notebook")
+                }
+            }
+        }
+    }
+
+    private var profileForm: some View {
         Form {
             Section {
-                HStack(spacing: 14) {
+                // One heading: the photo, the name with its pencil, the count.
+                // No badge on the photo and no second box under it.
+                VStack(spacing: 8) {
                     Button {
                         showsKeyPhotoPicker = true
                     } label: {
                         CatProfileThumbnail(photo: profile.coverPhoto)
-                            .frame(width: 82, height: 82)
-                            .overlay(alignment: .bottomTrailing) {
-                                Image(systemName: "photo.badge.checkmark")
-                                    .padding(5)
-                                    .background(.regularMaterial, in: Circle())
-                            }
+                            .frame(width: 96, height: 96)
+                            .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .disabled(profile.confirmedPhotos.isEmpty)
                     .accessibilityLabel("\(profile.displayName)の代表写真を変更")
-                    VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
                         Text(profile.displayName)
                             .font(.title2.bold())
-                        Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
-                            .foregroundStyle(.secondary)
+                        if !showsNameEditor {
+                            Button {
+                                draftName = profile.name ?? ""
+                                nameSaveFailed = false
+                                showsNameEditor = true
+                            } label: {
+                                Image(systemName: "pencil.circle.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    .frame(minWidth: 44, minHeight: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("名前を変更")
+                            .accessibilityIdentifier("cat-profile-rename")
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .listRowBackground(Color.clear)
 
                 if showsNameEditor {
                     TextField("名前", text: $draftName)
@@ -93,30 +155,10 @@ struct CatProfileDetailView: View {
                     }
                     .buttonStyle(.borderless)
                     .disabled(isSavingName)
-                } else {
-                    Button("名前を変更", systemImage: "pencil") {
-                        draftName = profile.name ?? ""
-                        nameSaveFailed = false
-                        showsNameEditor = true
-                    }
                 }
             }
 
-            Section {
-                NavigationLink {
-                    CatPreparednessView(
-                        identityKey: profile.identifier,
-                        catName: profile.displayName,
-                        candidatePhotos: preparednessCandidates,
-                        profiles: allProfiles
-                    )
-                } label: {
-                    Label("迷子のとき", systemImage: "pawprint")
-                }
-            } footer: {
-                Text("この子の写真と特徴を用意しておくと、必要なときに渡す画像を作れます。")
-            }
-
+            // 迷子のとき is a tool; it lives on the ツール tab, not in the profile.
             Section {
                 NavigationLink {
                     UnassignedCatPhotosView(
@@ -156,35 +198,8 @@ struct CatProfileDetailView: View {
                 }
                 .disabled(profile.confirmedPhotos.isEmpty)
 
-                NavigationLink {
-                    CatProfilePhotoAlbumSelectionView(
-                        profile: profile,
-                        albums: photoAlbumOptions,
-                        actions: actions
-                    )
-                } label: {
-                    LabeledContent(
-                        "写真アプリのアルバムをつなぐ",
-                        value: profile.photoAlbumLink?.displayTitle ?? "未連携"
-                    )
-                }
             } header: {
                 Text("写真")
-            } footer: {
-                Text("一緒に写っている猫を複数選べます。写真は移動・削除されません。")
-            }
-
-            Section {
-                Button {
-                    showsLifeReferenceEditor = true
-                } label: {
-                    LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)
-                }
-                .foregroundStyle(.primary)
-            } header: {
-                Text("この子の時間")
-            } footer: {
-                Text(timeGroupingExplanation)
             }
 
             Section {
@@ -197,10 +212,8 @@ struct CatProfileDetailView: View {
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
-            } header: {
-                Text("その他")
             } footer: {
-                Text("プロフィールを削除しても、写真や預けるとき・迷子のときなどの入力は残ります。")
+                Text("削除しても、写真とツールの入力は残ります。")
             }
         }
         .disabled(isDeleting || isSavingName)
@@ -222,12 +235,6 @@ struct CatProfileDetailView: View {
         } message: {
             Text("写真やツールの入力は残ります。この子への写真の指定とアルバム連携だけを外します。")
         }
-        .sheet(isPresented: $showsLifeReferenceEditor) {
-            CatProfileLifeReferenceEditor(
-                profile: profile,
-                save: actions.updateLifeDates
-            )
-        }
         .sheet(isPresented: $showsKeyPhotoPicker) {
             NavigationStack {
                 CatProfilePhotoPicker(
@@ -237,7 +244,7 @@ struct CatProfileDetailView: View {
                 )
             }
         }
-        .appRecordEditing(retainWhileHidden: showsNameEditor || isSavingName || showsLifeReferenceEditor || showsKeyPhotoPicker)
+        .appRecordEditing(retainWhileHidden: showsNameEditor || isSavingName || showsKeyPhotoPicker)
     }
 
     private var preparednessCandidates: [CatProfilePhotoPresentation] {
@@ -247,26 +254,29 @@ struct CatProfileDetailView: View {
             .filter { seen.insert($0.localIdentifier).inserted }
     }
 
-    private var lifeReferenceSummary: String {
-        if profile.lifeDates.hasBothDates { return "両方設定済み" }
-        guard let reference = profile.lifeDates.birthday ?? profile.lifeDates.adoptionDay
-            ?? profile.lifeReference else { return "未設定" }
+}
+
+extension CatProfilePresentation {
+    /// 「推定の誕生日 2020/5/1」「両方設定済み」「未設定」: the 誕生日・迎えた日 row.
+    var lifeDatesSummary: String {
+        if lifeDates.hasBothDates { return "両方設定済み" }
+        guard let reference = lifeDates.birthday ?? lifeDates.adoptionDay ?? lifeReference else { return "未設定" }
         let prefix = reference.isApproximate ? "推定の" : ""
         return "\(prefix)\(reference.kind.title) \(reference.date.formatted(date: .numeric, time: .omitted))"
     }
 
-    private var timeGroupingExplanation: String {
-        guard let reference = profile.lifeReference else {
-            return "誕生日を設定すると、この子だけの「子猫のころ」「1歳のころ」を作ります。"
+    /// What the dates do: the album groups this cat's photos by them.
+    var lifeDatesExplanation: String {
+        guard let reference = lifeReference else {
+            return "誕生日を入れると、アルバムにこの子だけの「子猫のころ」「1歳のころ」ができます。分からなければ迎えた日でも。"
         }
         switch reference.kind {
         case .birthday:
-            return "このプロフィール内だけで「子猫のころ」「1歳のころ」のようにまとめます。"
+            return "アルバムで「子猫のころ」「1歳のころ」のようにまとめます。"
         case .adoptionDay:
             return "迎えた日を基準に「お迎えしたころ」「いっしょに暮らして1年」のようにまとめます。"
         }
     }
-
 }
 
 private struct CatProfilePhotoAlbumSelectionView: View {
@@ -374,7 +384,7 @@ private struct CatProfilePhotoAlbumSelectionView: View {
     }
 }
 
-private struct CatProfileLifeReferenceEditor: View {
+struct CatProfileLifeReferenceEditor: View {
     let profile: CatProfilePresentation
     let save: (String, CatProfileLifeDatesPresentation) async -> Bool
 
@@ -715,7 +725,7 @@ struct CatProfileConfirmedPhotosView: View {
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -767,7 +777,7 @@ struct CatProfileConfirmedPhotosView: View {
                     Button("\(profile.displayName)ではない") {
                         showsRemoveConfirmation = true
                     }
-                    Button("候補から外す", role: .destructive) {
+                    Button("猫の写真から外す", role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     }
                 } label: {
@@ -813,7 +823,7 @@ struct UnassignedCatPhotosView: View {
     let photos: [CatProfilePhotoPresentation]
     let profiles: [CatProfilePresentation]
     let actions: CatProfilesViewActions
-    var navigationTitle = "猫を選んでいない写真"
+    var navigationTitle = "どの猫か決めていない写真"
     /// A picker opened from one cat's page starts with that cat selected while
     /// preserving any other explicit profile assignments on the same photo.
     var preselectedProfileIdentifier: String? = nil
@@ -886,7 +896,7 @@ struct UnassignedCatPhotosView: View {
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -942,7 +952,7 @@ struct UnassignedCatPhotosView: View {
                     Button(role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     } label: {
-                        Label("候補から外す", systemImage: "eye.slash")
+                        Label("猫の写真から外す", systemImage: "eye.slash")
                     }
                 }
             }
@@ -1100,7 +1110,7 @@ struct LegacyCatExclusionReviewView: View {
                 }
             } label: {
                 Label(
-                    isRestoring ? "戻しています…" : "候補に戻す（\(selection.count.formatted())枚）",
+                    isRestoring ? "戻しています…" : "猫の写真に戻す（\(selection.count.formatted())枚）",
                     systemImage: "arrow.uturn.backward.circle"
                 )
                 .frame(maxWidth: .infinity)

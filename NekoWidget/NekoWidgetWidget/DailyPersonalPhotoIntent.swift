@@ -40,7 +40,7 @@ struct DailyPersonalPhotoIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        if !refreshOnly {
+        if !refreshOnly && !CloudyWindowStore.shared.configuration().enabled {
             let token = PersonalRediscoveryEntryToken(id: tokenID, createdAt: createdAt,
                 eligibilityDay: eligibilityDay, sourceID: sourceID, photoID: photoID,
                 scopeRevision: scopeRevision)

@@ -130,7 +130,7 @@ describe('moderation visibility over authenticated moment transport',()=>{
   expect(raced).toBe(true);
   expect(await testEnv.DB.prepare('SELECT state,acknowledged_at FROM moment_deliveries WHERE moment_id=?').bind(p.reservation.moment.id).first()).toEqual({state:'pending',acknowledged_at:null});
  });
- it('keeps the60s decision limit for an active linked album after its moment expires',async()=>{
+ it('allows a completed review to be confirmed later for a linked album without reviving its expired moment',async()=>{
   const space=await seedActiveSpace(),p=await reportedMoment(space),moment=p.reservation.moment.id,f=await resolutionFixture(p.report.id,undefined,true);
   const photo=await momentSharedPhotoID(space.id,moment),objectKey=`family-records/test/${photo}`;
   await testEnv.MEDIA!.put(objectKey,new Uint8Array(32));
@@ -142,8 +142,10 @@ describe('moderation visibility over authenticated moment transport',()=>{
   const receipt=await f.read(),claim=await testEnv.DB.prepare('SELECT expires_at,claimed_at FROM moderation_owner_read_claims WHERE read_receipt_id=?').bind(receipt).first<{expires_at:number;claimed_at:number}>();
   expect(claim!.expires_at-claim!.claimed_at).toBeLessThanOrEqual(4);
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,claim!.expires_at*1000-Date.now()+100)));
-  expect((await routeLocalModerationResolution(f.request(`${f.path()}/no_action/${receipt}/0`,'POST'),f.local)).status).toBe(409);
-  expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM moderation_resolution_events').first()).toEqual({n:0});
+  expect((await f.act('no_action',receipt,0)).reply).toBe('available_in_app');
+  expect(await testEnv.DB.prepare('SELECT COUNT(*) AS n FROM moderation_resolution_events').first()).toEqual({n:1});
+  expect(await testEnv.DB.prepare('SELECT state FROM moments WHERE id=?').bind(moment).first()).toEqual({state:'expired'});
+  expect(await testEnv.DB.prepare('SELECT state FROM family_records WHERE id=?').bind(photo).first()).toEqual({state:'active'});
  });
  it('releases an active linked album after delivery expiry without reviving the delivery',async()=>{
   const space=await seedActiveSpace(),p=await reportedMoment(space),moment=p.reservation.moment.id,f=await resolutionFixture(p.report.id);

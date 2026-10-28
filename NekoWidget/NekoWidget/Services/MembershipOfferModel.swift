@@ -285,7 +285,7 @@ final class MembershipOfferModel: ObservableObject {
     private func updateMembershipState() {
         expiryTask?.cancel()
         if let purchases {
-            isMember = purchases.entitlementState.grantsPlus
+            isMember = purchases.entitlementState.permitsPersonalPlus
             isWaiting = purchases.pendingProductID != nil || purchases.awaitingServerConfirmation
             verificationRequired = !isMember && !isWaiting && !purchases.canStartNewPurchase
             if isMember, let expiry = purchases.entitlementState.lastServerConfirmed?.expirationDate {
@@ -648,7 +648,7 @@ struct PlusSettingsSection: View {
     private enum Status { case notMember, member, unknown }
 
     private var status: Status {
-        if purchases.entitlementState.grantsPlus { return .member }
+        if purchases.entitlementState.permitsPersonalPlus { return .member }
         if case .indeterminate = purchases.entitlementState { return .unknown }
         if purchases.pendingProductID != nil || purchases.awaitingServerConfirmation { return .unknown }
         return .notMember
@@ -662,17 +662,18 @@ struct PlusSettingsSection: View {
                     showsOffer = true
                 } label: {
                     Label(PlusOfferContext.settings.entryTitle, systemImage: "sparkles")
+                        .frame(maxWidth: .infinity, minHeight: 40)
                 }
+                .buttonStyle(.borderedProminent)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
                 .accessibilityIdentifier("settings-membership-offer")
             case .member:
-                Label("Plus利用中", systemImage: "checkmark.seal")
-                    .accessibilityIdentifier("settings-membership-active")
-                Button("サブスクリプションを管理") { showsManagement = true }
+                SettingsActionRow("サブスクリプションを管理", systemImage: "checkmark.seal") { showsManagement = true }
                     .accessibilityIdentifier("settings-membership-manage")
             case .unknown:
-                Label("購入状況を確認できません", systemImage: "exclamationmark.arrow.circlepath")
-                    .accessibilityIdentifier("settings-membership-unknown")
-                Button(isRechecking ? "確認しています…" : "再確認") {
+                SettingsActionRow(isRechecking ? "確認しています…" : "購入状況を再確認",
+                                  systemImage: "exclamationmark.arrow.circlepath") {
                     isRechecking = true
                     Task {
                         await purchases.refreshAfterForegroundEntry()
@@ -684,12 +685,17 @@ struct PlusSettingsSection: View {
             }
             if status != .member {
                 Button("購入を復元") { showsRestore = true }
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
                     .accessibilityIdentifier("settings-membership-restore")
             }
         } header: {
             // Presenters live on the header, which stays while the rows switch
             // between states (a list Section would copy them onto every row).
-            Text("Plus")
+            Text(status == .member ? "Plus（利用中）" : status == .unknown ? "Plus（購入状況を確認できません）" : "Plus")
+                .accessibilityIdentifier(status == .member ? "settings-membership-active"
+                                         : status == .unknown ? "settings-membership-unknown" : "settings-membership-header")
                 .sheet(isPresented: $showsOffer, onDismiss: refreshMembership) {
                     MembershipOfferSheet(model: .live(), context: .settings) { _ in showsOffer = false }
                 }
@@ -706,18 +712,6 @@ struct PlusSettingsSection: View {
 
     private func refreshMembership() {
         NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-    }
-}
-
-/// Distribution intent, not receipt environment, controls internal-only UI.
-/// TestFlight and App Review both use sandbox receipts in public builds.
-enum InternalBuildPresentationAvailability {
-    static var isAvailable: Bool {
-#if DEBUG
-        !CommandLine.arguments.contains("--review-public-presentation")
-#else
-        (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
-#endif
     }
 }
 

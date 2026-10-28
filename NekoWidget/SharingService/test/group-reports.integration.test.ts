@@ -1,4 +1,4 @@
-import { describe,expect,it } from 'vitest';
+import { describe,expect,it,vi } from 'vitest';
 import { plusOwner,pauseOwner } from './group-billing-fixture';
 import { base64urlDecode,randomBase64url,sha256Base64url } from '../src/encoding';
 import { groupFields } from '../src/group-protocol';
@@ -176,6 +176,16 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
       const value=Reflect.get(target,property);return typeof value==='function'?value.bind(target):value;
     }});
     expect((await authenticateGroupRequest(request,{...testEnv,DB:beforeMigration})).actor.deviceId).toBe(p.deviceId);
+  });
+  it('replays a reserved report after its original consent timestamp ages without admitting new stale consent',async()=>{
+    const {owner,bob,w}=await family(),p=await photo(owner,w),q=await photo(owner,w),r=await reserve(bob,w,p.id);accepted(r.result);
+    const fresh=await descriptor(q.id),now=Date.now(),clock=vi.spyOn(Date,'now').mockReturnValue(now+600000);
+    try {
+      expect(accepted(await reportCall(bob,`${root(w)}/reserve`,r.body)).id).toBe(r.id);
+      expect((await reportCall(bob,`${root(w)}/reserve`,fresh.body)).data.error.code).toBe('reporter_consent_required');
+      expect(await db.prepare('SELECT id FROM group_reports WHERE moment_id=?').bind(q.id).first()).toBeNull();
+      expect((await db.prepare('SELECT attempts FROM group_report_daily_usage WHERE person_id=?').bind(bob.id).first<{attempts:number}>())?.attempts).toBe(1);
+    } finally { clock.mockRestore(); }
   });
   it('rejects an owner-scope/key change during upload and does not accept further reports',async()=>{
     const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);accepted(r.result);

@@ -63,13 +63,13 @@ enum WidgetInstallationState: Equatable, Sendable {
 /// privacy variant. Keeping it outside the SwiftUI view makes both modes
 /// independently verifiable.
 enum OnboardingPresentationCopy {
-    static let purposeBodyLines = [
-        "撮りためた猫写真が、",
-        "毎日会える思い出に。",
-        "猫だけを端末内で見つけて、",
-        "自動アルバムとホーム画面へ。"
-    ]
-    static let purposeAction = "自分で始める"
+    /// Page one has one job: the Photos permission. People come from the
+    /// site knowing what the app is, so it says what happens next, answers
+    /// the one worry (the photos stay on the iPhone), and asks. No feature list.
+    static let purposeTitle = "このiPhoneの中の猫を、全部見つけます。"
+    static let purposeBody = "写真はiPhoneの中だけで探します。外には送りません。"
+    static let purposeAction = "猫を探す"
+    static let purposeFootnote = ""
 
     static let permissionTitleLines = [
         "このiPhoneの猫の写真や動画を",
@@ -100,18 +100,18 @@ enum OnboardingPresentationCopy {
     static let permissionAction = "写真へのアクセスを許可"
     static let permissionSkipAction = "あとで（スキップ）"
 
-    static let scanTitle = "このiPhoneの猫写真を探しています"
+    /// Page three shows the cats as they are found: a grid that fills, a count,
+    /// and the one next step (place the Widget). The count reads 「いま 32枚」
+    /// while the scan runs and 「128枚」 once it is final.
+    static let scanTitle = "猫を探しています"
+    static let scanFoundTitle = "猫の写真が見つかりました"
     static let scanBodyLines = [
         "アプリを開いている間、新しい写真から順に調べます。"
     ]
-    static let scanContinueAction = "写真を見る"
-    static let resultLeadLines = [
-        "このiPhoneで見つけた",
-        "猫写真は"
-    ]
-    static let resultCountSuffix = "枚"
-    static let resultClosing = "ありました"
-    static let resultOldestLead = "一番古い1枚は"
+    static let scanCountLead = "いま"
+    static let scanWidgetAction = "まどを置く"
+    /// The quiet way past the Widget: straight into the 写真 tab.
+    static let scanContinueAction = "あとで"
 
     static let widgetTitleLines = [
         "ホーム画面に、",

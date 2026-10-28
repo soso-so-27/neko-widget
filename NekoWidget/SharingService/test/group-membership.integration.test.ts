@@ -92,19 +92,24 @@ describe("group membership additive D1 boundary (not signature verification)", (
   });
   it("does not consume an invitation on the first application", async () => {
     const w = await window();
+    // The join guard uses SQLite's real clock; a fixed fixture date eventually expires.
+    const invitationNow = (await sql("SELECT unixepoch() AS now").first<{now:number}>())!.now;
     // The HTTP API records applications only for active, not preparing windows.
     await sql("UPDATE group_windows SET mode='active' WHERE space_id=?",w.windowId).run();
     const invitationId = id();
     await sql("INSERT INTO group_invitations VALUES (?, ?, ?, ?, ?, ?, NULL)",
-      invitationId, w.windowId, id(), w.deviceId, now, now + 86400).run();
+      invitationId, w.windowId, id(), w.deviceId, invitationNow, invitationNow + 86400).run();
     for (let i = 0; i < 2; i++) {
       const p = await person(); const d = await device(p);
       await sql("INSERT INTO group_join_requests VALUES (?, ?, ?, ?, ?, 'signed', 'pending', ?, NULL)",
-        id(), w.windowId, invitationId, p, d, now + 86400).run();
+        id(), w.windowId, invitationId, p, d, invitationNow + 86400).run();
     }
     expect((await sql("SELECT COUNT(*) n FROM group_join_requests WHERE invitation_id=?", invitationId).first<{n:number}>())?.n).toBe(2);
     await expect(sql("INSERT INTO group_invitations VALUES (?, ?, ?, ?, ?, ?, NULL)",
-      id(), w.windowId, id(), w.deviceId, now, now + 86401).run()).rejects.toThrow();
+      id(), w.windowId, id(), w.deviceId, invitationNow, invitationNow + 86401).run()).rejects.toThrow();
+    const expiredApplicant = await person(), expiredDevice = await device(expiredApplicant);
+    await expect(sql("INSERT INTO group_join_requests VALUES (?, ?, ?, ?, ?, 'signed', 'pending', ?, NULL)",
+      id(), w.windowId, invitationId, expiredApplicant, expiredDevice, invitationNow - 1).run()).rejects.toThrow("group_invalid_join_request");
   });
   it("commits the roster/envelopes/current epoch together", async () => {
     const w = await window();

@@ -58,15 +58,15 @@ struct PersonalRediscoveryHistoryView: View {
                     Text("48時間で履歴から消えます。残したい一枚は、開いて「お気に入りに追加」へ。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
-                    ContentUnavailableView(loadFailed ? "履歴を読み込めませんでした" : "めくった写真はまだありません",
+                    ContentUnavailableView(loadFailed ? "履歴を読み込めませんでした" : "選び直した写真はまだありません",
                         systemImage: "photo.on.rectangle",
-                        description: Text(loadFailed ? "時間をおいてもう一度お試しください。" : "最近ウィジェットに出た写真を48時間表示します。"))
+                        description: Text(loadFailed ? "時間をおいてもう一度お試しください。" : "選び直すと、前の写真と新しい写真がここに48時間残ります。"))
                         .accessibilityIdentifier("personal-rediscovery-empty")
                 }
             }
             .padding(20)
         }
-        .navigationTitle("まどでめくった写真")
+        .navigationTitle("今日の一枚を選び直す")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("personal-rediscovery-history")
         .refreshable { reload() }

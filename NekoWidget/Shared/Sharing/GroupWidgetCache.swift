@@ -107,13 +107,44 @@ enum GroupWidgetCache {
         let entry = Entry(windowID: windowID, windowName: windowName, photoID: photoID,
                           imageFileName: imageFileName, senderDisplayName: senderDisplayName,
                           capturedAt: capturedAt, isPaused: isPaused, myHeartActive: myHeartActive)
-        catalog.entries.removeAll { $0.windowID == windowID }
-        catalog.entries.insert(entry, at: 0)
+        // Keep each window where it is, so the widget's list does not reorder.
+        if let index = catalog.entries.firstIndex(where: { $0.windowID == windowID }) {
+            catalog.entries[index] = entry
+        } else {
+            catalog.entries.append(entry)
+        }
         catalog.entries = Array(catalog.entries.prefix(maximumWindows))
         try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
         if let old = previous?.imageFileName, old != imageFileName {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(old))
         }
+    }
+
+    /// After leaving a window, its home-screen photo goes too.
+    static func remove(windowID: String) throws {
+        guard let directory = directory() else { return }
+        var catalog = Catalog(entries: entries())
+        guard let removed = catalog.entries.first(where: { $0.windowID == windowID }) else { return }
+        catalog.entries.removeAll { $0.windowID == windowID }
+        try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
+        if let name = removed.imageFileName {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+
+    /// Written by builds with group windows on. The Widget then offers group
+    /// windows only, as the app does (the two-person window is not shown).
+    static func markGroupWindowsOn() {
+        guard let directory = directory() else { return }
+        let marker = directory.appendingPathComponent("group-windows-on")
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? write(Data("1".utf8), to: marker)
+    }
+
+    static var groupWindowsAreOn: Bool {
+        guard let marker = directory()?.appendingPathComponent("group-windows-on") else { return false }
+        return FileManager.default.fileExists(atPath: marker.path)
     }
 
     /// After the app sent a heart from the Widget, show it as sent.
@@ -176,5 +207,17 @@ enum GroupWidgetCache {
 #else
         try data.write(to: url, options: .atomic)
 #endif
+    }
+}
+
+/// A person's name as other people see it: 「ゆいさん」, but 「お母さん」
+/// stays 「お母さん」 (no 「お母さんさん」). Shared by the app and the Widget.
+enum GroupDisplayName {
+    private static let endings = ["さん", "ちゃん", "くん", "君", "さま", "様", "先生", "氏"]
+
+    static func withSan(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "名前のない人" }
+        return endings.contains(where: { trimmed.hasSuffix($0) }) ? trimmed : trimmed + "さん"
     }
 }

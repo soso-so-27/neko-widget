@@ -15,6 +15,8 @@ enum FamilyWidgetHeartStatus: Equatable, Sendable {
 struct GroupWindowPhotoReference: Equatable, Sendable {
     let windowID: String
     let photoID: String
+    /// A photo this iPhone sent: no heart to send, as in the app.
+    var isOwn = false
 }
 
 struct NekoWidgetEntry: TimelineEntry {
@@ -37,6 +39,7 @@ struct NekoWidgetEntry: TimelineEntry {
     var officialPhoto: OfficialCatPhoto? = nil
     var personalRediscoveryAction: PersonalRediscoveryAction = .unavailable
     var personalSelectionPaused: Bool = false
+    var cloudyWindowSelection: CloudyWindowSelection? = nil
     /// The group window photo this entry shows, for its heart button.
     var groupWindowPhoto: GroupWindowPhotoReference? = nil
 
@@ -67,6 +70,10 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     var photoURL: URL? {
+        if let cloudyWindowSelection, cloudyWindowSelection.revealedAt == nil { return nil }
+        if let selection = cloudyWindowSelection, selection.albumPeriod != nil {
+            return CloudyWindowAlbumRoute(selectionID: selection.id).url
+        }
         if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: photoSourceIdentifier) {
             return GroupWidgetCache.openURL(windowID: groupWindowID)
         }
