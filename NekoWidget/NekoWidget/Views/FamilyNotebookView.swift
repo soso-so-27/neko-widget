@@ -147,9 +147,11 @@ final class FamilyNotebookPrototype: ObservableObject {
         return mappings
     }
 
-    /// Test builds only: forget the tried family. What the test buttons
-    /// changed in 「この子のこと」 is put back; nothing else is touched.
-    func remove() {
+    /// Test builds only: end the tried family on this iPhone. What the test
+    /// buttons changed in 「この子のこと」 is put back; nothing else is touched.
+    /// Never the real leaving: that keeps this person's copy and is the
+    /// sharing service's (FamilyNotebookSharing).
+    func endPrototypeFamily() {
         guard let familyID = snapshot?.familyID else { return }
         undoTryouts()
         discard(familyID)
@@ -359,9 +361,9 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// Takes someone out of the family: what they wrote stays (test builds:
     /// the tried family member only).
-    func removeMember(_ member: FamilyNotebookAuthor) {
-        guard member != Self.me, !joinedSomeonesFamily else { return }
-        let removed = (UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? []) + [member.personID]
+    func removeMember(personID: String) {
+        guard personID != Self.me.personID, !joinedSomeonesFamily else { return }
+        let removed = (UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? []) + [personID]
         UserDefaults.standard.set(removed, forKey: Self.removedKey)
         objectWillChange.send()
     }
@@ -481,21 +483,29 @@ final class FamilyNotebookPrototype: ObservableObject {
 
 struct FamilyNotebookView: View {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var creating = false
     @State private var invites = false
     @State private var triesInvitation = false
 
     var body: some View {
         NavigationStack {
             Group {
-                if model.hasFamily {
-                    notebook
-                } else {
-                    FamilyNotebookIntroView(creating: creating, create: {
-                        creating = true
-                        Task { await model.create(); creating = false }
+                switch sharing.state {
+                case .checking, .leaving:
+                    ProgressView()
+                case .notInFamily:
+                    FamilyNotebookIntroView(creating: sharing.isWorking, create: {
+                        Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } }
                     }, tryInvitation: { triesInvitation = true })
+                case .pendingApproval:
+                    ContentUnavailableView("参加を待っています", systemImage: "hourglass",
+                                           description: Text("家族が受け入れると、ここに手帳が出ます。"))
+                case .waitingForKeys:
+                    ContentUnavailableView("準備しています", systemImage: "key",
+                                           description: Text("家族の手帳を受け取っています。"))
+                case let .inFamily(membership):
+                    notebook(membership)
                 }
             }
             .navigationTitle("家族の手帳")
@@ -506,8 +516,12 @@ struct FamilyNotebookView: View {
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(model.message ?? "") }
+            .alert("家族の手帳", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(sharing.failure?.message ?? "") }
         }
         .task {
+            await sharing.refresh()
             guard model.hasFamily else { return }
             // Visits and care plans written since: into the notebook.
             try? await model.copyTools()
@@ -519,22 +533,23 @@ struct FamilyNotebookView: View {
 
     /// Who is in the family, and what they wrote lately (like the activity of
     /// a shared note). The writing itself lives in 「この子のこと」 and the tools.
-    private var notebook: some View {
+    private func notebook(_ membership: FamilyMembership) -> some View {
         List {
             Section {
                 ForEach(model.members, id: \.personID) { member in
                     NavigationLink {
-                        FamilyNotebookMemberView(member: member)
+                        FamilyNotebookMemberView(member: member, membership: membership)
                     } label: {
                         Label(member.displayName, systemImage: "person.crop.circle.fill")
                     }
                 }
-                if !model.joinedSomeonesFamily {
+                // Everyone in the family invites (the family decision in #543).
+                if membership.canInvite {
                     Button { invites = true } label: { Label("招待する", systemImage: "person.badge.plus") }
                         .accessibilityIdentifier("family-notebook-invite")
                 }
             } footer: {
-                if !model.joinedSomeonesFamily { Text("招待された人は無料です。") }
+                Text("招待された人は無料です。")
             }
             if !model.recentFromFamily.isEmpty {
                 Section("最近の書き込み") {
@@ -555,26 +570,73 @@ struct FamilyNotebookView: View {
                     Button("招待を受けたときを試す") { triesInvitation = true }
                 }
             } footer: {
-                Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。あなたのページの「家族の共有をやめる」で元に戻ります。")
+                Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。家族を終えると元に戻ります。")
             }
         }
     }
 }
 
 /// One person's page, as in Apple's family settings: what can be done about
-/// this person, and what happens. You end the sharing for everyone; someone
-/// else is taken out. (A member who did not make the family would leave.)
+/// this person, and what happens. The one who pays ends the family or takes
+/// someone out; everyone else can leave. Three operations, never one.
 struct FamilyNotebookMemberView: View {
     let member: FamilyNotebookAuthor
-    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    let membership: FamilyMembership
+    @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
     @State private var confirms = false
 
+    private enum Action { case dissolve, leave, remove }
+
     private var isMe: Bool { member == FamilyNotebookPrototype.me }
-    private var joined: Bool { model.joinedSomeonesFamily }
-    private var action: String? {
-        if isMe { return joined ? "家族から抜ける" : "家族の共有をやめる" }
-        return joined ? nil : "家族から外す"
+    private var action: Action? {
+        if isMe { return membership.canDissolve ? .dissolve : membership.canLeave ? .leave : nil }
+        return membership.canRemoveMember ? .remove : nil
+    }
+
+    private func title(_ action: Action) -> String {
+        switch action {
+        case .dissolve: "家族の共有をやめる"
+        case .leave: "家族から抜ける"
+        case .remove: "家族から外す"
+        }
+    }
+
+    private func explanation(_ action: Action) -> String {
+        switch action {
+        case .dissolve: "家族全員の共有が止まります。それまでに書いたことは、それぞれの iPhone に残ります。"
+        case .leave: "これから書くことは家族に届かなくなります。それまでに書いたことは、この iPhone に残ります。"
+        case .remove: "これから書いたことは届かなくなります。それまでに書いたことは残ります。"
+        }
+    }
+
+    private func question(_ action: Action) -> String {
+        switch action {
+        case .dissolve: "家族の共有をやめますか？"
+        case .leave: "家族から抜けますか？"
+        case .remove: "\(member.displayName)を家族から外しますか？"
+        }
+    }
+
+    private func confirmation(_ action: Action) -> String {
+        switch action {
+        case .dissolve: "共有をやめる"
+        case .leave: "抜ける"
+        case .remove: "外す"
+        }
+    }
+
+    private func run(_ action: Action) async {
+        let service = sharing.service
+        let personID = member.personID
+        let done = await sharing.perform { operationID in
+            switch action {
+            case .dissolve: _ = try await service.dissolveFamily(operationID: operationID)
+            case .leave: _ = try await service.leaveFamily(operationID: operationID)
+            case .remove: try await service.removeMember(personID: personID, operationID: operationID)
+            }
+        }
+        if done { dismiss() }
     }
 
     var body: some View {
@@ -591,24 +653,20 @@ struct FamilyNotebookMemberView: View {
             }
             if let action {
                 Section {
-                    Button(action, role: .destructive) { confirms = true }
+                    Button(title(action), role: .destructive) { confirms = true }
+                        .disabled(sharing.isWorking)
                 } footer: {
-                    Text(isMe && !joined
-                         ? "家族全員の共有が止まります。それまでに書いたことは、それぞれの iPhone に残ります。"
-                         : isMe
-                         ? "これから書くことは家族に届かなくなります。それまでに書いたことは、この iPhone に残ります。"
-                         : "これから書いたことは届かなくなります。それまでに書いたことは残ります。")
+                    Text(explanation(action))
                 }
             }
         }
         .navigationTitle(member.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog(isMe ? (joined ? "家族から抜けますか？" : "家族の共有をやめますか？")
-                                 : "\(member.displayName)を家族から外しますか？",
-                            isPresented: $confirms, titleVisibility: .visible) {
-            Button(isMe ? (joined ? "抜ける" : "共有をやめる") : "外す", role: .destructive) {
-                if isMe { model.remove() } else { model.removeMember(member) }
-                dismiss()
+        .confirmationDialog(action.map(question) ?? "", isPresented: $confirms, titleVisibility: .visible) {
+            if let action {
+                Button(confirmation(action), role: .destructive) {
+                    Task { await run(action) }
+                }
             }
         }
     }
@@ -700,7 +758,9 @@ struct FamilyNotebookInvitationCard: View {
 /// this shows the invitation as it will arrive.
 struct FamilyNotebookInviteView: View {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var invitation: FamilyInvitation?
 
     var body: some View {
         NavigationStack {
@@ -708,13 +768,32 @@ struct FamilyNotebookInviteView: View {
                 FamilyNotebookInvitationCard(from: "あなた", cats: model.catNames)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 Spacer()
-                Button { } label: {
-                    Label("招待を送る", systemImage: "square.and.arrow.up")
-                        .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                if let invitation {
+                    ShareLink(item: invitation.link) {
+                        Label("招待を送る", systemImage: "square.and.arrow.up")
+                            .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button {
+                        Task {
+                            let service = sharing.service
+                            var made: FamilyInvitation?
+                            await sharing.perform { made = try await service.createInvitation(operationID: $0) }
+                            invitation = made
+                        }
+                    } label: {
+                        Group {
+                            if sharing.isWorking { ProgressView() } else {
+                                Label("招待を送る", systemImage: "square.and.arrow.up").font(.headline)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!sharing.service.sendsInvitations || sharing.isWorking)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(true)
-                Text("試作のため、まだ送れません。招待された人は無料です。")
+                Text(sharing.service.sendsInvitations ? "招待された人は無料です。" : "試作のため、まだ送れません。招待された人は無料です。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             .padding(24)
@@ -729,41 +808,70 @@ struct FamilyNotebookInviteView: View {
 /// Opening an invitation: who asks and for which cats, then 参加する. One
 /// family at a time, as in Apple's family sharing. Joining is free.
 struct FamilyNotebookJoinView: View {
-    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    var link: URL? = nil
+    @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var joining = false
+    @State private var preview: FamilyInvitationPreview?
+    @State private var result: FamilyJoinResult?
+
+    private var inFamily: Bool { sharing.state.membership != nil }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
                 Spacer()
-                FamilyNotebookInvitationCard(from: FamilyNotebookPrototype.tryout.displayName, cats: model.catNames)
+                if let preview {
+                    FamilyNotebookInvitationCard(from: preview.inviterName, cats: preview.catNames)
+                } else {
+                    ProgressView()
+                }
                 Text("この子のこと・病院・預けるときを、一緒に書きます。")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if model.hasFamily {
-                    Text("家族は 1 つまでです。いまの家族から抜けると参加できます。")
+                if result == .pendingApproval || result == .waitingForKeys {
+                    // Sent is not joined: say what it is waiting for.
+                    Text(result == .pendingApproval ? "家族が受け入れるのを待っています。" : "家族の手帳を受け取っています。")
+                        .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("閉じる") { dismiss() }
+                } else if inFamily {
+                    Text(FamilySharingError.alreadyInFamily.message)
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else {
                     Button {
-                        joining = true
-                        Task { await model.join(); joining = false; if model.hasFamily { dismiss() } }
+                        guard let preview else { return }
+                        Task {
+                            let service = sharing.service
+                            var joined: FamilyJoinResult?
+                            await sharing.perform { joined = try await service.join(preview, operationID: $0) }
+                            result = joined
+                            if joined == .joined { dismiss() }
+                        }
                     } label: {
-                        Group { if joining { ProgressView() } else { Text("参加する").font(.headline) } }
+                        Group { if sharing.isWorking { ProgressView() } else { Text("参加する").font(.headline) } }
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(joining)
+                    .disabled(sharing.isWorking || preview == nil)
                     .accessibilityIdentifier("family-notebook-join")
                     Text("参加は無料です。").font(.footnote).foregroundStyle(.secondary)
                 }
-                Button("今はやめておく") { dismiss() }
-                    .disabled(joining)
+                if result == nil {
+                    Button("今はやめておく") { dismiss() }
+                        .disabled(sharing.isWorking)
+                }
             }
             .padding(24)
             .navigationTitle("招待")
             .navigationBarTitleDisplayMode(.inline)
+            .alert("招待", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(sharing.failure?.message ?? "") }
+        }
+        .task {
+            await sharing.refresh()
+            do { preview = try await sharing.service.previewInvitation(link) }
+            catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
         }
     }
 }
