@@ -10,6 +10,7 @@ import { parseJsonBody,requireEmptyBody } from './http';
 import { connectGroupBilling } from './group-owner-plus';
 import { acknowledgeGroupPhoto,commitGroupPhoto,getGroupPhoto,GROUP_MAX_CIPHERTEXT,listGroupPhotos,reserveGroupPhoto,uploadGroupPhoto } from './group-media';
 import { listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
+import { groupReportAPI,isGroupReportPath } from './group-reports';
 
 export async function groupAPI(request:Request,env:Env):Promise<Response> {
   try { return await dispatchGroup(request,env); }
@@ -39,6 +40,10 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
       ['group_reservation_expired',410,'reservation_expired'],
       ['group_delivery_unavailable',410,'delivery_expired'],['group_moments.space_id',409,'idempotency_conflict'],
       ['group_rosters.space_id',409,'stale_revision'],['group_epoch_transitions.id',409,'idempotency_conflict'],
+      ['group_report_gate_closed',503,'report_ingestion_runtime_disabled'],['group_report_not_authorized',403,'report_not_authorized'],
+      ['group_report_not_delivered',404,'reportable_moment_not_found'],['group_report_already_reported',409,'already_reported'],
+      ['group_report_daily_limit',429,'report_daily_quota_exceeded'],['group_report_key_required',409,'moderation_key_required'],
+      ['group_reports.moment_id',409,'already_reported'],['group_report_invalid_',409,'report_conflict'],
     ];
     for(const [marker,status,code] of codes) if(message.includes(marker)) throw new ApiError(status,code,'The group operation could not be completed.');
     throw error;
@@ -46,6 +51,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
 }
 async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const path=new URL(request.url).pathname;
+  if(isGroupReportPath(path))return groupReportAPI(request,env);
   if(request.method==='POST' && path==='/v3/group-identities/challenges') return createGroupIdentityChallenge(request,env);
   if(request.method==='POST' && path==='/v3/group-identities') return registerGroupIdentity(request,env);
   if(!path.startsWith('/v3/group-windows')) throw new ApiError(404,'not_found','The endpoint was not found.');
