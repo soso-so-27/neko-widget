@@ -8,7 +8,7 @@ import { apply,call,create,db,invitation,ok,person,send,sign,signed,testEnv,tran
 import type { Env } from '../src/env';
 import { authenticateGroupRequest } from '../src/group-auth';
 
-const reports={...testEnv,GROUP_REPORT_RUNTIME_ENABLED:'YES',REPORT_INGESTION_RUNTIME_ENABLED:'YES'};
+const reports={...testEnv,GROUP_REPORT_RUNTIME_ENABLED:'YES',REPORT_INGESTION_RUNTIME_ENABLED:'YES',GROUP_MODERATION_RUNTIME_ENABLED:'YES'};
 type Window=Awaited<ReturnType<typeof create>>;
 async function family() {
   const owner=await plusOwner(),bob=await person();let w=await create(owner);
@@ -109,6 +109,7 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
   it('fails closed on gate changes, rejects unknown fields/keys/consent and consumes rejected signed nonces',async()=>{
     const {owner,bob,w}=await family(),p=await photo(owner,w),d=await descriptor(p.id),path=`${root(w)}/reserve`;
     expect((await reportCall(bob,path,d.body,testEnv)).data.error.code).toBe('group_reports_disabled');
+    expect((await reportCall(bob,path,d.body,{...reports,GROUP_MODERATION_RUNTIME_ENABLED:'NO'})).data.error.code).toBe('group_moderation_disabled');
     expect((await reportCall(bob,path,{...d.body,groupKey:randomBase64url(32)})).data.error.code).toBe('invalid_fields');
     expect((await reportCall(bob,path,{...d.body,moderationKeyId:'moderation-v1'})).data.error.code).toBe('moderation_key_required');
     expect((await reportCall(bob,path,{...d.body,reporterConsent:{version:2,acceptedAt:Math.floor(Date.now()/1000)}})).data.error.code).toBe('reporter_consent_required');

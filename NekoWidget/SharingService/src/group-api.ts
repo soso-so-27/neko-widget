@@ -12,6 +12,7 @@ import { acknowledgeGroupPhoto,commitGroupPhoto,getGroupPhoto,GROUP_MAX_CIPHERTE
 import { listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
 import { groupReportAPI,isGroupReportPath } from './group-reports';
 import { registerGroupPush } from './group-push';
+import { groupReportStatus,groupReplyPath } from './group-moderation-replies';
 
 export async function groupAPI(request:Request,env:Env):Promise<Response> {
   try { return await dispatchGroup(request,env); }
@@ -24,6 +25,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
     // ciphertext, names, request bodies and signatures are never logged.
     const message=error instanceof Error?error.message:'';
     const codes:[string,number,string][]=[
+      ['group_moderation_restricted',404,'group_moderation_restricted'],
       ['group_total_window_limit',409,'total_window_limit'],['group_owned_window_limit',409,'owned_window_limit'],
       ['group_member_limit',409,'member_limit'],['group_device_limit',409,'device_limit'],
       ['group_stale_revision_or_epoch',409,'stale_revision'],['group_request_not_pending',409,'request_not_pending'],
@@ -53,6 +55,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
 }
 async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   const path=new URL(request.url).pathname;
+  if(groupReplyPath.test(path))return groupReportStatus(request,env);
   if(isGroupReportPath(path))return groupReportAPI(request,env);
   if(request.method==='POST' && path==='/v3/group-identities/challenges') return createGroupIdentityChallenge(request,env);
   if(request.method==='POST' && path==='/v3/group-identities') return registerGroupIdentity(request,env);

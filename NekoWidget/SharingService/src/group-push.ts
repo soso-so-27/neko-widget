@@ -5,6 +5,7 @@ import { groupMutationStatement,groupNonceStatements,requireGroupMember,storedGr
 import { APNS_SUBSCRIPTION_TTL_SECONDS,decryptDeviceToken,encryptDeviceToken,parseProviderCredential,parseTokenKeyring,providerJWT,type APNsDrainSummary } from './push';
 import { apnsGateOpen,loadRuntimeGate } from './runtime-gate';
 import { exactKeys,stringField,uuidField,type JsonRecord } from './validation';
+import { groupModerationPredicate } from './group-moderation';
 
 function enabled(env:Env):boolean {
   return env.GROUP_APNS_RUNTIME_ENABLED==='YES' && env.GROUP_RUNTIME_ENABLED==='YES'
@@ -84,10 +85,13 @@ async function finish(env:Env,row:Queued,leaseId:string,state:'accepted'|'skippe
 async function current(env:Env,row:Queued,leaseId:string,generation:number):Promise<Current|null> {
   return env.DB.prepare(`SELECT v.*,q.attempts FROM group_live_push_deliveries v
     JOIN group_notification_deliveries q ON q.event_id=v.event_id AND q.device_id=v.device_id
+    JOIN group_notification_events moderation_event ON moderation_event.id=v.event_id
+    JOIN group_members moderation_actor ON moderation_actor.space_id=v.space_id AND moderation_actor.participant_id=moderation_event.actor_participant_id
     JOIN personal_staging_runtime_gate g ON g.singleton=1
     WHERE q.event_id=? AND q.device_id=? AND q.token_digest=? AND q.subscription_generation=?
       AND q.state='leased' AND q.lease_id=? AND q.lease_expires_at>unixepoch()
-      AND g.generation=? AND g.media_enabled=1 AND g.apns_enabled=1`)
+      AND g.generation=? AND g.media_enabled=1 AND g.apns_enabled=1
+      AND ${groupModerationPredicate(env,{space:'v.space_id',photo:'v.moment_id',actor:'moderation_actor.person_id'})}`)
     .bind(row.event_id,row.device_id,row.token_digest,row.subscription_generation,leaseId,generation).first<Current>();
 }
 export async function drainGroupNotifications(env:Env,now=Math.floor(Date.now()/1000),fetchImpl:typeof fetch=fetch,

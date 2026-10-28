@@ -6,6 +6,7 @@ import {build} from 'esbuild';
 import {getPlatformProxy} from 'wrangler';
 import {validateLocalOperatorConfig} from './moderation-operator-local-start.mjs';
 import {createOwnerR2Transport,verifyWindowsKeyCustody} from './moderation-owner-r2-transport.mjs';
+import {createGroupOwnerR2Transport} from './group-moderation-r2-transport.mjs';
 import {startLoopbackOperatorServer} from './moderation-operator-local-server.mjs';
 process.env.WRANGLER_LOG='none';process.env.WRANGLER_SEND_METRICS='false';
 const service=path.resolve(import.meta.dirname,'..'),repo=path.resolve(service,'../..');
@@ -13,8 +14,8 @@ const fail=()=>{throw Error('invalid_staging_owner_config')};
 const exact=(o,keys)=>{if(!o||Object.getPrototypeOf(o)!==Object.prototype||Reflect.ownKeys(o).length!==keys.length||keys.some(k=>!Object.hasOwn(o,k)))fail()};
 const inside=(root,p)=>{const r=path.relative(root,p);return r===''||r==='..'||r.startsWith('..'+path.sep)?r==='':!path.isAbsolute(r)};
 export function validateStagingOwnerConfig(value){
- exact(value,['schemaVersion','mode','localConfigurationFile','runtimeDirectory','port','scope','keyDirectory','pipeName','caseHmacKeyFile','brokerRecordFile','verificationCaseReferences']);
- if(value.schemaVersion!==1||value.mode!=='owner-staging'||!Number.isInteger(value.port)||value.port<1||value.port>65535
+ exact(value,['schemaVersion','mode','localConfigurationFile','runtimeDirectory','port','scope','keyDirectory','pipeName','caseHmacKeyFile','brokerRecordFile','verificationCaseReferences',...(value?.schemaVersion===2?['groupModerationEnabled']:[])]);
+ if(![1,2].includes(value.schemaVersion)||(value.schemaVersion===2&&typeof value.groupModerationEnabled!=='boolean')||value.mode!=='owner-staging'||!Number.isInteger(value.port)||value.port<1||value.port>65535
   ||!/^neko-owner-key-check-[0-9a-f-]{36}$/u.test(value.pipeName))fail();
  if(!Array.isArray(value.verificationCaseReferences)||value.verificationCaseReferences.length>1||value.verificationCaseReferences.some(v=>!/^[0-9a-f]{64}$/u.test(v)))fail();
  for(const name of ['localConfigurationFile','runtimeDirectory','keyDirectory','caseHmacKeyFile','brokerRecordFile'])if(!path.isAbsolute(value[name]))fail();
@@ -65,6 +66,8 @@ export async function main(args){
   if(subjectKey.length!==32||caseKey.length!==32)fail();
   const access={issuer:original.access.issuer,audience:original.access.audience,subjectHmacKey:subjectKey,subjectHmacKeyVersion:original.access.subjectHmacKeyVersion,cache:new ModerationAccessJwksCache()};
   const localHost=createLocalModerationOperatorHost({environment:'local',runtimeEnabled:'YES',db,origin:original.origin,rpId:original.rpId,access,
+   ...(config.groupModerationEnabled===true?{group:{runtimeEnabled:'YES',caseHmacKey:caseKey,
+    reviewEvidence:createGroupOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope})}}:{}),
    enrollment:{...original.enrollment,scope:{accountID:config.scope.accountID,databaseID:config.scope.databaseID,serviceIdentity:config.scope.serviceIdentity,
     accessIssuer:access.issuer,accessAudience:access.audience,expectedOrigin:original.origin,expectedRPID:original.rpId}},
    syntheticCaseReferences:config.verificationCaseReferences,
