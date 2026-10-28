@@ -7,6 +7,7 @@ import { parseJsonBody } from './http';
 import { currentModerationReportKey } from './moderation-report-key-policy';
 import { loadRuntimeGate, reportIngestionGateOpen } from './runtime-gate';
 import { asObject, binaryField, exactKeys, integerField, opaqueId, stringField, uuidField, type JsonRecord } from './validation';
+import {groupReceiptNumber,newGroupReceiptNumber,isReceiptNumberCollision} from './group-report-number';
 
 export const GROUP_REPORT_MAX_BYTES=1048576;
 export const GROUP_REPORT_UPLOAD_SECONDS=3600;
@@ -14,6 +15,7 @@ export const GROUP_REPORT_CONTENT_SECONDS=7*86400;
 const reportPath=/^\/v3\/group-windows\/([A-Za-z0-9_-]{22})\/reports\/(reserve|[A-Za-z0-9_-]{22}\/(?:ciphertext|commit))$/u;
 export function isGroupReportPath(path:string):boolean { return reportPath.test(path); }
 interface Report {
+  receipt_number:string;
   id:string;space_id:string;moment_id:string;reporter_person_id:string;reporter_participant_id:string;reporter_device_id:string;
   reason_code:string;moderation_key_id:string;ciphertext_size:number;ciphertext_sha256:string;object_key:string;dedupe_key:string;
   state:'reserved'|'uploaded'|'committed'|'expired';created_at:number;upload_expires_at:number;
@@ -22,14 +24,14 @@ interface Report {
 function fail(code:string,status=409):never { throw new ApiError(status,code,'The encrypted report could not be accepted.'); }
 function bucket(env:Env):R2Bucket { if(!env.MODERATION_MEDIA)fail('report_storage_unavailable',503);return env.MODERATION_MEDIA; }
 function response(row:Report) {
-  return {protocolVersion:3,report:{id:row.id,windowId:row.space_id,momentId:row.moment_id,state:row.state,
+  return {protocolVersion:3,report:{id:row.id,receiptNumber:row.receipt_number,windowId:row.space_id,momentId:row.moment_id,state:row.state,
     moderationKeyId:row.moderation_key_id,ciphertextSize:row.ciphertext_size,ciphertextSHA256:row.ciphertext_sha256,
     uploadExpiresAt:row.upload_expires_at,committedAt:row.committed_at,contentExpiresAt:row.content_expires_at}};
 }
 async function load(env:Env,actor:GroupActor,windowId:string,id:string):Promise<Report> {
   const row=await env.DB.prepare('SELECT * FROM group_reports WHERE id=? AND space_id=? AND reporter_person_id=? AND reporter_device_id=?')
     .bind(id,windowId,actor.personId,actor.deviceId).first<Report>();
-  if(!row)fail('report_not_found',404);return row;
+  if(!row)fail('report_not_found',404);row.receipt_number=await groupReceiptNumber(env.DB,id);return row;
 }
 function live(row:Report,now=Math.floor(Date.now()/1000)):void {
   if(row.state==='expired' || (row.committed_at===null?row.upload_expires_at<=now:(row.content_expires_at??0)<=now))fail('reservation_expired',410);
@@ -53,7 +55,7 @@ async function replay(env:Env,actor:GroupActor,windowId:string,generation:number
   await env.DB.batch([...checks(env,actor,windowId,generation),...nonce(env,actor)]);
   return jsonResponse(response(current));
 }
-async function reserve(env:Env,actor:GroupActor,windowId:string,generation:number,body:JsonRecord):Promise<Response> {
+async function reserve(env:Env,actor:GroupActor,windowId:string,generation:number,body:JsonRecord,numberAttempt=0):Promise<Response> {
   exactKeys(body,['operationId','momentId','reasonCode','moderationKeyId','ciphertextSize','ciphertextSHA256','reporterConsent']);
   const operationId=uuidField(body,'operationId'),momentId=opaqueId(stringField(body,'momentId'),'moment');
   const reason=stringField(body,'reasonCode');
@@ -80,7 +82,7 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
   if(previous && (previous.committed_at!==null || previous.upload_expires_at>actor.now)) {
     if(previous.reporter_device_id!==actor.deviceId || previous.reason_code!==reason || previous.moderation_key_id!==key
       || previous.ciphertext_size!==size || previous.ciphertext_sha256!==hash)fail('already_reported');
-    live(previous);const receipt=response(previous);
+    live(previous);previous.receipt_number=await groupReceiptNumber(env.DB,previous.id);const receipt=response(previous);
     await env.DB.batch([...checks(env,actor,windowId,generation),...nonce(env,actor),groupMutationStatement(env,actor,operationId,receipt)]);
     return jsonResponse(receipt);
   }
@@ -89,7 +91,7 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
   // consent; SQL independently enforces that same rule at insertion time.
   if(Math.abs(consentAt-actor.now)>300)fail('reporter_consent_required');
   const id=randomBase64url(16),objectKey=`groups/reports/v3/${id}/${randomBase64url(24)}`;
-  const row={id,space_id:windowId,moment_id:momentId,state:'reserved',moderation_key_id:key,ciphertext_size:size,ciphertext_sha256:hash,
+  const row={id,receipt_number:newGroupReceiptNumber(),space_id:windowId,moment_id:momentId,state:'reserved',moderation_key_id:key,ciphertext_size:size,ciphertext_sha256:hash,
     upload_expires_at:actor.now+GROUP_REPORT_UPLOAD_SECONDS,committed_at:null,content_expires_at:null} as Report;
   const receipt=response(row),statements=[...checks(env,actor,windowId,generation),...nonce(env,actor)];
   if(previous && previous.state!=='expired')statements.push(
@@ -101,10 +103,13 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
     accused_participant_id,reason_code,moderation_key_id,ciphertext_size,ciphertext_sha256,reporter_consent_version,reporter_consented_at,
     object_key,dedupe_key,state,created_at,upload_expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,'reserved',?,?)`)
     .bind(id,windowId,momentId,actor.personId,delivered.participant_id,actor.deviceId,delivered.sender_participant_id,reason,key,size,hash,consentAt,
-      objectKey,dedupe,actor.now,actor.now+GROUP_REPORT_UPLOAD_SECONDS),groupMutationStatement(env,actor,operationId,receipt));
+      objectKey,dedupe,actor.now,actor.now+GROUP_REPORT_UPLOAD_SECONDS),
+    env.DB.prepare('INSERT INTO group_report_numbers(report_id,receipt_number) VALUES (?,?)').bind(id,row.receipt_number),
+    groupMutationStatement(env,actor,operationId,receipt));
   try { await env.DB.batch(statements); }
   catch(error) {
     const raced=await replay(env,actor,windowId,generation,operationId);if(raced)return raced;
+    if(isReceiptNumberCollision(error)&&numberAttempt<3)return reserve(env,actor,windowId,generation,body,numberAttempt+1);
     throw error;
   }
   return jsonResponse(receipt,201);

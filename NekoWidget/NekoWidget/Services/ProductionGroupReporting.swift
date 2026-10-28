@@ -175,9 +175,36 @@ final class ProductionGroupReporting: GroupReportingService {
             evidenceSHA256: digest, evidenceSize: encrypted.count, ciphertext: encrypted, receipt: nil), createOnly: true)
         return id
     }
+    private func receiptNumber(_ incoming: String?, draft: GroupReportDraft) throws -> String? {
+        let stored = [draft.record.receiptNumber, draft.receipt?.receiptNumber].compactMap { $0 }
+        let values = stored + [incoming].compactMap { $0 }
+        let alphabet = Set("0123456789ABCDEFGHJKMNPQRSTVWXYZ".utf8)
+        for value in values {
+            let bytes = Array(value.utf8)
+            guard bytes.count == 14, bytes[0] == 82,
+                  [1, 6, 11].allSatisfy({ bytes[$0] == 45 }),
+                  bytes.enumerated().allSatisfy({ index, byte in
+                      index == 0 || [1, 6, 11].contains(index) || alphabet.contains(byte)
+                  }), values.allSatisfy({ $0 == value }) else { throw GroupSafetyError.invalidResponse }
+        }
+        // An older response may omit the field. Never erase a learned number.
+        return incoming ?? stored.first
+    }
+    private func confirmedCommit(state: String, at: Int?, expires: Int?) throws -> Bool {
+        guard let at else {
+            guard state != "committed", expires == nil else { throw GroupSafetyError.invalidResponse }
+            return false
+        }
+        guard ["committed", "expired"].contains(state), at > 0,
+              at <= 9_007_199_254_740_991 - 604_800, expires == at + 604_800 else {
+            throw GroupSafetyError.invalidResponse
+        }
+        return true
+    }
     private func receipt(_ data: Data, draft: GroupReportDraft) throws -> GroupReportReceipt {
         struct Reply: Decodable { let protocolVersion: Int; let report: GroupReportReceipt }
-        let result = try GroupWire.decode(Reply.self, data), r = result.report
+        let result = try GroupWire.decode(Reply.self, data)
+        var r = result.report
         guard result.protocolVersion == 3, GroupCanonical.validID(r.id), r.windowID == draft.record.windowID,
               r.momentID == draft.record.photoID, r.moderationKeyID == "moderation-v2",
               r.ciphertextSHA256 == draft.evidenceSHA256, r.ciphertextSize == draft.evidenceSize,
@@ -185,10 +212,11 @@ final class ProductionGroupReporting: GroupReportingService {
               ["reserved", "uploaded", "committed", "expired"].contains(r.state), r.uploadExpiresAt > 0 else {
             throw GroupSafetyError.invalidResponse
         }
-        if r.state == "committed" {
-            guard let at = r.committedAt, let until = r.contentExpiresAt,
-                  at > 0, at <= 9_007_199_254_740_991 - 604_800, until == at + 604_800 else { throw GroupSafetyError.invalidResponse }
+        _ = try confirmedCommit(state: r.state, at: r.committedAt, expires: r.contentExpiresAt)
+        if let previous = draft.receipt?.committedAt {
+            guard r.committedAt == previous else { throw GroupSafetyError.invalidResponse }
         }
+        r.receiptNumber = try receiptNumber(r.receiptNumber, draft: draft)
         return r
     }
     func submitReport(draftID: String) async throws -> GroupReportRecord {
@@ -212,22 +240,27 @@ final class ProductionGroupReporting: GroupReportingService {
             if draft.receipt == nil {
                 transmissionStarted = true
                 let data = try await request(base + "reserve", body: draft.reserveBody, actor: actor)
-                draft.receipt = try receipt(data, draft: draft); try store.write(draft)
+                draft.receipt = try receipt(data, draft: draft)
+                draft.record.receiptNumber = draft.receipt?.receiptNumber; try store.write(draft)
             }
             guard let saved = draft.receipt else { throw GroupSafetyError.invalidResponse }
-            if saved.state == "expired" { throw GroupSafetyError.reservationExpired }
-            if saved.state != "committed" {
+            if saved.state == "expired" && saved.committedAt == nil { throw GroupSafetyError.reservationExpired }
+            if saved.committedAt == nil {
                 if saved.state != "uploaded" {
                     guard let bytes = draft.ciphertext else { throw GroupSafetyError.invalidResponse }
                     transmissionStarted = true
                     let data = try await request(base + saved.id + "/ciphertext", body: bytes, actor: actor, method: "PUT", ciphertext: true)
-                    draft.receipt = try receipt(data, draft: draft); try store.write(draft)
+                    draft.receipt = try receipt(data, draft: draft)
+                    draft.record.receiptNumber = draft.receipt?.receiptNumber; try store.write(draft)
                 }
                 transmissionStarted = true
                 let data = try await request(base + saved.id + "/commit", body: draft.commitBody, actor: actor)
                 draft.receipt = try receipt(data, draft: draft)
+                draft.record.receiptNumber = draft.receipt?.receiptNumber
             }
-            guard draft.receipt?.state == "committed" else { throw GroupSafetyError.invalidResponse }
+            guard let committed = draft.receipt,
+                  try confirmedCommit(state: committed.state, at: committed.committedAt, expires: committed.contentExpiresAt)
+            else { throw GroupSafetyError.invalidResponse }
             draft.record.progress = .received; draft.ciphertext = nil
             try store.write(draft)
             return draft.record
@@ -265,20 +298,29 @@ final class ProductionGroupReporting: GroupReportingService {
         struct State: Decodable {
             let id: String; let submissionState: String; let receivedAt: Int?; let evidenceExpiresAt: Int?
             let outcome: String; let revision: Int; let replyTemplate: String?; let repliedAt: Int?
+            let receiptNumber: String?
         }
         struct Reply: Decodable { let protocolVersion: Int; let report: State }
         let data = try await request("/v3/group-windows/" + draft.record.windowID + "/reports/" + saved.id + "/status", actor: actor)
         let response = try GroupWire.decode(Reply.self, data), state = response.report
         guard response.protocolVersion == 3, state.id == saved.id, state.revision >= draft.revision,
               ["reserved", "uploaded", "committed", "expired"].contains(state.submissionState) else { throw GroupSafetyError.invalidResponse }
-        switch state.submissionState {
-        case "committed":
-            guard let received = state.receivedAt, let expires = state.evidenceExpiresAt,
-                  received > 0, received <= 9_007_199_254_740_991 - 604_800, expires == received + 604_800 else { throw GroupSafetyError.invalidResponse }
-            draft.record.progress = .received; draft.ciphertext = nil
-        case "expired": draft.record.progress = .expired
-        default: draft.record.progress = .retryable
+        let number = try receiptNumber(state.receiptNumber, draft: draft)
+        let committed = try confirmedCommit(state: state.submissionState, at: state.receivedAt, expires: state.evidenceExpiresAt)
+        if let previous = saved.committedAt {
+            guard state.receivedAt == previous else { throw GroupSafetyError.invalidResponse }
         }
+        if draft.record.progress == .received && !committed { throw GroupSafetyError.invalidResponse }
+        if committed {
+            // Evidence expiry does not undo an accepted report or its answer.
+            draft.record.progress = .received; draft.ciphertext = nil
+            draft.receipt?.state = state.submissionState
+            draft.receipt?.committedAt = state.receivedAt
+            draft.receipt?.contentExpiresAt = state.evidenceExpiresAt
+        } else {
+            draft.record.progress = state.submissionState == "expired" ? .expired : .retryable
+        }
+        draft.record.receiptNumber = number; draft.receipt?.receiptNumber = number
         switch (state.outcome, state.replyTemplate) {
         case ("received", nil): draft.record.reply = .none
         case ("no_action", "review_no_action_v1"): draft.record.reply = .noAction

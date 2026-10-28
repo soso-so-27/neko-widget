@@ -1,4 +1,6 @@
-export interface Env {
+import type {GroupReportMailEnv} from './group-report-mail';
+
+export interface Env extends GroupReportMailEnv {
   DB: D1Database;
   MEDIA?: R2Bucket;
   MODERATION_MEDIA?: R2Bucket;

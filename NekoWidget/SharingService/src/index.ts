@@ -1,4 +1,5 @@
 import { ApiError, errorResponse, jsonResponse } from "./errors";
+import {runGroupReportOperations,drainGroupReportMail} from './group-report-operations';
 import {
   apnsRuntimeEnabled,
   billingAccountBootstrapRuntimeEnabled,
@@ -626,11 +627,15 @@ export default {
   },
   async scheduled(controller, env, ctx): Promise<void> {
     if (controller.cron === MOMENT_CLEANUP_CRON) {
+      // Independent promises: an operations/mail failure must never postpone
+      // the ordinary seven-day evidence cleanup.
+      ctx.waitUntil(runGroupReportOperations(env));
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
+      ctx.waitUntil(drainGroupReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
       if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(drainGroupNotifications(env));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {

@@ -6,13 +6,14 @@ struct GroupReportReceipt: Codable, Sendable {
     let id: String
     let windowID: String
     let momentID: String
-    let state: String
+    var state: String
     let moderationKeyID: String
     let ciphertextSize: Int
     let ciphertextSHA256: String
     let uploadExpiresAt: Int
-    let committedAt: Int?
-    let contentExpiresAt: Int?
+    var committedAt: Int?
+    var contentExpiresAt: Int?
+    var receiptNumber: String? = nil
 }
 
 /// No plaintext photo, group key, arbitrary path, or network response text.

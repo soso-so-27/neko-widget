@@ -6,6 +6,7 @@ import { verifyPreparedModerationOperatorWebAuthnAssertion } from './moderation-
 import type { LocalModerationTriageEnvironment } from './moderation-operator-triage-local';
 import { groupCaseReference,groupModerationSHA,groupSourceSHA,groupSourceSQL,readGroupModerationSource,type GroupModerationSource } from './group-moderation-source';
 import { groupModerationConsole } from './group-moderation-console';
+import {groupReceiptNumber} from './group-report-number';
 
 export interface GroupReviewHost {
  (input:Readonly<{source:GroupModerationSource;sourceSHA256:string;signal:AbortSignal;
@@ -70,17 +71,25 @@ async function issue(env:GroupOperatorEnvironment,access:Access,actor:Actor,acti
  assertionPath:`/operator/group/v1/assertions/${id}`,action,expiresAt:expires,caseReference:reference??null,sourceSHA256:sourceSHA},202);
 }
 async function queue(env:GroupOperatorEnvironment,access:Access,actor:Actor,c:Challenge):Promise<Response> {
- const rows=await env.db.prepare(`SELECT r.id FROM group_reports r WHERE r.committed_at IS NOT NULL AND NOT EXISTS
- (SELECT 1 FROM group_moderation_cases c WHERE c.report_id=r.id) ORDER BY r.committed_at LIMIT 50`).all<{id:string}>();
+ const rows=await env.db.prepare(`SELECT r.report_id AS id FROM group_report_records r WHERE NOT EXISTS
+ (SELECT 1 FROM group_moderation_cases c WHERE c.report_id=r.report_id) ORDER BY r.committed_at,r.report_id LIMIT 50`).all<{id:string}>();
  for(const row of rows.results){
   const reference=await groupCaseReference(row.id,env.group.caseHmacKey);
-  await env.db.batch([...current(env,access,actor,c),env.db.prepare(`INSERT INTO group_moderation_cases(case_reference,report_id,key_version)
-   VALUES (?,?,1) ON CONFLICT(report_id) DO NOTHING`).bind(reference,row.id)]);
+  await groupReceiptNumber(env.db,row.id);
+  await env.db.batch([...current(env,access,actor,c),env.db.prepare(`INSERT INTO group_moderation_cases(case_reference,report_id,key_version,revision,outcome)
+   SELECT ?,report_id,1,revision,outcome FROM group_report_records WHERE report_id=?
+   ON CONFLICT(report_id) DO NOTHING`).bind(reference,row.id)]);
  }
+ const unnumbered=await env.db.prepare(`SELECT n.report_id FROM group_report_numbers n JOIN group_moderation_cases c USING(report_id)
+  WHERE n.receipt_number IS NULL AND c.rowid>? ORDER BY c.rowid LIMIT 100`).bind(c.queue_after).all<{report_id:string}>();
+ for(const row of unnumbered.results)await groupReceiptNumber(env.db,row.report_id);
  const result=await env.db.batch([...current(env,access,actor,c),env.db.prepare(`SELECT c.rowid AS cursor,c.case_reference AS caseReference,c.revision,c.outcome,
- COALESCE(r.committed_at,c.created_at) AS receivedAt,r.content_expires_at AS evidenceExpiresAt,
+ n.receipt_number AS receiptNumber,e.origin AS decisionOrigin,COALESCE(k.committed_at,c.created_at) AS receivedAt,k.evidence_expires_at AS evidenceExpiresAt,
  COALESCE((r.state='committed' AND r.content_expires_at>unixepoch() AND NOT EXISTS(SELECT 1 FROM group_report_object_deletions d WHERE d.report_id=r.id)),0) AS evidenceAvailable
- FROM group_moderation_cases c LEFT JOIN group_reports r ON r.id=c.report_id WHERE c.rowid>? ORDER BY c.rowid LIMIT 100`).bind(c.queue_after)]);
+ FROM group_moderation_cases c JOIN group_report_records k ON k.report_id=c.report_id
+ JOIN group_report_numbers n ON n.report_id=c.report_id
+ LEFT JOIN group_report_events e ON e.report_id=k.report_id AND e.revision=k.revision
+ LEFT JOIN group_reports r ON r.id=c.report_id WHERE c.rowid>? ORDER BY c.rowid LIMIT 100`).bind(c.queue_after)]);
  const cases=result.at(-1)!.results as Array<{cursor:number;[key:string]:unknown}>;
  // A signed monotonic cursor keeps older cases and release operations reachable.
  return json({cases,nextAfter:cases.length?cases.at(-1)!.cursor:null});
@@ -119,15 +128,17 @@ async function decide(env:GroupOperatorEnvironment,access:Access,actor:Actor,c:C
  const statements=[...current(env,access,actor,c),consume,
   env.db.prepare(`INSERT INTO group_moderation_decisions(id,challenge_id,case_reference,revision,outcome,reply_template) VALUES (?,?,?,?,?,?)`)
    .bind(id,c.id,c.case_reference,revision,c.action,reply),
-  env.db.prepare(`UPDATE group_moderation_restrictions SET active=0,revision=revision+1,updated_at=unixepoch() WHERE case_reference=? AND active=1`).bind(c.case_reference)];
+  env.db.prepare(`UPDATE group_moderation_restrictions SET active=0,revision=revision+1,updated_at=unixepoch()
+   WHERE active=1 AND (case_reference=? OR case_reference='deadline:'||(SELECT report_id FROM group_moderation_cases WHERE case_reference=?))`)
+   .bind(c.case_reference,c.case_reference)];
  if(['window','person','photo'].includes(c.action))statements.push(env.db.prepare(`INSERT INTO group_moderation_restrictions
  (id,case_reference,space_id,target_kind,target_id,active,revision,created_at,updated_at) VALUES (?,?,?,?,?,1,1,unixepoch(),unixepoch())
  ON CONFLICT(case_reference,space_id,target_kind,target_id) DO UPDATE SET active=1,revision=revision+1,updated_at=unixepoch()`)
  .bind(crypto.randomUUID(),c.case_reference,target!.space_id,c.action,c.action==='window'?target!.space_id:c.action==='person'?target!.person_id:target!.moment_id));
- statements.push(env.db.prepare('UPDATE group_moderation_cases SET revision=?,outcome=? WHERE case_reference=? AND revision=?')
- .bind(revision,c.action,c.case_reference,c.case_revision));
- statements.push(env.db.prepare(`SELECT EXISTS(SELECT 1 FROM group_reports r JOIN group_moderation_cases c ON c.report_id=r.id
- WHERE c.case_reference=?) AS available`).bind(c.case_reference));
+ // The decision trigger updates the durable record and local case revision in
+ // this same transaction. This remains true after the evidence row is gone.
+ statements.push(env.db.prepare(`SELECT EXISTS(SELECT 1 FROM group_report_records r JOIN group_moderation_cases c ON c.report_id=r.report_id
+ WHERE c.case_reference=? AND r.reporter_person_id IS NOT NULL AND r.reporter_device_id IS NOT NULL) AS available`).bind(c.case_reference));
  const saved=await env.db.batch(statements),available=(saved.at(-1)!.results[0] as {available:number}).available===1;
  return json({caseReference:c.case_reference,revision,outcome:c.action,replyTemplate:reply,replyAvailable:available});
 }

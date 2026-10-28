@@ -1252,7 +1252,7 @@ describe("APNs durable notification delivery", () => {
     ).bind(fixture.inviteeID).first()).toBeNull();
   });
 
-  it("wires only the exact every-minute APNs cron to the durable drain", async () => {
+  it("wires the exact every-minute cron to independent APNs and report-mail drains", async () => {
     const scheduled = worker.scheduled;
     expect(scheduled).toBeDefined();
     const scheduledEnv = {
@@ -1276,7 +1276,7 @@ describe("APNs durable notification delivery", () => {
       scheduledEnv,
       context,
     );
-    expect(waits).toHaveLength(1);
+    expect(waits).toHaveLength(2);
     await Promise.all(waits);
 
     const ignoredWaits: Promise<unknown>[] = [];
