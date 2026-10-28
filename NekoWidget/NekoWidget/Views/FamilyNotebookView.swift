@@ -17,6 +17,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     private static let seenKey = "debug.familyNotebook.seenClock.v1"
     private static let undoKey = "debug.familyNotebook.tryoutUndo.v1"
     private static let removedKey = "debug.familyNotebook.removedMembers.v1"
+    private static let joinedKey = "debug.familyNotebook.joined.v1"
 
     @Published private(set) var snapshot: FamilyNotebookSnapshot?
     @Published var message: String?
@@ -38,6 +39,16 @@ final class FamilyNotebookPrototype: ObservableObject {
         .vetName, .vetPhone, .vetNote]
 
     var hasFamily: Bool { snapshot != nil }
+
+    /// This iPhone joined someone's family instead of making one. As in
+    /// Apple's family sharing, only the one who made it invites and takes
+    /// people out; the others can leave.
+    var joinedSomeonesFamily: Bool { hasFamily && UserDefaults.standard.bool(forKey: Self.joinedKey) }
+
+    /// The cats an invitation shows (test builds: this iPhone's own).
+    var catNames: [String] {
+        (CatCareStore.shared.state?.cats ?? []).compactMap { $0.name?.value }.filter { !$0.isEmpty }
+    }
 
     private init() {
         if let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
@@ -89,6 +100,16 @@ final class FamilyNotebookPrototype: ObservableObject {
         }
     }
 
+    /// Test builds only: what joining from an invitation will do. With no
+    /// server the family is made here, and the inviter is the tried member.
+    func join() async {
+        guard !hasFamily else { return }
+        await create()
+        guard hasFamily else { return }
+        UserDefaults.standard.set(true, forKey: Self.joinedKey)
+        objectWillChange.send()
+    }
+
     /// Copies what the notebook does not have yet: new cats, entries, visits
     /// and care plans. Safe to run again: nothing is copied twice, and a cat
     /// is linked by its tool ID and profile, never by its name.
@@ -136,7 +157,9 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     private func discard(_ familyID: UUID) {
         store = nil; snapshot = nil
-        for key in [Self.familyKey, Self.seenKey, Self.undoKey, Self.removedKey] { UserDefaults.standard.removeObject(forKey: key) }
+        for key in [Self.familyKey, Self.seenKey, Self.undoKey, Self.removedKey, Self.joinedKey] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
         if let directory = Self.root?.appendingPathComponent(familyID.uuidString.lowercased(), isDirectory: true) {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -326,6 +349,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     var members: [FamilyNotebookAuthor] {
         let removed = Set(UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? [])
         var people = [Self.me]
+        if joinedSomeonesFamily { people.append(Self.tryout) }
         for operation in snapshot?.operations ?? []
         where !people.contains(operation.author) && !removed.contains(operation.author.personID) {
             people.append(operation.author)
@@ -336,7 +360,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Takes someone out of the family: what they wrote stays (test builds:
     /// the tried family member only).
     func removeMember(_ member: FamilyNotebookAuthor) {
-        guard member != Self.me else { return }
+        guard member != Self.me, !joinedSomeonesFamily else { return }
         let removed = (UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? []) + [member.personID]
         UserDefaults.standard.set(removed, forKey: Self.removedKey)
         objectWillChange.send()
@@ -459,6 +483,8 @@ struct FamilyNotebookView: View {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @Environment(\.dismiss) private var dismiss
     @State private var creating = false
+    @State private var invites = false
+    @State private var triesInvitation = false
 
     var body: some View {
         NavigationStack {
@@ -466,15 +492,17 @@ struct FamilyNotebookView: View {
                 if model.hasFamily {
                     notebook
                 } else {
-                    FamilyNotebookIntroView(creating: creating) {
+                    FamilyNotebookIntroView(creating: creating, create: {
                         creating = true
                         Task { await model.create(); creating = false }
-                    }
+                    }, tryInvitation: { triesInvitation = true })
                 }
             }
             .navigationTitle("家族の手帳")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+            .sheet(isPresented: $invites) { FamilyNotebookInviteView() }
+            .sheet(isPresented: $triesInvitation) { FamilyNotebookJoinView() }
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(model.message ?? "") }
@@ -501,10 +529,12 @@ struct FamilyNotebookView: View {
                         Label(member.displayName, systemImage: "person.crop.circle.fill")
                     }
                 }
-                Button {} label: { Label("招待する", systemImage: "person.badge.plus") }
-                    .disabled(true)
+                if !model.joinedSomeonesFamily {
+                    Button { invites = true } label: { Label("招待する", systemImage: "person.badge.plus") }
+                        .accessibilityIdentifier("family-notebook-invite")
+                }
             } footer: {
-                Text("招待された人は無料で使えます。招待はまだできません（試作）。")
+                if !model.joinedSomeonesFamily { Text("招待された人は無料です。") }
             }
             if !model.recentFromFamily.isEmpty {
                 Section("最近の書き込み") {
@@ -522,6 +552,7 @@ struct FamilyNotebookView: View {
                 DisclosureGroup("テスト用") {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
                     Button("2 人が同時に直したときを試す") { model.tryConflict() }
+                    Button("招待を受けたときを試す") { triesInvitation = true }
                 }
             } footer: {
                 Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。あなたのページの「家族の共有をやめる」で元に戻ります。")
@@ -540,6 +571,11 @@ struct FamilyNotebookMemberView: View {
     @State private var confirms = false
 
     private var isMe: Bool { member == FamilyNotebookPrototype.me }
+    private var joined: Bool { model.joinedSomeonesFamily }
+    private var action: String? {
+        if isMe { return joined ? "家族から抜ける" : "家族の共有をやめる" }
+        return joined ? nil : "家族から外す"
+    }
 
     var body: some View {
         List {
@@ -553,19 +589,24 @@ struct FamilyNotebookMemberView: View {
                 .frame(maxWidth: .infinity)
                 .listRowBackground(Color.clear)
             }
-            Section {
-                Button(isMe ? "家族の共有をやめる" : "家族から外す", role: .destructive) { confirms = true }
-            } footer: {
-                Text(isMe
-                     ? "家族全員の共有が止まります。それまでに書いたことは、それぞれの iPhone に残ります。"
-                     : "これから書いたことは届かなくなります。それまでに書いたことは残ります。")
+            if let action {
+                Section {
+                    Button(action, role: .destructive) { confirms = true }
+                } footer: {
+                    Text(isMe && !joined
+                         ? "家族全員の共有が止まります。それまでに書いたことは、それぞれの iPhone に残ります。"
+                         : isMe
+                         ? "これから書くことは家族に届かなくなります。それまでに書いたことは、この iPhone に残ります。"
+                         : "これから書いたことは届かなくなります。それまでに書いたことは残ります。")
+                }
             }
         }
         .navigationTitle(member.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog(isMe ? "家族の共有をやめますか？" : "\(member.displayName)を家族から外しますか？",
+        .confirmationDialog(isMe ? (joined ? "家族から抜けますか？" : "家族の共有をやめますか？")
+                                 : "\(member.displayName)を家族から外しますか？",
                             isPresented: $confirms, titleVisibility: .visible) {
-            Button(isMe ? "共有をやめる" : "外す", role: .destructive) {
+            Button(isMe ? (joined ? "抜ける" : "共有をやめる") : "外す", role: .destructive) {
                 if isMe { model.remove() } else { model.removeMember(member) }
                 dismiss()
             }
@@ -577,6 +618,8 @@ struct FamilyNotebookMemberView: View {
 struct FamilyNotebookIntroView: View {
     var creating = false
     var create: (@MainActor () -> Void)?
+    /// Test builds only: open an invitation as the invited person sees it.
+    var tryInvitation: (@MainActor () -> Void)?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -591,16 +634,137 @@ struct FamilyNotebookIntroView: View {
             Spacer()
             Button { create?() } label: {
                 Group {
-                    if creating { ProgressView() } else { Text("家族を作る").font(.headline) }
+                    if creating {
+                        ProgressView()
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("家族を作る").font(.headline)
+                            FamilyNotebookPlusMark()
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, minHeight: 50)
             }
             .buttonStyle(.borderedProminent)
             .disabled(create == nil || creating)
-            Text("Plus の機能。招待された人は無料です。")
+            .accessibilityLabel("家族を作る、Plus")
+            Text("招待された人は無料です。")
                 .font(.footnote).foregroundStyle(.secondary)
+            if let tryInvitation {
+                Button("招待を受けたときを試す（テスト用）") { tryInvitation() }
+                    .font(.footnote)
+                    .accessibilityIdentifier("family-notebook-try-invitation")
+            }
         }
         .padding(24)
+    }
+}
+
+/// 「Plus」 on the button that needs it, the way apps mark a paid action.
+struct FamilyNotebookPlusMark: View {
+    var body: some View {
+        Text(verbatim: "Plus")
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(.white.opacity(0.25), in: Capsule())
+            .accessibilityHidden(true)
+    }
+}
+
+/// What the invited person sees first: who asks, and for which cats. The
+/// same card in the sending preview and on the invited iPhone.
+struct FamilyNotebookInvitationCard: View {
+    let from: String
+    let cats: [String]
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "person.2.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(.white)
+                .frame(width: 76, height: 76)
+                .background(Color.accentColor.gradient, in: Circle())
+            Text("\(from)から、家族の手帳への招待").font(.headline).multilineTextAlignment(.center)
+            if !cats.isEmpty {
+                Text(cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Inviting, as with TimeTree or a shared note: a link sent by Messages or
+/// LINE. Nothing can be sent before the family works between iPhones, so
+/// this shows the invitation as it will arrive.
+struct FamilyNotebookInviteView: View {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                FamilyNotebookInvitationCard(from: "あなた", cats: model.catNames)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                Spacer()
+                Button { } label: {
+                    Label("招待を送る", systemImage: "square.and.arrow.up")
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(true)
+                Text("試作のため、まだ送れません。招待された人は無料です。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("招待する")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+        }
+    }
+}
+
+/// Opening an invitation: who asks and for which cats, then 参加する. One
+/// family at a time, as in Apple's family sharing. Joining is free.
+struct FamilyNotebookJoinView: View {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var joining = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Spacer()
+                FamilyNotebookInvitationCard(from: FamilyNotebookPrototype.tryout.displayName, cats: model.catNames)
+                Text("この子のこと・病院・預けるときを、一緒に書きます。")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if model.hasFamily {
+                    Text("家族は 1 つまでです。いまの家族から抜けると参加できます。")
+                        .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                } else {
+                    Button {
+                        joining = true
+                        Task { await model.join(); joining = false; if model.hasFamily { dismiss() } }
+                    } label: {
+                        Group { if joining { ProgressView() } else { Text("参加する").font(.headline) } }
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(joining)
+                    .accessibilityIdentifier("family-notebook-join")
+                    Text("参加は無料です。").font(.footnote).foregroundStyle(.secondary)
+                }
+                Button("今はやめておく") { dismiss() }
+                    .disabled(joining)
+            }
+            .padding(24)
+            .navigationTitle("招待")
+            .navigationBarTitleDisplayMode(.inline)
+        }
     }
 }
 
