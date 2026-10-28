@@ -107,6 +107,7 @@ xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
   build
 wait "$boot_pid"
 app="$RUNNER_TEMP/QuickBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
+test "$(/usr/libexec/PlistBuddy -c 'Print GroupReportingProductionEnabled' "$app/Info.plist")" = "NO"
 python3 ci/group-window-release.py --requested false --mode disabled \
   --app-info-plist "$app/Info.plist"
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")

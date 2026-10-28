@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import Darwin
 
 struct GroupReportReceipt: Codable, Sendable {
     let id: String
@@ -41,10 +42,21 @@ final class GroupReportDraftStore {
     init(directory: URL) throws {
         guard directory.isFileURL else { throw GroupSafetyError.storageUnavailable }
         let manager = FileManager.default
-        let parent = directory.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        // Foundation standardization may turn /private/var back into /var on
+        // Apple platforms. SQLITE_OPEN_NOFOLLOW rejects that parent symlink;
+        // retain the physical parent path without standardizing it again.
+        let parentPath = directory.deletingLastPathComponent().path
+        try manager.createDirectory(atPath: parentPath, withIntermediateDirectories: true)
+        guard let resolvedParent = realpath(parentPath, nil) else { throw GroupSafetyError.storageUnavailable }
+        defer { free(resolvedParent) }
+        let parent = URL(fileURLWithPath: String(cString: resolvedParent), isDirectory: true)
         let expected = parent.appendingPathComponent(directory.lastPathComponent, isDirectory: true)
+        if let attributes = try? manager.attributesOfItem(atPath: expected.path),
+           attributes[.type] as? FileAttributeType == .typeSymbolicLink { throw GroupSafetyError.storageUnavailable }
         try manager.createDirectory(at: expected, withIntermediateDirectories: true)
-        guard expected.resolvingSymlinksInPath().standardizedFileURL.path == expected.standardizedFileURL.path else {
+        guard let resolvedFolder = realpath(expected.path, nil) else { throw GroupSafetyError.storageUnavailable }
+        defer { free(resolvedFolder) }
+        guard String(cString: resolvedFolder) == expected.path else {
             throw GroupSafetyError.storageUnavailable
         }
         var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true

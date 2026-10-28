@@ -9,6 +9,18 @@ private enum ReportingCheckFailure: Error { case failed(String) }
 private func require(_ condition: Bool, _ message: String) throws {
     if !condition { throw ReportingCheckFailure.failed(message) }
 }
+private func reportingStoreContext<Value>(_ phase: String, _ work: () throws -> Value) throws -> Value {
+    do { return try work() }
+    catch let error as GroupSafetyError {
+        // Only the fixed fixture phase and enum case, never a path or evidence.
+        throw ReportingCheckFailure.failed(phase + ": " + String(describing: error))
+    }
+}
+@MainActor
+private func reportingPhase(_ name: String, _ work: () async throws -> Void) async throws {
+    FileHandle.standardError.write(Data(("Group reporting fixture: " + name + "\n").utf8))
+    try await work()
+}
 @MainActor
 private func fails(_ expected: GroupSafetyError, _ message: String,
                    _ action: () async throws -> Void) async throws {
@@ -225,11 +237,15 @@ private actor ReportingEcho: GroupHTTPTransport {
 // production injection API or relying on chmod (ineffective for privileged CI).
 private func reportingSQL(_ directory: URL, _ sql: String) throws {
     var connection: OpaquePointer?
-    guard sqlite3_open_v2(directory.appendingPathComponent("reports.sqlite").path, &connection,
-                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
-          let connection else { throw ReportingCheckFailure.failed("fixture SQLite open") }
+    let opened = sqlite3_open_v2(directory.appendingPathComponent("reports.sqlite").path, &connection,
+                                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
+    guard opened == SQLITE_OK, let connection else {
+        if let connection { sqlite3_close(connection) }
+        throw ReportingCheckFailure.failed("fixture SQLite open code " + String(opened))
+    }
     defer { sqlite3_close(connection) }
-    guard sqlite3_exec(connection, sql, nil, nil, nil) == SQLITE_OK else { throw ReportingCheckFailure.failed("fixture SQLite command") }
+    let executed = sqlite3_exec(connection, sql, nil, nil, nil)
+    guard executed == SQLITE_OK else { throw ReportingCheckFailure.failed("fixture SQLite command code " + String(executed)) }
 }
 
 @MainActor
@@ -268,17 +284,27 @@ private final class ReportingEnvironment {
     }
     func service() throws -> ProductionGroupReporting {
         let evidence = self.evidence
-        return try ProductionGroupReporting(endpoint: URL(string: ProductionGroupReporting.stagingEndpoint)!,
-            secrets: secrets, transport: echo, directory: directory, publicKey: GroupReportCrypto.moderationPublicKey) { window, photo in
-                try evidence.read(windowID: window, photoID: photo)
-            }
+        return try reportingStoreContext(directory.lastPathComponent + ".service-init") {
+            try ProductionGroupReporting(endpoint: URL(string: ProductionGroupReporting.stagingEndpoint)!,
+                secrets: secrets, transport: echo, directory: directory, publicKey: GroupReportCrypto.moderationPublicKey) { window, photo in
+                    try evidence.read(windowID: window, photoID: photo)
+                }
+        }
     }
     func prepare(_ service: ProductionGroupReporting) async throws -> String {
         try await service.prepareReport(windowID: windowID, photoID: photoID, senderName: "合成の送り主",
             reason: .privacy, consent: .init(acceptedAt: Date()))
     }
-    func draft(_ id: String) throws -> GroupReportDraft { try GroupReportDraftStore(directory: directory).read(id) }
-    func all() throws -> [GroupReportDraft] { try GroupReportDraftStore(directory: directory).all() }
+    func draft(_ id: String) throws -> GroupReportDraft {
+        try reportingStoreContext(directory.lastPathComponent + ".draft-open-read") {
+            try GroupReportDraftStore(directory: directory).read(id)
+        }
+    }
+    func all() throws -> [GroupReportDraft] {
+        try reportingStoreContext(directory.lastPathComponent + ".draft-open-list") {
+            try GroupReportDraftStore(directory: directory).all()
+        }
+    }
     func mutationLog() async -> [ReportingRequest] { await echo.log().filter { $0.method != "GET" } }
     func replaceIdentity() throws -> Data {
         var replacement = GroupDeviceIdentity.firstDevice(); replacement.registered = true
@@ -297,16 +323,37 @@ private struct VerifyGroupReporting {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("group-reporting-checks-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try await selectedEvidence(root, jpeg)
-        try await persistence(root, jpeg)
+        try await reportingPhase("physical parent and rejected symlink leaf") { try await storePaths(root, jpeg) }
+        try await reportingPhase("selected evidence") { try await selectedEvidence(root, jpeg) }
+        try await reportingPhase("intentional persistence failures") { try await persistence(root, jpeg) }
         for (name, loss) in [("reserve", ReportingLoss.reserve), ("upload", .upload), ("commit", .commit), ("before-commit", .beforeCommit)] {
-            try await recovery(root, jpeg, name, loss)
+            try await reportingPhase("restart after " + name) { try await recovery(root, jpeg, name, loss) }
         }
-        try await wrongReceipt(root, jpeg)
-        try await identitiesAndDeparture(root, jpeg)
-        try await blocking(root, jpeg)
-        try await disabled(root, jpeg)
+        try await reportingPhase("receipt mismatch") { try await wrongReceipt(root, jpeg) }
+        try await reportingPhase("identity and departure") { try await identitiesAndDeparture(root, jpeg) }
+        try await reportingPhase("blocking") { try await blocking(root, jpeg) }
+        try await reportingPhase("OFF") { try await disabled(root, jpeg) }
         print("Group reporting native adapter checks passed: exact evidence, durable retries, signed requests, identity/status, receipt binding, blocks and OFF.")
+    }
+
+    private static func storePaths(_ root: URL, _ jpeg: Data) async throws {
+        // Leave Foundation's temporaryDirectory spelling unchanged, exercising
+        // /var on macOS. An additional owned parent alias makes this explicit
+        // even when a runner happens to supply a physical /private path.
+        let physical = root.appendingPathComponent("physical-parent", isDirectory: true)
+        let alias = root.appendingPathComponent("parent-alias", isDirectory: true)
+        try FileManager.default.createDirectory(at: physical, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: physical)
+        let env = try ReportingEnvironment(root: alias, name: "report-store", jpeg: jpeg)
+        let service = try env.service(), id = try await env.prepare(service)
+        try require(try env.draft(id).ciphertext != nil, "parent alias permits durable private draft")
+        try require(await env.mutationLog().isEmpty, "path check sends no photo")
+
+        let leaf = root.appendingPathComponent("rejected-leaf", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: leaf, withDestinationURL: physical)
+        try await fails(.storageUnavailable, "symlink store leaf stays forbidden") {
+            _ = try GroupReportDraftStore(directory: leaf)
+        }
     }
 
     private static func selectedEvidence(_ root: URL, _ jpeg: Data) async throws {
