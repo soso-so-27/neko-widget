@@ -70,6 +70,7 @@ const expectedMigrationNames = [
   "0050_group_moderation_operator.sql",
   "0051_group_moderation_restrictions.sql",
   "0052_group_report_operations.sql",
+  "0053_group_invitation_pause.sql",
 ];
 
 const databaseGateColumns = [

@@ -567,7 +567,8 @@ extension ProductionGroupWindowClient {
         guard reply.windowID == capability.windowID, reply.invitationID == invitationID, reply.personID == identity.personID,
               reply.candidateDeviceID == (try identity.deviceID) else { throw GroupClientError.invalidResponse }
         let result = GroupJoinRequest(id: reply.requestID, invitationID: invitationID, personID: identity.personID, candidateDeviceID: try identity.deviceID,
-            displayName: name, verificationPhrase: GroupWire.phrase(identity.personPublicKey), expiresAt: Date(timeIntervalSince1970: TimeInterval(reply.expiresAt)), state: reply.state)
+            displayName: name, verificationPhrase: GroupWire.phrase(identity.personPublicKey), expiresAt: Date(timeIntervalSince1970: TimeInterval(reply.expiresAt)),
+            state: reply.state, admissionPaused: reply.state == .pending ? reply.admissionPaused : false)
         try save(GroupLocalJoin(windowID: capability.windowID, request: result), "join:" + reply.requestID)
         return result
     }
@@ -577,7 +578,9 @@ extension ProductionGroupWindowClient {
             GroupAPIModel.JoinStatusInput(requestID: requestID)))
         guard reply.requestID == requestID, reply.personID == saved.request.personID, reply.candidateDeviceID == saved.request.candidateDeviceID,
               reply.windowID == saved.windowID, reply.invitationID == saved.request.invitationID else { throw GroupClientError.invalidResponse }
-        saved.request.state = reply.state; try save(saved, "join:" + requestID)
+        saved.request.state = reply.state
+        saved.request.admissionPaused = reply.state == .pending ? reply.admissionPaused : false
+        try save(saved, "join:" + requestID)
         if reply.state == .approved {
             guard var record = try load(GroupLocalWindow.self, "window:" + saved.windowID), let revision = reply.resultRevision,
                   revision >= record.minimumAdmissionRevision else { throw GroupClientError.invalidResponse }
@@ -604,7 +607,8 @@ extension ProductionGroupWindowClient {
                 ownerDeviceID: identity.deviceID, agreementKey: identity.agreementKey)
             try save(row, "candidate:\(windowID):\(row.id)")
             result.append(.init(id: row.id, invitationID: row.invitationID, personID: row.personID, candidateDeviceID: row.candidateDeviceID,
-                displayName: name, verificationPhrase: GroupWire.phrase(row.identityPublicKey), expiresAt: Date(timeIntervalSince1970: TimeInterval(row.expiresAt)), state: row.state))
+                displayName: name, verificationPhrase: GroupWire.phrase(row.identityPublicKey), expiresAt: Date(timeIntervalSince1970: TimeInterval(row.expiresAt)),
+                state: row.state, admissionPaused: row.state == .pending ? row.admissionPaused : false))
         }
         return result
     }

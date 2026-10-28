@@ -292,6 +292,21 @@ private struct GroupAdapterChecks {
             do { _ = try GroupHTTPRequest.check(.init(status: 403, data: Data("{\"error\":{\"code\":\"\(code)\"}}".utf8))); throw Failure.check("subscription error preserved") }
             catch let error as GroupSubscriptionError { try check(error == expected, "typed subscription refusal") }
         }
+        do {
+            _ = try GroupHTTPRequest.check(.init(status: 503, data: Data("{\"error\":{\"code\":\"invitation_paused\"}}".utf8)))
+            throw Failure.check("invitation pause must not be treated as success")
+        } catch let error as GroupClientError {
+            try check(error == .invitationPaused, "operator invitation pause remains distinct from network and report errors")
+        }
+        let oldJoinJSON = Data("{\"id\":\"request\",\"invitationId\":\"invite\",\"personId\":\"person\",\"candidateDeviceId\":\"device\",\"displayName\":\"家族\",\"verificationPhrase\":\"phrase\",\"expiresAt\":1000,\"state\":\"pending\"}".utf8)
+        var storedJoin = try GroupWire.decode(GroupJoinRequest.self, oldJoinJSON)
+        try check(storedJoin.state == .pending && storedJoin.admissionPaused == nil, "existing saved join survives missing pause field")
+        storedJoin.admissionPaused = true
+        let restoredJoin = try GroupWire.decode(GroupJoinRequest.self, GroupWire.encode(storedJoin))
+        try check(restoredJoin == storedJoin, "pending admission pause survives local save and reload")
+        let pausedJoinJSON = Data("{\"requestId\":\"request\",\"windowId\":\"window\",\"invitationId\":\"invite\",\"personId\":\"person\",\"candidateDeviceId\":\"device\",\"state\":\"pending\",\"expiresAt\":1000,\"admissionPaused\":true}".utf8)
+        let pausedJoin = try GroupWire.decode(GroupAPIModel.JoinReply.self, pausedJoinJSON)
+        try check(pausedJoin.state == .pending && pausedJoin.admissionPaused == true, "pending reply exposes operator pause without pretending admission succeeded")
 
         let vector = try GroupWire.decode(RosterVector.self, Data(contentsOf: URL(fileURLWithPath: paths[2])))
         let roster = try GroupRosterVerifier.verify(vector.packet, anchor: vector.anchor)

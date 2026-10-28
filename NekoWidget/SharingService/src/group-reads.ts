@@ -2,7 +2,7 @@ import { base64urlDecode, base64urlEncode } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
 import { groupNonceStatements,requireGroupMember,type GroupActor } from './group-auth';
-import { groupStoredJoinBody,type GroupJoinRow } from './group-joins';
+import { groupStoredJoinBody,groupAdmissionPause,type GroupJoinRow } from './group-joins';
 import { loadStoredGroupRoster } from './group-protocol';
 import { exactKeys,integerField,type JsonRecord } from './validation';
 
@@ -41,7 +41,8 @@ export async function listGroupJoinRequests(env:Env,actor:GroupActor,windowId:st
     JOIN group_invitations i ON i.id=j.invitation_id WHERE j.space_id=? AND j.state='pending'
     AND j.expires_at>? AND i.revoked_at IS NULL AND d.state='active' AND p.state='active' AND j.id>? ORDER BY j.id LIMIT ?`)
     .bind(windowId,actor.now,page.after,page.limit+1).all<GroupJoinRow & {signing_public_key:string;hpke_public_key:string;identity_public_key:string}>();
-  const items=result.results.slice(0,page.limit).map(row=>({id:row.id,invitationId:row.invitation_id,personId:row.person_id,
+  const active=await groupAdmissionPause(env,windowId);
+  const items=result.results.slice(0,page.limit).map(row=>({admissionPaused:active!==null&&!active.has(row.person_id),id:row.id,invitationId:row.invitation_id,personId:row.person_id,
     candidateDeviceId:row.candidate_device_id,state:row.state,expiresAt:row.expires_at,
     encryptedDisplayName:groupStoredJoinBody(row).encryptedDisplayName,personAuthorization:groupStoredJoinBody(row).personAuthorization,
     signingPublicKey:row.signing_public_key,hpkePublicKey:row.hpke_public_key,identityPublicKey:row.identity_public_key}));

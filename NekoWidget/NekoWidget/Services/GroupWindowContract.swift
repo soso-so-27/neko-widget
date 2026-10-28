@@ -70,6 +70,8 @@ struct GroupJoinRequest: Identifiable, Codable, Equatable, Sendable {
     let verificationPhrase: String
     let expiresAt: Date
     var state: GroupRequestState
+    // Optional so requests saved before operator admission controls still decode.
+    var admissionPaused: Bool? = nil
 }
 
 struct GroupHeart: Identifiable, Codable, Equatable, Sendable {
@@ -104,7 +106,7 @@ enum GroupClientError: Error, Equatable, Sendable {
     case offline, unavailable, authenticationRequired, notMember, ownerRequired
     case staleRevision(current: Int), staleEpoch, rotationPending
     case memberLimit, deviceLimit, totalWindowLimit, ownedWindowLimit
-    case invitationExpired, invitationRevoked, requestNotPending
+    case invitationExpired, invitationRevoked, invitationPaused, requestNotPending
     case cannotRemoveOwner, ownerCannotLeave, invalidResponse
     case idempotencyConflict
 }
