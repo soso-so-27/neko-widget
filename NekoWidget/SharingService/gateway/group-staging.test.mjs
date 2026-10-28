@@ -7,6 +7,18 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { createGroupStagingRouter } from './group-staging-router.mjs';
 import { groupStagingConfigs } from './group-staging-config.mjs';
 
+test('report operations and fixed mail reuse existing ticks without coupling evidence cleanup to their failures',async()=>{
+  const pending=[],calls=[],env={ENVIRONMENT:'staging'},ctx={waitUntil(job){pending.push(job);}};
+  const router=createGroupStagingRouter({scheduled(){calls.push('legacy');return 'preserved';}}, {},
+    async()=>{calls.push('evidence');},'cleanup',async()=>{calls.push('group-push');},'mail',
+    async()=>{calls.push('deadline');throw Error('synthetic operations failure');},async()=>{calls.push('mail');});
+  assert.equal(router.scheduled({cron:'cleanup'},env,ctx),'preserved');
+  router.scheduled({cron:'mail'},env,ctx);
+  const results=await Promise.allSettled(pending);
+  assert.deepEqual(calls,['legacy','evidence','deadline','legacy','group-push','mail']);
+  assert.equal(results.filter(r=>r.status==='rejected').length,1);
+});
+
 test('existing schedule is preserved and only its APNs tick adds the group drain',async()=>{
   const env={ENVIRONMENT:'staging'},pending=[];let legacyRuns=0,drains=0;
   const ctx={waitUntil(job){pending.push(job);}};

@@ -33,6 +33,7 @@ enum GroupReportProgress: String, Codable, Equatable, Sendable {
     case received
     /// Offline, timeout or a server error: the same draft can be sent again.
     case retryable
+    /// Reservation expired before any confirmed commit; not evidence expiry.
     case expired
     case alreadyReported
     case authenticationRequired
@@ -55,6 +56,8 @@ struct GroupReportRecord: Identifiable, Codable, Equatable, Sendable {
     var reply: GroupReportReply
     var sentAt: Date
     var repliedAt: Date?
+    /// Server-issued matching number, not an identifier that grants access.
+    var receiptNumber: String? = nil
 }
 
 enum GroupSafetyError: Error, Equatable, Sendable {

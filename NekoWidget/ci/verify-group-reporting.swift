@@ -90,6 +90,7 @@ private struct ReportingRequest: Sendable { let path: String; let method: String
 /// security implementation and performs no network requests.
 private actor ReportingEcho: GroupHTTPTransport {
     let reportID = GroupWire.base64(Data(repeating: 5, count: 16))
+    static let receiptNumber = "R-0123-4567-89"
     private let deviceID: String
     private let signingPublicKey: Data
     private let windowID: String
@@ -102,6 +103,12 @@ private actor ReportingEcho: GroupHTTPTransport {
     private var uploaded: Data?
     private var committed: Data?
     private var state = "reserved"
+    private var committedAt: Int?
+    private var commitTimeOverride: Int?
+    private var number: String? = ReportingEcho.receiptNumber
+    private var numberOverrides: [String: String] = [:]
+    private var omitStatusCommit = false
+    private var statusExpiryAdjustment = 0
     private var wrongReceiptOn: String?
     private var replaceOn: String?
     private var replacement: (ReportingMemorySecrets, Data)?
@@ -115,6 +122,12 @@ private actor ReportingEcho: GroupHTTPTransport {
     func lose(_ value: ReportingLoss) { loss = value }
     func setAvailable(_ value: Bool) { available = value }
     func wrongReceipt(on value: String?) { wrongReceiptOn = value }
+    func setReceiptNumber(_ value: String?) { number = value }
+    func overrideReceiptNumber(_ value: String, on phase: String) { numberOverrides[phase] = value }
+    func setCommitTime(_ value: Int) { commitTimeOverride = value }
+    func expire() { state = "expired" }
+    func omitCommitFromStatus() { omitStatusCommit = true }
+    func alterStatusExpiry(by value: Int) { statusExpiryAdjustment = value }
     func replaceIdentity(on value: String, secrets: ReportingMemorySecrets, identityData: Data) {
         replaceOn = value; replacement = (secrets, identityData)
     }
@@ -137,7 +150,8 @@ private actor ReportingEcho: GroupHTTPTransport {
             "windowId": windowID, "momentId": photoID, "state": state, "moderationKeyId": "moderation-v2",
             "ciphertextSize": body["ciphertextSize"]!, "ciphertextSHA256": body["ciphertextSHA256"]!,
             "uploadExpiresAt": now + 900]
-        if state == "committed" { value["committedAt"] = now; value["contentExpiresAt"] = now + 604800 }
+        if let committedAt { value["committedAt"] = committedAt; value["contentExpiresAt"] = committedAt + 604800 }
+        if let number = numberOverrides[phase] ?? number { value["receiptNumber"] = number }
         return try json(["protocolVersion": 3, "report": value])
     }
     private func after(_ phase: String) throws {
@@ -209,6 +223,7 @@ private actor ReportingEcho: GroupHTTPTransport {
             if let committed { try require(committed == body, "commit bytes unchanged after restart") } else { committed = body }
             if loss == .beforeCommit { loss = .none; throw GroupClientError.offline }
             state = "committed"
+            if committedAt == nil { committedAt = commitTimeOverride ?? Int(Date().timeIntervalSince1970) }
             try after("commit")
             if loss == .commit { loss = .none; throw GroupClientError.offline }
             return try receipt(for: "commit")
@@ -218,7 +233,10 @@ private actor ReportingEcho: GroupHTTPTransport {
             let now = Int(Date().timeIntervalSince1970)
             var result: [String: Any] = ["id": wrongReceiptOn == "status" ? GroupWire.base64(Data(repeating: 7, count: 16)) : reportID,
                 "submissionState": state, "outcome": statusReply ? "photo" : "received", "revision": statusReply ? 1 : 0]
-            if state == "committed" { result["receivedAt"] = now; result["evidenceExpiresAt"] = now + 604800 }
+            if let committedAt, !omitStatusCommit {
+                result["receivedAt"] = committedAt; result["evidenceExpiresAt"] = committedAt + 604800 + statusExpiryAdjustment
+            }
+            if let number = numberOverrides["status"] ?? number { result["receiptNumber"] = number }
             if statusReply { result["replyTemplate"] = "review_restricted_v1"; result["repliedAt"] = now }
             try after("status")
             return try json(["protocolVersion": 3, "report": result])
@@ -330,10 +348,13 @@ private struct VerifyGroupReporting {
             try await reportingPhase("restart after " + name) { try await recovery(root, jpeg, name, loss) }
         }
         try await reportingPhase("receipt mismatch") { try await wrongReceipt(root, jpeg) }
+        try await reportingPhase("receipt number persistence and legacy backfill") { try await receiptNumbers(root, jpeg) }
+        try await reportingPhase("receipt number validation") { try await invalidReceiptNumbers(root, jpeg) }
+        try await reportingPhase("accepted reports after evidence expiry") { try await evidenceExpiry(root, jpeg) }
         try await reportingPhase("identity and departure") { try await identitiesAndDeparture(root, jpeg) }
         try await reportingPhase("blocking") { try await blocking(root, jpeg) }
         try await reportingPhase("OFF") { try await disabled(root, jpeg) }
-        print("Group reporting native adapter checks passed: exact evidence, durable retries, signed requests, identity/status, receipt binding, blocks and OFF.")
+        print("Group reporting native adapter checks passed: exact evidence, durable retries, signed requests, identity/status, receipt numbers, evidence expiry, blocks and OFF.")
     }
 
     private static func storePaths(_ root: URL, _ jpeg: Data) async throws {
@@ -400,6 +421,8 @@ private struct VerifyGroupReporting {
             && before.ciphertext == original.ciphertext, "restart preserves exact operation bodies and ciphertext")
         let result = try await restarted.resumeReport(draftID: id), after = try env.draft(id)
         try require(result.progress == .received && after.ciphertext == nil, "only confirmed commit marks received and drops encrypted copy")
+        try require(result.receiptNumber == ReportingEcho.receiptNumber && after.receipt?.receiptNumber == result.receiptNumber,
+            "response loss and restart preserve the same server receipt number")
         try require(after.reserveBody == original.reserveBody && after.commitBody == original.commitBody, "resume never replaces operation IDs")
         try require(env.evidence.reads() == 1, "restart never reads a different photo or regenerates envelope")
         let mutations = await env.mutationLog()
@@ -425,6 +448,111 @@ private struct VerifyGroupReporting {
         await env.echo.wrongReceipt(on: "status")
         try await fails(.invalidResponse, "status cannot switch receipt ID") { _ = try await service.refreshReport(draftID: id) }
         try require(try env.draft(id).record.progress != .received, "wrong status never marks received")
+    }
+    private static func receiptNumbers(_ root: URL, _ jpeg: Data) async throws {
+        let env = try ReportingEnvironment(root: root, name: "receipt-number", jpeg: jpeg), service = try env.service()
+        let id = try await env.prepare(service)
+        try require(try env.draft(id).record.receiptNumber == nil, "a local draft invents no receipt number")
+        await env.echo.lose(.beforeCommit)
+        try await fails(.offline, "pause before accepted commit") { _ = try await service.submitReport(draftID: id) }
+        let pending = try env.draft(id)
+        try require(pending.record.progress != .received && pending.record.receiptNumber == ReportingEcho.receiptNumber
+            && pending.receipt?.receiptNumber == ReportingEcho.receiptNumber,
+            "reserve/upload persist the number without claiming reception")
+        // A compatible older response omits the new optional field; it must not
+        // erase a number already saved before the process restarted.
+        await env.echo.setReceiptNumber(nil)
+        let restarted = try env.service(), received = try await restarted.resumeReport(draftID: id)
+        try require(received.progress == .received && received.receiptNumber == ReportingEcho.receiptNumber,
+            "omitted fields retain the known number through status and commit")
+        try require(try env.draft(id).receipt?.receiptNumber == ReportingEcho.receiptNumber, "receipt copy also retains the number")
+
+        let legacy = try ReportingEnvironment(root: root, name: "legacy-receipt-number", jpeg: jpeg), old = try legacy.service()
+        await legacy.echo.setReceiptNumber(nil)
+        let oldID = try await legacy.prepare(old)
+        let oldRecord = try await old.submitReport(draftID: oldID)
+        try require(oldRecord.receiptNumber == nil && oldRecord.progress == .received, "legacy response remains compatible")
+        // Decode the old on-disk shape, not only a new struct initialized to nil.
+        let encoder = PropertyListEncoder(); encoder.outputFormat = .binary
+        var value = try PropertyListSerialization.propertyList(from: encoder.encode(legacy.draft(oldID)), format: nil) as! [String: Any]
+        var record = value["record"] as! [String: Any], receipt = value["receipt"] as! [String: Any]
+        record.removeValue(forKey: "receiptNumber"); receipt.removeValue(forKey: "receiptNumber")
+        value["record"] = record; value["receipt"] = receipt
+        let legacyBytes = try PropertyListSerialization.data(fromPropertyList: value, format: .binary, options: 0)
+        let legacyHex = legacyBytes.map { String(format: "%02x", $0) }.joined()
+        try reportingSQL(legacy.directory, "UPDATE reports SET data=X'" + legacyHex + "' WHERE id='" + oldID + "';")
+        let decoded = try legacy.draft(oldID)
+        try require(decoded.record.receiptNumber == nil && decoded.receipt?.receiptNumber == nil, "missing legacy fields decode as nil")
+        await legacy.echo.setReceiptNumber(ReportingEcho.receiptNumber)
+        let upgraded = try legacy.service(), filled = try await upgraded.refreshReport(draftID: oldID)
+        try require(filled.progress == .received && filled.receiptNumber == ReportingEcho.receiptNumber,
+            "authenticated status backfills an old accepted record")
+        let persisted = try legacy.draft(oldID)
+        try require(persisted.record.receiptNumber == ReportingEcho.receiptNumber
+            && persisted.receipt?.receiptNumber == ReportingEcho.receiptNumber, "backfill is durable in both copies")
+    }
+    private static func invalidReceiptNumbers(_ root: URL, _ jpeg: Data) async throws {
+        let invalid = ["r-0123-4567-89", "R-O123-4567-89", "R-0123-4567-8", "R-0123-4567-８9"]
+        for (index, number) in invalid.enumerated() {
+            let env = try ReportingEnvironment(root: root, name: "invalid-number-\(index)", jpeg: jpeg), service = try env.service()
+            let id = try await env.prepare(service)
+            await env.echo.overrideReceiptNumber(number, on: "reserve")
+            try await fails(.invalidResponse, "strict uppercase Crockford receipt number") { _ = try await service.submitReport(draftID: id) }
+            try require(try env.draft(id).record.receiptNumber == nil, "malformed number is never persisted")
+            try require(!(await env.mutationLog()).contains(where: { $0.method == "PUT" }), "malformed reserve stops before upload")
+        }
+        for phase in ["upload", "commit", "status"] {
+            let env = try ReportingEnvironment(root: root, name: "changed-number-" + phase, jpeg: jpeg), service = try env.service()
+            let id = try await env.prepare(service)
+            if phase == "status" { _ = try await service.submitReport(draftID: id) }
+            await env.echo.overrideReceiptNumber("R-ZYXW-VTSR-QP", on: phase)
+            try await fails(.invalidResponse, phase + " cannot replace an issued number") {
+                if phase == "status" { _ = try await service.refreshReport(draftID: id) }
+                else { _ = try await service.submitReport(draftID: id) }
+            }
+            let saved = try env.draft(id)
+            try require(saved.record.receiptNumber == ReportingEcho.receiptNumber
+                && saved.receipt?.receiptNumber == ReportingEcho.receiptNumber, "a changed response leaves the original number intact")
+            if phase == "upload" {
+                try require(!(await env.mutationLog()).contains(where: { $0.path.hasSuffix("/commit") }), "changed upload stops before commit")
+            }
+        }
+    }
+    private static func evidenceExpiry(_ root: URL, _ jpeg: Data) async throws {
+        for lostCommit in [false, true] {
+            let env = try ReportingEnvironment(root: root, name: lostCommit ? "expired-lost-commit" : "expired-accepted", jpeg: jpeg)
+            let service = try env.service(), id = try await env.prepare(service)
+            let committedAt = Int(Date().timeIntervalSince1970) - 8 * 86400
+            await env.echo.setCommitTime(committedAt)
+            if lostCommit {
+                await env.echo.lose(.commit)
+                try await fails(.offline, "commit response was lost before evidence expiry") { _ = try await service.submitReport(draftID: id) }
+            } else { _ = try await service.submitReport(draftID: id) }
+            await env.echo.expire(); await env.echo.replyRestricted(); await env.echo.setAvailable(false)
+            try env.secrets.remove("window:" + env.windowID); env.secrets.denyWindowReads()
+            let before = await env.mutationLog().count
+            let restarted = try env.service(), result = try await restarted.resumeReport(draftID: id)
+            try require(result.progress == .received && result.reply == .restricted && result.receiptNumber == ReportingEcho.receiptNumber,
+                "expired evidence retains accepted progress, reply and number, including a lost commit response")
+            let saved = try env.draft(id)
+            try require(saved.ciphertext == nil && saved.receipt?.committedAt == committedAt
+                && saved.receipt?.contentExpiresAt == committedAt + 604800, "original confirmed dates survive evidence expiry")
+            try require(await env.mutationLog().count == before && env.secrets.readsOfWindows() == 0 && env.evidence.reads() == 1,
+                "reply reconciliation needs no new evidence, group key or mutation")
+            await env.echo.alterStatusExpiry(by: 1)
+            try await fails(.invalidResponse, "evidence deadline must remain the original seven days") { _ = try await restarted.refreshReport(draftID: id) }
+            await env.echo.alterStatusExpiry(by: 0); await env.echo.omitCommitFromStatus()
+            try await fails(.invalidResponse, "accepted history cannot be downgraded to an uncommitted expiry") { _ = try await restarted.refreshReport(draftID: id) }
+            try require(try env.draft(id).record.progress == .received, "invalid status preserves the accepted record")
+        }
+        let pending = try ReportingEnvironment(root: root, name: "expired-uncommitted", jpeg: jpeg), service = try pending.service()
+        let id = try await pending.prepare(service)
+        await pending.echo.lose(.beforeCommit)
+        try await fails(.offline, "reservation not committed") { _ = try await service.submitReport(draftID: id) }
+        await pending.echo.expire()
+        let result = try await pending.service().resumeReport(draftID: id)
+        try require(result.progress == .expired && result.reply == .none && result.receiptNumber == ReportingEcho.receiptNumber,
+            "only a never-committed reservation becomes expired")
     }
     private static func identitiesAndDeparture(_ root: URL, _ jpeg: Data) async throws {
         let env = try ReportingEnvironment(root: root, name: "identity", jpeg: jpeg), service = try env.service()
