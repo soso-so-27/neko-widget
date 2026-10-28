@@ -1748,6 +1748,7 @@ private func memoryPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String
 
 struct SavedMemoriesGalleryView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.photoLibraryPageIsCurrent) private var isCurrentPhotoLibraryPage
 
     private enum CreationOutput: Equatable {
         case pdf
@@ -1911,7 +1912,7 @@ struct SavedMemoriesGalleryView: View {
         .accessibilityIdentifier("saved-memories-gallery")
         .accessibilityValue(galleryAccessibilityValue)
         .toolbar {
-            if hasPhotoAccess && !photos.isEmpty {
+            if isCurrentPhotoLibraryPage && hasPhotoAccess && !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(isSelectingForExport ? "キャンセル" : "PDFを作る") {
                         toggleExportMode()

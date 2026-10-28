@@ -236,6 +236,13 @@ final class PhotoLibraryRowTracker {
     private var visible: [String: Int] = [:]
     private var lastTop: String?
 
+    /// The list the person is touching is the one whose place is kept. The
+    /// 写真 tab's pages sit side by side and all appear at once.
+    func claimActiveSection() {
+        guard isVisible, let section else { return }
+        PhotoLibraryReadingPosition.activeSection = section
+    }
+
     func appear(_ id: String, index: Int) {
         visible[id] = index
         report()
@@ -293,11 +300,15 @@ private struct PhotoLibraryUserScrollDetector: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content.onScrollPhaseChange { _, phase in
-                if phase == .interacting { tracker.userScrolled = true }
+                if phase == .interacting {
+                    tracker.userScrolled = true
+                    tracker.claimActiveSection()
+                }
             }
         } else {
             content.simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
                 tracker.userScrolled = true
+                tracker.claimActiveSection()
             })
         }
     }
