@@ -84,30 +84,11 @@ private struct PhotoLibraryPageSettling: ViewModifier {
     }
 }
 
-/// Decides whether a sideways swipe on the photo list changes the section.
-/// Only a clear horizontal swipe counts, and not one that started on the
-/// theme row (that row scrolls sideways itself).
-final class PhotoSectionSwipeGuard {
-    static let space = "photo-library-content"
-    var themeRow: CGRect = .zero
-
-    func section(after drag: DragGesture.Value, from current: PhotoLibrarySection) -> PhotoLibrarySection? {
-        let dx = drag.translation.width, dy = drag.translation.height
-        guard abs(dx) > 50, abs(dx) > abs(dy) * 2, !themeRow.contains(drag.startLocation) else { return nil }
-        let all = PhotoLibrarySection.allCases
-        guard let index = all.firstIndex(of: current) else { return nil }
-        let next = dx < 0 ? all.index(after: index) : index - 1
-        return all.indices.contains(next) ? all[next] : nil
-    }
-}
-
 /// Where the 写真 tab's pages are while they move: 0 is すべて, 1 お気に入り,
 /// 2 メモ, and 0.4 is part way. Only the tabs above read it, so following the
 /// finger redraws three words and a line, never the tab with its photos.
 @MainActor
 final class PhotoLibraryPagerProgress: ObservableObject {
-    /// Test builds only: back to one page at a time, pushed out by a swipe.
-    nonisolated static let pushKey = "debug.photos.sectionsPush.v1"
     /// The gap between pages, so where one ends is plain while it moves.
     nonisolated static let gap: CGFloat = 8
 
@@ -533,16 +514,10 @@ struct MainTabView: View {
         }
     }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
-    /// Where the theme row sits, so a swipe on it scrolls the row instead of
-    /// changing the section. A plain box: moving it never redraws the tab.
-    @State private var photoSwipeGuard = PhotoSectionSwipeGuard()
-    /// The side the next page comes in from, as the tabs are laid out.
-    @State private var photoLibraryPushEdge: Edge = .trailing
     /// A plain box on purpose: the pages moving never redraw this view.
     @State private var photoPager = PhotoLibraryPagerProgress()
     /// The page the pager rests on or is heading to.
     @State private var photoPage: PhotoLibrarySection?
-    @AppStorage(PhotoLibraryPagerProgress.pushKey) private var photoSectionsPushStored = false
     @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
@@ -949,27 +924,9 @@ struct MainTabView: View {
     private var photoLibrary: some View {
         VStack(spacing: 0) {
             // One row, one kind of control: which photos (all / favorites / memos).
-            PhotoLibrarySectionPicker(selection: photoLibrarySectionBinding, isCompact: true,
-                                      pager: photoSectionsPush ? nil : photoPager)
+            PhotoLibrarySectionPicker(selection: photoLibrarySectionBinding, isCompact: true, pager: photoPager)
                 .padding(.horizontal, 16)
-            if photoSectionsPush {
-                // Test builds only: one page at a time, pushed out by a swipe.
-                ZStack {
-                    photoLibraryContent(photoLibrarySelection.selection)
-                        .id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
-                        .transition(.push(from: photoLibraryPushEdge))
-                }
-                .clipped()
-                .coordinateSpace(.named(PhotoSectionSwipeGuard.space))
-                .simultaneousGesture(DragGesture(minimumDistance: 24, coordinateSpace: .named(PhotoSectionSwipeGuard.space))
-                    .onEnded { value in
-                        guard let next = photoSwipeGuard.section(after: value, from: photoLibrarySelection.selection)
-                        else { return }
-                        showPhotoLibrarySection(next)
-                    })
-            } else {
-                photoLibraryPager
-            }
+            photoLibraryPager
         }
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
@@ -1302,10 +1259,6 @@ struct MainTabView: View {
         photoLibraryPositionKey(photoLibrarySelection.selection)
     }
 
-    private var photoSectionsPush: Bool {
-        InternalBuildPresentationAvailability.isAvailable && photoSectionsPushStored
-    }
-
     /// すべて・お気に入り・メモ side by side, as in Instagram and X (10/28):
     /// the next page is already there, follows the finger with a gap between
     /// pages, and a short flick is enough. One page per swipe.
@@ -1349,22 +1302,10 @@ struct MainTabView: View {
         Binding(get: { photoLibrarySelection.selection }, set: { showPhotoLibrarySection($0) })
     }
 
-    /// The edge is set first and the page changes on the next turn, so the
-    /// page leaving and the page coming slide the same way.
+    /// The pages slide there; the section is kept when they rest.
     private func showPhotoLibrarySection(_ section: PhotoLibrarySection) {
-        let all = PhotoLibrarySection.allCases
-        guard section != photoLibrarySelection.selection,
-              let from = all.firstIndex(of: photoLibrarySelection.selection),
-              let to = all.firstIndex(of: section) else { return }
-        if !photoSectionsPush {
-            // The pages slide there; the section is kept when they rest.
-            withAnimation(.snappy(duration: 0.35)) { photoPage = section }
-            return
-        }
-        photoLibraryPushEdge = to > from ? .trailing : .leading
-        Task { @MainActor in
-            withAnimation(.snappy(duration: 0.3)) { photoLibrarySelection.select(section) }
-        }
+        guard section != photoLibrarySelection.selection else { return }
+        withAnimation(.snappy(duration: 0.35)) { photoPage = section }
     }
 
     private func photoLibraryPositionKey(_ section: PhotoLibrarySection) -> String {
@@ -1549,9 +1490,6 @@ struct MainTabView: View {
             .padding(.horizontal, 16)
         }
         .accessibilityIdentifier("photos-theme-row")
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(PhotoSectionSwipeGuard.space)) } action: { frame in
-            photoSwipeGuard.themeRow = frame
-        }
     }
 
     private var catProfileAlbumsDestination: CatProfileAlbumsDestination {
