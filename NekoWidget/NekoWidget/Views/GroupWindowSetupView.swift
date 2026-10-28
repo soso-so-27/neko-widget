@@ -29,7 +29,7 @@ enum GroupWindowPresentation {
         switch error {
         case .offline:
             return "接続できません。電波のあるところで、もう一度お試しください。"
-        case .unavailable:
+        case .unavailable, .invitationPaused:
             return "まどの仕組みをいま利用できません。時間をおいてもう一度お試しください。"
         case .authenticationRequired:
             return "このiPhoneの確認が必要です。まどを開き直してください。"

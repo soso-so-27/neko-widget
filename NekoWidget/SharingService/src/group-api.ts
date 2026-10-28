@@ -26,6 +26,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
     // ciphertext, names, request bodies and signatures are never logged.
     const message=error instanceof Error?error.message:'';
     const codes:[string,number,string][]=[
+      ['group_invitation_paused',503,'invitation_paused'],
       ['group_moderation_restricted',404,'group_moderation_restricted'],
       ['group_total_window_limit',409,'total_window_limit'],['group_owned_window_limit',409,'owned_window_limit'],
       ['group_member_limit',409,'member_limit'],['group_device_limit',409,'device_limit'],

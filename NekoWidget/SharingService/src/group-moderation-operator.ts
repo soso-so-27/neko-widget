@@ -6,6 +6,7 @@ import { verifyPreparedModerationOperatorWebAuthnAssertion } from './moderation-
 import type { LocalModerationTriageEnvironment } from './moderation-operator-triage-local';
 import { groupCaseReference,groupModerationSHA,groupSourceSHA,groupSourceSQL,readGroupModerationSource,type GroupModerationSource } from './group-moderation-source';
 import { groupModerationConsole } from './group-moderation-console';
+import {groupInvitationOperator} from './group-invitation-operator';
 import {groupReceiptNumber} from './group-report-number';
 
 export interface GroupReviewHost {
@@ -169,6 +170,7 @@ export async function routeGroupOperator(request:Request,env:GroupOperatorEnviro
   await env.db.batch(auth(env,access,actor!));
   if(request.method==='GET'&&url.pathname==='/operator/group/console')return groupModerationConsole();
   if(request.method!=='POST'||request.headers.get('origin')!==env.origin)fail(403);
+  if(url.pathname.startsWith('/operator/group/v1/invitations/'))return await groupInvitationOperator(request,env,access,actor!,revision=>auth(env,access,actor!,revision));
   const assertion=assertionPattern.exec(url.pathname);if(assertion)return await prove(request,env,access,actor!,assertion[1]!);
   if(request.body!==null)fail(400);
   const page=queuePattern.exec(url.pathname);if(page)return await issue(env,access,actor!,'queue',undefined,undefined,Number(page[1]??0));
