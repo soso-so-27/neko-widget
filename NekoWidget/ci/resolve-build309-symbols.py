@@ -68,5 +68,21 @@ def validate_release(metadata: dict) -> None:
 
 diagnostic.validate_release = validate_release
 
+# atos may succeed with no text for an optimized async continuation. Keep that
+# frame explicitly unresolved; do not discard the other exact-address results.
+# Nonempty output still uses the existing size and privacy validation.
+validated_symbol_lines = diagnostic.symbol_lines
+
+
+def symbol_lines(output: str) -> list[str]:
+    if not output.strip():
+        return ["[unresolved optimized frame: atos returned no text]"]
+    if len(output.strip().splitlines()) > 64:
+        return ["[unresolved frame: atos exceeded the inline-symbol limit]"]
+    return validated_symbol_lines(output)
+
+
+diagnostic.symbol_lines = symbol_lines
+
 if __name__ == "__main__":
     raise SystemExit(diagnostic.main())
