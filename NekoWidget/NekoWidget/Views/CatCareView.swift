@@ -102,6 +102,8 @@ enum CatFarewell {
 }
 
 /// Recording the day, quietly: a date and one sentence, nothing to fill in.
+/// Reached only where someone goes looking at that time (deleting the cat's
+/// profile), never from a page that is open every day.
 struct CatFarewellEditor: View {
     let name: String
     let recorded: CatCareDay?
@@ -237,14 +239,6 @@ struct CatCareDetailView: View {
             folded("health", "健康", healthCount) { healthSection }
             folded("living", "暮らし", livingCount) { livingSection }
             folded("household", "家の情報", householdCount) { householdSection }
-            if AlbumPrototype.isOn(albumPrototypeStored), farewell == nil {
-                Section {
-                    Button("この子が旅立ったとき") { showsFarewellEditor = true }
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("cat-care-farewell-open")
-                }
-            }
             Section {
                 Text("書いた内容は自動で保存します。")
                 if familyNotebook.hasFamily {

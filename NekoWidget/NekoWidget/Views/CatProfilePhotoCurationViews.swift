@@ -44,6 +44,7 @@ struct CatProfileDetailView: View {
     @State private var page: CatPage = .photos
     @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
+    @State private var showsFarewellEditor = false
 
     enum CatPage: Hashable { case photos, care }
 
@@ -241,9 +242,19 @@ struct CatProfileDetailView: View {
                     } else { deleteFailed = true }
                 }
             }
+            // When a cat has died, deleting is usually where people go. Offer
+            // to keep the cat instead, in words that suit any reason for deleting.
+            if AlbumPrototype.isOn(albumPrototypeStored), CatFarewell.days(farewellJSON)[profile.identifier] == nil {
+                Button("思い出として残す") { showsFarewellEditor = true }
+            }
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("写真やツールの入力は残ります。この子への写真の指定とアルバム連携だけを外します。")
+        }
+        .sheet(isPresented: $showsFarewellEditor) {
+            CatFarewellEditor(name: profile.displayName, recorded: CatFarewell.days(farewellJSON)[profile.identifier]) { day in
+                farewellJSON = CatFarewell.setting(day, for: profile.identifier, in: farewellJSON)
+            }
         }
         .sheet(isPresented: $showsKeyPhotoPicker) {
             NavigationStack {
