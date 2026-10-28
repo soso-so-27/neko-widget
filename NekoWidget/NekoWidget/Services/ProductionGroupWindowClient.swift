@@ -13,10 +13,25 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private let billingSigner: any GroupBillingSigner
     private let ownerDisplayName: String
     private let outboxDirectory: URL
-    private var registering = false
+    /// The one registration in flight. A second caller (the list and a window
+    /// opening together on a fresh iPhone) waits for it instead of failing.
+    private var registrationTask: Task<GroupDeviceIdentity, Error>?
     private var inFlight = Set<UUID>()
     private var photoMetadata: [String: GroupAPIModel.PhotoRow] = [:]
     private var historicalRosters: [String: VerifiedGroupRoster] = [:]
+    // Only fully verified, in-process snapshots. The relay still authorizes
+    // every heart against its current membership and epoch.
+    private var verifiedWindows: [String: GroupWindow] = [:]
+    private struct VerifiedListEntry {
+        let window: GroupWindow
+        let encryptedName: Data
+        let rosterHash: Data
+        let keyHash: Data
+        let personID: String
+        let deviceID: String
+    }
+    private var verifiedListEntries: [String: VerifiedListEntry] = [:]
+    private var heartOperations = Set<UUID>()
 
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
         self.endpoint = endpoint; self.secrets = try GroupKeychainStore(namespace: namespace)
@@ -45,6 +60,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             .appendingPathComponent("outbox", isDirectory: true)
     }
     private func load<T: Decodable>(_ type: T.Type, _ account: String) throws -> T? {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { GroupListMeasurement.current?.recordStorage(seconds: ProcessInfo.processInfo.systemUptime - started) }
         guard let bytes = try (account.hasPrefix("op:") ? operations : secrets).read(account) else { return nil }
         return try GroupWire.decode(type, bytes)
     }
@@ -72,13 +89,31 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                   headers["Neko-Billing-Protocol-Version"] == "1" else { throw GroupClientError.invalidResponse }
             for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         }
-        return try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 1_048_576))
+        let trace = GroupListMeasurement.current
+        let started = ProcessInfo.processInfo.systemUptime
+        var outcome = "失敗"
+        defer { trace?.recordRequest(path: path, seconds: ProcessInfo.processInfo.systemUptime - started, outcome: outcome) }
+        do {
+            let reply = try await transport.send(request, maximumBytes: 1_048_576)
+            outcome = "HTTP \(reply.status)"
+            return try GroupHTTPRequest.check(reply)
+        } catch is CancellationError {
+            outcome = "中断"
+            throw CancellationError()
+        }
     }
     private func registeredIdentity() async throws -> GroupDeviceIdentity {
-        var value = try identity()
+        let value = try identity()
         if value.registered { return value }
-        guard !registering else { throw GroupClientError.unavailable }
-        registering = true; defer { registering = false }
+        if let registrationTask { return try await registrationTask.value }
+        let task = Task { try await self.register(value) }
+        registrationTask = task
+        defer { registrationTask = nil }
+        return try await task.value
+    }
+
+    private func register(_ initial: GroupDeviceIdentity) async throws -> GroupDeviceIdentity {
+        var value = initial
         var body = try secrets.read("registration-request")
         if body == nil {
             guard let root = value.personPrivateKey else { throw GroupClientError.authenticationRequired }
@@ -173,13 +208,85 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
 
     func windows() async throws -> [GroupWindow] {
-        let items = try await page(GroupAPIModel.WindowItem.self, path: "/v3/group-windows/list")
-        guard items.count <= 10, Set(items.map(\.windowID)).count == items.count else { throw GroupClientError.invalidResponse }
-        var result: [GroupWindow] = []
-        for item in items { result.append(try await window(id: item.windowID)) }
-        return result
+        GroupListMeasurement.current?.enteredClient()
+        do {
+            // The signed list request still checks current person AND device
+            // membership on the relay. Never display cached entries on failure.
+            let items = try await page(GroupAPIModel.WindowItem.self, path: "/v3/group-windows/list")
+            let ids = Set(items.map(\.windowID))
+            guard items.count <= 10, ids.count == items.count else { throw GroupClientError.invalidResponse }
+            verifiedListEntries = verifiedListEntries.filter { ids.contains($0.key) }
+            verifiedWindows = verifiedWindows.filter { ids.contains($0.key) }
+            let identity = try await registeredIdentity()
+            var result: [GroupWindow] = []
+            for item in items {
+                if let cached = try cachedListWindow(item, identity: identity) {
+                    result.append(cached)
+                } else {
+                    let fresh = try await window(id: item.windowID)
+                    guard fresh.revision >= (item.revision ?? 0), fresh.keyEpoch >= (item.keyEpoch ?? 0) else {
+                        throw GroupClientError.invalidResponse
+                    }
+                    result.append(fresh)
+                }
+            }
+            return result
+        } catch {
+            verifiedListEntries.removeAll()
+            throw error
+        }
+    }
+    private func cachedListWindow(_ item: GroupAPIModel.WindowItem, identity: GroupDeviceIdentity) throws -> GroupWindow? {
+        let started = ProcessInfo.processInfo.systemUptime
+        var outcome = "不採用・検証エラー"
+        defer { GroupListMeasurement.current?.recordCache(outcome, seconds: ProcessInfo.processInfo.systemUptime - started) }
+        guard let entry = verifiedListEntries[item.windowID] else { outcome = "不採用・検証済みデータなし"; return nil }
+        let stored = try local(item.windowID), cached = entry.window
+        // Keep every authorization/key/pin check. Only the diagnostic reason is new.
+        guard item.rotationRequired == false, cached.state == .active else {
+            outcome = "不採用・鍵更新待ちまたは旧応答"; return nil
+        }
+        guard item.revision == cached.revision, item.keyEpoch == cached.keyEpoch,
+              item.encryptedName == entry.encryptedName else {
+            outcome = "不採用・版／鍵世代／名前の変更または欠落"; return nil
+        }
+        guard item.myParticipantID == cached.myParticipantID, item.myRole == cached.myRole,
+              identity.personID == entry.personID, try identity.deviceID == entry.deviceID else {
+            outcome = "不採用・本人／端末／役割の不一致"; return nil
+        }
+        guard stored.pinnedRevision == cached.revision, stored.pinnedHash == entry.rosterHash,
+              stored.minimumAdmissionRevision <= cached.revision,
+              let savedKey = stored.keys[String(cached.keyEpoch)], savedKey.count == 32,
+              GroupCanonical.hash(savedKey) == entry.keyHash else {
+            outcome = "不採用・保存済みの版／鍵の不一致"; return nil
+        }
+        var current = cached
+        // Payment can change independently of the roster. Only the fresh list
+        // supplies policy, and its owner must belong to the verified snapshot.
+        switch (item.deliveryStatus, item.deliveryReason, item.ownerParticipantID) {
+        case (nil, nil, nil): break
+        case (.active?, .ownerPlus?, let owner?), (.paused?, .ownerPlusRequired?, let owner?):
+            guard cached.members.contains(where: { $0.id == owner && $0.role == .owner && $0.state == .active }) else {
+                throw GroupClientError.invalidResponse
+            }
+        default: throw GroupClientError.invalidResponse
+        }
+        current.deliveryStatus = item.deliveryStatus
+        current.deliveryReason = item.deliveryReason
+        current.ownerParticipantID = item.ownerParticipantID
+        outcome = "採用"
+        return current
     }
     func window(id windowID: String) async throws -> GroupWindow {
+        let trace = GroupListMeasurement.current
+        let started = ProcessInfo.processInfo.systemUptime, networkBefore = trace?.snapshot().networkSeconds ?? 0
+        defer {
+            if let trace {
+                trace.recordDetail(seconds: ProcessInfo.processInfo.systemUptime - started
+                    - (trace.snapshot().networkSeconds - networkBefore))
+            }
+        }
+        verifiedListEntries.removeValue(forKey: windowID)
         let identity = try await registeredIdentity(), stored = try local(windowID), path = "/v3/group-windows/" + windowID
         let myDeviceID = try identity.deviceID
         let reply = try GroupWire.decode(GroupAPIModel.WindowReply.self, await raw(path, body: nil, identity: identity))
@@ -236,11 +343,16 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                 }))
         }
         let name = try GroupNameCrypto.open(reply.window.encryptedName, slot: "window", key: key, roster: head)
-        return .init(id: windowID, name: name, revision: head.roster.revision, keyEpoch: head.roster.keyEpoch,
+        let result = GroupWindow(id: windowID, name: name, revision: head.roster.revision, keyEpoch: head.roster.keyEpoch,
             myParticipantID: me.member.participantID, myRole: GroupRole(rawValue: me.member.role.rawValue)!,
             state: reply.window.rotationRequired ? .rotationRequired : .active, members: members,
             deliveryStatus: reply.window.deliveryStatus, deliveryReason: reply.window.deliveryReason,
             ownerParticipantID: reply.window.ownerParticipantID)
+        verifiedWindows[windowID] = result
+        verifiedListEntries[windowID] = .init(window: result, encryptedName: reply.window.encryptedName,
+            rosterHash: head.hash, keyHash: GroupCanonical.hash(key.withUnsafeBytes { Data($0) }),
+            personID: identity.personID, deviceID: myDeviceID)
+        return result
     }
 
     private func material(roster: GroupRoster, names: [String: String], windowName: String, identity: GroupDeviceIdentity,
@@ -682,21 +794,59 @@ extension ProductionGroupWindowClient {
         return result
     }
     func setHeart(photoID: String, windowID: String, active: Bool, operationID: UUID) async throws -> GroupPhoto {
-        let current = try await window(id: windowID), identity = try identity(), stored = try local(windowID)
-        guard current.state == .active, let roster = try stored.verified() else { throw GroupClientError.rotationPending }
-        let intent = "heart:\(windowID):\(photoID):\(active ? 1 : 0)", body: Data
-        if let saved = try pending(operationID, intent: intent) { body = saved.body }
-        else {
-            let signature = try identity.signingKey.signature(for: heartBytes(windowID: windowID, photoID: photoID, participantID: current.myParticipantID,
-                deviceID: identity.deviceID, active: active, operationID: operationID.uuidString.lowercased(), epoch: current.keyEpoch, rosterHash: roster.hash))
-            body = try GroupWire.encode(GroupAPIModel.HeartInput(operationID: operationID.uuidString.lowercased(), active: active,
-                keyEpoch: current.keyEpoch, rosterRevision: current.revision, reactorSignature: signature))
-        }
         guard GroupCanonical.validID(photoID) else { throw GroupClientError.invalidResponse }
-        _ = try await mutation(operationID: operationID, intent: intent, path: "/v3/group-windows/\(windowID)/moments/\(photoID)/hearts", body: body)
+        guard heartOperations.insert(operationID).inserted else { throw GroupClientError.unavailable }
+        defer { heartOperations.remove(operationID) }
+        let intent = "heart:\(windowID):\(photoID):\(active ? 1 : 0)"
+        let path = "/v3/group-windows/\(windowID)/moments/\(photoID)/hearts"
+        var current: GroupWindow
+        let stored = try local(windowID)
+        if let cached = verifiedWindows[windowID], cached.revision == stored.pinnedRevision,
+           cached.keyEpoch == (try stored.verified())?.roster.keyEpoch {
+            current = cached
+        } else { current = try await window(id: windowID) }
+        var response: Data
+        do {
+            let body = try heartBody(current, photoID: photoID, active: active, operationID: operationID)
+            response = try await mutation(operationID: operationID, intent: intent, path: path, body: body)
+        } catch GroupClientError.staleEpoch {
+            // This explicit rejection precedes the server's mutation commit.
+            // Only it permits re-signing the SAME operation ID. A timeout or
+            // unknown result must keep the original body for exact replay.
+            current = try await window(id: windowID)
+            guard let rejected = try pending(operationID, intent: intent), rejected.response == nil,
+                  rejected.path == path, Date().timeIntervalSince(rejected.createdAt) < 172_800
+            else { throw GroupClientError.unavailable }
+            let body = try heartBody(current, photoID: photoID, active: active, operationID: operationID)
+            let rebased = GroupPendingHTTP(operationID: rejected.operationID, path: rejected.path, body: body,
+                intentHash: rejected.intentHash, createdAt: rejected.createdAt, response: nil)
+            try save(rebased, "op:" + operationID.uuidString.lowercased())
+            response = try await mutation(operationID: operationID, intent: intent, path: path, body: body)
+        }
+        // Old relays/receipts and invalid inline snapshots use the existing
+        // read route. Neither a malformed list nor an invalid signature is
+        // allowed into the photo cache or UI.
+        if let reply = try? GroupWire.decode(GroupAPIModel.HeartReply.self, response),
+           reply.momentID == photoID, let row = reply.moment, row.id == photoID,
+           let photo = try? await displayPhoto(row, current: current) {
+            photoMetadata[windowID + ":" + photoID] = row
+            return photo
+        }
         photoMetadata.removeValue(forKey: windowID + ":" + photoID)
         let row = try await photoRow(windowID: windowID, photoID: photoID)
         return try await displayPhoto(row, current: current)
+    }
+    private func heartBody(_ current: GroupWindow, photoID: String, active: Bool, operationID: UUID) throws -> Data {
+        let identity = try identity(), stored = try local(current.id)
+        guard current.state == .active, let roster = try stored.verified(),
+              roster.roster.revision == current.revision, roster.roster.keyEpoch == current.keyEpoch,
+              roster.device(id: try identity.deviceID)?.member.participantID == current.myParticipantID
+        else { throw GroupClientError.rotationPending }
+        let signature = try identity.signingKey.signature(for: heartBytes(windowID: current.id, photoID: photoID,
+            participantID: current.myParticipantID, deviceID: identity.deviceID, active: active,
+            operationID: operationID.uuidString.lowercased(), epoch: current.keyEpoch, rosterHash: roster.hash))
+        return try GroupWire.encode(GroupAPIModel.HeartInput(operationID: operationID.uuidString.lowercased(), active: active,
+            keyEpoch: current.keyEpoch, rosterRevision: current.revision, reactorSignature: signature))
     }
     func downloadPhoto(photoID: String, windowID: String) async throws -> GroupVerifiedIncomingPhoto {
         let current = try await window(id: windowID), identity = try await registeredIdentity()

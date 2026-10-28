@@ -51,9 +51,14 @@ final class CatCareStore: ObservableObject {
 
     /// Applies a change and saves it. Refuses when another writer saved first
     /// (the revision on disk moved) or when part of the file is unreadable.
+    /// Told after every save (what it was, what it is now). Test builds use
+    /// it to hand changes to the family notebook; nothing else listens.
+    var didSave: (@MainActor (CatCareState, CatCareState) -> Void)?
+
     @discardableResult
     func update(_ change: (inout CatCareState) -> Void) -> Bool {
         guard canSave, var next = state, let fileURL else { return false }
+        let previous = next
         let expected = next.mutationRevision
         change(&next)
         guard next != state else { return true }
@@ -76,6 +81,7 @@ final class CatCareStore: ObservableObject {
             try CatCareDecoding.encode(next).write(to: fileURL, options: .atomic)
 #endif
             state = next
+            didSave?(previous, next)
             return true
         } catch {
             reload()
@@ -102,6 +108,10 @@ final class CatCareStore: ObservableObject {
         let sources = Self.sources(care: care, evacuation: evacuation, preparedness: preparedness)
         update { state in
             let now = Date()
+            // An earlier version copied 預けるとき's medicine note into the allergy.
+            for index in state.cats.indices where state.cats[index].allergy?.editedBy == "import:CareHandoff" {
+                state.cats[index].allergy = nil
+            }
             for household in sources.household { CatCareImport.apply(household, to: &state, now: now) }
             for cat in sources.cats { CatCareImport.apply(cat, to: &state, now: now) }
         }
@@ -128,10 +138,11 @@ final class CatCareStore: ObservableObject {
         for cat in care.cats {
             // Same cat ID rule as the tools themselves.
             let catID = cat.toolCatID ?? cat.id
+            // The free-text medicine note is not copied: it has no right field here.
+            // The tool keeps showing it until 「この子のこと」 has medicines or an allergy.
             cats.append(CatCareImportSource(
                 tool: "CareHandoff", catID: catID, profileID: cat.profileID.flatMap(UUID.init(uuidString:)),
                 name: cat.name,
-                allergy: allergy(status: cat.healthStatus.rawValue, text: cat.healthDetails),
                 water: cat.water, litter: cat.toilet, temperament: cat.handling,
                 meals: cat.meals.map { (time: $0.time, food: $0.food, amount: $0.amount) }
             ))
@@ -145,15 +156,9 @@ final class CatCareStore: ObservableObject {
                 temperament: cat.handling
             ))
         }
-        for (key, record) in preparedness {
-            // Keyed by the recognition profile; only lands on a matching cat.
-            guard let profileID = UUID(uuidString: key) else { continue }
-            cats.append(CatCareImportSource(
-                tool: "Preparedness", catID: UUID(), profileID: profileID,
-                name: record.name, marks: record.identifyingFeatures,
-                temperament: record.approachAdvice
-            ))
-        }
+        // 迷子のとき is not read: its old records are superseded by the flyer
+        // drafts, and its advice is for people who find the cat, not care.
+        _ = preparedness
         let household = [
             CatCareHouseholdImportSource(
                 tool: "CareHandoff", ownerContact: care.contact, backupContact: care.backupContact,
@@ -192,7 +197,84 @@ final class CatCareStore: ObservableObject {
             .appendingPathComponent(ref.fileName)
     }
 
-    /// The record for a recognized cat, created on first use.
+    /// The birthday lives in the cat profile; this keeps a copy that follows
+    /// it (set, changed or cleared there), so every tool can say the age.
+    func importBirthdays(_ profiles: [CatProfilePresentation]) {
+        guard let current = state else { return }
+        let items = profiles.compactMap { profile -> (UUID, String, CatCareDay?)? in
+            guard let id = UUID(uuidString: profile.identifier) else { return nil }
+            return (id, profile.displayName, profile.lifeDates.birthday.flatMap { CatCareDay(date: $0.date) })
+        }
+        let needed = items.filter { id, _, day in
+            let record = current.cats.first { $0.profileID == id && $0.deletedAt == nil }
+            let stored = record?.birthday?.value ?? nil
+            if record == nil { return day != nil }
+            return stored != day
+        }
+        guard !needed.isEmpty else { return }
+        update { state in
+            let now = Date()
+            for (id, name, day) in needed {
+                if let index = state.cats.firstIndex(where: { $0.profileID == id && $0.deletedAt == nil }) {
+                    state.cats[index].birthday = .init(value: day, editedAt: now, editedBy: "import:Profile")
+                } else if let day {
+                    var record = CatCareRecord(catID: UUID(), profileID: id)
+                    record.name = .init(value: name, editedAt: now, editedBy: "import:Profile")
+                    record.birthday = .init(value: day, editedAt: now, editedBy: "import:Profile")
+                    state.cats.append(record)
+                }
+            }
+        }
+    }
+
+    /// The record for a tool's cat that has no cat profile (a guest cat), so
+    /// it can have 「この子のこと」 too. Found by the shared tool ID first.
+    func ensureRecord(toolCatID: UUID, profileIdentifier: String?, name: String) -> CatCareRecord? {
+        let profileID = profileIdentifier.flatMap(UUID.init(uuidString:))
+        if let found = state?.cats.first(where: { $0.catID == toolCatID && $0.deletedAt == nil })
+            ?? profileID.flatMap({ id in state?.cats.first { $0.profileID == id && $0.deletedAt == nil } }) {
+            return found
+        }
+        var created: CatCareRecord?
+        update { state in
+            var record = CatCareRecord(catID: toolCatID, profileID: profileID)
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                record.name = .init(value: CatCareLimits.clippedText(trimmed, limit: CatCareLimits.nameCharacters),
+                                    editedAt: Date(), editedBy: state.deviceID)
+            }
+            state.cats.append(record)
+            created = record
+        }
+        return created
+    }
+
+    // MARK: - The household, edited from a tool too (one place for it)
+
+    func householdText(_ key: WritableKeyPath<CatCareHousehold, CatCareStamped<String>?>) -> String {
+        state?.household[keyPath: key]?.value ?? ""
+    }
+
+    func setHouseholdText(_ value: String, _ key: WritableKeyPath<CatCareHousehold, CatCareStamped<String>?>) {
+        let text = CatCareLimits.clippedText(value)
+        guard householdText(key) != text else { return }
+        update { state in
+            state.household[keyPath: key] = .init(value: text, editedAt: Date(), editedBy: state.deviceID)
+        }
+    }
+
+    var vet: CatCareVet { state?.household.vet?.value ?? CatCareVet() }
+
+    func setVet(name: String? = nil, phone: String? = nil) {
+        var next = vet
+        if let name { next.name = CatCareLimits.clippedText(name) }
+        if let phone { next.phone = CatCareLimits.clippedText(phone) }
+        guard next != vet else { return }
+        update { state in
+            state.household.vet = .init(value: next, editedAt: Date(), editedBy: state.deviceID)
+        }
+    }
+
     func ensureRecord(profileID: UUID, name: String?) -> CatCareRecord? {
         if let found = state?.cats.first(where: { $0.profileID == profileID && $0.deletedAt == nil }) {
             return found

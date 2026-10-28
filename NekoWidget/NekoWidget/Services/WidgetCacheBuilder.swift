@@ -135,6 +135,7 @@ actor WidgetCacheBuilder {
         from snapshot: LibrarySnapshot,
         eligibilityRevision: String,
         skippingPhotoIDs: Set<String> = [],
+        priorityPhotoIDs: Set<String> = [],
         now: Date = .now
     ) async throws -> PersonalWidgetPreparationResult {
         guard let container = SharedContainer.containerURL,
@@ -160,11 +161,14 @@ actor WidgetCacheBuilder {
             .filter { initial.eligiblePhotoIDs.contains($0.localIdentifier)
                 && (!existingIDs.contains($0.localIdentifier) || needsGeometryIDs.contains($0.localIdentifier))
                 && !skippingPhotoIDs.contains($0.localIdentifier) }
+        ordered = ordered.filter { priorityPhotoIDs.contains($0.localIdentifier) }
+            + ordered.filter { !priorityPhotoIDs.contains($0.localIdentifier) }
         // Refill once a displayed photo can safely retire. Waiting for seventy
         // consumed slots would defer new photos for months at the daily cadence.
         // Current/tomorrow entries and retained manual photos stay protected.
         if existingIDs.count >= 100 && initial.retirableCandidateCount == 0 {
-            ordered.removeAll { !needsGeometryIDs.contains($0.localIdentifier) }
+            ordered.removeAll { !needsGeometryIDs.contains($0.localIdentifier)
+                && !priorityPhotoIDs.contains($0.localIdentifier) }
         }
         let stage = container.appendingPathComponent("personal-widget-staging", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -217,7 +221,8 @@ actor WidgetCacheBuilder {
             expectedRevision: eligibilityRevision,
             now: now,
             interval: TimeInterval(snapshot.settings.widgetEntryIntervalMinutes * 60),
-            discardCandidateIDs: discardedIDs
+            discardCandidateIDs: discardedIDs,
+            priorityPhotoIDs: priorityPhotoIDs
         ) { protectedFiles in
             try Task.checkCancellation()
             // An unsuccessful first batch has no new files to publish. Keep

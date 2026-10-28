@@ -34,7 +34,9 @@ struct MembershipAccessContext: Equatable {
         case .disabled, .checking: personal = .checking
         case .inactive: personal = .inactive
         case let .serverConfirmed(value):
-            if !value.status.grantsAccess || value.accessUntilDate <= now {
+            if now < value.serverEvaluatedAt {
+                personal = .checking
+            } else if !value.status.grantsAccess || value.accessUntilDate <= now {
                 personal = .inactive
             } else if value.authorityStaleAt <= now {
                 personal = .indeterminate(lastVerifiedUntil: nil)
@@ -43,7 +45,7 @@ struct MembershipAccessContext: Equatable {
             }
         case let .indeterminate(value):
             personal = .indeterminate(lastVerifiedUntil:
-                value?.status.grantsAccess == true ? value?.expirationDate : nil)
+                value?.isUsable(at: now) == true ? value?.expirationDate : nil)
         }
     }
 
@@ -104,9 +106,26 @@ extension EnvironmentValues {
 /// the restore check, so an existing member is never told to buy again.
 struct MembershipAccessNotice: View {
     let decision: MembershipAccessDecision
+    @Environment(\.membershipAccess) private var access
     @State private var showsRestore = false
 
     var body: some View {
+        if decision == .verificationRequired, access.personal == .checking {
+            // Just after launch: the answer is on its way. Nothing to do yet.
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Plus を確認しています…").font(.subheadline).foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("membership-access-checking")
+        } else {
+            notice
+        }
+    }
+
+    private var notice: some View {
         VStack(spacing: 14) {
             Image(systemName: decision == .verificationRequired ? "arrow.clockwise" : "cat")
                 .font(.title).foregroundStyle(.tint).accessibilityHidden(true)

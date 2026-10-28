@@ -156,7 +156,10 @@ async function disclose(env: LocalModerationOwnerEnvironment, access: Authentica
     return new Response(jpeg.slice().buffer, { headers: { "Cache-Control": "no-store", "Content-Type": "image/jpeg",
       "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
       "X-Moderation-Read-Receipt": receiptId, "X-Moderation-Source-SHA256": challenge.source_snapshot_sha256,
-      "X-Moderation-Expires-At": String(Math.min(challenge.expires_at, Math.floor(deadline / 1000))) } });
+      // Transport must complete under its original lease; it does not time the
+      // human's review. No source or Access lifetime is extended here.
+      "X-Moderation-Expires-At": String(Math.min(challenge.expires_at, Math.floor(deadline / 1000))),
+      "X-Moderation-Review-Expires-At": String(Math.min(access.expiresAt, snapshot.metadata.contentExpiresAt)) } });
   } catch (error) {
     try { await step(() => env.db.prepare(`INSERT INTO moderation_owner_read_events(read_receipt_id,phase) VALUES (?,'delivery_unknown')`).bind(receiptId).run()); }
     catch { /* Claim remains consumed; absence of a final receipt is unresolved. */ }

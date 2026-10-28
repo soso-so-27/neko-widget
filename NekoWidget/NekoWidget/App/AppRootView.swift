@@ -35,6 +35,11 @@ struct AppRootView: View {
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
     @State private var showsInvitationJoin = false
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
+    @State private var onboardingInvitation: GroupInvitationLink?
+    /// An invitation that arrived while the help sheet was open. It opens
+    /// after that sheet has closed, so two sheets never switch at once.
+    @State private var invitationAfterHelp: GroupInvitationLink?
     @State private var firstRunPhoto: PhotoPresentation?
     @State private var startsInPhotosAfterOnboarding = false
     @State private var officialWindowRoute: OfficialWindowRoute?
@@ -57,7 +62,15 @@ struct AppRootView: View {
         } photo: { opening, close in
             widgetPhotoDestination(opening, close: close)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .cloudyWindowConfigurationChanged)) { _ in
+            Task { await viewModel.refreshCloudyWindow() }
+        }
         .sheet(isPresented: $showsInvitationJoin, onDismiss: {
+            if let next = invitationAfterHelp {
+                invitationAfterHelp = nil
+                onboardingInvitation = next
+                return
+            }
             // Completion follows a successful pairing, never merely a tap.
             if (try? PairingStateStore.load())?.phase == .paired {
                 completeOnboardingWithoutPhotoAccess()
@@ -65,11 +78,39 @@ struct AppRootView: View {
             }
         }) {
             NavigationStack {
-                PairingView(initialSetupPath: .join)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) {
-                        Button("閉じる") { showsInvitationJoin = false }
-                    } }
+                Group {
+                    if GroupWindowClientProvider.ui != nil {
+                        OnboardingInvitationHelpView()
+                    } else {
+                        PairingView(initialSetupPath: .join)
+                    }
+                }
+                .toolbar { ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { showsInvitationJoin = false }
+                } }
             }
+        }
+        // An invitation link opened before the first-run guide ends: join at once,
+        // then land in the まど tab. The guide can be finished later from 設定.
+        .onChange(of: invitationInbox.pending?.id, initial: true) { _, _ in
+            guard OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
+                  let invitation = invitationInbox.pending else { return }
+            if showsInvitationJoin {
+                invitationAfterHelp = invitation
+                showsInvitationJoin = false
+            } else {
+                onboardingInvitation = invitation
+            }
+        }
+        .sheet(item: $onboardingInvitation, onDismiss: {
+            // Joined, or the invitation was settled (the sheet then cleared it).
+            // Closed before applying: the guide stays, and the invitation waits.
+            guard GroupWindowOpenInbox.shared.pendingWindowID != nil || invitationInbox.pending == nil else { return }
+            invitationInbox.discard()
+            // The まど tab opens the joined window from GroupWindowOpenInbox.
+            completeOnboardingWithoutPhotoAccess()
+        }) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
         }
         .onReceive(NotificationCenter.default.publisher(for: .onboardingInvitationReceived)) { _ in
             guard SharingAPIConfiguration.current.isReviewVisible else { return }
@@ -196,6 +237,11 @@ struct AppRootView: View {
     }
 
     private func handleNonPhotoURL(_ url: URL) {
+        if let route = CloudyWindowAlbumRoute(url: url) {
+            guard AlbumPrototype.isOn(UserDefaults.standard.bool(forKey: AlbumPrototype.key)) else { return }
+            AlbumArrivalOpenInbox.shared.pending = route
+            return
+        }
         if let route = OfficialWindowRoute(url: url) {
             officialWindowPresentationID = UUID()
             officialWindowRoute = route
@@ -300,7 +346,7 @@ struct AppRootView: View {
             isPhotoRequestReady: viewModel.catHouseholdIdentity != nil,
             scan: scanPresentation(records: viewModel.catAssets),
             resultPhotos: hasPhotoAccess
-                ? viewModel.catAssets.prefix(3).map(photoPresentation)
+                ? viewModel.catAssets.prefix(9).map(photoPresentation)
                 : [],
             scanErrorMessage: onboardingScanErrorMessage,
             isLimitedAccess: viewModel.isLimitedAccess,
@@ -409,6 +455,7 @@ struct AppRootView: View {
             savedPhotoIdentifiers: viewModel.savedPhotoIdentifiers,
             savedPhotoStateReadFailed: viewModel.savedPhotoStateReadFailed,
             readablePhotoIdentifiers: Set(readableSnapshot.assets.map(\.localIdentifier)),
+            photoLibraryLoadSucceeded: viewModel.widgetPhotoLibraryLoadSucceeded,
             photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
                 ? scanPresentation(records: visibleCatAssets)

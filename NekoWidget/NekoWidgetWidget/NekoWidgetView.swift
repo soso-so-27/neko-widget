@@ -36,10 +36,32 @@ import UIKit
 
 struct NekoWidgetView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let entry: NekoWidgetEntry
 
     var body: some View {
+        Group {
+            if let selection = entry.cloudyWindowSelection, selection.revealedAt == nil {
+                Button(intent: RevealCloudyWindowIntent(selection: selection)) { photoContent }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(selection.albumPeriod == nil
+                        ? "きょうのまどのくもりを晴らす" : "作品が届きました。くもりを晴らす")
+                    .accessibilityIdentifier("cloudy-window-reveal")
+            } else {
+                photoContent.widgetURL(entry.photoURL)
+            }
+        }
+        .containerBackground(for: .widget) {
+            Color(red: 0.12, green: 0.10, blue: 0.09)
+        }
+        // The fog clears inside the window: puffs drift to the edges while the
+        // photo's blur dissolves. WidgetKit animates only transitions, so each
+        // puff leaves with its own removal transition.
+        .animation(reduceMotion ? nil : .easeOut(duration: 1.6), value: entry.cloudyWindowSelection?.revealedAt)
+    }
+
+    private var photoContent: some View {
         Group {
             if
                 let cacheFilename = entry.cacheFilename,
@@ -66,12 +88,31 @@ struct NekoWidgetView: View {
                                 height: proxy.size.height
                             )
                             .clipped()
+                            .id(entry.cacheFilename)
+                            .transition(reduceMotion ? AnyTransition.opacity : AnyTransition(.blurReplace))
+
+                        if entry.cloudyWindowSelection != nil {
+                            CloudyFogPuffs(isCloudy: entry.cloudyWindowSelection?.revealedAt == nil,
+                                           size: proxy.size, reduceMotion: reduceMotion)
+                        }
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(loadedPhotoAccessibilityLabel)
                     .overlay(alignment: .bottom) {
-                        if let photo = entry.officialPhoto {
+                        if let selection = entry.cloudyWindowSelection {
+                            if selection.revealedAt == nil {
+                                // Says what you get, not the verb: 「晴らす」 alone was unclear.
+                                Label(selection.albumPeriod == nil ? "タップで きょうの 1 枚" : "作品が届きました",
+                                      systemImage: "hand.tap.fill")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 12).padding(.vertical, 7)
+                                    .background(.black.opacity(0.35), in: Capsule())
+                                    .padding(12)
+                                    .accessibilityHidden(true)
+                            }
+                        } else if let photo = entry.officialPhoto {
                             Text(photo.catName)
                                 .font(.caption.weight(.medium))
                                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
@@ -96,9 +137,6 @@ struct NekoWidgetView: View {
                 emptyState
             }
         }
-        .containerBackground(for: .widget) {
-            Color(red: 0.12, green: 0.10, blue: 0.09)
-        }
 #if WIDGET_VISUAL_REVIEW_LARGE_TEXT
         // Use the normal shipping text-size limits, with the environment at
         // its largest setting; this never changes ordinary or Release Widgets.
@@ -108,7 +146,6 @@ struct NekoWidgetView: View {
         // The photo opens its detail; only the separate heart sends a reaction.
         // A received photo's bookmark only opens the app's save confirmation.
         // Personal-library memory stays explicit.
-        .widgetURL(entry.photoURL)
     }
 
     /// Used only inside the successfully decoded photo branch above. The
@@ -201,7 +238,9 @@ struct NekoWidgetView: View {
     /// A group window photo's heart: the app sends it in the background.
     @ViewBuilder
     private func groupHeartControl(_ photo: GroupWindowPhotoReference) -> some View {
-        if entry.familyHeartStatus == .serverAccepted {
+        if photo.isOwn {
+            unavailableHeartSlot
+        } else if entry.familyHeartStatus == .serverAccepted {
             heartMark(status: .serverAccepted)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("ハートを送りました")
@@ -270,14 +309,15 @@ struct NekoWidgetView: View {
 
             if status == .pending {
                 Image(systemName: "clock.fill")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.caption2.weight(.bold))
                     .padding(1.5)
                     .background(Color.black.opacity(0.82), in: Circle())
                     .offset(x: 2, y: 2)
             }
         }
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(.white)
+        .font(.footnote.weight(.medium))
+        // Sent: red, as in the app. Not yet: white outline.
+        .foregroundStyle(status == .serverAccepted ? Color.red : .white)
         .frame(width: 30, height: 30)
         .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
@@ -395,7 +435,7 @@ struct NekoWidgetView: View {
 
     private func dailyPersonalPhotoMark(isUsed: Bool) -> some View {
         Image(systemName: isUsed ? "checkmark" : "arrow.clockwise")
-        .font(.system(size: 13, weight: .medium))
+        .font(.footnote.weight(.medium))
         .invalidatableContent()
         .foregroundStyle(.white)
         .frame(width: 30, height: 30)
@@ -420,7 +460,7 @@ struct NekoWidgetView: View {
                 Image(systemName: isSelected ? "bookmark.fill" : "bookmark")
             }
         }
-        .font(.system(size: 13, weight: .medium))
+        .font(.footnote.weight(.medium))
         .foregroundStyle(.white)
         .frame(width: 30, height: 30)
         .background(Color.black.opacity(0.64), in: Circle())
@@ -513,7 +553,7 @@ struct NekoWidgetView: View {
     private var emptyStateTitle: String {
         if let windowID = PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) {
             guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return "このまどは利用できません" }
-            if definition.endpoint == nil { return "公式まどを準備中" }
+            if definition.endpoint == nil { return "公式のまどを準備中" }
             return OfficialWindowStore.forWindow(definition).snapshot().isSubscribed ? "いま届いている写真はありません" : definition.displayName
         }
         if effectiveEmptyStateReason == .sourceUnavailable {
@@ -526,6 +566,13 @@ struct NekoWidgetView: View {
             // Waiting also follows the expiry of a previously displayed photo.
             return "写真を待っています"
         }
+        if let windowID = GroupWidgetCache.windowID(fromSourceID: entry.photoSourceIdentifier) {
+            // A group window says why it is empty: stopped, nothing sent yet,
+            // or a photo the app has not drawn here yet.
+            let cached = GroupWidgetCache.entry(windowID: windowID)
+            if cached?.isPaused == true { return "このまどは止まっています" }
+            return cached?.photoID != nil ? "アプリを開くと写真が出ます" : "まだ写真が届いていません"
+        }
         return "写真を準備しています"
     }
 
@@ -537,7 +584,8 @@ struct NekoWidgetView: View {
         if effectiveEmptyStateReason == .needsApp {
             return "アプリを開いて更新"
         }
-        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
+            || GroupWidgetCache.isGroupSourceID(entry.photoSourceIdentifier) {
             return entry.windowDisplayName
         }
         return "タップしてアプリを開く"
@@ -922,3 +970,46 @@ enum AppStoreWidgetPreviewFixture {
     }()
 }
 #endif
+
+/// Soft white puffs over the cloudy window. Each one leaves toward its own
+/// edge when the window clears, so the fog drifts away inside the Widget.
+private struct CloudyFogPuffs: View {
+    let isCloudy: Bool
+    let size: CGSize
+    let reduceMotion: Bool
+
+    private struct Puff: Identifiable {
+        let id: Int
+        let x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat
+        let dx: CGFloat, dy: CGFloat
+    }
+
+    private let puffs: [Puff] = [
+        Puff(id: 0, x: 0.22, y: 0.28, w: 0.95, h: 0.55, dx: -1.1, dy: -0.4),
+        Puff(id: 1, x: 0.80, y: 0.24, w: 0.85, h: 0.50, dx: 1.1, dy: -0.5),
+        Puff(id: 2, x: 0.50, y: 0.55, w: 1.10, h: 0.60, dx: 0.2, dy: 1.1),
+        Puff(id: 3, x: 0.15, y: 0.78, w: 0.80, h: 0.50, dx: -1.1, dy: 0.5),
+        Puff(id: 4, x: 0.86, y: 0.80, w: 0.85, h: 0.50, dx: 1.1, dy: 0.6),
+    ]
+
+    var body: some View {
+        ZStack {
+            ForEach(puffs) { puff in
+                if isCloudy {
+                    Ellipse()
+                        .fill(Color.white.opacity(0.42))
+                        .frame(width: size.width * puff.w, height: size.height * puff.h)
+                        .blur(radius: min(size.width, size.height) * 0.12)
+                        .position(x: size.width * puff.x, y: size.height * puff.y)
+                        .transition(reduceMotion ? .opacity : .asymmetric(
+                            insertion: .opacity,
+                            removal: .offset(x: puff.dx * size.width, y: puff.dy * size.height)
+                                .combined(with: .opacity)))
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}

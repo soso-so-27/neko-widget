@@ -247,8 +247,9 @@ struct EvacuationDisclosure: Equatable {
     var medical = false
     var contact = false
     var withOwnerPhoto = false
-    /// Vaccinations with their proofs and the microchip, from 「この子のこと」. Shelters ask for these.
-    var catCare = true
+    /// Vaccinations with their proofs and the microchip, from 「この子のこと」.
+    /// Off at first: proofs often show the owner's name and address.
+    var catCare = false
 
     func fields(cat: EvacuationCat, plan: EvacuationPlan) -> [(String, String)] {
         var result: [(String, String)] = []

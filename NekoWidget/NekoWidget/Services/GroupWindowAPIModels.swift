@@ -9,7 +9,14 @@ enum GroupAPIModel {
             try c.encode(limit, forKey: .limit)
         }
     }
-    struct WindowItem: Decodable { let windowID: String }
+    struct WindowItem: Decodable {
+        let windowID: String
+        // Older relays may only return the ID. Incomplete version information
+        // always takes the full detail/roster/member verification path.
+        let revision: Int?; let keyEpoch: Int?; let rotationRequired: Bool?
+        let myParticipantID: String?; let myRole: GroupRole?; let encryptedName: Data?
+        let deliveryStatus: GroupDeliveryStatus?; let deliveryReason: GroupDeliveryReason?; let ownerParticipantID: String?
+    }
     struct Page<T: Decodable>: Decodable { let items: [T]; let next: String?; let revision: Int? }
     struct WindowReply: Decodable {
         struct Metadata: Decodable {
@@ -81,6 +88,10 @@ enum GroupAPIModel {
     }
     struct HeartInput: Codable {
         let operationID: String; let active: Bool; let keyEpoch: Int; let rosterRevision: Int; let reactorSignature: Data
+    }
+    struct HeartReply: Decodable {
+        let momentID: String
+        let moment: PhotoRow?
     }
     struct ReservePhoto: Codable {
         let operationID: String; let clientMomentID: String; let keyEpoch: Int; let rosterRevision: Int

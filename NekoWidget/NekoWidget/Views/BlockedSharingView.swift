@@ -31,7 +31,7 @@ struct BlockedSharingView: View {
             }
             if hasLoaded && entries.isEmpty {
                 ContentUnavailableView(
-                    "ブロックした共有はありません", systemImage: "hand.raised",
+                    "ブロックした相手はいません", systemImage: "hand.raised",
                     description: Text("このiPhoneで行ったブロックを、ここから解除できます。")
                 )
             }
@@ -59,12 +59,12 @@ struct BlockedSharingView: View {
                 .disabled(isWorking)
             }
             Section {
-                Text("ブロックを解除しても、写真の送受信は再開しません。もう一度共有するには、新しいまどを作り、相手と招待・確認をやり直します。削除した写真は戻りません。")
-                Text("以前のバージョンで行ったブロックや、別のiPhoneで行ったブロックは、この一覧から解除できません。以前の共有を復元することもできません。")
+                Text("ブロックを解除しても、前のまどは戻りません。もう一度届け合うには、新しいまどを作ります。")
+                Text("別のiPhoneや前の版でしたブロックは、ここには出ません。")
             }
             .font(.footnote).foregroundStyle(.secondary)
         }
-        .navigationTitle("ブロックした共有")
+        .navigationTitle("ブロックした相手")
         .navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in

@@ -100,6 +100,7 @@ struct AlbumView: View {
                     .padding(.vertical, 12)
             }
             .navigationTitle("アルバム")
+            .navigationBarTitleDisplayMode(.inline)
             .background(Color(.systemGroupedBackground))
         }
     }
@@ -169,7 +170,7 @@ struct AlbumView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(sectionTitle(for: section.id))
-                        .font(.title3.bold())
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
 
                     LazyVGrid(columns: cardColumns, spacing: 12) {
@@ -195,8 +196,8 @@ struct AlbumView: View {
         // 成長 is for each cat (情報設計 4章): the album root lists every cat.
         let showsCatGrowth = selectedProfileIdentifier == nil && !profiles.isEmpty
         return VStack(alignment: .leading, spacing: 16) {
-            Text(comparisons.isEmpty && !showsCatGrowth ? "探す" : "成長")
-                .font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            Text(!comparisons.isEmpty ? "成長" : showsCatGrowth ? "猫ごとのアルバム" : "探す")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             if showsCatGrowth {
                 CatProfileNavigationStrip {
                     ForEach(profiles) { profile in
@@ -204,7 +205,7 @@ struct AlbumView: View {
                             CatProfileNavigationLabel(profile: profile)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(profile.displayName)の成長とアルバム")
+                        .accessibilityLabel("\(profile.displayName)のアルバム")
                         .accessibilityIdentifier("albums-cat-growth-\(profile.identifier)")
                     }
                 } more: { EmptyView() }
@@ -227,7 +228,7 @@ struct AlbumView: View {
                 }
             }
             if !comparisons.isEmpty || showsCatGrowth {
-                Text("探す").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                Text("探す").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             }
             if !periods.isEmpty || !dates.isEmpty {
                 NavigationLink(value: AlbumCatalogRoute.years(profileIdentifier: selectedProfileIdentifier)) {
@@ -252,9 +253,12 @@ struct AlbumView: View {
                     }.padding(.top, 8)
                 } label: {
                     // Identifying the entire group overrides its child links' IDs.
+                    // Black like the rows around it: it opens more, it is not an action.
                     Text("ほかのテーマ")
+                        .foregroundStyle(.primary)
                         .accessibilityIdentifier("albums-other-themes")
                 }
+                .tint(.secondary)
             }
         }
     }
@@ -277,9 +281,9 @@ struct AlbumView: View {
                     ContentUnavailableView("この範囲の写真はありません", systemImage: "calendar")
                         .accessibilityIdentifier("album-scope-empty")
                 }
-                if !dates.isEmpty { periodShelf(dates, title: "日付から探す") }
                 if !lifePeriods.isEmpty { periodShelf(lifePeriods, title: "時期ごと") }
                 ForEach(years) { album in albumLink(album, isPrimary: false) }
+                if !dates.isEmpty { periodShelf(dates, title: "日付", compact: true) }
             }.padding(16)
         }
         .navigationTitle("日付から探す")
@@ -291,7 +295,7 @@ struct AlbumView: View {
         _ albums: [CuratedAlbumPresentation], title: String, compact: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.title3.bold())
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) {
                 ForEach(albums) { album in
@@ -461,7 +465,7 @@ struct AlbumView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Text("スキャンはアプリを開いている間に進みます。")
+            Text("写真を探すのは、アプリを開いている間に進みます。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -476,7 +480,7 @@ struct AlbumView: View {
             ContentUnavailableView(
                 "アルバムを表示できません",
                 systemImage: "exclamationmark.triangle",
-                description: Text("写真を探し終えられませんでした。設定の「最初から再スキャン」で、もう一度探してください。")
+                description: Text("写真を探し終えられませんでした。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度探してください。")
             )
             .frame(maxWidth: .infinity, minHeight: isEmbedded ? 160 : 320)
         } else if scan.isPreparingGroupedAlbums || scan.isScanning {
@@ -633,7 +637,10 @@ private struct AlbumNavigationRow: View {
             Text(title).font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
             if let newBadgeIdentifier {
-                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                // The same red 「新着」 capsule as the album cards.
+                Text("新着").font(.caption2.bold()).foregroundStyle(.white)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.red, in: Capsule())
                     .accessibilityLabel("新着")
                     .accessibilityIdentifier(newBadgeIdentifier)
             }
@@ -777,7 +784,7 @@ struct CuratedAlbumDetailView: View {
                     Button(role: .destructive) {
                         requestExclusion(Array(selectedIdentifiers))
                     } label: {
-                        Label("候補から外す", systemImage: "eye.slash")
+                        Label("猫の写真から外す", systemImage: "eye.slash")
                     }
                     .disabled(selectedIdentifiers.isEmpty)
                 }
@@ -798,7 +805,7 @@ struct CuratedAlbumDetailView: View {
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 let identifiers = pendingExclusionIdentifiers
                 pendingExclusionIdentifiers.removeAll()
                 selectedIdentifiers.subtract(identifiers)
@@ -870,7 +877,7 @@ struct CuratedAlbumDetailView: View {
                 Button {
                     requestExclusion([photo.localIdentifier])
                 } label: {
-                    Label("候補から外す", systemImage: "eye.slash")
+                    Label("猫の写真から外す", systemImage: "eye.slash")
                 }
             }
         }
@@ -1033,7 +1040,7 @@ struct LikedPhotosView: View {
 
     @Environment(\.membershipAccess) private var membershipAccess
     /// The monthly summary and movie open with Plus; their cards say so before a tap.
-    private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) != .allowed }
+    private var summaryNeedsPlus: Bool { membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired }
     private var showsReflectionPlaceholder: Bool {
         hasPhotoAccess && !isCatDetail && albumScope.wrappedValue == .everyone && !hasPeriodCollections
     }
@@ -1183,7 +1190,7 @@ struct LikedPhotosView: View {
                     }
                     if memoLoadFailed, !isCatDetail {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("ピックアップのメモを読み込めませんでした")
+                            Text("おすすめのメモを読み込めませんでした")
                                 .font(.subheadline)
                             Button {
                                 memoLoadFailed = false
@@ -1224,8 +1231,9 @@ struct LikedPhotosView: View {
         .membershipFeature(.browseAlbums, hasContent: hasPhotoAccess && !isPreparingAlbums
             && (!months.isEmpty || !seasonalMovies.isEmpty || albumSections.contains(where: { $0.id != .all })))
         }
-        .navigationTitle(showsHighlightArchive ? "ピックアップ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
-        .navigationBarTitleDisplayMode(isCatDetail || showsReflectionArchive || showsHighlightArchive ? .inline : .large)
+        .navigationTitle(showsHighlightArchive ? "おすすめ" : showsReflectionArchive ? "月のまとめ・季節のムービー" : navigationTitleOverride ?? "アルバム")
+        // The same small title as every other tab.
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(showsHighlightArchive ? "albums-highlights-archive" : showsReflectionArchive ? "albums-reflections-archive" : isCatDetail ? "albums-cat-detail" : "albums-root")
         .onAppear { freezeRecommendations(allowAppend: true) }
@@ -1256,14 +1264,8 @@ struct LikedPhotosView: View {
         .onChange(of: availableRecommendations.map(\.id)) { _, _ in freezeRecommendations() }
         .onChange(of: recommendationDay) { _, _ in freezeRecommendations() }
         .toolbar {
-            if !isCatDetail && !showsReflectionArchive && !showsHighlightArchive {
-                if let showSettings {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: showSettings) { Image(systemName: "gearshape") }
-                            .accessibilityLabel("設定").accessibilityIdentifier("albums-settings-button")
-                    }
-                }
-            } else if isCatDetail && !showsHighlightArchive {
+            // Settings lives in one place (the ツール tab); no gear here.
+            if isCatDetail && !showsHighlightArchive {
                 ToolbarItem(placement: .topBarTrailing) { catAlbumMenu }
             }
         }
@@ -1326,14 +1328,18 @@ struct LikedPhotosView: View {
     }
     private var reflectionShelf: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("ふりかえり").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            Text("ふりかえり").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             if let month = months.first {
                 monthLink(month, isLatest: true, isWide: true)
                     .overlay(alignment: .topLeading) { if summaryNeedsPlus { plusMark.padding(10) } }
+            } else {
+                Label("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。", systemImage: "calendar")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
             if let movie = seasonalMovies.first {
                 NavigationLink(value: MemoriesRoute.seasonalMovie(movie.periodID)) {
-                    HStack(spacing: 12) {
+                    // Stacked at very large text, so the title is not squeezed.
+                    ToolAdaptiveStack(spacing: 12) {
                         ZStack {
                             if let scene = movie.effectivePresentation.coverScene {
                                 PhotoAssetImageView(localIdentifier: scene.localIdentifier,
@@ -1346,10 +1352,10 @@ struct LikedPhotosView: View {
                         .background(Color.secondary.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(movie.effectivePresentation.periodTitle)の季節のムービー").font(.headline)
-                            Text("\(movie.effectivePresentation.scenes.count)枚").font(.caption).foregroundStyle(.secondary)
+                            Text("\(movie.effectivePresentation.scenes.count)場面").font(.caption).foregroundStyle(.secondary)
                         }
                         if summaryNeedsPlus { plusMark }
-                        if latestSeasonalMovieIsNew {
+                        if latestSeasonalMovieIsNew && !summaryNeedsPlus {
                             Text("新着").font(.caption2.bold()).foregroundStyle(.white)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(.red, in: Capsule())
@@ -1375,10 +1381,12 @@ struct LikedPhotosView: View {
     /// best part of the album is not a surprise (A2).
     private var reflectionPlaceholder: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("ふりかえり").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            Text("ふりかえり").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 10) {
-                Label("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。", systemImage: "calendar")
-                Label("いろいろな日の写真が2か月分たまると、季節のムービーができます。", systemImage: "film")
+                Text("猫の写真がひと月に5枚ほどたまると、その月のまとめができます。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Text("いろいろな日の写真が2か月分たまると、季節のムービーができます。")
+                    .font(.subheadline).foregroundStyle(.secondary)
                 if summaryNeedsPlus {
                     HStack(spacing: 6) {
                         plusMark
@@ -1431,8 +1439,8 @@ struct LikedPhotosView: View {
     private var featuredShelf: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let item = featuredPhotoRecommendation {
-                Text("今日のピックアップ")
-                    .font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                Text("今日のおすすめ")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                 recommendationLink(item)
             }
         }
@@ -1461,7 +1469,7 @@ struct LikedPhotosView: View {
     }
     private var highlightArchive: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            if !hasPickupArchive { ContentUnavailableView("ピックアップはまだありません", systemImage: "photo.stack") }
+            if !hasPickupArchive { ContentUnavailableView("おすすめはまだありません", systemImage: "photo.stack") }
             ForEach(highlights) { highlightLink($0, featured: false) }
             if hasPeriodCollections {
                 ForEach(months) { monthLink($0, isLatest: $0.id == months.first?.id, showsCover: false) }
@@ -1507,11 +1515,12 @@ struct LikedPhotosView: View {
             if showsCover {
                 AlbumOverviewCard(identifier: month.coverPhoto?.localIdentifier, catBoundingBox: month.coverPhoto?.catBoundingBox,
                     title: "\(month.monthNumber)月のまとめ", subtitle: "\(month.yearNumber)年 · \(month.photos.count.formatted())枚",
-                    isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread,
+                    isMovie: false, isNew: isLatest && latestMonthlyWindowIsUnread && !summaryNeedsPlus,
                     networkAccessAllowed: true, previewPhotos: Array(month.photos.prefix(3)), isCompact: false, isWide: isWide)
             } else {
                 AlbumNavigationRow(title: "\(month.yearNumber)年\(month.monthNumber)月", subtitle: "\(month.photos.count.formatted())枚",
-                    newBadgeIdentifier: isLatest && latestMonthlyWindowIsUnread ? "monthly-window-new-badge" : nil)
+                    newBadgeIdentifier: isLatest && latestMonthlyWindowIsUnread && !summaryNeedsPlus
+                        ? "monthly-window-new-badge" : nil)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
             }
         }
@@ -1739,6 +1748,7 @@ private func memoryPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String
 
 struct SavedMemoriesGalleryView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.photoLibraryPageIsCurrent) private var isCurrentPhotoLibraryPage
 
     private enum CreationOutput: Equatable {
         case pdf
@@ -1762,24 +1772,55 @@ struct SavedMemoriesGalleryView: View {
         photos.filter { originFilter.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }
     }
 
+    private func originCount(_ origin: FavoritePhotoOrigin) -> Int {
+        photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }.count
+    }
+
+    /// Origins with something in them. More origins can come without the row growing.
+    private var offeredOrigins: [FavoritePhotoOrigin] {
+        FavoritePhotoOrigin.allCases.filter { $0 == .all || originCount($0) > 0 }
+    }
+
+    /// The heading row: what this is, how many, and (when there is a choice)
+    /// where the photos came from, as one menu at the right.
     private var originPicker: some View {
-        HStack(spacing: 8) {
-            ForEach(FavoritePhotoOrigin.allCases, id: \.rawValue) { origin in
-                let count = photos.filter { origin.includes(isReceived: receivedPhotoIdentifiers.contains($0.localIdentifier), hasOwnCat: ownCatPhotoIdentifiers.contains($0.localIdentifier)) }.count
-                Button { originFilter = origin } label: {
-                    Text("\(origin.title) \(count)")
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 12).frame(minHeight: 44)
-                        .background(originFilter == origin ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08), in: Capsule())
+        HStack(alignment: .center, spacing: 8) {
+            Text("お気に入り")
+                .font(.title3.bold())
+                .accessibilityAddTraits(.isHeader)
+            Text("\(visiblePhotos.count.formatted())枚")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if offeredOrigins.count > 1 {
+                Menu {
+                    ForEach(offeredOrigins, id: \.rawValue) { origin in
+                        Button {
+                            originFilter = origin
+                        } label: {
+                            if originFilter == origin {
+                                Label("\(origin.title)  \(originCount(origin))", systemImage: "checkmark")
+                            } else {
+                                Text("\(origin.title)  \(originCount(origin))")
+                            }
+                        }
+                        .accessibilityAddTraits(originFilter == origin ? .isSelected : [])
+                        .accessibilityIdentifier("favorites-origin-\(origin.rawValue)")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(originFilter.title)
+                        Image(systemName: "chevron.down").font(.caption.weight(.bold))
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .frame(minHeight: 44)
                 }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(originFilter == origin ? .isSelected : [])
-                .accessibilityIdentifier("favorites-origin-\(origin.rawValue)")
                 .disabled(isExportingPhotoBook)
+                .accessibilityLabel("絞り込み、\(originFilter.title)")
+                .accessibilityIdentifier("favorites-origin-menu")
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.horizontal, 16).padding(.top, 6)
     }
     let isDedicatedPhotoBookFlow: Bool
     let isEmbedded: Bool
@@ -1833,41 +1874,47 @@ struct SavedMemoriesGalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if hasPhotoAccess && !isDedicatedPhotoBookFlow { originPicker }
+            // With nothing to show, the heading stays above the empty state.
+            if hasPhotoAccess && !isDedicatedPhotoBookFlow && visiblePhotos.isEmpty { originPicker }
             ZStack {
             if !hasPhotoAccess || visiblePhotos.isEmpty {
                 emptyGalleryState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
+                        // The heading scrolls with the photos, as on the 「すべて」 tab.
+                        if !isDedicatedPhotoBookFlow {
+                            originPicker.padding(.bottom, 6)
+                        }
                         if savedStateReadFailed || unavailableSavedPhotoCount > 0 {
                             unavailableSavedPhotosBanner
                         }
-                        ForEach(PhotoLibraryGridRow.rows(visiblePhotos)) { row in
+                        ForEach(Array(PhotoLibraryGridRow.rows(visiblePhotos).enumerated()), id: \.element.id) { index, row in
                             PhotoLibraryGridRowView(row: row, spacing: 2) { photo in
                                 gridItem(photo)
                                     .accessibilityIdentifier("saved-memory-photo-\(photo.localIdentifier)")
                             }
                             .id(row.id)
+                            .photoLibraryReadingRow(row.id, index: index)
                         }
                     }
-                    .scrollTargetLayout(isEnabled: isEmbedded)
                 }
                 .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "favorites") + "." + originFilter.rawValue : nil,
+                    firstRow: visiblePhotos.first?.localIdentifier,
                     normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: visiblePhotos) })
             }
         }
         }
         .navigationTitle(isSelectingForExport ? "写真を選ぶ" : isEmbedded ? "写真" : "お気に入り")
-        .navigationBarTitleDisplayMode(isEmbedded ? .large : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("saved-memories-gallery")
         .accessibilityValue(galleryAccessibilityValue)
         .toolbar {
-            if hasPhotoAccess && !photos.isEmpty {
+            if isCurrentPhotoLibraryPage && hasPhotoAccess && !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isSelectingForExport ? "キャンセル" : "作成") {
+                    Button(isSelectingForExport ? "キャンセル" : "PDFを作る") {
                         toggleExportMode()
                     }
                     .disabled(isExportingPhotoBook)
@@ -2508,6 +2555,10 @@ private struct PhotoRediscoveryScopeKey: EnvironmentKey {
     static var defaultValue: CatProfileScopePresentation { .everyone }
 }
 
+private struct ReceivedPhotoIdentifiersKey: EnvironmentKey {
+    static let defaultValue: Set<String> = []
+}
+
 extension EnvironmentValues {
     var photoRelatedAlbums: PhotoRelatedAlbums? {
         get { self[PhotoRelatedAlbumsKey.self] }
@@ -2532,6 +2583,13 @@ extension EnvironmentValues {
     var photoRediscoveryScope: CatProfileScopePresentation {
         get { self[PhotoRediscoveryScopeKey.self] }
         set { self[PhotoRediscoveryScopeKey.self] = newValue }
+    }
+
+    /// Photos copied in from a まど (received). Removing one from favorites
+    /// says once that the copy in the Photos app stays.
+    var receivedPhotoIdentifiers: Set<String> {
+        get { self[ReceivedPhotoIdentifiersKey.self] }
+        set { self[ReceivedPhotoIdentifiersKey.self] = newValue }
     }
 }
 
@@ -2564,6 +2622,8 @@ struct PhotoBrowserView: View {
     @Environment(\.showcaseOpenOne) private var showcaseOpenOne
     @Environment(\.showcaseAddTargets) private var showcaseAddTargets
     @Environment(\.showcaseAddPhoto) private var showcaseAddPhoto
+    @Environment(\.receivedPhotoIdentifiers) private var receivedPhotoIdentifiers
+    @State private var pendingReceivedRemoval: String?
 
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -2575,6 +2635,7 @@ struct PhotoBrowserView: View {
     let showsWidgetTiming: Bool
     let setMemorySaved: (String, Bool) -> Void
     let navigationTitleText: String
+    let legacyBirthday: Date?
     let exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)?
     let excludedCatCandidateIdentifiers: Set<String>
     let excludeFromCatCandidates: ([String]) -> Void
@@ -2606,6 +2667,7 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
     @State private var deliveryPhoto: PhotoPresentation?
+    @State private var groupDelivery: GroupDeliveryRequest?
     @StateObject private var photoDeliveryModel = MomentSharingViewModel()
     @State private var stagedDeliveryID: String?
     @State private var showsWidgetInformation = false
@@ -2631,7 +2693,8 @@ struct PhotoBrowserView: View {
         dayCollectionDate: Date? = nil,
         rediscoveryStore: PersonalRediscoveryStore? = nil,
         memoryNoteStore: PhotoMemoryNoteStore = .shared,
-        navigationTitle: String = "写真"
+        navigationTitle: String = "写真",
+        legacyBirthday: Date? = nil
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -2644,6 +2707,7 @@ struct PhotoBrowserView: View {
         )
 
         self.navigationTitleText = navigationTitle
+        self.legacyBirthday = legacyBirthday
         self.photos = photos
         self.libraryPhotos = libraryPhotos
         self.initialPhoto = initialPhoto
@@ -2688,6 +2752,11 @@ struct PhotoBrowserView: View {
                 if let selectedPhoto {
                     photoDate(selectedPhoto).frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
+                    if navigationTitleText == "この1枚", let age = cloudyPhotoAge(selectedPhoto) {
+                        Text(age).font(.subheadline).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+                            .accessibilityIdentifier("cloudy-photo-age")
+                    }
                 }
             PhotoBrowserPager(
                 photos: browserPhotos,
@@ -2697,7 +2766,7 @@ struct PhotoBrowserView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topTrailing) {
-                if browserPhotos.count > 1 {
+                if false {
                     Text(pagePositionText)
                         .font(.caption2.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.white)
@@ -2709,18 +2778,45 @@ struct PhotoBrowserView: View {
             }
 
             }
-            ViewThatFits(in: .vertical) {
-                browserFooter.fixedSize(horizontal: false, vertical: true)
-                ScrollView { browserFooter }
-                    .accessibilityIdentifier("photo-browser-actions-scroll")
-            }
+            // One shape, always: the layout clamps the footer's height, and the
+            // footer scrolls when its content is taller. (A ViewThatFits here
+            // flipped between its two shapes under the clamped height and the
+            // bottom inset, and the layout never settled: the screen froze.)
+            ScrollView { browserFooter }
+                .scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier("photo-browser-actions-scroll")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom) {
+            // The one main action, always in view (not below the fold).
+            if let selectedPhoto, GroupWindowClientProvider.ui != nil {
+                Button {
+                    groupDelivery = GroupDeliveryRequest(localIdentifier: selectedPhoto.localIdentifier)
+                } label: {
+                    Label("まどに届ける", systemImage: "paperplane.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isExportingMemoryPhoto)
+                .accessibilityHint("届け先のまどを選んでから、写真とメモを確認します")
+                .accessibilityIdentifier("photo-browser-deliver-group")
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(.bar)
+            }
+        }
     }
 
     private var browserFooter: some View {
         VStack(spacing: 8) {
             if let selectedPhoto {
+                quickActions(selectedPhoto)
+                if navigationTitleText == "この1枚", let date = selectedPhoto.creationDate,
+                   photos(onSameDayAs: date).count > 1 {
+                    sameDayLink(for: selectedPhoto, date: date, dateText: "同じ日の写真")
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("cloudy-photo-same-day")
+                }
                 if let note = personalNote.note(for: selectedPhoto.localIdentifier) {
                     Button {
                         personalNotePhoto = selectedPhoto
@@ -2786,13 +2882,90 @@ struct PhotoBrowserView: View {
         .background(.ultraThinMaterial)
     }
 
+    /// The three things people do with a photo, as icons under it:
+    /// お気に入り, メモ, 共有. Everything rarer stays in 「…」.
+    private func quickActions(_ photo: PhotoPresentation) -> some View {
+        let saved = confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked
+        let noteState = personalNote.state(for: photo.localIdentifier)
+        return HStack(spacing: 0) {
+            quickAction(saved ? "bookmark.fill" : "bookmark", "お気に入り", tinted: saved,
+                        identifier: "photo-browser-bookmark") {
+                // The requested state, never a toggle of a stale display.
+                if !saved {
+                    setMemorySaved(photo.localIdentifier, true)
+                } else if receivedPhotoIdentifiers.contains(photo.localIdentifier) {
+                    pendingReceivedRemoval = photo.localIdentifier
+                } else {
+                    setMemorySaved(photo.localIdentifier, false)
+                }
+            }
+            .accessibilityLabel(saved ? "お気に入りから外す" : "お気に入りに追加")
+            .accessibilityHint("自分のお気に入りです。相手には共有されません")
+            .accessibilityIdentifier("photo-browser-memory-saved-state")
+            .disabled(isExportingMemoryPhoto)
+
+            quickAction("square.and.pencil", "メモ", tinted: personalNote.note(for: photo.localIdentifier) != nil,
+                        identifier: "photo-memory-note-open") {
+                personalNotePhoto = photo
+            }
+            .accessibilityLabel(noteState.actionTitle(hasNote: personalNote.note(for: photo.localIdentifier) != nil))
+            .accessibilityHint("自分だけのメモです。相手には送られません")
+            .disabled(isExportingMemoryPhoto || noteState.isLoading)
+
+            if exportMemoryPhoto != nil {
+                // The public page names this action 「写真を書き出す」; the caption is its short form.
+                Button {
+                    beginMemoryPhotoExport(photo.localIdentifier)
+                } label: {
+                    VStack(spacing: 3) {
+                        Label("写真を書き出す", systemImage: "square.and.arrow.up")
+                            .labelStyle(.iconOnly)
+                            .font(.title3)
+                        Text("書き出す").font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .foregroundStyle(Color.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("写真を書き出す")
+                .accessibilityHint("位置情報などを除いた画像を共有します")
+                .accessibilityIdentifier("photo-browser-export")
+                .disabled(isExportingMemoryPhoto)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func quickAction(_ systemImage: String, _ title: String, tinted: Bool,
+                             identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: systemImage).font(.title3)
+                Text(title).font(.caption2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .foregroundStyle(tinted ? Color.accentColor : Color.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+    }
+
     @ViewBuilder
     private func photoDate(_ photo: PhotoPresentation) -> some View {
         if let creationDate = photo.creationDate {
             let spokenDate = creationDate.formatted(.dateTime.year().month().day())
             let dateText = dynamicTypeSize.isAccessibilitySize
                 ? creationDate.formatted(date: .numeric, time: .omitted) : spokenDate
-            photoDateLabel(dateText, photo: photo, showsCollectionIcon: false)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                photoDateLabel(dateText, photo: photo, showsCollectionIcon: false)
+                if browserPhotos.count > 1 {
+                    Text(pagePositionText)
+                        .font(.subheadline.monospacedDigit())
+                        .accessibilityIdentifier("photo-browser-position")
+                }
+            }
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(spokenDate)
@@ -2845,35 +3018,6 @@ struct PhotoBrowserView: View {
         }
     }
 
-    @ViewBuilder
-    private func photoActions(_ photo: PhotoPresentation) -> some View {
-        if confirmedMemorySavedStates[photo.localIdentifier] ?? photo.isLiked {
-            Button("お気に入りから外す", systemImage: "bookmark.slash", role: .destructive) {
-                setMemorySaved(photo.localIdentifier, false)
-            }
-            .accessibilityIdentifier("photo-browser-memory-saved-state")
-            .disabled(isExportingMemoryPhoto)
-        } else {
-            Button("お気に入りに追加", systemImage: "bookmark") {
-                setMemorySaved(photo.localIdentifier, true)
-            }
-            .accessibilityHint("自分のお気に入りに追加します。相手には共有されません")
-            .disabled(isExportingMemoryPhoto)
-        }
-        Button {
-            personalNotePhoto = photo
-        } label: {
-            Label(personalNote.state(for: photo.localIdentifier).actionTitle(
-                hasNote: personalNote.note(for: photo.localIdentifier) != nil), systemImage: "square.and.pencil")
-        }
-        .accessibilityHint("自分だけのメモです。相手には送られません")
-        .accessibilityIdentifier("photo-memory-note-open")
-        .disabled(isExportingMemoryPhoto || personalNote.state(for: photo.localIdentifier).isLoading)
-        Button("見せる", systemImage: "eye") { showcaseOpenOne?(photo.localIdentifier) }
-            .disabled(showcaseOpenOne == nil)
-            .accessibilityIdentifier("photo-browser-showcase")
-    }
-
     private var browserNavigation: some View {
         browserContent
         .background(Color.black)
@@ -2883,12 +3027,9 @@ struct PhotoBrowserView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                // お気に入り・メモ・共有 are under the photo. 「…」 holds the rest.
                 Menu {
-                    if let photo = selectedPhoto {
-                        photoActions(photo)
-                        Divider()
-                    }
                     if rediscoveryEnabled, let photo = selectedPhoto, let date = photo.creationDate,
                        dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: date) }) != true {
                         sameDayLink(for: photo, date: date, dateText: "同じ日の写真")
@@ -2900,19 +3041,7 @@ struct PhotoBrowserView: View {
                         Label("この写真があるアルバム", systemImage: "rectangle.stack")
                     }
                     .disabled((relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty)
-                    if let photo = selectedPhoto {
-                        Button {
-                            if showcaseAddTargets.count == 1, let target = showcaseAddTargets.first {
-                                addToShowcase(photo.localIdentifier, scopeID: target.id)
-                            } else {
-                                showcasePhotoToAdd = photo.localIdentifier
-                            }
-                        } label: {
-                            Label(isAddingToShowcase ? "追加中…" : "見せる写真に追加", systemImage: "photo.badge.plus")
-                        }
-                        .disabled(showcaseAddPhoto == nil || isAddingToShowcase)
-                        .accessibilityIdentifier("photo-browser-showcase-add")
-                    }
+                    // 「見せる写真に追加」 is done from 写真を見せる's own picker, not here.
                     if ManagedPreservationConfiguration.current.isEnabled, let photo = selectedPhoto {
                         Button { managedPreservationPhoto = photo } label: {
                             Label("サービスに保管", systemImage: "externaldrive.badge.plus")
@@ -2928,24 +3057,6 @@ struct PhotoBrowserView: View {
                         }
                         Divider()
                     }
-                    if exportMemoryPhoto != nil {
-                        if isExportingMemoryPhoto {
-                            Button(role: .cancel) {
-                                cancelMemoryPhotoExport()
-                            } label: {
-                                Label("書き出しをキャンセル", systemImage: "xmark.circle")
-                            }
-                        } else {
-                            Button {
-                                beginMemoryPhotoExport(selectedPhotoIdentifier)
-                            } label: {
-                                Label("写真を書き出す", systemImage: "square.and.arrow.up")
-                            }
-                            .accessibilityHint("位置情報などを除いた画像を共有します")
-                        }
-                        Divider()
-                    }
-
                     if !profiles.isEmpty,
                        !excludedCatCandidateIdentifiers.contains(selectedPhotoIdentifier) {
                         Button {
@@ -2958,14 +3069,14 @@ struct PhotoBrowserView: View {
                         Button {
                             restoreCatCandidates([selectedPhotoIdentifier])
                         } label: {
-                            Label("表示候補に戻す", systemImage: "arrow.uturn.backward.circle")
+                            Label("猫の写真に戻す", systemImage: "arrow.uturn.backward.circle")
                         }
                     } else {
                         Button {
                             pendingExclusionIdentifier = selectedPhotoIdentifier
                             showsExclusionConfirmation = true
                         } label: {
-                            Label("候補から外す", systemImage: "eye.slash")
+                            Label("猫の写真から外す", systemImage: "eye.slash")
                         }
                     }
                 } label: {
@@ -3066,7 +3177,7 @@ struct PhotoBrowserView: View {
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から外す", role: .destructive) {
+            Button("猫の写真から外す", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])
@@ -3096,8 +3207,25 @@ struct PhotoBrowserView: View {
 
     var body: some View {
         browserDialogs
+        .confirmationDialog("お気に入りから外しますか？", isPresented: Binding(
+            get: { pendingReceivedRemoval != nil }, set: { if !$0 { pendingReceivedRemoval = nil } }),
+            titleVisibility: .visible) {
+            Button("お気に入りから外す", role: .destructive) {
+                if let identifier = pendingReceivedRemoval { setMemorySaved(identifier, false) }
+                pendingReceivedRemoval = nil
+            }
+            Button("戻る", role: .cancel) { pendingReceivedRemoval = nil }
+        } message: {
+            Text("まどから届いた写真です。写真アプリへコピーした写真は、外してもそのまま残ります。")
+        }
         .task(id: selectedPhotoIdentifier) {
+            CloudyWindowStore.shared.noteViewed(photoID: selectedPhotoIdentifier)
             await personalNote.load(for: selectedPhotoIdentifier)
+        }
+        .sheet(item: $groupDelivery) { request in
+            if let client = GroupWindowClientProvider.ui {
+                GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
+            }
         }
         .sheet(item: $deliveryPhoto) { photo in
             PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live(model: photoDeliveryModel),
@@ -3198,8 +3326,29 @@ struct PhotoBrowserView: View {
 #if DEBUG
         if deliveryActions != nil { return true }
 #endif
+        // This delivers to two-person windows, which are hidden with group windows on.
         return SharingAPIConfiguration.current.isMediaAvailable
             && SharingAPIConfiguration.current.isShareExtensionHandoffAvailable
+            && GroupWindowClientProvider.ui == nil
+    }
+
+    private func cloudyPhotoAge(_ photo: PhotoPresentation) -> String? {
+        guard let date = photo.creationDate else { return nil }
+        func ageText(since birthday: Date) -> String? {
+            guard date >= birthday else { return nil }
+            let components = CloudyWindowStore.calendar.dateComponents([.year, .month], from: birthday, to: date)
+            let years = components.year ?? 0, months = components.month ?? 0
+            return years == 0 ? "生後\(months)か月ごろ" : "\(years)歳ごろ"
+        }
+        if profiles.isEmpty, let legacyBirthday { return ageText(since: legacyBirthday) }
+        let assigned = assignmentsByPhotoIdentifier[photo.localIdentifier] ?? []
+        let values = profiles.filter { assigned.contains($0.identifier) }.compactMap { profile -> String? in
+            let birthday = profile.lifeDates.birthday
+                ?? (profile.lifeReference?.kind == .birthday ? profile.lifeReference : nil)
+            guard let birthday, let age = ageText(since: birthday.date) else { return nil }
+            return "\(profile.displayName)・\(age)"
+        }
+        return values.isEmpty ? nil : values.joined(separator: "　")
     }
 
     private func addToShowcase(_ identifier: String, scopeID: String) {
@@ -3749,4 +3898,10 @@ struct DayPhotosView: View {
         )
         .aspectRatio(1, contentMode: .fit)
     }
+}
+
+/// A photo waiting to be delivered to a group window from its detail screen.
+struct GroupDeliveryRequest: Identifiable {
+    let id = UUID()
+    let localIdentifier: String
 }

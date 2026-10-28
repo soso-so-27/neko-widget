@@ -7,107 +7,88 @@ import SwiftUI
 struct WidgetPlacementGuideView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
-    @State private var showsRediscoveryHistory = false
+    @State private var page = 0
 
-    private var placementSteps: [String] {
+    /// One picture per step: the iOS screens the person will see, in order.
+    private var steps: [(image: String, text: String)] {
         if #available(iOS 18.0, *) {
-            OnboardingPresentationCopy.widgetModernPlacementSteps
+            Array(zip(["onboarding-widget-step-1", "onboarding-widget-step-2-ios18", "onboarding-widget-step-3"],
+                      OnboardingPresentationCopy.widgetModernPlacementSteps))
         } else {
-            OnboardingPresentationCopy.widgetLegacyPlacementSteps
+            Array(zip(["onboarding-widget-step-1", "onboarding-widget-step-3", "onboarding-widget-step-4"],
+                      OnboardingPresentationCopy.widgetLegacyPlacementSteps))
         }
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                VStack(spacing: 12) {
-                    Image(systemName: "rectangle.on.rectangle.angled")
-                        .font(.system(size: 38, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 68, height: 68)
-                        .background(
-                            Color.accentColor.opacity(0.10),
-                            in: RoundedRectangle(cornerRadius: 20)
-                        )
+        VStack(spacing: 14) {
+            Text(OnboardingPresentationCopy.widgetTitleLines.joined(separator: ""))
+                .font(.title2.bold())
+                .multilineTextAlignment(.center)
+                .padding(.top, 18)
+                .accessibilityAddTraits(.isHeader)
 
-                    Text(
-                        OnboardingPresentationCopy.widgetTitleLines
-                            .joined(separator: "\n")
-                    )
-                    .font(.title.bold())
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityAddTraits(.isHeader)
-
-                    Text(OnboardingPresentationCopy.widgetBody)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                VStack(spacing: 0) {
-                    ForEach(Array(placementSteps.enumerated()), id: \.offset) { index, step in
-                        WidgetPlacementStepRow(number: index + 1, text: step)
-
-                        if index < placementSteps.count - 1 {
-                            Divider()
-                                .padding(.leading, 54)
+            // The pictures do the explaining; one line under each.
+            TabView(selection: $page) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                    VStack(spacing: 12) {
+                        Image(step.image)
+                            .resizable()
+                            .scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color(.separator), lineWidth: 0.5))
+                            .accessibilityHidden(true)
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text((index + 1).formatted())
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.white)
+                                .frame(width: 26, height: 26)
+                                .background(Color.accentColor, in: Circle())
+                            Text(step.text)
+                                .font(.body.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("手順\(index + 1)。\(step.text)")
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 36)
+                    .tag(index)
                 }
-                .background(
-                    Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 20)
-                )
-                .accessibilityIdentifier("widget-placement-steps")
+            }
+            .tabViewStyle(.page(indexDisplayMode: .always))
+            .indexViewStyle(.page(backgroundDisplayMode: .always))
+            .accessibilityIdentifier("widget-placement-steps")
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("毎日一枚。1日1回だけ選び直せます。", systemImage: "arrow.clockwise")
-                        .font(.footnote).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("widget-placement-daily-rule")
-                    Button("まどでめくった写真を見る") { showsRediscoveryHistory = true }
-                        .font(.subheadline).frame(minHeight: 44)
-                        .accessibilityIdentifier("widget-placement-rediscovery")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Label(
-                    OnboardingPresentationCopy.widgetReturnHint,
-                    systemImage: "checkmark.circle"
-                )
+            Text("置くと、写真タブのこのカードは消えます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                VStack(spacing: 12) {
-                    Button(action: onComplete) {
-                        Text(OnboardingPresentationCopy.widgetAction)
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 5)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("widget-placement-complete")
-
-                    Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("widget-placement-skip")
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 10) {
+                Button(action: onComplete) {
+                    Text(OnboardingPresentationCopy.widgetAction)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("widget-placement-complete")
+
+                Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("widget-placement-skip")
             }
             .padding(.horizontal, 20)
-            .padding(.top, 24)
-            .padding(.bottom, 30)
-        }
-        .background(Color(.systemBackground))
-        .sheet(isPresented: $showsRediscoveryHistory) {
-            NavigationStack {
-                PersonalRediscoveryHistoryView()
-                    .toolbar { ToolbarItem(placement: .cancellationAction) {
-                        Button("閉じる") { showsRediscoveryHistory = false }
-                    } }
-            }
+            .padding(.vertical, 12)
+            .background(.bar)
         }
     }
 }

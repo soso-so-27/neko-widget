@@ -14,13 +14,13 @@ struct WidgetPhotoSource: AppEntity {
     static let personalLibraryID = "personal-library"
     static let officialWindow = WidgetPhotoSource(
         id: OfficialWindowCatalog.sourceID,
-        name: "どこかの猫 · 公式まど",
+        name: "どこかの猫 · 公式のまど",
         detail: "公開用に提供された猫の一枚"
     )
     static let familyWindowIDPrefix = "family-window:"
     static func publicWindow(_ definition: PublicWindowDefinition) -> WidgetPhotoSource {
         WidgetPhotoSource(id: definition.widgetSourceID,
-                          name: "\(definition.displayName) · 公式まど", detail: definition.subtitle)
+                          name: "\(definition.displayName) · 公式のまど", detail: definition.subtitle)
     }
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,
@@ -68,6 +68,13 @@ struct WidgetPhotoSource: AppEntity {
     }
 
     static func resolvedSource(id: String) -> WidgetPhotoSource? {
+        if id.hasPrefix(CloudyWindowStore.profilePrefix) {
+            let profileID = String(id.dropFirst(CloudyWindowStore.profilePrefix.count))
+            if let profile = CloudyWindowStore.shared.profiles().first(where: { $0.id == profileID }) {
+                return WidgetPhotoSource(id: id, name: profile.name, detail: "この子のくもりのまど")
+            }
+            return WidgetPhotoSource(id: id, name: "利用できないまど", detail: "ウィジェットを編集してください")
+        }
         if let windowID = PublicWindowDefinition.windowID(from: id) {
             if let definition = OfficialWindowConfiguration.definition(for: windowID) {
                 return publicWindow(definition)
@@ -118,21 +125,28 @@ struct WidgetPhotoSource: AppEntity {
 
     /// Add future selectable sources here, or replace this with App Group data.
     /// Existing widget instances continue to resolve by their stable `id`.
+    /// The windows people share come first, then this iPhone's photos, then
+    /// public windows. A new widget still starts on this iPhone's photos
+    /// (`defaultResult`), so reordering never changes an existing choice.
     static var availableSources: [WidgetPhotoSource] {
-        var sources: [WidgetPhotoSource] = [.personalLibrary]
-            + OfficialWindowConfiguration.definitions
-                .filter { $0.endpoint != nil }
-                .map(publicWindow)
-        if familyWindowSourceIsEnabled {
+        // Group windows the app has verified and kept on this iPhone.
+        var sources: [WidgetPhotoSource] = GroupWidgetCache.entries().map(groupWindow)
+        // Builds with group windows on show no two-person window anywhere.
+        if familyWindowSourceIsEnabled && !GroupWidgetCache.groupWindowsAreOn {
             let windows = PrivateWindowCatalogStore.widgetEntries()
             if windows.isEmpty {
-                sources.append(.familyWindow)
+                if sources.isEmpty { sources.append(.familyWindow) }
             } else {
                 sources.append(contentsOf: windows.map(familyWindow))
             }
         }
-        // Group windows the app has verified and kept on this iPhone.
-        sources.append(contentsOf: GroupWidgetCache.entries().map(groupWindow))
+        sources.append(.personalLibrary)
+        sources.append(contentsOf: CloudyWindowStore.shared.profiles().map {
+            WidgetPhotoSource(id: CloudyWindowStore.profilePrefix + $0.id, name: $0.name, detail: "この子のくもりのまど")
+        })
+        sources.append(contentsOf: OfficialWindowConfiguration.definitions
+            .filter { $0.endpoint != nil }
+            .map(publicWindow))
         return sources
     }
 

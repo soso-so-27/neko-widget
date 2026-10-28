@@ -21,7 +21,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertFalse(app.buttons["settings-membership-preview"].exists)
         XCTAssertFalse(app.buttons["settings-window-support-preview"].exists)
         XCTAssertFalse(app.buttons["settings-internal-diagnostics"].exists)
-        XCTAssertTrue(app.staticTexts["対応OS"].exists)
+        XCTAssertTrue(app.staticTexts["settings-app-version"].exists)
         captureScreenshot(named: "public-settings-no-internal-options")
         app.terminate()
 
@@ -64,14 +64,20 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "received-favorites"
         app.launch()
-        XCTAssertTrue(app.buttons["favorites-origin-received"].waitForExistence(timeout: 15))
+        // The origins live in one menu at the heading's right.
+        let originMenu = app.buttons["favorites-origin-menu"]
+        XCTAssertTrue(originMenu.waitForExistence(timeout: 15))
         captureScreenshot(named: "favorites-all-origins")
+        originMenu.tap()
+        XCTAssertTrue(app.buttons["favorites-origin-received"].waitForExistence(timeout: 5))
         app.buttons["favorites-origin-received"].tap()
-        XCTAssertTrue(app.buttons["favorites-origin-received"].isSelected)
+        XCTAssertEqual(originMenu.label, "絞り込み、まどから届いた")
         XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.waitForExistence(timeout: 5))
         captureScreenshot(named: "favorites-from-mado")
+        originMenu.tap()
+        XCTAssertTrue(app.buttons["favorites-origin-ownCats"].waitForExistence(timeout: 5))
         app.buttons["favorites-origin-ownCats"].tap()
-        XCTAssertTrue(app.buttons["favorites-origin-ownCats"].isSelected)
+        XCTAssertEqual(originMenu.label, "絞り込み、自分の猫")
         // A received photo explicitly assigned to one's cat also belongs to
         // Own Cats, while retaining its true received provenance label.
         XCTAssertTrue(app.staticTexts["お母さんから"].firstMatch.exists)
@@ -177,6 +183,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
     func testReviewToolsAndAutomaticVisitSave() {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
+        // The vet memo starts from a cat profile (the name prompt is gone).
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
         app.launch()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"))
         for identifier in ["tools-showcase-open", "tools-care-open", "tools-vet-open", "tools-lost-cat-open", "tools-evacuation-open"] {
@@ -184,12 +192,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "PR4-tools")
         app.buttons["tools-vet-open"].tap()
-        let add = app.buttons["vet-new-cat"]
-        XCTAssertTrue(add.waitForExistence(timeout: 10)); add.tap()
-        let alert = app.alerts["猫の名前"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 5))
-        alert.textFields.firstMatch.tap(); alert.textFields.firstMatch.typeText("むぎ")
-        alert.buttons["作る"].tap()
+        let cat = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(cat.waitForExistence(timeout: 10)); cat.tap()
         let observations = app.descendants(matching: .any)["vet-observations"].firstMatch
         XCTAssertTrue(observations.waitForExistence(timeout: 10), app.debugDescription)
         observations.tap(); observations.typeText("いつもの様子")
@@ -207,7 +211,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments + ["--app-store-screenshot-fixture"]
         app.launch()
-        XCTAssertTrue(app.buttons["albums-settings-button"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["main-tab-photos"].waitForExistence(timeout: 20))
         let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
         if permission.waitForExistence(timeout: 3) {
             let deny = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
@@ -261,10 +265,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let menu = app.buttons["photo-browser-related"]
         XCTAssertTrue(menu.waitForExistence(timeout: 20))
         menu.tap()
-        XCTAssertTrue(app.buttons["写真を書き出す"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["同じ日の猫写真"].waitForExistence(timeout: 5))
         captureScreenshot(named: "PR2-photo-menu")
-        app.buttons["photo-browser-showcase-add"].tap()
-        XCTAssertTrue(app.staticTexts["見せる写真に追加しました"].waitForExistence(timeout: 5))
         app.terminate()
     }
 

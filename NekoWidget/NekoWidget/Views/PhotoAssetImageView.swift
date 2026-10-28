@@ -148,8 +148,8 @@ struct PhotoAssetImageView: View {
                     } description: {
                         Text(
                             networkAccessAllowed
-                                ? "写真へのアクセスや通信を確認してください。"
-                                : "この計測では、端末内にある写真だけを使います。"
+                                ? "写真の許可と、iCloud写真の読み込みが終わっているかを確かめてください。"
+                                : "このiPhoneに保存されている写真だけを使います。"
                         )
                     } actions: {
                         Button {
@@ -173,9 +173,14 @@ struct PhotoAssetImageView: View {
                 }
 
             case .loading:
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("写真を読み込み中")
+                // A thumbnail stays a quiet grey tile; only a full photo shows a spinner.
+                if showsFullImage {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("写真を読み込み中")
+                } else {
+                    Color.clear.accessibilityLabel("写真を読み込み中")
+                }
             }
         }
         .clipped()

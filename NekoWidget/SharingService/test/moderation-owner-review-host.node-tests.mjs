@@ -17,7 +17,7 @@ const {localModerationOwnerConsole}=await import(moduleURL(consoleSource.replace
 const ownerHTML=await localModerationOwnerConsole(true).text();
 const ownerScript=/<script nonce="[^"]+">([\s\S]+)<\/script>/u.exec(ownerHTML)[1];
 
-async function ownerPage(active=false){
+async function ownerPage(active=false,reviewHeader=true){
  let clock=1791800000000,nextTimer=0,signatures=0,completed=false;
  const timers=new Map(),calls=[];
  const elements=new Map([...ownerHTML.matchAll(/id="([^"]+)"/gu)].map(m=>[m[1],{disabled:false,checked:false,hidden:/\bhidden(?:[ >])/u.test(m.input.slice(m.index,m.input.indexOf('>',m.index))),dataset:{},listeners:{},addEventListener(type,fn){this.listeners[type]=fn},removeAttribute(name){delete this[name]},async decode(){}}]));
@@ -34,7 +34,7 @@ async function ownerPage(active=false){
    calls.push(path);
    if(path.endsWith('/state'))return Response.json({caseReferenceHmac:ref,revision:completed?1:0,targetAvailable:active,canNoAction:!completed,canRelease:false,...(completed?{operation:'no_action'}:{})});
    if(path.includes('/assertions/')){
-    if(path.includes('/content-read/'))return new Response(SYNTHETIC_CANONICAL_JPEG,{headers:{'Content-Type':'image/jpeg','X-Moderation-Read-Receipt':receipt,'X-Moderation-Source-SHA256':digest,'X-Moderation-Expires-At':String((clock+60000)/1000)}});
+    if(path.includes('/content-read/'))return new Response(SYNTHETIC_CANONICAL_JPEG,{headers:{'Content-Type':'image/jpeg','X-Moderation-Read-Receipt':receipt,'X-Moderation-Source-SHA256':digest,'X-Moderation-Expires-At':String((clock+60000)/1000),...(reviewHeader?{'X-Moderation-Review-Expires-At':String((clock+3600000)/1000)}:{})}});
     completed=true;return Response.json({caseReferenceHmac:ref,operation:'no_action',revision:1,reply:'available_in_app',recipientViewed:false});
    }
    const purpose=path.endsWith('/content-read')?'content_read':'no_action';
@@ -44,16 +44,31 @@ async function ownerPage(active=false){
  return {elements,radios,calls,get signatures(){return signatures},async click(id){assert.equal(elements.get(id).disabled,false);await elements.get(id).listeners.click()},confirm(){elements.get('confirmed').checked=true;elements.get('confirmed').listeners.change()},advance(ms){const target=clock+ms;for(const [id,t] of [...timers].sort((a,b)=>a[1].at-b[1].at)){if(t.at<=target&&timers.has(id)){clock=t.at;timers.delete(id);t.fn()}}clock=target},leave(){document.hidden=true;document.listeners.visibilitychange()}};
 }
 
-test('retired report loses its photo at60s but can complete once with a new signature before the original300s challenge ends',async()=>{
- const p=await ownerPage();await p.click('open');assert.equal(p.elements.get('photo').hidden,false);p.advance(61000);
- assert.equal(p.elements.get('photo').hidden,true);assert.equal(p.elements.get('photo').src,undefined);assert.equal(p.elements.get('decision').hidden,false);assert.equal(p.elements.get('finish').disabled,true);
- p.confirm();await p.click('finish');assert.equal(p.signatures,2);assert.equal(p.calls.filter(x=>x.includes('/no_action/')&&x.includes('/assertions/')).length,1);assert.match(p.elements.get('status').textContent,/対応を保存しました/u);
+for(const active of [false,true])test(`human review outlasts both the read lease and original authentication challenge (active=${active})`,async()=>{
+ const p=await ownerPage(active);await p.click('open');p.advance(301000);
+ assert.equal(p.elements.get('photo').hidden,false);assert.equal(p.elements.get('decision').hidden,false);
+ assert.equal(p.signatures,1);assert.equal(p.calls.filter(x=>x.includes('/no_action/')).length,0);
+ // Merely waiting does not sign or submit anything. Confirmation uses a new signature.
+ if(active){p.radios[1].checked=true;p.radios[1].listeners.change()}
+ p.confirm();await p.click('finish');assert.equal(p.signatures,2);
+ assert.equal(p.calls.filter(x=>x.includes('/no_action/')&&x.includes('/assertions/')).length,1);
+ assert.match(p.elements.get('status').textContent,/対応を保存しました/u);
+ assert.equal(p.elements.get('photo').src,undefined);
 });
-test('retired decision metadata expires at the original300s deadline and leaving clears it sooner',async()=>{
- for(const leave of [false,true]){const p=await ownerPage();await p.click('open');p.advance(61000);if(leave)p.leave();else p.advance(240000);assert.equal(p.elements.get('photo').src,undefined);assert.equal(p.elements.get('decision').hidden,true);assert.equal(p.elements.get('confirmed').checked,false);assert.equal(p.elements.get('finish').disabled,true);assert.equal(p.signatures,1);assert.equal(p.calls.filter(x=>x.includes('/no_action/')).length,0)}
+test('explicit close, leaving, and the existing session/report expiry each clear photo and decision without a write',async()=>{
+ for(const close of ['button','leave','expiry']){
+  const p=await ownerPage();await p.click('open');p.confirm();p.advance(301000);
+  if(close==='button')await p.click('close-photo');else if(close==='leave')p.leave();else p.advance(3600000);
+  assert.equal(p.elements.get('photo').src,undefined);assert.equal(p.elements.get('photo').hidden,true);
+  assert.equal(p.elements.get('close-photo').hidden,true);assert.equal(p.elements.get('decision').hidden,true);
+  assert.equal(p.elements.get('confirmed').checked,false);assert.equal(p.elements.get('finish').disabled,true);
+  assert.equal(p.signatures,1);assert.equal(p.calls.filter(x=>x.includes('/no_action/')).length,0);
+ }
 });
-test('active-photo decisions retain their existing60s display-and-decision deadline',async()=>{
- const p=await ownerPage(true);await p.click('open');p.advance(61000);assert.equal(p.elements.get('decision').hidden,true);assert.equal(p.elements.get('photo').src,undefined);assert.equal(p.elements.get('finish').disabled,true);assert.equal(p.signatures,1);
+test('an older server without a review lifetime cannot accidentally enable unbounded display',async()=>{
+ const p=await ownerPage(false,false);await p.click('open');
+ assert.equal(p.elements.get('photo').src,undefined);assert.equal(p.elements.get('decision').hidden,true);
+ assert.equal(p.elements.get('finish').disabled,true);
 });
 function fixture() {
   const privateKeyBytes = randomBytes(32), raw = deriveRawModerationPublicKey(privateKeyBytes);

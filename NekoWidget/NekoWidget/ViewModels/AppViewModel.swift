@@ -3817,6 +3817,10 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func refreshCloudyWindow() async {
+        await rebuildWidgetCache(reportErrors: true)
+    }
+
     private func performRebuildWidgetCache(reportErrors: Bool) async {
         SharedLog.app.info(
             "widget-cache",
@@ -3830,7 +3834,10 @@ final class AppViewModel: ObservableObject {
             let revision = try synchronizePersonalWidgetAuthority()
             let input = candidateSnapshot(snapshot)
             let result = try await widgetCacheBuilder.replenishPersonal(
-                from: input, eligibilityRevision: revision)
+                from: input, eligibilityRevision: revision,
+                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
+            try synchronizeCloudyWindowMetadata()
+            try await CloudyWindowImagePreparer.shared.prepare()
             // Preparation is not a view. Keep legacy lastShownAt/shownCount
             // unchanged; the shared journal records issued slots separately.
             WidgetCenter.shared.reloadAllTimelines()
@@ -3853,8 +3860,11 @@ final class AppViewModel: ObservableObject {
                         do {
                             let batch = try await self.widgetCacheBuilder.replenishPersonal(
                                 from: input, eligibilityRevision: revision,
-                                skippingPhotoIDs: attemptedPhotoIDs)
+                                skippingPhotoIDs: attemptedPhotoIDs,
+                                priorityPhotoIDs: CloudyWindowStore.shared.albumPriorityPhotoIDs())
                             attemptedPhotoIDs.formUnion(batch.attemptedPhotoIDs)
+                            try self.synchronizeCloudyWindowMetadata()
+                            try await CloudyWindowImagePreparer.shared.prepare()
                             if batch.addedCount > 0 { WidgetCenter.shared.reloadAllTimelines() }
                             if !batch.hasMore { return }
                         } catch { return } // Next foreground/BG opportunity can resume.
@@ -3988,8 +3998,26 @@ final class AppViewModel: ObservableObject {
             isAuthorized: authorized, now: now, photoModificationDates: dates,
             bootstrapCandidates: bootstrap,
             interval: TimeInterval(curated.settings.widgetEntryIntervalMinutes * 60))
+        try synchronizeCloudyWindowMetadata(input: curated)
         if !bootstrap.isEmpty { WidgetCenter.shared.reloadAllTimelines() }
         return revision
+    }
+
+    private func synchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
+        guard InternalBuildPresentationAvailability.isAvailable,
+              CloudyWindowStore.shared.configuration().enabled else { return }
+        let records = (input ?? candidateSnapshot(snapshot)).assets
+        let received = receivedPhotoIdentifiers
+        var metadata: [String: CloudyWindowPhotoMetadata] = [:]
+        for record in records where !received.contains(record.localIdentifier) {
+            let profiles = catHouseholdIdentity?.confirmedProfileIDs(for: record.localIdentifier) ?? []
+            metadata[record.localIdentifier] = .init(creationDate: record.creationDate,
+                burstIdentifier: record.burstIdentifier,
+                profileIDs: Set(profiles.map { $0.uuidString.lowercased() }),
+                previouslyShown: record.shownCount > 0 || record.lastShownAt != nil)
+        }
+        try CloudyWindowStore.shared.synchronize(metadata: metadata,
+            profiles: Dictionary(uniqueKeysWithValues: catProfiles.map { ($0.id.uuidString.lowercased(), $0.displayName) }))
     }
 
     private func reconcilePersonalWidgetReadAuthority() async {

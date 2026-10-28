@@ -1,3 +1,4 @@
+import Photos
 import SwiftUI
 import UIKit
 
@@ -90,6 +91,9 @@ struct ShowcasePhotoView: View {
     @State private var showsPreparation = false
     @State private var showsCatPicker = false
     @State private var accessRevision = 0
+    /// The nine photos as one picture, for the share sheet. Built off the main
+    /// thread when the set changes; nil until then or when nothing can be drawn.
+    @State private var bestNineImage: UIImage?
     @AppStorage("showcase-shows-name-and-age") private var showsCaption = true
 
     private var scopeID: String { selectedScopeID ?? initialScopeID ?? "" }
@@ -97,8 +101,10 @@ struct ShowcasePhotoView: View {
     /// 「むぎ・3歳」 for one chosen cat. 「すべての猫」 has no caption: a photo's cat is not guessed.
     private var caption: String? {
         guard initialScopeID != nil, !scopeID.isEmpty,
-              let name = profiles.first(where: { $0.identifier == scopeID })?.displayName else { return nil }
-        let age = CatCareLostCat.age(CatCareSummary.record(profileIdentifier: scopeID)?.birthday?.value,
+              let profile = profiles.first(where: { $0.identifier == scopeID }) else { return nil }
+        let name = profile.displayName
+        // The cat profile's own birthday, so the age is right without opening another tool.
+        let age = CatCareLostCat.age(profile.lifeDates.birthday.flatMap { CatCareDay(date: $0.date) },
                                      today: CatCareDay(date: Date()))
         return [name, age].compactMap { $0 }.joined(separator: "・")
     }
@@ -113,6 +119,9 @@ struct ShowcasePhotoView: View {
             store.imageURL(for: entry).map { .prepared(entry, $0) }
         }
     }
+
+    /// The band under the nine: the cat's name.
+    private var bandTitle: String? { scopeID.isEmpty ? nil : visibleTitle }
 
     private var visibleTitle: String {
         guard initialScopeID != nil else { return title }
@@ -185,10 +194,12 @@ struct ShowcasePhotoView: View {
             if !displayedItems.isEmpty {
                 ZStack {
                     ScrollView {
+                    // A tight 3×3: the nine read as one picture, with the cat's
+                    // name on a band at the bottom.
                     LazyVGrid(columns: Array(
-                        repeating: GridItem(.flexible(), spacing: 8),
+                        repeating: GridItem(.flexible(), spacing: 3),
                         count: dynamicTypeSize.isAccessibilitySize ? 2 : 3
-                    ), spacing: 8) {
+                    ), spacing: 3) {
                         ForEach(Array(displayedItems.enumerated()), id: \.element.id) { index, item in
                             Button { selectedIndex = index } label: {
                                 ShowcaseSquare { image(for: item, fillsSquare: true) }
@@ -201,9 +212,49 @@ struct ShowcasePhotoView: View {
                             .accessibilityIdentifier("showcase-gallery-photo")
                         }
                     }
+                    .overlay(alignment: .bottom) {
+                        if initialScopeID != nil, let bandTitle {
+                            Text(bandTitle)
+                                .font(.headline)
+                                .tracking(2)
+                                .frame(maxWidth: .infinity, minHeight: 40)
+                                .background(.black.opacity(0.55))
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .padding(16)
+                    if detailIndex == nil, initialScopeID != nil {
+                        if let bestNineImage {
+                            ShareLink(item: Image(uiImage: bestNineImage),
+                                      preview: SharePreview("\(visibleTitle)の自慢の 9 枚",
+                                                            image: Image(uiImage: bestNineImage))) {
+                                Label("画像にして共有", systemImage: "square.and.arrow.up")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity, minHeight: 50)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.horizontal, 16)
+                            .accessibilityIdentifier("showcase-share-best-nine")
+                        }
+                        Text("写真を押すと大きく見られます。鉛筆から差し替えられます。")
+                            .font(.footnote)
+                            .foregroundStyle(.white.opacity(0.7))
+                            .padding(.top, 10)
+                    }
                     }
                     .id(scopeID)
+                    .task(id: displayedItems.map(\.id).joined(separator: ",") + (bandTitle ?? "")) {
+                        bestNineImage = nil
+                        var sources: [UIImage] = []
+                        for item in displayedItems.prefix(9) {
+                            if let image = await Self.image(of: item) { sources.append(image) }
+                        }
+                        let title = bandTitle
+                        bestNineImage = await Task.detached(priority: .userInitiated) {
+                            BestNineComposer.image(sources, title: title)
+                        }.value
+                    }
                     .opacity(detailIndex == nil ? 1 : 0)
                     .allowsHitTesting(detailIndex == nil)
                     .accessibilityHidden(detailIndex != nil)
@@ -332,6 +383,41 @@ struct ShowcasePhotoView: View {
         }
     }
 
+    /// The picture behind an item, for the composed image: the kept file, or
+    /// a Photos rendition fetched on this iPhone (no network).
+    private static func image(of item: Item) async -> UIImage? {
+        switch item {
+        case let .prepared(_, url):
+            return UIImage(contentsOfFile: url.path)
+        case let .current(identifier):
+#if DEBUG
+            if let fixture = AppStoreScreenshotFixture.image(for: identifier) { return fixture }
+#endif
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject
+            else { return nil }
+            return await withCheckedContinuation { continuation in
+                let options = PHImageRequestOptions()
+                options.deliveryMode = .highQualityFormat
+                options.resizeMode = .fast
+                options.isNetworkAccessAllowed = false
+                var completed = false
+                PHImageManager.default().requestImage(
+                    for: asset, targetSize: CGSize(width: 800, height: 800),
+                    contentMode: .aspectFill, options: options
+                ) { image, info in
+                    if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
+                    guard !completed else { return }
+                    completed = true
+                    continuation.resume(returning: image)
+                }
+            }
+#if DEBUG && targetEnvironment(simulator)
+        case let .fixture(_, image):
+            return image
+#endif
+        }
+    }
+
 #if DEBUG && targetEnvironment(simulator)
     static var layoutFixtureItems: [Item]? {
         guard ProcessInfo.processInfo.arguments.contains("--showcase-gallery-ui-fixture") else { return nil }
@@ -350,6 +436,48 @@ struct ShowcasePhotoView: View {
         }
     }
 #endif
+}
+
+/// Draws up to nine photos as one square picture: three by three, square
+/// crops, a thin gap, and the cat's name on a dark band. Nothing but pixels
+/// from the kept photos goes into it.
+enum BestNineComposer {
+    static func image(_ photos: [UIImage], title: String?) -> UIImage? {
+        guard !photos.isEmpty else { return nil }
+        let cell: CGFloat = 400, gap: CGFloat = 6, band: CGFloat = title == nil ? 0 : 96
+        let side = cell * 3 + gap * 4
+        let size = CGSize(width: side, height: side + band)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor.black.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            for (index, photo) in photos.prefix(9).enumerated() {
+                let column = CGFloat(index % 3), row = CGFloat(index / 3)
+                let frame = CGRect(x: gap + column * (cell + gap), y: gap + row * (cell + gap), width: cell, height: cell)
+                context.cgContext.saveGState()
+                context.cgContext.clip(to: frame)
+                // Centre crop to a square.
+                let scale = max(cell / photo.size.width, cell / photo.size.height)
+                let drawn = CGSize(width: photo.size.width * scale, height: photo.size.height * scale)
+                photo.draw(in: CGRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2,
+                                      width: drawn.width, height: drawn.height))
+                context.cgContext.restoreGState()
+            }
+            if let title {
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.alignment = .center
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 40, weight: .semibold),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: paragraph,
+                    .kern: 4
+                ]
+                (title as NSString).draw(in: CGRect(x: 0, y: side + (band - 48) / 2, width: side, height: 48),
+                                         withAttributes: attributes)
+            }
+        }
+    }
 }
 
 /// The owner's compact, persistent set. Candidate browsing is a separate sheet.
@@ -788,9 +916,12 @@ struct ShowcaseToolCatPicker: View {
                     Section {
                         Button("すべての猫") { select(""); dismiss() }
                     }
-                    Section("まだ登録していない猫") {
-                        ForEach(storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }, id: \.self) { scope in
-                            Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
+                    let former = storedScopes.filter { scope in !scope.isEmpty && !profiles.contains { $0.identifier == scope } }
+                    if !former.isEmpty {
+                        Section("まだ登録していない猫") {
+                            ForEach(former, id: \.self) { scope in
+                                Button("以前選んだ写真・\(storeOrder(scope))") { select(scope); dismiss() }
+                            }
                         }
                     }
                 }

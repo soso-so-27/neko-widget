@@ -186,6 +186,13 @@ actor GroupWindowFixture: GroupWindowClient {
         try validate(windowID)
         if room.myRole == .owner { throw GroupClientError.ownerCannotLeave }
     }
+    func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow {
+        try validate(windowID)
+        let key = "rotate"
+        if let old = try begin(operation, fingerprint: key) { return old }
+        room.state = .active
+        return commit(operation, fingerprint: key, rotates: true)
+    }
     func photos(windowID: String) async throws -> [GroupPhoto] { try validate(windowID); return pictures }
     func setHeart(photoID: String, windowID: String, active: Bool, operationID: UUID) async throws -> GroupPhoto {
         try validate(windowID)

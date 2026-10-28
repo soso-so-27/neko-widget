@@ -3,6 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Public programme boundaries: local publisher/Worker and native metadata.
+# No UI suite, remote calls or publication.
+node --test ../OfficialWindowService/test/program.test.js ../OfficialWindowService/test/black-cat-days.test.js ../OfficialWindowService/test/program-black-cat.test.js ../OfficialWindowService/test/black-cat-loop.test.js ../OfficialWindowService/test/black-cat-loop-monitor.test.js
+xcrun swiftc -parse-as-library -D OFFICIAL_WINDOW_CHECKS \
+  Shared/Models/OfficialWindowCatalog.swift Shared/Storage/AtomicJSON.swift \
+  Shared/Storage/OfficialWindowStore.swift ci/verify-official-window.swift \
+  -o "$RUNNER_TEMP/verify-official-window"
+"$RUNNER_TEMP/verify-official-window"
+
 python3 ci/test-disabled-release-config.py
 python3 ci/test-disabled-release-build-settings.py
 python3 ci/test-group-window-release.py
@@ -50,6 +59,26 @@ xcrun swiftc -parse-as-library \
   ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-veterinary-visits"
 "$RUNNER_TEMP/verify-veterinary-visits"
 
+# Family notebook stage 1: isolated stores and synthetic data only. The same
+# source files are compiled into the app, with no UI or network connection.
+notebook_common=(
+  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift
+  Shared/Models/CatCandidateCuration.swift Shared/Models/CatHouseholdIdentity.swift
+  Shared/Models/CatProfileTransfer.swift Shared/Models/NekoWidgetError.swift
+  Shared/Models/WidgetRenderPlan.swift Shared/Models/WidgetManifest.swift
+  Shared/Storage/AtomicJSON.swift Shared/AppGroup/SharedContainer.swift
+  NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookStore.swift
+)
+xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
+  ci/verify-family-notebook.swift -o "$RUNNER_TEMP/verify-family-notebook"
+"$RUNNER_TEMP/verify-family-notebook"
+xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
+  NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
+  NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift \
+  NekoWidget/Services/FamilyNotebookMigration.swift \
+  ci/verify-family-notebook-migration.swift -o "$RUNNER_TEMP/verify-family-notebook-migration"
+"$RUNNER_TEMP/verify-family-notebook-migration"
+
 xcrun swiftc -parse-as-library Shared/MembershipAccessPolicy.swift \
   ci/verify-membership-access.swift -o "$RUNNER_TEMP/verify-membership-access"
 "$RUNNER_TEMP/verify-membership-access"
@@ -69,6 +98,21 @@ xcrun --sdk macosx swiftc \
   ci/verify-personal-rediscovery.swift \
   -o "$RUNNER_TEMP/verify-personal-rediscovery"
 "$RUNNER_TEMP/verify-personal-rediscovery"
+
+xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
+  Shared/Models/WidgetManifest.swift Shared/Models/WidgetRenderPlan.swift \
+  Shared/Storage/PersonalRediscoveryStore.swift Shared/Storage/CloudyWindowStore.swift \
+  ci/verify-cloudy-window.swift -o "$RUNNER_TEMP/verify-cloudy-window"
+"$RUNNER_TEMP/verify-cloudy-window"
+
+xcrun --sdk macosx swiftc -parse-as-library \
+  Shared/Models/AppSettings.swift Shared/Models/NormalizedRect.swift \
+  Shared/Models/CatDetection.swift Shared/Models/AssetRecord.swift \
+  Shared/Models/ScanState.swift Shared/Models/LibrarySnapshot.swift \
+  NekoWidget/Views/GrowthAlbumSelector.swift NekoWidget/Views/AppPresentationModels.swift \
+  NekoWidget/Views/MonthlyWindowPresentation.swift ci/verify-monthly-window.swift \
+  -o "$RUNNER_TEMP/verify-monthly-window"
+"$RUNNER_TEMP/verify-monthly-window"
 
 # ADR-027 5章: the one Plus screen opens only from its entry places. A new
 # caller of the sheet (or of the prompt that opens it) must be added here on

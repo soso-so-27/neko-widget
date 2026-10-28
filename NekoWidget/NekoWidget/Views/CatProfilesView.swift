@@ -266,7 +266,7 @@ struct CatProfilesView: View {
                 Button {
                     organizationDestination = .unassigned
                 } label: {
-                    Label("猫を選んでいない写真", systemImage: "photo.on.rectangle")
+                    Label("どの猫か決めていない写真", systemImage: "photo.on.rectangle")
                 }
                 .accessibilityIdentifier("cat-profiles-unassigned")
             }
@@ -740,8 +740,17 @@ struct ToolCatPicker<Legacy: View>: View {
         Group {
             Section("猫のプロフィール") {
                 ForEach(profiles) { profile in
-                    Button { select(profile) } label: { Label(profile.displayName, systemImage: "cat") }
-                        .accessibilityIdentifier("tool-profile-\(profile.identifier)")
+                    // A row that opens the cat's page: black text and a chevron, like a link.
+                    Button { select(profile) } label: {
+                        HStack {
+                            Label(profile.displayName, systemImage: "cat")
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("tool-profile-\(profile.identifier)")
                 }
                 Button("猫を追加", systemImage: "plus") { name = ""; addsCat = true }
                     .accessibilityIdentifier("tool-profile-add").disabled(busy)
@@ -770,12 +779,80 @@ struct ToolCatPicker<Legacy: View>: View {
     }
 }
 
+/// A cat in the row at the top of a もしも tool.
+struct ToolStripCat: Identifiable, Equatable {
+    let id: String
+    let name: String
+    /// nil for a cat without a profile (one written only in a tool).
+    let profile: CatProfilePresentation?
+    /// Kept from the old lists, so the same identifier still finds the cat.
+    let accessibilityIdentifier: String
+}
+
+/// The row of cats at the top of a もしも tool: round photo and name, the
+/// chosen one ringed. Tapping switches the page in place. With one cat
+/// there is nothing to choose, so the row stays away.
+struct ToolCatStrip: View {
+    let cats: [ToolStripCat]
+    let selectedID: String?
+    let select: (ToolStripCat) -> Void
+
+    var body: some View {
+        if cats.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(cats) { cat in
+                        Button { select(cat) } label: { chip(cat) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(cat.name)
+                            .accessibilityAddTraits(cat.id == selectedID ? .isSelected : [])
+                            .accessibilityIdentifier(cat.accessibilityIdentifier)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .background(Color(.systemGroupedBackground))
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("tool-cat-strip")
+        }
+    }
+
+    private func chip(_ cat: ToolStripCat) -> some View {
+        let chosen = cat.id == selectedID
+        return VStack(spacing: 4) {
+            Group {
+                if let profile = cat.profile {
+                    CatProfileThumbnail(photo: profile.coverPhoto)
+                } else {
+                    Image(systemName: "cat")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(.tertiarySystemFill))
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(chosen ? Color.accentColor : Color.clear, lineWidth: 3))
+            .padding(3)
+            Text(cat.name)
+                .font(.caption.weight(chosen ? .bold : .regular))
+                .foregroundStyle(chosen ? .primary : .secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .frame(width: 72)
+        .contentShape(Rectangle())
+    }
+}
+
 struct ToolCatProfileInfo: View {
     let profile: CatProfilePresentation
     let profiles: [CatProfilePresentation]
     @Environment(\.toolProfileActions) private var actions
     var body: some View {
-        Section("この子のこと") {
+        Section("猫のプロフィール") {
             LabeledContent("名前", value: profile.displayName)
             if let birthday = profile.lifeDates.birthday {
                 LabeledContent("誕生日", value: birthday.date.formatted(date: .abbreviated, time: .omitted))
