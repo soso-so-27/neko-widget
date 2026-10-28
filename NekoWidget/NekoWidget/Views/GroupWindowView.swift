@@ -2196,6 +2196,10 @@ struct GroupReportsView: View {
 
     /// What the answer means, in the app's own words. Never the server's.
     static func text(_ record: GroupReportRecord) -> String {
+        // A received report keeps its answer after the photo's 7 days end.
+        if record.reply != .none, record.progress == .received || record.progress == .expired {
+            return replyText(record.reply)
+        }
         switch record.progress {
         case .preparing, .sending: return "送っています。"
         case .retryable: return "送り終わっていません。"
@@ -2204,10 +2208,15 @@ struct GroupReportsView: View {
         case .authenticationRequired, .unavailable: return "いまは状態を確かめられません。"
         case .received: break
         }
-        switch record.reply {
+        return replyText(record.reply)
+    }
+
+    /// The same words whether a person or the 7-day rule stopped the photo.
+    private static func replyText(_ reply: GroupReportReply) -> String {
+        switch reply {
         case .none: return "受け付けました。運営からの返答はまだありません。"
         case .noAction: return "確認しました。今回は配信を止める対応はしていません。"
-        case .restricted: return "確認し、このまどでの配信を止める対応をしました。"
+        case .restricted: return "このまどでの配信を止めました。"
         case .released: return "この通報で止めていた配信を、もとに戻しました。"
         case .unknown: return "運営から返答があります。アプリを最新にすると読めます。"
         }
