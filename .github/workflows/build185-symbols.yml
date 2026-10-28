@@ -58,7 +58,7 @@ jobs:
           python3 NekoWidget/ci/resolve-build185-symbols.py --input-directory "$diagnostic"
 
   resolve309:
-    if: inputs.build == '309' && github.ref == 'refs/heads/codex/suspension-file-locks-20261028' && github.repository == 'soso-so-27/neko-widget'
+    if: inputs.build == '309' && github.ref == 'refs/heads/main' && github.repository == 'soso-so-27/neko-widget'
     runs-on: macos-15
     timeout-minutes: 15
     environment: testflight

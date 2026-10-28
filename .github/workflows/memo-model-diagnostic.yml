@@ -1,6 +1,7 @@
 name: Private memo model diagnostic
 
 on:
+  workflow_dispatch:
   push:
     branches: ['diagnostic/memo-veterinary-*']
     paths:
@@ -24,6 +25,7 @@ concurrency:
 
 jobs:
   private-models:
+    if: github.event_name == 'push'
     name: Apple persistence models only - not release evidence
     runs-on: macos-15
     timeout-minutes: 10
@@ -57,3 +59,23 @@ jobs:
           path: ${{ runner.temp }}/neko-memo-model-diagnostic
           retention-days: 7
           if-no-files-found: warn
+
+  personal-store:
+    if: github.event_name == 'workflow_dispatch'
+    name: Personal store concurrency probe - not release evidence
+    runs-on: macos-15
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check atomic snapshots, publication races, and existing state machine
+        working-directory: NekoWidget
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
+            Shared/Models/WidgetManifest.swift Shared/Models/WidgetRenderPlan.swift \
+            Shared/Storage/PersonalRediscoveryStore.swift ci/verify-personal-rediscovery.swift \
+            -o "$RUNNER_TEMP/verify-personal-rediscovery"
+          "$RUNNER_TEMP/verify-personal-rediscovery"
