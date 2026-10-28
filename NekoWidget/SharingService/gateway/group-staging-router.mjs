@@ -1,6 +1,6 @@
 // Route only the new namespace to current code. Every pre-existing request,
 // environment and schedule stays with the downloaded, unchanged live module.
-export function createGroupStagingRouter(legacy, group, cleanup, cleanupCron) {
+export function createGroupStagingRouter(legacy, group, cleanup, cleanupCron, drainGroup, drainCron) {
   return {
     fetch(request, env, ctx) {
       const path = new URL(request.url).pathname;
@@ -14,6 +14,7 @@ export function createGroupStagingRouter(legacy, group, cleanup, cleanupCron) {
     scheduled(controller, env, ctx) {
       const existing = legacy.scheduled(controller, env, ctx);
       if (controller.cron === cleanupCron) ctx.waitUntil(cleanup(env));
+      if (drainGroup && controller.cron === drainCron) ctx.waitUntil(drainGroup(env));
       return existing;
     },
   };

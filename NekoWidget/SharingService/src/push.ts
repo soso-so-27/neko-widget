@@ -31,7 +31,7 @@ type APNsEnvironment = "development" | "production";
 type NotificationKind = "new_moment" | "heart";
 type NotificationRouteSchemaVersion = 1 | 2;
 
-interface ProviderCredential {
+export interface ProviderCredential {
   keyId: string;
   teamId: string;
   bundleId: string;
@@ -39,7 +39,7 @@ interface ProviderCredential {
   privateKey: string;
 }
 
-interface TokenKeyring {
+export interface TokenKeyring {
   current: string;
   keys: ReadonlyMap<string, Uint8Array>;
 }
@@ -109,7 +109,7 @@ function secretString(object: JsonRecord, key: string): string {
   return value;
 }
 
-function parseProviderCredential(env: Env): ProviderCredential {
+export function parseProviderCredential(env: Env): ProviderCredential {
   if (env.APNS_PROVIDER_CREDENTIAL_JSON === undefined) {
     throw new Error("APNs provider credential is unavailable.");
   }
@@ -147,7 +147,7 @@ function parseProviderCredential(env: Env): ProviderCredential {
   return { keyId, teamId, bundleId, environment, privateKey };
 }
 
-function parseTokenKeyring(env: Env): TokenKeyring {
+export function parseTokenKeyring(env: Env): TokenKeyring {
   if (env.APNS_TOKEN_KEYRING_JSON === undefined) {
     throw new Error("APNs token keyring is unavailable.");
   }
@@ -204,7 +204,7 @@ async function importAESKey(bytes: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", buffer(bytes), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
 
-async function encryptDeviceToken(
+export async function encryptDeviceToken(
   token: Uint8Array,
   deviceID: string,
   credential: ProviderCredential,
@@ -235,8 +235,8 @@ async function encryptDeviceToken(
   };
 }
 
-async function decryptDeviceToken(
-  row: DispatchRow,
+export async function decryptDeviceToken(
+  row: Pick<DispatchRow,'device_id'|'environment'|'encryption_key_id'|'token_nonce'|'token_ciphertext'|'token_digest'>,
   credential: ProviderCredential,
   keyring: TokenKeyring,
 ): Promise<Uint8Array> {
@@ -628,7 +628,7 @@ function pemPKCS8Bytes(value: string): Uint8Array {
   return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
 
-async function providerJWT(credential: ProviderCredential, now: number): Promise<string> {
+export async function providerJWT(credential: ProviderCredential, now: number): Promise<string> {
   const cacheKey = `${credential.teamId}:${credential.keyId}`;
   const cached = providerTokenCache.get(cacheKey);
   if (cached !== undefined && now - cached.issuedAt < 50 * 60) return cached.value;

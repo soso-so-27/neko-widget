@@ -6,4 +6,6 @@ import group from '../src/index.ts';
 import { runGroupRelayCleanup } from '../src/group-cleanup.ts';
 import { MOMENT_CLEANUP_CRON } from '../src/scheduled.ts';
 import { createGroupStagingRouter } from './group-staging-router.mjs';
-export default createGroupStagingRouter(legacy, group, runGroupRelayCleanup, MOMENT_CLEANUP_CRON);
+import { drainGroupNotifications } from '../src/group-push.ts';
+import { APNS_DRAIN_CRON } from '../src/push.ts';
+export default createGroupStagingRouter(legacy, group, runGroupRelayCleanup, MOMENT_CLEANUP_CRON, drainGroupNotifications, APNS_DRAIN_CRON);

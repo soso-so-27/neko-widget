@@ -49,6 +49,9 @@ export async function recordGroupHeart(env:Env,actor:GroupActor,windowId:string,
         WHERE e.id=? AND d.participant_id=? AND d.device_id<>? AND d.state IN ('pending','acknowledged')
           AND d.access_expires_at>? AND s.expires_at>? ON CONFLICT(event_id,device_id) DO NOTHING`)
         .bind(eventId,actor.now,eventId,row.sender_participant_id,actor.deviceId,actor.now,actor.now));
+    // Gate OFF deployments must not depend on the additive push migration.
+    if(env.GROUP_APNS_RUNTIME_ENABLED==='YES')statements.push(env.DB.prepare(
+      `INSERT INTO group_heart_notification_operations SELECT id,? FROM group_notification_events WHERE id=?`).bind(operationId,eventId));
   }
   statements.push(groupMutationStatement(env,actor,operationId,response));
   await env.DB.batch(statements);return groupHeartResponse(env,actor,windowId,momentId,response);

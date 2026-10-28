@@ -90,6 +90,33 @@ window／moment／reporter／reason／moderation keyへの結び付けをクラ�
 このreceiverは暗号文のサイズ・SHA-256と署名済み予約を検証し、元の写真・グループ鍵の取得や復号はしません。
 アプリの実装は #465 のmain取り込み後に行います。
 
+### グループのプッシュ通知（ドラフト・未稼働）
+
+追加schema `0046_group_push_delivery.sql` とサーバーの登録・送信処理です。
+`GROUP_APNS_RUNTIME_ENABLED=YES` を明示した場合だけ登録・送信し、
+既存のGROUP・MEDIA・APNsのruntimeとD1側のmedia/APNs gateも必要です。
+設定の既定値は変えません。稼働D1への適用やCloudflare反映は所有者確認後です。
+新しい定期実行は作らず、既存のAPNs cronにグループ用drainを追加する接続を用意します。
+従来のWorkerが担当する既存のHTTP・定期処理はそのまま呼びます。
+
+- `POST /v3/group-windows/{windowId}/push-subscription`: v3署名、JSON `{operationId, token, environment}`。
+  tokenは16〜256 bytesのbase64url、環境は現在のAPNs設定と一致が必要です。
+- `POST /v3/group-windows/{windowId}/push-subscription/remove`: v3署名、JSON `{operationId}`。
+  push受付OFFでも解除できます。世代番号を残すので、再登録で古い通知を復活させません。
+
+トークンは既存のAES-GCM keyringで暗号化し、35日後の期限切れや解除時に暗号文を消します。
+同じ物理tokenを別のdevice identityが登録すると、前のidentityのグループ登録を失効させます。
+既存の2人用token registryは変更しません。
+写真・ハートの通知直前に、現在のメンバー／端末、退出・除外・閉鎖、相互ブロック、
+元の受信deliveryと期限、名簿の参加世代、token世代、D1のgate世代を再検査します。
+取り消したハートや、取り消し前の古い操作には通知しません。
+
+APNs本文は汎用の「新しい一枚が届きました。」等だけです。
+`neko: {v: 3, kind: 'moment' | 'heart', windowId: opaqueID}` を送り、
+写真・名前・まど名・ひとこと・鍵・object URLは含めません。
+まど名の表示、バックグラウンドでの取得・検証・ACK、Widget更新はアプリ側の作業です。
+APNsの200はAppleの受付であり、端末への到達成功とは区別します。
+
 すべてのresponseはJSONで、`Cache-Control: no-store`です。Error shapeは次のとおりです。
 
 ```json

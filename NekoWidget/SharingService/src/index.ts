@@ -112,6 +112,7 @@ import { familyRecords, runFamilyRecordCleanup } from "./family-records";
 import { groupAPI } from './group-api';
 import { runGroupRelayCleanup } from './group-cleanup';
 import { isGroupReportPath } from './group-reports';
+import { drainGroupNotifications } from './group-push';
 
 export async function route(
   request: Request,
@@ -629,6 +630,7 @@ export default {
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
       ctx.waitUntil(drainNotificationOutbox(env));
+      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(drainGroupNotifications(env));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
       if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {
