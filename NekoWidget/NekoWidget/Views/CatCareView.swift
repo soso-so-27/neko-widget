@@ -117,7 +117,7 @@ struct CatFarewellEditor: View {
                 Section {
                     DatePicker("旅立った日", selection: $date, in: ...Date(), displayedComponents: .date)
                 } footer: {
-                    Text("写真や記録は、すべてそのまま残ります。")
+                    Text("写真や記録は、すべてそのまま残ります。ホーム画面のウィジェットもそのままです。変えたいときは、ウィジェットを長押しして「ウィジェットを編集」から選べます。")
                 }
                 if recorded != nil {
                     Section {
