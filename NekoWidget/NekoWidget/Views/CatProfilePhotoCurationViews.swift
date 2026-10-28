@@ -43,6 +43,7 @@ struct CatProfileDetailView: View {
     @State private var deleteFailed = false
     @State private var page: CatPage = .photos
     @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
 
     enum CatPage: Hashable { case photos, care }
 
@@ -130,6 +131,15 @@ struct CatProfileDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .listRowBackground(Color.clear)
+                if AlbumPrototype.isOn(albumPrototypeStored),
+                   let day = CatFarewell.days(farewellJSON)[profile.identifier] {
+                    Text(CatFarewell.text(day) + "に旅立ちました")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                        .accessibilityIdentifier("cat-profile-farewell")
+                }
 
                 if showsNameEditor {
                     TextField("名前", text: $draftName)
