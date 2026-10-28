@@ -2074,6 +2074,13 @@ struct GroupReportSheet: View {
                     } footer: {
                         Text("この写真は、このiPhoneでは表示しません。運営が確かめて、結果をまどの「メンバー」の「通報への返答」でお知らせします。")
                     }
+                    if let number = record.receiptNumber {
+                        Section {
+                            GroupReportReceiptRow(number: number)
+                        } footer: {
+                            Text("問い合わせるときは、この番号を添えてください。")
+                        }
+                    }
                 } else {
                     Section {
                         ForEach(GroupReportReason.allCases, id: \.self) { candidate in
@@ -2165,6 +2172,12 @@ struct GroupReportsView: View {
                         Text(record.sentAt.formatted(.dateTime.month().day())).font(.footnote).foregroundStyle(.secondary)
                     }
                     Text(Self.text(record)).font(.footnote).foregroundStyle(.secondary)
+                    if let number = record.receiptNumber, record.progress == .received {
+                        Text("受付番号 \(number)")
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
                     if record.progress == .retryable {
                         Button("もう一度送る") {
                             Task {
@@ -2220,6 +2233,19 @@ struct GroupReportsView: View {
         case .released: return "この通報で止めていた配信を、もとに戻しました。"
         case .unknown: return "運営から返答があります。アプリを最新にすると読めます。"
         }
+    }
+}
+
+/// The number to quote when asking about a report. It opens nothing by itself.
+private struct GroupReportReceiptRow: View {
+    let number: String
+
+    var body: some View {
+        LabeledContent("受付番号") {
+            Text(number).font(.body.monospaced()).textSelection(.enabled)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("group-report-receipt-number")
     }
 }
 

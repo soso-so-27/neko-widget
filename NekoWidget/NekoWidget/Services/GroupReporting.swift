@@ -198,7 +198,18 @@ final class GroupReportingPrototype: GroupReportingService {
     }
 
     func submitReport(draftID: String) async throws -> GroupReportRecord {
-        try update(draftID) { $0.progress = .received }
+        try update(draftID) {
+            $0.progress = .received
+            if $0.receiptNumber == nil { $0.receiptNumber = Self.sampleReceiptNumber() }
+        }
+    }
+
+    /// Test only: the same shape as the server's numbers (R-XXXX-XXXX-XX).
+    private static func sampleReceiptNumber() -> String {
+        let letters = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+        let body = String((0..<10).map { _ in letters.randomElement()! })
+        let a = body.prefix(4), b = body.dropFirst(4).prefix(4), c = body.suffix(2)
+        return "R-\(a)-\(b)-\(c)"
     }
 
     func resumeReport(draftID: String) async throws -> GroupReportRecord {
