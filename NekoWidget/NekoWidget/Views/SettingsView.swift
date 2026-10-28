@@ -92,7 +92,6 @@ struct SettingsView: View {
     @AppStorage(AlbumPrototype.key) private var albumPrototypeOn = false
     @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
     @AppStorage(AlbumPrototype.slideshowKey) private var albumSlideshow = false
-    @AppStorage(PhotoLibraryPagerProgress.pushKey) private var photoSectionsPush = false
     @State private var showsWindowSupportPreview = false
     @State private var cloudyWindowEnabled = CloudyWindowStore.shared.configuration().enabled
     @State private var cloudyWindowStrength = CloudyWindowStore.shared.configuration().strength
@@ -355,8 +354,6 @@ struct SettingsView: View {
                         if let cloudyWindowError {
                             Text(cloudyWindowError).foregroundStyle(.red)
                         }
-                        Toggle("写真タブの横移動を前の形にする（押し出す）", isOn: $photoSectionsPush)
-                            .accessibilityIdentifier("settings-photos-sections-push")
                         // The album as works that arrive, with the monthly story.
                         Toggle("新しいアルバムとタブの並び（試作）", isOn: $albumPrototypeOn)
                             .accessibilityIdentifier("settings-album-prototype")
