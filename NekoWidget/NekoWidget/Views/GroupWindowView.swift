@@ -752,6 +752,8 @@ struct GroupWindowScreen: View {
             }
         }
         .task {
+            // Photos this person reported stay covered on this iPhone, from the first frame.
+            await GroupSafety.shared.loadRecords(windowID: model.windowID)
             await model.showStored()
             await model.sync()
 #if DEBUG
@@ -905,16 +907,21 @@ private struct GroupPhotoTile: View {
     let entry: GroupWindowLocalPhotoStore.Entry
     let open: () -> Void
     @State private var image: UIImage?
+    @ObservedObject private var safety = GroupSafety.shared
 
     private var heartCount: Int { model.hearts[entry.id]?.filter(\.active).count ?? 0 }
-    private var canHeart: Bool { !entry.isHidden && !entry.isOwn && !model.isFormer }
+    private var reported: Bool { safety.hasReported(entry.id, in: model.windowID) }
+    private var canHeart: Bool { !entry.isHidden && !reported && !entry.isOwn && !model.isFormer }
 
     var body: some View {
         VStack(spacing: 0) {
             Color(uiColor: .tertiarySystemFill)
                 .aspectRatio(4 / 3, contentMode: .fit)
                 .overlay {
-                    if entry.isHidden {
+                    if reported {
+                        Label("通報した写真", systemImage: "eye.slash")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    } else if entry.isHidden {
                         Image(systemName: "eye.slash").font(.title2).foregroundStyle(.secondary)
                     } else if let image {
                         Image(uiImage: image).resizable().scaledToFill()
@@ -967,13 +974,14 @@ private struct GroupPhotoTile: View {
                 GroupPhotoDecoder.image(at: url, maxPixel: 900)
             }.value
         }
+        .onChange(of: reported) { _, covered in if covered { image = nil } }
     }
 }
 
 private extension GroupPhotoTile {
     var tileLabel: String {
         var parts = [entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から届いた写真"]
-        if entry.isHidden { parts.append("表示していない写真") }
+        if reported { parts.append("通報した写真") } else if entry.isHidden { parts.append("表示していない写真") }
         if !(model.hearts[entry.id]?.filter(\.active).isEmpty ?? true) { parts.append("ハートあり") }
         return parts.joined(separator: "、")
     }
@@ -1222,8 +1230,10 @@ private struct GroupPhotoDetail: View {
                                 showsHideConfirmation = true
                             }
                             if safety.service.isAvailable {
-                                Button("この写真を通報", systemImage: "exclamationmark.bubble") { reportTarget = current }
-                                    .accessibilityIdentifier("group-photo-report")
+                                if !safety.hasReported(current.id, in: model.windowID) {
+                                    Button("この写真を通報", systemImage: "exclamationmark.bubble") { reportTarget = current }
+                                        .accessibilityIdentifier("group-photo-report")
+                                }
                                 Button("\(GroupDisplayName.withSan(current.senderDisplayName))をブロック", systemImage: "hand.raised") {
                                     showsBlockConfirmation = true
                                 }
@@ -1328,8 +1338,9 @@ private struct GroupPhotoDetail: View {
     private func actions(_ entry: GroupWindowLocalPhotoStore.Entry) -> some View {
         let heartCount = reactors(entry).count
         let mine = model.myHeartIsActive(entry.id)
+        let shown = !entry.isHidden && !safety.hasReported(entry.id, in: model.windowID)
         HStack(spacing: 0) {
-            if !entry.isHidden && !entry.isOwn && !model.isFormer {
+            if shown && !entry.isOwn && !model.isFormer {
                 Button {
                     Task { await model.toggleHeart(entry.id) }
                 } label: {
@@ -1351,7 +1362,7 @@ private struct GroupPhotoDetail: View {
                 .accessibilityValue(heartCount > 0 ? "\(heartCount)" : "")
                 .accessibilityIdentifier("group-photo-heart")
             }
-            if !entry.isHidden && !entry.isOwn {
+            if shown && !entry.isOwn {
                 if entry.favoriteLocalIdentifier != nil {
                     VStack(spacing: 3) {
                         Image(systemName: "bookmark.fill").font(.title2)
@@ -1387,10 +1398,14 @@ private struct GroupPhotoPage: View {
     @ObservedObject var model: GroupWindowScreenModel
     let entry: GroupWindowLocalPhotoStore.Entry
     @State private var url: URL?
+    @ObservedObject private var safety = GroupSafety.shared
 
     var body: some View {
         Group {
-            if entry.isHidden {
+            if safety.hasReported(entry.id, in: model.windowID) {
+                ContentUnavailableView("通報した写真", systemImage: "eye.slash",
+                    description: Text("このiPhoneでは表示しません。結果は、まどの「メンバー」の「通報への返答」でお知らせします。"))
+            } else if entry.isHidden {
                 ContentUnavailableView("この写真は表示しません", systemImage: "eye.slash",
                     description: Text("iPhoneがセンシティブな内容と判断しました。右上の「…」から、このiPhoneから消せます。"))
             } else if let url, let image = UIImage(contentsOfFile: url.path) {
@@ -2057,7 +2072,7 @@ struct GroupReportSheet: View {
                         Label("受け付けました", systemImage: "checkmark.circle.fill")
                             .font(.headline)
                     } footer: {
-                        Text("運営が確認します。返答は、まどの「メンバー」の「通報への返答」に届きます。")
+                        Text("この写真は、このiPhoneでは表示しません。運営が確かめて、結果をまどの「メンバー」の「通報への返答」でお知らせします。")
                     }
                 } else {
                     Section {
@@ -2076,7 +2091,7 @@ struct GroupReportSheet: View {
                     } header: {
                         Text("理由")
                     } footer: {
-                        Text("この写真の暗号化したコピーだけを運営へ送ります。確認のため 7 日間扱い、そのあと削除します。まどの鍵やほかの写真は送りません。")
+                        Text("この写真の暗号化したコピーだけを運営へ送ります。確認のため 7 日間扱い、そのあと削除します。まどの鍵やほかの写真は送りません。送ると、この写真はこのiPhoneで見えなくなります。")
                     }
                     if let record, record.progress == .retryable {
                         Section {

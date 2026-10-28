@@ -5061,7 +5061,8 @@ class Build269FeedbackTests(unittest.TestCase):
                      "NekoWidget/Views/EvacuationPreparationView.swift"):
             self.assertIn("importBirthdays(profiles)", source(path), path)
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        self.assertIn("if !entry.isHidden && !entry.isOwn {", window)
+        self.assertIn("let shown = !entry.isHidden && !safety.hasReported(entry.id, in: model.windowID)", window)
+        self.assertIn("if shown && !entry.isOwn {", window)
 
 
 class TwoPersonWindowHiddenTests(unittest.TestCase):
