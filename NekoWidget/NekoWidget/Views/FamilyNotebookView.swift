@@ -47,7 +47,7 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// The cats an invitation shows (test builds: this iPhone's own).
     var catNames: [String] {
-        CatCareStore.shared.state.cats.compactMap { $0.name?.value }.filter { !$0.isEmpty }
+        (CatCareStore.shared.state?.cats ?? []).compactMap { $0.name?.value }.filter { !$0.isEmpty }
     }
 
     private init() {
