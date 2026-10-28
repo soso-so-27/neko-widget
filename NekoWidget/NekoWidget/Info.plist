@@ -96,6 +96,8 @@
 	<string>$(SHARING_FEATURE_ENABLED)</string>
 	<key>GroupWindowsEnabled</key>
 	<string>$(GROUP_WINDOWS_ENABLED)</string>
+	<key>GroupReportingProductionEnabled</key>
+	<string>$(GROUP_REPORTING_PRODUCTION_ENABLED)</string>
 	<key>SharingMediaEnabled</key>
 	<string>$(SHARING_MEDIA_ENABLED)</string>
 	<key>SharingShareExtensionHandoffEnabled</key>
