@@ -16,6 +16,8 @@ export interface Env {
   /// New group reports stay closed until the group-aware owner review path is
   /// ready. This never enables the legacy report gate or media traffic.
   GROUP_REPORT_RUNTIME_ENABLED?: string;
+  /// Group evidence decisions and delivery restrictions; defaults OFF.
+  GROUP_MODERATION_RUNTIME_ENABLED?: string;
   /// Group APNs registration/dispatch is an independent opt-in. Secrets or
   /// the legacy APNs switch alone never start new group notifications.
   GROUP_APNS_RUNTIME_ENABLED?: string;

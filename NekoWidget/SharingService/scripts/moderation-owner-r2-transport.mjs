@@ -32,12 +32,17 @@ export async function verifyWindowsKeyCustody(config,signal){
 /** Only fixed trusted startup code supplies this R2 binding and custody config.
  * The caller's owner handler owns fresh authorization, current source and audit.
  * No ordinary media bucket, disk plaintext, HTTP key route or dynamic key path. */
-export function createOwnerR2Transport({bucket,keyDirectory,publicKeySHA256,pipeName,brokerRecordFile,assertScope}){
+export function createOwnerR2Transport(config){
+ return createOwnerR2TransportForReviewHost(config,createLocalOwnerReviewHost);
+}
+// Fixed trusted startup code only; never selected from an HTTP request or JSON.
+export function createOwnerR2TransportForReviewHost({bucket,keyDirectory,publicKeySHA256,pipeName,brokerRecordFile,assertScope},trustedHostFactory){
+ if(typeof trustedHostFactory!=='function')fail();
  if(!bucket||typeof bucket.get!=='function'||typeof assertScope!=='function'||!path.isAbsolute(keyDirectory)||!/^[0-9a-f]{64}$/u.test(publicKeySHA256))fail();
  return async input=>{
   const owned=[];
   try{
-   const host=createLocalOwnerReviewHost({
+   const host=trustedHostFactory({
     async readCiphertext(source,signal){
      await assertScope();if(signal.aborted)fail();
      // Source object keys come ONLY from the current authorized D1 snapshot.

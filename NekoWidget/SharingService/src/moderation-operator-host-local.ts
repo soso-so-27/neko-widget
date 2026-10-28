@@ -1,10 +1,12 @@
 import { routeLocalModerationEnrollment, type LocalModerationEnrollmentEnvironment } from "./moderation-operator-enrollment-local";
 import { routeLocalModerationOperatorTriage, type LocalModerationTriageEnvironment } from "./moderation-operator-triage-local";
+import { routeGroupOperator,type GroupOperatorConfiguration } from './group-moderation-operator';
 
 /** Trusted local composition only; neither public nor disabled Worker imports it.
  * Offline administration supplies the existing identity, roles and authority keys.
  * The host never provisions them or treats an admission receipt as authentication. */
 export interface LocalModerationOperatorHostEnvironment extends LocalModerationTriageEnvironment {
+  group?:GroupOperatorConfiguration;
   enrollment: Pick<LocalModerationEnrollmentEnvironment, "operatorID" | "scope" | "activeRoles" | "authorities">;
 }
 type LocalOperatorHost = (request: Request) => Promise<Response>;
@@ -26,6 +28,7 @@ export function createLocalModerationOperatorHost(input: LocalModerationOperator
       origin:input.origin,rpId:input.rpId,access,...(input.reviewEvidence === undefined ? {} : {reviewEvidence:input.reviewEvidence}),
       syntheticCaseReferences:Object.freeze([...(input.syntheticCaseReferences??[])])});
     const origin = new URL(env.origin);
+    const group=input.group===undefined?undefined:Object.freeze({...input.group,caseHmacKey:new Uint8Array(input.group.caseHmacKey)});
     if (origin.protocol !== "https:" || origin.origin !== env.origin || origin.username || origin.password
         || origin.search || origin.hash || origin.hostname !== env.rpId
         || enrollment.scope.expectedOrigin !== env.origin || enrollment.scope.expectedRPID !== env.rpId
@@ -36,6 +39,7 @@ export function createLocalModerationOperatorHost(input: LocalModerationOperator
     return async request => {
       const url = new URL(request.url);
       if (url.origin !== env.origin || url.username || url.password || url.search || url.hash) return failure(403);
+      if(url.pathname.startsWith('/operator/group/'))return group?routeGroupOperator(request,{...env,group}):failure(503);
       if (url.pathname === "/operator/enrollment" || url.pathname.startsWith("/operator/v1/enrollment/")) {
         return routeLocalModerationEnrollment(request,registration);
       }

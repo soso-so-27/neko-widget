@@ -6,6 +6,7 @@ import { groupFields,loadStoredGroupRoster } from './group-protocol';
 import { groupCursor,groupPage } from './group-reads';
 import { groupDeliveryPolicyStatements } from './group-owner-plus';
 import { cleanLateGroupUpload } from './group-cleanup';
+import { groupModerationChecks,groupModerationPredicate,requireGroupMediaAllowed } from './group-moderation';
 import { binaryField,exactKeys,integerField,opaqueId,stringField,uuidField,type JsonRecord } from './validation';
 
 export const GROUP_MAX_CIPHERTEXT=1048576;
@@ -25,7 +26,8 @@ export async function groupMoment(env:Env,windowId:string,momentId:string):Promi
 }
 export function groupMediaChecks(env:Env,actor:GroupActor,momentId:string,purpose:'read'|'heart'|'upload'|'commit'):D1PreparedStatement[] {
   const id=crypto.randomUUID();
-  return [env.DB.prepare('INSERT INTO group_media_access_checks VALUES (?,?,?,?,?)').bind(id,actor.deviceId,momentId,Math.floor(Date.now()/1000),purpose),
+  return [...groupModerationChecks(env,{momentId,actorPersonId:purpose==='heart'?actor.personId:undefined}),
+    env.DB.prepare('INSERT INTO group_media_access_checks VALUES (?,?,?,?,?)').bind(id,actor.deviceId,momentId,Math.floor(Date.now()/1000),purpose),
     env.DB.prepare('DELETE FROM group_media_access_checks WHERE id=?').bind(id)];
 }
 export async function requireGroupDelivery(env:Env,actor:GroupActor,row:GroupMomentRow):Promise<{accessExpiresAt:number}> {
@@ -49,7 +51,11 @@ export async function groupPhotoProof(actor:GroupActor,windowId:string,participa
 export async function reserveGroupPhoto(env:Env,actor:GroupActor,windowId:string,body:JsonRecord):Promise<Response> {
   exactKeys(body,['operationId','clientMomentId','keyEpoch','rosterRevision','ciphertextSize','ciphertextSHA256','senderSignature','kind']);
   const access=await requireGroupMember(env,actor,windowId),operationId=uuidField(body,'operationId');
-  const prior=await storedGroupMutation(env,actor,operationId,{windowId});if(prior!==null)return jsonResponse(prior);
+  await requireGroupMediaAllowed(env,{spaceId:windowId,senderPersonId:actor.personId});
+  const prior=await storedGroupMutation(env,actor,operationId,{windowId});if(prior!==null) {
+    const momentId=(prior as {momentId?:string}).momentId;
+    await requireGroupMediaAllowed(env,{spaceId:windowId,senderPersonId:actor.personId,momentId});return jsonResponse(prior);
+  }
   if(body.kind!=='photo') unavailable('invalid_request',400);
   const revision=integerField(body,'rosterRevision',1,Number.MAX_SAFE_INTEGER),epoch=integerField(body,'keyEpoch',1,Number.MAX_SAFE_INTEGER);
   if(access.rotationRequired) unavailable('rotation_pending');
@@ -60,6 +66,7 @@ export async function reserveGroupPhoto(env:Env,actor:GroupActor,windowId:string
   const id=randomBase64url(16),hash=binaryField(body,'ciphertextSHA256',32),expires=actor.now+GROUP_UPLOAD_SECONDS;
   const response={operationId,momentId:id,uploadExpiresAt:expires,serverNow:actor.now};
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:revision}),
+    ...groupModerationChecks(env,{spaceId:windowId,senderPersonId:actor.personId}),
     env.DB.prepare(`INSERT INTO group_moments VALUES (?,?,?,?,?,?,?,?,?,?,?,'photo','reserved',?,?,?,NULL,?,?,NULL)`)
       .bind(id,windowId,body.clientMomentId,access.participantId,actor.deviceId,epoch,revision,roster.hash,body.ciphertextSize,hash,body.senderSignature,
         `groups/v3/${windowId}/${id}/${hash}`,actor.now,expires,actor.now+GROUP_UNRECEIVED_SECONDS,expires+600),
@@ -71,11 +78,12 @@ export async function uploadGroupPhoto(env:Env,actor:GroupActor,windowId:string,
   await requireGroupMember(env,actor,windowId);
   const row=await groupMoment(env,windowId,momentId);
   if(row.sender_device_id!==actor.deviceId) unavailable('not_found',404);
+  await requireGroupMediaAllowed(env,{spaceId:windowId,momentId});
   if(bytes.length!==row.ciphertext_size || await sha256Base64url(bytes)!==row.ciphertext_sha256) unavailable('hash_mismatch',400);
   // Recovering a lost commit response must not rewrite a committed object or
   // republish its deliveries, including after a later roster/key transition.
   if(row.state==='committed') {
-    await env.DB.batch(groupNonceStatements(env,actor,{windowId}));
+    await env.DB.batch([...groupNonceStatements(env,actor,{windowId}),...groupModerationChecks(env,{spaceId:windowId,momentId})]);
     return jsonResponse({momentId,state:'committed',serverNow:actor.now});
   }
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'upload')]);
@@ -100,14 +108,18 @@ export function groupNotificationStatements(env:Env,actor:GroupActor,row:GroupMo
 export async function commitGroupPhoto(env:Env,actor:GroupActor,windowId:string,momentId:string,body:JsonRecord):Promise<Response> {
   exactKeys(body,['operationId','expectedRevision','keyEpoch','ciphertextSHA256']);
   await requireGroupMember(env,actor,windowId);
-  const operationId=uuidField(body,'operationId'),prior=await storedGroupMutation(env,actor,operationId,{windowId});if(prior!==null)return jsonResponse(prior);
+  await requireGroupMediaAllowed(env,{spaceId:windowId,momentId});
+  const operationId=uuidField(body,'operationId'),prior=await storedGroupMutation(env,actor,operationId,{windowId});if(prior!==null) {
+    await requireGroupMediaAllowed(env,{spaceId:windowId,momentId});return jsonResponse(prior);
+  }
   const row=await groupMoment(env,windowId,momentId);
   if(row.sender_device_id!==actor.deviceId) unavailable('not_found',404);
   if(binaryField(body,'ciphertextSHA256',32)!==row.ciphertext_sha256 || body.expectedRevision!==row.roster_revision || body.keyEpoch!==row.key_epoch) unavailable('hash_mismatch',400);
   const response={operationId,momentId,windowId,revision:row.roster_revision,keyEpoch:row.key_epoch,state:'committed',
     senderParticipantId:row.sender_participant_id,senderDeviceId:row.sender_device_id,createdAt:row.committed_at??actor.now,serverNow:actor.now};
   if(row.state==='committed') {
-    await env.DB.batch([...groupNonceStatements(env,actor,{windowId}),groupMutationStatement(env,actor,operationId,response)]);return jsonResponse(response);
+    await env.DB.batch([...groupNonceStatements(env,actor,{windowId}),...groupModerationChecks(env,{spaceId:windowId,momentId}),
+      groupMutationStatement(env,actor,operationId,response)]);return jsonResponse(response);
   }
   const object=await bucket(env).head(row.object_key);
   if(!object || object.size!==row.ciphertext_size || object.customMetadata?.digest!==row.ciphertext_sha256) unavailable('upload_required');
@@ -148,21 +160,23 @@ export async function listGroupPhotos(env:Env,actor:GroupActor,windowId:string,b
   const result=await env.DB.prepare(`SELECT p.* FROM group_moments p JOIN group_moment_deliveries d ON d.moment_id=p.id
       JOIN group_window_devices wd ON wd.space_id=p.space_id AND wd.device_id=d.device_id JOIN group_members m ON m.participant_id=wd.participant_id
       WHERE p.space_id=? AND d.device_id=? AND p.state='committed' AND p.unreceived_expires_at>? AND d.access_expires_at>?
+        AND ${groupModerationPredicate(env,{space:'p.space_id',photo:'p.id'})}
         AND d.state IN ('pending','acknowledged') AND wd.state='active' AND m.state='active'
         AND d.roster_revision>=wd.added_revision AND d.roster_revision>=m.joined_revision
         AND p.id>? AND NOT EXISTS (SELECT 1 FROM group_participant_blocks b WHERE b.space_id=p.space_id AND b.active=1
           AND ((b.blocker_id=m.participant_id AND b.blocked_id=p.sender_participant_id) OR (b.blocked_id=m.participant_id AND b.blocker_id=p.sender_participant_id)))
       ORDER BY p.id LIMIT ?`).bind(windowId,actor.deviceId,actor.now,actor.now,page.after,page.limit+1).all<GroupMomentRow>();
   const rows=result.results.slice(0,page.limit),items=await groupPhotoMetadata(env,rows,actor.deviceId);
-  // The scoped inventory query is the metadata read's linearization point.
-  // Recheck the caller at response time; actual ciphertext downloads separately
-  // recheck their individual delivery after reading R2. No per-photo writes
-  // or full-history scans are needed for a metadata page.
-  await env.DB.batch(groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}));
+  // A restriction added while metadata was loading must not expose the old
+  // snapshot. ON-only ephemeral guards share the final authorization batch.
+  await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}),
+    ...groupModerationChecks(env,{spaceId:windowId}),
+    ...rows.flatMap(row=>groupModerationChecks(env,{spaceId:windowId,momentId:row.id}))]);
   return jsonResponse({items,next:result.results.length>page.limit?groupCursor(scope,rows.at(-1)!.id):null,revision:access.revision,serverNow:actor.now});
 }
 export async function getGroupPhoto(env:Env,actor:GroupActor,windowId:string,momentId:string,download:boolean):Promise<Response> {
   const access=await requireGroupMember(env,actor,windowId),row=await groupMoment(env,windowId,momentId);await requireGroupDelivery(env,actor,row);
+  await requireGroupMediaAllowed(env,{spaceId:windowId,momentId});
   let bytes:Uint8Array|undefined;
   if(download) {
     const object=await bucket(env).get(row.object_key);

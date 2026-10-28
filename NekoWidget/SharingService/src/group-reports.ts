@@ -163,6 +163,7 @@ async function commit(env:Env,actor:GroupActor,windowId:string,generation:number
  * Operator review must be connected and verified before enabling this gate. */
 export async function groupReportAPI(request:Request,env:Env):Promise<Response> {
   if(env.GROUP_REPORT_RUNTIME_ENABLED!=='YES')fail('group_reports_disabled',503);
+  if(env.GROUP_MODERATION_RUNTIME_ENABLED!=='YES')fail('group_moderation_disabled',503);
   const path=new URL(request.url).pathname,match=path.match(reportPath);
   if(!match)fail('not_found',404);
   const windowId=match[1]!,action=match[2]!,isUpload=action.endsWith('/ciphertext');
