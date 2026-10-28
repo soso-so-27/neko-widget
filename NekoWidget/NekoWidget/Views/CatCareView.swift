@@ -79,6 +79,68 @@ enum CatCareSubject {
     }
 }
 
+/// Test builds only: the day a cat passed away (ねこのまど_ペットロスの方針_1028).
+/// Kept on this iPhone until the saved records can hold it. Nothing is
+/// deleted: the photos and records stay; the age stops at this day.
+enum CatFarewell {
+    static let key = "debug.catFarewell.days.v1"
+
+    static func days(_ json: String) -> [String: CatCareDay] {
+        (try? JSONDecoder().decode([String: CatCareDay].self, from: Data(json.utf8))) ?? [:]
+    }
+
+    static func setting(_ day: CatCareDay?, for subject: String, in json: String) -> String {
+        var all = days(json)
+        all[subject] = day
+        guard let data = try? JSONEncoder().encode(all) else { return json }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func text(_ day: CatCareDay) -> String {
+        "\(day.year)年\(day.month)月\(day.day)日"
+    }
+}
+
+/// Recording the day, quietly: a date and one sentence, nothing to fill in.
+struct CatFarewellEditor: View {
+    let name: String
+    let recorded: CatCareDay?
+    let save: (CatCareDay?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var date = Date()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    DatePicker("旅立った日", selection: $date, in: ...Date(), displayedComponents: .date)
+                } footer: {
+                    Text("写真や記録は、すべてそのまま残ります。")
+                }
+                if recorded != nil {
+                    Section {
+                        Button("記録を消す", role: .destructive) { save(nil); dismiss() }
+                    }
+                }
+            }
+            .navigationTitle(name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("記録する") { save(CatCareDay(date: date)); dismiss() }
+                        .accessibilityIdentifier("cat-farewell-save")
+                }
+            }
+            .onAppear {
+                if let recorded, let day = Calendar.current.date(from: DateComponents(
+                    year: recorded.year, month: recorded.month, day: recorded.day)) { date = day }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
 /// 「この子のことを直す」 from a tool: the profile's page, or the guest cat's.
 struct CatCareSubjectView: View {
     let subject: CatCareSubject
@@ -107,6 +169,13 @@ struct CatCareDetailView: View {
     /// reload over what is on screen.
     @State private var loadedKey: String?
     @State private var showsLifeDatesEditor = false
+    @State private var showsFarewellEditor = false
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
+
+    /// Test builds only, as the rest of the prototype.
+    private var farewell: CatCareDay? {
+        AlbumPrototype.isOn(albumPrototypeStored) ? CatFarewell.days(farewellJSON)[subject.key] : nil
+    }
 
     init(profile: CatProfilePresentation, otherProfiles: [CatProfilePresentation],
          selectedProfileID: Binding<String?>) {
@@ -168,6 +237,14 @@ struct CatCareDetailView: View {
             folded("health", "健康", healthCount) { healthSection }
             folded("living", "暮らし", livingCount) { livingSection }
             folded("household", "家の情報", householdCount) { householdSection }
+            if AlbumPrototype.isOn(albumPrototypeStored), farewell == nil {
+                Section {
+                    Button("この子が旅立ったとき") { showsFarewellEditor = true }
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("cat-care-farewell-open")
+                }
+            }
             Section {
                 Text("書いた内容は自動で保存します。")
                 if familyNotebook.hasFamily {
@@ -209,6 +286,11 @@ struct CatCareDetailView: View {
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor, catID: catID) { result in
                 apply(result)
+            }
+        }
+        .sheet(isPresented: $showsFarewellEditor) {
+            CatFarewellEditor(name: subject.displayName, recorded: farewell) { day in
+                farewellJSON = CatFarewell.setting(day, for: subject.key, in: farewellJSON)
             }
         }
         .sheet(isPresented: $showsLifeDatesEditor) {
@@ -288,8 +370,8 @@ struct CatCareDetailView: View {
     private var basicsFooter: String {
         var line = subject.displayName
         if let birthday = currentRecord?.birthday?.value ?? nil,
-           let age = CatCareLostCat.age(birthday, today: CatCareDay(date: Date())) {
-            line += "（\(age)）"
+           let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
+            line += farewell == nil ? "（\(age)）" : "（\(age)まで）"
         }
         if case let .profile(profile) = subject {
             line += "\n" + profile.lifeDatesExplanation
@@ -311,6 +393,17 @@ struct CatCareDetailView: View {
                 }
                 .foregroundStyle(.primary)
                 .accessibilityIdentifier("cat-care-life-dates")
+            }
+            if let farewell {
+                Button { showsFarewellEditor = true } label: {
+                    HStack {
+                        LabeledContent("旅立った日", value: CatFarewell.text(farewell))
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
+                .accessibilityIdentifier("cat-care-farewell")
             }
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)
