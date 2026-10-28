@@ -736,10 +736,12 @@ struct ToolCatPicker<Legacy: View>: View {
     @State private var name = ""
     @State private var failed = false
     @State private var busy = false
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
     var body: some View {
         Group {
             Section("猫のプロフィール") {
-                ForEach(profiles) { profile in
+                // A cat whose day was recorded is not offered for a new plan.
+                ForEach(profiles.filter { CatFarewell.days(farewellJSON)[$0.identifier] == nil }) { profile in
                     // A row that opens the cat's page: black text and a chevron, like a link.
                     Button { select(profile) } label: {
                         HStack {
@@ -796,8 +798,19 @@ struct ToolCatStrip: View {
     let cats: [ToolStripCat]
     let selectedID: String?
     let select: (ToolStripCat) -> Void
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
+
+    /// A cat whose day was recorded leaves the row, unless its page is the
+    /// one open. Its plans stay; only the row stops offering it.
+    private var shown: [ToolStripCat] {
+        let farewells = CatFarewell.days(farewellJSON)
+        return cats.filter { cat in
+            cat.id == selectedID || cat.profile.map { farewells[$0.identifier] == nil } ?? true
+        }
+    }
 
     var body: some View {
+        let cats = shown
         if cats.count > 1 {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
