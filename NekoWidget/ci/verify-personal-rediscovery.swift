@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 #if canImport(ImageIO)
 import ImageIO
 import CoreGraphics
@@ -17,6 +22,40 @@ private func midnightAfter(_ date: Date, timeZone: TimeZone = utc) -> Date {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = timeZone
     return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))!
+}
+
+// The production test seam is @Sendable. Keep all observations synchronized;
+// failures in its nonthrowing callback must still fail the parent check.
+private final class PublishRaceProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempts = 0
+    private var failure: Swift.Error?
+    private var committedBytes: Data?
+
+    func beforeCommit(_ action: (Int) throws -> Data?) {
+        lock.lock()
+        attempts += 1
+        let attempt = attempts
+        lock.unlock()
+        do {
+            if let bytes = try action(attempt) {
+                lock.lock()
+                committedBytes = bytes
+                lock.unlock()
+            }
+        } catch {
+            lock.lock()
+            if failure == nil { failure = error }
+            lock.unlock()
+        }
+    }
+
+    func result() throws -> (attempts: Int, bytes: Data?) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let failure { throw failure }
+        return (attempts, committedBytes)
+    }
 }
 
 private struct Fixture {
@@ -105,6 +144,45 @@ private enum PersonalRediscoveryVerifier {
             if case .committed = outcome { print("committed") } else { print("existing") }
             return
         }
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--snapshot" {
+            let store = PersonalRediscoveryStore(containerURL: URL(fileURLWithPath: CommandLine.arguments[2]))
+            print("snapshot:\(try store.snapshot(now: baseline)?.candidates.count ?? -1)")
+            return
+        }
+        if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--hold-state-lock" {
+            let directory = URL(fileURLWithPath: CommandLine.arguments[2])
+            let lockURL = directory.appendingPathComponent("personal-rediscovery.v1/state.lock")
+            let descriptor = open(lockURL.path, O_RDWR)
+            try require(descriptor >= 0, "lock-holder could not open the real shared lock")
+            defer { _ = close(descriptor) }
+            try require(flock(descriptor, LOCK_EX) == 0, "lock-holder could not acquire flock")
+            defer { _ = flock(descriptor, LOCK_UN) }
+            // This marker is written only after the other process owns flock.
+            try Data("held".utf8).write(to: URL(fileURLWithPath: CommandLine.arguments[3]), options: .atomic)
+            _ = FileHandle.standardInput.readData(ofLength: 1)
+            return
+        }
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--revoke" {
+            try PersonalRediscoveryStore(containerURL: URL(fileURLWithPath: CommandLine.arguments[2]))
+                .invalidate(now: baseline)
+            print("revoked")
+            return
+        }
+        if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--touch-authority" {
+            let store = PersonalRediscoveryStore(containerURL: URL(fileURLWithPath: CommandLine.arguments[2]))
+            guard let saved = try store.snapshot(now: baseline),
+                  let seconds = Double(CommandLine.arguments[3]) else {
+                throw CheckFailure.failed("missing CAS interference state")
+            }
+            let revision = try store.updateEligibility(photoIDs: saved.eligiblePhotoIDs,
+                scopeIdentifier: saved.scopeIdentifier, isAuthorized: saved.isAuthorized,
+                now: Date(timeIntervalSince1970: seconds),
+                photoModificationDates: saved.photoModificationDates, timeZone: utc)
+            try require(revision == saved.eligibilityRevision, "interference changed authority instead of raw state")
+            print("touched")
+            return
+        }
+        try require(CommandLine.arguments.count == 1, "unknown child mode")
         try poolAndTimeline()
         try dailyAndHistory()
         try dailyPhotoAndCadenceMigration()
@@ -116,7 +194,13 @@ private enum PersonalRediscoveryVerifier {
         try membershipSelectionBoundary()
         try frozenPhotoOutlivesPoolAndCleanup()
         try concurrentProcesses()
-        print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, frozen last photo across pool replacement/30 days/cleanup, frozen release on resume and source deletion, cross-process race.")
+        try snapshotWhileAnotherProcessHoldsLock()
+        try publicationPreservesConcurrentQuota()
+        try publicationRejectsConcurrentRevocation()
+        try publicationStopsAfterThreeConflicts()
+        try publicationCallbackFailureIsNotRetried()
+        try readAndPublicationPreserveMissingOrCorruptState()
+        print("Personal rediscovery passed: calendar-day photos, same-day hold after turning/refill/restart, legacy cadence migration, shared slots, bounded pool, cycles, leases, failures, quota, midnight/DST, stale requests, 48h history, source and authority isolation, atomic legacy bootstrap, frozen last photo across pool replacement/30 days/cleanup, frozen release on resume and source deletion, cross-process quota race, snapshot without flock, publication CAS with quota/revocation/three-conflict bounds, single callback including failure, missing/corrupt state preserved.")
     }
 
     private static func membershipSelectionBoundary() throws {
@@ -754,6 +838,219 @@ private enum PersonalRediscoveryVerifier {
                         "automatic daily cadence used 86400 seconds across DST")
             try require(try dst.store.currentEntry(now: midnight.addingTimeInterval(-1), timeZone: pacific)?.item?.localIdentifier == day.entries[0].item?.localIdentifier,
                         "DST changed photo before local midnight")
+        }
+    }
+
+    private static func stopChild(_ process: Process) {
+        if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+        process.waitUntilExit()
+    }
+
+    private static func runChild(_ arguments: [String], timeout: TimeInterval = 5) throws -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        process.arguments = arguments
+        process.standardOutput = output
+        process.standardError = FileHandle.standardError
+        try process.run()
+        defer { stopChild(process) }
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        try require(!process.isRunning, "child timed out: \(arguments[0])")
+        try require(process.terminationStatus == 0, "child failed: \(arguments[0])")
+        let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func snapshotWhileAnotherProcessHoldsLock() throws {
+        let fixture = try Fixture(4)
+        defer { fixture.cleanup() }
+        let stateURL = fixture.directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let original = try Data(contentsOf: stateURL)
+        let ready = fixture.directory.appendingPathComponent("lock-held")
+        let holder = Process()
+        let release = Pipe()
+        holder.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        holder.arguments = ["--hold-state-lock", fixture.directory.path, ready.path]
+        holder.standardInput = release
+        holder.standardOutput = FileHandle.standardOutput
+        holder.standardError = FileHandle.standardError
+        try holder.run()
+        defer {
+            try? release.fileHandleForWriting.close()
+            stopChild(holder)
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while holder.isRunning && !FileManager.default.fileExists(atPath: ready.path)
+            && ProcessInfo.processInfo.systemUptime < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        try require(holder.isRunning && FileManager.default.fileExists(atPath: ready.path),
+                    "other process did not acquire flock")
+        // The old snapshot implementation blocks here until the holder exits.
+        // No unlock or timed release happens before this bounded child finishes.
+        let text = try runChild(["--snapshot", fixture.directory.path], timeout: 3)
+        try require(text == "snapshot:4" && holder.isRunning,
+                    "snapshot waited for the writer lock or failed to decode the complete state")
+        try require(try Data(contentsOf: stateURL) == original, "snapshot rewrote shared state")
+    }
+
+    private static func publicationPreservesConcurrentQuota() throws {
+        let fixture = try Fixture(4)
+        defer { fixture.cleanup() }
+        let directory = fixture.directory
+        let stateURL = directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let token = try fixture.token()
+        let encodedToken = try JSONEncoder().encode(token).base64EncodedString()
+        let operationID = UUID().uuidString
+        let probe = PublishRaceProbe()
+        let store = PersonalRediscoveryStore(containerURL: directory, publishBeforeCommit: {
+            probe.beforeCommit { attempt in
+                guard attempt == 1 else { return nil }
+                let text = try runChild(["--turn", directory.path, encodedToken,
+                    String(baseline.timeIntervalSince1970), operationID])
+                try require(text == "committed", "concurrent quota operation did not commit")
+                return try Data(contentsOf: stateURL)
+            }
+        })
+        var replacement = fixture.candidates[0]
+        replacement.preparedAt = baseline.addingTimeInterval(30)
+        var callbacks = 0
+        let published = try store.publish(candidates: [replacement], expectedRevision: fixture.revision,
+            now: baseline, timeZone: utc) { _ in callbacks += 1 }
+        let observation = try probe.result()
+        try require(observation.attempts == 2 && callbacks == 1,
+                    "CAS interference did not retry preparation exactly once before a single callback")
+        guard let saved = try fixture.store.snapshot(now: baseline), let grant = saved.history.first else {
+            throw CheckFailure.failed("publication lost the concurrently committed grant")
+        }
+        try require(saved == published && saved.history.count == 1 && !saved.canTurn
+            && saved.nextAvailableAt == midnightAfter(baseline)
+            && saved.candidates.contains(replacement), "publication overwrote quota or failed to publish its recomputed candidate")
+        guard case let .existing(replay) = try fixture.store.perform(token: token, operationID: operationID,
+            operationCreatedAt: baseline, now: baseline, timeZone: utc) else {
+            throw CheckFailure.failed("publication lost cross-process operation idempotency")
+        }
+        try require(replay.id == grant.id, "publication changed the committed operation result")
+    }
+
+    private static func publicationRejectsConcurrentRevocation() throws {
+        let fixture = try Fixture(4)
+        defer { fixture.cleanup() }
+        let directory = fixture.directory
+        let stateURL = directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let probe = PublishRaceProbe()
+        let store = PersonalRediscoveryStore(containerURL: directory, publishBeforeCommit: {
+            probe.beforeCommit { attempt in
+                guard attempt == 1 else { return nil }
+                try require(try runChild(["--revoke", directory.path]) == "revoked", "authority child failed")
+                return try Data(contentsOf: stateURL)
+            }
+        })
+        var callbacks = 0
+        do {
+            try store.publish(candidates: fixture.candidates, expectedRevision: fixture.revision,
+                              now: baseline, timeZone: utc) { _ in callbacks += 1 }
+            throw CheckFailure.failed("publication accepted revoked authority")
+        } catch PersonalRediscoveryStore.Error.staleRevision {}
+        let observation = try probe.result()
+        let saved = try fixture.store.snapshot(now: baseline)
+        try require(observation.attempts == 1 && callbacks == 0 && saved?.isAuthorized == false
+            && saved?.eligiblePhotoIDs.isEmpty == true && saved?.eligibilityRevision != fixture.revision,
+                    "revoked publication performed side effects or revived authority")
+        try require(try Data(contentsOf: stateURL) == observation.bytes, "publication overwrote revoked raw state")
+    }
+
+    private static func publicationStopsAfterThreeConflicts() throws {
+        let fixture = try Fixture(4)
+        defer { fixture.cleanup() }
+        let directory = fixture.directory
+        let stateURL = directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let probe = PublishRaceProbe()
+        let store = PersonalRediscoveryStore(containerURL: directory, publishBeforeCommit: {
+            probe.beforeCommit { attempt in
+                try require(try runChild(["--touch-authority", directory.path,
+                    String(baseline.addingTimeInterval(Double(attempt)).timeIntervalSince1970)]) == "touched",
+                    "CAS interference did not update raw state")
+                return try Data(contentsOf: stateURL)
+            }
+        })
+        var callbacks = 0
+        do {
+            try store.publish(candidates: [], expectedRevision: fixture.revision,
+                              now: baseline, timeZone: utc) { _ in callbacks += 1 }
+            throw CheckFailure.failed("publication ignored three consecutive raw-state conflicts")
+        } catch PersonalRediscoveryStore.Error.staleRevision {}
+        let observation = try probe.result()
+        try require(observation.attempts == 3 && callbacks == 0, "publication retry bound or callback boundary changed")
+        try require(try Data(contentsOf: stateURL) == observation.bytes, "exhausted publication overwrote the latest state")
+        try require(try fixture.store.snapshot(now: baseline)?.eligibilityRevision == fixture.revision,
+                    "fixture changed revision instead of testing full-byte CAS")
+    }
+
+    private static func publicationCallbackFailureIsNotRetried() throws {
+        let fixture = try Fixture(3)
+        defer { fixture.cleanup() }
+        let stateURL = fixture.directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let original = try Data(contentsOf: stateURL)
+        let probe = PublishRaceProbe()
+        let store = PersonalRediscoveryStore(containerURL: fixture.directory, publishBeforeCommit: {
+            probe.beforeCommit { _ in nil }
+        })
+        var callbacks = 0
+        do {
+            try store.publish(candidates: [], expectedRevision: fixture.revision,
+                              now: baseline, timeZone: utc) { _ in
+                callbacks += 1
+                throw PersonalRediscoveryStore.Error.staleRevision
+            }
+            throw CheckFailure.failed("callback failure reported publication success")
+        } catch PersonalRediscoveryStore.Error.staleRevision {}
+        try require(try probe.result().attempts == 1 && callbacks == 1,
+                    "callback staleRevision was mistaken for a retryable CAS conflict")
+        try require(try Data(contentsOf: stateURL) == original, "callback failure changed canonical state")
+    }
+
+    private static func readAndPublicationPreserveMissingOrCorruptState() throws {
+        let missing = try Fixture(0, legacyOnly: true)
+        defer { missing.cleanup() }
+        let missingDirectory = missing.directory.appendingPathComponent("personal-rediscovery.v1")
+        let legacyURL = missing.directory.appendingPathComponent("widget-manifest.json")
+        let legacyBytes = try Data(contentsOf: legacyURL)
+        try require(try missing.store.snapshot(now: baseline) == nil, "missing observation invented state")
+        var callbacks = 0
+        do {
+            try missing.store.publish(candidates: [], expectedRevision: UUID().uuidString,
+                                      now: baseline, timeZone: utc) { _ in callbacks += 1 }
+            throw CheckFailure.failed("missing publication invented authority")
+        } catch PersonalRediscoveryStore.Error.staleRevision {}
+        try require(callbacks == 0 && !FileManager.default.fileExists(atPath: missingDirectory.path),
+                    "missing observation/publication created a lock or state directory")
+        try require(try Data(contentsOf: legacyURL) == legacyBytes, "missing state handling changed legacy original")
+
+        let corrupt = try Fixture(3)
+        defer { corrupt.cleanup() }
+        let stateURL = corrupt.directory.appendingPathComponent("personal-rediscovery.v1/state.json")
+        let original = try Data(contentsOf: stateURL)
+        var unknown = try JSONSerialization.jsonObject(with: original) as! [String: Any]
+        unknown["schemaVersion"] = 999
+        for invalid in [Data("{ broken".utf8), try JSONSerialization.data(withJSONObject: unknown)] {
+            try invalid.write(to: stateURL, options: .atomic)
+            do {
+                _ = try corrupt.store.snapshot(now: baseline)
+                throw CheckFailure.failed("corrupt/unknown state was treated as missing")
+            } catch PersonalRediscoveryStore.Error.corrupted {}
+            do {
+                try corrupt.store.publish(candidates: [], expectedRevision: corrupt.revision,
+                                          now: baseline, timeZone: utc) { _ in callbacks += 1 }
+                throw CheckFailure.failed("corrupt/unknown state was overwritten")
+            } catch PersonalRediscoveryStore.Error.corrupted {}
+            let unchanged = try Data(contentsOf: stateURL)
+            try require(callbacks == 0 && unchanged == invalid,
+                        "corrupt/unknown state handling changed original bytes or called publication")
         }
     }
 

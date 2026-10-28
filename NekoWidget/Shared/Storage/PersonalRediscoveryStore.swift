@@ -168,6 +168,9 @@ struct PersonalRediscoveryStore: Sendable {
     static let pausedReloadInterval: TimeInterval = 6 * 60 * 60
     private static let frozenSlotID = "membership-frozen"
     private let containerURL: URL?
+#if PERSONAL_REDISCOVERY_CHECKS
+    private var publishBeforeCommit: (@Sendable () -> Void)? = nil
+#endif
 
     private static var defaultContainerURL: URL? {
 #if PERSONAL_REDISCOVERY_CHECKS
@@ -180,6 +183,13 @@ struct PersonalRediscoveryStore: Sendable {
     init(containerURL: URL? = Self.defaultContainerURL) {
         self.containerURL = containerURL
     }
+
+#if PERSONAL_REDISCOVERY_CHECKS
+    init(containerURL: URL?, publishBeforeCommit: @escaping @Sendable () -> Void) {
+        self.containerURL = containerURL
+        self.publishBeforeCommit = publishBeforeCommit
+    }
+#endif
 
     /// Publish the current eligibility authority before starting asynchronous
     /// cache work. An empty pool can adopt up to twenty verified legacy cache
@@ -329,8 +339,14 @@ struct PersonalRediscoveryStore: Sendable {
         timeZone: TimeZone = .current,
         prepareFiles: (Set<String>) throws -> Void = { _ in }
     ) throws -> PersonalRediscoverySnapshot {
-        try locked {
-            guard var state = try read(), state.isAuthorized,
+        // Existing/older writers atomically replace state.json under state.lock.
+        // Decode, validate and plan from immutable bytes without holding flock.
+        // Compare the complete original bytes at commit: eligibilityRevision
+        // alone does not change for every quota/issue/plan update.
+        for _ in 0..<3 {
+            guard let original = try readData() else { throw Error.staleRevision }
+            var state = try decode(original)
+            guard state.isAuthorized,
                   state.eligibilityRevision == expectedRevision else { throw Error.staleRevision }
             guard interval.isFinite, (60...86_400).contains(interval),
                   incoming.count <= Self.maximumCandidateCount,
@@ -398,10 +414,6 @@ struct PersonalRediscoveryStore: Sendable {
             guard before.union(nextFiles).count <= Self.maximumCachedFileCount else {
                 throw Error.cacheBudgetExceeded
             }
-            try prepareFiles(before.union(nextFiles))
-            for candidate in proposed where !allFilesReadable(candidate.item) {
-                throw Error.invalidCandidate
-            }
             state.candidates = proposed
             if state.plan == nil, !proposed.isEmpty {
                 state.plan = makePlan(candidates: proposed, anchor: now, timeZone: timeZone)
@@ -415,9 +427,30 @@ struct PersonalRediscoveryStore: Sendable {
             }
             repairPlan(&state, now: now)
             state.updatedAt = now
-            try write(state)
-            return snapshot(state, now: now)
+            let encoded = try encode(state)
+            let result = snapshot(state, now: now)
+#if PERSONAL_REDISCOVERY_CHECKS
+            publishBeforeCommit?()
+#endif
+            let committed = try locked {
+                guard try readData() == original else { return false }
+                // No side effect happens before the comparison. Once admitted,
+                // a callback/save failure propagates and is never retried.
+                try prepareFiles(before.union(nextFiles))
+                // Every name was validated by decode/the incoming-item check
+                // before locking. Keep only the required file IO at commit.
+                for candidate in proposed {
+                    guard WidgetImageVariant.allCases.allSatisfy({ variant in
+                        prevalidatedFileReadable(candidate.item.cacheFilename(for: variant),
+                            maximumBytes: variant.maximumJPEGByteCount)
+                    }) else { throw Error.invalidCandidate }
+                }
+                try writeData(encoded)
+                return true
+            }
+            if committed { return result }
         }
+        throw Error.staleRevision
     }
 
     /// Cleanup and compatibility publication use this gate too. Never call
@@ -439,10 +472,11 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     func snapshot(now: Date = .now) throws -> PersonalRediscoverySnapshot? {
-        try locked {
-            guard let state = try read() else { return nil }
-            return snapshot(state, now: now)
-        }
+        // An atomic replacement gives readers a complete old or new document.
+        // This is an observation, not permission to publish/reveal a photo;
+        // those operations still validate authority under the shared lock.
+        guard let state = try read() else { return nil }
+        return snapshot(state, now: now)
     }
 
     /// Experiments use the same cross-process lock as permission publication.
@@ -1106,7 +1140,12 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     private func fileReadable(_ filename: String, maximumBytes: Int) -> Bool {
-        guard Self.validFilename(filename), let containerURL else { return false }
+        guard Self.validFilename(filename) else { return false }
+        return prevalidatedFileReadable(filename, maximumBytes: maximumBytes)
+    }
+
+    private func prevalidatedFileReadable(_ filename: String, maximumBytes: Int) -> Bool {
+        guard let containerURL else { return false }
         let url = containerURL.appendingPathComponent("widget-cache").appendingPathComponent(filename)
         guard let attributes = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
               attributes.isRegularFile == true, attributes.isSymbolicLink != true,
@@ -1121,6 +1160,11 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     private func read() throws -> PersonalRediscoveryFile? {
+        guard let data = try readData() else { return nil }
+        return try decode(data)
+    }
+
+    private func readData() throws -> Data? {
         let url = try stateURL()
         let data: Data
         do { data = try Data(contentsOf: url) }
@@ -1131,8 +1175,12 @@ struct PersonalRediscoveryStore: Sendable {
             }
             throw Error.unavailable
         }
-        guard data.count <= 8 * 1_024 * 1_024,
-              let state = try? JSONDecoder().decode(PersonalRediscoveryFile.self, from: data),
+        guard data.count <= 8 * 1_024 * 1_024 else { throw Error.corrupted }
+        return data
+    }
+
+    private func decode(_ data: Data) throws -> PersonalRediscoveryFile {
+        guard let state = try? JSONDecoder().decode(PersonalRediscoveryFile.self, from: data),
               state.schemaVersion == 1, state.sourceID == Self.personalSourceID,
               UUID(uuidString: state.eligibilityRevision) != nil,
               state.candidates.count <= Self.maximumCandidateCount,
@@ -1150,10 +1198,18 @@ struct PersonalRediscoveryStore: Sendable {
     }
 
     private func write(_ state: PersonalRediscoveryFile) throws {
+        try writeData(encode(state))
+    }
+
+    private func encode(_ state: PersonalRediscoveryFile) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(state)
         guard data.count <= 8 * 1_024 * 1_024 else { throw Error.corrupted }
+        return data
+    }
+
+    private func writeData(_ data: Data) throws {
         let url = try stateURL()
         // Foundation's atomic replacement is the sole commit. No throwing
         // operation follows it, so callers cannot mistake success for failure.
