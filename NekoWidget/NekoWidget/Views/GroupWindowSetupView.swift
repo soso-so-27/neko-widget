@@ -452,15 +452,22 @@ struct GroupWindowMembersView: View {
     /// standards, and where to report a problem.
     @ViewBuilder private var safetySection: some View {
         let configuration = SharingAPIConfiguration.current
-        if configuration.privacyURL != nil || configuration.communityStandardsURL != nil || configuration.supportURL != nil {
+        let reports = GroupSafety.shared.service.isAvailable
+        if reports || configuration.privacyURL != nil || configuration.communityStandardsURL != nil || configuration.supportURL != nil {
             Section {
+                if reports {
+                    NavigationLink("通報への返答") { GroupReportsView(windowID: model.windowID) }
+                        .accessibilityIdentifier("group-window-reports")
+                }
                 if let url = configuration.privacyURL { Link("プライバシーポリシー", destination: url) }
                 if let url = configuration.communityStandardsURL { Link("コミュニティ基準", destination: url) }
                 if let url = configuration.supportURL { Link("問題を問い合わせる", destination: url) }
             } header: {
                 Text("安全と決まり")
             } footer: {
-                Text("困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
+                Text(reports
+                     ? "困る写真が届いたときは、写真の「…」から、通報・ブロック・その人の写真を表示しないようにできます。"
+                     : "困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
             }
         }
     }

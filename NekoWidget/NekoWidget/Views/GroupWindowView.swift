@@ -1170,6 +1170,9 @@ private struct GroupPhotoDetail: View {
     @State private var showsFavoriteConfirmation = false
     @State private var showsRemoveConfirmation = false
     @State private var showsHideConfirmation = false
+    @State private var reportTarget: GroupWindowLocalPhotoStore.Entry?
+    @State private var showsBlockConfirmation = false
+    @ObservedObject private var safety = GroupSafety.shared
 
     init(model: GroupWindowScreenModel, startID: String) {
         self.model = model
@@ -1218,6 +1221,14 @@ private struct GroupPhotoDetail: View {
                             Button("\(GroupDisplayName.withSan(current.senderDisplayName))の写真を表示しない", systemImage: "eye.slash") {
                                 showsHideConfirmation = true
                             }
+                            if safety.service.isAvailable {
+                                Button("この写真を通報", systemImage: "exclamationmark.bubble") { reportTarget = current }
+                                    .accessibilityIdentifier("group-photo-report")
+                                Button("\(GroupDisplayName.withSan(current.senderDisplayName))をブロック", systemImage: "hand.raised") {
+                                    showsBlockConfirmation = true
+                                }
+                                .accessibilityIdentifier("group-photo-block")
+                            }
                         }
                         Button("このiPhoneから消す", systemImage: "trash", role: .destructive) {
                             showsRemoveConfirmation = true
@@ -1258,6 +1269,33 @@ private struct GroupPhotoDetail: View {
             } message: {
                 Text("このまどで、この人から届いた写真がこのiPhoneで見えなくなります。相手には知らせません。設定の「表示しないようにした人」から戻せます。")
             }
+            .sheet(item: $reportTarget) { entry in
+                GroupReportSheet(windowID: model.windowID, entry: entry)
+            }
+            // Blocking stops photos both ways in this window. What already
+            // arrived stays; the other person is not told.
+            .confirmationDialog(current.map { "\(GroupDisplayName.withSan($0.senderDisplayName))をブロックしますか？" } ?? "",
+                                isPresented: $showsBlockConfirmation, titleVisibility: .visible) {
+                Button("ブロックする", role: .destructive) {
+                    guard let current else { return }
+                    let windowID = model.windowID
+                    Task {
+                        let done = await safety.run(windowID: windowID) {
+                            try await safety.service.setBlock(windowID: windowID, participantID: current.senderParticipantID,
+                                                              active: true, operationID: UUID())
+                        }
+                        guard done != nil else { return }
+                        await model.hideSender(of: current)
+                        if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
+                    }
+                }
+                Button("戻る", role: .cancel) {}
+            } message: {
+                Text("このまどで、お互いの写真が届かなくなります。届いた写真はこのiPhoneに残ります。相手には知らせません。")
+            }
+            .alert("まど", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(safety.failure?.message ?? "") }
             .confirmationDialog("この写真を、このiPhoneから消しますか？",
                                 isPresented: $showsRemoveConfirmation, titleVisibility: .visible) {
                 Button("消す", role: .destructive) {
@@ -2016,3 +2054,164 @@ struct GroupWindowFixtureModeration: MomentModerating {
     }
 }
 #endif
+
+/// Reporting one photo: why, and what is sent. Only this photo, as an
+/// encrypted copy, kept 7 days for the team to check. Sent is not received:
+/// the sheet says so only once the team has it.
+struct GroupReportSheet: View {
+    let windowID: String
+    let entry: GroupWindowLocalPhotoStore.Entry
+    @ObservedObject private var safety = GroupSafety.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var reason: GroupReportReason?
+    @State private var record: GroupReportRecord?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let record, record.progress == .received {
+                    Section {
+                        Label("受け付けました", systemImage: "checkmark.circle.fill")
+                            .font(.headline)
+                    } footer: {
+                        Text("運営が確認します。返答は、まどの「メンバー」の「通報への返答」に届きます。")
+                    }
+                } else {
+                    Section {
+                        ForEach(GroupReportReason.allCases, id: \.self) { candidate in
+                            Button {
+                                reason = candidate
+                            } label: {
+                                HStack {
+                                    Text(candidate.title).foregroundStyle(.primary)
+                                    Spacer()
+                                    if reason == candidate { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+                                }
+                            }
+                            .disabled(record != nil)
+                        }
+                    } header: {
+                        Text("理由")
+                    } footer: {
+                        Text("この写真の暗号化したコピーだけを運営へ送ります。確認のため 7 日間扱い、そのあと削除します。まどの鍵やほかの写真は送りません。")
+                    }
+                    if let record, record.progress == .retryable {
+                        Section {
+                            Text(GroupSafetyError.unknownOutcome.message).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("この写真を通報")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(record?.progress == .received ? "閉じる" : "やめる") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if record?.progress != .received {
+                        Button(record?.progress == .retryable ? "もう一度送る" : "送る") { Task { await send() } }
+                            .disabled(reason == nil || safety.isWorking)
+                            .accessibilityIdentifier("group-report-send")
+                    }
+                }
+            }
+            .alert("通報", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(safety.failure?.message ?? "") }
+        }
+        .interactiveDismissDisabled(safety.isWorking)
+    }
+
+    /// The first tap fixes the photo, reason and consent; a retry sends the
+    /// same draft again instead of making a second report.
+    private func send() async {
+        let service = safety.service
+        if let draft = record {
+            record = await safety.run(windowID: windowID) { try await service.resumeReport(draftID: draft.id) } ?? draft
+            return
+        }
+        guard let reason else { return }
+        let entry = entry
+        record = await safety.run(windowID: windowID) {
+            let draftID = try await service.prepareReport(windowID: windowID, photoID: entry.id,
+                                                          senderName: entry.senderDisplayName, reason: reason,
+                                                          consent: GroupReportConsent(acceptedAt: Date()))
+            do {
+                return try await service.submitReport(draftID: draftID)
+            } catch let error as GroupSafetyError where error == .offline || error == .unknownOutcome {
+                return try await service.refreshReport(draftID: draftID)
+            }
+        }
+    }
+}
+
+/// This person's reports in this window and the team's answers. Kept after
+/// leaving the window; an answer never deletes a photo here.
+struct GroupReportsView: View {
+    let windowID: String
+    @ObservedObject private var safety = GroupSafety.shared
+
+    private var records: [GroupReportRecord] { safety.records[windowID] ?? [] }
+
+    var body: some View {
+        List {
+            if records.isEmpty {
+                ContentUnavailableView("通報はありません", systemImage: "exclamationmark.bubble")
+            }
+            ForEach(records) { record in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(record.reason.title).font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(record.sentAt.formatted(.dateTime.month().day())).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Text(Self.text(record)).font(.footnote).foregroundStyle(.secondary)
+                    if record.progress == .retryable {
+                        Button("もう一度送る") {
+                            Task {
+                                await safety.run(windowID: windowID) { try await safety.service.resumeReport(draftID: record.id) }
+                            }
+                        }
+                        .font(.footnote)
+                        .disabled(safety.isWorking)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            if let prototype = safety.service as? GroupReportingPrototype, !records.isEmpty {
+                Section {
+                    DisclosureGroup("テスト用") {
+                        Button("返答が届いたときを試す") {
+                            prototype.tryReply(windowID: windowID)
+                            Task { await safety.load(windowID: windowID) }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("通報への返答")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await safety.refresh(windowID: windowID) }
+        .refreshable { await safety.refresh(windowID: windowID) }
+    }
+
+    /// What the answer means, in the app's own words. Never the server's.
+    static func text(_ record: GroupReportRecord) -> String {
+        switch record.progress {
+        case .preparing, .sending: return "送っています。"
+        case .retryable: return "送り終わっていません。"
+        case .expired: return "受付の期限が切れました。"
+        case .alreadyReported: return "この写真はもう通報しています。"
+        case .authenticationRequired, .unavailable: return "いまは状態を確かめられません。"
+        case .received: break
+        }
+        switch record.reply {
+        case .none: return "受け付けました。運営からの返答はまだありません。"
+        case .noAction: return "確認しました。今回は配信を止める対応はしていません。"
+        case .restricted: return "確認し、このまどでの配信を止める対応をしました。"
+        case .released: return "この通報で止めていた配信を、もとに戻しました。"
+        case .unknown: return "運営から返答があります。アプリを最新にすると読めます。"
+        }
+    }
+}
