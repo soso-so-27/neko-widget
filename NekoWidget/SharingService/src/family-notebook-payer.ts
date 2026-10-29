@@ -4,10 +4,9 @@ import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
 import { exactKeys, integerField, uuidField } from './validation';
 
-// Deliberately NOT registered in index.ts or the group router. The family
-// admission/consent and encrypted notebook transport do not exist yet. A
-// synthetic DB fixture supplies admitted members for this server transaction
-// boundary; photo-window membership must never be treated as family consent.
+// The independent family router also requires FAMILY_NOTEBOOK_API_RUNTIME_ENABLED.
+// This transaction gate alone never exposes an HTTP route. Photo-window
+// membership must never be treated as family consent.
 type Operation = 'leave' | 'claim';
 interface FamilyRow {
   generation: number;
@@ -119,7 +118,7 @@ function receiptResponse(operationId: string, row: Receipt): Response {
     operation: row.operation, appliedGeneration: row.resulting_generation });
 }
 
-/** Authenticated future handler, intentionally unreachable from deployed routes. */
+/** Authenticated handler behind the separate family API and transaction gates. */
 export async function familyNotebookPayer(request: Request, env: Env, familyValue: string,
   operation?: Operation): Promise<Response> {
   try {

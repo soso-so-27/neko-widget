@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { familyNotebookHistory } from '../src/family-notebook-history';
-import { familyNotebookAdmission, familyInvitationProof } from '../src/family-notebook-admission';
-import { familyNotebookPayer } from '../src/family-notebook-payer';
+import { route } from '../src/index';
+import { familyInvitationProof } from '../src/family-notebook-admission';
 import { familyRosterBytes, verifyFamilyRoster, type FamilyCryptoMember, type VerifiedFamilyCryptoRoster } from '../src/family-notebook-crypto';
 import { groupDeviceAuthorization, groupFields } from '../src/group-protocol';
 import { base64urlDecode, base64urlEncode, randomBase64url, sha256Base64url } from '../src/encoding';
@@ -10,15 +9,13 @@ import type { Env } from '../src/env';
 import { plusOwner, pauseOwner, settings } from './group-billing-fixture';
 import { cipher, db, key, ok, person, send, sign, signed, type Person, type Reply } from './group-fixture';
 
-const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES' };
+const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES', FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'YES' };
 const root = '/v3/family-notebooks';
 async function invoke(p: Person, path: string, body?: unknown, env = enabled): Promise<Reply> {
   const request = await signed(p, path, body);
   let response: Response;
   try {
-    response = path.includes('/crypto/') ? await familyNotebookHistory(request, env)
-      : path.endsWith('/leave') ? await familyNotebookPayer(request, env, path.split('/')[3]!, 'leave')
-      : await familyNotebookAdmission(request, env);
+    response = await route(request, env);
   } catch (error) { response = errorResponse(error); }
   return { status: response.status, data: await response.json() as Reply['data'] };
 }
@@ -90,7 +87,7 @@ function beforeCommit(action: () => Promise<void>): Env {
 describe('family encrypted history transaction boundary', () => {
   it('keeps public routes off, requires membership and an explicit family certificate', async () => {
     const a = await plusOwner(), stranger = await person(), f = await create(a);
-    expect((await send(await signed(a, `${root}/${f}/crypto/state`), enabled)).status).toBe(404);
+    expect((await send(await signed(a, `${root}/${f}/crypto/state`), { ...enabled, FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'NO' })).status).toBe(404);
     expect((await invoke(stranger, `${root}/${f}/crypto/state`)).status).toBe(404);
     const wrong = await member(a, crypto.randomUUID());
     expect((await invoke(a, `${root}/${f}/crypto/devices`, body({ personAuthorization: wrong.devices[0]!.personAuthorization }, 1, 0))).data.error.code).toBe('invalid_family_proof');

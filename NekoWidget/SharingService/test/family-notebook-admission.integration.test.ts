@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { familyNotebookAdmission, familyInvitationProof } from '../src/family-notebook-admission';
+import { route } from '../src/index';
+import { familyInvitationProof } from '../src/family-notebook-admission';
 import { familyNotebookPayer } from '../src/family-notebook-payer';
 import { base64urlEncode } from '../src/encoding';
 import { errorResponse } from '../src/errors';
@@ -7,11 +8,11 @@ import type { Env } from '../src/env';
 import { plusOwner, pauseOwner, settings } from './group-billing-fixture';
 import { cipher, create, db, ok, person, send, sign, signed, type Person, type Reply } from './group-fixture';
 
-const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES' };
+const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES', FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'YES' };
 const root = '/v3/family-notebooks';
 async function invoke(request: Request, env: Env = enabled): Promise<Reply> {
   let response: Response;
-  try { response = await familyNotebookAdmission(request, env); } catch (error) { response = errorResponse(error); }
+  try { response = await route(request, env); } catch (error) { response = errorResponse(error); }
   return { status: response.status, data: await response.json() as Reply['data'] };
 }
 async function call(p: Person, path: string, body: unknown, env = enabled) { return invoke(await signed(p, path, body), env); }
@@ -58,6 +59,27 @@ function beforeCommit(action: () => Promise<void>): Env {
 }
 
 describe('independent family admission, not publicly enabled', () => {
+  it('requires the separate exact API opt-in before any family DB access', async () => {
+    const p = await person();
+    const noDB = new Proxy(db, { get() { throw new Error('closed API must not access D1'); } });
+    for (const flag of [undefined, 'NO', 'yes', 'true']) {
+      const config: Env = { ...enabled, DB: noDB };
+      if (flag === undefined) delete config.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED;
+      else config.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED = flag;
+      const reply = await send(await signed(p, root + '/me'), config);
+      expect(reply.status).toBe(404);
+    }
+    expect((await send(await signed(p, root + '/me'), {
+      ...enabled, DB: noDB, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'NO',
+    })).data.error.code).toBe('family_notebook_disabled');
+    expect((await send(await signed(p, root + '/me'), enabled)).data.error.code).toBe('family_notebook_disabled');
+    await openGate();
+    expect(ok(await send(await signed(p, root + '/me'), enabled))).toMatchObject({ personId: p.id, family: null, pendingRequests: [] });
+    expect((await send(await signed(p, root + '/me', {}), enabled)).status).toBe(404);
+    expect((await send(await signed(p, root + '/unknown'), enabled)).status).toBe(404);
+    await db.prepare('UPDATE family_notebook_runtime_gate SET enabled=0,generation=generation+1 WHERE singleton=1').run();
+  });
+
   it('stays OFF/unrouted and requires verified Plus, never photo-window membership', async () => {
     const p = await plusOwner(), body = { operationId: crypto.randomUUID(), familyId: crypto.randomUUID() };
     expect((await call(p, root, body)).data.error.code).toBe('family_notebook_disabled');
@@ -66,7 +88,7 @@ describe('independent family admission, not publicly enabled', () => {
     expect((await call(free, root, body)).data.error.code).toBe('plus_entitlement_required');
     const photo = await create(p);
     expect((await db.prepare('SELECT COUNT(*) n FROM family_notebook_members WHERE person_id=?').bind(p.id).first())?.n).toBe(0);
-    expect((await send(await signed(p, root, body), enabled)).status).toBe(404);
+    expect((await send(await signed(p, root, body), { ...enabled, FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'NO' })).status).toBe(404);
     expect(photo.windowId).toBeTruthy();
   });
 

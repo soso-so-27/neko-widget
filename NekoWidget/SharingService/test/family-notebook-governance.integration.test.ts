@@ -1,27 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { familyNotebookGovernance } from '../src/family-notebook-governance';
-import { familyNotebookAdmission, familyInvitationProof } from '../src/family-notebook-admission';
-import { familyNotebookPayer } from '../src/family-notebook-payer';
-import { familyNotebookHistory } from '../src/family-notebook-history';
-import { familyNotebookDirectory } from '../src/family-notebook-directory';
+import { route } from '../src/index';
+import { familyInvitationProof } from '../src/family-notebook-admission';
 import { errorResponse } from '../src/errors';
 import type { Env } from '../src/env';
 import { plusOwner, pauseOwner, settings } from './group-billing-fixture';
 import { cipher, db, key, ok, person, send, sign, signed, type Person, type Reply } from './group-fixture';
 
-const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES' };
+const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES', FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'YES' };
 const root = '/v3/family-notebooks';
 async function invoke(p: Person, path: string, body?: unknown, env = enabled): Promise<Reply> {
   const request = await signed(p, path, body); let response: Response;
   try {
-    const family = path.split('/')[3]!;
-    response = body === undefined && /\/(me|members|requests|invitations)$/u.test(path) ? await familyNotebookDirectory(request, env)
-      : path.endsWith('/leave') ? await familyNotebookPayer(request, env, family, 'leave')
-      : path.endsWith('/payer/claim') ? await familyNotebookPayer(request, env, family, 'claim')
-      : path.endsWith('/payer') ? await familyNotebookPayer(request, env, family)
-      : path.includes('/crypto/') ? await familyNotebookHistory(request, env)
-      : path === root || path.includes('/invitations') || path.includes('/requests/') ? await familyNotebookAdmission(request, env)
-      : await familyNotebookGovernance(request, env);
+    response = await route(request, env);
   } catch (error) { response = errorResponse(error); }
   return { status: response.status, data: await response.json() as Reply['data'] };
 }
@@ -73,7 +63,7 @@ describe('explicit family handover and retained management', () => {
 
   it('keeps routes off and requires the actual payer to nominate an admitted different person', async () => {
     const a = await plusOwner(), b = await person(), stranger = await person(), f = await create(a); await admit(a, b, f);
-    expect((await send(await signed(a, `${root}/${f}/payer/handover`), enabled)).status).toBe(404);
+    expect((await send(await signed(a, `${root}/${f}/payer/handover`), { ...enabled, FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'NO' })).status).toBe(404);
     expect((await invoke(b, `${root}/${f}/payer/nominate`, body(2, { personId: a.id }))).data.error.code).toBe('family_notebook_not_allowed');
     expect((await invoke(a, `${root}/${f}/payer/nominate`, body(2, { personId: stranger.id }))).status).toBe(403);
     expect((await invoke(a, `${root}/${f}/payer/nominate`, body(2, { personId: a.id }))).status).toBe(403);
