@@ -139,6 +139,9 @@ actor FamilyNotebookSync {
             guard let key = keys[current.roster.epoch] else { throw FamilyNotebookSyncError.missingKey(epoch: current.roster.epoch) }
             for operation in try store.pendingOperations().prefix(64) {
                 guard try !store.snapshot().sharingEnded else { throw FamilyNotebookError.sharingEnded }
+                // Recheck the live outbox, not only the earlier array: consent
+                // may have been withdrawn while another operation was in flight.
+                guard try store.pendingOperations().contains(where: { $0.id == operation.id }) else { continue }
                 let encrypted = try FamilyNotebookOperationCrypto.seal(operation, roster: current, key: key, signingKey: identity.signingKey)
                 let body = try GroupWire.encode(Upload(operationID: operation.id.uuidString.lowercased(), expectedGeneration: state.generation,
                     expectedEpoch: current.roster.epoch, payload: encrypted))

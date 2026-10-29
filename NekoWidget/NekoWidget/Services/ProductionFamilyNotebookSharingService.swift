@@ -51,6 +51,9 @@ final class FamilyNotebookSession {
         // Keep the pointer and full copy for the reader. It is no longer an
         // active membership, and synchronize refuses its terminal outbox.
     }
+    func matchesParticipation(family: UUID, admittedGeneration: Int64) -> Bool {
+        participation?.familyID == family && participation?.admittedGeneration == admittedGeneration
+    }
 }
 
 /// Explicitly enabled builds use this adapter. Every membership decision comes
@@ -64,6 +67,16 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     private let billing: @MainActor () async throws -> Void
     private let displayName: @MainActor () throws -> String
     private let catNames: @MainActor () -> [String]
+    private let privateFarewellDay: @MainActor (UUID, UUID?) throws -> String?
+    private let now: @MainActor () -> Date
+    private struct PreparedFarewell {
+        let preview: FamilyFarewellPreview
+        let toolCatID: UUID, profileID: UUID?
+        let directory: URL
+        let generation: Int64
+        let sharedOperationID: UUID?
+    }
+    private var farewellPreviews: [UUID: PreparedFarewell] = [:]
     private var session: FamilyNotebookSession?
     private var working = false
     private(set) var needsAnotherPass = false
@@ -77,8 +90,11 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     var sendsInvitations: Bool { true }
 
     init(provider: @escaping SessionProvider, billing: @escaping @MainActor () async throws -> Void,
-         displayName: @escaping @MainActor () throws -> String, catNames: @escaping @MainActor () -> [String]) {
+         displayName: @escaping @MainActor () throws -> String, catNames: @escaping @MainActor () -> [String],
+         privateFarewellDay: @escaping @MainActor (UUID, UUID?) throws -> String? = { _, _ in nil },
+         now: @escaping @MainActor () -> Date = { Date() }) {
         self.provider = provider; self.billing = billing; self.displayName = displayName; self.catNames = catNames
+        self.privateFarewellDay = privateFarewellDay; self.now = now
     }
     private func run<T>(_ action: (FamilyNotebookSession) async throws -> T) async throws -> T {
         guard !working else { throw FamilySharingError.unknownOutcome }
@@ -100,6 +116,13 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             }
         }
         if error is FamilyNotebookCryptoError { return .unsupported }
+        if let error = error as? FamilyNotebookError {
+            switch error {
+            case .staleConsent, .consentOperationConflict: return .farewellPreviewChanged
+            case .sharingEnded: return .removedOrDissolved
+            default: break
+            }
+        }
         return FamilyNotebookMembershipClient.presentation(error)
     }
     private func family(_ context: FamilyNotebookSession) async throws -> FamilyNotebookAdmissionClient.Family {
@@ -143,6 +166,104 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
     }
     func loadPause() async throws -> FamilySharingPause? {
         try await run { FamilySharingPause(try await payer($0)) }
+    }
+
+    private func farewellMapping(_ context: FamilyNotebookSession, tool: UUID) throws -> (FamilyNotebookStore, FamilyNotebookLocalMapping) {
+        guard let store = context.notebook else { throw FamilySharingError.membershipChecking }
+        let snapshot = try store.snapshot()
+        guard !snapshot.sharingEnded else { throw FamilySharingError.removedOrDissolved }
+        let mappings = snapshot.mappings.filter { $0.recordID == nil && $0.toolCatID == tool }
+        guard let mapping = mappings.first, Set(mappings.map(\.familyCatID)).count == 1,
+              Set(mappings.compactMap(\.profileID)).count <= 1 else { throw FamilySharingError.notAllowed }
+        return (store, mapping)
+    }
+    private func farewellFamily(_ context: FamilyNotebookSession, store: FamilyNotebookStore) async throws -> FamilyNotebookAdmissionClient.Family {
+        let value = try await family(context)
+        let members = try await context.admission.members(value.familyID)
+        let snapshot = try store.snapshot()
+        guard value.familyID == snapshot.familyID,
+              let own = members.members.first(where: { $0.personID == context.identity.personID }),
+              own.identityPublicKey == context.identity.personPublicKey,
+              members.generation == value.generation,
+              context.matchesParticipation(family: value.familyID, admittedGeneration: own.admittedGeneration)
+        else { throw FamilySharingError.farewellPreviewChanged }
+        return value
+    }
+    private func sharedFarewell(_ snapshot: FamilyNotebookSnapshot, cat: UUID) -> (String?, FamilyNotebookAuthor?) {
+        guard let field = snapshot.fieldState(for: .init(familyCatID: cat, field: .farewellDay)),
+              !field.isDeleted, case .day(let day) = field.operation.value else { return (nil, nil) }
+        return (day, field.operation.author)
+    }
+    func loadFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellSharingState {
+        try await run { context in
+            let (store, mapping) = try farewellMapping(context, tool: toolCatID), snapshot = try store.snapshot()
+            let decision = snapshot.farewellDecisions.last { $0.familyCatID == mapping.familyCatID && $0.personID == context.identity.personID }
+            let shared = sharedFarewell(snapshot, cat: mapping.familyCatID)
+            let pending = decision?.sharedOperationID.map { id in snapshot.outbox.contains { $0.id == id } } ?? false
+            let ownDates = snapshot.operations.filter { operation in
+                guard operation.target.familyCatID == mapping.familyCatID, operation.target.field == .farewellDay,
+                      operation.author.personID == context.identity.personID, case .day = operation.value else { return false }
+                return true
+            }
+            var possiblyShared = false
+            for operation in ownDates {
+                let attempted = try context.journal.read("op:family:" + operation.id.uuidString.lowercased()) != nil
+                // A received/restored copy may have no local HTTP journal.
+                // Absence of that journal never proves the date stayed private.
+                let stillPendingHere = snapshot.outbox.contains { $0.id == operation.id }
+                if attempted || !stillPendingHere || operation.version.deviceID != store.localDeviceID ||
+                    snapshot.acknowledgements.contains(where: { $0.operationID == operation.id }) { possiblyShared = true }
+            }
+            return try .init(familyID: snapshot.familyID, familyCatID: mapping.familyCatID,
+                localDay: privateFarewellDay(toolCatID, mapping.profileID), consentedDay: decision?.day,
+                sharedDay: shared.0, sharedAuthor: shared.1,
+                sharingPending: pending && decision?.day != nil, revocationPending: pending && decision?.day == nil,
+                mayAlreadyHaveBeenShared: possiblyShared)
+        }
+    }
+    func previewFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellPreview {
+        try await run { context in
+            let (store, mapping) = try farewellMapping(context, tool: toolCatID)
+            let family = try await farewellFamily(context, store: store), snapshot = try store.snapshot()
+            guard let day = try privateFarewellDay(toolCatID, mapping.profileID) else { throw FamilySharingError.farewellDayMissing }
+            try FamilyNotebookCore.validate(target: .init(familyCatID: mapping.familyCatID, field: .farewellDay), value: .day(day))
+            let shared = sharedFarewell(snapshot, cat: mapping.familyCatID)
+            guard let name = snapshot.fieldState(for: .init(familyCatID: mapping.familyCatID, field: .name)),
+                  !name.isDeleted, case .text(let catName) = name.operation.value else { throw FamilySharingError.notAllowed }
+            let preview = FamilyFarewellPreview(id: UUID(), familyID: family.familyID, familyCatID: mapping.familyCatID,
+                catName: catName, day: day, currentSharedDay: shared.0, currentSharedAuthor: shared.1, expiresAt: now().addingTimeInterval(600))
+            farewellPreviews = farewellPreviews.filter { $0.value.preview.expiresAt > now() }
+            farewellPreviews[preview.id] = .init(preview: preview, toolCatID: toolCatID, profileID: mapping.profileID,
+                directory: store.localDirectory, generation: family.generation,
+                sharedOperationID: snapshot.fieldState(for: .init(familyCatID: mapping.familyCatID, field: .farewellDay))?.operation.id)
+            return preview
+        }
+    }
+    func consentToShareFarewell(previewID: UUID, operationID: UUID) async throws {
+        try await run { context in
+            guard let store = context.notebook, try !store.snapshot().sharingEnded else { throw FamilySharingError.removedOrDissolved }
+            if let saved = try store.farewellDecision(actionID: operationID) {
+                guard saved.personID == context.identity.personID, saved.previewID == previewID, saved.day != nil else { throw FamilySharingError.farewellPreviewChanged }
+                return // Durable receipt; a retry never renews a revoked decision.
+            }
+            guard let prepared = farewellPreviews[previewID], prepared.preview.expiresAt > now(),
+                  prepared.directory == store.localDirectory else { throw FamilySharingError.farewellPreviewChanged }
+            let (_, mapping) = try farewellMapping(context, tool: prepared.toolCatID)
+            let family = try await farewellFamily(context, store: store)
+            guard prepared.preview.expiresAt > now(), family.familyID == prepared.preview.familyID, family.generation == prepared.generation,
+                  mapping.familyCatID == prepared.preview.familyCatID, mapping.profileID == prepared.profileID,
+                  try privateFarewellDay(prepared.toolCatID, prepared.profileID) == prepared.preview.day else { throw FamilySharingError.farewellPreviewChanged }
+            try store.consentFarewell(cat: mapping.familyCatID, day: prepared.preview.day,
+                author: .init(personID: context.identity.personID, displayName: displayName()), previewID: previewID,
+                expectedSharedOperationID: prepared.sharedOperationID, actionID: operationID, now: now())
+        }
+    }
+    func revokeFarewellSharing(toolCatID: UUID, operationID: UUID) async throws {
+        try await run { context in
+            let (store, mapping) = try farewellMapping(context, tool: toolCatID)
+            try store.revokeFarewell(cat: mapping.familyCatID,
+                author: .init(personID: context.identity.personID, displayName: displayName()), actionID: operationID, now: now())
+        }
     }
     private func admissionAllowed(_ context: FamilyNotebookSession) async throws {
         guard try await !context.membership.hasPendingOperation() else { throw FamilySharingError.unknownOutcome }

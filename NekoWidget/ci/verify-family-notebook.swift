@@ -39,7 +39,79 @@ struct VerifyFamilyNotebook {
         try participationEnd(root.appendingPathComponent("participation-end"))
         try payerStateContract()
         try boundaries(root.appendingPathComponent("boundaries"))
+        try farewellConsent(root.appendingPathComponent("farewell"))
         print("Family notebook: convergence, offline restart, conflicts, tombstones, ACK, persistence and retained exit checks passed")
+    }
+
+    private static func farewellConsent(_ path: URL) throws {
+        let writer = Writer(), local = try store(path, "device-a", writer: writer), tool = UUID(), profile = UUID()
+        let target = FamilyNotebookTarget(familyCatID: cat, field: .farewellDay)
+        let mapping = FamilyNotebookLocalMapping(sourceKey: "cat-local", familyCatID: cat, profileID: profile, toolCatID: tool)
+        let plan = FamilyNotebookImportPlan(familyID: family, entries: [
+            .init(ledgerKey: "farewell-private", target: target, value: .day("2026-10-28"), editedAt: day)
+        ], mappings: [mapping])
+        try rejects("generic edit cannot grant consent") { _ = try local.edit(target: target, value: .day("2026-10-28"), author: a) }
+        try rejects("import cannot grant consent") { _ = try local.applyImport(plan, author: a) }
+        try rejects("automatic delta cannot grant consent") { try local.applyLocalChanges(plan, author: a) }
+        try check(try local.snapshot().operations.isEmpty, "no private date persisted before consent")
+        try local.applyLocalChanges(.init(familyID: family, entries: [], mappings: [mapping]), author: a)
+        let action = UUID(), preview = UUID()
+        writer.fail = true
+        try rejects("failed atomic consent") {
+            try local.consentFarewell(cat: cat, day: "2026-10-28", author: a, previewID: preview,
+                expectedSharedOperationID: nil, actionID: action)
+        }
+        writer.fail = false
+        try check(try local.snapshot().farewellDecisions.isEmpty && local.pendingOperations().isEmpty, "failed write saves neither decision nor send")
+        let first = try local.consentFarewell(cat: cat, day: "2026-10-28", author: a, previewID: preview,
+            expectedSharedOperationID: nil, actionID: action)
+        let firstOp = try local.pendingOperations()[0]
+        let reopened = try store(path, "device-a")
+        try check(try reopened.farewellDecision(actionID: action) == first, "durable exact decision")
+        try check(try reopened.consentFarewell(cat: cat, day: "2026-10-28", author: a, previewID: preview,
+            expectedSharedOperationID: nil, actionID: action) == first, "same action is idempotent after restart")
+        try rejects("action ID cannot change day") {
+            try reopened.consentFarewell(cat: cat, day: "2026-10-29", author: a, previewID: preview,
+                expectedSharedOperationID: firstOp.id, actionID: action)
+        }
+        try rejects("another cat needs its own mapping and consent") {
+            try reopened.consentFarewell(cat: UUID(), day: "2026-10-28", author: a, previewID: UUID(), expectedSharedOperationID: nil, actionID: UUID())
+        }
+        try rejects("stale preview does not replace a date") {
+            try reopened.consentFarewell(cat: cat, day: "2026-10-29", author: a, previewID: UUID(), expectedSharedOperationID: nil, actionID: UUID())
+        }
+        let revoked = try reopened.revokeFarewell(cat: cat, author: a, actionID: UUID())
+        try check(try !reopened.pendingOperations().contains(where: { $0.id == firstOp.id }), "unsent date canceled")
+        try check(try reopened.pendingOperations().map(\.value) == [.clear], "only removal remains pending")
+        _ = try reopened.revokeFarewell(cat: cat, author: a, actionID: UUID())
+        try check(try reopened.pendingOperations().map(\.id) == [revoked.sharedOperationID!], "repeated revoke keeps pending removal")
+        try rejects("revoked history cannot be re-enqueued") { _ = try reopened.enqueue(operationID: firstOp.id) }
+        _ = try reopened.consentFarewell(cat: cat, day: "2026-10-28", author: a, previewID: preview,
+            expectedSharedOperationID: nil, actionID: action)
+        try check(try reopened.pendingOperations().map(\.value) == [.clear], "retry old consent never reactivates it")
+        _ = try reopened.consentFarewell(cat: cat, day: "2026-10-29", author: a, previewID: UUID(),
+            expectedSharedOperationID: revoked.sharedOperationID, actionID: UUID())
+        let other = try store(path.appendingPathComponent("other"), "device-b")
+        try other.applyLocalChanges(.init(familyID: family, entries: [], mappings: [mapping]), author: b)
+        _ = try other.receive(reopened.snapshot().operations)
+        try other.consentFarewell(cat: cat, day: "2026-10-27", author: b, previewID: UUID(),
+            expectedSharedOperationID: other.snapshot().fieldState(for: target)?.operation.id, actionID: UUID())
+        _ = try reopened.receive(other.pendingOperations())
+        _ = try reopened.revokeFarewell(cat: cat, author: a, actionID: UUID())
+        try check(try reopened.snapshot().fieldState(for: target)?.operation.value == .day("2026-10-27"), "revocation preserves another person's newer date")
+        try check(try reopened.pendingOperations().isEmpty, "old own date not sent after another member wins")
+        try check(try reopened.snapshot().operations.contains(firstOp), "history is retained, not falsely recalled")
+        _ = try reopened.endSharing()
+        try rejects("ended participation cannot consent") {
+            try reopened.consentFarewell(cat: cat, day: "2026-10-29", author: a, previewID: UUID(), expectedSharedOperationID: nil, actionID: UUID())
+        }
+        let json = "{\"\(profile.uuidString)\":{\"year\":2026,\"month\":10,\"day\":28}}"
+        try check(try FamilyNotebookPrivateFarewell.day(json: json, toolCatID: tool, profileID: profile) == "2026-10-28", "read exact mapped private date")
+        try check(try FamilyNotebookPrivateFarewell.day(json: json, toolCatID: UUID(), profileID: UUID()) == nil, "no name-based private cat matching")
+        try rejects("malformed local source is not an empty date") { _ = try FamilyNotebookPrivateFarewell.day(json: "broken", toolCatID: tool, profileID: profile) }
+        let ambiguous = "{\"\(profile.uuidString)\":{\"year\":2026,\"month\":10,\"day\":28},\"tool-\(tool.uuidString)\":{\"year\":2026,\"month\":10,\"day\":29}}"
+        try rejects("different aliases require reconfirming source") { _ = try FamilyNotebookPrivateFarewell.day(json: ambiguous, toolCatID: tool, profileID: profile) }
+        print("Farewell: pre-consent send blocked, atomic failure, exact retry, revocation, other author, retained history and private ID mapping passed")
     }
 
     private static func payerStateContract() throws {
