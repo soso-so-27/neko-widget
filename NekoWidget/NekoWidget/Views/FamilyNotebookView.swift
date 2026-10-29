@@ -110,9 +110,12 @@ final class FamilyNotebookPrototype: ObservableObject {
         let mappings = Self.catMappings(snapshot.mappings, care: care, handoff: nil, visits: [])
         let profiles = Set(care.cats.compactMap(\.profileID))
         var handoff = CareHandoffStore.shared.loadError == nil ? CareHandoffStore.shared.plan : nil
-        handoff?.cats = handoff?.cats.filter { cat in
-            selected.contains(cat.toolCatID ?? cat.id) || cat.profileID.flatMap(UUID.init(uuidString:)).map(profiles.contains) == true
-        } ?? []
+        if var plan = handoff {
+            plan.cats = plan.cats.filter { cat in
+                selected.contains(cat.toolCatID ?? cat.id) || cat.profileID.flatMap(UUID.init(uuidString:)).map(profiles.contains) == true
+            }
+            handoff = plan
+        }
         let visits = try await VeterinaryVisitStore.shared.visits().filter { selected.contains($0.catID) }
         let source = try FamilyNotebookMigrationSource(catCare: .init(state: care, unreadableCatCount: 0), handoff: handoff, visits: visits)
         let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings)
