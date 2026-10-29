@@ -151,6 +151,54 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
 
     private func forgetHandover() {
         pretendedPause = nil; claimedPayer = false; nomination = nil
+        consentedFarewells = [:]; farewellPreviews = [:]
+    }
+
+    // Test only, kept in memory: which cats' farewell days this person
+    // agreed to show the tried family. Nothing leaves this iPhone.
+    private var consentedFarewells: [UUID: String] = [:]
+    private var farewellPreviews: [UUID: (toolCatID: UUID, day: String)] = [:]
+
+    private func localFarewell(_ toolCatID: UUID) throws -> (day: String?, name: String) {
+        guard model.hasFamily else { throw FamilySharingError.removedOrDissolved }
+        let cat = CatCareStore.shared.state?.cats.first { $0.catID == toolCatID }
+        let day = try? FamilyNotebookPrivateFarewell.day(json: UserDefaults.standard.string(forKey: CatFarewell.key) ?? "",
+                                                         toolCatID: toolCatID, profileID: cat?.profileID)
+        return (day, cat?.name?.value ?? "この子")
+    }
+
+    func loadFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellSharingState {
+        let local = try localFarewell(toolCatID)
+        let consented = consentedFarewells[toolCatID]
+        return FamilyFarewellSharingState(
+            familyID: model.snapshot?.familyID ?? toolCatID, familyCatID: toolCatID,
+            localDay: local.day, consentedDay: consented, sharedDay: consented,
+            sharedAuthor: consented == nil ? nil : FamilyNotebookPrototype.me,
+            sharingPending: false, revocationPending: false, mayAlreadyHaveBeenShared: consented != nil)
+    }
+
+    func previewFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellPreview {
+        let local = try localFarewell(toolCatID)
+        guard let day = local.day else { throw FamilySharingError.farewellDayMissing }
+        let preview = FamilyFarewellPreview(
+            id: UUID(), familyID: model.snapshot?.familyID ?? toolCatID, familyCatID: toolCatID,
+            catName: local.name, day: day, currentSharedDay: consentedFarewells[toolCatID],
+            currentSharedAuthor: consentedFarewells[toolCatID] == nil ? nil : FamilyNotebookPrototype.me,
+            expiresAt: Date().addingTimeInterval(600))
+        farewellPreviews[preview.id] = (toolCatID, day)
+        return preview
+    }
+
+    func consentToShareFarewell(previewID: UUID, operationID: UUID) async throws {
+        guard let prepared = farewellPreviews[previewID],
+              try localFarewell(prepared.toolCatID).day == prepared.day else { throw FamilySharingError.farewellPreviewChanged }
+        consentedFarewells[prepared.toolCatID] = prepared.day
+        farewellPreviews[previewID] = nil
+    }
+
+    func revokeFarewellSharing(toolCatID: UUID, operationID: UUID) async throws {
+        _ = try localFarewell(toolCatID)
+        consentedFarewells[toolCatID] = nil
     }
 
     func claimPayer(operationID: UUID) async throws {
