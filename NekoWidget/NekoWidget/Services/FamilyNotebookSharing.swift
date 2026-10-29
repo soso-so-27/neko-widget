@@ -15,6 +15,8 @@ final class FamilyNotebookSharing: ObservableObject {
     @Published private(set) var pause: FamilySharingPause?
     @Published var failure: FamilySharingError?
     @Published private(set) var isWorking = false
+    private var refreshing = false
+    @Published private(set) var requests: [FamilyNotebookJoinRequest] = []
     let service: any FamilyNotebookSharingService
 
     init(service: any FamilyNotebookSharingService) {
@@ -22,15 +24,22 @@ final class FamilyNotebookSharing: ObservableObject {
     }
 
     func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true; defer { refreshing = false }
         do {
             state = try await service.loadState()
             pause = state.membership == nil ? nil : try await service.loadPause()
+            if let real = service as? ProductionFamilyNotebookSharingService {
+                FamilyNotebookPrototype.shared.attachReal(real)
+                requests = state.membership == nil ? [] : try await real.pendingRequests()
+            }
         } catch { failure = error as? FamilySharingError ?? .serviceUnavailable }
     }
 
     /// Runs one operation with a fresh ID, then reads the state again.
     @discardableResult
     func perform(_ operation: (UUID) async throws -> Void) async -> Bool {
+        guard !isWorking, !refreshing else { return false }
         isWorking = true
         defer { isWorking = false }
         do {

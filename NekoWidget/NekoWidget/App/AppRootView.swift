@@ -36,6 +36,9 @@ struct AppRootView: View {
     @State private var showsWidgetPlacementGuide = false
     @State private var showsInvitationJoin = false
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    private struct FamilyLink: Identifiable { let id = UUID(); let url: URL }
+    @State private var familyLink: FamilyLink?
     @State private var onboardingInvitation: GroupInvitationLink?
     /// An invitation that arrived while the help sheet was open. It opens
     /// after that sheet has closed, so two sheets never switch at once.
@@ -65,6 +68,7 @@ struct AppRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .cloudyWindowConfigurationChanged)) { _ in
             Task { await viewModel.refreshCloudyWindow() }
         }
+        .sheet(item: $familyLink) { FamilyNotebookJoinView(link: $0.url) }
         .sheet(isPresented: $showsInvitationJoin, onDismiss: {
             if let next = invitationAfterHelp {
                 invitationAfterHelp = nil
@@ -237,6 +241,10 @@ struct AppRootView: View {
     }
 
     private func handleNonPhotoURL(_ url: URL) {
+        if FamilyNotebookServiceFactory.productionRequested, (try? FamilyNotebookInvitationCapability(url: url)) != nil {
+            familyLink = FamilyLink(url: url)
+            return
+        }
         if let route = CloudyWindowAlbumRoute(url: url) {
             guard AlbumPrototype.isOn(UserDefaults.standard.bool(forKey: AlbumPrototype.key)) else { return }
             AlbumArrivalOpenInbox.shared.pending = route

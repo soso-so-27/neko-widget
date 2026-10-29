@@ -128,6 +128,9 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             let state = try await context.membership.loadPayer(familyID: family.familyID, minimumGeneration: members.generation)
             let store = try context.activate(family: family.familyID, admittedGeneration: own.admittedGeneration)
             currentFamilyID = family.familyID; lastMembers = members.members
+            // Paused sharing still has a real membership and a retained local
+            // notebook. Do not turn a write-gate rejection into an endless spinner.
+            if state.sharingStatus == .paused { return .inFamily(.init(role: state.role == .payer ? .payer : .member)) }
             guard let material = try await context.keys.prepare(family: family.familyID) else { needsAnotherPass = true; return .waitingForKeys }
             guard material.ready, !material.moreWork else { needsAnotherPass = true; return .waitingForKeys }
             let sync = try FamilyNotebookSync(familyID: family.familyID, identity: context.identity, store: store,

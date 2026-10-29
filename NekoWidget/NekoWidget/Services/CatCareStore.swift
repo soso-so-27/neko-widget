@@ -54,6 +54,9 @@ final class CatCareStore: ObservableObject {
     /// Told after every save (what it was, what it is now). Test builds use
     /// it to hand changes to the family notebook; nothing else listens.
     var didSave: (@MainActor (CatCareState, CatCareState) -> Void)?
+    /// A real shared record must reach its durable local notebook first. On
+    /// failure keep the old tool file; the caller's edit remains on screen.
+    var willSave: (@MainActor (CatCareState, CatCareState) throws -> Void)?
 
     @discardableResult
     func update(_ change: (inout CatCareState) -> Void) -> Bool {
@@ -72,6 +75,7 @@ final class CatCareStore: ObservableObject {
             }
             next.mutationRevision = expected + 1
             next.updatedAt = Date()
+            try willSave?(previous, next)
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 #if os(iOS)

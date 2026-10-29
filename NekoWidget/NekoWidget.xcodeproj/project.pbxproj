@@ -294,6 +294,7 @@
 		FA2610290000000000000018 /* FamilyNotebookAdmissionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000017 /* FamilyNotebookAdmissionClient.swift */; };
 		FA2610290000000000000020 /* ProductionFamilyNotebookSharingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */; };
 		FA2610290000000000000022 /* FamilyNotebookServiceFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */; };
+		FA2610290000000000000024 /* FamilyNotebookCatCareBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000023 /* FamilyNotebookCatCareBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -590,6 +591,7 @@
 		FA2610290000000000000017 /* FamilyNotebookAdmissionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookAdmissionClient.swift; sourceTree = "<group>"; };
 		FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionFamilyNotebookSharingService.swift; sourceTree = "<group>"; };
 		FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookServiceFactory.swift; sourceTree = "<group>"; };
+		FA2610290000000000000023 /* FamilyNotebookCatCareBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookCatCareBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -866,6 +868,7 @@
 				FA2610290000000000000017 /* FamilyNotebookAdmissionClient.swift */,
 				FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */,
 				FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */,
+				FA2610290000000000000023 /* FamilyNotebookCatCareBridge.swift */,
 				FA2610290000000000000015 /* FamilyNotebookKeyCoordinator.swift */,
 				FA2610290000000000000001 /* FamilyNotebookCrypto.swift */,
 				FA2610260000000000000001 /* FamilyNotebookCore.swift */,
@@ -1419,6 +1422,7 @@
 				FA2610290000000000000018 /* FamilyNotebookAdmissionClient.swift in Sources */,
 				FA2610290000000000000020 /* ProductionFamilyNotebookSharingService.swift in Sources */,
 				FA2610290000000000000022 /* FamilyNotebookServiceFactory.swift in Sources */,
+				FA2610290000000000000024 /* FamilyNotebookCatCareBridge.swift in Sources */,
 				FA2610290000000000000016 /* FamilyNotebookKeyCoordinator.swift in Sources */,
 				FA2610290000000000000002 /* FamilyNotebookCrypto.swift in Sources */,
 				FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */,
