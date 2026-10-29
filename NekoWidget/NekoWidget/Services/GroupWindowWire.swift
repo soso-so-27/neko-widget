@@ -63,6 +63,18 @@ enum GroupWire {
     }
 }
 
+enum GroupManagementCanonical {
+    static func rename(windowID: String, revision: Int, keyEpoch: Int, rosterHash: Data,
+                       nameRevision: Int, operationID: String, ciphertextHash: Data) throws -> Data {
+        try GroupCanonical.fields(["NW3.WINDOW-NAME", windowID, String(revision), String(keyEpoch)].map(GroupCanonical.text)
+            + [rosterHash, GroupCanonical.text(String(nameRevision)), GroupCanonical.text(operationID), ciphertextHash])
+    }
+    static func close(windowID: String, revision: Int, keyEpoch: Int, rosterHash: Data, operationID: String) throws -> Data {
+        try GroupCanonical.fields(["NW3.WINDOW-CLOSE", windowID, String(revision), String(keyEpoch)].map(GroupCanonical.text)
+            + [rosterHash, GroupCanonical.text(operationID)])
+    }
+}
+
 @available(iOS 17.0, macOS 14.0, *)
 enum GroupNameCrypto {
     private struct SignedName: Codable { let name: String; let signerDeviceID: String; let signature: Data }

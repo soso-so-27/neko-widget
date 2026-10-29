@@ -44,6 +44,8 @@ struct GroupWindow: Identifiable, Codable, Equatable, Sendable {
     var deliveryStatus: GroupDeliveryStatus? = nil
     var deliveryReason: GroupDeliveryReason? = nil
     var ownerParticipantID: String? = nil
+    // nil means this relay has not exposed the management capability yet.
+    var nameRevision: Int? = nil
 
     var activeMembers: [GroupMember] { members.filter { $0.state == .active } }
     var memberCount: Int { activeMembers.count }
@@ -111,6 +113,18 @@ enum GroupClientError: Error, Equatable, Sendable {
     case idempotencyConflict
 }
 
+enum GroupWindowManagementError: Error, Equatable, Sendable {
+    case invalidName, unavailable, staleNameRevision, closed
+    case reconciliationRequired, stateRefreshRequired
+}
+
+struct GroupWindowClosure: Equatable, Sendable {
+    let windowID: String
+    let operationID: UUID
+    let revision: Int
+    let keyEpoch: Int
+}
+
 // Methods receive intent, never a room key. The production adapter is responsible for
 // signing, verifying the complete roster, creating envelopes, CAS, and durable retries.
 protocol GroupWindowClient: Sendable {
@@ -120,6 +134,9 @@ protocol GroupWindowClient: Sendable {
     /// Explicit creator name; adapters must encrypt it instead of substituting
     /// a local-only label such as "自分" for the other members to see.
     func createWindow(name: String, ownerDisplayName: String, operationID: UUID) async throws -> GroupWindow
+    func renameWindow(windowID: String, name: String, expectedNameRevision: Int,
+                      operation: GroupOperation) async throws -> GroupWindow
+    func closeWindow(windowID: String, operation: GroupOperation) async throws -> GroupWindowClosure
     func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation
     func revokeInvitation(id: String, windowID: String, operation: GroupOperation) async throws
     func apply(invitationID: String, displayName: String, operationID: UUID) async throws -> GroupJoinRequest
@@ -142,6 +159,13 @@ protocol GroupWindowClient: Sendable {
 }
 
 extension GroupWindowClient {
+    func renameWindow(windowID: String, name: String, expectedNameRevision: Int,
+                      operation: GroupOperation) async throws -> GroupWindow {
+        throw GroupWindowManagementError.unavailable
+    }
+    func closeWindow(windowID: String, operation: GroupOperation) async throws -> GroupWindowClosure {
+        throw GroupWindowManagementError.unavailable
+    }
     // Legacy/preview adapters fail explicitly until they support this intent;
     // silently ignoring a supplied name would recreate the original problem.
     func createWindow(name: String, ownerDisplayName: String, operationID: UUID) async throws -> GroupWindow {

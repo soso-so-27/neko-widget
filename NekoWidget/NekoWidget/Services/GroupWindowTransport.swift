@@ -136,6 +136,8 @@ enum GroupHTTPRequest {
             case "window_paused": throw GroupSubscriptionError.windowPaused
             case "stale_revision": throw GroupClientError.staleRevision(current: error.currentRevision ?? 0)
             case "stale_epoch": throw GroupClientError.staleEpoch
+            case "stale_name_revision": throw GroupWindowManagementError.staleNameRevision
+            case "group_management_disabled": throw GroupWindowManagementError.unavailable
             case "rotation_pending": throw GroupClientError.rotationPending
             case "member_limit": throw GroupClientError.memberLimit
             case "device_limit": throw GroupClientError.deviceLimit

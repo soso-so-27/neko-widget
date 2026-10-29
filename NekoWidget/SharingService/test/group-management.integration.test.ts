@@ -37,6 +37,15 @@ async function photo(owner:Person,w:Window) {
   return id;
 }
 describe('owner-only encrypted names and terminal soft closure',()=>{
+  it('matches the public native management transcript vectors',()=>{
+    const input={windowId:'AAAAAAAAAAAAAAAAAAAAAA',revision:7,keyEpoch:3,
+      rosterHash:'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE',
+      operationId:'11111111-1111-4111-8111-111111111111'};
+    const hex=(bytes:Uint8Array)=>Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+    expect(hex(groupRenameTranscript({...input,nameRevision:9,ciphertextSHA256:'AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI'})))
+      .toBe('000f4e57332e57494e444f572d4e414d4500164141414141414141414141414141414141414141414100013700013300200101010101010101010101010101010101010101010101010101010101010101000139002431313131313131312d313131312d343131312d383131312d31313131313131313131313100200202020202020202020202020202020202020202020202020202020202020202');
+    expect(hex(groupCloseTranscript(input))).toBe('00104e57332e57494e444f572d434c4f534500164141414141414141414141414141414141414141414100013700013300200101010101010101010101010101010101010101010101010101010101010101002431313131313131312d313131312d343131312d383131312d313131313131313131313131');
+  });
   it('changes only the encrypted name with an owner proof, monotonic CAS and no roster/key rotation',async()=>{
     const {owner,bob,w}=await family(),body=await rename(owner,w);ok(await manage(owner,w,body));
     const read=ok(await send(await signed(bob,`/v3/group-windows/${w.windowId}`),settings));

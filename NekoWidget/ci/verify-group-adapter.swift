@@ -56,6 +56,23 @@ private actor EchoTransport: GroupHTTPTransport {
     private var heartBodies: [Data] = []
     private var listMode = "normal"
     private var listDelay: UInt64 = 0
+    private var managementEnabled = false
+    private var managementClosed = false
+    private var nameRevision = 0
+    private var nameProof: [String: Any]?
+    private var originalName: Any?
+    private var nameResponseMode = "normal"
+    private var managementDrops = Set<String>()
+    private var managementReplies: [String: (Data, [String: Any])] = [:]
+    private var managementBodies: [String: [Data]] = [:]
+    private var corruptManagementReceipt = false
+    private var failRefreshAfterRename = false
+    func configureManagement(drop: Set<String> = []) { managementEnabled = true; managementDrops = drop }
+    func disableManagement() { managementEnabled = false }
+    func configureNameResponse(_ mode: String) { nameResponseMode = mode }
+    func corruptNextManagementReceipt() { corruptManagementReceipt = true }
+    func failNextRenameRefresh() { failRefreshAfterRename = true }
+    func managementStats(_ operation: String) -> [Data] { managementBodies[operation] ?? [] }
     func configureList(_ mode: String = "normal", delay: UInt64 = 0) { listMode = mode; listDelay = delay; paths = [] }
     func requestPaths() -> [String] { paths }
     func advanceRoster(identity: GroupDeviceIdentity, includeMember: Bool) throws {
@@ -87,6 +104,7 @@ private actor EchoTransport: GroupHTTPTransport {
             encryptedName: GroupNameCrypto.seal("新しいまど", slot: "window", key: key, roster: verified,
                 signerID: identity.deviceID, signingKey: identity.signingKey), encryptedMemberNames: names)
         creation = try JSONSerialization.jsonObject(with: GroupWire.encode(updated)) as? [String: Any]
+        nameRevision = 0; nameProof = nil; originalName = nil
     }
     func configureHearts(_ mode: String) { heartMode = mode; paths = []; heartBodies = [] }
     func heartStats() -> ([String], [Data]) { (paths, heartBodies) }
@@ -146,6 +164,7 @@ private actor EchoTransport: GroupHTTPTransport {
             return try reply(["operationId": try text("operationId"), "personId": try text("personId"), "state": "connected"])
         }
         if path == "/v3/group-windows/list" {
+            if managementClosed { return try reply(["items": [], "next": NSNull()]) }
             if listMode == "denied" { return try reply(["error": ["code": "not_found"]], status: 404) }
             if listMode == "offline" { throw GroupClientError.offline }
             guard listMode != "absent", let creation, let packet = creation["packet"] as? [String: Any],
@@ -182,6 +201,48 @@ private actor EchoTransport: GroupHTTPTransport {
         guard let creation, let packet = creation["packet"] as? [String: Any], let r = packet["roster"] as? [String: Any],
               let windowID = r["windowId"] as? String, let members = r["members"] as? [[String: Any]], let owner = members.first else { throw Failure.check("echo created window") }
         let root = "/v3/group-windows/" + windowID
+        if path == root + "/name" || path == root + "/close" {
+            let kind = path.hasSuffix("/name") ? "name" : "close"
+            managementBodies[kind, default: []].append(body)
+            if !managementEnabled { return try reply(["error": ["code": "group_management_disabled"]], status: 503) }
+            let operationID = try text("operationId")
+            if let prior = managementReplies[operationID] {
+                try check(prior.0 == body, "management retry preserves exact original bytes")
+                return try reply(prior.1)
+            }
+            if managementClosed { return try reply(["error": ["code": "not_member"]], status: 404) }
+            let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
+            let roster = signed.packet.roster, hash = try GroupCanonical.hash(roster.canonicalBytes())
+            try check(object["expectedRevision"] as? Int == roster.revision && object["keyEpoch"] as? Int == roster.keyEpoch,
+                      "management uses current roster and epoch")
+            var receipt: [String: Any] = ["operationId": operationID, "windowId": windowID,
+                "revision": roster.revision, "keyEpoch": roster.keyEpoch]
+            var fields = ["NW3.WINDOW-" + (kind == "name" ? "NAME" : "CLOSE"), windowID,
+                String(roster.revision), String(roster.keyEpoch)].map(GroupCanonical.text) + [hash]
+            if kind == "name" {
+                if object["expectedNameRevision"] as? Int != nameRevision {
+                    return try reply(["error": ["code": "stale_name_revision"]], status: 409)
+                }
+                let cipher = try GroupWire.bytes(text("encryptedName"))
+                fields += [GroupCanonical.text(String(nameRevision + 1)), GroupCanonical.text(operationID), GroupCanonical.hash(cipher)]
+            } else { fields += [GroupCanonical.text(operationID)] }
+            try check(Curve25519.Signing.PublicKey(rawRepresentation: signing).isValidSignature(
+                GroupWire.bytes(text("ownerSignature"), count: 64), for: GroupCanonical.fields(fields)), "management owner signature")
+            if kind == "name" {
+                if originalName == nil { originalName = creation["encryptedName"] }
+                nameRevision += 1
+                nameProof = ["nameRevision": nameRevision, "signerDeviceId": device,
+                    "operationId": operationID, "signature": try text("ownerSignature")]
+                self.creation?["encryptedName"] = try text("encryptedName")
+                receipt["nameRevision"] = nameRevision
+                if failRefreshAfterRename { failRefreshAfterRename = false; nameResponseMode = "missing" }
+            } else { managementClosed = true; receipt["state"] = "closed" }
+            managementReplies[operationID] = (body, receipt)
+            if managementDrops.remove(kind) != nil { throw GroupClientError.offline }
+            if corruptManagementReceipt { corruptManagementReceipt = false; receipt["windowId"] = "other-window" }
+            return try reply(receipt)
+        }
+        if managementClosed { return try reply(["error": ["code": "not_member"]], status: 404) }
         let photoPath = root + "/moments/" + photoID
         func photo() throws -> [String: Any] {
             let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
@@ -227,6 +288,16 @@ private actor EchoTransport: GroupHTTPTransport {
             let hash = try GroupCanonical.hash(signed.packet.roster.canonicalBytes())
             var metadata: [String: Any] = ["windowId": windowID, "revision": r["revision"]!, "keyEpoch": r["keyEpoch"]!, "rotationRequired": listMode == "rotation",
                                           "encryptedName": creation["encryptedName"]!, "nameKeyEpoch": r["keyEpoch"]!, "nameRosterRevision": r["revision"]!]
+            if managementEnabled {
+                metadata["nameRevision"] = nameRevision; metadata["nameProof"] = nameProof as Any? ?? NSNull()
+                if nameResponseMode == "rollback", let originalName {
+                    metadata["encryptedName"] = originalName; metadata["nameRevision"] = 0; metadata["nameProof"] = NSNull()
+                }
+                if nameResponseMode == "missing" { metadata["nameProof"] = NSNull() }
+                if nameResponseMode == "forged", var proof = nameProof {
+                    proof["signature"] = GroupWire.base64(Data(repeating: 0, count: 64)); metadata["nameProof"] = proof
+                }
+            }
             if delivery != "legacy" {
                 metadata["deliveryStatus"] = delivery == "active" ? "active" : "paused"
                 metadata["deliveryReason"] = delivery == "active" ? "owner_plus" : "owner_plus_required"
@@ -463,7 +534,101 @@ private struct GroupAdapterChecks {
         }
         let afterInvalidName = await nameRelay.stats()
         try check(namedStats.1.count == afterInvalidName.1.count, "invalid creator name makes no creation request")
+        try await verifyManagement(endpoint: endpoint, folder: folder.appendingPathComponent("management"))
         print("Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed")
+    }
+
+    private static func verifyManagement(endpoint: URL, folder: URL) async throws {
+        // These public transcript vectors are also checked against the Worker.
+        let wireName = try GroupManagementCanonical.rename(windowID: "AAAAAAAAAAAAAAAAAAAAAA", revision: 7,
+            keyEpoch: 3, rosterHash: Data(repeating: 1, count: 32), nameRevision: 9,
+            operationID: "11111111-1111-4111-8111-111111111111", ciphertextHash: Data(repeating: 2, count: 32))
+        let wireClose = try GroupManagementCanonical.close(windowID: "AAAAAAAAAAAAAAAAAAAAAA", revision: 7,
+            keyEpoch: 3, rosterHash: Data(repeating: 1, count: 32), operationID: "11111111-1111-4111-8111-111111111111")
+        try check(wireName.map { String(format: "%02x", $0) }.joined() == "000f4e57332e57494e444f572d4e414d4500164141414141414141414141414141414141414141414100013700013300200101010101010101010101010101010101010101010101010101010101010101000139002431313131313131312d313131312d343131312d383131312d31313131313131313131313100200202020202020202020202020202020202020202020202020202020202020202", "Worker rename transcript")
+        try check(wireClose.map { String(format: "%02x", $0) }.joined() == "00104e57332e57494e444f572d434c4f534500164141414141414141414141414141414141414141414100013700013300200101010101010101010101010101010101010101010101010101010101010101002431313131313131312d313131312d343131312d383131312d313131313131313131313131", "Worker close transcript")
+        let memory = MemorySecrets(), relay = EchoTransport(), creationID = UUID()
+        var client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay,
+            outboxDirectory: folder, billingSigner: SyntheticBillingSigner())
+        do { _ = try await client.createWindow(name: "元のまど", operationID: creationID); throw Failure.check("creation drop") }
+        catch GroupClientError.offline { }
+        let legacy = try await client.createWindow(name: "元のまど", operationID: creationID)
+        do { _ = try await client.closeWindow(windowID: legacy.id, operation: .init(expectedRevision: 1)); throw Failure.check("legacy management accepted") }
+        catch GroupWindowManagementError.unavailable { }
+        await relay.configureManagement(drop: ["name", "close"])
+        let rename = GroupOperation(expectedRevision: legacy.revision)
+        do { _ = try await client.renameWindow(windowID: legacy.id, name: "新しい名前", expectedNameRevision: 0, operation: rename); throw Failure.check("rename drop") }
+        catch GroupClientError.offline { }
+        let store = try GroupOperationStore(directory: folder.appendingPathComponent("http-operations", isDirectory: true))
+        let account = "op:" + rename.id.uuidString.lowercased(), original = try store.read(account)!
+        let pending = try GroupWire.decode(GroupPendingHTTP.self, original)
+        let expired = GroupPendingHTTP(operationID: pending.operationID, path: pending.path, body: pending.body,
+            intentHash: pending.intentHash, createdAt: Date().addingTimeInterval(-172_801), response: nil)
+        try store.write(GroupWire.encode(expired), account: account, createOnly: false)
+        do { _ = try await client.renameWindow(windowID: legacy.id, name: "新しい名前", expectedNameRevision: 0, operation: rename); throw Failure.check("expired rename resent") }
+        catch GroupWindowManagementError.reconciliationRequired { }
+        try store.write(original, account: account, createOnly: false)
+        client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
+        let renamed = try await client.renameWindow(windowID: legacy.id, name: "新しい名前", expectedNameRevision: 0, operation: rename)
+        try check(renamed.name == "新しい名前" && renamed.nameRevision == 1, "rename survives restart and verifies name proof")
+        let bodies = await relay.managementStats("name")
+        try check(bodies.count == 2 && bodies[0] == bodies[1], "same rename bytes with fresh request authentication")
+        _ = try await client.renameWindow(windowID: legacy.id, name: "新しい名前", expectedNameRevision: 0, operation: rename)
+        let cachedCount = await relay.managementStats("name").count
+        try check(cachedCount == 2, "durable receipt avoids duplicate rename")
+        do { _ = try await client.renameWindow(windowID: legacy.id, name: "異なる意図", expectedNameRevision: 0, operation: rename); throw Failure.check("changed rename intent") }
+        catch GroupClientError.idempotencyConflict { }
+        do { _ = try await client.renameWindow(windowID: legacy.id, name: "古い画面", expectedNameRevision: 0, operation: .init(expectedRevision: 1)); throw Failure.check("stale name accepted") }
+        catch GroupWindowManagementError.staleNameRevision { }
+        await relay.disableManagement()
+        let disabled = try await client.window(id: legacy.id)
+        try check(disabled.name == "新しい名前" && disabled.nameRevision == nil, "management OFF preserves the pinned readable name")
+        do { _ = try await client.closeWindow(windowID: legacy.id, operation: .init(expectedRevision: 1)); throw Failure.check("disabled closure accepted") }
+        catch GroupWindowManagementError.unavailable { }
+        await relay.configureManagement(drop: ["close"])
+        for mode in ["rollback", "missing", "forged"] {
+            await relay.configureNameResponse(mode)
+            do { _ = try await client.window(id: legacy.id); throw Failure.check("untrusted name accepted: " + mode) }
+            catch GroupClientError.invalidResponse { }
+        }
+        await relay.configureNameResponse("normal")
+        // A malformed receipt must not poison the durable response cache.
+        let refresh = GroupOperation(expectedRevision: 1)
+        await relay.corruptNextManagementReceipt()
+        do { _ = try await client.renameWindow(windowID: legacy.id, name: "三つ目", expectedNameRevision: 1, operation: refresh); throw Failure.check("wrong receipt accepted") }
+        catch GroupClientError.invalidResponse { }
+        _ = try await client.renameWindow(windowID: legacy.id, name: "三つ目", expectedNameRevision: 1, operation: refresh)
+        // A successful operation whose follow-up cannot be verified is already
+        // committed. Retrying the same ID refreshes without another POST.
+        let followup = GroupOperation(expectedRevision: 1)
+        await relay.failNextRenameRefresh()
+        do { _ = try await client.renameWindow(windowID: legacy.id, name: "四つ目", expectedNameRevision: 2, operation: followup); throw Failure.check("refresh failure hidden") }
+        catch GroupWindowManagementError.stateRefreshRequired { }
+        let beforeRefresh = await relay.managementStats("name").count
+        await relay.configureNameResponse("normal")
+        _ = try await client.renameWindow(windowID: legacy.id, name: "四つ目", expectedNameRevision: 2, operation: followup)
+        let afterRefresh = await relay.managementStats("name").count
+        try check(beforeRefresh == afterRefresh, "confirmed rename refresh does not POST twice")
+        let close = GroupOperation(expectedRevision: 1)
+        let sentinel = folder.appendingPathComponent("received-photo.jpg")
+        try Data([1, 2, 3]).write(to: sentinel)
+        let before = try GroupWire.decode(GroupLocalWindow.self, memory.read("window:" + legacy.id)!)
+        do { _ = try await client.closeWindow(windowID: legacy.id, operation: close); throw Failure.check("close drop") }
+        catch GroupClientError.offline { }
+        client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
+        let closed = try await client.closeWindow(windowID: legacy.id, operation: close)
+        try check(closed.windowID == legacy.id && closed.operationID == close.id, "close retry works after membership ended")
+        _ = try await client.closeWindow(windowID: legacy.id, operation: close)
+        let closeBodies = await relay.managementStats("close")
+        try check(closeBodies.count == 2 && closeBodies[0] == closeBodies[1], "close persisted request and receipt")
+        let after = try GroupWire.decode(GroupLocalWindow.self, memory.read("window:" + legacy.id)!)
+        try check(after.closed == true && after.left && after.keys == before.keys && after.packet == before.packet,
+                  "closure persists while retaining keys and authenticated history")
+        try check(try Data(contentsOf: sentinel) == Data([1, 2, 3]), "closure retains local photo bytes")
+        let windows = try await client.windows()
+        try check(windows.isEmpty, "closed window leaves the list")
+        do { _ = try await client.closeWindow(windowID: legacy.id, operation: .init(expectedRevision: 1)); throw Failure.check("new operation on closed window") }
+        catch GroupWindowManagementError.closed { }
     }
 
     private static func verifyListCache(memory: MemorySecrets, relay: EchoTransport, folder: URL,
