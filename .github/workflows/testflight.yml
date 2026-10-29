@@ -48,6 +48,11 @@ on:
         required: false
         default: false
         type: boolean
+      group_reporting_trial:
+        description: "試験専用・自分用のみ。本物のグループ通報を有効化。group_windows/internal_reportsと当日の承認が必要。既定OFF"
+        required: false
+        default: false
+        type: boolean
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -84,6 +89,10 @@ jobs:
       RELEASE_SOURCE_SHA: ${{ inputs.expected_main_sha || github.sha }}
       GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
       GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
+      GROUP_REPORTING_TRIAL_REQUESTED: ${{ inputs.group_reporting_trial || false }}
+      INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports || false }}
+      INTERNAL_REPORTS_APPROVAL: ${{ vars.INTERNAL_REPORTS_ENABLED }}
+      INTERNAL_REPORTS_SCOPE: ${{ vars.INTERNAL_REPORTS_SCOPE }}
 
     steps:
       - name: Require signed artifact retention for TestFlight uploads
@@ -730,6 +739,10 @@ jobs:
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --report-trial-requested "${GROUP_REPORTING_TRIAL_REQUESTED:-false}" \
+            --internal-reports-requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
+            --internal-reports-approval "${INTERNAL_REPORTS_APPROVAL:-}" \
+            --internal-reports-scope "${INTERNAL_REPORTS_SCOPE:-}" \
             --env-file "$GITHUB_ENV"
 
       - name: Validate the exact runtime embedded in the limited external beta
@@ -1250,6 +1263,7 @@ jobs:
             OFFICIAL_WINDOW_FEED_URL="$RELEASE_OFFICIAL_WINDOW_FEED_URL" \
             SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
             GROUP_WINDOWS_ENABLED="$RELEASE_GROUP_WINDOWS_ENABLED" \
+            GROUP_REPORTING_PRODUCTION_ENABLED="$RELEASE_GROUP_REPORTING_PRODUCTION_ENABLED" \
             SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             PERSONAL_ARCHIVE_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             MANAGED_PRESERVATION_ENABLED="$RELEASE_MANAGED_PRESERVATION_ENABLED" \
@@ -1482,6 +1496,10 @@ jobs:
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --report-trial-requested "${GROUP_REPORTING_TRIAL_REQUESTED:-false}" \
+            --internal-reports-requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
+            --internal-reports-approval "${INTERNAL_REPORTS_APPROVAL:-}" \
+            --internal-reports-scope "${INTERNAL_REPORTS_SCOPE:-}" \
             --app-info-plist "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
@@ -1507,6 +1525,10 @@ jobs:
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
+            --report-trial-requested "${GROUP_REPORTING_TRIAL_REQUESTED:-false}" \
+            --internal-reports-requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
+            --internal-reports-approval "${INTERNAL_REPORTS_APPROVAL:-}" \
+            --internal-reports-scope "${INTERNAL_REPORTS_SCOPE:-}" \
             --ipa "$ipa_path" \
             --verify-export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
 
@@ -1812,6 +1834,7 @@ jobs:
             echo "- Build number: \`${RELEASE_BUILD_NUMBER:-not resolved}\`"
             echo "- Release mode: \`${SELECTED_RELEASE_MODE}\`"
             echo "- Sharing scope: \`${RELEASE_MODE_SUMMARY:-not resolved}\`"
+            echo "- Real group report trial (YES = 試験専用・自分用のみ): \`${RELEASE_GROUP_REPORTING_PRODUCTION_ENABLED:-not resolved}\`"
             if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" ]]; then
               echo "- Intended result: signed archive, IPA export, validation, and TestFlight upload"
             else
