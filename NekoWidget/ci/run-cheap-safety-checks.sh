@@ -80,6 +80,14 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/FamilyNotebookSync.swift ci/verify-family-notebook-sync.swift \
   -o "$RUNNER_TEMP/verify-family-notebook-sync"
 "$RUNNER_TEMP/verify-family-notebook-sync"
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" "${notebook_common[@]}" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/FamilyNotebookTransport.swift NekoWidget/Services/FamilyNotebookSharingContract.swift \
+  NekoWidget/Services/FamilyNotebookMembershipClient.swift ci/verify-family-notebook-membership.swift \
+  -o "$RUNNER_TEMP/verify-family-notebook-membership"
+"$RUNNER_TEMP/verify-family-notebook-membership"
 xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
   NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
   NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift \
