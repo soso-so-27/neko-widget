@@ -68,6 +68,7 @@ private actor EchoTransport: GroupHTTPTransport {
     private var corruptManagementReceipt = false
     private var failRefreshAfterRename = false
     func configureManagement(drop: Set<String> = []) { managementEnabled = true; managementDrops = drop }
+    func disableManagement() { managementEnabled = false }
     func configureNameResponse(_ mode: String) { nameResponseMode = mode }
     func corruptNextManagementReceipt() { corruptManagementReceipt = true }
     func failNextRenameRefresh() { failRefreshAfterRename = true }
@@ -579,6 +580,12 @@ private struct GroupAdapterChecks {
         catch GroupClientError.idempotencyConflict { }
         do { _ = try await client.renameWindow(windowID: legacy.id, name: "古い画面", expectedNameRevision: 0, operation: .init(expectedRevision: 1)); throw Failure.check("stale name accepted") }
         catch GroupWindowManagementError.staleNameRevision { }
+        await relay.disableManagement()
+        let disabled = try await client.window(id: legacy.id)
+        try check(disabled.name == "新しい名前" && disabled.nameRevision == nil, "management OFF preserves the pinned readable name")
+        do { _ = try await client.closeWindow(windowID: legacy.id, operation: .init(expectedRevision: 1)); throw Failure.check("disabled closure accepted") }
+        catch GroupWindowManagementError.unavailable { }
+        await relay.configureManagement(drop: ["close"])
         for mode in ["rollback", "missing", "forged"] {
             await relay.configureNameResponse(mode)
             do { _ = try await client.window(id: legacy.id); throw Failure.check("untrusted name accepted: " + mode) }

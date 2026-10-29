@@ -250,7 +250,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         guard let entry = verifiedListEntries[item.windowID] else { outcome = "不採用・検証済みデータなし"; return nil }
         let stored = try local(item.windowID), cached = entry.window
         if let pin = stored.nameCheckpoint,
-           pin.rosterRevision != cached.revision || pin.nameRevision != (cached.nameRevision ?? 0)
+           pin.rosterRevision != cached.revision || pin.nameRevision != (cached.nameRevision ?? pin.nameRevision)
             || pin.ciphertextHash != GroupCanonical.hash(entry.encryptedName) {
             outcome = "不採用・名前の確認済み版の変更"; return nil
         }
@@ -389,6 +389,13 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         if let pin = stored.nameCheckpoint {
             guard pin.rosterRevision <= roster.roster.revision else { throw GroupClientError.invalidResponse }
             if pin.rosterRevision == roster.roster.revision {
+                // Turning management OFF removes the optional proof fields,
+                // not the current name. Accept only the exact already-pinned
+                // ciphertext and retain its counter for later re-enablement.
+                if metadata.nameRevision == nil {
+                    guard hash == pin.ciphertextHash else { throw GroupClientError.invalidResponse }
+                    return
+                }
                 guard nameRevision >= pin.nameRevision,
                       nameRevision != pin.nameRevision || hash == pin.ciphertextHash else { throw GroupClientError.invalidResponse }
                 if nameRevision == pin.nameRevision { return }
