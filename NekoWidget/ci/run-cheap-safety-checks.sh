@@ -91,7 +91,8 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
 xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
   NekoWidget/Services/CatCareCore.swift NekoWidget/Services/CareHandoffPlan.swift \
   NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift \
-  NekoWidget/Services/FamilyNotebookMigration.swift \
+  NekoWidget/Services/FamilyNotebookMigration.swift NekoWidget/Services/FamilyNotebookCatCareBridge.swift \
+  ci/verify-family-notebook-catcare-bridge.swift \
   ci/verify-family-notebook-migration.swift -o "$RUNNER_TEMP/verify-family-notebook-migration"
 "$RUNNER_TEMP/verify-family-notebook-migration"
 

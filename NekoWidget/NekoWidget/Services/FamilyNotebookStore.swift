@@ -18,6 +18,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
     private let familyID: UUID
     private let deviceID: String
     private let write: Writer
+    var localDirectory: URL { directory }
+    var localDeviceID: String { deviceID }
 
     private struct State: Codable, Equatable {
         var schemaVersion = 1
@@ -89,6 +91,31 @@ final class FamilyNotebookStore: @unchecked Sendable {
     }
 
     // Simulation seam only: the future authenticated/decrypted receiver must
+    /// One local save becomes one durable notebook transaction before a tool
+    /// projects it. A failed tool-file write can be recovered from this copy.
+    func applyLocalChanges(_ plan: FamilyNotebookImportPlan, author: FamilyNotebookAuthor) throws {
+        try transaction { state in
+            guard plan.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
+            for mapping in plan.mappings {
+                if let old = state.mappings.first(where: { $0.sourceKey == mapping.sourceKey }) {
+                    guard old == mapping else { throw FamilyNotebookError.mappingConflict }
+                } else { state.mappings.append(mapping) }
+            }
+            for entry in plan.entries {
+                try FamilyNotebookCore.validate(target: entry.target, value: entry.value)
+                if state.operations.contains(where: { $0.target.removes(entry.target) }) { continue }
+                let current = state.snapshot.fieldState(for: entry.target)
+                if current?.operation.value == entry.value && current != nil { continue }
+                let operation = try makeOperation(state: state, target: entry.target, value: entry.value,
+                    author: author, editedAt: entry.editedAt)
+                state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
+                state.clock = operation.version.clock; state.outboxIDs.insert(operation.id)
+            }
+        }
+    }
+
+    // The authenticated/decrypted receiver establishes provenance before merge.
     // establish membership and provenance before calling a merge layer.
     @discardableResult
     func receive(_ operations: [FamilyNotebookOperation], expectedRevision: UInt64? = nil) throws -> FamilyNotebookSnapshot {

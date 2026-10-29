@@ -26,6 +26,23 @@ final class FamilyNotebookPrototype: ObservableObject {
     @Published private(set) var familyWritesToCatCare = 0
 
     private var store: FamilyNotebookStore?
+    private var realAuthor: FamilyNotebookAuthor?
+    private var realMemberIDs: [String] = []
+    private var applyingRemote = false
+    private struct LocalBinding: Codable {
+        let directory: URL; let familyID: UUID; let deviceID: String; let author: FamilyNotebookAuthor
+    }
+    private static let bindingKey = "familyNotebook.localBinding.v1"
+    var isReal: Bool { FamilyNotebookServiceFactory.productionRequested }
+    var currentAuthor: FamilyNotebookAuthor? { isReal ? realAuthor : Self.me }
+    func isMe(_ author: FamilyNotebookAuthor) -> Bool { author.personID == currentAuthor?.personID }
+    private func writer() throws -> FamilyNotebookAuthor {
+        guard let value = currentAuthor else { throw FamilySharingError.signInExpired }; return value
+    }
+    private var currentSeenKey: String {
+        guard isReal, let id = snapshot?.familyID, let person = realAuthor?.personID else { return Self.seenKey }
+        return "familyNotebook.seen.v1." + person + "." + id.uuidString.lowercased() + "." + (store?.localDirectory.lastPathComponent ?? "")
+    }
 
     static let me = FamilyNotebookAuthor(personID: "this-iphone", displayName: "あなた")
     /// The other person in the test buttons. Not a real member.
@@ -46,11 +63,79 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// The cats an invitation shows (test builds: this iPhone's own).
     var catNames: [String] {
-        (CatCareStore.shared.state?.cats ?? []).compactMap { $0.name?.value }.filter { !$0.isEmpty }
+        if isReal { return familyCats.map(\.name) }
+        return (CatCareStore.shared.state?.cats ?? []).compactMap { $0.name?.value }.filter { !$0.isEmpty }
+    }
+
+    struct FamilyCat: Identifiable { let id: UUID; let toolID: UUID; let name: String }
+    var familyCats: [FamilyCat] {
+        guard let snapshot else { return [] }
+        var seen = Set<UUID>()
+        return snapshot.mappings.compactMap { mapping in
+            guard mapping.recordID == nil, let toolID = mapping.toolCatID, seen.insert(mapping.familyCatID).inserted,
+                  snapshot.fieldState(for: .init(familyCatID: mapping.familyCatID, field: nil))?.isDeleted != true else { return nil }
+            return FamilyCat(id: mapping.familyCatID, toolID: toolID, name: name(of: mapping.familyCatID))
+        }
+    }
+
+    /// Called after a service pass, including a failed network pass when a
+    /// retained local copy is available. No prototype store is consulted.
+    func attachReal(_ service: ProductionFamilyNotebookSharingService) {
+        guard isReal else { return }
+        if let liveStore = service.notebook { store = liveStore }
+        if let author = service.author { realAuthor = author }
+        realMemberIDs = service.lastMembers.map(\.personID)
+        if let store, let author = realAuthor, let saved = try? store.snapshot(),
+           let bytes = try? JSONEncoder().encode(LocalBinding(directory: store.localDirectory, familyID: saved.familyID,
+                                                             deviceID: store.localDeviceID, author: author)) {
+            UserDefaults.standard.set(bytes, forKey: Self.bindingKey)
+        }
+        reload()
+        guard hasFamily, let store, let snapshot, let author = realAuthor else { return }
+        do {
+            let mappings = try FamilyNotebookCatCareBridge.mappings(for: snapshot,
+                existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []))
+            if mappings != snapshot.mappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
+            reload(); applyFamilyWrites()
+        } catch { message = "家族の記録を開けませんでした。記録は消していません。" }
+    }
+
+    /// Explicit personal-to-family boundary. Only the selected tool cats and
+    /// their text records are copied; photos and farewell dates are excluded.
+    func sharePersonalCats(_ selected: Set<UUID>) async throws {
+        guard isReal, hasFamily, let store, let snapshot, var care = CatCareStore.shared.state,
+              CatCareStore.shared.canSave else { throw FamilySharingError.notAllowed }
+        care.cats = care.cats.filter { selected.contains($0.catID) && $0.deletedAt == nil }
+        guard Set(care.cats.map(\.catID)) == selected else { throw FamilyNotebookMigrationError.unreadableSource }
+        let mappings = Self.catMappings(snapshot.mappings, care: care, handoff: nil, visits: [])
+        let profiles = Set(care.cats.compactMap(\.profileID))
+        var handoff = CareHandoffStore.shared.loadError == nil ? CareHandoffStore.shared.plan : nil
+        handoff?.cats = handoff?.cats.filter { cat in
+            selected.contains(cat.toolCatID ?? cat.id) || cat.profileID.flatMap(UUID.init(uuidString:)).map(profiles.contains) == true
+        } ?? []
+        let visits = try await VeterinaryVisitStore.shared.visits().filter { selected.contains($0.catID) }
+        let source = try FamilyNotebookMigrationSource(catCare: .init(state: care, unreadableCatCount: 0), handoff: handoff, visits: visits)
+        let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings)
+        _ = try store.applyImport(prepared.plan, author: writer())
+        reload()
     }
 
     private init() {
-        if let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
+        if !isReal, let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
+        if isReal, let bytes = UserDefaults.standard.data(forKey: Self.bindingKey) {
+            do {
+                let binding = try JSONDecoder().decode(LocalBinding.self, from: bytes)
+                let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("FamilyNotebook-v1", isDirectory: true).standardizedFileURL.resolvingSymlinksInPath().path + "/"
+                guard binding.directory.standardizedFileURL.resolvingSymlinksInPath().path.hasPrefix(root) else { throw FamilyNotebookError.unsafePath }
+                store = try .init(directory: binding.directory, familyID: binding.familyID, deviceID: binding.deviceID)
+                realAuthor = binding.author; reload()
+            } catch { message = "家族の手帳を読み込めませんでした。記録は消していません。" }
+        }
+        CatCareStore.shared.willSave = { [weak self] before, after in
+            guard let self, self.isReal, !self.applyingRemote else { return }
+            try self.saveRealChanges(before, after)
+        }
         CatCareStore.shared.didSave = { [weak self] before, after in self?.catCareDidSave(before, after) }
     }
 
@@ -86,6 +171,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     // MARK: Making the family, and copying the tools in
 
     func create() async {
+        guard !isReal else { return }
         guard !hasFamily else { return }
         let retainedFamilyID = snapshot?.familyID
         let familyID = UUID()
@@ -111,6 +197,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Test builds only: what joining from an invitation will do. With no
     /// server the family is made here, and the inviter is the tried member.
     func join() async {
+        guard !isReal else { return }
         guard !hasFamily else { return }
         await create()
         guard hasFamily else { return }
@@ -122,6 +209,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// and care plans. Safe to run again: nothing is copied twice, and a cat
     /// is linked by its tool ID and profile, never by its name.
     func copyTools() async throws {
+        guard !isReal else { return } // Real sharing starts only with explicit cat selection.
         let catCare = CatCareStore.shared
         guard catCare.loadError == nil, catCare.unreadableCatCount == 0 else { throw FamilyNotebookMigrationError.unreadableSource }
         let care = catCare.state
@@ -159,6 +247,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// and personal copy unchanged; a failed durable stop leaves it active.
     /// The retained family pointer reopens the stopped copy after a restart.
     func leavePrototypeFamily() throws {
+        guard !isReal else { throw FamilySharingError.notAllowed }
         guard let store, let snapshot else { throw FamilySharingError.notAllowed }
         if snapshot.sharingEnded { return }
         self.snapshot = try store.endSharing()
@@ -169,12 +258,14 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Never the real leaving: that keeps this person's copy and is the
     /// sharing service's (FamilyNotebookSharing).
     func endPrototypeFamily() {
+        guard !isReal else { return }
         guard let familyID = snapshot?.familyID else { return }
         undoTryouts()
         discard(familyID)
     }
 
     private func discard(_ familyID: UUID) {
+        guard !isReal else { return }
         store = nil; snapshot = nil
         if UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) == familyID {
             for key in [Self.familyKey, Self.seenKey, Self.undoKey, Self.removedKey, Self.joinedKey] {
@@ -191,7 +282,8 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Every save of 「この子のこと」 (the page, its lists, what the tools fill
     /// in) goes into the notebook as the items that changed.
     private func catCareDidSave(_ before: CatCareState, _ after: CatCareState) {
-        guard hasFamily, let store, let snapshot else { return }
+        guard !applyingRemote, hasFamily, let store, let snapshot else { return }
+        if isReal { reload(); return }
         do {
             let mappings = Self.catMappings(snapshot.mappings, care: after, handoff: nil, visits: [])
             let now = try Self.plan(after, family: snapshot.familyID, mappings: mappings)
@@ -219,6 +311,29 @@ final class FamilyNotebookPrototype: ObservableObject {
         }
     }
 
+    private func saveRealChanges(_ before: CatCareState, _ after: CatCareState) throws {
+        guard hasFamily, let store, let snapshot else {
+            // If a retained binding exists but could not be opened, do not let
+            // a personal save hide an unresolved shared edit.
+            if self.snapshot == nil && UserDefaults.standard.data(forKey: Self.bindingKey) != nil {
+                throw FamilyNotebookError.storageUnavailable
+            }
+            return
+        }
+        let linked = Set(snapshot.mappings.filter { $0.recordID == nil }.compactMap(\.toolCatID))
+        var selectedBefore = before, selectedAfter = after
+        selectedBefore.cats = before.cats.filter { linked.contains($0.catID) }
+        selectedAfter.cats = after.cats.filter { linked.contains($0.catID) }
+        let now = try Self.plan(selectedAfter, family: snapshot.familyID, mappings: snapshot.mappings)
+        let then = try Self.plan(selectedBefore, family: snapshot.familyID, mappings: now.mappings)
+        let entries = now.entries.filter { entry in
+            guard let previous = then.entries.first(where: { $0.target == entry.target }) else { return true }
+            return previous.value != entry.value
+        }
+        try store.applyLocalChanges(.init(familyID: snapshot.familyID, entries: entries, mappings: now.mappings), author: writer())
+        reload()
+    }
+
     private static func plan(_ state: CatCareState, family: UUID,
                              mappings: [FamilyNotebookLocalMapping]) throws -> FamilyNotebookImportPlan {
         let source = try FamilyNotebookMigrationSource(catCare: CatCareDecoding.Result(state: state, unreadableCatCount: 0))
@@ -232,6 +347,17 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// once, the newer one is kept without asking, as in shared Notes; the
     /// other stays in the item's history.
     func applyFamilyWrites() {
+        if isReal {
+            guard hasFamily, let snapshot, let care = CatCareStore.shared.state, CatCareStore.shared.canSave else { return }
+            do {
+                let next = try FamilyNotebookCatCareBridge.apply(snapshot, to: care)
+                guard next != care else { return }
+                applyingRemote = true; defer { applyingRemote = false }
+                guard CatCareStore.shared.update({ $0 = next }) else { throw FamilyNotebookError.storageUnavailable }
+                familyWritesToCatCare += 1
+            } catch { message = "家族の記録を「この子のこと」に反映できませんでした。記録は消していません。" }
+            return
+        }
         guard hasFamily, let snapshot, let care = CatCareStore.shared.state,
               let here = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.mappings) else { return }
         var current: [FamilyNotebookTarget: FamilyNotebookValue] = [:]
@@ -354,7 +480,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     var recentFromFamily: [FamilyNotebookOperation] {
         guard let snapshot else { return [] }
         var seen = Set<FamilyNotebookTarget>()
-        return Array(snapshot.operations.filter { $0.author != Self.me && $0.target.field != nil }
+        return Array(snapshot.operations.filter { !isMe($0.author) && $0.target.field != nil }
             .sorted { $0.version > $1.version }
             .filter { seen.insert($0.target).inserted }
             .prefix(5))
@@ -368,6 +494,13 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// The family, you first. Like Apple's family and shared lists, nobody
     /// is labelled; who can do what shows only on a person's own page.
     var members: [FamilyNotebookAuthor] {
+        if isReal {
+            return realMemberIDs.map { id in
+                if id == realAuthor?.personID, let realAuthor { return realAuthor }
+                return snapshot?.operations.filter { $0.author.personID == id }.max { $0.version < $1.version }?.author
+                    ?? .init(personID: id, displayName: "家族の人")
+            }
+        }
         let removed = Set(UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? [])
         var people = [Self.me]
         if joinedSomeonesFamily { people.append(Self.tryout) }
@@ -381,6 +514,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Takes someone out of the family: what they wrote stays (test builds:
     /// the tried family member only).
     func removeMember(personID: String) {
+        guard !isReal else { return }
         guard personID != Self.me.personID, !joinedSomeonesFamily else { return }
         let removed = (UserDefaults.standard.stringArray(forKey: Self.removedKey) ?? []) + [personID]
         UserDefaults.standard.set(removed, forKey: Self.removedKey)
@@ -390,13 +524,13 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Someone else wrote after you last looked: a small dot on the tools tab.
     var hasNewFromFamily: Bool {
         guard hasFamily else { return false }
-        let seen = UInt64(UserDefaults.standard.integer(forKey: Self.seenKey))
-        return snapshot?.operations.contains { $0.author != Self.me && $0.version.clock > seen } ?? false
+        let seen = UInt64(max(0, UserDefaults.standard.integer(forKey: currentSeenKey)))
+        return snapshot?.operations.contains { !isMe($0.author) && $0.version.clock > seen } ?? false
     }
 
     func markSeen() {
         guard let clock = snapshot?.clock else { return }
-        UserDefaults.standard.set(Int(clock), forKey: Self.seenKey)
+        UserDefaults.standard.set(Int(clamping: clock), forKey: currentSeenKey)
         objectWillChange.send()
     }
 
@@ -412,6 +546,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Another iPhone in the family writes one item; it arrives as shared and
     /// shows up in 「この子のこと」.
     func tryFamilyWrite() {
+        guard !isReal else { return }
         guard let linked = firstLinkedCat() else { message = "「この子のこと」に猫がいないので試せません。"; return }
         let (cat, toolID) = linked
         let target = FamilyNotebookTarget(familyCatID: cat, field: .temperament)
@@ -424,6 +559,7 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// Two people change the same item at once, each without seeing the other.
     func tryConflict() {
+        guard !isReal else { return }
         guard let linked = firstLinkedCat() else { message = "「この子のこと」に猫がいないので試せません。"; return }
         let (cat, toolID) = linked
         let target = FamilyNotebookTarget(familyCatID: cat, field: .litter)
@@ -486,6 +622,7 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// Only items still showing a test value go back; anything you wrote stays.
     private func undoTryouts() {
+        guard !isReal else { return }
         let undos = loadUndos().filter { undo in catCareValue(undo.toolCatID, undo.field).map { undo.written.contains($0) } ?? false }
         guard !undos.isEmpty else { return }
         CatCareStore.shared.update { state in
@@ -509,17 +646,30 @@ struct FamilyNotebookView: View {
     @State private var invites = false
     @State private var triesInvitation = false
     @State private var showsPlusOffer = false
+    @State private var showsName = false
+    @State private var showsCats = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
             Group {
                 switch sharing.state {
+                case .checking where model.snapshot != nil:
+                    List {
+                        Section {
+                            ForEach(model.familyCats) { cat in
+                                NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
+                            }
+                        } footer: { Text("この iPhone に残っている記録です。共有の状態を確認しています。") }
+                        Button("もう一度確認") { Task { await sharing.refresh() } }
+                    }
                 case .checking, .leaving:
                     ProgressView()
                 case .notInFamily:
                     FamilyNotebookIntroView(creating: sharing.isWorking, create: {
-                        Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } }
-                    }, tryInvitation: { triesInvitation = true })
+                        if model.isReal { showsName = true }
+                        else { Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } } }
+                    }, tryInvitation: model.isReal ? nil : { triesInvitation = true })
                 case .pendingApproval:
                     ContentUnavailableView("参加を待っています", systemImage: "hourglass",
                                            description: Text("家族が受け入れると、ここに手帳が出ます。"))
@@ -535,6 +685,13 @@ struct FamilyNotebookView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
             .sheet(isPresented: $invites) { FamilyNotebookInviteView() }
             .sheet(isPresented: $triesInvitation) { FamilyNotebookJoinView() }
+            .sheet(isPresented: $showsName) {
+                FamilyNotebookNameView {
+                    showsName = false
+                    Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } }
+                }
+            }
+            .sheet(isPresented: $showsCats) { FamilyNotebookCatSelectionView() }
             .sheet(isPresented: $showsPlusOffer, onDismiss: {
                 NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
                 Task { await sharing.refresh() }
@@ -549,12 +706,15 @@ struct FamilyNotebookView: View {
                 Button("OK", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
         }
-        .task {
-            await sharing.refresh()
-            guard model.hasFamily else { return }
-            // Visits and care plans written since: into the notebook.
-            try? await model.copyTools()
-            model.applyFamilyWrites()
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            repeat {
+                if !sharing.isWorking { await sharing.refresh() }
+                if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }
+                guard model.isReal else { return }
+                let pending = (sharing.service as? ProductionFamilyNotebookSharingService)?.needsAnotherPass == true
+                do { try await Task.sleep(for: .seconds(pending ? 5 : 60)) } catch { return }
+            } while !Task.isCancelled
         }
         .onAppear { model.markSeen() }
         .onDisappear { model.markSeen() }
@@ -584,6 +744,27 @@ struct FamilyNotebookView: View {
             } footer: {
                 Text("招待された人は無料です。")
             }
+            if model.isReal {
+                Section("一緒に書く猫") {
+                    ForEach(model.familyCats) { cat in
+                        NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
+                    }
+                    Button("この iPhone の猫を追加") { showsCats = true }
+                }
+                if !sharing.requests.isEmpty {
+                    Section("参加を待っている人") {
+                        ForEach(sharing.requests, id: \.id) { request in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(request.displayName)
+                                HStack {
+                                    Button("受け入れる") { decide(request, approve: true) }
+                                    Button("受け入れない", role: .destructive) { decide(request, approve: false) }
+                                }.buttonStyle(.bordered).disabled(sharing.isWorking)
+                            }
+                        }
+                    }
+                }
+            }
             if !model.recentFromFamily.isEmpty {
                 Section("最近の書き込み") {
                     ForEach(model.recentFromFamily) { operation in
@@ -596,7 +777,7 @@ struct FamilyNotebookView: View {
                     }
                 }
             }
-            Section {
+            if !model.isReal { Section {
                 DisclosureGroup("テスト用") {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
                     Button("2 人が同時に直したときを試す") { model.tryConflict() }
@@ -609,8 +790,14 @@ struct FamilyNotebookView: View {
                 }
             } footer: {
                 Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。家族を終えると元に戻ります。")
-            }
+            } }
         }
+        .refreshable { if !sharing.isWorking { await sharing.refresh() } }
+    }
+
+    private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {
+        guard let real = sharing.service as? ProductionFamilyNotebookSharingService else { return }
+        Task { await sharing.perform { try await real.decide(requestID: request.id, approve: approve, operationID: $0) } }
     }
 }
 
@@ -680,7 +867,7 @@ struct FamilyNotebookMemberView: View {
 
     private enum Action: Hashable { case dissolve, leave, remove }
 
-    private var isMe: Bool { member == FamilyNotebookPrototype.me }
+    private var isMe: Bool { FamilyNotebookPrototype.shared.isMe(member) }
     private var actions: [Action] {
         if isMe {
             return (membership.canLeave ? [.leave] : []) + (membership.canDissolve ? [.dissolve] : [])
@@ -907,6 +1094,7 @@ struct FamilyNotebookJoinView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var preview: FamilyInvitationPreview?
     @State private var result: FamilyJoinResult?
+    @State private var displayName = GroupDisplayName.remembered
 
     private var inFamily: Bool { sharing.state.membership != nil }
 
@@ -932,8 +1120,17 @@ struct FamilyNotebookJoinView: View {
                     Text(FamilySharingError.alreadyInFamily.message)
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else {
+                    if sharing.service.sendsInvitations {
+                        TextField("家族に表示するあなたの名前", text: $displayName)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("family-notebook-display-name")
+                    }
                     Button {
                         guard let preview else { return }
+                        if sharing.service.sendsInvitations {
+                            guard let name = try? GroupWire.name(displayName) else { return }
+                            GroupDisplayName.remember(name)
+                        }
                         Task {
                             let service = sharing.service
                             var joined: FamilyJoinResult?
@@ -946,7 +1143,7 @@ struct FamilyNotebookJoinView: View {
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(sharing.isWorking || preview == nil)
+                    .disabled(sharing.isWorking || preview == nil || (sharing.service.sendsInvitations && (try? GroupWire.name(displayName)) == nil))
                     .accessibilityIdentifier("family-notebook-join")
                     Text("参加は無料です。").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -966,6 +1163,69 @@ struct FamilyNotebookJoinView: View {
             await sharing.refresh()
             do { preview = try await sharing.service.previewInvitation(link) }
             catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
+        }
+    }
+}
+
+struct FamilyNotebookNameView: View {
+    let confirmed: @MainActor () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = GroupDisplayName.remembered
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("あなたの名前", text: $name)
+                } footer: { Text("書いた人の名前として、家族に表示されます。") }
+                Button("この名前で家族を作る") {
+                    guard let valid = try? GroupWire.name(name) else { return }
+                    GroupDisplayName.remember(valid); confirmed()
+                }.disabled((try? GroupWire.name(name)) == nil)
+            }
+            .navigationTitle("家族で使う名前")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } } }
+        }
+    }
+}
+
+struct FamilyNotebookCatSelectionView: View {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @ObservedObject private var care = CatCareStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: Set<UUID> = []
+    @State private var saving = false
+    @State private var failed = false
+    private var available: [CatCareRecord] {
+        let linked = Set(model.familyCats.map(\.toolID))
+        return (care.state?.cats ?? []).filter { $0.deletedAt == nil && !linked.contains($0.catID) }
+    }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(available) { cat in
+                        Toggle(cat.name?.value ?? "名前なし", isOn: Binding(
+                            get: { selected.contains(cat.catID) },
+                            set: { if $0 { selected.insert(cat.catID) } else { selected.remove(cat.catID) } }))
+                    }
+                } footer: {
+                    Text("選んだ猫の「この子のこと」と、病院・預けるときの文字の記録を家族に共有します。写真と旅立った日は含みません。")
+                }
+                Button(saving ? "追加しています…" : "選んだ猫を家族に共有") {
+                    saving = true
+                    Task {
+                        do {
+                            try await model.sharePersonalCats(selected)
+                            await FamilyNotebookSharing.shared.refresh(); dismiss()
+                        } catch { failed = true }
+                        saving = false
+                    }
+                }.disabled(saving || selected.isEmpty || !care.canSave)
+            }
+            .navigationTitle("一緒に書く猫を選ぶ")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) } }
+            .alert("追加できませんでした", isPresented: $failed) { Button("OK", role: .cancel) {} }
+                message: { Text("元の記録は消していません。もう一度お試しください。") }
         }
     }
 }
@@ -1093,7 +1353,7 @@ struct FamilyNotebookNote: ViewModifier {
             VStack(alignment: .leading, spacing: 4) {
                 content
                 if let state = model.state(toolCatID: toolCatID, field),
-                   state.operation.author != FamilyNotebookPrototype.me {
+                   !model.isMe(state.operation.author) {
                     Label(FamilyNotebookWords.byline(state.operation), systemImage: "person.2")
                         .font(.caption).foregroundStyle(.secondary)
                 }
