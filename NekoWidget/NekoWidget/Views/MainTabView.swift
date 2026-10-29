@@ -803,8 +803,10 @@ struct MainTabView: View {
         .fullScreenCover(item: $arrivalStory) { letter in
             if AlbumPrototype.isOn(albumPrototypeStored), hasPhotoAccess,
                let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
-                MonthlyStoryView(letter: current, catPhotos: catPhotos,
-                    assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
+                AlbumWorkGate(month: current.monthNumber) {
+                    MonthlyStoryView(letter: current, catPhotos: catPhotos,
+                        assignments: currentPhotoLibraryAssignments, profileNames: currentPhotoLibraryProfileNames)
+                }
             } else {
                 NavigationStack {
                     ContentUnavailableView("この作品は開けません", systemImage: "photo.stack")
