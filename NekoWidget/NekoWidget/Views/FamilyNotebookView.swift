@@ -650,6 +650,14 @@ struct FamilyNotebookView: View {
     @State private var showsCats = false
     @Environment(\.scenePhase) private var scenePhase
 
+    private var prototypeInvitationAction: (@MainActor () -> Void)? {
+        guard !model.isReal else { return nil }
+        return { triesInvitation = true }
+    }
+    @ToolbarContentBuilder private var closeToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -669,7 +677,7 @@ struct FamilyNotebookView: View {
                     FamilyNotebookIntroView(creating: sharing.isWorking, create: {
                         if model.isReal { showsName = true }
                         else { Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } } }
-                    }, tryInvitation: model.isReal ? nil : { triesInvitation = true })
+                    }, tryInvitation: prototypeInvitationAction)
                 case .pendingApproval:
                     ContentUnavailableView("参加を待っています", systemImage: "hourglass",
                                            description: Text("家族が受け入れると、ここに手帳が出ます。"))
@@ -682,7 +690,7 @@ struct FamilyNotebookView: View {
             }
             .navigationTitle("家族の手帳")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
+            .toolbar { closeToolbar }
             .sheet(isPresented: $invites) { FamilyNotebookInviteView() }
             .sheet(isPresented: $triesInvitation) { FamilyNotebookJoinView() }
             .sheet(isPresented: $showsName) {
