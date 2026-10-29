@@ -39,8 +39,14 @@ enum PhotoLibraryReadingPosition {
     /// view), so the whole screen was rebuilt row by row while scrolling.
     private static var unsaved: [String: String] = [:]
 
+    /// Remembered while the first row is on screen. Coming back then shows
+    /// the list from its top, header and theme row included, instead of
+    /// pinning the first row under the bar (10/27: the row above hid).
+    static let listTop = ""
+
     static func identifier(for section: String) -> String? {
-        unsaved[section] ?? defaults.string(forKey: "photoLibrary.position.\(section).v1")
+        let identifier = unsaved[section] ?? defaults.string(forKey: "photoLibrary.position.\(section).v1")
+        return identifier == listTop ? nil : identifier
     }
 
     /// While scrolling: memory only.
@@ -53,7 +59,7 @@ enum PhotoLibraryReadingPosition {
     static func flush() {
         let pending = unsaved
         unsaved = [:]
-        for (section, identifier) in pending { save(identifier, section: section) }
+        for (section, identifier) in pending { save(identifier == listTop ? nil : identifier, section: section) }
     }
 
     static func save(_ identifier: String?, section: String) {
@@ -74,10 +80,12 @@ enum PhotoLibraryReadingPosition {
 }
 
 extension View {
-    func restoringPhotoLibraryPosition(section: String?, isSearching: Bool = false,
+    /// `firstRow`: the list's first row. A place saved there means the top,
+    /// so coming back leaves the list at its top, header included.
+    func restoringPhotoLibraryPosition(section: String?, isSearching: Bool = false, firstRow: String? = nil,
                                        normalize: @escaping (String) -> String = { $0 }) -> some View {
         modifier(PhotoLibraryPositionRestoration(section: section, isSearching: isSearching,
-                                                normalize: normalize))
+                                                firstRow: firstRow, normalize: normalize))
     }
 }
 
@@ -128,12 +136,14 @@ struct PhotoLibraryGridRowView<Cell: View>: View {
 private struct PhotoLibraryPositionRestoration: ViewModifier {
     let section: String?
     let isSearching: Bool
+    let firstRow: String?
     let normalize: (String) -> String
     @State private var tracker = PhotoLibraryRowTracker()
 
-    init(section: String?, isSearching: Bool, normalize: @escaping (String) -> String) {
+    init(section: String?, isSearching: Bool, firstRow: String?, normalize: @escaping (String) -> String) {
         self.section = section
         self.isSearching = isSearching
+        self.firstRow = firstRow
         self.normalize = normalize
     }
 
@@ -203,7 +213,9 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
         tracker.userScrolled = false
         tracker.generation &+= 1
         let generation = tracker.generation
-        guard let identifier else { return }
+        // 10/28: 306 saved the first row while the list sat at its top, and
+        // every return pinned that row under the bar, hiding the theme row.
+        guard let identifier, identifier != firstRow else { return }
         DispatchQueue.main.async {
             guard tracker.isVisible, generation == tracker.generation else { return }
             proxy.scrollTo(identifier, anchor: .top)
@@ -224,6 +236,13 @@ final class PhotoLibraryRowTracker {
     private var visible: [String: Int] = [:]
     private var lastTop: String?
 
+    /// The list the person is touching is the one whose place is kept. The
+    /// 写真 tab's pages sit side by side and all appear at once.
+    func claimActiveSection() {
+        guard isVisible, let section else { return }
+        PhotoLibraryReadingPosition.activeSection = section
+    }
+
     func appear(_ id: String, index: Int) {
         visible[id] = index
         report()
@@ -235,7 +254,9 @@ final class PhotoLibraryRowTracker {
     }
 
     private func report() {
-        guard let top = visible.min(by: { $0.value < $1.value })?.key, top != lastTop else { return }
+        guard let first = visible.min(by: { $0.value < $1.value }) else { return }
+        let top = first.value == 0 ? PhotoLibraryReadingPosition.listTop : first.key
+        guard top != lastTop else { return }
         lastTop = top
         onTopChange?(top)
     }
@@ -279,11 +300,15 @@ private struct PhotoLibraryUserScrollDetector: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content.onScrollPhaseChange { _, phase in
-                if phase == .interacting { tracker.userScrolled = true }
+                if phase == .interacting {
+                    tracker.userScrolled = true
+                    tracker.claimActiveSection()
+                }
             }
         } else {
             content.simultaneousGesture(DragGesture(minimumDistance: 3).onChanged { _ in
                 tracker.userScrolled = true
+                tracker.claimActiveSection()
             })
         }
     }
@@ -427,6 +452,7 @@ struct HomeView: View {
         }
         .accessibilityIdentifier("photo-library-all-scroll")
         .restoringPhotoLibraryPosition(section: isEmbedded ? (readingPositionKey ?? "all") : nil,
+            firstRow: catPhotos.first?.localIdentifier,
             normalize: { PhotoLibraryGridRow.identifier(containing: $0, in: catPhotos) })
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)

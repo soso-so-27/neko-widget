@@ -1,4 +1,6 @@
-export interface Env {
+import type {GroupReportMailEnv} from './group-report-mail';
+
+export interface Env extends GroupReportMailEnv {
   DB: D1Database;
   MEDIA?: R2Bucket;
   MODERATION_MEDIA?: R2Bucket;
@@ -13,6 +15,14 @@ export interface Env {
   /// available when this is disabled.
   MOMENT_RUNTIME_ENABLED?: string;
   GROUP_RUNTIME_ENABLED?: string;
+  /// New group reports stay closed until the group-aware owner review path is
+  /// ready. This never enables the legacy report gate or media traffic.
+  GROUP_REPORT_RUNTIME_ENABLED?: string;
+  /// Group evidence decisions and delivery restrictions; defaults OFF.
+  GROUP_MODERATION_RUNTIME_ENABLED?: string;
+  /// Group APNs registration/dispatch is an independent opt-in. Secrets or
+  /// the legacy APNs switch alone never start new group notifications.
+  GROUP_APNS_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side switch for accepting new moderation
   /// report reservations, ciphertext uploads and commits. Report cleanup,
   /// retention and deletion remain available when this is disabled.

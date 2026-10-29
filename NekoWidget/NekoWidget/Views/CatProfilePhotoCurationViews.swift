@@ -42,6 +42,9 @@ struct CatProfileDetailView: View {
     @State private var nameSaveFailed = false
     @State private var deleteFailed = false
     @State private var page: CatPage = .photos
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
+    @State private var showsFarewellEditor = false
 
     enum CatPage: Hashable { case photos, care }
 
@@ -80,6 +83,14 @@ struct CatProfileDetailView: View {
         }
         .navigationTitle(profile.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // この子のこと brings its own; 写真 shows the same at the same place.
+            if page == .photos, AlbumPrototype.isOn(albumPrototypeStored) || FamilyNotebookPrototype.shared.hasFamily {
+                ToolbarItem(placement: .topBarTrailing) {
+                    FamilyNotebookButton(accessibilityIdentifier: "cat-profile-family-notebook")
+                }
+            }
+        }
     }
 
     private var profileForm: some View {
@@ -121,6 +132,15 @@ struct CatProfileDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .listRowBackground(Color.clear)
+                if AlbumPrototype.isOn(albumPrototypeStored),
+                   let day = CatFarewell.days(farewellJSON)[profile.identifier] {
+                    Text(CatFarewell.text(day) + "に旅立ちました")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                        .accessibilityIdentifier("cat-profile-farewell")
+                }
 
                 if showsNameEditor {
                     TextField("名前", text: $draftName)
@@ -222,9 +242,19 @@ struct CatProfileDetailView: View {
                     } else { deleteFailed = true }
                 }
             }
+            // When a cat has died, deleting is usually where people go. Offer
+            // to keep the cat instead, in words that suit any reason for deleting.
+            if AlbumPrototype.isOn(albumPrototypeStored), CatFarewell.days(farewellJSON)[profile.identifier] == nil {
+                Button("思い出として残す") { showsFarewellEditor = true }
+            }
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("写真やツールの入力は残ります。この子への写真の指定とアルバム連携だけを外します。")
+        }
+        .sheet(isPresented: $showsFarewellEditor) {
+            CatFarewellEditor(name: profile.displayName, recorded: CatFarewell.days(farewellJSON)[profile.identifier]) { day in
+                farewellJSON = CatFarewell.setting(day, for: profile.identifier, in: farewellJSON)
+            }
         }
         .sheet(isPresented: $showsKeyPhotoPicker) {
             NavigationStack {

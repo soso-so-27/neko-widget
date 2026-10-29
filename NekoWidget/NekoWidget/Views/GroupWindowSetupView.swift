@@ -31,6 +31,8 @@ enum GroupWindowPresentation {
             return "接続できません。電波のあるところで、もう一度お試しください。"
         case .unavailable:
             return "まどの仕組みをいま利用できません。時間をおいてもう一度お試しください。"
+        case .invitationPaused:
+            return invitationPausedMessage
         case .authenticationRequired:
             return "このiPhoneの確認が必要です。まどを開き直してください。"
         case .notMember:
@@ -65,6 +67,10 @@ enum GroupWindowPresentation {
             return "うまく続けられませんでした。画面を開き直して、もう一度お試しください。"
         }
     }
+
+    /// The team paused new invitations and new people joining. Windows in use
+    /// carry on; nobody is told why, and nothing is lost.
+    static let invitationPausedMessage = "いまは、新しい招待と参加の受付をお休みしています。いまのまどは、このまま使えます。少し時間をおいて、もう一度お試しください。"
 
     /// The window keeps everything; only new photos stop. Never says
     /// "deleted", never blames the members.
@@ -452,15 +458,22 @@ struct GroupWindowMembersView: View {
     /// standards, and where to report a problem.
     @ViewBuilder private var safetySection: some View {
         let configuration = SharingAPIConfiguration.current
-        if configuration.privacyURL != nil || configuration.communityStandardsURL != nil || configuration.supportURL != nil {
+        let reports = GroupSafety.shared.service.isAvailable
+        if reports || configuration.privacyURL != nil || configuration.communityStandardsURL != nil || configuration.supportURL != nil {
             Section {
+                if reports {
+                    NavigationLink("通報への返答") { GroupReportsView(windowID: model.windowID) }
+                        .accessibilityIdentifier("group-window-reports")
+                }
                 if let url = configuration.privacyURL { Link("プライバシーポリシー", destination: url) }
                 if let url = configuration.communityStandardsURL { Link("コミュニティ基準", destination: url) }
                 if let url = configuration.supportURL { Link("問題を問い合わせる", destination: url) }
             } header: {
                 Text("安全と決まり")
             } footer: {
-                Text("困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
+                Text(reports
+                     ? "困る写真が届いたときは、写真の「…」から、通報・ブロック・その人の写真を表示しないようにできます。"
+                     : "困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
             }
         }
     }
@@ -649,7 +662,7 @@ struct GroupWindowMembersView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(request.displayName)
                         .font(.body.weight(.semibold))
-                    Text("参加を待っています")
+                    Text(request.admissionPaused == true ? "参加の受付をお休み中です" : "参加を待っています")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -665,7 +678,7 @@ struct GroupWindowMembersView: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isWorking || window.state != .active)
+                    .disabled(model.isWorking || window.state != .active || request.admissionPaused == true)
                     .accessibilityIdentifier("group-window-approve")
                     Button {
                         Task { await model.reject(request) }
@@ -993,6 +1006,13 @@ struct GroupJoinView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if request.admissionPaused == true {
+                Label("いまは参加の受付をお休みしています。再開すると、そのまま承認を待つ形にもどります。", systemImage: "hourglass")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("group-join-admission-paused")
+            }
             LabeledContent("確認の言葉", value: request.verificationPhrase)
                 .accessibilityIdentifier("group-join-verification-phrase")
             Text("作った人に聞かれたら、この言葉を伝えてください。")

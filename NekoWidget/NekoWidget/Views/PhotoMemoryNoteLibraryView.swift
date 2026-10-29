@@ -187,6 +187,7 @@ struct PhotoMemoryNotesListView: View {
     let readingPositionKey: String?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.photoLibraryPageIsCurrent) private var isCurrentPhotoLibraryPage
     @StateObject private var library: PhotoMemoryNoteLibraryPresentation
     @StateObject private var access = PhotoMemoryNotePhotoAccess()
     @State private var sort: PhotoMemoryNoteLibraryPolicy.Sort = .captured
@@ -432,7 +433,7 @@ struct PhotoMemoryNotesListView: View {
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
-        if archiveEnabled || openCatPreparedness != nil {
+        if isCurrentPhotoLibraryPage, archiveEnabled || openCatPreparedness != nil {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
                     if archiveEnabled {

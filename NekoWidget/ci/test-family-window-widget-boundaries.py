@@ -1285,7 +1285,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("if hasPhotoAccess", album_root)
         self.assertIn('isCatDetail ? "albums-cat-detail" : "albums-root"', album_root)
         self.assertNotIn('accessibilityIdentifier("albums-favorites")', album_root)
-        photo_library = section(main_tab, "private var photoLibraryContent:", "private var allPhotosView:")
+        photo_library = section(main_tab, "private func photoLibraryContent(", "private var allPhotosView:")
         self.assertIn("case .favorites:", photo_library)
         self.assertIn("SavedMemoriesGalleryView(photos: hasPhotoAccess ? photoLibraryLikedPhotos : []", photo_library)
         self.assertIn("unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount", photo_library)
@@ -5061,7 +5061,8 @@ class Build269FeedbackTests(unittest.TestCase):
                      "NekoWidget/Views/EvacuationPreparationView.swift"):
             self.assertIn("importBirthdays(profiles)", source(path), path)
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        self.assertIn("if !entry.isHidden && !entry.isOwn {", window)
+        self.assertIn("let shown = !entry.isHidden && !safety.hasReported(entry.id, in: model.windowID)", window)
+        self.assertIn("if shown && !entry.isOwn {", window)
 
 
 class TwoPersonWindowHiddenTests(unittest.TestCase):

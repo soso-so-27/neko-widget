@@ -40,12 +40,79 @@ final class PhotoLibrarySelectionState: ObservableObject {
     }
 }
 
+/// Whether this page of the 写真 tab is the one on screen. The pages sit side
+/// by side, so only the shown one puts buttons in the bar.
+private struct PhotoLibraryPageIsCurrentKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var photoLibraryPageIsCurrent: Bool {
+        get { self[PhotoLibraryPageIsCurrentKey.self] }
+        set { self[PhotoLibraryPageIsCurrentKey.self] = newValue }
+    }
+}
+
+/// While the pages move: the tabs follow from the scroll offset (iOS 18), and
+/// the chosen section is kept only once the pages rest, so nothing above the
+/// pages redraws mid-swipe. iOS 17 has no offset to follow; the line moves
+/// when the page changes.
+private struct PhotoLibraryPageSettling: ViewModifier {
+    let page: PhotoLibrarySection?
+    let pager: PhotoLibraryPagerProgress
+    let settle: () -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    let width = geometry.containerSize.width + PhotoLibraryPagerProgress.gap
+                    return width > 0 ? geometry.contentOffset.x / width : 0
+                } action: { _, position in
+                    pager.position = position
+                }
+                .onScrollPhaseChange { _, phase in
+                    if phase == .idle { settle() }
+                }
+        } else {
+            content.onChange(of: page) { _, page in
+                guard let page else { return }
+                withAnimation(.snappy) { pager.position = PhotoLibraryPagerProgress.index(of: page) }
+                settle()
+            }
+        }
+    }
+}
+
+/// Where the 写真 tab's pages are while they move: 0 is すべて, 1 お気に入り,
+/// 2 メモ, and 0.4 is part way. Only the tabs above read it, so following the
+/// finger redraws three words and a line, never the tab with its photos.
+@MainActor
+final class PhotoLibraryPagerProgress: ObservableObject {
+    /// The gap between pages, so where one ends is plain while it moves.
+    nonisolated static let gap: CGFloat = 8
+
+    @Published var position: CGFloat = 0
+
+    nonisolated static func index(of section: PhotoLibrarySection) -> CGFloat {
+        CGFloat(PhotoLibrarySection.allCases.firstIndex(of: section) ?? 0)
+    }
+}
+
 /// Thin underline tabs under the title, the way Photos lists its albums:
-/// no box, no fill, the chosen one underlined.
+/// no box, no fill, the chosen one underlined. With a pager the line moves
+/// with the finger, as in Instagram and X, and the nearer title darkens.
 struct PhotoLibrarySectionPicker: View {
     @Binding var selection: PhotoLibrarySection
     var isCompact = false
+    var pager: PhotoLibraryPagerProgress? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Namespace private var underline
+    @State private var titleFrames: [PhotoLibrarySection: CGRect] = [:]
+
+    private var follows: PhotoLibraryPagerProgress? {
+        typeSize.isAccessibilitySize ? nil : pager
+    }
 
     var body: some View {
         let layout = typeSize.isAccessibilitySize
@@ -54,26 +121,74 @@ struct PhotoLibrarySectionPicker: View {
             layout {
                 ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
                     Button { selection = section } label: {
-                        Text(section.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(selection == section ? .primary : .secondary)
-                            .frame(minHeight: 44)
-                            .overlay(alignment: .bottom) {
-                                Rectangle()
-                                    .fill(selection == section ? Color.primary : .clear)
-                                    .frame(height: 2)
+                        Group {
+                            if let follows {
+                                PhotoLibraryPagerTitle(section: section, pager: follows)
+                            } else {
+                                Text(section.title)
+                                    .foregroundStyle(selection == section ? .primary : .secondary)
                             }
-                            .contentShape(Rectangle())
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(minHeight: 44)
+                        .overlay(alignment: .bottom) {
+                            if follows == nil, selection == section {
+                                Rectangle()
+                                    .fill(Color.primary)
+                                    .frame(height: 2)
+                                    .matchedGeometryEffect(id: "underline", in: underline)
+                            }
+                        }
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("photos-section-\(section.rawValue)")
                     .accessibilityAddTraits(selection == section ? .isSelected : [])
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("photo-section-titles")) } action: { frame in
+                        titleFrames[section] = frame
+                    }
                 }
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            }
+            .coordinateSpace(.named("photo-section-titles"))
+            .overlay(alignment: .topLeading) {
+                if let follows { PhotoLibraryPagerUnderline(pager: follows, frames: titleFrames) }
             }
             Divider()
         }
         .padding(.horizontal, isCompact ? 0 : 16)
+    }
+}
+
+private struct PhotoLibraryPagerTitle: View {
+    let section: PhotoLibrarySection
+    @ObservedObject var pager: PhotoLibraryPagerProgress
+
+    var body: some View {
+        let distance = abs(pager.position - PhotoLibraryPagerProgress.index(of: section))
+        Text(section.title)
+            .foregroundStyle(distance < 0.5 ? .primary : .secondary)
+    }
+}
+
+/// The line under the titles, between two of them while the pages move.
+private struct PhotoLibraryPagerUnderline: View {
+    @ObservedObject var pager: PhotoLibraryPagerProgress
+    let frames: [PhotoLibrarySection: CGRect]
+
+    var body: some View {
+        let all = PhotoLibrarySection.allCases
+        let position = min(max(pager.position, 0), CGFloat(all.count - 1))
+        let lower = Int(position.rounded(.down)), upper = min(lower + 1, all.count - 1)
+        let t = position - CGFloat(lower)
+        if let from = frames[all[lower]], let to = frames[all[upper]] {
+            Rectangle()
+                .fill(Color.primary)
+                .frame(width: from.width + (to.width - from.width) * t, height: 2)
+                .offset(x: from.minX + (to.minX - from.minX) * t, y: from.maxY - 2)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -399,6 +514,10 @@ struct MainTabView: View {
         }
     }
     @StateObject private var photoLibrarySelection = PhotoLibrarySelectionState()
+    /// A plain box on purpose: the pages moving never redraw this view.
+    @State private var photoPager = PhotoLibraryPagerProgress()
+    /// The page the pager rests on or is heading to.
+    @State private var photoPage: PhotoLibrarySection?
     @State private var photoLibraryProfileIdentifier: String?
     @StateObject private var showcaseStore = ShowcasePhotoStore.shared
     @AppStorage("showcase.lastScopeID.v1") private var showcaseScopeID = ""
@@ -433,7 +552,6 @@ struct MainTabView: View {
     private var growthPhotoOverridesJSON = ""
     /// Test builds only: 設定 → テスト用「新しいアルバム（試作）」.
     @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
-    @State private var showsFamilyNotebook = false
     @AppStorage(AlbumPrototype.enabledAtKey) private var albumPrototypeEnabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var albumPrototypeOpened = ""
     @ObservedObject private var albumArrivalInbox = AlbumArrivalOpenInbox.shared
@@ -672,6 +790,8 @@ struct MainTabView: View {
         }
         .onChange(of: albumArrivalInbox.pending, initial: true) { _, _ in openAlbumArrivalIfReady() }
         .onChange(of: albumPrototypeStored, initial: true) { _, enabled in
+            // Test builds: the family notebook listens to 「この子のこと」 from the start.
+            if AlbumPrototype.isOn(enabled) { _ = FamilyNotebookPrototype.shared }
             if AlbumPrototype.isOn(enabled), albumPrototypeEnabledAt == 0 {
                 albumPrototypeEnabledAt = Date().timeIntervalSince1970
             }
@@ -804,9 +924,9 @@ struct MainTabView: View {
     private var photoLibrary: some View {
         VStack(spacing: 0) {
             // One row, one kind of control: which photos (all / favorites / memos).
-            PhotoLibrarySectionPicker(selection: photoLibrarySelection.binding, isCompact: true)
+            PhotoLibrarySectionPicker(selection: photoLibrarySectionBinding, isCompact: true, pager: photoPager)
                 .padding(.horizontal, 16)
-            photoLibraryContent.id("\(photoLibraryRevision)-\(photoLibraryPositionKey)")
+            photoLibraryPager
         }
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
@@ -872,9 +992,6 @@ struct MainTabView: View {
     private var toolsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                if AlbumPrototype.isOn(albumPrototypeStored) {
-                    familyNotebookRow
-                }
                 // The cats are the door, but small: a row of faces above the
                 // tools, each opening the cat's page. The tools stay tools.
                 catStrip
@@ -938,33 +1055,6 @@ struct MainTabView: View {
                     .accessibilityIdentifier("tools-settings-button")
             }
         }
-    }
-
-    /// Test builds only: one family for every tool, chosen here, above the
-    /// tools it shares. Nothing is sent yet; the sheet explains the idea.
-    private var familyNotebookRow: some View {
-        Button { showsFamilyNotebook = true } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "person.2.fill")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(ToolTint.everydayLight)
-                    .frame(width: 36, height: 36)
-                    .background(ToolTint.everydayLight.opacity(0.15), in: Circle())
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("家族と一緒に書く").font(.subheadline.weight(.semibold))
-                    Text("この子のこと・病院・預けるときを、家族で同じものに")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-            }
-            .padding(12)
-            .background(Color(.secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("tools-family-notebook")
-        .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookIntroView() }
     }
 
     private var showcaseToolCard: some View {
@@ -1166,7 +1256,60 @@ struct MainTabView: View {
     }
 
     private var photoLibraryPositionKey: String {
-        let mode = photoLibrarySelection.selection.rawValue
+        photoLibraryPositionKey(photoLibrarySelection.selection)
+    }
+
+    /// すべて・お気に入り・メモ side by side, as in Instagram and X (10/28):
+    /// the next page is already there, follows the finger with a gap between
+    /// pages, and a short flick is enough. One page per swipe.
+    private var photoLibraryPager: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: PhotoLibraryPagerProgress.gap) {
+                ForEach(PhotoLibrarySection.allCases, id: \.self) { section in
+                    ZStack {
+                        photoLibraryContent(section)
+                            .id("\(photoLibraryRevision)-\(photoLibraryPositionKey(section))")
+                    }
+                    .background(Color(.systemGroupedBackground))
+                    .environment(\.photoLibraryPageIsCurrent, section == photoLibrarySelection.selection)
+                    .containerRelativeFrame(.horizontal)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollIndicators(.hidden)
+        .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+        .scrollPosition(id: $photoPage)
+        .background(Color(.systemGray5))
+        .modifier(PhotoLibraryPageSettling(page: photoPage, pager: photoPager) {
+            guard let photoPage, photoPage != photoLibrarySelection.selection else { return }
+            photoLibrarySelection.select(photoPage)
+        })
+        .onAppear {
+            guard photoPage == nil else { return }
+            photoPage = photoLibrarySelection.selection
+            photoPager.position = PhotoLibraryPagerProgress.index(of: photoLibrarySelection.selection)
+        }
+        // Chosen elsewhere (a link, a closed photo): the pages go there too.
+        .onChange(of: photoLibrarySelection.selection) { _, section in
+            guard photoPage != section else { return }
+            photoPage = section
+            photoPager.position = PhotoLibraryPagerProgress.index(of: section)
+        }
+    }
+
+    private var photoLibrarySectionBinding: Binding<PhotoLibrarySection> {
+        Binding(get: { photoLibrarySelection.selection }, set: { showPhotoLibrarySection($0) })
+    }
+
+    /// The pages slide there; the section is kept when they rest.
+    private func showPhotoLibrarySection(_ section: PhotoLibrarySection) {
+        guard section != photoLibrarySelection.selection else { return }
+        withAnimation(.snappy(duration: 0.35)) { photoPage = section }
+    }
+
+    private func photoLibraryPositionKey(_ section: PhotoLibrarySection) -> String {
+        let mode = section.rawValue
         return photoLibraryProfileIdentifier.map { "\(mode)-\($0)" } ?? mode
     }
 
@@ -1260,14 +1403,14 @@ struct MainTabView: View {
         .accessibilityIdentifier("photos-cat-\(identifier ?? "all")")
     }
 
-    @ViewBuilder private var photoLibraryContent: some View {
-        switch photoLibrarySelection.selection {
+    @ViewBuilder private func photoLibraryContent(_ section: PhotoLibrarySection) -> some View {
+        switch section {
         case .all:
             allPhotosView
         case .favorites:
             SavedMemoriesGalleryView(photos: hasPhotoAccess ? photoLibraryLikedPhotos : [], startsInExportMode: false,
                                     isEmbedded: true,
-                                    readingPositionKey: photoLibraryPositionKey,
+                                    readingPositionKey: photoLibraryPositionKey(.favorites),
                                     unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount,
                                     hasPhotoAccess: hasPhotoAccess,
                                     savedStateReadFailed: savedPhotoStateReadFailed,
@@ -1283,8 +1426,8 @@ struct MainTabView: View {
                                      currentPhotoAssignments: currentPhotoLibraryAssignments,
                                      registeredProfileIdentifiers: photoLibraryRegisteredIdentifiers,
                                      currentProfileNames: currentPhotoLibraryProfileNames,
-                                     readingPositionKey: photoLibraryPositionKey) {
-                photoLibrarySelection.select(.all)
+                                     readingPositionKey: photoLibraryPositionKey(.notes)) {
+                showPhotoLibrarySection(.all)
             }
         }
     }
@@ -1304,7 +1447,7 @@ struct MainTabView: View {
             isEmbedded: true,
             supplementaryPhotos: photoLibraryProfileIdentifier == nil ? AnyView(PersonalArchivePhotosSection(
                 photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
-            readingPositionKey: photoLibraryPositionKey,
+            readingPositionKey: photoLibraryPositionKey(.all),
             showsCatProfileNavigation: false,
             headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker),
             themeRow: AlbumPrototype.isOn(albumPrototypeStored) && hasPhotoAccess && !photoThemeAlbums.isEmpty
@@ -4038,59 +4181,3 @@ private extension View {
     }
 }
 
-/// Test builds only: what writing the tools together with the family will be.
-/// The family is one group for every tool; people outside it get a tool
-/// handed to them (PDF, image) instead. Nothing here sends anything yet.
-struct FamilyNotebookIntroView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("一緒にお世話する人（家族・同居の人）と、この子のことを同じ手帳に書けます。")
-                        .font(.body)
-                    VStack(alignment: .leading, spacing: 14) {
-                        point("syringe", "だれかが書いたワクチンの日を、ほかの家族も見られる")
-                        point("house", "預けるとき、実家の親が自分の iPhone で食事の量を確かめられる")
-                        point("clock.arrow.circlepath", "どの項目も、だれがいつ書いたかが残る")
-                        point("lock", "健康や家の情報は、iPhone の中で暗号にしてから送る")
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("一緒に書けるもの").font(.subheadline.weight(.semibold))
-                        Text("この子のこと（基本・健康・暮らし）、病院で見せる、預けるとき。迷子のチラシも、いつも最新の内容で作れます。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("家族の外の人には").font(.subheadline.weight(.semibold))
-                        Text("ペットシッターや病院には、道具ごとに PDF や画像で渡せます。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("料金").font(.subheadline.weight(.semibold))
-                        Text("家族を作る人は Plus。招待された人はずっと無料です。Plus をやめても、書いたことはみんなの iPhone に残ります。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    Button {} label: {
-                        Text("家族を作る").font(.headline).frame(maxWidth: .infinity, minHeight: 50)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(true)
-                    Text("テスト用の版の試作です。まだ家族を作ることはできません。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(20)
-            }
-            .navigationTitle("家族と一緒に書く")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
-        }
-    }
-
-    private func point(_ systemImage: String, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: systemImage).foregroundStyle(.secondary).frame(width: 22)
-            Text(text).font(.subheadline)
-        }
-    }
-}

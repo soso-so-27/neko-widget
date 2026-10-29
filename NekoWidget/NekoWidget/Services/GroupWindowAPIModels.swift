@@ -9,7 +9,14 @@ enum GroupAPIModel {
             try c.encode(limit, forKey: .limit)
         }
     }
-    struct WindowItem: Decodable { let windowID: String }
+    struct WindowItem: Decodable {
+        let windowID: String
+        // Older relays may only return the ID. Incomplete version information
+        // always takes the full detail/roster/member verification path.
+        let revision: Int?; let keyEpoch: Int?; let rotationRequired: Bool?
+        let myParticipantID: String?; let myRole: GroupRole?; let encryptedName: Data?
+        let deliveryStatus: GroupDeliveryStatus?; let deliveryReason: GroupDeliveryReason?; let ownerParticipantID: String?
+    }
     struct Page<T: Decodable>: Decodable { let items: [T]; let next: String?; let revision: Int? }
     struct WindowReply: Decodable {
         struct Metadata: Decodable {
@@ -56,11 +63,13 @@ enum GroupAPIModel {
     struct JoinReply: Decodable {
         let requestID: String; let windowID: String; let invitationID: String; let personID: String; let candidateDeviceID: String
         let state: GroupRequestState; let expiresAt: Int; let resultRevision: Int?
+        let admissionPaused: Bool?
     }
     struct PendingJoin: Codable {
         let id: String; let invitationID: String; let personID: String; let candidateDeviceID: String
         let state: GroupRequestState; let expiresAt: Int; let encryptedDisplayName: Data; let personAuthorization: Data
         let signingPublicKey: Data; let hpkePublicKey: Data; let identityPublicKey: Data
+        var admissionPaused: Bool? = nil
     }
     struct Transition: Codable {
         let operationID: String; let expectedRevision: Int; let kind: String; let targetID: String

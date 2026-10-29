@@ -1,4 +1,5 @@
 import { ApiError, errorResponse, jsonResponse } from "./errors";
+import {runGroupReportOperations,drainGroupReportMail} from './group-report-operations';
 import {
   apnsRuntimeEnabled,
   billingAccountBootstrapRuntimeEnabled,
@@ -111,6 +112,10 @@ import { getWindowName, putWindowName } from "./window-name";
 import { familyRecords, runFamilyRecordCleanup } from "./family-records";
 import { groupAPI } from './group-api';
 import { runGroupRelayCleanup } from './group-cleanup';
+import { isGroupReportPath } from './group-reports';
+import { groupReplyPath } from './group-moderation-replies';
+import { groupReportingAvailabilityPath } from './group-reporting-availability';
+import { drainGroupNotifications } from './group-push';
 
 export async function route(
   request: Request,
@@ -135,6 +140,9 @@ export async function route(
 
   if (pathname === '/v3/group-identities' || pathname.startsWith('/v3/group-identities/')
       || pathname === '/v3/group-windows' || pathname.startsWith('/v3/group-windows/')) {
+    // Reporting is independent of media reception and creator Plus. Only this
+    // narrow router can authenticate a revoked device's scoped report grant.
+    if (isGroupReportPath(pathname) || groupReplyPath.test(pathname) || pathname===groupReportingAvailabilityPath) return groupAPI(request, env);
     if (env.GROUP_RUNTIME_ENABLED !== 'YES' || !momentRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate())) {
       throw new ApiError(503, 'group_runtime_disabled', 'Group windows are unavailable.');
     }
@@ -619,12 +627,17 @@ export default {
   },
   async scheduled(controller, env, ctx): Promise<void> {
     if (controller.cron === MOMENT_CLEANUP_CRON) {
+      // Independent promises: an operations/mail failure must never postpone
+      // the ordinary seven-day evidence cleanup.
+      ctx.waitUntil(runGroupReportOperations(env));
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
+      ctx.waitUntil(drainGroupReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
+      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(drainGroupNotifications(env));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
       if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {

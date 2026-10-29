@@ -47,6 +47,19 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/ProductionGroupWindowClient.swift ci/verify-group-adapter.swift \
   -o "$RUNNER_TEMP/group-adapter-tests"
 "$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json | node ci/verify-native-group-http.mjs
+xcrun --sdk macosx swiftc -D GROUP_REPORT_CRYPTO_CHECKS -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupReportCrypto.swift ci/verify-group-report-crypto.swift \
+  -o "$RUNNER_TEMP/group-report-crypto-tests"
+"$RUNNER_TEMP/group-report-crypto-tests" ci/fixtures/group-report-v3.json | node ci/verify-group-report-crypto.mjs --swift-stdin
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift Shared/Sharing/GroupReportCrypto.swift \
+  NekoWidget/Services/GroupWindowContract.swift NekoWidget/Services/GroupWindowWire.swift \
+  NekoWidget/Services/GroupWindowStorage.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupReporting.swift \
+  NekoWidget/Services/GroupReportingProvider.swift NekoWidget/Services/GroupReportDraftStore.swift \
+  NekoWidget/Services/ProductionGroupReporting.swift ci/verify-group-reporting.swift \
+  -o "$RUNNER_TEMP/group-reporting-tests"
+"$RUNNER_TEMP/group-reporting-tests" ci/fixtures/group-report-v3.json
 xcrun --sdk macosx swiftc -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
   NekoWidget/Services/GroupInvitationLink.swift ci/verify-group-invitation-link.swift \
@@ -94,6 +107,7 @@ xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
   build
 wait "$boot_pid"
 app="$RUNNER_TEMP/QuickBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
+test "$(/usr/libexec/PlistBuddy -c 'Print GroupReportingProductionEnabled' "$app/Info.plist")" = "NO"
 python3 ci/group-window-release.py --requested false --mode disabled \
   --app-info-plist "$app/Info.plist"
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")

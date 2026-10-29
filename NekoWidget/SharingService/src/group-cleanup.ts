@@ -1,4 +1,6 @@
 import type { Env } from './env';
+import { runGroupReportCleanup } from './group-report-cleanup';
+import { cleanupExpiredGroupPush } from './group-push';
 
 // Only this feature's temporary relay objects. This never follows local file
 // paths or private archive/legacy prefixes and never reacts to Plus pausing.
@@ -47,6 +49,8 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
       WHERE q.state='completed' AND q.available_at<=? AND NOT EXISTS (SELECT 1 FROM group_moments m WHERE m.id=q.moment_id) LIMIT 100)`)
       .bind(now-RECEIPT_SECONDS),
   ]);
+  await runGroupReportCleanup(env,now);
+  await cleanupExpiredGroupPush(env,now);
 }
 
 // An upload whose final authorization fails may finish after cleanup has

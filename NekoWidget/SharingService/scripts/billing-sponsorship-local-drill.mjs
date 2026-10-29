@@ -64,7 +64,13 @@ const expectedMigrationNames = [
   "0042_group_owner_plus.sql",
   "0043_group_media.sql",
   "0044_group_appstore_subscription.sql",
+  "0045_group_encrypted_reports.sql",
+  "0046_group_push_delivery.sql",
   "0049_moderation_review_duration.sql",
+  "0050_group_moderation_operator.sql",
+  "0051_group_moderation_restrictions.sql",
+  "0052_group_report_operations.sql",
+  "0053_group_invitation_pause.sql",
 ];
 
 const databaseGateColumns = [

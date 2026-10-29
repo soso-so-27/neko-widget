@@ -180,9 +180,12 @@
 		CC2610200000000000000012 /* CatCareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000011 /* CatCareCore.swift */; };
 		CC2610200000000000000014 /* CatCareStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000013 /* CatCareStore.swift */; };
 		FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000001 /* FamilyNotebookCore.swift */; };
+		CC2610280000000000000002 /* FamilyNotebookSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610280000000000000001 /* FamilyNotebookSharing.swift */; };
+		CC2610280000000000000004 /* GroupReporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610280000000000000003 /* GroupReporting.swift */; };
 		FA2610260000000000000004 /* FamilyNotebookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000003 /* FamilyNotebookStore.swift */; };
 		FA2610260000000000000006 /* FamilyNotebookMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000005 /* FamilyNotebookMigration.swift */; };
 		CC2610200000000000000016 /* CatCareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000015 /* CatCareView.swift */; };
+		CC2610270000000000000002 /* FamilyNotebookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610270000000000000001 /* FamilyNotebookView.swift */; };
 		CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000001 /* GroupWindowSetupView.swift */; };
 		CC2610200000000000000006 /* GroupWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000005 /* GroupWindowView.swift */; };
 		CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */; };
@@ -277,6 +280,10 @@
 		AB261020000000000000006E /* ProductionGroupWindowClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006D /* ProductionGroupWindowClient.swift */; };
 		AB2610200000000000000070 /* GroupWindowPhotoValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006F /* GroupWindowPhotoValidation.swift */; };
 		AB2610200000000000000072 /* GroupWindowOperationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000071 /* GroupWindowOperationStore.swift */; };
+		C0261028F000000000000002 /* ProductionGroupReporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0261028F000000000000001 /* ProductionGroupReporting.swift */; };
+		C0261028F000000000000004 /* GroupReportDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0261028F000000000000003 /* GroupReportDraftStore.swift */; };
+		C0261028F000000000000006 /* GroupReportingProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0261028F000000000000005 /* GroupReportingProvider.swift */; };
+		C0261028F000000000000008 /* GroupReportCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0261028F000000000000007 /* GroupReportCrypto.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -459,9 +466,12 @@
 		CC2610200000000000000011 /* CatCareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareCore.swift; sourceTree = "<group>"; };
 		CC2610200000000000000013 /* CatCareStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareStore.swift; sourceTree = "<group>"; };
 		FA2610260000000000000001 /* FamilyNotebookCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookCore.swift; sourceTree = "<group>"; };
+		CC2610280000000000000001 /* FamilyNotebookSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookSharing.swift; sourceTree = "<group>"; };
+		CC2610280000000000000003 /* GroupReporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReporting.swift; sourceTree = "<group>"; };
 		FA2610260000000000000003 /* FamilyNotebookStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookStore.swift; sourceTree = "<group>"; };
 		FA2610260000000000000005 /* FamilyNotebookMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookMigration.swift; sourceTree = "<group>"; };
 		CC2610200000000000000015 /* CatCareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareView.swift; sourceTree = "<group>"; };
+		CC2610270000000000000001 /* FamilyNotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000001 /* GroupWindowSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowSetupView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000005 /* GroupWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000007 /* GroupWindowLocalPhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowLocalPhotoStore.swift; sourceTree = "<group>"; };
@@ -556,6 +566,10 @@
 		AB261020000000000000006D /* ProductionGroupWindowClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionGroupWindowClient.swift; sourceTree = "<group>"; };
 		AB261020000000000000006F /* GroupWindowPhotoValidation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowPhotoValidation.swift; sourceTree = "<group>"; };
 		AB2610200000000000000071 /* GroupWindowOperationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupWindowOperationStore.swift; sourceTree = "<group>"; };
+		C0261028F000000000000001 /* ProductionGroupReporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionGroupReporting.swift; sourceTree = "<group>"; };
+		C0261028F000000000000003 /* GroupReportDraftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReportDraftStore.swift; sourceTree = "<group>"; };
+		C0261028F000000000000005 /* GroupReportingProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReportingProvider.swift; sourceTree = "<group>"; };
+		C0261028F000000000000007 /* GroupReportCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReportCrypto.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -739,6 +753,7 @@
 				F000000000000000000001A1 /* PairingKeychainStore.swift */,
 				F000000000000000000001A2 /* DailySharingCore.swift */,
 				F000000000000000000001A3 /* MomentSharingCore.swift */,
+				C0261028F000000000000007 /* GroupReportCrypto.swift */,
 				AA2610200000000000000001 /* GroupWindowCore.swift */,
 				CC2610200000000000000009 /* GroupWidgetCache.swift */,
 				F000000000000000000001A4 /* MomentSharingStore.swift */,
@@ -824,6 +839,11 @@
 				CC2610200000000000000011 /* CatCareCore.swift */,
 				CC2610200000000000000013 /* CatCareStore.swift */,
 				FA2610260000000000000001 /* FamilyNotebookCore.swift */,
+				CC2610280000000000000001 /* FamilyNotebookSharing.swift */,
+				CC2610280000000000000003 /* GroupReporting.swift */,
+				C0261028F000000000000005 /* GroupReportingProvider.swift */,
+				C0261028F000000000000003 /* GroupReportDraftStore.swift */,
+				C0261028F000000000000001 /* ProductionGroupReporting.swift */,
 				FA2610260000000000000003 /* FamilyNotebookStore.swift */,
 				FA2610260000000000000005 /* FamilyNotebookMigration.swift */,
 				AB2610200000000000000071 /* GroupWindowOperationStore.swift */,
@@ -936,6 +956,7 @@
 				F0000000000000000000024E /* CatIdentityExperimentView.swift */,
 				F00000000000000000000255 /* FamilyWindowView.swift */,
 				CC2610200000000000000015 /* CatCareView.swift */,
+				CC2610270000000000000001 /* FamilyNotebookView.swift */,
 				CC2610200000000000000001 /* GroupWindowSetupView.swift */,
 				CC2610200000000000000005 /* GroupWindowView.swift */,
 				E02609080000000000000002 /* MomentDeliveryComposer.swift */,
@@ -1361,9 +1382,16 @@
 				CC2610200000000000000012 /* CatCareCore.swift in Sources */,
 				CC2610200000000000000014 /* CatCareStore.swift in Sources */,
 				FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */,
+				CC2610280000000000000002 /* FamilyNotebookSharing.swift in Sources */,
+				CC2610280000000000000004 /* GroupReporting.swift in Sources */,
+				C0261028F000000000000008 /* GroupReportCrypto.swift in Sources */,
+				C0261028F000000000000006 /* GroupReportingProvider.swift in Sources */,
+				C0261028F000000000000004 /* GroupReportDraftStore.swift in Sources */,
+				C0261028F000000000000002 /* ProductionGroupReporting.swift in Sources */,
 				FA2610260000000000000004 /* FamilyNotebookStore.swift in Sources */,
 				FA2610260000000000000006 /* FamilyNotebookMigration.swift in Sources */,
 				CC2610200000000000000016 /* CatCareView.swift in Sources */,
+				CC2610270000000000000002 /* FamilyNotebookView.swift in Sources */,
 				CC2610200000000000000002 /* GroupWindowSetupView.swift in Sources */,
 				CC2610200000000000000006 /* GroupWindowView.swift in Sources */,
 				CC2610200000000000000008 /* GroupWindowLocalPhotoStore.swift in Sources */,
@@ -1594,6 +1622,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = "$(inherited)";
+				GROUP_REPORTING_PRODUCTION_ENABLED = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1623,6 +1652,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = "$(inherited)";
+				GROUP_REPORTING_PRODUCTION_ENABLED = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

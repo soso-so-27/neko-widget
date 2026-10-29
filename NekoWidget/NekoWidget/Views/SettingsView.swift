@@ -365,7 +365,7 @@ struct SettingsView: View {
                         if albumPrototypeOn {
                             Toggle("1 年の作品をいま届ける（12/6 を待たない）", isOn: $albumYearNow)
                                 .accessibilityIdentifier("settings-album-year-now")
-                            Toggle("月の作品をスライドショーで見る（前の形）", isOn: $albumSlideshow)
+                            Toggle("月と年の作品をスライドショーで見る（前の形）", isOn: $albumSlideshow)
                                 .accessibilityIdentifier("settings-album-slideshow")
                             Button("届いた作品を、届いたばかりに戻す") { AlbumPrototype.cloudLatestAgain() }
                                 .accessibilityIdentifier("settings-album-cloud-again")

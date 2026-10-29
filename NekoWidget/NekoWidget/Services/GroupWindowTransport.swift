@@ -143,6 +143,7 @@ enum GroupHTTPRequest {
             case "owned_window_limit": throw GroupClientError.ownedWindowLimit
             case "invitation_expired", "challenge_expired": throw GroupClientError.invitationExpired
             case "invitation_revoked": throw GroupClientError.invitationRevoked
+            case "invitation_paused": throw GroupClientError.invitationPaused
             case "request_not_pending": throw GroupClientError.requestNotPending
             case "cannot_remove_owner", "cannot_remove_last_owner_device": throw GroupClientError.cannotRemoveOwner
             case "owner_cannot_leave": throw GroupClientError.ownerCannotLeave

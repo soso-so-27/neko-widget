@@ -54,6 +54,40 @@ private actor EchoTransport: GroupHTTPTransport {
     private var heartMode = "inline"
     private var paths: [String] = []
     private var heartBodies: [Data] = []
+    private var listMode = "normal"
+    private var listDelay: UInt64 = 0
+    func configureList(_ mode: String = "normal", delay: UInt64 = 0) { listMode = mode; listDelay = delay; paths = [] }
+    func requestPaths() -> [String] { paths }
+    func advanceRoster(identity: GroupDeviceIdentity, includeMember: Bool) throws {
+        let old = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation!))
+        let anchor = GroupTrustAnchor(windowID: old.packet.roster.windowID, ownerPersonID: identity.personID,
+            ownerIdentityPublicKey: identity.personPublicKey)
+        let previous = try GroupRosterVerifier.restoreLocalCheckpoint(old.packet, anchor: anchor,
+            pinnedRevision: old.packet.roster.revision, pinnedHash: GroupCanonical.hash(old.packet.roster.canonicalBytes()))
+        var members = old.packet.roster.members.filter { $0.role == .owner }
+        if includeMember {
+            let guest = GroupDeviceIdentity.firstDevice()
+            members.append(try .init(participantID: GroupWire.randomID(), personID: guest.personID,
+                identityPublicKey: guest.personPublicKey, role: .member, devices: [guest.certificate(windowID: anchor.windowID)]))
+        }
+        let roster = GroupRoster(windowID: anchor.windowID, revision: previous.roster.revision + 1,
+            keyEpoch: previous.roster.keyEpoch + 1, previousHash: previous.hash, ownerPersonID: identity.personID, members: members)
+        let packet = try GroupRosterVerifier.sign(roster, deviceID: identity.deviceID, privateKey: identity.signingKey)
+        let verified = try GroupRosterVerifier.verify(packet, anchor: anchor, previous: previous), key = SymmetricKey(size: .bits256)
+        let envelopes = try members.flatMap(\.devices).map {
+            try GroupHPKE.wrap(roomKey: key, for: $0.id, roster: verified, signerID: identity.deviceID, signingKey: identity.signingKey)
+        }
+        var names: [String: Data] = [:]
+        for member in members {
+            names[member.participantID] = try GroupNameCrypto.seal(member.role == .owner ? "自分" : "家族",
+                slot: "member:" + member.participantID, key: key, roster: verified,
+                signerID: identity.deviceID, signingKey: identity.signingKey)
+        }
+        let updated = try GroupAPIModel.CreateInput(operationID: old.operationID, packet: packet, envelopes: envelopes,
+            encryptedName: GroupNameCrypto.seal("新しいまど", slot: "window", key: key, roster: verified,
+                signerID: identity.deviceID, signingKey: identity.signingKey), encryptedMemberNames: names)
+        creation = try JSONSerialization.jsonObject(with: GroupWire.encode(updated)) as? [String: Any]
+    }
     func configureHearts(_ mode: String) { heartMode = mode; paths = []; heartBodies = [] }
     func heartStats() -> ([String], [Data]) { (paths, heartBodies) }
     init(dropBillingOnce: Bool = false) { self.dropBillingOnce = dropBillingOnce }
@@ -63,6 +97,7 @@ private actor EchoTransport: GroupHTTPTransport {
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         let path = request.url!.path, body = request.httpBody ?? Data()
         paths.append(path)
+        if path == "/v3/group-windows/list", listDelay > 0 { try await Task.sleep(nanoseconds: listDelay) }
         let object = body.isEmpty ? [:] : try JSONSerialization.jsonObject(with: body) as! [String: Any]
         func text(_ key: String) throws -> String {
             guard let value = object[key] as? String else { throw Failure.check("native wire key: " + key) }; return value
@@ -111,8 +146,31 @@ private actor EchoTransport: GroupHTTPTransport {
             return try reply(["operationId": try text("operationId"), "personId": try text("personId"), "state": "connected"])
         }
         if path == "/v3/group-windows/list" {
-            guard let creation, let packet = creation["packet"] as? [String: Any], let roster = packet["roster"] as? [String: Any] else { return try reply(["items": [], "next": NSNull()]) }
-            return try reply(["items": [["windowId": roster["windowId"]!]], "next": NSNull()])
+            if listMode == "denied" { return try reply(["error": ["code": "not_found"]], status: 404) }
+            if listMode == "offline" { throw GroupClientError.offline }
+            guard listMode != "absent", let creation, let packet = creation["packet"] as? [String: Any],
+                  let roster = packet["roster"] as? [String: Any], let members = roster["members"] as? [[String: Any]],
+                  let owner = members.first(where: { $0["role"] as? String == "owner" }) else { return try reply(["items": [], "next": NSNull()]) }
+            var item: [String: Any] = ["windowId": roster["windowId"]!, "revision": roster["revision"]!, "keyEpoch": roster["keyEpoch"]!,
+                "rotationRequired": listMode == "rotation", "encryptedName": creation["encryptedName"]!,
+                "myParticipantId": owner["participantId"]!, "myRole": "owner"]
+            if delivery != "legacy" {
+                item["deliveryStatus"] = delivery == "active" ? "active" : "paused"
+                item["deliveryReason"] = delivery == "active" ? "owner_plus" : "owner_plus_required"
+                item["ownerParticipantId"] = delivery == "wrong-owner" ? "unrelated" : owner["participantId"]!
+            }
+            switch listMode {
+            case "legacy": item = ["windowId": roster["windowId"]!]
+            case "missing-version": item.removeValue(forKey: "revision")
+            case "role": item["myRole"] = "member"
+            case "participant": item["myParticipantId"] = "unrelated"
+            case "name": item["encryptedName"] = GroupWire.base64(Data(repeating: 1, count: 32))
+            case "epoch": item["keyEpoch"] = 0
+            case "ahead": item["revision"] = 999
+            case "partial-policy": item.removeValue(forKey: "deliveryReason")
+            default: break
+            }
+            return try reply(["items": listMode == "duplicate" ? [item, item] : [item], "next": NSNull()])
         }
         if path == "/v3/group-windows" {
             createBodies.append(body)
@@ -167,8 +225,8 @@ private actor EchoTransport: GroupHTTPTransport {
         if path == root {
             let signed = try GroupWire.decode(GroupAPIModel.CreateInput.self, JSONSerialization.data(withJSONObject: creation))
             let hash = try GroupCanonical.hash(signed.packet.roster.canonicalBytes())
-            var metadata: [String: Any] = ["windowId": windowID, "revision": 1, "keyEpoch": 1, "rotationRequired": false,
-                                          "encryptedName": creation["encryptedName"]!, "nameKeyEpoch": 1, "nameRosterRevision": 1]
+            var metadata: [String: Any] = ["windowId": windowID, "revision": r["revision"]!, "keyEpoch": r["keyEpoch"]!, "rotationRequired": listMode == "rotation",
+                                          "encryptedName": creation["encryptedName"]!, "nameKeyEpoch": r["keyEpoch"]!, "nameRosterRevision": r["revision"]!]
             if delivery != "legacy" {
                 metadata["deliveryStatus"] = delivery == "active" ? "active" : "paused"
                 metadata["deliveryReason"] = delivery == "active" ? "owner_plus" : "owner_plus_required"
@@ -177,15 +235,20 @@ private actor EchoTransport: GroupHTTPTransport {
             return try reply(["window": metadata,
                               "roster": packet, "rosterHash": GroupWire.base64(hash)])
         }
-        if path == root + "/rosters/list" { return try reply(["items": [packet], "nextRevision": NSNull(), "revision": 1]) }
-        if path == root + "/keys/1" {
+        if path == root + "/rosters/list" { return try reply(["items": [packet], "nextRevision": NSNull(), "revision": r["revision"]!]) }
+        if path == root + "/keys/" + String(r["keyEpoch"] as! Int) {
             let envelopes = creation["envelopes"] as! [[String: Any]]
             return try reply(["roster": packet, "envelopeForThisDevice": envelopes.first(where: { $0["deviceId"] as? String == device })!])
         }
         if path == root + "/members/list" {
-            let names = creation["encryptedMemberNames"] as! [String: Any], participant = owner["participantId"] as! String
-            return try reply(["items": [["id": participant, "personId": owner["personId"]!, "role": "owner", "state": "active",
-                                         "joinedRevision": 1, "encryptedDisplayName": names[participant]!]], "next": NSNull(), "revision": 1])
+            let names = creation["encryptedMemberNames"] as! [String: Any]
+            let rows = members.map { member -> [String: Any] in
+                let participant = member["participantId"] as! String
+                return ["id": participant, "personId": member["personId"]!, "role": member["role"]!,
+                    "state": listMode == "rotation" && member["role"] as? String == "member" ? "left" : "active",
+                    "joinedRevision": 1, "encryptedDisplayName": names[participant]!]
+            }
+            return try reply(["items": rows, "next": NSNull(), "revision": r["revision"]!])
         }
         throw Failure.check("unexpected native route")
     }
@@ -229,6 +292,21 @@ private struct GroupAdapterChecks {
             do { _ = try GroupHTTPRequest.check(.init(status: 403, data: Data("{\"error\":{\"code\":\"\(code)\"}}".utf8))); throw Failure.check("subscription error preserved") }
             catch let error as GroupSubscriptionError { try check(error == expected, "typed subscription refusal") }
         }
+        do {
+            _ = try GroupHTTPRequest.check(.init(status: 503, data: Data("{\"error\":{\"code\":\"invitation_paused\"}}".utf8)))
+            throw Failure.check("invitation pause must not be treated as success")
+        } catch let error as GroupClientError {
+            try check(error == .invitationPaused, "operator invitation pause remains distinct from network and report errors")
+        }
+        let oldJoinJSON = Data("{\"id\":\"request\",\"invitationId\":\"invite\",\"personId\":\"person\",\"candidateDeviceId\":\"device\",\"displayName\":\"家族\",\"verificationPhrase\":\"phrase\",\"expiresAt\":1000,\"state\":\"pending\"}".utf8)
+        var storedJoin = try GroupWire.decode(GroupJoinRequest.self, oldJoinJSON)
+        try check(storedJoin.state == .pending && storedJoin.admissionPaused == nil, "existing saved join survives missing pause field")
+        storedJoin.admissionPaused = true
+        let restoredJoin = try GroupWire.decode(GroupJoinRequest.self, GroupWire.encode(storedJoin))
+        try check(restoredJoin == storedJoin, "pending admission pause survives local save and reload")
+        let pausedJoinJSON = Data("{\"requestId\":\"request\",\"windowId\":\"window\",\"invitationId\":\"invite\",\"personId\":\"person\",\"candidateDeviceId\":\"device\",\"state\":\"pending\",\"expiresAt\":1000,\"admissionPaused\":true}".utf8)
+        let pausedJoin = try GroupWire.decode(GroupAPIModel.JoinReply.self, pausedJoinJSON)
+        try check(pausedJoin.state == .pending && pausedJoin.admissionPaused == true, "pending reply exposes operator pause without pretending admission succeeded")
 
         let vector = try GroupWire.decode(RosterVector.self, Data(contentsOf: URL(fileURLWithPath: paths[2])))
         let roster = try GroupRosterVerifier.verify(vector.packet, anchor: vector.anchor)
@@ -364,6 +442,186 @@ private struct GroupAdapterChecks {
         try check(parsed.privateKey == cap.privateKey && link.query == nil, "invitation secret stays in fragment")
         _ = try await client.stageInvitation(url: link)
         try rejects("invitation query is rejected") { _ = try GroupInvitationCapability(url: URL(string: link.absoluteString.replacingOccurrences(of: "/join#", with: "/join?tracking=1#"))!) }
+        try await verifyListCache(memory: memory, relay: relay, folder: folder, endpoint: endpoint, room: room, identity: firstIdentity)
         print("Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed")
+    }
+
+    private static func verifyListCache(memory: MemorySecrets, relay: EchoTransport, folder: URL,
+                                        endpoint: URL, room: GroupWindow, identity: GroupDeviceIdentity) async throws {
+        let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: memory, transport: relay, outboxDirectory: folder)
+        let list = "/v3/group-windows/list", root = "/v3/group-windows/" + room.id
+        let full = [list, root, root + "/members/list"]
+        await relay.configureList()
+        let coldTrace = GroupListTrace()
+        let cold = try await GroupListMeasurement.$current.withValue(coldTrace) { try await client.windows() }
+        let coldPaths = await relay.requestPaths()
+        try check(cold == [room] && coldPaths == full, "first list verifies detail and members: THREE requests")
+        try check(coldTrace.snapshot().requests.map(\.kind) == ["一覧", "詳細", "メンバー"]
+                  && coldTrace.snapshot().cache == ["不採用・検証済みデータなし"], "cold trace matches actual transport")
+        await relay.configureList(delay: 30_000_000)
+        let warmTrace = GroupListTrace()
+        let warm = try await GroupListMeasurement.$current.withValue(warmTrace) { try await client.windows() }
+        let warmPaths = await relay.requestPaths()
+        try check(warm == cold && warmPaths == [list], "repeat list keeps identical verified names/members: ONE request")
+        let measured = warmTrace.snapshot()
+        try check(measured.requests.count == 1 && measured.cache == ["採用"] && measured.networkSeconds >= 0.025,
+                  "slow single list is counted and timed separately from a cache hit")
+        try check(measured.storageSeconds >= 0 && measured.cacheSeconds >= 0 && measured.entryWaitSeconds >= 0,
+                  "monotonic local stages")
+        let presentation = measured.text(total: 0.1)
+        try check(presentation.contains("通信 1回") && presentation.contains("採用")
+                  && !presentation.contains(room.id) && !presentation.contains(identity.personID)
+                  && !presentation.contains(endpoint.absoluteString), "diagnostic contains only labels/counts/times")
+
+        let traceA = GroupListTrace(), traceB = GroupListTrace()
+        async let loadA = GroupListMeasurement.$current.withValue(traceA) { try await client.windows() }
+        async let loadB = GroupListMeasurement.$current.withValue(traceB) { try await client.windows() }
+        let (valueA, valueB) = try await (loadA, loadB)
+        try check(valueA == cold && valueB == cold && traceA.snapshot().requests.count == 1
+                  && traceB.snapshot().requests.count == 1 && traceA.snapshot().cache == ["採用"]
+                  && traceB.snapshot().cache == ["採用"], "interleaved actor calls have independent traces")
+        _ = try await client.windows()
+        try check(traceA.snapshot().requests.count == 1 && traceB.snapshot().requests.count == 1,
+                  "ordinary untraced calls do not retain a prior trace")
+
+        for mode in ["offline", "denied"] {
+            await relay.configureList(mode, delay: 30_000_000)
+            let failureTrace = GroupListTrace()
+            do {
+                _ = try await GroupListMeasurement.$current.withValue(failureTrace) { try await client.windows() }
+                throw Failure.check("diagnosed failure was accepted")
+            } catch GroupClientError.offline { try check(mode == "offline", "offline trace") }
+              catch GroupClientError.notMember { try check(mode == "denied", "denied trace") }
+            let failed = failureTrace.snapshot()
+            try check(failed.requests.count == 1 && failed.networkSeconds >= 0.025 && failed.cache.isEmpty,
+                      "failure retains attempted request timing, not a previous success")
+            try check(failed.requests[0].outcome == (mode == "denied" ? "HTTP 404" : "失敗"), "bounded failure label")
+        }
+        await relay.configureList(delay: 10_000_000_000)
+        let cancelledTrace = GroupListTrace()
+        let cancelledLoad = Task {
+            try await GroupListMeasurement.$current.withValue(cancelledTrace) { try await client.windows() }
+        }
+        while await relay.requestPaths().isEmpty { await Task.yield() }
+        cancelledLoad.cancel()
+        do { _ = try await cancelledLoad.value; throw Failure.check("cancelled list completed") }
+        catch is CancellationError { }
+        try check(cancelledTrace.snapshot().requests.count == 1 && cancelledTrace.snapshot().requests[0].outcome == "中断",
+                  "actual cancellation retains its own request attempt")
+        await relay.configureList()
+        _ = try await client.windows()
+        print("Window list transport fixture: diagnostic cold=3/warm=1, delayed list, concurrent isolation and failures passed")
+
+        for delivery in ["paused", "legacy", "active"] {
+            await relay.setDelivery(delivery); await relay.configureList()
+            let windows = try await client.windows()
+            let expected: GroupDeliveryStatus? = delivery == "legacy" ? nil : delivery == "active" ? .active : .paused
+            try check(windows.first?.deliveryStatus == expected && windows.first?.canManage == true,
+                      "fresh list policy independent of roster: " + delivery)
+            try check(await relay.requestPaths() == [list], "policy change requires only list")
+        }
+        for mode in ["legacy", "missing-version", "role", "participant", "name", "epoch"] {
+            await relay.configureList(mode)
+            try check(try await client.windows() == cold, "full verified fallback: " + mode)
+            try check(await relay.requestPaths() == full, "changed or missing metadata cannot reuse members: " + mode)
+        }
+        for mode in ["duplicate", "partial-policy", "ahead"] {
+            await relay.configureList(mode)
+            do { _ = try await client.windows(); throw Failure.check("invalid list accepted: " + mode) }
+            catch GroupClientError.invalidResponse { }
+            await relay.configureList()
+            _ = try await client.windows()
+            try check(await relay.requestPaths() == full, "invalid list discards reusable snapshots: " + mode)
+        }
+        await relay.setDelivery("wrong-owner"); await relay.configureList()
+        do { _ = try await client.windows(); throw Failure.check("list policy owner not roster-bound") }
+        catch GroupClientError.invalidResponse { }
+        await relay.setDelivery("active"); await relay.configureList()
+        _ = try await client.windows()
+        for mode in ["denied", "offline", "absent"] {
+            await relay.configureList(mode)
+            if mode == "absent" {
+                try check(try await client.windows().isEmpty, "deleted/left/removed memberships disappear from list")
+            } else {
+                do { _ = try await client.windows(); throw Failure.check("cached list on failed authorization/network") }
+                catch GroupClientError.notMember { try check(mode == "denied", "expected authorization failure") }
+                catch GroupClientError.offline { try check(mode == "offline", "expected network failure") }
+            }
+            try check(await relay.requestPaths() == [list], "no hidden fallback after refusal/absence")
+            await relay.configureList()
+            _ = try await client.windows()
+            try check(await relay.requestPaths() == full, "reappearing window is reverified")
+        }
+
+        let account = "window:" + room.id, saved = try memory.read("window:" + room.id)!
+        var record = try GroupWire.decode(GroupLocalWindow.self, saved)
+        record.left = true
+        try memory.write(GroupWire.encode(record), account: account, createOnly: false)
+        await relay.configureList()
+        do { _ = try await client.windows(); throw Failure.check("local leave resurrected by list") }
+        catch GroupClientError.notMember { }
+        try memory.write(saved, account: account, createOnly: false)
+        _ = try await client.windows()
+        record = try GroupWire.decode(GroupLocalWindow.self, saved)
+        record.minimumAdmissionRevision = room.revision + 1
+        try memory.write(GroupWire.encode(record), account: account, createOnly: false)
+        do { _ = try await client.windows(); throw Failure.check("pre-admission cache accepted") }
+        catch GroupClientError.invalidResponse { }
+        try memory.write(saved, account: account, createOnly: false)
+        _ = try await client.windows()
+        record = try GroupWire.decode(GroupLocalWindow.self, saved)
+        record.pinnedHash = Data(repeating: 0, count: 32)
+        try memory.write(GroupWire.encode(record), account: account, createOnly: false)
+        do { _ = try await client.windows(); throw Failure.check("changed local pin accepted") }
+        catch GroupProtocolError.staleRevision { }
+        try memory.write(saved, account: account, createOnly: false)
+        _ = try await client.windows()
+        record = try GroupWire.decode(GroupLocalWindow.self, saved); record.keys = [:]
+        try memory.write(GroupWire.encode(record), account: account, createOnly: false)
+        await relay.configureList()
+        _ = try await client.windows()
+        try check(await relay.requestPaths() == [list, root, root + "/keys/1", root + "/members/list"], "missing saved key requires verified HPKE retrieval")
+        record = try GroupWire.decode(GroupLocalWindow.self, saved)
+        record.keys[String(room.keyEpoch)] = Data(repeating: 9, count: 32)
+        try memory.write(GroupWire.encode(record), account: account, createOnly: false)
+        await relay.configureList()
+        var replacedKeyRejected = false
+        do { _ = try await client.windows() } catch { replacedKeyRejected = true }
+        let replacedKeyPaths = await relay.requestPaths()
+        try check(replacedKeyRejected && replacedKeyPaths == full, "same-epoch replacement key cannot reuse decrypted cache")
+        try memory.write(saved, account: account, createOnly: false)
+        _ = try await client.windows()
+        let changedIdentity = GroupDeviceIdentity(personPrivateKey: nil, personPublicKey: Data(repeating: 8, count: 32),
+            signingPrivateKey: identity.signingPrivateKey, agreementPrivateKey: identity.agreementPrivateKey,
+            windowCertificates: [:], registered: true)
+        try memory.write(GroupWire.encode(changedIdentity), account: "identity", createOnly: false)
+        do { _ = try await client.windows(); throw Failure.check("cache crossed person identity") }
+        catch GroupClientError.notMember { }
+        try memory.write(GroupWire.encode(identity), account: "identity", createOnly: false)
+        _ = try await client.windows()
+
+        try await relay.advanceRoster(identity: identity, includeMember: true)
+        await relay.configureList()
+        let admitted = try await client.windows()
+        try check(admitted.first?.revision == 2 && admitted.first?.keyEpoch == 2 && admitted.first?.memberCount == 2
+            && admitted.first?.name == "新しいまど", "new roster, key, name and member are verified")
+        try check(await relay.requestPaths() == [list, root, root + "/rosters/list", root + "/keys/2", root + "/members/list"], "revision change loads signed chain and key")
+        await relay.configureList(); _ = try await client.windows()
+        try check(await relay.requestPaths() == [list], "updated verified roster becomes reusable")
+        for _ in 0..<2 {
+            await relay.configureList("rotation")
+            let left = try await client.windows()
+            try check(left.first?.revision == 2 && left.first?.memberCount == 1 && left.first?.state == .rotationRequired,
+                      "member leave is visible even without revision change")
+            try check(await relay.requestPaths() == full, "every pending rotation refreshes member states")
+        }
+        try await relay.advanceRoster(identity: identity, includeMember: false)
+        await relay.configureList()
+        let removed = try await client.windows()
+        try check(removed.first?.revision == 3 && removed.first?.keyEpoch == 3 && removed.first?.members.count == 1,
+                  "removal replaces roster and key before caching")
+        await relay.configureList(); _ = try await client.windows()
+        try check(await relay.requestPaths() == [list], "post-removal list remains one authorized request")
+        print("Window list transport fixture: first 3 requests, repeat 1; membership, policy, pin, identity and key boundaries passed (not iPhone/network latency)")
     }
 }

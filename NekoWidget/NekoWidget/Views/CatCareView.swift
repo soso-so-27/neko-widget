@@ -79,6 +79,70 @@ enum CatCareSubject {
     }
 }
 
+/// Test builds only: the day a cat passed away (ねこのまど_ペットロスの方針_1028).
+/// Kept on this iPhone until the saved records can hold it. Nothing is
+/// deleted: the photos and records stay; the age stops at this day.
+enum CatFarewell {
+    static let key = "debug.catFarewell.days.v1"
+
+    static func days(_ json: String) -> [String: CatCareDay] {
+        (try? JSONDecoder().decode([String: CatCareDay].self, from: Data(json.utf8))) ?? [:]
+    }
+
+    static func setting(_ day: CatCareDay?, for subject: String, in json: String) -> String {
+        var all = days(json)
+        all[subject] = day
+        guard let data = try? JSONEncoder().encode(all) else { return json }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func text(_ day: CatCareDay) -> String {
+        "\(day.year)年\(day.month)月\(day.day)日"
+    }
+}
+
+/// Recording the day, quietly: a date and one sentence, nothing to fill in.
+/// Reached only where someone goes looking at that time (deleting the cat's
+/// profile), never from a page that is open every day.
+struct CatFarewellEditor: View {
+    let name: String
+    let recorded: CatCareDay?
+    let save: (CatCareDay?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var date = Date()
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    DatePicker("旅立った日", selection: $date, in: ...Date(), displayedComponents: .date)
+                } footer: {
+                    Text("写真や記録は、すべてそのまま残ります。ホーム画面のウィジェットもそのままです。変えたいときは、ウィジェットを長押しして「ウィジェットを編集」から選べます。")
+                }
+                if recorded != nil {
+                    Section {
+                        Button("記録を消す", role: .destructive) { save(nil); dismiss() }
+                    }
+                }
+            }
+            .navigationTitle(name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("記録する") { save(CatCareDay(date: date)); dismiss() }
+                        .accessibilityIdentifier("cat-farewell-save")
+                }
+            }
+            .onAppear {
+                if let recorded, let day = Calendar.current.date(from: DateComponents(
+                    year: recorded.year, month: recorded.month, day: recorded.day)) { date = day }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
 /// 「この子のことを直す」 from a tool: the profile's page, or the guest cat's.
 struct CatCareSubjectView: View {
     let subject: CatCareSubject
@@ -107,6 +171,13 @@ struct CatCareDetailView: View {
     /// reload over what is on screen.
     @State private var loadedKey: String?
     @State private var showsLifeDatesEditor = false
+    @State private var showsFarewellEditor = false
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
+
+    /// Test builds only, as the rest of the prototype.
+    private var farewell: CatCareDay? {
+        AlbumPrototype.isOn(albumPrototypeStored) ? CatFarewell.days(farewellJSON)[subject.key] : nil
+    }
 
     init(profile: CatProfilePresentation, otherProfiles: [CatProfilePresentation],
          selectedProfileID: Binding<String?>) {
@@ -123,6 +194,8 @@ struct CatCareDetailView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = CatCareDraft()
+    @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
+    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
     @State private var savedDraft = CatCareDraft()
     @State private var catID: UUID?
     @State private var autosave: Task<Void, Never>?
@@ -168,7 +241,12 @@ struct CatCareDetailView: View {
             folded("household", "家の情報", householdCount) { householdSection }
             Section {
                 Text("書いた内容は自動で保存します。")
-                Text("このiPhoneの中だけに保存し、外には送りません。")
+                if familyNotebook.hasFamily {
+                    // Test builds only (a family can be made only there).
+                    Text("家族と書いています（試作・まだ送りません）。")
+                } else {
+                    Text("このiPhoneの中だけに保存し、外には送りません。")
+                }
             }
             .font(.footnote)
             .foregroundStyle(.secondary)
@@ -186,6 +264,14 @@ struct CatCareDetailView: View {
             if phase != .active { autosave?.cancel(); save() }
         }
         .onDisappear { autosave?.cancel(); save() }
+        .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
+        .toolbar {
+            // Test builds only: the family, at the top right like sharing in
+            // Notes, so it is out of the way for anyone who keeps to themselves.
+            if AlbumPrototype.isOn(albumPrototypeStored) || familyNotebook.hasFamily {
+                ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
+            }
+        }
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
@@ -194,6 +280,11 @@ struct CatCareDetailView: View {
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor, catID: catID) { result in
                 apply(result)
+            }
+        }
+        .sheet(isPresented: $showsFarewellEditor) {
+            CatFarewellEditor(name: subject.displayName, recorded: farewell) { day in
+                farewellJSON = CatFarewell.setting(day, for: subject.key, in: farewellJSON)
             }
         }
         .sheet(isPresented: $showsLifeDatesEditor) {
@@ -273,8 +364,8 @@ struct CatCareDetailView: View {
     private var basicsFooter: String {
         var line = subject.displayName
         if let birthday = currentRecord?.birthday?.value ?? nil,
-           let age = CatCareLostCat.age(birthday, today: CatCareDay(date: Date())) {
-            line += "（\(age)）"
+           let age = CatCareLostCat.age(birthday, today: farewell ?? CatCareDay(date: Date())) {
+            line += farewell == nil ? "（\(age)）" : "（\(age)まで）"
         }
         if case let .profile(profile) = subject {
             line += "\n" + profile.lifeDatesExplanation
@@ -297,24 +388,40 @@ struct CatCareDetailView: View {
                 .foregroundStyle(.primary)
                 .accessibilityIdentifier("cat-care-life-dates")
             }
+            if let farewell {
+                Button { showsFarewellEditor = true } label: {
+                    HStack {
+                        LabeledContent("旅立った日", value: CatFarewell.text(farewell))
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
+                .accessibilityIdentifier("cat-care-farewell")
+            }
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)
                 Text("オス").tag(CatCareSex.male)
                 Text("メス").tag(CatCareSex.female)
             }
+            .familyNotebookNote(catID, .sex)
             Picker("去勢・避妊", selection: $draft.neutered) {
                 Text("未記入").tag(CatCareTriState.unknown)
                 Text("済み").tag(CatCareTriState.yes)
                 Text("まだ").tag(CatCareTriState.no)
             }
+            .familyNotebookNote(catID, .neutered)
             Picker("室内飼い", selection: $draft.indoorOnly) {
                 Text("未記入").tag(CatCareTriState.unknown)
                 Text("室内だけ").tag(CatCareTriState.yes)
                 Text("外にも出る").tag(CatCareTriState.no)
             }
+            .familyNotebookNote(catID, .indoorOnly)
             TextField("毛色・柄（例：キジトラ）", text: $draft.coat)
+                .familyNotebookNote(catID, .coat)
             TextField("見分ける特徴（例：しっぽが短い、右耳に切れ込み）", text: $draft.marks, axis: .vertical)
                 .lineLimit(2...4)
+                .familyNotebookNote(catID, .marks)
             VStack(alignment: .leading, spacing: 4) {
                 TextField("マイクロチップ番号（15桁）", text: $draft.microchip)
                     .keyboardType(.numberPad)
@@ -325,6 +432,7 @@ struct CatCareDetailView: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
+            .familyNotebookNote(catID, .microchip)
         } header: {
             Text("基本")
         } footer: {
@@ -397,13 +505,16 @@ struct CatCareDetailView: View {
         Section {
             TextField("持病（例：腎臓の療法食中）", text: $draft.conditions, axis: .vertical)
                 .lineLimit(1...4)
+                .familyNotebookNote(catID, .conditions)
             Picker("アレルギー", selection: $draft.allergyStatus) {
                 Text("未確認").tag(CatCareAllergy.Status.unknown)
                 Text("なし").tag(CatCareAllergy.Status.none)
                 Text("あり").tag(CatCareAllergy.Status.recorded)
             }
+            .familyNotebookNote(catID, .allergyStatus)
             if draft.allergyStatus == .recorded {
                 TextField("アレルギーの内容", text: $draft.allergyText)
+                    .familyNotebookNote(catID, .allergyText)
             }
             listRow(title: "体重", detail: weightSummary, kind: .weight)
             listRow(title: "飲んでいる薬", detail: "\(currentRecord?.activeMedications.count ?? 0)件", kind: .medication)
@@ -420,10 +531,14 @@ struct CatCareDetailView: View {
             listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
             TextField("療法食・別々に与えるなど（何匹もいるとき大事）", text: $draft.specialDiet, axis: .vertical)
                 .lineLimit(1...3)
+                .familyNotebookNote(catID, .specialDiet)
             TextField("水", text: $draft.water)
+                .familyNotebookNote(catID, .water)
             TextField("トイレ", text: $draft.litter)
+                .familyNotebookNote(catID, .litter)
             TextField("接し方・苦手なこと", text: $draft.temperament, axis: .vertical)
                 .lineLimit(1...4)
+                .familyNotebookNote(catID, .temperament)
         }
     }
 
@@ -432,8 +547,10 @@ struct CatCareDetailView: View {
             TextField("飼い主の連絡先", text: $draft.ownerContact)
             TextField("予備の連絡先", text: $draft.backupContact)
             TextField("かかりつけ病院の名前", text: $draft.vetName)
+                .familyNotebookNote(catID, .vetName)
             TextField("かかりつけ病院の電話", text: $draft.vetPhone)
                 .keyboardType(.phonePad)
+                .familyNotebookNote(catID, .vetPhone)
             TextField("避難のときの家族の集合場所", text: $draft.meetingPlace)
         } header: {
             Text("家の情報")
@@ -501,6 +618,24 @@ struct CatCareDetailView: View {
         }
         // What was actually stored: an unfinished chip number stays out of it.
         if saved { savedDraft = value } else { saveFailed = true }
+    }
+
+    /// The family's writing came into 「この子のこと」 (test builds): show it.
+    /// Items typed here and not saved yet stay as typed and are saved after.
+    private func takeFamilyWrites() {
+        guard let catID, let state = store.state, let record = state.record(catID: catID) else { return }
+        let fresh = CatCareDraft(record: record, household: state.household)
+        var next = draft
+        func take<Value: Equatable>(_ path: WritableKeyPath<CatCareDraft, Value>) {
+            if draft[keyPath: path] == savedDraft[keyPath: path] { next[keyPath: path] = fresh[keyPath: path] }
+        }
+        take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus)
+        let texts: [WritableKeyPath<CatCareDraft, String>] = [
+            \.coat, \.marks, \.microchip, \.conditions, \.allergyText, \.specialDiet, \.water, \.litter,
+            \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone, \.meetingPlace]
+        for path in texts { take(path) }
+        savedDraft = fresh
+        draft = next
     }
 
     private func apply(_ result: CatCareListEditor.Result) {
