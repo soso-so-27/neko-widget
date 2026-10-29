@@ -187,6 +187,7 @@ private actor Relay: GroupHTTPTransport {
         try await afterRestart.revokeFarewellSharing(toolCatID: tool, operationID: UUID())
         let canceled = try await afterRestart.loadFarewellSharing(toolCatID: tool)
         try check(canceled.localDay == privateDay && !canceled.hasConsentForLocalDay && canceled.revocationPending, "revoke keeps the private original")
+        try check(canceled.mayAlreadyHaveBeenShared, "retained history without an HTTP journal is not claimed private")
         try await afterRestart.consentToShareFarewell(previewID: confirmed.id, operationID: consentAction)
         try check(try await !afterRestart.loadFarewellSharing(toolCatID: tool).hasConsentForLocalDay, "retry old consent after revoke stays revoked")
         print("Farewell service: read-only preview, changed date, expired preview, exact consent, restart receipt and revocation passed")

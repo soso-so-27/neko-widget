@@ -208,7 +208,11 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             var possiblyShared = false
             for operation in ownDates {
                 let attempted = try context.journal.read("op:family:" + operation.id.uuidString.lowercased()) != nil
-                if attempted || snapshot.acknowledgements.contains(where: { $0.operationID == operation.id }) { possiblyShared = true }
+                // A received/restored copy may have no local HTTP journal.
+                // Absence of that journal never proves the date stayed private.
+                let stillPendingHere = snapshot.outbox.contains { $0.id == operation.id }
+                if attempted || !stillPendingHere || operation.version.deviceID != store.localDeviceID ||
+                    snapshot.acknowledgements.contains(where: { $0.operationID == operation.id }) { possiblyShared = true }
             }
             return try .init(familyID: snapshot.familyID, familyCatID: mapping.familyCatID,
                 localDay: privateFarewellDay(toolCatID, mapping.profileID), consentedDay: decision?.day,
@@ -246,7 +250,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                   prepared.directory == store.localDirectory else { throw FamilySharingError.farewellPreviewChanged }
             let (_, mapping) = try farewellMapping(context, tool: prepared.toolCatID)
             let family = try await farewellFamily(context, store: store)
-            guard family.familyID == prepared.preview.familyID, family.generation == prepared.generation,
+            guard prepared.preview.expiresAt > now(), family.familyID == prepared.preview.familyID, family.generation == prepared.generation,
                   mapping.familyCatID == prepared.preview.familyCatID, mapping.profileID == prepared.profileID,
                   try privateFarewellDay(prepared.toolCatID, prepared.profileID) == prepared.preview.day else { throw FamilySharingError.farewellPreviewChanged }
             try store.consentFarewell(cat: mapping.familyCatID, day: prepared.preview.day,
