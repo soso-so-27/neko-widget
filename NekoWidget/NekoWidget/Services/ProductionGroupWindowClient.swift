@@ -114,6 +114,12 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         return try await task.value
     }
 
+    /// Family sharing reuses the registered app person/device, not photo-room
+    /// membership. Only the host's explicitly enabled family factory calls it.
+    func familyNotebookIdentity() async throws -> GroupDeviceIdentity {
+        try await registeredIdentity()
+    }
+
     private func register(_ initial: GroupDeviceIdentity) async throws -> GroupDeviceIdentity {
         var value = initial
         var body = try secrets.read("registration-request")

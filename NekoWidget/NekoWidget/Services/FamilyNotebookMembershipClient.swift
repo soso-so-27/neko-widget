@@ -147,6 +147,22 @@ actor FamilyNotebookMembershipClient {
     }
     func hasPendingOperation() throws -> Bool { try pending() != nil }
 
+    /// Resolve an interrupted UI operation before reading a new membership.
+    /// A departure ACK must close its retained local outbox even after restart.
+    func resumePending(notebook: FamilyNotebookStore?) async throws {
+        guard let saved = try pending() else { return }
+        let exits = saved.intent.action == .leave || saved.intent.action == .dissolve
+        if exits {
+            guard let notebook, try notebook.snapshot().familyID == saved.intent.familyID else {
+                throw FamilySharingError.unknownOutcome
+            }
+            try await perform(saved.intent, generation: saved.expectedGeneration, operationID: saved.operationID,
+                              afterAcknowledgement: { _ = try notebook.endSharing() })
+        } else {
+            try await perform(saved.intent, generation: saved.expectedGeneration, operationID: saved.operationID)
+        }
+    }
+
     private func path(_ familyID: UUID) -> String { "/v3/family-notebooks/" + familyID.uuidString.lowercased() }
     private func path(_ intent: Intent) -> String {
         let root = path(intent.familyID)
@@ -234,7 +250,7 @@ actor FamilyNotebookMembershipClient {
         default: return false
         }
     }
-    private static func presentation(_ error: Error) -> FamilySharingError {
+    static func presentation(_ error: Error) -> FamilySharingError {
         if let value = error as? FamilySharingError { return value }
         guard let value = error as? FamilyNotebookTransportError else { return .serviceUnavailable }
         switch value {

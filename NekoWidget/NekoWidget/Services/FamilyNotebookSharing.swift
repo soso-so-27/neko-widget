@@ -6,61 +6,10 @@ import Foundation
 // taking someone out and ending the family are separate operations, and none
 // of them deletes this person's own copy.
 
-enum FamilySharingState: Equatable, Sendable {
-    case checking
-    case notInFamily
-    /// Asked to join; the family has not let this person in yet.
-    case pendingApproval
-    /// Let in; the keys for the notebook have not arrived yet.
-    case waitingForKeys
-    case inFamily(FamilyMembership)
-    /// Leaving or ending sent; the server has not confirmed it yet.
-    case leaving
-
-    var membership: FamilyMembership? {
-        if case let .inFamily(membership) = self { return membership }
-        return nil
-    }
-}
-
-/// Every operation carries an operation ID; sending the same operation again
-/// uses the same ID, so a retry never makes a second family or a second join.
-@MainActor
-protocol FamilyNotebookSharingService: AnyObject {
-    /// Whether invitations can leave this iPhone (false in the prototype).
-    var sendsInvitations: Bool { get }
-    func loadState() async throws -> FamilySharingState
-    /// Nil while sharing goes on.
-    func loadPause() async throws -> FamilySharingPause?
-    func createFamily(operationID: UUID) async throws
-    func createInvitation(operationID: UUID) async throws -> FamilyInvitation
-    func previewInvitation(_ link: URL?) async throws -> FamilyInvitationPreview
-    func join(_ invitation: FamilyInvitationPreview, operationID: UUID) async throws -> FamilyJoinResult
-    func leaveFamily(operationID: UUID) async throws -> FamilyExitResult
-    func removeMember(personID: String, operationID: UUID) async throws
-    func dissolveFamily(operationID: UUID) async throws -> FamilyExitResult
-    /// After the payer left without naming anyone: become the payer, so
-    /// sharing comes back. The server decides who came first.
-    func claimPayer(operationID: UUID) async throws
-    func loadHandover() async throws -> FamilyPayerHandover
-    func nominatePayer(personID: String, expectedGeneration: Int64, operationID: UUID) async throws
-    func acceptPayer(nominationID: UUID, expectedGeneration: Int64, operationID: UUID) async throws
-    func cancelPayerNomination(nominationID: UUID, expectedGeneration: Int64, operationID: UUID) async throws
-}
-
-// A prototype never pretends to have nominated a real family member. Existing
-// screen previews remain source-compatible until the production adapter lands.
-extension FamilyNotebookSharingService {
-    func loadHandover() async throws -> FamilyPayerHandover { throw FamilySharingError.notAvailableYet }
-    func nominatePayer(personID: String, expectedGeneration: Int64, operationID: UUID) async throws { throw FamilySharingError.notAvailableYet }
-    func acceptPayer(nominationID: UUID, expectedGeneration: Int64, operationID: UUID) async throws { throw FamilySharingError.notAvailableYet }
-    func cancelPayerNomination(nominationID: UUID, expectedGeneration: Int64, operationID: UUID) async throws { throw FamilySharingError.notAvailableYet }
-}
-
 /// What the screens hold: the state, and one way to run an operation.
 @MainActor
 final class FamilyNotebookSharing: ObservableObject {
-    static let shared = FamilyNotebookSharing(service: FamilyNotebookPrototypeSharing())
+    static let shared = FamilyNotebookSharing(service: FamilyNotebookServiceFactory.make())
 
     @Published private(set) var state: FamilySharingState = .checking
     @Published private(set) var pause: FamilySharingPause?

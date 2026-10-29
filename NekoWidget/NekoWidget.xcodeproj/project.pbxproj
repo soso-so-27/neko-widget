@@ -291,6 +291,9 @@
 		C0261028F000000000000004 /* GroupReportDraftStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0261028F000000000000003 /* GroupReportDraftStore.swift */; };
 		C0261028F000000000000006 /* GroupReportingProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0261028F000000000000005 /* GroupReportingProvider.swift */; };
 		C0261028F000000000000008 /* GroupReportCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0261028F000000000000007 /* GroupReportCrypto.swift */; };
+		FA2610290000000000000018 /* FamilyNotebookAdmissionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000017 /* FamilyNotebookAdmissionClient.swift */; };
+		FA2610290000000000000020 /* ProductionFamilyNotebookSharingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */; };
+		FA2610290000000000000022 /* FamilyNotebookServiceFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -584,6 +587,9 @@
 		C0261028F000000000000003 /* GroupReportDraftStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReportDraftStore.swift; sourceTree = "<group>"; };
 		C0261028F000000000000005 /* GroupReportingProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReportingProvider.swift; sourceTree = "<group>"; };
 		C0261028F000000000000007 /* GroupReportCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReportCrypto.swift; sourceTree = "<group>"; };
+		FA2610290000000000000017 /* FamilyNotebookAdmissionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookAdmissionClient.swift; sourceTree = "<group>"; };
+		FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionFamilyNotebookSharingService.swift; sourceTree = "<group>"; };
+		FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookServiceFactory.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -857,6 +863,9 @@
 				FA2610290000000000000009 /* FamilyNotebookMembershipClient.swift */,
 				FA2610290000000000000011 /* FamilyNotebookSharingContract.swift */,
 				FA2610290000000000000013 /* FamilyNotebookInvitationCrypto.swift */,
+				FA2610290000000000000017 /* FamilyNotebookAdmissionClient.swift */,
+				FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */,
+				FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */,
 				FA2610290000000000000015 /* FamilyNotebookKeyCoordinator.swift */,
 				FA2610290000000000000001 /* FamilyNotebookCrypto.swift */,
 				FA2610260000000000000001 /* FamilyNotebookCore.swift */,
@@ -1407,6 +1416,9 @@
 				FA2610290000000000000010 /* FamilyNotebookMembershipClient.swift in Sources */,
 				FA2610290000000000000012 /* FamilyNotebookSharingContract.swift in Sources */,
 				FA2610290000000000000014 /* FamilyNotebookInvitationCrypto.swift in Sources */,
+				FA2610290000000000000018 /* FamilyNotebookAdmissionClient.swift in Sources */,
+				FA2610290000000000000020 /* ProductionFamilyNotebookSharingService.swift in Sources */,
+				FA2610290000000000000022 /* FamilyNotebookServiceFactory.swift in Sources */,
 				FA2610290000000000000016 /* FamilyNotebookKeyCoordinator.swift in Sources */,
 				FA2610290000000000000002 /* FamilyNotebookCrypto.swift in Sources */,
 				FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */,
