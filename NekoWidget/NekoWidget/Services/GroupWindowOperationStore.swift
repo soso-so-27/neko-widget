@@ -7,9 +7,12 @@ import SQLite3
 final class GroupOperationStore: GroupSecretStore, @unchecked Sendable {
     private let database: OpaquePointer
     private let lock = NSLock()
+    private let maximumRecordBytes: Int
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    init(directory: URL) throws {
+    init(directory: URL, maximumRecordBytes: Int = 262_144) throws {
+        guard (262_144...2_100_000).contains(maximumRecordBytes) else { throw GroupClientError.invalidResponse }
+        self.maximumRecordBytes = maximumRecordBytes
         guard directory.isFileURL else { throw GroupClientError.invalidResponse }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 #if os(iOS)
@@ -46,11 +49,11 @@ final class GroupOperationStore: GroupSecretStore, @unchecked Sendable {
         if result == SQLITE_DONE { return nil }
         guard result == SQLITE_ROW else { throw GroupClientError.unavailable }
         let count = Int(sqlite3_column_bytes(statement, 0))
-        guard (1...262_144).contains(count), let bytes = sqlite3_column_blob(statement, 0) else { throw GroupClientError.invalidResponse }
+        guard (1...maximumRecordBytes).contains(count), let bytes = sqlite3_column_blob(statement, 0) else { throw GroupClientError.invalidResponse }
         return Data(bytes: bytes, count: count)
     }
     func write(_ data: Data, account: String, createOnly: Bool) throws {
-        guard (1...262_144).contains(data.count) else { throw GroupClientError.invalidResponse }
+        guard (1...maximumRecordBytes).contains(data.count) else { throw GroupClientError.invalidResponse }
         lock.lock(); defer { lock.unlock() }
         let statement = try prepare(createOnly ? "INSERT INTO group_http_operations VALUES (?,?)"
             : "INSERT INTO group_http_operations VALUES (?,?) ON CONFLICT(account) DO UPDATE SET data=excluded.data")
