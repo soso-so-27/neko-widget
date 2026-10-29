@@ -6,7 +6,21 @@ import Foundation
 enum FamilyNotebookError: Error, Equatable {
     case invalidValue, invalidTarget, invalidOperation, operationCollision
     case familyMismatch, mappingConflict, staleRevision, clockOverflow
-    case unsupportedSchema, corruptStorage, unsafePath, storageUnavailable, invalidAcknowledgement, deletedTarget
+    case unsupportedSchema, corruptStorage, unsafePath, storageUnavailable, invalidAcknowledgement, deletedTarget, sharingEnded
+}
+
+/// Everyone may leave their own family. Leaving is independent from the
+/// payer's authority to remove someone else or dissolve the family (#543).
+enum FamilyRole: Equatable, Sendable {
+    case payer, member
+}
+
+struct FamilyMembership: Equatable, Sendable {
+    var role: FamilyRole
+    var canInvite: Bool { true }
+    var canRemoveMember: Bool { role == .payer }
+    var canDissolve: Bool { role == .payer }
+    var canLeave: Bool { true }
 }
 
 enum FamilyNotebookCollection: String, Codable, CaseIterable, Hashable, Sendable {
@@ -150,6 +164,8 @@ struct FamilyNotebookSnapshot: Equatable, Sendable {
     let ledgerKeys: Set<String>
     let outbox: [FamilyNotebookOperation]
     let acknowledgements: [FamilyNotebookAcknowledgement]
+    /// Local transmission boundary, not proof of a server-confirmed exit.
+    let sharingEnded: Bool
 
     func fieldState(for target: FamilyNotebookTarget) -> FamilyNotebookFieldState? {
         FamilyNotebookCore.resolve(target: target, operations: operations,

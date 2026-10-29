@@ -29,11 +29,14 @@ final class FamilyNotebookStore: @unchecked Sendable {
         var acknowledgements: [FamilyNotebookAcknowledgement] = []
         var mappings: [FamilyNotebookLocalMapping] = []
         var ledgerKeys: Set<String> = []
+        // Absent in the original schema. Ending participation uses schema 2
+        // so an older app refuses to reopen it as an active sharing outbox.
+        var sharingEnded: Bool?
 
         var snapshot: FamilyNotebookSnapshot {
             .init(familyID: familyID, revision: revision, clock: clock, operations: operations,
                   mappings: mappings, ledgerKeys: ledgerKeys, outbox: operations.filter { outboxIDs.contains($0.id) },
-                  acknowledgements: acknowledgements)
+                  acknowledgements: acknowledgements, sharingEnded: sharingEnded == true)
         }
     }
 
@@ -57,7 +60,21 @@ final class FamilyNotebookStore: @unchecked Sendable {
         return try load().snapshot
     }
 
-    func pendingOperations() throws -> [FamilyNotebookOperation] { try snapshot().outbox }
+    func pendingOperations() throws -> [FamilyNotebookOperation] {
+        let current = try snapshot()
+        return current.sharingEnded ? [] : current.outbox
+    }
+
+    /// Preserve the complete notebook, including its unsent operations. No
+    /// transport or membership claim is made by this local prototype boundary.
+    @discardableResult
+    func endSharing() throws -> FamilyNotebookSnapshot {
+        try transaction { state in
+            state.schemaVersion = 2
+            state.sharingEnded = true
+        }
+        return try snapshot()
+    }
 
     @discardableResult
     func edit(target: FamilyNotebookTarget, value: FamilyNotebookValue?, author: FamilyNotebookAuthor,
@@ -66,7 +83,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
             let operation = try makeOperation(state: state, target: target, value: value, author: author, editedAt: editedAt)
             state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
             state.clock = operation.version.clock
-            if enqueue { state.outboxIDs.insert(operation.id) }
+            if enqueue && state.sharingEnded != true { state.outboxIDs.insert(operation.id) }
             return operation
         }
     }
@@ -76,6 +93,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
     @discardableResult
     func receive(_ operations: [FamilyNotebookOperation], expectedRevision: UInt64? = nil) throws -> FamilyNotebookSnapshot {
         try transaction(expectedRevision: expectedRevision) { state in
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
             guard operations.allSatisfy({ $0.familyID == familyID }) else { throw FamilyNotebookError.familyMismatch }
             state.operations = try FamilyNotebookCore.merge(state.operations, operations)
             state.clock = max(state.clock, operations.map(\.version.clock).max() ?? 0)
@@ -100,6 +118,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
     @discardableResult
     func enqueue(operationID: UUID) throws -> FamilyNotebookSnapshot {
         try transaction { state in
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
             guard let operation = state.operations.first(where: { $0.id == operationID }) else { throw FamilyNotebookError.invalidOperation }
             if !state.acknowledgements.contains(where: { $0.operationID == operation.id && $0.version == operation.version }) {
                 state.outboxIDs.insert(operationID)
@@ -136,7 +155,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
                     let operation = try makeOperation(state: state, target: entry.target, value: entry.value,
                                                       author: author, editedAt: now, importedSourceEditedAt: entry.editedAt)
                     state.operations.append(operation)
-                    state.clock = operation.version.clock; state.outboxIDs.insert(operation.id)
+                    state.clock = operation.version.clock
+                    if state.sharingEnded != true { state.outboxIDs.insert(operation.id) }
                 }
                 state.ledgerKeys.insert(entry.ledgerKey)
             }
@@ -190,7 +210,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
         struct Header: Decodable { let schemaVersion: Int }
         let decoder = JSONDecoder()
         guard let header = try? decoder.decode(Header.self, from: bytes) else { throw FamilyNotebookError.corruptStorage }
-        guard header.schemaVersion == 1 else { throw FamilyNotebookError.unsupportedSchema }
+        guard [1, 2].contains(header.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
         let state: State
         do { state = try decoder.decode(State.self, from: bytes) }
         catch { throw FamilyNotebookError.corruptStorage }
@@ -199,7 +219,10 @@ final class FamilyNotebookStore: @unchecked Sendable {
     }
 
     private func validate(_ state: State) throws {
-        guard state.schemaVersion == 1 else { throw FamilyNotebookError.unsupportedSchema }
+        guard [1, 2].contains(state.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
+        guard (state.schemaVersion == 1 && state.sharingEnded == nil)
+                || (state.schemaVersion == 2 && state.sharingEnded == true)
+        else { throw FamilyNotebookError.corruptStorage }
         guard state.familyID == familyID, state.operations.allSatisfy({ $0.familyID == familyID })
         else { throw FamilyNotebookError.familyMismatch }
         let operations = try FamilyNotebookCore.merge([], state.operations)

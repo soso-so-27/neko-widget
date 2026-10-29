@@ -6,24 +6,6 @@ import Foundation
 // taking someone out and ending the family are separate operations, and none
 // of them deletes this person's own copy.
 
-/// Who this person is in the family. Never shown as a label: it only decides
-/// what can be done (10/27: no "支払う人" on screen).
-enum FamilyRole: Equatable, Sendable {
-    /// Made the family and pays for it with Plus.
-    case payer
-    case member
-}
-
-/// What this person can do. Everyone invites (the family decision in #543);
-/// only the payer takes others out or ends the family.
-struct FamilyMembership: Equatable, Sendable {
-    var role: FamilyRole
-    var canInvite: Bool { true }
-    var canRemoveMember: Bool { role == .payer }
-    var canDissolve: Bool { role == .payer }
-    var canLeave: Bool { role == .member }
-}
-
 enum FamilySharingState: Equatable, Sendable {
     case checking
     case notInFamily
@@ -201,8 +183,7 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
     /// The prototype's own copy is 「この子のこと」, which stays; only the
     /// tried family on this iPhone ends.
     func leaveFamily(operationID: UUID) async throws -> FamilyExitResult {
-        guard model.joinedSomeonesFamily else { throw FamilySharingError.notAllowed }
-        model.endPrototypeFamily()
+        try model.leavePrototypeFamily()
         return .confirmed
     }
 

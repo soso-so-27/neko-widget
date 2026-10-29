@@ -36,8 +36,9 @@ struct VerifyFamilyNotebook {
         try deletion(root.appendingPathComponent("deletion"))
         try acknowledgements(root.appendingPathComponent("ack"))
         try persistence(root.appendingPathComponent("persistence"))
+        try participationEnd(root.appendingPathComponent("participation-end"))
         try boundaries(root.appendingPathComponent("boundaries"))
-        print("Family notebook: convergence, offline restart, conflicts, tombstones, ACK and persistence checks passed")
+        print("Family notebook: convergence, offline restart, conflicts, tombstones, ACK, persistence and retained exit checks passed")
     }
 
     private static func store(_ path: URL, _ device: String, writer: Writer = Writer()) throws -> FamilyNotebookStore {
@@ -160,6 +161,93 @@ struct VerifyFamilyNotebook {
         try broken.write(to: stateFile, options: .atomic)
         try rejects("corrupt file is never bootstrapped as empty") { _ = try store(path, "device-a") }
         try check(try Data(contentsOf: stateFile) == broken, "corrupt source bytes remain untouched")
+    }
+
+    static func participationEnd(_ path: URL) throws {
+        let payer = FamilyMembership(role: .payer), member = FamilyMembership(role: .member)
+        try check(payer.canLeave && member.canLeave, "payer and member can both leave themselves")
+        try check(payer.canDissolve && payer.canRemoveMember && !member.canDissolve && !member.canRemoveMember,
+                  "leaving does not grant another person's removal or family dissolution")
+        let writer = Writer()
+        let value = try store(path, "device-a", writer: writer)
+        let mapping = FamilyNotebookLocalMapping(sourceKey: "cat:local", familyCatID: cat, toolCatID: UUID())
+        _ = try value.applyImport(.init(familyID: family,
+            entries: [.init(ledgerKey: "name:initial", target: name, value: .text("残す名前"), editedAt: day)],
+            mappings: [mapping]), author: a, now: day)
+        let acknowledged = try value.edit(target: water, value: .text("確認済み"), author: a, editedAt: day)
+        _ = try value.acknowledge(.init(familyID: family, operationID: acknowledged.id, version: acknowledged.version))
+        let pending = try value.edit(target: name, value: .text("送らずに残す"), author: a, editedAt: day)
+        let otherCat = UUID()
+        let tombstone = try value.edit(target: .init(familyCatID: otherCat, field: nil), value: nil, author: a, editedAt: day)
+        let before = try value.snapshot()
+        let stateFile = path.appendingPathComponent("family-notebook.json")
+        let beforeBytes = try Data(contentsOf: stateFile)
+        struct Header: Decodable { let schemaVersion: Int }
+        try check(try JSONDecoder().decode(Header.self, from: beforeBytes).schemaVersion == 1,
+                  "active stores retain the original schema")
+        // Open before departure to exercise an already-existing caller, not
+        // only a newly initialized reader of the persisted stop.
+        let otherInstance = try store(path, "device-a")
+        writer.fail = true
+        try rejects("failed departure save is surfaced") { _ = try value.endSharing() }
+        try check(try Data(contentsOf: stateFile) == beforeBytes, "failed departure preserves original bytes")
+        try check(try otherInstance.snapshot() == before, "failed departure does not mark sharing stopped")
+        try check(try otherInstance.pendingOperations() == before.outbox, "failed departure preserves pending work")
+        writer.fail = false
+        let ended = try value.endSharing()
+        try check(ended.sharingEnded && ended.revision == before.revision + 1, "departure commits once")
+        try check(ended.operations == before.operations && ended.outbox == before.outbox
+                  && ended.mappings == before.mappings && ended.ledgerKeys == before.ledgerKeys
+                  && ended.acknowledgements == before.acknowledgements && ended.clock == before.clock,
+                  "departure preserves history, unsent work, identity links, imports, receipts and clock")
+        try check(ended.operations.contains(where: { $0.id == tombstone.id }), "departure retains deletion evidence")
+        try check(ended.outbox.contains(where: { $0.id == pending.id }), "unacknowledged work remains recoverable")
+        try check(try otherInstance.pendingOperations().isEmpty, "an existing caller cannot send the retained outbox")
+        let endedBytes = try Data(contentsOf: stateFile)
+        // Released readers accept schemaVersion == 1 only. An ended file must
+        // be outside that accepted version, never an ignorable optional flag.
+        try check(try JSONDecoder().decode(Header.self, from: endedBytes).schemaVersion == 2,
+                  "original schema-1 readers refuse ended notebooks")
+        let restarted = try store(path, "device-a")
+        try check(try restarted.snapshot() == ended, "departure and the full notebook survive restart")
+        try check(try restarted.pendingOperations().isEmpty, "restart cannot resume transmission")
+        try check(try restarted.endSharing() == ended, "repeated departure is idempotent")
+        let delayed = FamilyNotebookOperation(familyID: family, target: name, value: .text("遅れて到着"),
+            version: .init(clock: ended.clock + 100, deviceID: "device-b", operationID: UUID()), author: b, editedAt: day)
+        do {
+            _ = try otherInstance.receive([delayed])
+            throw Failure.check("delayed receive after departure must fail")
+        } catch FamilyNotebookError.sharingEnded { }
+        do {
+            _ = try otherInstance.enqueue(operationID: pending.id)
+            throw Failure.check("retained operations cannot be queued again")
+        } catch FamilyNotebookError.sharingEnded { }
+        try check(try Data(contentsOf: stateFile) == endedBytes, "rejected late work leaves retained bytes untouched")
+        let local = try restarted.edit(target: water, value: .text("この端末の変更"), author: a, editedAt: day)
+        let localState = try restarted.snapshot()
+        try check(localState.operations.contains(local) && localState.outbox == ended.outbox,
+                  "later local edits persist without joining the retained outbox")
+        try check(localState.fieldState(for: water)?.status == .localSaved, "later local edits are not reported shared")
+        let localImportTarget = FamilyNotebookTarget(familyCatID: cat, field: .litter)
+        _ = try restarted.applyImport(.init(familyID: family,
+            entries: [.init(ledgerKey: "litter:after-exit", target: localImportTarget, value: .text("端末だけ"), editedAt: day)],
+            mappings: []), author: a, now: day)
+        try check(try restarted.snapshot().outbox == ended.outbox, "later local imports do not resume transmission")
+        // A missing/false stop cannot turn a schema-2 notebook into an active
+        // family. Refuse malformed state without repairing or resetting it.
+        let malformedFlags: [Bool?] = [nil, false]
+        for flag in malformedFlags {
+            var malformed = try JSONSerialization.jsonObject(with: endedBytes) as! [String: Any]
+            if let flag { malformed["sharingEnded"] = flag }
+            else { malformed.removeValue(forKey: "sharingEnded") }
+            let bytes = try JSONSerialization.data(withJSONObject: malformed, options: .sortedKeys)
+            try bytes.write(to: stateFile, options: .atomic)
+            do {
+                _ = try store(path, "device-a")
+                throw Failure.check("schema 2 requires a durable sharing stop")
+            } catch FamilyNotebookError.corruptStorage { }
+            try check(try Data(contentsOf: stateFile) == bytes, "malformed stopped notebook is preserved")
+        }
     }
 
     static func boundaries(_ path: URL) throws {
