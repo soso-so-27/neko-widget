@@ -38,11 +38,10 @@ final class FamilyNotebookPrototype: ObservableObject {
         .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter, .temperament,
         .vetName, .vetPhone, .vetNote]
 
-    var hasFamily: Bool { snapshot != nil }
+    var hasFamily: Bool { snapshot.map { !$0.sharingEnded } ?? false }
 
-    /// This iPhone joined someone's family instead of making one. As in
-    /// Apple's family sharing, only the one who made it invites and takes
-    /// people out; the others can leave.
+    /// This iPhone joined someone's family instead of making one. Everyone
+    /// can invite and leave; only the payer removes others or dissolves it.
     var joinedSomeonesFamily: Bool { hasFamily && UserDefaults.standard.bool(forKey: Self.joinedKey) }
 
     /// The cats an invitation shows (test builds: this iPhone's own).
@@ -87,15 +86,24 @@ final class FamilyNotebookPrototype: ObservableObject {
     // MARK: Making the family, and copying the tools in
 
     func create() async {
+        guard !hasFamily else { return }
+        let retainedFamilyID = snapshot?.familyID
         let familyID = UUID()
         open(familyID)
-        guard store != nil else { return }
+        guard store != nil else {
+            if let retainedFamilyID { open(retainedFamilyID) }
+            return
+        }
         do {
             try await copyTools()
+            for key in [Self.seenKey, Self.undoKey, Self.removedKey, Self.joinedKey] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
             UserDefaults.standard.set(familyID.uuidString, forKey: Self.familyKey)
             markSeen()
         } catch {
             discard(familyID)
+            if let retainedFamilyID { open(retainedFamilyID) }
             message = "「この子のこと」を写せませんでした。元の記録はそのままです。"
         }
     }
@@ -147,6 +155,15 @@ final class FamilyNotebookPrototype: ObservableObject {
         return mappings
     }
 
+    /// All participants, including the payer, may leave. Keep the notebook
+    /// and personal copy unchanged; a failed durable stop leaves it active.
+    /// The retained family pointer reopens the stopped copy after a restart.
+    func leavePrototypeFamily() throws {
+        guard let store, let snapshot else { throw FamilySharingError.notAllowed }
+        if snapshot.sharingEnded { return }
+        self.snapshot = try store.endSharing()
+    }
+
     /// Test builds only: end the tried family on this iPhone. What the test
     /// buttons changed in 「この子のこと」 is put back; nothing else is touched.
     /// Never the real leaving: that keeps this person's copy and is the
@@ -159,8 +176,10 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     private func discard(_ familyID: UUID) {
         store = nil; snapshot = nil
-        for key in [Self.familyKey, Self.seenKey, Self.undoKey, Self.removedKey, Self.joinedKey] {
-            UserDefaults.standard.removeObject(forKey: key)
+        if UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) == familyID {
+            for key in [Self.familyKey, Self.seenKey, Self.undoKey, Self.removedKey, Self.joinedKey] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
         }
         if let directory = Self.root?.appendingPathComponent(familyID.uuidString.lowercased(), isDirectory: true) {
             try? FileManager.default.removeItem(at: directory)
@@ -172,7 +191,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Every save of 「この子のこと」 (the page, its lists, what the tools fill
     /// in) goes into the notebook as the items that changed.
     private func catCareDidSave(_ before: CatCareState, _ after: CatCareState) {
-        guard let store, let snapshot else { return }
+        guard hasFamily, let store, let snapshot else { return }
         do {
             let mappings = Self.catMappings(snapshot.mappings, care: after, handoff: nil, visits: [])
             let now = try Self.plan(after, family: snapshot.familyID, mappings: mappings)
@@ -213,7 +232,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// once, the newer one is kept without asking, as in shared Notes; the
     /// other stays in the item's history.
     func applyFamilyWrites() {
-        guard let snapshot, let care = CatCareStore.shared.state,
+        guard hasFamily, let snapshot, let care = CatCareStore.shared.state,
               let here = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.mappings) else { return }
         var current: [FamilyNotebookTarget: FamilyNotebookValue] = [:]
         for entry in here.entries { if let value = entry.value { current[entry.target] = value } }
@@ -370,6 +389,7 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// Someone else wrote after you last looked: a small dot on the tools tab.
     var hasNewFromFamily: Bool {
+        guard hasFamily else { return false }
         let seen = UInt64(UserDefaults.standard.integer(forKey: Self.seenKey))
         return snapshot?.operations.contains { $0.author != Self.me && $0.version.clock > seen } ?? false
     }
@@ -577,21 +597,24 @@ struct FamilyNotebookView: View {
 }
 
 /// One person's page, as in Apple's family settings: what can be done about
-/// this person, and what happens. The one who pays ends the family or takes
-/// someone out; everyone else can leave. Three operations, never one.
+/// this person, and what happens. The payer may also leave without choosing
+/// to dissolve the family. Three operations, never one.
 struct FamilyNotebookMemberView: View {
     let member: FamilyNotebookAuthor
     let membership: FamilyMembership
     @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
     @State private var confirms = false
+    @State private var selectedAction: Action?
 
-    private enum Action { case dissolve, leave, remove }
+    private enum Action: Hashable { case dissolve, leave, remove }
 
     private var isMe: Bool { member == FamilyNotebookPrototype.me }
-    private var action: Action? {
-        if isMe { return membership.canDissolve ? .dissolve : membership.canLeave ? .leave : nil }
-        return membership.canRemoveMember ? .remove : nil
+    private var actions: [Action] {
+        if isMe {
+            return (membership.canLeave ? [.leave] : []) + (membership.canDissolve ? [.dissolve] : [])
+        }
+        return membership.canRemoveMember ? [.remove] : []
     }
 
     private func title(_ action: Action) -> String {
@@ -651,9 +674,9 @@ struct FamilyNotebookMemberView: View {
                 .frame(maxWidth: .infinity)
                 .listRowBackground(Color.clear)
             }
-            if let action {
+            ForEach(actions, id: \.self) { action in
                 Section {
-                    Button(title(action), role: .destructive) { confirms = true }
+                    Button(title(action), role: .destructive) { selectedAction = action; confirms = true }
                         .disabled(sharing.isWorking)
                 } footer: {
                     Text(explanation(action))
@@ -662,8 +685,8 @@ struct FamilyNotebookMemberView: View {
         }
         .navigationTitle(member.displayName)
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog(action.map(question) ?? "", isPresented: $confirms, titleVisibility: .visible) {
-            if let action {
+        .confirmationDialog(selectedAction.map(question) ?? "", isPresented: $confirms, titleVisibility: .visible) {
+            if let action = selectedAction, actions.contains(action) {
                 Button(confirmation(action), role: .destructive) {
                     Task { await run(action) }
                 }
