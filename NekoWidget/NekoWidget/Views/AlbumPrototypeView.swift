@@ -191,8 +191,14 @@ struct AlbumPrototypeView: View {
     @State private var storySource = ""
     @State private var yearStory: YearStory?
     @Namespace private var zoom
+    @Environment(\.membershipAccess) private var membershipAccess
 
     struct YearStory: Identifiable { let year: Int; var id: Int { year } }
+
+    /// The works open with Plus; the card says so before a tap (ADR-027).
+    private var workNeedsPlus: Bool {
+        membershipAccess.decision(for: .openGrowingSummary) == .membershipRequired
+    }
 
     private var arrivedYears: [Int] {
         AlbumPrototype.arrivedYears(from: catPhotos, deliverNow: yearNow)
@@ -259,14 +265,18 @@ struct AlbumPrototypeView: View {
             _ = await MonthlyStoryView.prepare(key)
         }
         .fullScreenCover(item: $story) { letter in
-            MonthlyStoryView(letter: letter, catPhotos: catPhotos,
-                             assignments: assignments, profileNames: profileNames)
-                .zoomTransition(storySource, in: zoom)
+            AlbumWorkGate(month: letter.monthNumber) {
+                MonthlyStoryView(letter: letter, catPhotos: catPhotos,
+                                 assignments: assignments, profileNames: profileNames)
+            }
+            .zoomTransition(storySource, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
-            YearStoryView(year: story.year, catPhotos: catPhotos,
-                          assignments: assignments, profileNames: profileNames)
-                .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
+            AlbumWorkGate(month: nil) {
+                YearStoryView(year: story.year, catPhotos: catPhotos,
+                              assignments: assignments, profileNames: profileNames)
+            }
+            .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
         }
     }
 
@@ -449,12 +459,51 @@ struct AlbumPrototypeView: View {
                 .padding(.top, 60)
                 .background(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom))
             }
+            .overlay(alignment: .topTrailing) {
+                if workNeedsPlus {
+                    Text("Plus").font(.caption2.bold())
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.thinMaterial, in: Capsule())
+                        .padding(12)
+                        .accessibilityIdentifier("album-prototype-plus-mark")
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .zoomSource(id, in: zoom)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(wrapped ? "\(accessibilityTitle)、届きました" : accessibilityTitle)
+        .accessibilityLabel((wrapped ? "\(accessibilityTitle)、届きました" : accessibilityTitle)
+                            + (workNeedsPlus ? "、Plusで見られます" : ""))
+    }
+}
+
+/// Opening a month's or the year's work is Plus; the shelf and the covers
+/// stay free (ADR-027: lists free, opening a summary or movie is Plus). In
+/// place of the work: the one Plus screen for that month, or the notice when
+/// the purchase state cannot be confirmed. After joining, the work opens.
+struct AlbumWorkGate<Content: View>: View {
+    let month: Int?
+    @ViewBuilder let content: () -> Content
+    @Environment(\.membershipAccess) private var access
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let decision = access.decision(for: .openGrowingSummary)
+        if decision == .allowed {
+            content()
+        } else {
+            NavigationStack {
+                PlusOfferPrompt(context: .monthlySummary(month: month), decision: decision)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("閉じる") { dismiss() }
+                        }
+                    }
+            }
+            .accessibilityIdentifier("album-work-plus-gate")
+        }
     }
 }
 
@@ -548,14 +597,18 @@ struct PastWorksView: View {
         .navigationTitle("これまでの作品")
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $story) { letter in
-            MonthlyStoryView(letter: letter, catPhotos: catPhotos,
-                             assignments: assignments, profileNames: profileNames)
-                .zoomTransition(letter.periodIdentifier, in: zoom)
+            AlbumWorkGate(month: letter.monthNumber) {
+                MonthlyStoryView(letter: letter, catPhotos: catPhotos,
+                                 assignments: assignments, profileNames: profileNames)
+            }
+            .zoomTransition(letter.periodIdentifier, in: zoom)
         }
         .fullScreenCover(item: $yearStory) { story in
-            YearStoryView(year: story.year, catPhotos: catPhotos,
-                          assignments: assignments, profileNames: profileNames)
-                .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
+            AlbumWorkGate(month: nil) {
+                YearStoryView(year: story.year, catPhotos: catPhotos,
+                              assignments: assignments, profileNames: profileNames)
+            }
+            .zoomTransition(YearStoryView.periodIdentifier(story.year), in: zoom)
         }
     }
 
