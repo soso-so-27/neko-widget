@@ -23,6 +23,57 @@ struct FamilyMembership: Equatable, Sendable {
     var canLeave: Bool { true }
 }
 
+/// Read-only contract for the future authenticated family service. This is
+/// neither a locally assignable role nor an authorization token. Mutations must
+/// recheck membership, Plus and generation on the server. The local prototype
+/// deliberately does not apply this DTO to FamilyMembership or its outbox.
+struct FamilyNotebookPayerState: Decodable, Equatable, Sendable {
+    enum SharingStatus: String, Decodable, Sendable { case active, paused }
+    enum PauseReason: String, Decodable, Sendable { case noPayer = "no_payer", payerPlusUnverified = "payer_plus_unverified" }
+    enum Role: String, Decodable, Sendable { case payer, member }
+    let schemaVersion: Int
+    let familyId: String
+    let generation: Int64
+    let sharingStatus: SharingStatus
+    let pauseReason: PauseReason?
+    let payerPersonId: String?
+    let role: Role
+    let nominationPending: Bool
+    let canClaimPayer: Bool
+    let canRemoveMember: Bool
+    let canDissolve: Bool
+
+    func validated(family expectedFamily: String, person currentPerson: String,
+                   minimumGeneration: Int64 = 0) throws -> Self {
+        func validID(_ value: String) -> Bool {
+            (1...128).contains(value.utf8.count) && value.utf8.allSatisfy {
+                (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95
+            }
+        }
+        guard schemaVersion == 1, validID(familyId), validID(expectedFamily), validID(currentPerson),
+              (1...1_000_000_001).contains(generation), minimumGeneration >= 0,
+              payerPersonId.map(validID) ?? true else { throw FamilyNotebookError.invalidValue }
+        guard familyId == expectedFamily else { throw FamilyNotebookError.familyMismatch }
+        guard generation >= minimumGeneration else { throw FamilyNotebookError.staleRevision }
+        let isPayer = payerPersonId == currentPerson
+        guard (role == .payer) == isPayer, canRemoveMember == isPayer, canDissolve == isPayer else {
+            throw FamilyNotebookError.invalidValue
+        }
+        switch (sharingStatus, pauseReason) {
+        case (.active, nil):
+            guard payerPersonId != nil, !canClaimPayer else { throw FamilyNotebookError.invalidValue }
+        case (.paused, .noPayer):
+            guard payerPersonId == nil, role == .member, !canClaimPayer || !nominationPending else {
+                throw FamilyNotebookError.invalidValue
+            }
+        case (.paused, .payerPlusUnverified):
+            guard payerPersonId != nil, !canClaimPayer else { throw FamilyNotebookError.invalidValue }
+        default: throw FamilyNotebookError.invalidValue
+        }
+        return self
+    }
+}
+
 enum FamilyNotebookCollection: String, Codable, CaseIterable, Hashable, Sendable {
     case cat, weight, medication, vaccination, meal, visit, visitEntry, handoff, handoffMeal
 }

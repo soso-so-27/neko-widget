@@ -37,8 +37,47 @@ struct VerifyFamilyNotebook {
         try acknowledgements(root.appendingPathComponent("ack"))
         try persistence(root.appendingPathComponent("persistence"))
         try participationEnd(root.appendingPathComponent("participation-end"))
+        try payerStateContract()
         try boundaries(root.appendingPathComponent("boundaries"))
         print("Family notebook: convergence, offline restart, conflicts, tombstones, ACK, persistence and retained exit checks passed")
+    }
+
+    private static func payerStateContract() throws {
+        let base: [String: Any] = ["schemaVersion": 1, "familyId": "family-fixture", "generation": 3,
+            "sharingStatus": "paused", "pauseReason": "no_payer", "payerPersonId": NSNull(),
+            "role": "member", "nominationPending": false, "canClaimPayer": true,
+            "canRemoveMember": false, "canDissolve": false]
+        func read(_ changes: [String: Any] = [:], family: String = "family-fixture",
+                  person: String = "person-a", minimum: Int64 = 3) throws -> FamilyNotebookPayerState {
+            let body = base.merging(changes) { _, new in new }
+            return try JSONDecoder().decode(FamilyNotebookPayerState.self,
+                from: JSONSerialization.data(withJSONObject: body))
+                .validated(family: family, person: person, minimumGeneration: minimum)
+        }
+        let absent = try read()
+        try check(absent.pauseReason == .noPayer && absent.canClaimPayer && !absent.canDissolve,
+                  "absent payer is paused without local administrative authority")
+        let active: [String: Any] = ["sharingStatus": "active", "pauseReason": NSNull(),
+            "payerPersonId": "person-a", "role": "payer", "canClaimPayer": false,
+            "canRemoveMember": true, "canDissolve": true]
+        try check(try read(active).role == .payer, "confirmed payer state")
+        let winnerElsewhere = active.merging(["role": "member", "canRemoveMember": false, "canDissolve": false]) { _, new in new }
+        try check(try read(winnerElsewhere, person: "person-b").role == .member,
+                  "another Plus member stays an ordinary member")
+        let paused = active.merging(["sharingStatus": "paused", "pauseReason": "payer_plus_unverified"]) { _, new in new }
+        try check(try read(paused).canDissolve, "temporary Plus uncertainty does not vacate payer role")
+        _ = try read(["nominationPending": true, "canClaimPayer": false])
+        let invalid: [[String: Any]] = [
+            ["sharingStatus": "active"], ["role": "payer"], ["canDissolve": true],
+            ["nominationPending": true], ["payerPersonId": "person-b"], ["generation": 0],
+            ["schemaVersion": 2], ["pauseReason": "new_unknown_reason"]
+        ]
+        for change in invalid {
+            try rejects("inconsistent or unknown payer state") { _ = try read(change) }
+        }
+        try rejects("cross-family state") { _ = try read(family: "other-family") }
+        try rejects("stale generation") { _ = try read(minimum: 4) }
+        try rejects("other person's payer authority") { _ = try read(active, person: "person-b") }
     }
 
     private static func store(_ path: URL, _ device: String, writer: Writer = Writer()) throws -> FamilyNotebookStore {
