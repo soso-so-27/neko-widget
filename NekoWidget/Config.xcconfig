@@ -72,6 +72,9 @@ SHARING_API_BASE_URL =
 // Pairing can be exercised independently. One-photo moment upload/download
 // remains separately off until privacy, safety, staging, and device gates pass.
 SHARING_MEDIA_ENABLED = NO
+// Family notebook transport is independent of photo-room membership. Keep the
+// local prototype unless a reviewed internal build explicitly enables this.
+FAMILY_NOTEBOOK_PRODUCTION_ENABLED = NO
 // The Share Extension may write one protected, short-lived canonical input.
 // Only the host app may validate the current installation, encrypt and send.
 SHARING_SHARE_EXTENSION_HANDOFF_ENABLED = NO
