@@ -738,6 +738,9 @@ struct FamilyNotebookView: View {
             if let pause = sharing.pause {
                 pausedSection(pause)
             }
+            if let handover = sharing.handover {
+                handoverSection(handover)
+            }
             Section {
                 ForEach(model.members, id: \.personID) { member in
                     NavigationLink {
@@ -745,6 +748,7 @@ struct FamilyNotebookView: View {
                     } label: {
                         Label(member.displayName, systemImage: "person.crop.circle.fill")
                     }
+                    .badge(sharing.handover?.payerPersonId == member.personID ? Text("払う人") : nil)
                 }
                 // Everyone in the family invites (the family decision in #543),
                 // while sharing goes on.
@@ -797,6 +801,13 @@ struct FamilyNotebookView: View {
                         (sharing.service as? FamilyNotebookPrototypeSharing)?
                             .pretendPayerLeft(hasPlus: access.decision(for: .createPersonalMemo) == .allowed)
                         Task { await sharing.refresh() }
+                    }
+                    if membership.role == .member {
+                        Button("払う人に頼まれたときを試す") {
+                            (sharing.service as? FamilyNotebookPrototypeSharing)?
+                                .pretendNominated(hasPlus: access.decision(for: .createPersonalMemo) == .allowed)
+                            Task { await sharing.refresh() }
+                        }
                     }
                 }
             } footer: {
@@ -865,6 +876,114 @@ extension FamilyNotebookView {
     }
 }
 
+extension FamilyNotebookView {
+    private func name(of personID: String?) -> String {
+        guard let personID else { return "払っていた人" }
+        if personID == model.currentAuthor?.personID { return "あなた" }
+        return model.members.first { $0.personID == personID }?.displayName ?? "家族の 1 人"
+    }
+
+    /// Handing over paying (1029f): the payer asks one person, that person
+    /// says yes with their own Plus or says no. Until then nothing changes.
+    @ViewBuilder
+    private func handoverSection(_ handover: FamilyPayerHandover) -> some View {
+        let me = model.currentAuthor?.personID
+        if handover.nominationState == .unavailable {
+            Section {
+                Label("払う人の引き継ぎを確かめられません", systemImage: "exclamationmark.arrow.circlepath")
+                Button("もう一度確認") { Task { await sharing.refresh() } }
+                    .disabled(sharing.isWorking)
+            } footer: {
+                Text("少し待ってから、もう一度確認してください。")
+            }
+            .accessibilityIdentifier("family-notebook-handover-unavailable")
+        } else if let nominationID = handover.nominationId, let nominee = handover.nomineePersonId {
+            let asked = nominee == me
+            let asking = handover.payerPersonId == me
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(FamilyNotebookWords.handoverTitle(asked: asked, asking: asking),
+                          systemImage: "arrow.left.arrow.right.circle")
+                        .font(.headline)
+                    Text(FamilyNotebookWords.handoverDetail(payer: name(of: handover.payerPersonId),
+                                                            nominee: name(of: nominee),
+                                                            asked: asked, asking: asking))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("family-notebook-handover")
+                if asked {
+                    if handover.canAccept {
+                        Button {
+                            accept(nominationID, generation: handover.generation)
+                        } label: {
+                            Group {
+                                if sharing.isWorking { ProgressView() } else { Text("引き受ける").font(.headline) }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(sharing.isWorking)
+                        .accessibilityIdentifier("family-notebook-accept-payer")
+                    } else {
+                        Button { showsPlusOffer = true } label: {
+                            HStack(spacing: 8) {
+                                Text("Plus を始めて引き受ける").font(.headline)
+                                FamilyNotebookPlusMark()
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityLabel("Plus を始めて引き受ける")
+                        .accessibilityIdentifier("family-notebook-accept-payer-plus")
+                    }
+                }
+                if handover.canCancel {
+                    Button(asked ? "断る" : "頼むのをやめる") {
+                        cancelNomination(nominationID, generation: handover.generation)
+                    }
+                    .disabled(sharing.isWorking)
+                    .accessibilityIdentifier(asked ? "family-notebook-decline-payer" : "family-notebook-cancel-nomination")
+                }
+            } footer: {
+                if asked {
+                    Text(handover.canAccept
+                         ? "引き受けると、あなたの Plus で家族の共有が続きます。ほかの人を外す・家族の共有をやめることも、あなたができるようになります。"
+                         : "引き継ぐには Plus が必要です。断っても、家族の手帳はこれまでどおり使えます。")
+                }
+            }
+        }
+    }
+
+    private func accept(_ nominationID: UUID, generation: Int64) {
+        let service = sharing.service
+        Task {
+            await sharing.perform { operationID in
+                do {
+                    try await service.acceptPayer(nominationID: nominationID, expectedGeneration: generation,
+                                                  operationID: operationID)
+                } catch FamilySharingError.plusRequired {
+                    // Here it is about taking over, not making a family.
+                    throw FamilySharingError.handoverPlusRequired
+                }
+            }
+        }
+    }
+
+    private func cancelNomination(_ nominationID: UUID, generation: Int64) {
+        let service = sharing.service
+        Task {
+            await sharing.perform {
+                try await service.cancelPayerNomination(nominationID: nominationID, expectedGeneration: generation,
+                                                        operationID: $0)
+            }
+        }
+    }
+}
+
 /// One person's page, as in Apple's family settings: what can be done about
 /// this person, and what happens. The payer may also leave without choosing
 /// to dissolve the family. Three operations, never one.
@@ -875,8 +994,16 @@ struct FamilyNotebookMemberView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirms = false
     @State private var selectedAction: Action?
+    @State private var confirmsNomination = false
 
     private enum Action: Hashable { case dissolve, leave, remove }
+
+    /// The payer asking this person to take over paying (1029f).
+    private var handover: FamilyPayerHandover? {
+        guard !isMe, let handover = sharing.handover, handover.canNominate,
+              handover.nominationState == .confirmed else { return nil }
+        return handover
+    }
 
     private var isMe: Bool { FamilyNotebookPrototype.shared.isMe(member) }
     private var actions: [Action] {
@@ -897,6 +1024,8 @@ struct FamilyNotebookMemberView: View {
     private func explanation(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族全員の共有が止まります。それまでに書いたことは、それぞれの iPhone に残ります。"
+        case .leave where membership.role == .payer && sharing.handover?.canNominate == true:
+            "これから書くことは家族に届かなくなります。それまでに書いたことは、この iPhone に残ります。抜ける前に、家族の 1 人に払う人を頼むこともできます。"
         case .leave: "これから書くことは家族に届かなくなります。それまでに書いたことは、この iPhone に残ります。"
         case .remove: "これから書いたことは届かなくなります。それまでに書いたことは残ります。"
         }
@@ -916,6 +1045,15 @@ struct FamilyNotebookMemberView: View {
         case .leave: "抜ける"
         case .remove: "外す"
         }
+    }
+
+    private func nominate(generation: Int64) async {
+        let service = sharing.service
+        let personID = member.personID
+        let done = await sharing.perform {
+            try await service.nominatePayer(personID: personID, expectedGeneration: generation, operationID: $0)
+        }
+        if done { dismiss() }
     }
 
     private func run(_ action: Action) async {
@@ -943,6 +1081,15 @@ struct FamilyNotebookMemberView: View {
                 .frame(maxWidth: .infinity)
                 .listRowBackground(Color.clear)
             }
+            if handover != nil {
+                Section {
+                    Button("払う人を頼む") { confirmsNomination = true }
+                        .disabled(sharing.isWorking)
+                        .accessibilityIdentifier("family-notebook-nominate-payer")
+                } footer: {
+                    Text("\(member.displayName)が引き受けると、\(member.displayName)の Plus で家族の共有が続きます。引き受けるまでは、あなたが払う人のままです。")
+                }
+            }
             ForEach(actions, id: \.self) { action in
                 Section {
                     Button(title(action), role: .destructive) { selectedAction = action; confirms = true }
@@ -954,6 +1101,14 @@ struct FamilyNotebookMemberView: View {
         }
         .navigationTitle(member.displayName)
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("\(member.displayName)に払う人を頼みますか？", isPresented: $confirmsNomination,
+                            titleVisibility: .visible) {
+            if let handover {
+                Button("頼む") { Task { await nominate(generation: handover.generation) } }
+            }
+        } message: {
+            Text("頼めるのは 1 人だけです。返事があるまでは取り消せます。")
+        }
         .confirmationDialog(selectedAction.map(question) ?? "", isPresented: $confirms, titleVisibility: .visible) {
             if let action = selectedAction, actions.contains(action) {
                 Button(confirmation(action), role: .destructive) {
@@ -1280,6 +1435,18 @@ enum FamilyNotebookWords {
         case .payerPlusUnverified(isPayer: false):
             return "払っている人の Plus を確かめられないため、共有を止めています。" + kept
         }
+    }
+
+    static func handoverTitle(asked: Bool, asking: Bool) -> String {
+        if asked { return "払う人を頼まれています" }
+        if asking { return "返事を待っています" }
+        return "払う人の引き継ぎを待っています"
+    }
+
+    static func handoverDetail(payer: String, nominee: String, asked: Bool, asking: Bool) -> String {
+        if asked { return "\(payer)から、払う人を引き継いでほしいと頼まれています。" }
+        if asking { return "\(nominee)に払う人を頼みました。引き受けてもらうまでは、あなたが払う人のままです。" }
+        return "\(nominee)が引き受けると、払う人が替わります。"
     }
 
     static func byline(_ operation: FamilyNotebookOperation) -> String {

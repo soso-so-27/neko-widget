@@ -57,6 +57,8 @@ enum FamilySharingError: Error, Equatable, Sendable {
     case alreadyInFamily, memberLimit
     case signInExpired, notAllowed
     case plusRequired, membershipChecking
+    /// Taking over paying needs this person's own Plus (1029f).
+    case handoverPlusRequired
     case staleRoster, removedOrDissolved
     /// Someone else in the family was confirmed as the payer first.
     case payerAlreadyChosen
@@ -85,6 +87,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .signInExpired: "もう一度サインインしてください。"
         case .notAllowed: "この操作はできません。"
         case .plusRequired: "家族を作るには Plus が必要です。"
+        case .handoverPlusRequired: "引き継ぐには Plus が必要です。"
         case .membershipChecking: "Plus の確認ができるまでお待ちください。"
         case .staleRoster: "家族の情報が新しくなりました。もう一度お試しください。"
         case .removedOrDissolved: "この家族の共有は終わっています。"
