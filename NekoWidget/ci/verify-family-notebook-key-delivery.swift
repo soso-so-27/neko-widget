@@ -18,10 +18,14 @@ private actor Relay: GroupHTTPTransport {
     var generation: Int64 = 1, head: VerifiedFamilyNotebookRoster?, history: [Int: SignedFamilyNotebookRoster] = [:]
     var envelopes: [String: FamilyNotebookKeyEnvelope] = [:], receipts: [String: (Data, Data)] = [:]
     var loseRoster = false, rejectRoster = false, loseKey = false, sentKeys: [FamilyNotebookKeyEnvelope] = []
+    var loseDeviceBeforeCommit = false, deviceRequests: [Data] = []
     init(family: UUID, creator: GroupDeviceIdentity) throws { self.family = family; identities[try creator.deviceID] = creator; members.insert(creator.personID) }
     func loseNextRoster() { loseRoster = true }
     func rejectNextRoster() { rejectRoster = true }
     func loseNextKey() { loseKey = true }
+    func loseNextDeviceBeforeCommit() { loseDeviceBeforeCommit = true }
+    func deviceBodies() -> [Data] { deviceRequests }
+    func replaceCertificateForTest(_ value: GroupRosterDevice) { certificates[value.id] = value }
     func admit(_ identity: GroupDeviceIdentity, certified: Bool = false) throws {
         identities[try identity.deviceID] = identity; members.insert(identity.personID); generation += 1
         if certified { certificates[try identity.deviceID] = try identity.certificate(windowID: family.uuidString.lowercased()) }
@@ -76,9 +80,15 @@ private actor Relay: GroupHTTPTransport {
         guard (value["expectedGeneration"] as! NSNumber).int64Value == generation, expectedEpoch == (head?.roster.epoch ?? 0) else { return try failure("family_notebook_crypto_stale", 409) }
         let payload = try JSONSerialization.data(withJSONObject: value["payload"]!), action: String
         if path.hasSuffix("/devices") {
-            action = "device"; let certificate = try identity.certificate(windowID: family.uuidString.lowercased())
+            action = "device"
+            deviceRequests.append(body)
+            if loseDeviceBeforeCommit { loseDeviceBeforeCommit = false; throw Failure.lost }
             let authorization = (value["payload"] as! [String: Any])["personAuthorization"] as! String
-            try check(authorization == GroupWire.base64(certificate.personAuthorization), "family-scoped device root authorization")
+            let certificate = try GroupRosterDevice(id: deviceID, signingPublicKey: identity.signingKey.publicKey.rawRepresentation,
+                hpkePublicKey: identity.agreementKey.publicKey.rawRepresentation, personAuthorization: GroupWire.bytes(authorization, count: 64))
+            try check(try Curve25519.Signing.PublicKey(rawRepresentation: identity.personPublicKey).isValidSignature(
+                certificate.personAuthorization, for: certificate.authorizationBytes(windowID: family.uuidString.lowercased(), personID: identity.personID)),
+                "family-scoped device root authorization")
             certificates[deviceID] = certificate
         } else if path.hasSuffix("/rosters") {
             if rejectRoster { rejectRoster = false; return try failure("family_notebook_crypto_stale", 409) }
@@ -121,11 +131,17 @@ private actor Relay: GroupHTTPTransport {
         let first = try coordinator(a)
         stage("Key delivery stage: create and lost roster ACK")
         try await first.registerCreatedFamily(family)
-        await relay.loseNextRoster()
+        await relay.loseNextDeviceBeforeCommit()
         try await rejected { _ = try await first.prepare(family: family) }
+        await relay.loseNextRoster()
+        try await rejected { _ = try await coordinator(a).prepare(family: family) }
         let restarted = try coordinator(a)
         stage("Key delivery stage: restart creator")
         guard let original = try await restarted.prepare(family: family), original.ready else { throw Failure.check("creator restart failed") }
+        let registrationBodies = await relay.deviceBodies()
+        try check(registrationBodies.count == 2 && registrationBodies[0] == registrationBodies[1], "certificate and operation ID survive a pre-commit interruption and restart")
+        _ = try await coordinator(a).prepare(family: family)
+        try check(await relay.deviceBodies().count == 2, "valid registered certificate does not cause regeneration or another registration")
         try check(await relay.epoch() == 1, "lost roster ACK never creates a second epoch")
         let now = Date(), (capability, cipher) = try FamilyNotebookInvitationCrypto.create(roster: original.current, generation: 1, identity: a,
             payerPersonID: a.personID, invitationID: UUID(), inviterName: "synthetic", catNames: [], now: now)
@@ -165,6 +181,10 @@ private actor Relay: GroupHTTPTransport {
         _ = try await coordinator(b).prepare(family: family)
         guard let recovered = try await coordinator(b).prepare(family: family), recovered.ready else { throw Failure.check("rejected proposal poisoned the key slot") }
         try check(recovered.current.roster.epoch == 4 && recovered.keys[1] == original.keys[1], "CAS-rejected key is separate from winning key; complete old history remains")
+        let beforeInvalid = await relay.deviceBodies().count
+        try await relay.replaceCertificateForTest(b.certificate(windowID: UUID().uuidString.lowercased()))
+        try await rejected { _ = try await coordinator(b).prepare(family: family) }
+        try check(await relay.deviceBodies().count == beforeInvalid, "a certificate signed for another family is rejected, not treated as registration")
         print("Family notebook key delivery: real HPKE, pinned invitation, durable roster/key retry, explicit admission, pre-join keys, departure rotation and rejected-key isolation passed")
     }
 }

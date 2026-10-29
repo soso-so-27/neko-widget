@@ -64,6 +64,31 @@ actor FamilyNotebookKeyCoordinator {
         "op:fnb-" + kind + ":" + family.uuidString.lowercased() + (epoch.map { ":" + String($0) } ?? "")
     }
     private func path(_ family: UUID) -> String { "/v3/family-notebooks/" + family.uuidString.lowercased() + "/crypto/" }
+    private func validateOwnCertificate(_ certificate: GroupRosterDevice, family: UUID) throws {
+        guard certificate.id == (try identity.deviceID),
+              certificate.signingPublicKey == (try identity.signingKey.publicKey.rawRepresentation),
+              certificate.hpkePublicKey == (try identity.agreementKey.publicKey.rawRepresentation),
+              certificate.personAuthorization.count == 64,
+              try Curve25519.Signing.PublicKey(rawRepresentation: identity.personPublicKey).isValidSignature(
+                certificate.personAuthorization,
+                for: certificate.authorizationBytes(windowID: family.uuidString.lowercased(), personID: identity.personID)) else {
+            throw FamilyNotebookCryptoError.untrusted
+        }
+    }
+    private func registrationCertificate(_ family: UUID) throws -> GroupRosterDevice {
+        let name = account("certificate", family)
+        if let bytes = try journal.read(name) {
+            let certificate = try GroupWire.decode(GroupRosterDevice.self, bytes)
+            try validateOwnCertificate(certificate, family: family)
+            return certificate
+        }
+        let certificate = try identity.certificate(windowID: family.uuidString.lowercased())
+        try validateOwnCertificate(certificate, family: family)
+        // Persist before sending. Signature bytes are opaque signed material,
+        // not a deterministic identifier that can be recreated on retry.
+        try journal.write(GroupWire.encode(certificate), account: name, createOnly: true)
+        return certificate
+    }
     private func trust(_ family: UUID) throws -> Trust {
         guard let bytes = try secrets.read(account("trust", family)) else { throw FamilyNotebookCryptoError.untrusted }
         let value = try GroupWire.decode(Trust.self, bytes)
@@ -225,10 +250,13 @@ actor FamilyNotebookKeyCoordinator {
         var trusted = try trust(family)
         try await finishCandidate(family, trust: &trusted)
         var currentState = try await state(family)
-        let certificate = try identity.certificate(windowID: family.uuidString.lowercased())
-        if !currentState.devices.contains(where: { $0.personID == identity.personID && $0.certificate == certificate && $0.root == identity.personPublicKey }) {
+        if let registered = currentState.devices.first(where: { $0.deviceID == (try? identity.deviceID) }) {
+            guard registered.personID == identity.personID, registered.root == identity.personPublicKey else { throw FamilyNotebookCryptoError.untrusted }
+            try validateOwnCertificate(registered.certificate, family: family)
+        } else {
+            let certificate = try registrationCertificate(family)
             struct Payload: Encodable { let personAuthorization: Data }
-            let intent = GroupCanonical.hash(try GroupCanonical.fields([GroupCanonical.text(family.uuidString.lowercased()), certificate.personAuthorization]))
+            let intent = GroupCanonical.hash(try certificate.authorizationBytes(windowID: family.uuidString.lowercased(), personID: identity.personID))
             try await post(family: family, action: "device", route: "devices", operation: operationID([intent]), intent: intent,
                 generation: currentState.generation, epoch: currentState.currentEpoch, payload: Payload(personAuthorization: certificate.personAuthorization), replaceStale: true)
             currentState = try await state(family)
