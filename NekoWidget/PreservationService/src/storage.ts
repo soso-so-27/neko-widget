@@ -8,6 +8,7 @@ import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 import type { ToolOwnerTrial } from './tool-owner-trial';
 import { exportPage } from './export-page';
 import { ToolMetadataBatches } from './tool-metadata-batches';
+import { pendingProductQuota, type ProductQuotaSettings } from './product-quota-policy';
 
 interface Row {
   owner_id: string; record_id: string; revision: number; initial_fingerprint: string; initial_operation: string;
@@ -24,6 +25,7 @@ interface UsageRow {
   accounting_valid: number;
 }
 interface Dependencies {
+  productQuotaSettings?: ProductQuotaSettings;
   db: D1Database; bucket: R2Bucket; keys: KeyCustody; membership: MembershipAuthority; photos: PhotoValidator;
   auth: { requireSession(token: string): Promise<Session>; requireToolMetadataBatchSession?(token: string, batchId: string): Promise<Session> }; now: () => number; quotaBytes: number; maximumRecords: number;
   /** Operational admission cap across all owners. This does not cap S3 history or request charges. */
@@ -374,7 +376,8 @@ export class ArchiveStore {
       records: { saved: row.saved_records, pending: row.pending_records, maximumRecords,
         // Keep tombstones for replay protection, but do not let lifetime deletions
         // exhaust the number of records a customer may currently keep.
-        creationLimitReached: row.saved_records + row.pending_records >= maximumRecords } };
+        creationLimitReached: row.saved_records + row.pending_records >= maximumRecords },
+      ...(this.d.productQuotaSettings ? { productQuota: pendingProductQuota(this.d.productQuotaSettings) } : {}) };
   }
   async list(token: string, after = '', limit = 20, visibleOnly = false) {
     if (after) recordId(after);

@@ -11108,15 +11108,36 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     static func testManagedPreservationUsageBoundary() throws {
-        func read(_ records: [String: Any]) throws -> ManagedPreservationUsage {
-            let body: [String: Any] = ["version": 1, "accounting": "encrypted-records-v1",
+        func read(_ records: [String: Any], productQuota: [String: Any]? = nil) throws -> ManagedPreservationUsage {
+            var body: [String: Any] = ["version": 1, "accounting": "encrypted-records-v1",
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 5_000_000_000,
                             "availableBytes": 5_000_000_000, "overLimit": false], "records": records]
+            if let productQuota { body["productQuota"] = productQuota }
             let data = try JSONSerialization.data(withJSONObject: body)
             return try JSONDecoder().decode(ManagedPreservationUsage.self, from: data).validated()
         }
         let legacy = try read(["saved": 2, "pending": 0, "creationLimitReached": false])
         guard legacy.records.maximumRecords == nil else { throw ManagedPreservationError.invalidResponse }
+        let policy: [String: Any] = ["version": 1, "byteUnit": "decimal", "recordUnit": "visible-records-v1",
+            "plus": ["limitBytes": 3_000_000_000, "maximumRecords": 3000, "includesAppleFamily": true],
+            "trial": ["limitBytes": 250_000_000, "maximumRecords": 3000, "durationDays": 14],
+            "familyParticipationRequiresPersonalStoragePurchase": false]
+        let pending: [String: Any] = ["policy": policy, "configurationStatus": "valid",
+            "accountingStatus": "not_available", "enforcementStatus": "not_enabled", "usage": NSNull()]
+        let records: [String: Any] = ["saved": 6000, "pending": 0, "maximumRecords": 200000, "creationLimitReached": false]
+        let product = try read(records, productQuota: pending)
+        guard product.productQuota?.policy?.plus.maximumRecords == 3000,
+              product.productQuota?.usage == nil, product.records.saved == 6000,
+              legacy.productQuota == nil else { throw ManagedPreservationError.invalidResponse }
+        // A future ready response requires its own accounting validation first.
+        for field in ["accountingStatus", "enforcementStatus", "configurationStatus"] {
+            var invalid = pending; invalid[field] = "ready"
+            var rejected = false
+            do { _ = try read(records, productQuota: invalid) } catch { rejected = true }
+            guard rejected else { throw ManagedPreservationError.invalidResponse }
+        }
+        var invalidSettings = pending; invalidSettings["policy"] = NSNull(); invalidSettings["configurationStatus"] = "invalid"
+        _ = try read(records, productQuota: invalidSettings)
         let reserved = try read(["saved": 0, "pending": 1, "maximumRecords": 1, "creationLimitReached": true])
         guard reserved.records.maximumRecords == 1 else { throw ManagedPreservationError.invalidResponse }
         // A later reduction may put existing records above the configured limit.

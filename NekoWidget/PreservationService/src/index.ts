@@ -25,10 +25,11 @@ import { OwnerRequestLimiter, OwnerRequestRateLimited } from './owner-request-li
 import { payloadResponse, payloadWork } from './payload-work';
 import { recordResponse } from './record-frame';
 import { recordId } from './documents';
+import type { ProductQuotaSettings } from './product-quota-policy';
 import { readBoundedBody } from './bounded-body';
 export { OwnerDeletionInventory } from './owner-deletion-inventory';
 
-export interface Env {
+export interface Env extends ProductQuotaSettings {
   DB: D1Database; ARCHIVE: R2Bucket;
   ENVIRONMENT?: string; PILOT_MODE?: string; PILOT_IDENTITY_KEYS_JSON?: string;
   PILOT_STORAGE_ACCESS_ENABLED?: string; PILOT_REGISTRATION_ENABLED?: string;
@@ -334,6 +335,11 @@ export function configuredServices(env: Env): Services {
     ownerWriteLease: new RecoveryWriteLease(env.DB, now, deletionJournal),
     membership, photos: boundPhotoValidator(env.PHOTO_VALIDATOR),
     quotaBytes: Number(env.OWNER_QUOTA_BYTES), maximumRecords: Number(env.MAXIMUM_RECORDS),
+    productQuotaSettings: {
+      ...(env.PRODUCT_PLUS_BYTES !== undefined ? { PRODUCT_PLUS_BYTES: env.PRODUCT_PLUS_BYTES } : {}),
+      ...(env.PRODUCT_TRIAL_BYTES !== undefined ? { PRODUCT_TRIAL_BYTES: env.PRODUCT_TRIAL_BYTES } : {}),
+      ...(env.PRODUCT_VISIBLE_RECORDS !== undefined ? { PRODUCT_VISIBLE_RECORDS: env.PRODUCT_VISIBLE_RECORDS } : {}),
+    },
     ...(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES === undefined ? {}
       : { globalActiveBytesLimit: Number(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES) }),
     requireGlobalAdmissionLimit: true,

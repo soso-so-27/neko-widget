@@ -1,5 +1,15 @@
 # 個人保管サービス — 既定OFFの接続候補
 
+## 2026-10-29 商品の枠と、現在の使用量の区別
+
+1029eで決定したA案はPlus本人（Apple家族の受益者を含む）3,000,000,000 bytes、14日体験250,000,000 bytes、各3,000件です。件数は写真メモ・ツール記録・家族記録・猫プロフィールなど本人に見える記録で、添付や索引・分割部品・暗号の包み・履歴・同じ記録の編集を別件にしません。家族への参加・書込み・受信に個人保存の購入を求めません。
+
+認証済み `GET /v1/usage` の任意項目 `productQuota.policy` に、この決定を返します。設定 `PRODUCT_PLUS_BYTES` / `PRODUCT_TRIAL_BYTES` / `PRODUCT_VISIBLE_RECORDS` で後日拡張できます。設定省略時はA案、壊れた設定は `configurationStatus=invalid, policy=null` であり、既存保存の読み出しを止めません。未配備です。
+
+**この段階は商品枠の適用完了ではありません。** `accountingStatus=not_available, enforcementStatus=not_enabled, usage=null` を返します。従来の `storage` と `records` は `encrypted-records-v1` の実装上の計数で、商品枠の使用率へ代入してはいけません。`MAXIMUM_RECORDS` を3,000に下げる変更もしません。旧サーバーは `productQuota` 自体を返さず、アプリはその欠落も未提供として扱います。
+
+残りは記録の安定IDによる論理集計、添付容量と共有記録の帰属、同時保存の予約・公開時CAS、途中保存/旧形式との移行、検証済みPlus/14日体験の選択と期限、超過エラーの接続です。この接続前に本番商品枠が適用されたとは表示しません。環境の作成・反映、D1変更、月額予算は別途承認を要します。
+
 ## 2026-10-19 保存部品の集約
 
 新しいアプリは `usage.toolSnapshots.metadataBatchVersion == 1` の場合だけ、新規の不変 JSON/index 部品を最大16個ずつまとめます。写真と既存記録の編集・退役は従来経路を使います。月額980円、会員資格、受付期限・残量、同意、個人保存の範囲は変えません。
