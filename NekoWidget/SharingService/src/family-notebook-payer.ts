@@ -70,6 +70,7 @@ export function safeFailure(error: unknown): never {
     ['family_notebook_member_limit', 409, 'family_notebook_member_limit'],
     ['family_notebook_rate_limited', 429, 'rate_limited'],
     ['family_notebook_paused', 403, 'family_notebook_paused'],
+    ['family_notebook_crypto_stale', 409, 'family_notebook_crypto_stale'],
     ['group_request_nonces.device_id', 401, 'replay'],
   ];
   for (const [marker, status, code] of codes) {
