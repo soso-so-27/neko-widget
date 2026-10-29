@@ -4,6 +4,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# CoreSimulator installation can hang after a successful build. Bound the
+# simulator commands so an environment stall cannot consume the entire job.
+bounded() {
+  python3 - "$@" <<'PY'
+import subprocess, sys
+try:
+    result = subprocess.run(sys.argv[2:], timeout=int(sys.argv[1]))
+    sys.exit(result.returncode)
+except subprocess.TimeoutExpired:
+    print("Simulator command exceeded its time limit", file=sys.stderr)
+    sys.exit(124)
+PY
+}
+
 xcrun swiftc -parse-as-library \
   NekoWidget/Views/OnboardingPresentation.swift \
   ci/verify-onboarding-presentation.swift -o "$RUNNER_TEMP/onboarding-tests"
@@ -101,8 +115,8 @@ print(next((r for r in items if r["version"] == "26.2"), items[0])["identifier"]
 ')
 device=$(xcrun simctl create NekoQuickLaunch com.apple.CoreSimulator.SimDeviceType.iPhone-16 "$runtime")
 trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simctl delete "$device" >/dev/null 2>&1 || true' EXIT
-xcrun simctl boot "$device"
-xcrun simctl bootstatus "$device" -b &
+bounded 60 xcrun simctl boot "$device"
+bounded 300 xcrun simctl bootstatus "$device" -b &
 boot_pid=$!
 
 xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
@@ -118,8 +132,20 @@ test "$(/usr/libexec/PlistBuddy -c 'Print GroupReportingProductionEnabled' "$app
 python3 ci/group-window-release.py --requested false --mode disabled \
   --app-info-plist "$app/Info.plist"
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
-xcrun simctl install "$device" "$app"
-launch=$(xcrun simctl launch "$device" "$bundle")
+if bounded 90 xcrun simctl install "$device" "$app"; then
+  :
+else
+  install_status=$?
+  # Retry only a timeout, never a build, signing, or application error. Reuse
+  # the successful build on this runner; do not repeat compilation or tests.
+  if [ "$install_status" -ne 124 ]; then exit "$install_status"; fi
+  echo "Simulator install stalled; rebooting once and reusing the built app"
+  bounded 30 xcrun simctl shutdown "$device"
+  bounded 60 xcrun simctl boot "$device"
+  bounded 120 xcrun simctl bootstatus "$device" -b
+  bounded 90 xcrun simctl install "$device" "$app"
+fi
+launch=$(bounded 90 xcrun simctl launch "$device" "$bundle")
 pid=${launch##*: }
 sleep 5
 xcrun simctl spawn "$device" launchctl list | awk -v pid="$pid" -v bundle="$bundle" '
