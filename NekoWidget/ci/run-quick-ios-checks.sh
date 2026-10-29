@@ -41,6 +41,13 @@ xcrun --sdk macosx swiftc -D DEBUG -parse-as-library \
 
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/FamilyNotebookCore.swift \
+  NekoWidget/Services/FamilyNotebookCrypto.swift ci/verify-family-notebook-crypto.swift \
+  -o "$RUNNER_TEMP/family-notebook-crypto-tests"
+"$RUNNER_TEMP/family-notebook-crypto-tests" | node ci/verify-family-notebook-crypto.mjs
+
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupWindowStorage.swift \
   NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupWindowTransport.swift \
   NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \

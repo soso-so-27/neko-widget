@@ -171,7 +171,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
         let result = FamilyNotebookOperation(familyID: familyID, target: target, value: value,
             version: .init(clock: state.clock + 1, deviceID: deviceID, operationID: UUID()),
             author: author, editedAt: editedAt,
-            observedOperationIDs: state.operations.filter { $0.target == target || target.removes($0.target) }.map(\.id),
+            observedOperationIDs: FamilyNotebookCore.observedFrontier(target: target, operations: state.operations),
             importedSourceEditedAt: importedSourceEditedAt)
         try FamilyNotebookCore.validate(result)
         return result

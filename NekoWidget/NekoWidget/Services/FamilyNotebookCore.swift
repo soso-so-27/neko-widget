@@ -330,6 +330,14 @@ enum FamilyNotebookCore {
         return byID.values.sorted { $0.version < $1.version }
     }
 
+    /// New edits name the causal frontier, not a growing copy of every old ID.
+    /// History remains intact and resolve follows these references transitively.
+    static func observedFrontier(target: FamilyNotebookTarget, operations: [FamilyNotebookOperation]) -> [UUID] {
+        let candidates = operations.filter { $0.target == target || target.removes($0.target) }
+        let observed = Set(candidates.flatMap(\.observedOperationIDs))
+        return candidates.filter { !observed.contains($0.id) }.sorted { $0.version < $1.version }.map(\.id)
+    }
+
     static func resolve(target: FamilyNotebookTarget, operations: [FamilyNotebookOperation],
                         outboxIDs: Set<UUID> = [], acknowledgements: [FamilyNotebookAcknowledgement] = []) -> FamilyNotebookFieldState? {
         let candidates = operations.filter { $0.target == target || $0.target.removes(target) }
