@@ -3,9 +3,9 @@ import Foundation
 
 private enum Failure: Error { case check(String), lostReply, storage }
 private func check(_ value: Bool, _ text: String) throws { if !value { throw Failure.check(text) } }
-private func rejects(_ expected: FamilySharingError, _ work: () async throws -> Void) async throws {
-    do { try await work() } catch let error as FamilySharingError { try check(error == expected, "expected \(expected), got \(error)"); return }
-    throw Failure.check("expected \(expected)")
+private func rejects(_ expected: FamilySharingError, line: UInt = #line, _ work: () async throws -> Void) async throws {
+    do { try await work() } catch let error as FamilySharingError { try check(error == expected, "line \(line): expected \(expected), got \(error)"); return }
+    throw Failure.check("line \(line): expected \(expected)")
 }
 private actor Relay: GroupHTTPTransport {
     enum Next { case success, lostAfterCommit, lostBeforeCommit, badReceipt, stale, rejectedClaim, denied }

@@ -73,7 +73,7 @@ actor FamilyNotebookMembershipClient {
     private let wire: FamilyNotebookTransport
     private let journal: any GroupSecretStore
     private let endpoint: String, personID: String, deviceID: String
-    private let pendingAccount = "family:management:pending"
+    private let pendingAccount = "op:family:management:pending"
     private var working = false
 
     init(endpoint: URL, identity: GroupDeviceIdentity, transport: any GroupHTTPTransport, journal: any GroupSecretStore) throws {
