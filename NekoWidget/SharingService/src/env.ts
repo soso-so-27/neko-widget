@@ -34,6 +34,9 @@ export interface Env extends GroupReportMailEnv {
   WINDOW_NAME_RUNTIME_ENABLED?: string;
   /// Independent internal-pilot gate; never enabled by pairing/media alone.
   FAMILY_RECORD_RUNTIME_ENABLED?: string;
+  /// Independent family-notebook payer boundary. No public router/admission
+  /// is connected yet; absent remains OFF even when photo groups are enabled.
+  FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED?: string;
   /// Exact, independent switch for APNs registration and dispatch. Secrets
   /// alone never enable push traffic.
   APNS_RUNTIME_ENABLED?: string;
