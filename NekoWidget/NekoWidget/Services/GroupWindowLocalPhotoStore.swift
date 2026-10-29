@@ -284,3 +284,31 @@ extension GroupDisplayName {
 
     static let tooLongMessage = "名前が長すぎます。短くしてください。"
 }
+
+/// A rename or close that was sent but not settled (#591), kept so a retry,
+/// even after the app was closed, resends the same operation ID and
+/// arguments instead of a new one. One per window.
+enum GroupManagementMemory {
+    struct Pending: Codable, Equatable {
+        let key: String
+        let id: UUID
+        let expectedRevision: Int
+    }
+
+    private static func storageKey(_ windowID: String) -> String { "group.pendingManagement.v1." + windowID }
+
+    static func pending(windowID: String, key: String) -> Pending? {
+        guard let data = UserDefaults.standard.data(forKey: storageKey(windowID)),
+              let saved = try? JSONDecoder().decode(Pending.self, from: data), saved.key == key else { return nil }
+        return saved
+    }
+
+    static func remember(_ pending: Pending, windowID: String) {
+        guard let data = try? JSONEncoder().encode(pending) else { return }
+        UserDefaults.standard.set(data, forKey: storageKey(windowID))
+    }
+
+    static func forget(windowID: String) {
+        UserDefaults.standard.removeObject(forKey: storageKey(windowID))
+    }
+}

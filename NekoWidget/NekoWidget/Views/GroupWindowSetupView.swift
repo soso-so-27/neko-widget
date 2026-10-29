@@ -15,6 +15,22 @@ enum GroupWindowPresentation {
     static let totalWindowLimit = 10
 
     static func message(for error: Error) -> String {
+        if let error = error as? GroupWindowManagementError {
+            switch error {
+            case .invalidName:
+                return "名前を確認してください。空欄や改行は使えません。長い名前は短くしてください。"
+            case .unavailable:
+                return "このまどでは、まだこの操作を利用できません。"
+            case .staleNameRevision:
+                return "ほかのiPhoneで名前が変わりました。最新の名前を確認してください。"
+            case .closed:
+                return "このまどの共有は終了しています。"
+            case .stateRefreshRequired:
+                return "操作は受け付けられました。最新の状態を確認しています。"
+            case .reconciliationRequired:
+                return "前の操作の結果を確認できません。最新の状態を確認してください。"
+            }
+        }
         if let error = error as? GroupSubscriptionError {
             switch error {
             case .ownerPlusRequired:
@@ -175,6 +191,13 @@ final class GroupWindowMembersModel: ObservableObject {
         return window.memberCount < GroupWindowPresentation.memberLimit
     }
 
+    /// Renaming and closing: the creator only, and only once the relay says
+    /// it offers them (`nameRevision`). Nil is never taken as 0.
+    var canManageWindow: Bool {
+        guard let window, window.canManage, window.nameRevision != nil else { return false }
+        return true
+    }
+
     /// While people are being waited for, the list refreshes by itself (M2).
     var shouldAutoRefresh: Bool {
         activeInvitation != nil || !pendingRequests.isEmpty
@@ -263,6 +286,33 @@ final class GroupWindowMembersModel: ObservableObject {
         }
     }
 
+    /// Returns true when the new name was confirmed by the relay.
+    func rename(to name: String) async -> Bool {
+        guard let nameRevision = window?.nameRevision else { return false }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        // The key holds the arguments: a different name is a new operation,
+        // the same name again reuses the unsettled one.
+        await perform("rename:\(nameRevision):\(trimmed)", durable: true) { operation in
+            let renamed = try await client.renameWindow(
+                windowID: windowID, name: trimmed,
+                expectedNameRevision: nameRevision, operation: operation
+            )
+            self.window = transform(renamed)
+        }
+        if actionErrorMessage == nil { actionCompletionMessage = "名前を変えました。" }
+        return actionErrorMessage == nil
+    }
+
+    /// Returns true when the window was closed; the screen then goes back to
+    /// the list. Photos kept on this iPhone stay.
+    func close() async -> Bool {
+        await perform("close", reloadsAfterSuccess: false, durable: true) { operation in
+            _ = try await client.closeWindow(windowID: windowID, operation: operation)
+        }
+        return actionErrorMessage == nil
+    }
+
     /// Returns true when this iPhone has left; the screen then closes.
     func leave() async -> Bool {
         await perform("leave", reloadsAfterSuccess: false) { operation in
@@ -274,6 +324,7 @@ final class GroupWindowMembersModel: ObservableObject {
     private func perform(
         _ key: String,
         reloadsAfterSuccess: Bool = true,
+        durable: Bool = false,
         _ body: (GroupOperation) async throws -> Void
     ) async {
         guard let window, !isWorking else { return }
@@ -283,18 +334,34 @@ final class GroupWindowMembersModel: ObservableObject {
         actionCompletionMessage = nil
         // Compare-and-set against the revision shown on screen. A retry keeps
         // the operation ID so the relay can replay instead of applying twice.
-        let operation = GroupOperation(
-            id: retainedOperations[key]?.id ?? UUID(),
-            expectedRevision: window.revision
-        )
+        // Rename and close survive the app being closed: the same ID and
+        // arguments come back from GroupManagementMemory.
+        let saved = durable ? GroupManagementMemory.pending(windowID: windowID, key: key) : nil
+        let operation = saved.map { GroupOperation(id: $0.id, expectedRevision: $0.expectedRevision) }
+            ?? GroupOperation(id: retainedOperations[key]?.id ?? UUID(), expectedRevision: window.revision)
         retainedOperations[key] = operation
+        if durable {
+            GroupManagementMemory.remember(.init(key: key, id: operation.id,
+                                                 expectedRevision: operation.expectedRevision), windowID: windowID)
+        }
+        func settle() {
+            retainedOperations[key] = nil
+            if durable { GroupManagementMemory.forget(windowID: windowID) }
+        }
         do {
             try await body(operation)
-            retainedOperations[key] = nil
+            settle()
             if reloadsAfterSuccess { await load() }
         } catch let error as GroupSubscriptionError {
             // Paused or not yet Plus: nothing to retry; show the latest state.
             retainedOperations[key] = nil
+            if durable { GroupManagementMemory.forget(windowID: windowID) }
+            actionErrorMessage = GroupWindowPresentation.message(for: error)
+            await load()
+        } catch let error as GroupWindowManagementError {
+            // Accepted but not yet read back: keep the same operation for the
+            // next try. Anything else is final; show the latest state.
+            if error != .stateRefreshRequired { settle() }
             actionErrorMessage = GroupWindowPresentation.message(for: error)
             await load()
         } catch let error as GroupClientError {
@@ -302,15 +369,18 @@ final class GroupWindowMembersModel: ObservableObject {
             case .offline:
                 // Resend the same operation when the network returns.
                 break
+            case .unavailable where durable:
+                // The outcome may be unknown: the same operation, never a new ID.
+                break
             case .staleRevision:
                 // Same operation; re-read the list before the next attempt.
                 await load()
             default:
-                retainedOperations[key] = nil
+                settle()
             }
             actionErrorMessage = GroupWindowPresentation.message(for: error)
         } catch {
-            retainedOperations[key] = nil
+            settle()
             actionErrorMessage = GroupWindowPresentation.message(for: error)
         }
     }
@@ -345,6 +415,8 @@ struct GroupWindowMembersView: View {
     @State private var showsRevokeConfirmation = false
     @State private var showsLeaveConfirmation = false
     @State private var showsPlusOffer = false
+    @State private var showsRename = false
+    @State private var showsCloseConfirmation = false
 
     var body: some View {
         Form {
@@ -357,6 +429,9 @@ struct GroupWindowMembersView: View {
                 membersSection(window)
                 if capabilities.invitations, window.canManage {
                     invitationSection(window)
+                }
+                if capabilities.invitations, model.canManageWindow {
+                    manageSection(window)
                 }
                 if capabilities.leave {
                     leaveSection(window)
@@ -436,6 +511,26 @@ struct GroupWindowMembersView: View {
             Button("戻る", role: .cancel) {}
         } message: {
             Text("取り消すと、このリンクからは参加できなくなります。まだ入れていない人も入れなくなります。")
+        }
+        .sheet(isPresented: $showsRename) {
+            if let window = model.window {
+                GroupWindowRenameSheet(model: model, currentName: window.name)
+            }
+        }
+        .confirmationDialog(
+            "このまどを閉じますか？",
+            isPresented: $showsCloseConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("閉じる", role: .destructive) {
+                Task {
+                    guard await model.close() else { return }
+                    if let onLeft { onLeft() } else { dismiss() }
+                }
+            }
+            Button("戻る", role: .cancel) {}
+        } message: {
+            Text("このまどの共有を終了します。参加している人は、このまどで新しく共有できなくなります。端末に保存した写真は残ります。")
         }
         .confirmationDialog(
             "このまどから抜けますか？",
@@ -757,9 +852,26 @@ struct GroupWindowMembersView: View {
         }
     }
 
+    /// The creator's own changes to the window: its name, and closing it.
+    private func manageSection(_ window: GroupWindow) -> some View {
+        Section {
+            Button("名前を変える") { showsRename = true }
+                .disabled(model.isWorking)
+                .accessibilityIdentifier("group-window-rename")
+            Button("このまどを閉じる", role: .destructive) { showsCloseConfirmation = true }
+                .disabled(model.isWorking)
+                .accessibilityIdentifier("group-window-close")
+        } footer: {
+            Text("閉じても、届いた写真はそれぞれのiPhoneに残ります。")
+        }
+    }
+
     @ViewBuilder
     private func leaveSection(_ window: GroupWindow) -> some View {
-        if window.myRole == .owner {
+        if window.myRole == .owner && model.canManageWindow {
+            // Closing is offered above; the creator does not leave.
+            EmptyView()
+        } else if window.myRole == .owner {
             // Nothing to press: said in a footer, not in a row that looks like one.
             Section { EmptyView() } footer: {
                 Text(GroupWindowPresentation.message(for: GroupClientError.ownerCannotLeave))
@@ -773,6 +885,57 @@ struct GroupWindowMembersView: View {
                 .accessibilityIdentifier("group-window-leave")
             }
         }
+    }
+}
+
+/// Renaming the window: one field, saved by the relay before it closes.
+struct GroupWindowRenameSheet: View {
+    @ObservedObject var model: GroupWindowMembersModel
+    let currentName: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+
+    init(model: GroupWindowMembersModel, currentName: String) {
+        self.model = model
+        self.currentName = currentName
+        _name = State(initialValue: currentName)
+    }
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var tooLong: Bool { !GroupDisplayName.fits(trimmed) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("例：実家のまど", text: $name)
+                        .accessibilityIdentifier("group-window-rename-field")
+                } footer: {
+                    Text(tooLong ? GroupDisplayName.tooLongMessage : "名前はメンバー全員に表示されます。")
+                        .foregroundStyle(tooLong ? .red : .secondary)
+                }
+                if let message = model.actionErrorMessage {
+                    Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("名前を変える")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    if model.isWorking {
+                        ProgressView()
+                    } else {
+                        Button("保存") {
+                            Task { if await model.rename(to: trimmed) { dismiss() } }
+                        }
+                        .disabled(trimmed.isEmpty || trimmed == currentName || tooLong)
+                        .accessibilityIdentifier("group-window-rename-save")
+                    }
+                }
+            }
+        }
+        .interactiveDismissDisabled(model.isWorking)
     }
 }
 
