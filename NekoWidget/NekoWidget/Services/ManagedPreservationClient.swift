@@ -328,6 +328,55 @@ struct ManagedPreservationRetention: Decodable, Equatable, Sendable {
 }
 
 struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
+    /// Product policy is independent of legacy encrypted-fragment accounting.
+    /// No usage bar may be calculated from the approved limits until logical
+    /// accounting is available. Older services omit this object entirely.
+    struct ProductQuota: Decodable, Equatable, Sendable {
+        struct Policy: Decodable, Equatable, Sendable {
+            struct Plus: Decodable, Equatable, Sendable {
+                let limitBytes: Int64
+                let maximumRecords: Int64
+                let includesAppleFamily: Bool
+            }
+            struct Trial: Decodable, Equatable, Sendable {
+                let limitBytes: Int64
+                let maximumRecords: Int64
+                let durationDays: Int
+            }
+            let version: Int
+            let byteUnit: String
+            let recordUnit: String
+            let plus: Plus
+            let trial: Trial
+            let familyParticipationRequiresPersonalStoragePurchase: Bool
+        }
+        struct Usage: Decodable, Equatable, Sendable {
+            let storage: Storage
+            let records: Records
+        }
+        let policy: Policy?
+        let configurationStatus: String
+        let accountingStatus: String
+        let enforcementStatus: String
+        let usage: Usage?
+
+        func validate() throws {
+            guard accountingStatus == "not_available", enforcementStatus == "not_enabled", usage == nil else {
+                throw ManagedPreservationError.invalidResponse
+            }
+            if configurationStatus == "invalid", policy == nil { return }
+            guard configurationStatus == "valid", let policy,
+                  policy.version == 1, policy.byteUnit == "decimal", policy.recordUnit == "visible-records-v1",
+                  policy.plus.limitBytes > 0, policy.plus.limitBytes <= 9_007_199_254_740_991,
+                  policy.trial.limitBytes > 0, policy.trial.limitBytes <= policy.plus.limitBytes,
+                  policy.plus.maximumRecords > 0, policy.plus.maximumRecords <= 9_007_199_254_740_991,
+                  policy.trial.maximumRecords == policy.plus.maximumRecords,
+                  policy.trial.durationDays == 14, policy.plus.includesAppleFamily,
+                  !policy.familyParticipationRequiresPersonalStoragePurchase else {
+                throw ManagedPreservationError.invalidResponse
+            }
+        }
+    }
     struct ToolSnapshots: Decodable, Equatable, Sendable {
         let maximumIndexVersion: Int
         let strictPartDeletion: Bool
@@ -352,8 +401,10 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
     let storage: Storage
     let records: Records
     var toolSnapshots: ToolSnapshots? = nil
+    var productQuota: ProductQuota? = nil
 
     func validated() throws -> Self {
+        try productQuota?.validate()
         let space = storage
         guard version == 1, accounting == "encrypted-records-v1",
               space.usedBytes >= 0, space.reservedBytes >= 0,

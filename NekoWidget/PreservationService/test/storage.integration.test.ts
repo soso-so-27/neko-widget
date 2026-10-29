@@ -769,6 +769,28 @@ it('usage starts empty without creating inventory and never queries membership, 
   expect(await binding.DB.prepare('SELECT 1 FROM pa_inventory WHERE owner_id=?').bind(f.session.ownerId).first()).toBeNull();
 });
 
+it('exposes product policy without relabelling physical usage or changing existing records', async () => {
+  const f = await fixture(); const id = crypto.randomUUID();
+  await f.archive.put(f.session.token, id, f.request());
+  const before = await f.archive.usage(f.session.token);
+  const archive = new ArchiveStore({ ...f.options, productQuotaSettings: {} });
+  const response = await route(new Request('https://preserve.example/v1/usage', {
+    headers: { authorization: `Bearer ${f.session.token}` },
+  }), { auth: f.auth, archive } as Services);
+  expect(response.status).toBe(200);
+  const result = await response.json() as typeof before & { productQuota: { usage: null } };
+  expect(result.storage).toEqual(before.storage);
+  expect(result.records).toEqual(before.records);
+  expect(result.productQuota).toMatchObject({ usage: null, accountingStatus: 'not_available',
+    enforcementStatus: 'not_enabled', policy: { plus: { limitBytes: 3_000_000_000, maximumRecords: 3000 } } });
+  const malformed = new ArchiveStore({ ...f.options, productQuotaSettings: { PRODUCT_PLUS_BYTES: 'bad' } });
+  expect((await malformed.usage(f.session.token)).productQuota).toMatchObject({ configurationStatus: 'invalid', policy: null });
+  expect((await malformed.read(f.session.token, id)).revision).toBe(1);
+  const expanded = new ArchiveStore({ ...f.options, productQuotaSettings: { PRODUCT_PLUS_BYTES: '5000000000' } });
+  expect((await expanded.usage(f.session.token)).storage).toEqual(before.storage);
+  expect((await expanded.read(f.session.token, id)).document).toEqual(document);
+});
+
 it('deleted IDs prevent replay without consuming a new active record slot', async () => {
   const f = await fixture({ maximumRecords: 1 }); const id = crypto.randomUUID();
   await f.archive.put(f.session.token, id, f.request());
