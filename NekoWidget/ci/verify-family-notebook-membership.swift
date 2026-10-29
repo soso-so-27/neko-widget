@@ -39,9 +39,10 @@ private actor Relay: GroupHTTPTransport {
                     "canCancel": nomination != nil && (owner || nominee == identity.personID)])
             }
             let isPaused = payer == nil || paused
+            let pauseReason: String? = payer == nil ? "no_payer" : paused ? "payer_plus_unverified" : nil
             return try reply(["schemaVersion": 1, "familyId": family.uuidString.lowercased(), "generation": generation,
                 "payerPersonId": payer as Any? ?? NSNull(), "role": owner ? "payer" : "member",
-                "sharingStatus": isPaused ? "paused" : "active", "pauseReason": payer == nil ? "no_payer" : paused ? "payer_plus_unverified" : NSNull(),
+                "sharingStatus": isPaused ? "paused" : "active", "pauseReason": pauseReason as Any? ?? NSNull(),
                 "nominationPending": false, "canClaimPayer": payer == nil, "canRemoveMember": owner || invalidPayer, "canDissolve": owner])
         }
         let value = try JSONSerialization.jsonObject(with: body) as! [String: Any]
