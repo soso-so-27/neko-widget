@@ -117,7 +117,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .membershipChecking: "Plus の確認ができるまでお待ちください。"
         case .staleRoster: "家族の情報が新しくなりました。もう一度お試しください。"
         case .removedOrDissolved: "この家族の共有は終わっています。"
-        case .payerAlreadyChosen: "ほかの家族が先に払う人になりました。共有は戻っています。あなたの Plus はそのまま使えます。"
+        case .payerAlreadyChosen: "ほかの家族の Plus で、先に共有が戻りました。あなたの Plus はそのまま使えます。"
         case .offline: "つながっていません。つながってからもう一度お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .serviceUnavailable: "いまは使えません。少し待ってから、もう一度お試しください。"

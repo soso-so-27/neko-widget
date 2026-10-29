@@ -67,6 +67,8 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
     /// became the payer afterwards.
     private var pretendedPause: FamilySharingPause?
     private var claimedPayer = false
+    /// Test only: the tried member took over the family's Plus from this person.
+    private var handedOver = false
     /// Test only, kept in memory: the one person asked to take over paying,
     /// and whether this person had Plus when asked.
     private var nomination: (id: UUID, personID: String)?
@@ -76,7 +78,7 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
     var sendsInvitations: Bool { false }
 
     private var isPayer: Bool {
-        claimedPayer || (!model.joinedSomeonesFamily && pretendedPause == nil)
+        claimedPayer || (!handedOver && !model.joinedSomeonesFamily && pretendedPause == nil)
     }
 
     private var me: String { FamilyNotebookPrototype.me.personID }
@@ -121,10 +123,12 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
         generation += 1
     }
 
-    /// 「払う人に頼まれたときを試す」: the tried member, as the payer, asks
-    /// this person. Plus is read once, as with the payer leaving.
+    /// 「Plus の引き継ぎを頼まれたときを試す」: the tried member, as the payer,
+    /// asks this person. If this person was paying, the tried member is taken
+    /// to have taken it over first, so it is one tap. Plus is read once.
     func pretendNominated(hasPlus: Bool) {
-        guard model.hasFamily, !isPayer else { return }
+        guard model.hasFamily, nomination == nil else { return }
+        if isPayer { claimedPayer = false; handedOver = true }
         nomination = (UUID(), me)
         nomineeHasPlus = hasPlus
         if case .noPayer = pretendedPause { pretendedPause = .noPayer(canClaim: false, handoverPending: true) }
@@ -140,7 +144,7 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
         model.hasFamily ? pretendedPause : nil
     }
 
-    /// 「払う人が抜けたときを試す」: as the server would say it, with this
+    /// 「Plus で続けていた人が抜けたときを試す」: as the server would say it, with this
     /// person's Plus as the only thing deciding `canClaim`.
     func pretendPayerLeft(hasPlus: Bool) {
         // Someone already asked keeps the request; nobody claims first then.
@@ -149,8 +153,17 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
         if nomination?.personID == me { nomineeHasPlus = hasPlus }
     }
 
+    /// 「…が引き受けた・断ったときを試す」: the tried member answers this
+    /// person's request.
+    func pretendNomineeAnswered(accepted: Bool) {
+        guard isPayer, let nomination, nomination.personID != me else { return }
+        self.nomination = nil
+        if accepted { claimedPayer = false; handedOver = true }
+        generation += 1
+    }
+
     private func forgetHandover() {
-        pretendedPause = nil; claimedPayer = false; nomination = nil
+        pretendedPause = nil; claimedPayer = false; handedOver = false; nomination = nil
         consentedFarewells = [:]; farewellPreviews = [:]
     }
 
