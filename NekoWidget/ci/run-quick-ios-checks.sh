@@ -66,6 +66,15 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   NekoWidget/Services/FamilyNotebookInvitationCrypto.swift ci/verify-family-notebook-invitation.swift \
   -o "$RUNNER_TEMP/family-notebook-invitation-tests"
 "$RUNNER_TEMP/family-notebook-invitation-tests"
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookCrypto.swift \
+  NekoWidget/Services/FamilyNotebookTransport.swift NekoWidget/Services/FamilyNotebookInvitationCrypto.swift \
+  NekoWidget/Services/FamilyNotebookKeyCoordinator.swift ci/verify-family-notebook-key-delivery.swift \
+  -o "$RUNNER_TEMP/family-notebook-key-delivery-tests"
+"$RUNNER_TEMP/family-notebook-key-delivery-tests"
 
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
