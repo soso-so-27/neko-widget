@@ -76,6 +76,7 @@ struct SettingsView: View {
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
+    @State private var albumNoticeBlocked = false
     @State private var isPhotoSettingsSavePending = false
     @State private var settingsSaveTask: Task<Void, Never>?
     @State private var settingsSaveRevision = 0
@@ -369,6 +370,15 @@ struct SettingsView: View {
                                 .accessibilityIdentifier("settings-album-slideshow")
                             Button("届いた作品を、届いたばかりに戻す") { AlbumPrototype.cloudLatestAgain() }
                                 .accessibilityIdentifier("settings-album-cloud-again")
+                            // Shows on screen too; a tap on it opens the album tab.
+                            Button("「作品がとどきました」の通知を 5 秒後に出す") {
+                                Task { albumNoticeBlocked = !(await AlbumArrivalNotice.tryNow()) }
+                            }
+                            .accessibilityIdentifier("settings-album-notice-try")
+                            if albumNoticeBlocked {
+                                Text("通知が許可されていないため出せません。iPhone の設定 → ねこのまど → 通知 で許可できます。")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
                         }
                         NavigationLink {
                             advancedDiagnosticsView

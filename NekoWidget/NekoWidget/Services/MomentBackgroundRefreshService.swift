@@ -350,6 +350,11 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
 #if DEBUG
         guard !Self.suppressesNormalServicesForDebugLaunch else { return }
 #endif
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           response.notification.request.content.userInfo[AlbumArrivalNotice.userInfoKey] != nil {
+            AlbumArrivalOpenInbox.shared.showsAlbum = true
+            return
+        }
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
               let route = MomentNotificationRoutePayload.route(
                   from: response.notification.request.content.userInfo
