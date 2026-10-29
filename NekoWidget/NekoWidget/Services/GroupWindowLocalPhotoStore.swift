@@ -267,3 +267,20 @@ enum GroupInvitationMemory {
         UserDefaults.standard.removeObject(forKey: key(windowID))
     }
 }
+
+/// The name this person last gave a window, offered again next time. Written
+/// only after creating or asking to join, never while typing.
+extension GroupDisplayName {
+    private static let rememberedKey = "group.myDisplayName.v1"
+
+    static var remembered: String { UserDefaults.standard.string(forKey: rememberedKey) ?? "" }
+
+    static func remember(_ name: String) {
+        UserDefaults.standard.set(name, forKey: rememberedKey)
+    }
+
+    /// The relay takes up to 80 bytes (GroupWire.name), about 26 kana.
+    static func fits(_ name: String) -> Bool { name.utf8.count <= 80 }
+
+    static let tooLongMessage = "名前が長すぎます。短くしてください。"
+}

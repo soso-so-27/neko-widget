@@ -1508,13 +1508,17 @@ final class GroupWindowListModel: ObservableObject {
     /// Set when the relay answers that making a window needs Plus.
     @Published var needsPlus = false
 
-    func create(name: String) async -> GroupWindow? {
+    /// The creator's own name goes with the window (#470), so the others see
+    /// it instead of a local word such as 「自分」.
+    func create(name: String, ownerName: String) async -> GroupWindow? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isWorking else { return nil }
+        let owner = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !owner.isEmpty, !isWorking else { return nil }
         isWorking = true
         defer { isWorking = false }
         do {
-            let window = try await client.createWindow(name: trimmed, operationID: UUID())
+            let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: UUID())
+            GroupDisplayName.remember(owner)
             await load()
             return window
         } catch {
@@ -1535,6 +1539,7 @@ struct GroupWindowCreateScreen: View {
     @StateObject private var model: GroupWindowListModel
     @Environment(\.membershipAccess) private var membershipAccess
     @State private var name = ""
+    @State private var ownerName = GroupDisplayName.remembered
     @State private var createdWindowID: String?
 
     init(client: any GroupWindowMediaClient) {
@@ -1542,6 +1547,8 @@ struct GroupWindowCreateScreen: View {
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedOwner: String { ownerName.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var tooLong: Bool { !GroupDisplayName.fits(trimmed) || !GroupDisplayName.fits(trimmedOwner) }
 
     var body: some View {
         Form {
@@ -1550,6 +1557,15 @@ struct GroupWindowCreateScreen: View {
                     .accessibilityIdentifier("group-window-create-name")
             } header: { Text("まどの名前") }
               footer: { Text("名前はメンバー全員に表示されます。作ったら、招待リンクを送りましょう。") }
+            Section {
+                TextField("例：お母さん", text: $ownerName)
+                    .textContentType(.nickname)
+                    .accessibilityIdentifier("group-window-create-owner-name")
+            } header: { Text("あなたの名前") }
+              footer: {
+                  Text(tooLong ? GroupDisplayName.tooLongMessage : "メンバーには、この名前で表示されます。")
+                      .foregroundStyle(tooLong ? .red : .secondary)
+              }
             if let message = model.message {
                 Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             }
@@ -1562,12 +1578,12 @@ struct GroupWindowCreateScreen: View {
                                     presentsImmediately: false)
                 } else {
                     Button {
-                        Task { createdWindowID = await model.create(name: trimmed)?.id }
+                        Task { createdWindowID = await model.create(name: trimmed, ownerName: trimmedOwner)?.id }
                     } label: {
                         Text("作る").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(trimmed.isEmpty || model.isWorking)
+                    .disabled(trimmed.isEmpty || trimmedOwner.isEmpty || tooLong || model.isWorking)
                     .accessibilityIdentifier("group-window-create-confirm")
                 }
             }
@@ -1968,6 +1984,9 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
     }
     func createWindow(name: String, operationID: UUID) async throws -> GroupWindow {
         try await members.createWindow(name: name, operationID: operationID)
+    }
+    func createWindow(name: String, ownerDisplayName: String, operationID: UUID) async throws -> GroupWindow {
+        try await members.createWindow(name: name, ownerDisplayName: ownerDisplayName, operationID: operationID)
     }
     func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation {
         try await members.createInvitation(windowID: windowID, operation: operation)
