@@ -86,7 +86,7 @@ describe('owner-only encrypted names and terminal soft closure',()=>{
     const evidence=crypto.getRandomValues(new Uint8Array(64));
     ok(await send(await signed(bob,`/v3/group-windows/${w.windowId}/reports/reserve`,{operationId:crypto.randomUUID(),momentId:id,reasonCode:'privacy',moderationKeyId:'moderation-v2',
       ciphertextSize:evidence.length,ciphertextSHA256:await sha256Base64url(evidence),reporterConsent:{version:1,acceptedAt:Math.floor(Date.now()/1000)}}),
-      {...settings,GROUP_REPORT_RUNTIME_ENABLED:'YES',REPORT_INGESTION_RUNTIME_ENABLED:'YES'}),201);
+      {...settings,GROUP_REPORT_RUNTIME_ENABLED:'YES',REPORT_INGESTION_RUNTIME_ENABLED:'YES',GROUP_MODERATION_RUNTIME_ENABLED:'YES'}),201);
   });
   it('rejects an unauthorized or stale close without changing any membership',async()=>{
     const {owner,bob,w}=await family(),body=await close(owner,w);
