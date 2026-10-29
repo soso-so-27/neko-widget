@@ -534,7 +534,7 @@ private struct GroupAdapterChecks {
         let afterInvalidName = await nameRelay.stats()
         try check(namedStats.1.count == afterInvalidName.1.count, "invalid creator name makes no creation request")
         try await verifyManagement(endpoint: endpoint, folder: folder.appendingPathComponent("management"))
-        print("Group adapter: wire, signed names, HPKE, durable retries, management and device-root separation passed")
+        print("Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed")
     }
 
     private static func verifyManagement(endpoint: URL, folder: URL) async throws {
