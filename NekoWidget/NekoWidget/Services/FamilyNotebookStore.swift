@@ -34,11 +34,13 @@ final class FamilyNotebookStore: @unchecked Sendable {
         // Absent in the original schema. Ending participation uses schema 2
         // so an older app refuses to reopen it as an active sharing outbox.
         var sharingEnded: Bool?
+        var farewellDecisions: [FamilyNotebookFarewellDecision]?
 
         var snapshot: FamilyNotebookSnapshot {
             .init(familyID: familyID, revision: revision, clock: clock, operations: operations,
                   mappings: mappings, ledgerKeys: ledgerKeys, outbox: operations.filter { outboxIDs.contains($0.id) },
-                  acknowledgements: acknowledgements, sharingEnded: sharingEnded == true)
+                  acknowledgements: acknowledgements, sharingEnded: sharingEnded == true,
+                  farewellDecisions: farewellDecisions ?? [])
         }
     }
 
@@ -81,7 +83,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
     @discardableResult
     func edit(target: FamilyNotebookTarget, value: FamilyNotebookValue?, author: FamilyNotebookAuthor,
               editedAt: Date = Date(), enqueue: Bool = true, expectedRevision: UInt64? = nil) throws -> FamilyNotebookOperation {
-        try transaction(expectedRevision: expectedRevision) { state in
+        guard target.field != .farewellDay else { throw FamilyNotebookError.consentRequired }
+        return try transaction(expectedRevision: expectedRevision) { state in
             let operation = try makeOperation(state: state, target: target, value: value, author: author, editedAt: editedAt)
             state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
             state.clock = operation.version.clock
@@ -94,6 +97,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
     /// One local save becomes one durable notebook transaction before a tool
     /// projects it. A failed tool-file write can be recovered from this copy.
     func applyLocalChanges(_ plan: FamilyNotebookImportPlan, author: FamilyNotebookAuthor) throws {
+        guard !plan.entries.contains(where: { $0.target.field == .farewellDay }) else { throw FamilyNotebookError.consentRequired }
         try transaction { state in
             guard plan.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
             guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
@@ -147,6 +151,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
         try transaction { state in
             guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
             guard let operation = state.operations.first(where: { $0.id == operationID }) else { throw FamilyNotebookError.invalidOperation }
+            guard Self.farewellSendAllowed(operation, state) else { throw FamilyNotebookError.consentRequired }
             if !state.acknowledgements.contains(where: { $0.operationID == operation.id && $0.version == operation.version }) {
                 state.outboxIDs.insert(operationID)
             }
@@ -156,6 +161,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
 
     @discardableResult
     func applyImport(_ plan: FamilyNotebookImportPlan, author: FamilyNotebookAuthor, now: Date = Date()) throws -> FamilyNotebookSnapshot {
+        guard !plan.entries.contains(where: { $0.target.field == .farewellDay }) else { throw FamilyNotebookError.consentRequired }
         try transaction { state in
             guard plan.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
             guard now.timeIntervalSince1970.isFinite,
@@ -189,6 +195,78 @@ final class FamilyNotebookStore: @unchecked Sendable {
             }
         }
         return try snapshot()
+    }
+
+    func farewellDecision(actionID: UUID) throws -> FamilyNotebookFarewellDecision? {
+        try snapshot().farewellDecisions.first { $0.actionID == actionID }
+    }
+
+    @discardableResult
+    func consentFarewell(cat: UUID, day: String, author: FamilyNotebookAuthor, previewID: UUID,
+                         expectedSharedOperationID: UUID?, actionID: UUID, now: Date = Date()) throws -> FamilyNotebookFarewellDecision {
+        try transaction { state in
+            if let prior = state.farewellDecisions?.first(where: { $0.actionID == actionID }) {
+                guard prior.personID == author.personID, prior.familyCatID == cat, prior.day == day,
+                      prior.previewID == previewID else { throw FamilyNotebookError.consentOperationConflict }
+                return prior
+            }
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
+            guard state.mappings.contains(where: { $0.recordID == nil && $0.familyCatID == cat }) else { throw FamilyNotebookError.mappingConflict }
+            let target = FamilyNotebookTarget(familyCatID: cat, field: .farewellDay)
+            guard state.snapshot.fieldState(for: target)?.operation.id == expectedSharedOperationID else { throw FamilyNotebookError.staleConsent }
+            let operation = try makeOperation(state: state, target: target, value: .day(day), author: author, editedAt: now)
+            // Superseded, unacknowledged values remain in the local history but
+            // are never sent just because a new day was confirmed.
+            Self.cancelFarewellOutbox(cat: cat, person: author.personID, state: &state)
+            state.operations = try FamilyNotebookCore.merge(state.operations, [operation])
+            state.clock = operation.version.clock; state.outboxIDs.insert(operation.id)
+            let decision = FamilyNotebookFarewellDecision(actionID: actionID, previewID: previewID, personID: author.personID,
+                familyCatID: cat, day: day, sharedOperationID: operation.id, decidedAt: now)
+            state.farewellDecisions = (state.farewellDecisions ?? []) + [decision]
+            return decision
+        }
+    }
+
+    @discardableResult
+    func revokeFarewell(cat: UUID, author: FamilyNotebookAuthor, actionID: UUID, now: Date = Date()) throws -> FamilyNotebookFarewellDecision {
+        try transaction { state in
+            if let prior = state.farewellDecisions?.first(where: { $0.actionID == actionID }) {
+                guard prior.personID == author.personID, prior.familyCatID == cat, prior.day == nil,
+                      prior.previewID == nil else { throw FamilyNotebookError.consentOperationConflict }
+                return prior
+            }
+            guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
+            guard state.mappings.contains(where: { $0.recordID == nil && $0.familyCatID == cat }) else { throw FamilyNotebookError.mappingConflict }
+            let target = FamilyNotebookTarget(familyCatID: cat, field: .farewellDay)
+            let current = state.snapshot.fieldState(for: target)
+            let prior = state.farewellDecisions?.last { $0.familyCatID == cat && $0.personID == author.personID }
+            let previousClear = prior?.day == nil ? prior?.sharedOperationID : nil
+            let keepClearPending = previousClear.map { state.outboxIDs.contains($0) } ?? false
+            Self.cancelFarewellOutbox(cat: cat, person: author.personID, state: &state)
+            if let previousClear, keepClearPending { state.outboxIDs.insert(previousClear) }
+            var clearedID = previousClear
+            // Another person's newer date is not this person's consent to revoke.
+            if let prior, prior.day != nil, current?.operation.id == prior.sharedOperationID, current?.isDeleted == false {
+                let clear = try makeOperation(state: state, target: target, value: .clear, author: author, editedAt: now)
+                state.operations = try FamilyNotebookCore.merge(state.operations, [clear]); state.clock = clear.version.clock
+                state.outboxIDs.insert(clear.id); clearedID = clear.id
+            }
+            let decision = FamilyNotebookFarewellDecision(actionID: actionID, previewID: nil, personID: author.personID,
+                familyCatID: cat, day: nil, sharedOperationID: clearedID, decidedAt: now)
+            state.farewellDecisions = (state.farewellDecisions ?? []) + [decision]
+            return decision
+        }
+    }
+
+    private static func cancelFarewellOutbox(cat: UUID, person: String, state: inout State) {
+        let ids = state.operations.filter { $0.target.familyCatID == cat && $0.target.field == .farewellDay && $0.author.personID == person }.map(\.id)
+        state.outboxIDs.subtract(ids)
+    }
+    private static func farewellSendAllowed(_ operation: FamilyNotebookOperation, _ state: State) -> Bool {
+        guard operation.target.field == .farewellDay else { return true }
+        return state.farewellDecisions?.last(where: {
+            $0.familyCatID == operation.target.familyCatID && $0.personID == operation.author.personID
+        })?.sharedOperationID == operation.id
     }
 
     private func makeOperation(state: State, target: FamilyNotebookTarget, value: FamilyNotebookValue?,
@@ -277,6 +355,22 @@ final class FamilyNotebookStore: @unchecked Sendable {
                 guard !(sameProfile || sameTool || sameRecord) || mapping.familyCatID == other.familyCatID
                 else { throw FamilyNotebookError.mappingConflict }
             }
+        }
+        let decisions = state.farewellDecisions ?? []
+        guard Set(decisions.map(\.actionID)).count == decisions.count else { throw FamilyNotebookError.corruptStorage }
+        for decision in decisions {
+            guard FamilyNotebookCore.validIdentifier(decision.personID), decision.decidedAt.timeIntervalSince1970.isFinite,
+                  state.mappings.contains(where: { $0.familyCatID == decision.familyCatID && $0.recordID == nil }),
+                  (decision.day == nil) == (decision.previewID == nil) else { throw FamilyNotebookError.corruptStorage }
+            if let id = decision.sharedOperationID {
+                guard let operation = state.operations.first(where: { $0.id == id }),
+                      operation.author.personID == decision.personID,
+                      operation.target == FamilyNotebookTarget(familyCatID: decision.familyCatID, field: .farewellDay),
+                      operation.value == (decision.day.map(FamilyNotebookValue.day) ?? .clear) else { throw FamilyNotebookError.corruptStorage }
+            } else if decision.day != nil { throw FamilyNotebookError.corruptStorage }
+        }
+        guard state.operations.filter({ state.outboxIDs.contains($0.id) }).allSatisfy({ Self.farewellSendAllowed($0, state) }) else {
+            throw FamilyNotebookError.consentRequired
         }
     }
 

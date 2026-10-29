@@ -7,6 +7,28 @@ enum FamilyNotebookError: Error, Equatable {
     case invalidValue, invalidTarget, invalidOperation, operationCollision
     case familyMismatch, mappingConflict, staleRevision, clockOverflow
     case unsupportedSchema, corruptStorage, unsafePath, storageUnavailable, invalidAcknowledgement, deletedTarget, sharingEnded
+    case consentRequired, staleConsent, consentOperationConflict
+}
+
+/// Reads only explicitly mapped local identifiers. Reading is not consent and
+/// this helper neither writes the private source nor constructs an operation.
+enum FamilyNotebookPrivateFarewell {
+    private struct Parts: Decodable { let year: Int, month: Int, day: Int }
+    static func day(json: String, toolCatID: UUID, profileID: UUID?) throws -> String? {
+        guard !json.isEmpty else { return nil }
+        let values: [String: Parts]
+        do { values = try JSONDecoder().decode([String: Parts].self, from: Data(json.utf8)) }
+        catch { throw FamilyNotebookError.corruptStorage }
+        let keys = Set(["tool-" + toolCatID.uuidString.lowercased()] + (profileID.map { [$0.uuidString.lowercased()] } ?? []))
+        var days = Set<String>()
+        for (key, value) in values where keys.contains(key.lowercased()) {
+            let day = String(format: "%04d-%02d-%02d", value.year, value.month, value.day)
+            try FamilyNotebookCore.validate(target: .init(familyCatID: toolCatID, field: .farewellDay), value: .day(day))
+            days.insert(day)
+        }
+        guard days.count <= 1 else { throw FamilyNotebookError.staleConsent }
+        return days.first
+    }
 }
 
 /// Everyone may leave their own family. Leaving is independent from the
@@ -79,6 +101,7 @@ enum FamilyNotebookCollection: String, Codable, CaseIterable, Hashable, Sendable
 }
 
 enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
+    case farewellDay
     case name, sex, neutered, birthday, coat, marks, microchip, indoorOnly
     case conditions, allergyStatus, allergyText, specialDiet, water, litter, temperament
     case vetName, vetPhone, vetNote, measuredOn, grams, medicationName, dose, schedule
@@ -206,6 +229,18 @@ struct FamilyNotebookImportPlan: Equatable, Sendable {
     let mappings: [FamilyNotebookLocalMapping]
 }
 
+/// Private local decisions, never part of an encrypted operation or a roster.
+/// A nil day revokes this person's consent; it does not erase other phones.
+struct FamilyNotebookFarewellDecision: Codable, Equatable, Sendable {
+    let actionID: UUID
+    let previewID: UUID?
+    let personID: String
+    let familyCatID: UUID
+    let day: String?
+    let sharedOperationID: UUID?
+    let decidedAt: Date
+}
+
 struct FamilyNotebookSnapshot: Equatable, Sendable {
     let familyID: UUID
     let revision: UInt64
@@ -217,6 +252,7 @@ struct FamilyNotebookSnapshot: Equatable, Sendable {
     let acknowledgements: [FamilyNotebookAcknowledgement]
     /// Local transmission boundary, not proof of a server-confirmed exit.
     let sharingEnded: Bool
+    var farewellDecisions: [FamilyNotebookFarewellDecision] = []
 
     func fieldState(for target: FamilyNotebookTarget) -> FamilyNotebookFieldState? {
         FamilyNotebookCore.resolve(target: target, operations: operations,
@@ -242,7 +278,7 @@ enum FamilyNotebookCore {
         switch target.collection {
         case .cat: allowed = [.name, .sex, .neutered, .birthday, .coat, .marks, .microchip, .indoorOnly,
                               .conditions, .allergyStatus, .allergyText, .specialDiet, .water, .litter,
-                              .temperament, .vetName, .vetPhone, .vetNote]
+                              .temperament, .vetName, .vetPhone, .vetNote, .farewellDay]
         case .weight: allowed = [.measuredOn, .grams]
         case .medication: allowed = [.medicationName, .dose, .schedule, .startedOn, .endedOn, .note]
         case .vaccination: allowed = [.kind, .givenOn, .nextDueOn]
@@ -254,7 +290,7 @@ enum FamilyNotebookCore {
         }
         guard allowed.contains(field), let value else { throw FamilyNotebookError.invalidTarget }
         if value == .clear { return }
-        let days: Set<FamilyNotebookField> = [.birthday, .measuredOn, .startedOn, .endedOn, .givenOn, .nextDueOn]
+        let days: Set<FamilyNotebookField> = [.birthday, .measuredOn, .startedOn, .endedOn, .givenOn, .nextDueOn, .farewellDay]
         let dates: Set<FamilyNotebookField> = [.completedAt, .capturedAt, .writtenAt]
         switch value {
         case .text(let text):

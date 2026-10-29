@@ -152,6 +152,44 @@ private actor Relay: GroupHTTPTransport {
         try check(try await !resumedCreator.admission.hasPendingOperation(), "saved request and validated ACK recover explicit approval")
         let directory = try await resumedGuest.admission.members(family)
         try check(directory.members.count == 2, "actual person roots and admitted generations validate")
+        // Private-date preview is read-only; only the exact explicit action
+        // creates a sendable operation. No UI or network side effect grants it.
+        let farewellStore = try resumedCreator.activate(family: family, admittedGeneration: 1)
+        let tool = UUID(), familyCat = UUID(), profile = UUID()
+        let ownAuthor = FamilyNotebookAuthor(personID: a.personID, displayName: "合成の本人")
+        try farewellStore.applyLocalChanges(.init(familyID: family, entries: [
+            .init(ledgerKey: "name", target: .init(familyCatID: familyCat, field: .name), value: .text("合成ねこ"), editedAt: Date())
+        ], mappings: [.init(sourceKey: "cat", familyCatID: familyCat, profileID: profile, toolCatID: tool)]), author: ownAuthor)
+        var privateDay = "2026-10-28", instant = Date()
+        func farewellService(_ session: FamilyNotebookSession) -> ProductionFamilyNotebookSharingService {
+            .init(provider: { session }, billing: {}, displayName: { "合成の本人" }, catNames: { [] },
+                privateFarewellDay: { id, mapped in
+                    try check(id == tool && mapped == profile, "private read uses explicit identifiers")
+                    return privateDay
+                }, now: { instant })
+        }
+        let farewell = farewellService(resumedCreator)
+        try check(try await !farewell.loadFarewellSharing(toolCatID: tool).hasConsentForLocalDay, "reading never grants consent")
+        let staleDay = try await farewell.previewFarewellSharing(toolCatID: tool)
+        try check(try farewellStore.snapshot().farewellDecisions.isEmpty && farewellStore.pendingOperations().count == 1, "preview sends no private day")
+        privateDay = "2026-10-29"
+        try await rejects { try await farewell.consentToShareFarewell(previewID: staleDay.id, operationID: UUID()) }
+        let expired = try await farewell.previewFarewellSharing(toolCatID: tool)
+        instant = instant.addingTimeInterval(601)
+        try await rejects { try await farewell.consentToShareFarewell(previewID: expired.id, operationID: UUID()) }
+        let confirmed = try await farewell.previewFarewellSharing(toolCatID: tool), consentAction = UUID()
+        try await farewell.consentToShareFarewell(previewID: confirmed.id, operationID: consentAction)
+        let permitted = try await farewell.loadFarewellSharing(toolCatID: tool)
+        try check(permitted.hasConsentForLocalDay && permitted.sharingPending && !permitted.mayAlreadyHaveBeenShared, "exact confirmed day queued only")
+        let afterRestart = farewellService(try context(a))
+        try await afterRestart.consentToShareFarewell(previewID: confirmed.id, operationID: consentAction)
+        try check(try farewellStore.snapshot().farewellDecisions.count == 1, "restart retry uses durable receipt without duplicate")
+        try await afterRestart.revokeFarewellSharing(toolCatID: tool, operationID: UUID())
+        let canceled = try await afterRestart.loadFarewellSharing(toolCatID: tool)
+        try check(canceled.localDay == privateDay && !canceled.hasConsentForLocalDay && canceled.revocationPending, "revoke keeps the private original")
+        try await afterRestart.consentToShareFarewell(previewID: confirmed.id, operationID: consentAction)
+        try check(try await !afterRestart.loadFarewellSharing(toolCatID: tool).hasConsentForLocalDay, "retry old consent after revoke stays revoked")
+        print("Farewell service: read-only preview, changed date, expired preview, exact consent, restart receipt and revocation passed")
         let store = try resumedGuest.activate(family: family, admittedGeneration: 2)
         _ = try store.edit(target: .init(familyCatID: UUID(), collection: .cat, recordID: nil, parentRecordID: nil, field: .name),
                            value: .text("残す合成ねこ"), author: .init(personID: b.personID, displayName: "合成の参加者"))

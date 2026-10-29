@@ -28,6 +28,10 @@ enum FamilyNotebookServiceFactory {
         }, billing: {
             guard let client = GroupWindowClientProvider.production else { throw FamilySharingError.serviceUnavailable }
             try await client.connectExistingBillingAccount()
-        }, displayName: { try GroupWire.name(GroupDisplayName.remembered) }, catNames: { FamilyNotebookPrototype.shared.catNames })
+        }, displayName: { try GroupWire.name(GroupDisplayName.remembered) }, catNames: { FamilyNotebookPrototype.shared.catNames },
+        privateFarewellDay: { tool, profile in
+            try FamilyNotebookPrivateFarewell.day(json: UserDefaults.standard.string(forKey: CatFarewell.key) ?? "",
+                toolCatID: tool, profileID: profile)
+        })
     }
 }

@@ -39,6 +39,31 @@ struct FamilyInvitationPreview: Equatable, Sendable {
     var contextID: UUID? = nil
 }
 
+struct FamilyFarewellPreview: Equatable, Sendable {
+    let id: UUID, familyID: UUID, familyCatID: UUID
+    let catName: String
+    /// Gregorian YYYY-MM-DD, from this phone's record, validated before sharing.
+    let day: String
+    let currentSharedDay: String?
+    let currentSharedAuthor: FamilyNotebookAuthor?
+    let expiresAt: Date
+    var explanation: String {
+        "この子の旅立った日を、家族の手帳に共有します。家族にあとから加わる人にも、この記録が見えることがあります。"
+    }
+}
+
+struct FamilyFarewellSharingState: Equatable, Sendable {
+    let familyID: UUID, familyCatID: UUID
+    let localDay: String?, consentedDay: String?, sharedDay: String?
+    let sharedAuthor: FamilyNotebookAuthor?
+    let sharingPending: Bool, revocationPending: Bool
+    let mayAlreadyHaveBeenShared: Bool
+    var hasConsentForLocalDay: Bool { localDay != nil && localDay == consentedDay }
+    var revocationExplanation: String {
+        "まだ送っていない日付の送信を止めます。あなたが共有した日付が家族の現在の表示なら、その表示を消す更新を送ります。このiPhoneの日付は残ります。すでに届いた日付や履歴は回収できません。送信中だった日付は、届いている可能性があります。"
+    }
+}
+
 enum FamilyJoinResult: Equatable, Sendable {
     case pendingApproval
     case waitingForKeys
@@ -62,6 +87,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
     case payerAlreadyChosen
     case offline, rateLimited, serviceUnavailable, unknownOutcome
     case unsupported
+    case farewellDayMissing, farewellPreviewChanged
     /// Not possible before the family works between iPhones (the prototype).
     case notAvailableYet
 
@@ -70,7 +96,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
     var recovery: Recovery {
         switch self {
         case .offline, .rateLimited, .serviceUnavailable: .retry
-        case .unknownOutcome, .staleRoster, .payerAlreadyChosen: .reload
+        case .unknownOutcome, .staleRoster, .payerAlreadyChosen, .farewellPreviewChanged: .reload
         default: .personAction
         }
     }
@@ -95,6 +121,8 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .unknownOutcome: "結果を確かめています。少し待ってから開き直してください。"
         case .unsupported: "このアプリを最新にしてください。記録は消していません。"
         case .notAvailableYet: "試作のため、まだできません。"
+        case .farewellDayMissing: "この子の旅立った日は、まだ記録されていません。"
+        case .farewellPreviewChanged: "日付か家族の状態が変わりました。共有する内容をもう一度確認してください。"
         }
     }
 }
@@ -140,11 +168,19 @@ protocol FamilyNotebookSharingService: AnyObject {
     func nominatePayer(personID: String, expectedGeneration: Int64, operationID: UUID) async throws
     func acceptPayer(nominationID: UUID, expectedGeneration: Int64, operationID: UUID) async throws
     func cancelPayerNomination(nominationID: UUID, expectedGeneration: Int64, operationID: UUID) async throws
+    func loadFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellSharingState
+    func previewFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellPreview
+    func consentToShareFarewell(previewID: UUID, operationID: UUID) async throws
+    func revokeFarewellSharing(toolCatID: UUID, operationID: UUID) async throws
 }
 
 // A prototype never pretends to have nominated a real family member. Existing
 // screen previews remain source-compatible until the production adapter lands.
 extension FamilyNotebookSharingService {
+    func loadFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellSharingState { throw FamilySharingError.notAvailableYet }
+    func previewFarewellSharing(toolCatID: UUID) async throws -> FamilyFarewellPreview { throw FamilySharingError.notAvailableYet }
+    func consentToShareFarewell(previewID: UUID, operationID: UUID) async throws { throw FamilySharingError.notAvailableYet }
+    func revokeFarewellSharing(toolCatID: UUID, operationID: UUID) async throws { throw FamilySharingError.notAvailableYet }
     func loadHandover() async throws -> FamilyPayerHandover { throw FamilySharingError.notAvailableYet }
     func nominatePayer(personID: String, expectedGeneration: Int64, operationID: UUID) async throws { throw FamilySharingError.notAvailableYet }
     func acceptPayer(nominationID: UUID, expectedGeneration: Int64, operationID: UUID) async throws { throw FamilySharingError.notAvailableYet }
