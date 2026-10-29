@@ -1,8 +1,9 @@
-import { ServiceError, contactEmailValid, type KeyCustody } from './contracts';
+import { ServiceError, sha256, contactEmailValid, type KeyCustody } from './contracts';
 import { identityIndexKey, indexedNoticeEmail, indexedOwnerIdentity } from './identity-index';
 import { S3RecoveryCopy, type RecoveryObject } from './s3-recovery-copy';
 import { compressOwnerSnapshot, openOwnerSnapshot } from './owner-snapshot-codec';
 import { canonicalJSON, ImmutableRecordTree, type TreeRef } from './immutable-record-tree';
+import { ResumableRecordTree, type ResumableTreePlan } from './resumable-record-tree';
 
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const ownerPattern = new RegExp(`^${uuid}$`, 'u');
@@ -421,6 +422,178 @@ export class OwnerRecoveryCopy {
       this.keys, scoped, this.identityIndexSecret, this.options).copyCurrentUngrouped(db, ownerId, now));
   }
 
+  supportsMetadataBatch():boolean{return this.options.pagedWrites===true;}
+
+  async recoverStagedMetadata(db:D1Database,ownerId:string,now:number):Promise<{status:'none'|'pending'|'complete'}>{
+    if(!ownerPattern.test(ownerId)||!this.options.pagedWrites)return {status:'none'};
+    const pending=await db.prepare(`SELECT 1 FROM pa_tool_metadata_batches b JOIN pa_owners o ON o.owner_id=b.owner_id
+      JOIN pa_owner_recovery_generations g ON g.owner_id=o.owner_id WHERE b.owner_id=? AND b.owner_epoch=o.epoch
+      AND b.state='open' AND o.disabled=0 AND o.purge_fence_id IS NULL
+      AND NOT EXISTS(SELECT 1 FROM pa_owner_recovery_versions v WHERE v.owner_id=g.owner_id AND v.generation=g.generation)`)
+      .bind(ownerId).first();
+    return pending?this.copyCurrentStep(db,ownerId,now):{status:'none'};
+  }
+
+  /** Bounded union publication for staged immutable parts. Work rows are
+   * advisory, authenticated checkpoints, never owner ACKs. Publication is a
+   * separate quantum and still performs independent S3 readback/final fencing. */
+  async copyCurrentStep(db:D1Database,ownerId:string,now:number):Promise<
+    {status:'pending'}|{status:'complete';reference:RecoveryObject}> {
+    if(!safeInteger(now,1)||!this.options.pagedWrites)throw unavailable();
+    type Plan={version:1;headerHash:string;after:number;pendingAfter:number;root:TreeRef;tree:ResumableTreePlan|null};
+    type Work={owner_id:string;work_id:string;generation:number;inventory_generation:number;record_sequence:number;
+      record_count:number;plan_json:string;plan_mac:string;revision:number};
+    const state=await this.deltaState(db,ownerId),image=state.image;
+    if(image.disabled)throw unavailable();
+    await this.verifyInnerIdentity(image);
+    const headerHash=await sha256(canonicalJSON(wireHeader(image)));
+    const mac=async(work:Omit<Work,'plan_mac'>)=>{
+      const tag=await crypto.subtle.sign('HMAC',await this.indexKey,new TextEncoder().encode(
+        'neko-owner-delta-work-v1\0'+canonicalJSON(work)));
+      return [...new Uint8Array(tag)].map(byte=>byte.toString(16).padStart(2,'0')).join('');
+    };
+    const matches=(w:Work)=>w.generation===image.generation && w.inventory_generation===image.inventoryGeneration
+      && w.record_sequence===state.sequence && w.record_count===state.count;
+    const validMac=async(w:Work)=>{const {plan_mac,...signed}=w;return hex.test(plan_mac)&&await mac(signed)===plan_mac;};
+    const fence=`EXISTS(SELECT 1 FROM pa_owners o JOIN pa_owner_recovery_generations g ON g.owner_id=o.owner_id
+      JOIN pa_owner_record_counters d ON d.owner_id=o.owner_id WHERE o.owner_id=? AND o.disabled=0 AND o.purge_fence_id IS NULL
+      AND g.generation=? AND d.sequence=? AND d.record_count=?
+      AND coalesce((SELECT i.generation FROM pa_inventory i WHERE i.owner_id=o.owner_id),0)=?)`;
+    const bindings=[ownerId,image.generation,state.sequence,state.count,image.inventoryGeneration];
+    let work=await db.prepare('SELECT * FROM pa_owner_delta_work WHERE owner_id=?').bind(ownerId).first<Work>();
+    if(work && !await validMac(work))throw unavailable();
+    const cursor=await db.prepare(`SELECT v.object_key,v.version_id,v.sha256,v.bytes,
+      c.generation,c.inventory_generation,c.record_sequence,c.record_count FROM pa_owner_recovery_tree_cursors c
+      JOIN pa_owner_recovery_versions v ON v.owner_id=c.owner_id AND v.generation=c.generation WHERE c.owner_id=?`)
+      .bind(ownerId).first<CursorRow>();
+    if(!cursor)throw unavailable(); // Existing normal baseline/repair seeds it.
+    if(cursor.generation===image.generation && cursor.inventory_generation===image.inventoryGeneration
+      && cursor.record_sequence===state.sequence && cursor.record_count===state.count){
+      const reference={key:cursor.object_key,versionId:cursor.version_id,sha256:cursor.sha256,bytes:cursor.bytes};
+      const verified=await this.readWire(ownerId,reference);
+      if(verified.version!==3 || verified.recordsTree.count!==state.count
+        || canonicalJSON(wireHeader(decodedHeader(verified)))!==canonicalJSON(wireHeader(image)))throw unavailable();
+      await new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3).verifyRoot(verified.recordsTree);
+      if(!await this.rememberTree(db,state,reference))throw unavailable();
+      await db.batch([db.prepare('DELETE FROM pa_owner_delta_nodes WHERE owner_id=? AND work_id=? AND confirmed=1').bind(ownerId,work?.work_id ?? ''),
+        db.prepare('DELETE FROM pa_owner_delta_work WHERE owner_id=? AND work_id=?').bind(ownerId,work?.work_id ?? '')]);
+      return {status:'complete',reference};
+    }
+    if(!work || !matches(work)){
+      if(!safeInteger(cursor.record_sequence) || cursor.record_sequence>state.sequence
+        || cursor.generation>image.generation || cursor.record_count>state.count
+        || cursor.inventory_generation>image.inventoryGeneration)throw unavailable();
+      const previous=await this.readWire(ownerId,{key:cursor.object_key,versionId:cursor.version_id,sha256:cursor.sha256,bytes:cursor.bytes});
+      if(previous.version!==3 || previous.generation!==cursor.generation
+        || previous.inventoryGeneration!==cursor.inventory_generation || previous.recordsTree.count!==cursor.record_count)throw unavailable();
+      await new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3).verifyRoot(previous.recordsTree);
+      const plan:Plan={version:1,headerHash,after:cursor.record_sequence,pendingAfter:cursor.record_sequence,root:previous.recordsTree,tree:null};
+      const initial:Omit<Work,'plan_mac'>={owner_id:ownerId,work_id:crypto.randomUUID(),generation:image.generation,
+        inventory_generation:image.inventoryGeneration,record_sequence:state.sequence,record_count:state.count,
+        plan_json:canonicalJSON(plan),revision:0};
+      const result=await db.prepare(`INSERT INTO pa_owner_delta_work(owner_id,work_id,generation,inventory_generation,
+        record_sequence,record_count,plan_json,plan_mac,revision) SELECT ?,?,?,?,?,?,?,?,0 WHERE ${fence}
+        ON CONFLICT(owner_id) DO UPDATE SET work_id=excluded.work_id,generation=excluded.generation,
+          inventory_generation=excluded.inventory_generation,record_sequence=excluded.record_sequence,
+          record_count=excluded.record_count,plan_json=excluded.plan_json,plan_mac=excluded.plan_mac,revision=0
+        WHERE pa_owner_delta_work.generation<>excluded.generation OR pa_owner_delta_work.inventory_generation<>excluded.inventory_generation
+          OR pa_owner_delta_work.record_sequence<>excluded.record_sequence OR pa_owner_delta_work.record_count<>excluded.record_count
+        RETURNING work_id`).bind(ownerId,initial.work_id,image.generation,image.inventoryGeneration,state.sequence,state.count,
+          initial.plan_json,await mac(initial),...bindings).all();
+      if(result.results.length!==1)throw unavailable();
+      await db.prepare(`DELETE FROM pa_owner_delta_nodes WHERE owner_id=? AND confirmed=1
+        AND NOT EXISTS(SELECT 1 FROM pa_owner_delta_work w WHERE w.owner_id=pa_owner_delta_nodes.owner_id
+          AND w.work_id=pa_owner_delta_nodes.work_id)`).bind(ownerId).run();
+      return {status:'pending'};
+    }
+    const plan=JSON.parse(work.plan_json) as Plan;
+    if(!exact(plan,'after,headerHash,pendingAfter,root,tree,version') || plan.version!==1 || plan.headerHash!==headerHash
+      || !safeInteger(plan.after) || plan.after>state.sequence || !safeInteger(plan.pendingAfter,plan.after)
+      || plan.pendingAfter>state.sequence)throw unavailable();
+    const tree=new ResumableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
+    if(!plan.tree && plan.after<state.sequence){
+      const rows=(await db.prepare(`SELECT ch.sequence,r.record_id,r.revision,r.deleted,
+        m.marker_object_key,m.marker_version_id,m.marker_sha256,m.marker_bytes FROM pa_owner_record_changes ch
+        JOIN pa_records r ON r.owner_id=ch.owner_id AND r.record_id=ch.record_id
+        LEFT JOIN pa_record_commit_markers m ON m.owner_id=r.owner_id AND m.record_id=r.record_id AND m.revision=r.revision
+        WHERE ch.owner_id=? AND ch.sequence>? AND ch.sequence<=? ORDER BY ch.sequence LIMIT 16`)
+        .bind(ownerId,plan.after,state.sequence).all<InventoryPageRow & {sequence:number}>()).results;
+      if(!rows.length)throw unavailable();
+      const records:OwnerRecoveryImage['records']=[];
+      for(const row of rows){
+        if(!safeInteger(row.sequence,plan.pendingAfter+1) || row.sequence>state.sequence || !row.record_id
+          || !row.marker_object_key || (row.deleted!==0 && row.deleted!==1))throw unavailable();
+        plan.pendingAfter=row.sequence;
+        const value={recordId:row.record_id,revision:row.revision,deleted:row.deleted===1,
+          marker:{key:row.marker_object_key,versionId:row.marker_version_id,sha256:row.marker_sha256,bytes:row.marker_bytes}};
+        const at=records.findIndex(record=>record.recordId===value.recordId);
+        if(at<0)records.push(value);else records[at]=value;
+      }
+      records.sort((a,b)=>a.recordId.localeCompare(b.recordId));valid({...image,records});
+      plan.tree=await tree.begin(plan.root,records.map(value=>({key:value.recordId.replaceAll('-',''),value})));
+    }else if(plan.tree){
+      // At most 26 provider operations: 4*(GET+open), 4*(seal+open+PUT+HEAD),
+      // and the two identity/contact opens above. Publication is separate.
+      const step=await tree.step(plan.tree,{maxReads:4,maxWrites:4},{
+        validate:(before,next)=>{
+          if(!before)return;
+          const a=before.value as OwnerRecoveryImage['records'][number],b=next.value as OwnerRecoveryImage['records'][number];
+          if(a.recordId!==b.recordId || a.revision>b.revision || (a.deleted && !b.deleted)
+            || (a.revision===b.revision && canonicalJSON(a)!==canonicalJSON(b)))throw unavailable();
+        },
+        durablePreparedNode:async(node,hash,count,stepId)=>{
+          const serialized=canonicalJSON(node);
+          if(new TextEncoder().encode(serialized).length>128*1024)throw unavailable();
+          type Prepared={object_key:string;ciphertext:unknown};
+          const select=()=>db.prepare(`SELECT object_key,ciphertext FROM pa_owner_delta_nodes
+            WHERE owner_id=? AND work_id=? AND step_id=?`).bind(ownerId,work!.work_id,stepId).first<Prepared>();
+          let prepared=await select();
+          if(!prepared){
+            const sealed=await this.keys.seal(new TextEncoder().encode(serialized),{ownerId,purpose:'recovery'});
+            await db.prepare(`INSERT OR IGNORE INTO pa_owner_delta_nodes(owner_id,work_id,step_id,object_key,ciphertext,checkpoint_revision)
+              SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM pa_owner_delta_work WHERE owner_id=? AND work_id=? AND revision=?) AND ${fence}
+                AND (SELECT count(*) FROM pa_owner_delta_nodes WHERE owner_id=? AND confirmed=0)<32`)
+              .bind(ownerId,work!.work_id,stepId,`recovery/v1/${ownerId}/record/${crypto.randomUUID()}`,sealed,
+                work!.revision,ownerId,work!.work_id,work!.revision,...bindings,ownerId).run();
+            prepared=await select();
+          }
+          if(!prepared || !prepared.object_key.startsWith(`recovery/v1/${ownerId}/record/`))throw unavailable();
+          const sealed=blob(prepared.ciphertext,136*1024);
+          const opened=await this.keys.open(sealed,{ownerId,purpose:'recovery'});
+          try{if(new TextDecoder('utf-8',{fatal:true}).decode(opened)!==serialized)throw unavailable();}
+          finally{opened.fill(0);}
+          const object=await this.s3.putVersioned(prepared.object_key,sealed);
+          const confirmed=await db.prepare(`UPDATE pa_owner_delta_nodes SET confirmed=1
+            WHERE owner_id=? AND work_id=? AND step_id=? AND object_key=? AND ciphertext=? RETURNING step_id`)
+            .bind(ownerId,work!.work_id,stepId,object.key,sealed).all();
+          if(confirmed.results.length!==1)throw unavailable();
+          return {object,prefix:node.prefix,count,hash};
+        },
+      });
+      plan.tree=step.plan;
+      if(step.root){plan.root=step.root;plan.after=plan.pendingAfter;plan.tree=null;}
+    }else{
+      if(plan.after!==state.sequence || plan.root.count!==state.count)throw unavailable();
+      const publish=()=>this.publishTree(db,state,plan.root,now,false);
+      const reference=typeof this.s3.withOwnerWriteGroup==='function'
+        ? await this.s3.withOwnerWriteGroup(ownerId,scoped=>new OwnerRecoveryCopy(this.keys,scoped,this.identityIndexSecret,this.options)
+          .publishTree(db,state,plan.root,now,false)) : await publish();
+      await db.batch([db.prepare('DELETE FROM pa_owner_delta_nodes WHERE owner_id=? AND work_id=? AND confirmed=1').bind(ownerId,work.work_id),
+        db.prepare('DELETE FROM pa_owner_delta_work WHERE owner_id=? AND work_id=?').bind(ownerId,work.work_id)]);
+      return {status:'complete',reference};
+    }
+    const next={...work,plan_json:canonicalJSON(plan),revision:work.revision+1};
+    if(next.plan_json.length>1024*1024)throw unavailable();
+    const {plan_mac:unused,...signed}=next;
+    const advanced=await db.prepare(`UPDATE pa_owner_delta_work SET plan_json=?,plan_mac=?,revision=?
+      WHERE owner_id=? AND work_id=? AND revision=? AND ${fence} RETURNING work_id`)
+      .bind(next.plan_json,await mac(signed),next.revision,ownerId,work.work_id,work.revision,...bindings).all();
+    if(advanced.results.length!==1)throw unavailable();
+    await db.prepare(`DELETE FROM pa_owner_delta_nodes WHERE owner_id=? AND work_id=? AND checkpoint_revision<=? AND confirmed=1`)
+      .bind(ownerId,work.work_id,work.revision).run();
+    return {status:'pending'};
+  }
+
   private async copyCurrentUngrouped(db: D1Database, ownerId: string, now: number): Promise<RecoveryObject> {
     if (!safeInteger(now, 1)) throw unavailable();
     if (!this.options.pagedWrites) return this.copyCurrentFull(db, ownerId, now);
@@ -525,7 +698,7 @@ export class OwnerRecoveryCopy {
     } catch { throw unavailable(); }
   }
 
-  private async publishTree(db:D1Database,state:DeltaState,root:TreeRef,now:number):Promise<RecoveryObject> {
+  private async publishTree(db:D1Database,state:DeltaState,root:TreeRef,now:number,allowFullFallback=true):Promise<RecoveryObject> {
     const image=state.image,ownerId=image.ownerId;
     const tree=new ImmutableRecordTree(ownerId,'owner-inventory-v1',this.keys,this.s3);
     const expected: PagedImage = {...wireHeader(image),version:3,recordsTree:root};
@@ -560,7 +733,10 @@ export class OwnerRecoveryCopy {
     // A verified old cursor remains usable if a newer version was inserted
     // but its readback/cursor publication was interrupted. Reconcile legacy
     // v2 writers only through the separately bounded full-inventory path.
-    if (restored.version===2) return this.copyCurrentFull(db,ownerId,now);
+    if (restored.version===2) {
+      if(!allowFullFallback)throw unavailable();
+      return this.copyCurrentFull(db,ownerId,now);
+    }
     if (restored.recordsTree.count!==root.count || restored.recordsTree.hash!==root.hash
       || canonicalJSON(wireHeader(decodedHeader(restored)))!==canonicalJSON(wireHeader(image))) throw unavailable();
     await tree.verifyRoot(restored.recordsTree);
@@ -734,7 +910,9 @@ export class OwnerRecoveryCopy {
       for (const row of rows) {
         if (!ownerPattern.test(row.owner_id)) throw unavailable();
         try {
-          await this.copyCurrent(db, row.owner_id, now);
+          const staged=await this.recoverStagedMetadata(db,row.owner_id,now);
+          if(staged.status==='pending')throw new ServiceError('OWNER_RECOVERY_PENDING',503);
+          if(staged.status==='none')await this.copyCurrent(db, row.owner_id, now);
           await db.prepare('DELETE FROM pa_owner_recovery_repair_failures WHERE owner_id=?')
             .bind(row.owner_id).run();
         } catch (error) {

@@ -18,6 +18,9 @@ const receiptPattern = /^[A-Za-z0-9._:-]{16,256}$/u;
 type Row = { owner_id: string; revision: number; episode: number; verified_status: VerifiedMembershipStatus;
   checked_at: number; expired_at: number | null; due_at: number | null; paused_at: number | null;
   notice_not_before_at: number; final_notice_delivered_at: number | null; final_notice_receipt: string | null };
+type RefreshOwner = { owner_id: string; billing_account_id: string; epoch: number; retention_revision: number | null };
+const refreshOwnerFence = `EXISTS(SELECT 1 FROM pa_owners o JOIN pa_membership_links l ON l.owner_id=o.owner_id
+  WHERE o.owner_id=? AND o.epoch=? AND o.disabled=0 AND o.purge_fence_id IS NULL AND l.billing_account_id=?)`;
 export type RetentionState = { ownerId: string; revision: number; episode: number;
   status: VerifiedMembershipStatus; checkedAt: number; expiredAt: number | null;
   dueAt: number | null; pausedAt: number | null; finalNoticeDeliveredAt: number | null };
@@ -152,18 +155,93 @@ export class RetentionLedger {
   async refreshBatch(statusForBillingAccount: (billingAccountId: string) => Promise<VerifiedMembershipObservation>,
     limit = 20): Promise<number> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
-    const rows = await this.db.prepare(`SELECT l.owner_id,l.billing_account_id
-      FROM pa_membership_links l JOIN pa_owners o ON o.owner_id=l.owner_id
-      LEFT JOIN pa_retention r ON r.owner_id=l.owner_id
-      WHERE o.disabled=0 ORDER BY COALESCE(r.checked_at,0),l.owner_id LIMIT ?`)
-      .bind(limit).all<{ owner_id: string; billing_account_id: string }>();
-    for (const row of rows.results) {
-      let status: VerifiedMembershipObservation;
-      try { status = await statusForBillingAccount(row.billing_account_id); }
-      catch { status = 'unknown'; }
-      await this.observeMembership(row.owner_id, status);
+    const seen = new Set<string>();
+    while (seen.size < limit) {
+      const reservation = await this.reserveRefreshOwner(seen);
+      if (!reservation) break;
+      const { row, revision, retryPending } = reservation;
+      seen.add(row.owner_id);
+      try {
+        let observation: VerifiedMembershipObservation;
+        try { observation = await statusForBillingAccount(row.billing_account_id); }
+        catch { observation = 'unknown'; }
+        await this.observeChecked(row.owner_id, typeof observation === 'string' ? observation : observation.status,
+          typeof observation === 'string' ? null : observation.endedAt, row);
+        const completed = await this.db.prepare(`UPDATE pa_retention_scan_cursor SET retry_pending=0
+          WHERE singleton=1 AND revision=? AND last_owner_id=? AND retry_pending=?`)
+          .bind(revision, row.owner_id, retryPending).run();
+        if (completed.meta.changes !== 1) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+      } catch { throw new ServiceError('RETENTION_UNAVAILABLE', 503); }
     }
-    return rows.results.length;
+    return seen.size;
+  }
+
+  private async reserveRefreshOwner(seen: ReadonlySet<string>): Promise<{
+    row: RefreshOwner; revision: number; retryPending: number;
+  } | null> {
+    await this.db.prepare(`INSERT OR IGNORE INTO pa_retention_scan_cursor(singleton,revision,last_owner_id)
+      VALUES(1,0,'')`).run();
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const cursor = await this.db.prepare('SELECT revision,last_owner_id,retry_pending FROM pa_retention_scan_cursor WHERE singleton=1')
+        .first<{ revision: number; last_owner_id: string; retry_pending: number }>();
+      if (!cursor || !Number.isSafeInteger(cursor.revision) || cursor.revision < 0
+        || cursor.revision >= Number.MAX_SAFE_INTEGER || typeof cursor.last_owner_id !== 'string'
+        || (cursor.last_owner_id !== '' && !ownerPattern.test(cursor.last_owner_id))
+        || (cursor.retry_pending !== 0 && cursor.retry_pending !== 1)
+        || (cursor.retry_pending === 1 && cursor.last_owner_id === '')) {
+        throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+      }
+      // A concurrent invocation may have left a new pending reservation.
+      // Retrying it requires a fresh invocation, not our partly spent budget.
+      if (cursor.retry_pending === 1 && seen.size > 0) return null;
+      const scan = (after: string, retry = false) => this.db.prepare(`SELECT l.owner_id,l.billing_account_id,o.epoch,r.revision AS retention_revision
+        FROM pa_membership_links l JOIN pa_owners o ON o.owner_id=l.owner_id
+        LEFT JOIN pa_retention r ON r.owner_id=l.owner_id
+        WHERE o.disabled=0 AND o.purge_fence_id IS NULL AND l.owner_id${retry ? '=' : '>'}?
+        ORDER BY l.owner_id LIMIT 1`).bind(after).all<RefreshOwner>();
+      // Retry a failed/crashed normal reservation once with a fresh request
+      // budget. Consume that retry before I/O so a permanent failure cannot
+      // block the population. This cursor is never recovery/deletion evidence.
+      let rows = cursor.retry_pending === 1 ? (await scan(cursor.last_owner_id, true)).results : [];
+      const retry = rows.length > 0;
+      if (!rows.length) rows = (await scan(cursor.last_owner_id)).results;
+      if (!rows.length && cursor.last_owner_id !== '' && seen.size === 0) rows = (await scan('')).results;
+      if (!rows.length) {
+        if (cursor.retry_pending === 1) {
+          // The pending owner may have been disabled or removed since reserve.
+          const cleared = await this.db.prepare(`UPDATE pa_retention_scan_cursor SET revision=revision+1,retry_pending=0
+            WHERE singleton=1 AND revision=? AND last_owner_id=? AND retry_pending=1`)
+            .bind(cursor.revision, cursor.last_owner_id).run();
+          if (cleared.meta.changes !== 1) continue;
+        }
+        return null;
+      }
+      const row = rows[0]!;
+      // Do not reserve a duplicate and leave an unprocessed pending marker.
+      if (seen.has(row.owner_id)) return null;
+      const retryPending = retry ? 0 : 1;
+      // The advisory scan can race erasure/revocation. Validate the same owner
+      // authority inside the cursor mutation, before any provider call.
+      const reserved = await this.db.prepare(`UPDATE pa_retention_scan_cursor SET revision=revision+1,last_owner_id=?,retry_pending=?
+        WHERE singleton=1 AND revision=? AND last_owner_id=? AND retry_pending=? AND ${refreshOwnerFence}`)
+        .bind(row.owner_id, retryPending, cursor.revision, cursor.last_owner_id, cursor.retry_pending,
+          row.owner_id, row.epoch, row.billing_account_id).run();
+      if (reserved.meta.changes === 1) return { row, revision: cursor.revision + 1, retryPending };
+    }
+    throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+  }
+
+  private async acknowledgeRefresh(refresh: RefreshOwner, row: Row): Promise<RetentionState> {
+    const fence = async () => {
+      const current = await this.db.prepare(`SELECT 1 AS present FROM pa_retention r WHERE r.owner_id=?
+        AND r.revision=? AND ${refreshOwnerFence}`)
+        .bind(refresh.owner_id, row.revision, refresh.owner_id, refresh.epoch, refresh.billing_account_id).first();
+      if (!current) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    };
+    await fence();
+    const state = await this.acknowledge(refresh.owner_id, row);
+    await fence();
+    return state;
   }
 
   private async read(ownerId: string): Promise<Row> {
@@ -181,6 +259,11 @@ export class RetentionLedger {
 
   /** Call with a fresh private-billing result, or unknown on explicit check failure. */
   async observe(ownerId: string, status: VerifiedMembershipStatus, verifiedEndedAt: number | null = null): Promise<RetentionState> {
+    return this.observeChecked(ownerId, status, verifiedEndedAt);
+  }
+
+  private async observeChecked(ownerId: string, status: VerifiedMembershipStatus,
+    verifiedEndedAt: number | null, refresh?: RefreshOwner): Promise<RetentionState> {
     if (!ownerPattern.test(ownerId) || !['active', 'grace', 'expired', 'unknown'].includes(status)) {
       throw new ServiceError('RETENTION_UNAVAILABLE', 503);
     }
@@ -189,15 +272,22 @@ export class RetentionLedger {
         || verifiedEndedAt <= 0 || verifiedEndedAt > observedAt)) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
     // A ledger row is allowed only for a fixed owner↔billing link, never an
     // unlinked or disabled owner supplied by a caller.
-    await this.db.prepare(`INSERT OR IGNORE INTO pa_retention(owner_id)
+    const inserted = !refresh || refresh.retention_revision === null ? await this.db.prepare(`INSERT OR IGNORE INTO pa_retention(owner_id)
       SELECT l.owner_id FROM pa_membership_links l JOIN pa_owners o ON o.owner_id=l.owner_id
-      WHERE l.owner_id=? AND o.disabled=0`).bind(ownerId).run();
+      WHERE l.owner_id=? AND o.disabled=0 ${refresh ? `AND ${refreshOwnerFence}` : ''}
+      RETURNING owner_id`)
+      .bind(ownerId, ...(refresh ? [ownerId, refresh.epoch, refresh.billing_account_id] : [])).run() : null;
+    if (refresh && refresh.retention_revision === null && inserted?.results.length !== 1) {
+      throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+    }
+    const acknowledge = (row: Row) => refresh ? this.acknowledgeRefresh(refresh, row) : this.acknowledge(ownerId, row);
     for (let attempt = 0; attempt < 4; attempt++) {
       const current = await this.read(ownerId);
+      if (refresh && current.revision !== (refresh.retention_revision ?? 1)) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       if (observedAt < current.checked_at || (observedAt === current.checked_at
           && status !== current.verified_status)) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
       if (observedAt === current.checked_at && (verifiedEndedAt === null
-          || current.expired_at !== null && verifiedEndedAt <= current.expired_at)) return this.acknowledge(ownerId, current);
+          || current.expired_at !== null && verifiedEndedAt <= current.expired_at)) return acknowledge(current);
       const stable = status === current.verified_status
         && (status === 'expired'
           ? current.expired_at !== null && current.due_at !== null && current.paused_at === null
@@ -210,8 +300,11 @@ export class RetentionLedger {
               && current.final_notice_delivered_at === null && current.final_notice_receipt === null)
         && ((current.final_notice_delivered_at === null) === (current.final_notice_receipt === null));
       if (stable && (verifiedEndedAt === null || current.expired_at !== null && verifiedEndedAt <= current.expired_at)
-          && observedAt - current.checked_at < unchangedObservationInterval) {
-        return this.acknowledge(ownerId, current);
+          && (observedAt - current.checked_at < unchangedObservationInterval
+            || refresh !== undefined && (status === 'active' || status === 'grace'))) {
+        // Only scheduled, unchanged non-expiry observations omit a new header.
+        // Fresh authority and owner recovery/final fences still run every time.
+        return acknowledge(current);
       }
       let episode = current.episode;
       let expiredAt = current.expired_at;
@@ -250,10 +343,17 @@ export class RetentionLedger {
         notice_not_before_at=?,final_notice_delivered_at=?,final_notice_receipt=?
         WHERE owner_id=? AND revision=? AND EXISTS
         (SELECT 1 FROM pa_owners WHERE owner_id=? AND disabled=0)
+        ${refresh ? `AND ${refreshOwnerFence}` : ''}
         RETURNING revision`)
         .bind(episode, status, observedAt, expiredAt, dueAt, pausedAt,
-          noticeNotBeforeAt, noticeAt, receipt, ownerId, current.revision, ownerId).run();
-      if (result.results.length === 1) return this.acknowledge(ownerId, await this.read(ownerId));
+          noticeNotBeforeAt, noticeAt, receipt, ownerId, current.revision, ownerId,
+          ...(refresh ? [ownerId, refresh.epoch, refresh.billing_account_id] : [])).run();
+      if (result.results.length === 1) {
+        const updated = await this.read(ownerId);
+        if (refresh && updated.revision !== current.revision + 1) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
+        return acknowledge(updated);
+      }
+      if (refresh) throw new ServiceError('RETENTION_UNAVAILABLE', 503);
     }
     throw new ServiceError('RETENTION_UNAVAILABLE', 503);
   }

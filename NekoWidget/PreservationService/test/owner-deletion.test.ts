@@ -9,6 +9,7 @@ import type { S3RecoveryCopy, RecoveryVersion } from '../src/s3-recovery-copy';
 import { route } from '../src/index';
 import { RecoveryWriteLease } from '../src/recovery-write-lease';
 import { OwnerQuarantineRestore } from '../src/owner-quarantine-restore';
+import { insertOwnerWork } from './owner-work-fixture';
 
 const { DB: db, ARCHIVE: bucket } = env as unknown as { DB: D1Database; ARCHIVE: R2Bucket };
 const now = () => 100_000;
@@ -49,6 +50,50 @@ async function finish(executor: OwnerDeletionExecutor, ownerId: string) {
 }
 
 describe('explicit owner-requested deletion', () => {
+  it.each(['cursor', 'pa_tool_metadata_batches', 'pa_owner_delta_work', 'pa_owner_delta_nodes'] as const)
+    ('blocks the old owner DELETE with %s residue and lets the current eraser clear it', async residueKind => {
+      const f = await fixture(); const owner = f.session.ownerId;
+      await f.requests.request(f.session.token, f.receipt);
+      // Advance the real current executor only to the old final DELETE boundary.
+      // All older child rows are gone; deletion authority remains real D1 state.
+      let ready = false;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const residue = await inspectOwnerD1Residue(db, owner);
+        if (residue.contentTotal === 1 && residue.content.pa_owners === 1) { ready = true; break; }
+        expect(await f.executor.step(owner)).toBe('processing');
+      }
+      expect(ready).toBe(true);
+      const request = await f.journal.request(owner);
+      expect(request).not.toBeNull();
+      expect(await db.prepare('SELECT owner_id FROM pa_owner_requested_erasing_authority WHERE owner_id=?')
+        .bind(owner).first()).toEqual({ owner_id: owner });
+      if (residueKind === 'cursor') {
+        await db.prepare('UPDATE pa_retention_scan_cursor SET last_owner_id=?,revision=7,retry_pending=1 WHERE singleton=1')
+          .bind(owner).run();
+      } else {
+        await insertOwnerWork(db, owner);
+        for (const table of ['pa_tool_metadata_batches', 'pa_owner_delta_work', 'pa_owner_delta_nodes']) {
+          if (table !== residueKind) await db.prepare(`DELETE FROM ${table} WHERE owner_id=?`).bind(owner).run();
+        }
+      }
+      // Same final owner DELETE used by the old owner-requested executor.
+      await expect(db.prepare(`DELETE FROM pa_owners WHERE rowid IN
+        (SELECT rowid FROM pa_owners WHERE owner_id=? LIMIT 128)
+        AND EXISTS(SELECT 1 FROM pa_owner_requested_erasing_authority WHERE owner_id=? AND request_id=?)`)
+        .bind(owner, owner, request!.requestId).run())
+        .rejects.toThrow(residueKind === 'cursor' ? 'RETENTION_SCAN_CURSOR_NOT_CLEARED' : 'FOREIGN KEY');
+      expect(await db.prepare('SELECT owner_id FROM pa_owners WHERE owner_id=?').bind(owner).first())
+        .toEqual({ owner_id: owner });
+      expect(await f.requests.status(owner, f.receipt)).toEqual({ state: 'processing' });
+      await finish(f.executor, owner);
+      expect(await f.requests.status(owner, f.receipt)).toEqual({ state: 'completed' });
+      expect((await inspectOwnerD1Residue(db, owner)).contentTotal).toBe(0);
+      if (residueKind === 'cursor') {
+        expect(await db.prepare('SELECT revision,last_owner_id,retry_pending FROM pa_retention_scan_cursor').first())
+          .toEqual({ revision: 8, last_owner_id: '', retry_pending: 0 });
+      }
+    });
+
   it('visits later requests when the first batch remains blocked', async () => {
     const f = await fixture();
     for (let i = 0; i < 12; i++) {
@@ -100,6 +145,10 @@ describe('explicit owner-requested deletion', () => {
   it('erases all cloud versions and D1 content, resumes after interruption, leaves the other owner intact', async () => {
     const f = await fixture();
     const other = await f.auth.establish({ ...f.identity, subject: crypto.randomUUID() });
+    await insertOwnerWork(db, f.session.ownerId);
+    await insertOwnerWork(db, other.ownerId);
+    await db.prepare('UPDATE pa_retention_scan_cursor SET last_owner_id=?,revision=7,retry_pending=1 WHERE singleton=1')
+      .bind(f.session.ownerId).run();
     const exportLease = crypto.randomUUID();
     await db.prepare(`UPDATE pa_owners SET http_request_count=30,
       http_request_minute=CAST(unixepoch()/60 AS INTEGER),export_lease_id=?,export_lease_expires_at=?
@@ -151,6 +200,14 @@ describe('explicit owner-requested deletion', () => {
     expect(residue.contentTotal).toBe(0);
     expect(residue.content.pa_tool_snapshot_references).toBe(0);
     expect(residue.content.pa_tool_part_delete_claims).toBe(0);
+    const otherResidue = await inspectOwnerD1Residue(db, other.ownerId);
+    for (const table of ['pa_tool_metadata_batches', 'pa_owner_delta_work', 'pa_owner_delta_nodes']) {
+      expect(residue.content[table]).toBe(0);
+      expect(otherResidue.content[table]).toBe(1);
+    }
+    expect(residue.recoveryRepairCursors.pa_retention_scan_cursor).toBe(0);
+    expect(await db.prepare('SELECT last_owner_id,revision,retry_pending FROM pa_retention_scan_cursor WHERE singleton=1').first())
+      .toEqual({ last_owner_id: '', revision: 8, retry_pending: 0 });
     expect(residue.purgeWorkTotal).toBe(0);
     expect(await f.requests.status(f.session.ownerId, f.receipt)).toEqual({ state: 'completed' });
     await expect(f.journal.assertNotRequested(f.session.ownerId)).rejects.toThrow();

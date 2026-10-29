@@ -14,6 +14,7 @@ export const ownerContentTables = [
   'pa_owner_recovery_repair_failures', 'pa_owner_recovery_versions',
   'pa_owner_record_counters', 'pa_owner_record_changes', 'pa_owner_recovery_tree_cursors',
   'pa_owner_recovery_builds',
+  'pa_tool_metadata_batches', 'pa_owner_delta_work', 'pa_owner_delta_nodes',
   'pa_offline_recovery_jobs', 'pa_offline_recovery_objects', 'pa_offline_recovery_owners',
   'pa_offline_recovery_expected', 'pa_offline_recovery_revisions', 'pa_offline_recovery_heads',
   'pa_owners', 'pa_record_commit_markers', 'pa_record_delete_intents',
@@ -34,12 +35,16 @@ export const purgeWorkTables = [
 export const ownerCursorTables = [
   'pa_expiry_review_cursor', 'pa_notice_scan_cursor',
 ] as const;
+export const lastOwnerCursorTables = [
+  'pa_recovery_repair_cursor', 'pa_owner_recovery_repair_cursor', 'pa_retention_scan_cursor',
+] as const;
 /** Child-first order for the eventual owner eraser. The FK test below fails
  * on a new table or dependency. This list does not itself issue DELETEs:
  * erasing proof, external copy verification, and policy-specific trigger
  * changes are still required before any row may be removed.
  */
 export const ownerD1DeleteOrder = [
+  'pa_owner_delta_nodes', 'pa_owner_delta_work', 'pa_tool_metadata_batches',
   'pa_offline_recovery_heads', 'pa_offline_recovery_revisions', 'pa_offline_recovery_expected',
   'pa_offline_recovery_owners', 'pa_offline_recovery_objects', 'pa_offline_recovery_jobs',
   'pa_device_session_challenges',
@@ -85,10 +90,10 @@ export async function inspectOwnerD1Residue(db: D1Database,
     FROM pa_expiry_review_cursor WHERE owner_id=?`).bind(ownerId));
   statements.push(db.prepare(`SELECT 'pa_notice_scan_cursor' AS source, COUNT(*) AS n
     FROM pa_notice_scan_cursor WHERE owner_id=?`).bind(ownerId));
-  statements.push(db.prepare(`SELECT 'pa_recovery_repair_cursor' AS source, COUNT(*) AS n
-    FROM pa_recovery_repair_cursor WHERE last_owner_id=?`).bind(ownerId));
-  statements.push(db.prepare(`SELECT 'pa_owner_recovery_repair_cursor' AS source, COUNT(*) AS n
-    FROM pa_owner_recovery_repair_cursor WHERE last_owner_id=?`).bind(ownerId));
+  for (const table of lastOwnerCursorTables) {
+    statements.push(db.prepare(`SELECT '${table}' AS source, COUNT(*) AS n
+      FROM ${table} WHERE last_owner_id=?`).bind(ownerId));
+  }
   try {
     const results = await db.batch<CountRow>(statements);
     const rows = results.flatMap(result => result.results);
@@ -109,8 +114,9 @@ export async function inspectOwnerD1Residue(db: D1Database,
     const content = pick(ownerContentTables);
     const purgeWork = pick(purgeWorkTables);
     const ownerCursors = pick(ownerCursorTables);
-    const recoveryRepairCursors = pick([
-      'pa_recovery_repair_cursor', 'pa_owner_recovery_repair_cursor']);
+    // Keep the established result field for every last_owner_id cursor so
+    // all existing completion/cleanup gates include the scheduling residue.
+    const recoveryRepairCursors = pick(lastOwnerCursorTables);
     const pendingPhotoDeletes = values.get('pa_pending_deletes');
     if (pendingPhotoDeletes === undefined) throw unavailable();
     const contentTotal = Object.values(content).reduce((sum, n) => sum + n, 0);
