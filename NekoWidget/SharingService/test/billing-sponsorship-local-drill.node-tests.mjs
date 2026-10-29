@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,11 @@ import test from "node:test";
 import { runBillingSponsorshipLocalDrill } from "../scripts/billing-sponsorship-local-drill.mjs";
 
 const serviceDirectory = join(dirname(fileURLToPath(import.meta.url)), "..");
+// Compare the drill's explicitly reviewed list with the actual migration
+// directory, so omitting a new migration fails without maintaining a second
+// hard-coded count that breaks after an otherwise successful drill.
+const expectedMigrationCount = readdirSync(join(serviceDirectory, "migrations"))
+  .filter((name) => name.endsWith(".sql")).length;
 const scriptPath = join(
   serviceDirectory,
   "scripts",
@@ -15,7 +20,7 @@ const scriptPath = join(
 
 test("applies every migration and completes the isolated gate drill", () => {
   assert.deepEqual(runBillingSponsorshipLocalDrill(), {
-    migrationsApplied: 53,
+    migrationsApplied: expectedMigrationCount,
     checksPassed: 12,
     identifiersEmitted: 0,
   });
@@ -31,7 +36,7 @@ test("CLI emits aggregate PASS evidence without synthetic identifiers", () => {
   assert.equal(execution.stderr, "");
   assert.equal(
     execution.stdout,
-    "billing sponsorship local drill: PASS (migrations=53, checks=12, identifiers=0)\n",
+    `billing sponsorship local drill: PASS (migrations=${expectedMigrationCount}, checks=12, identifiers=0)\n`,
   );
   assert.doesNotMatch(execution.stdout, /[0-9a-f]{8}-[0-9a-f-]{27}/iu);
   assert.doesNotMatch(

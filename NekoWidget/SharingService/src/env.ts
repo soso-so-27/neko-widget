@@ -37,6 +37,8 @@ export interface Env extends GroupReportMailEnv {
   /// Independent family-notebook payer boundary. No public router/admission
   /// is connected yet; absent remains OFF even when photo groups are enabled.
   FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED?: string;
+  /// Admission safety limit, independently configurable before public rollout.
+  FAMILY_NOTEBOOK_MAX_MEMBERS?: string;
   /// Exact, independent switch for APNs registration and dispatch. Secrets
   /// alone never enable push traffic.
   APNS_RUNTIME_ENABLED?: string;

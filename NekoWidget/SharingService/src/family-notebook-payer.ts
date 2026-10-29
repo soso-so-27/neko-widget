@@ -39,20 +39,20 @@ export interface FamilyNotebookPayerState {
   canDissolve: boolean;
 }
 
-function storeEnvironment(env: Env): 'Production' | 'Sandbox' | null {
+export function storeEnvironment(env: Env): 'Production' | 'Sandbox' | null {
   if (!billingEffectiveEntitlementRuntimeEnabled(env)) return null;
   if (env.BILLING_STORE_ENVIRONMENT === 'Production') return 'Production';
   if (env.BILLING_STORE_ENVIRONMENT === 'Sandbox' && ['local', 'staging'].includes(env.ENVIRONMENT)) return 'Sandbox';
   return null;
 }
-async function gate(env: Env): Promise<void> {
+export async function gate(env: Env): Promise<void> {
   if (env.FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED !== 'YES') {
     throw new ApiError(503, 'family_notebook_disabled', 'Family notebooks are unavailable.');
   }
   const row = await env.DB.prepare('SELECT enabled FROM family_notebook_runtime_gate WHERE singleton=1').first<{ enabled: number }>();
   if (row?.enabled !== 1) throw new ApiError(503, 'family_notebook_disabled', 'Family notebooks are unavailable.');
 }
-function safeFailure(error: unknown): never {
+export function safeFailure(error: unknown): never {
   if (error instanceof ApiError) throw error;
   const message = error instanceof Error ? error.message : '';
   const codes: [string, number, string][] = [
@@ -63,6 +63,13 @@ function safeFailure(error: unknown): never {
     ['family_notebook_stale_generation', 409, 'family_notebook_stale_generation'],
     ['family_notebook_claim_unavailable', 409, 'family_notebook_claim_unavailable'],
     ['family_notebook_plus_required', 403, 'plus_entitlement_required'],
+    ['family_notebook_already_in_family', 409, 'family_notebook_already_in_family'],
+    ['family_notebook_invitation_unavailable', 410, 'family_notebook_invitation_unavailable'],
+    ['family_notebook_request_not_pending', 409, 'family_notebook_request_not_pending'],
+    ['family_notebook_not_allowed', 403, 'family_notebook_not_allowed'],
+    ['family_notebook_member_limit', 409, 'family_notebook_member_limit'],
+    ['family_notebook_rate_limited', 429, 'rate_limited'],
+    ['family_notebook_paused', 403, 'family_notebook_paused'],
     ['group_request_nonces.device_id', 401, 'replay'],
   ];
   for (const [marker, status, code] of codes) {
