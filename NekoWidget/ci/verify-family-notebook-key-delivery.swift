@@ -2,8 +2,11 @@ import CryptoKit
 import Foundation
 
 private enum Failure: Error { case check(String), lost }
+private func stage(_ message: String) {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+}
 private func check(_ value: Bool, _ message: String) throws {
-    if !value { print("Synthetic key relay check failed: " + message); throw Failure.check(message) }
+    if !value { stage("Synthetic key relay check failed: " + message); throw Failure.check(message) }
 }
 private func rejected(_ work: () async throws -> Void) async throws {
     do { try await work() } catch { return }
@@ -31,6 +34,14 @@ private actor Relay: GroupHTTPTransport {
         return Set(roster.members.flatMap(\.devices).map(\.id)) == Set(certificates.keys.filter { members.contains(identities[$0]!.personID) })
     }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        do { return try handle(request) }
+        catch Failure.lost { throw Failure.lost } // Expected injected interruption.
+        catch {
+            stage("Synthetic key relay failure: \(error)")
+            throw error
+        }
+    }
+    private func handle(_ request: URLRequest) throws -> GroupHTTPReply {
         let deviceID = request.value(forHTTPHeaderField: "Neko-Device-Id")!, identity = identities[deviceID]!
         let path = request.url!.path, body = request.httpBody ?? Data(), method = request.httpMethod!
         let transcript = try GroupCanonical.fields(["NW3.REQUEST", "3", deviceID, request.value(forHTTPHeaderField: "Neko-Timestamp")!,
@@ -108,12 +119,12 @@ private actor Relay: GroupHTTPTransport {
             return try .init(endpoint: endpoint, identity: who, network: .init(endpoint: endpoint, identity: who, transport: relay, journal: journal), secrets: secrets, journal: journal)
         }
         let first = try coordinator(a)
-        print("Key delivery stage: create and lost roster ACK")
+        stage("Key delivery stage: create and lost roster ACK")
         try await first.registerCreatedFamily(family)
         await relay.loseNextRoster()
         try await rejected { _ = try await first.prepare(family: family) }
         let restarted = try coordinator(a)
-        print("Key delivery stage: restart creator")
+        stage("Key delivery stage: restart creator")
         guard let original = try await restarted.prepare(family: family), original.ready else { throw Failure.check("creator restart failed") }
         try check(await relay.epoch() == 1, "lost roster ACK never creates a second epoch")
         let now = Date(), (capability, cipher) = try FamilyNotebookInvitationCrypto.create(roster: original.current, generation: 1, identity: a,
@@ -121,7 +132,7 @@ private actor Relay: GroupHTTPTransport {
         let invitation = try FamilyNotebookInvitationCrypto.open(cipher, capability: capability, serverInviterPersonID: a.personID,
             serverInviterDeviceID: a.deviceID, serverGeneration: 1, serverExpiresAt: Int64(now.timeIntervalSince1970) + 86400, now: now)
         let newcomer = try coordinator(b)
-        print("Key delivery stage: admit and register newcomer")
+        stage("Key delivery stage: admit and register newcomer")
         try await newcomer.registerInvitation(invitation); try await relay.admit(b)
         _ = try await newcomer.prepare(family: family) // Register own certificate, then wait for trusted rotation.
         let beforeApproval = await relay.delivered().count
@@ -129,17 +140,17 @@ private actor Relay: GroupHTTPTransport {
         let beforeEpoch = await relay.epoch(), afterUnapproved = await relay.delivered().count
         try check(beforeEpoch == 1 && afterUnapproved == beforeApproval, "relay cannot inject an unapproved person or receive old keys while roster is stale")
         try await restarted.confirmApprovedAddition(family: family, personID: b.personID, identityPublicKey: b.personPublicKey)
-        print("Key delivery stage: approved rotation")
+        stage("Key delivery stage: approved rotation")
         _ = try await restarted.prepare(family: family)
         await relay.loseNextKey()
-        print("Key delivery stage: lost key ACK and replay")
+        stage("Key delivery stage: lost key ACK and replay")
         try await rejected { _ = try await restarted.prepare(family: family) }
         _ = try await coordinator(a).prepare(family: family)
-        print("Key delivery stage: newcomer receives history")
+        stage("Key delivery stage: newcomer receives history")
         guard let joined = try await newcomer.prepare(family: family), joined.ready else { throw Failure.check("new member keys unavailable") }
         try check(joined.keys[1] == original.keys[1] && joined.keys[2] != nil && joined.history[1] == original.current.packet, "new member receives verified pre-join key/history plus current key")
         await relay.remove(a)
-        print("Key delivery stage: remaining member rotates")
+        stage("Key delivery stage: remaining member rotates")
         _ = try await newcomer.prepare(family: family)
         guard let remaining = try await newcomer.prepare(family: family), remaining.ready else { throw Failure.check("remaining member cannot rotate") }
         try check(remaining.current.roster.epoch == 3 && remaining.keys[3] != joined.keys[2], "departure rotates key without old payer")
@@ -149,7 +160,7 @@ private actor Relay: GroupHTTPTransport {
         try await relay.admit(c, certified: true)
         try await newcomer.confirmApprovedAddition(family: family, personID: c.personID, identityPublicKey: c.personPublicKey)
         await relay.rejectNextRoster()
-        print("Key delivery stage: rejected candidate and retry")
+        stage("Key delivery stage: rejected candidate and retry")
         try await rejected { _ = try await newcomer.prepare(family: family) }
         _ = try await coordinator(b).prepare(family: family)
         guard let recovered = try await coordinator(b).prepare(family: family), recovered.ready else { throw Failure.check("rejected proposal poisoned the key slot") }
