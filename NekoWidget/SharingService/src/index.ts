@@ -141,8 +141,8 @@ export async function route(
 
   // A separate opt-in is required even when lower family/payer pilot gates
   // are open. Absent/NO retains the previous unreachable public surface.
-  if (env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED === 'YES'
-      && (pathname === '/v3/family-notebooks' || pathname.startsWith('/v3/family-notebooks/'))) {
+  if ((pathname === '/v3/family-notebooks' || pathname.startsWith('/v3/family-notebooks/'))
+      && env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED === 'YES') {
     return familyNotebookAPI(request, env);
   }
 
