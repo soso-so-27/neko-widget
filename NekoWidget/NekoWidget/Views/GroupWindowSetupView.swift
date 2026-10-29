@@ -833,6 +833,7 @@ final class GroupJoinModel: ObservableObject {
     init(client: (any GroupWindowClient)?, invitationID: String) {
         self.client = client
         self.invitationID = invitationID
+        displayName = GroupDisplayName.remembered
     }
 
     var isAvailable: Bool { client != nil }
@@ -863,6 +864,7 @@ final class GroupJoinModel: ObservableObject {
                 displayName: trimmedName,
                 operationID: applyOperationID
             )
+            GroupDisplayName.remember(trimmedName)
             update(with: request)
         } catch {
             errorMessage = GroupWindowPresentation.message(for: error)
