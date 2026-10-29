@@ -64,6 +64,14 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupWindowStorage.swift \
   NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupWindowTransport.swift \
+  NekoWidget/Services/FamilyNotebookTransport.swift ci/verify-family-notebook-transport.swift \
+  -o "$RUNNER_TEMP/family-notebook-transport-tests"
+"$RUNNER_TEMP/family-notebook-transport-tests"
+
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
+  NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupWindowTransport.swift \
   NekoWidget/Services/GroupWindowAPIModels.swift NekoWidget/Services/GroupWindowPhotoValidation.swift \
   NekoWidget/Services/ProductionGroupWindowClient.swift ci/verify-group-adapter.swift \
   -o "$RUNNER_TEMP/group-adapter-tests"

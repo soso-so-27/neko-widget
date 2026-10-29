@@ -96,7 +96,8 @@ enum GroupHTTPRequest {
     static func make(endpoint: URL, path: String, body: Data?, identity: GroupDeviceIdentity?, now: Date = Date(), nonce: Data? = nil, method: String? = nil) throws -> URLRequest {
         guard let base = URLComponents(url: endpoint, resolvingAgainstBaseURL: false), base.scheme == "https", base.host != nil,
               base.user == nil, base.password == nil, base.query == nil, base.fragment == nil,
-              ["", "/"].contains(base.path), path.hasPrefix("/v3/group-"),
+              ["", "/"].contains(base.path),
+              (path.hasPrefix("/v3/group-") || path == "/v3/family-notebooks" || path.hasPrefix("/v3/family-notebooks/")),
               path.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [45, 47, 95].contains($0) }),
               let url = URL(string: path, relativeTo: endpoint)?.absoluteURL, url.host == base.host
         else { throw GroupClientError.invalidResponse }

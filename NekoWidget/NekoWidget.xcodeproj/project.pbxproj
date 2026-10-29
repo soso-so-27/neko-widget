@@ -179,6 +179,8 @@
 		100000000000000000000145 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000239 /* PairingView.swift */; };
 		CC2610200000000000000012 /* CatCareCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000011 /* CatCareCore.swift */; };
 		CC2610200000000000000014 /* CatCareStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000013 /* CatCareStore.swift */; };
+		FA2610290000000000000006 /* FamilyNotebookSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000005 /* FamilyNotebookSync.swift */; };
+		FA2610290000000000000004 /* FamilyNotebookTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000003 /* FamilyNotebookTransport.swift */; };
 		FA2610290000000000000002 /* FamilyNotebookCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000001 /* FamilyNotebookCrypto.swift */; };
 		FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000001 /* FamilyNotebookCore.swift */; };
 		CC2610280000000000000002 /* FamilyNotebookSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610280000000000000001 /* FamilyNotebookSharing.swift */; };
@@ -466,6 +468,8 @@
 		F00000000000000000000239 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		CC2610200000000000000011 /* CatCareCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareCore.swift; sourceTree = "<group>"; };
 		CC2610200000000000000013 /* CatCareStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareStore.swift; sourceTree = "<group>"; };
+		FA2610290000000000000005 /* FamilyNotebookSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookSync.swift; sourceTree = "<group>"; };
+		FA2610290000000000000003 /* FamilyNotebookTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookTransport.swift; sourceTree = "<group>"; };
 		FA2610290000000000000001 /* FamilyNotebookCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookCrypto.swift; sourceTree = "<group>"; };
 		FA2610260000000000000001 /* FamilyNotebookCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookCore.swift; sourceTree = "<group>"; };
 		CC2610280000000000000001 /* FamilyNotebookSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookSharing.swift; sourceTree = "<group>"; };
@@ -840,6 +844,8 @@
 				AA2610200000000000000003 /* GroupWindowContract.swift */,
 				CC2610200000000000000011 /* CatCareCore.swift */,
 				CC2610200000000000000013 /* CatCareStore.swift */,
+				FA2610290000000000000005 /* FamilyNotebookSync.swift */,
+				FA2610290000000000000003 /* FamilyNotebookTransport.swift */,
 				FA2610290000000000000001 /* FamilyNotebookCrypto.swift */,
 				FA2610260000000000000001 /* FamilyNotebookCore.swift */,
 				CC2610280000000000000001 /* FamilyNotebookSharing.swift */,
@@ -1384,6 +1390,8 @@
 				100000000000000000000145 /* PairingView.swift in Sources */,
 				CC2610200000000000000012 /* CatCareCore.swift in Sources */,
 				CC2610200000000000000014 /* CatCareStore.swift in Sources */,
+				FA2610290000000000000006 /* FamilyNotebookSync.swift in Sources */,
+				FA2610290000000000000004 /* FamilyNotebookTransport.swift in Sources */,
 				FA2610290000000000000002 /* FamilyNotebookCrypto.swift in Sources */,
 				FA2610260000000000000002 /* FamilyNotebookCore.swift in Sources */,
 				CC2610280000000000000002 /* FamilyNotebookSharing.swift in Sources */,
