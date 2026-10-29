@@ -23,6 +23,9 @@ enum PlusOfferContext: Equatable, Sendable {
     case createWindow
     /// The person who made a window opened it after it stopped.
     case continueWindow
+    /// The family notebook stopped because the payer left (1029e). Whoever
+    /// starts Plus first becomes the payer and sharing comes back.
+    case continueFamily
     case preservation
     case settings
 
@@ -36,6 +39,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .newMemo: "メモを書く"
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"
+        case .continueFamily: "家族の手帳を続ける"
         case .preservation: "保存を始める"
         case .settings: "Plusについて"
         }
@@ -50,6 +54,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .newMemo: "新しいメモはPlusで書けます。書いたメモは、いつでも読めます。"
         case .createWindow: "まどを作るのは、Plusの機能です。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
+        case .continueFamily: "家族の手帳は、家族の誰か1人のPlusで続きます。"
         case .preservation: "保存は、Plusの機能です。"
         }
     }
@@ -63,6 +68,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .newMemo: "new-memo"
         case .createWindow: "create-window"
         case .continueWindow: "continue-window"
+        case .continueFamily: "continue-family"
         case .preservation: "preservation"
         case .settings: "settings"
         }
@@ -766,7 +772,7 @@ struct MembershipOfferPreviewView: View {
     /// Every case, so a fixture run shows each entry opens the same screen.
     static let entryContexts: [PlusOfferContext] = [
         .onboarding, .widgetResume, .monthlySummary(month: 10), .newMemo,
-        .createWindow, .continueWindow, .preservation, .settings,
+        .createWindow, .continueWindow, .continueFamily, .preservation, .settings,
     ]
 
     private var previewModel: MembershipOfferModel {

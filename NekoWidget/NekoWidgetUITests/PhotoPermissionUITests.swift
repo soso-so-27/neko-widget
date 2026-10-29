@@ -3573,7 +3573,7 @@ final class SoloMemoriesUITests: XCTestCase {
             ("onboarding", nil), ("widget-resume", "ホーム画面の写真"),
             ("monthly-summary", "月のまとめ"), ("new-memo", "新しいメモ"),
             ("create-window", "まどを作る"), ("continue-window", "作った人のPlus"),
-            ("preservation", "保存"), ("settings", nil),
+            ("continue-family", "家族の誰か1人のPlus"), ("preservation", "保存"), ("settings", nil),
         ]
         XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons["membership-preview-open-monthly-summary"].label, "10月のまとめを見る")
