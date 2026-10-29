@@ -13,9 +13,6 @@ final class FamilyNotebookSharing: ObservableObject {
 
     @Published private(set) var state: FamilySharingState = .checking
     @Published private(set) var pause: FamilySharingPause?
-    /// Who pays and who was asked to take it over. Nil when it could not be
-    /// read; the screens then offer nothing about it.
-    @Published private(set) var handover: FamilyPayerHandover?
     @Published var failure: FamilySharingError?
     @Published private(set) var isWorking = false
     private var refreshing = false
@@ -32,7 +29,6 @@ final class FamilyNotebookSharing: ObservableObject {
         do {
             state = try await service.loadState()
             pause = state.membership == nil ? nil : try await service.loadPause()
-            handover = state.membership == nil ? nil : try? await service.loadHandover()
             if let real = service as? ProductionFamilyNotebookSharingService {
                 FamilyNotebookPrototype.shared.attachReal(real)
                 requests = state.membership == nil ? [] : try await real.pendingRequests()
@@ -67,8 +63,6 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
     /// became the payer afterwards.
     private var pretendedPause: FamilySharingPause?
     private var claimedPayer = false
-    /// Test only: the tried member took over the family's Plus from this person.
-    private var handedOver = false
     /// Test only, kept in memory: the one person asked to take over paying,
     /// and whether this person had Plus when asked.
     private var nomination: (id: UUID, personID: String)?
@@ -78,7 +72,7 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
     var sendsInvitations: Bool { false }
 
     private var isPayer: Bool {
-        claimedPayer || (!handedOver && !model.joinedSomeonesFamily && pretendedPause == nil)
+        claimedPayer || (!model.joinedSomeonesFamily && pretendedPause == nil)
     }
 
     private var me: String { FamilyNotebookPrototype.me.personID }
@@ -123,18 +117,6 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
         generation += 1
     }
 
-    /// 「Plus の引き継ぎを頼まれたときを試す」: the tried member, as the payer,
-    /// asks this person. If this person was paying, the tried member is taken
-    /// to have taken it over first, so it is one tap. Plus is read once.
-    func pretendNominated(hasPlus: Bool) {
-        guard model.hasFamily, nomination == nil else { return }
-        if isPayer { claimedPayer = false; handedOver = true }
-        nomination = (UUID(), me)
-        nomineeHasPlus = hasPlus
-        if case .noPayer = pretendedPause { pretendedPause = .noPayer(canClaim: false, handoverPending: true) }
-        generation += 1
-    }
-
     func loadState() async throws -> FamilySharingState {
         guard model.hasFamily else { return .notInFamily }
         return .inFamily(FamilyMembership(role: isPayer ? .payer : .member))
@@ -144,26 +126,19 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
         model.hasFamily ? pretendedPause : nil
     }
 
-    /// 「Plus で続けていた人が抜けたときを試す」: as the server would say it, with this
+    /// 「家族（試し）が Plus を使っていて抜けたときを試す」: as the server would say it, with this
     /// person's Plus as the only thing deciding `canClaim`.
     func pretendPayerLeft(hasPlus: Bool) {
         // Someone already asked keeps the request; nobody claims first then.
         pretendedPause = .noPayer(canClaim: hasPlus && nomination == nil, handoverPending: nomination != nil)
         claimedPayer = false
         if nomination?.personID == me { nomineeHasPlus = hasPlus }
-    }
-
-    /// 「…が引き受けた・断ったときを試す」: the tried member answers this
-    /// person's request.
-    func pretendNomineeAnswered(accepted: Bool) {
-        guard isPayer, let nomination, nomination.personID != me else { return }
-        self.nomination = nil
-        if accepted { claimedPayer = false; handedOver = true }
-        generation += 1
+        // The one who was paying is gone from the list, as after a real leave.
+        model.removeMember(personID: FamilyNotebookPrototype.tryout.personID)
     }
 
     private func forgetHandover() {
-        pretendedPause = nil; claimedPayer = false; handedOver = false; nomination = nil
+        pretendedPause = nil; claimedPayer = false; nomination = nil
         consentedFarewells = [:]; farewellPreviews = [:]
     }
 
