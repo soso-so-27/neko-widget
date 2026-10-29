@@ -505,8 +505,10 @@ struct FamilyNotebookView: View {
     @ObservedObject private var model = FamilyNotebookPrototype.shared
     @ObservedObject private var sharing = FamilyNotebookSharing.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.membershipAccess) private var access
     @State private var invites = false
     @State private var triesInvitation = false
+    @State private var showsPlusOffer = false
 
     var body: some View {
         NavigationStack {
@@ -533,6 +535,13 @@ struct FamilyNotebookView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
             .sheet(isPresented: $invites) { FamilyNotebookInviteView() }
             .sheet(isPresented: $triesInvitation) { FamilyNotebookJoinView() }
+            .sheet(isPresented: $showsPlusOffer, onDismiss: {
+                NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+                Task { await sharing.refresh() }
+            }) {
+                // ADR-027 5章 "家族の手帳を続ける": the same single subscription.
+                MembershipOfferSheet(model: .live(), context: .continueFamily) { _ in showsPlusOffer = false }
+            }
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(model.message ?? "") }
@@ -555,6 +564,9 @@ struct FamilyNotebookView: View {
     /// a shared note). The writing itself lives in 「この子のこと」 and the tools.
     private func notebook(_ membership: FamilyMembership) -> some View {
         List {
+            if let pause = sharing.pause {
+                pausedSection(pause)
+            }
             Section {
                 ForEach(model.members, id: \.personID) { member in
                     NavigationLink {
@@ -563,8 +575,9 @@ struct FamilyNotebookView: View {
                         Label(member.displayName, systemImage: "person.crop.circle.fill")
                     }
                 }
-                // Everyone in the family invites (the family decision in #543).
-                if membership.canInvite {
+                // Everyone in the family invites (the family decision in #543),
+                // while sharing goes on.
+                if membership.canInvite && sharing.pause == nil {
                     Button { invites = true } label: { Label("招待する", systemImage: "person.badge.plus") }
                         .accessibilityIdentifier("family-notebook-invite")
                 }
@@ -588,9 +601,67 @@ struct FamilyNotebookView: View {
                     Button("家族が書いたときを試す") { model.tryFamilyWrite() }
                     Button("2 人が同時に直したときを試す") { model.tryConflict() }
                     Button("招待を受けたときを試す") { triesInvitation = true }
+                    Button("払う人が抜けたときを試す") {
+                        (sharing.service as? FamilyNotebookPrototypeSharing)?
+                            .pretendPayerLeft(hasPlus: access.decision(for: .createPersonalMemo) == .allowed)
+                        Task { await sharing.refresh() }
+                    }
                 }
             } footer: {
                 Text("試すと「この子のこと」の接し方・トイレに（試し）の文が入ります。家族を終えると元に戻ります。")
+            }
+        }
+    }
+}
+
+extension FamilyNotebookView {
+    /// Shown while new writing does not reach the family (1029e). Everything
+    /// written stays; only sharing stops. After the payer left, anyone with
+    /// Plus may carry it on, and someone without Plus may start it.
+    private func pausedSection(_ pause: FamilySharingPause) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("家族の手帳は止まっています", systemImage: "pause.circle")
+                    .font(.headline)
+                Text(FamilyNotebookWords.pausedDetail(pause))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 4)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("family-notebook-paused")
+            if case let .noPayer(canClaim, handoverPending) = pause, !handoverPending {
+                if canClaim {
+                    Button {
+                        Task { await sharing.perform { try await sharing.service.claimPayer(operationID: $0) } }
+                    } label: {
+                        Group {
+                            if sharing.isWorking { ProgressView() } else { Text("わたしが払う人になる").font(.headline) }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(sharing.isWorking)
+                    .accessibilityIdentifier("family-notebook-claim-payer")
+                } else {
+                    Button { showsPlusOffer = true } label: {
+                        HStack(spacing: 8) {
+                            Text("Plus を始めて続ける").font(.headline)
+                            FamilyNotebookPlusMark()
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Plus を始めて続ける")
+                    .accessibilityIdentifier("family-notebook-continue-plus")
+                }
+            }
+        } footer: {
+            if case .noPayer(canClaim: true, handoverPending: false) = pause {
+                Text("あなたの Plus で、家族みんなの共有が戻ります。ほかの人を外す・家族をやめることも、あなたができるようになります。")
+            } else if case .noPayer(canClaim: false, handoverPending: false) = pause {
+                Text("先に始めた 1 人が払う人になります。ほかの人の Plus は、そのまま使えます。")
             }
         }
     }
@@ -923,6 +994,23 @@ struct FamilyNotebookButton: View {
 
 /// How the notebook's items read on screen.
 enum FamilyNotebookWords {
+    /// What stopped, and that nothing written was lost (1029e).
+    static func pausedDetail(_ pause: FamilySharingPause) -> String {
+        let kept = "これまでに書いたことは、それぞれの iPhone に残っています。"
+        switch pause {
+        case .noPayer(canClaim: _, handoverPending: true):
+            return "払っていた人が家族から抜けました。引き継ぐ人の返事を待っています。新しく書いたことは、まだ家族に届きません。" + kept
+        case .noPayer:
+            return "払っていた人が家族から抜けたので、新しく書いたことは家族に届きません。" + kept
+                + "続けるには、家族の誰か 1 人が Plus を始めてください。"
+        case .payerPlusUnverified(isPayer: true):
+            return "あなたの Plus を確かめられないため、共有を止めています。" + kept
+                + "Plus が続いていれば、確かめられしだい戻ります。"
+        case .payerPlusUnverified(isPayer: false):
+            return "払っている人の Plus を確かめられないため、共有を止めています。" + kept
+        }
+    }
+
     static func byline(_ operation: FamilyNotebookOperation) -> String {
         let date = (operation.importedSourceEditedAt ?? operation.editedAt)
             .formatted(.dateTime.month(.defaultDigits).day())

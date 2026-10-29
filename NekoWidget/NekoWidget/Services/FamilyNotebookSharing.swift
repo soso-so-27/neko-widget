@@ -23,6 +23,29 @@ enum FamilySharingState: Equatable, Sendable {
     }
 }
 
+/// Why new writing does not reach the family now (1029e). What is written
+/// stays on every iPhone; only sharing stops. Read from the server's payer
+/// state, never decided on this iPhone.
+enum FamilySharingPause: Equatable, Sendable {
+    /// The payer left without naming anyone. Whoever is confirmed first on the
+    /// server becomes the payer; `canClaim` is the server's word that this
+    /// person has Plus and may be the one.
+    case noPayer(canClaim: Bool, handoverPending: Bool)
+    /// The payer's Plus could not be confirmed. The payer stays the payer.
+    case payerPlusUnverified(isPayer: Bool)
+
+    init?(_ state: FamilyNotebookPayerState) {
+        switch (state.sharingStatus, state.pauseReason) {
+        case (.paused, .noPayer):
+            self = .noPayer(canClaim: state.canClaimPayer, handoverPending: state.nominationPending)
+        case (.paused, .payerPlusUnverified):
+            self = .payerPlusUnverified(isPayer: state.role == .payer)
+        default:
+            return nil
+        }
+    }
+}
+
 struct FamilyInvitation: Equatable, Sendable {
     var link: URL
     var expiresAt: Date
@@ -55,6 +78,8 @@ enum FamilySharingError: Error, Equatable, Sendable {
     case signInExpired, notAllowed
     case plusRequired, membershipChecking
     case staleRoster, removedOrDissolved
+    /// Someone else in the family was confirmed as the payer first.
+    case payerAlreadyChosen
     case offline, rateLimited, serviceUnavailable, unknownOutcome
     case unsupported
     /// Not possible before the family works between iPhones (the prototype).
@@ -65,7 +90,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
     var recovery: Recovery {
         switch self {
         case .offline, .rateLimited, .serviceUnavailable: .retry
-        case .unknownOutcome, .staleRoster: .reload
+        case .unknownOutcome, .staleRoster, .payerAlreadyChosen: .reload
         default: .personAction
         }
     }
@@ -83,6 +108,7 @@ enum FamilySharingError: Error, Equatable, Sendable {
         case .membershipChecking: "Plus の確認ができるまでお待ちください。"
         case .staleRoster: "家族の情報が新しくなりました。もう一度お試しください。"
         case .removedOrDissolved: "この家族の共有は終わっています。"
+        case .payerAlreadyChosen: "ほかの家族が先に払う人になりました。共有は戻っています。あなたの Plus はそのまま使えます。"
         case .offline: "つながっていません。つながってからもう一度お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .serviceUnavailable: "いまは使えません。少し待ってから、もう一度お試しください。"
@@ -100,6 +126,8 @@ protocol FamilyNotebookSharingService: AnyObject {
     /// Whether invitations can leave this iPhone (false in the prototype).
     var sendsInvitations: Bool { get }
     func loadState() async throws -> FamilySharingState
+    /// Nil while sharing goes on.
+    func loadPause() async throws -> FamilySharingPause?
     func createFamily(operationID: UUID) async throws
     func createInvitation(operationID: UUID) async throws -> FamilyInvitation
     func previewInvitation(_ link: URL?) async throws -> FamilyInvitationPreview
@@ -107,6 +135,9 @@ protocol FamilyNotebookSharingService: AnyObject {
     func leaveFamily(operationID: UUID) async throws -> FamilyExitResult
     func removeMember(personID: String, operationID: UUID) async throws
     func dissolveFamily(operationID: UUID) async throws -> FamilyExitResult
+    /// After the payer left without naming anyone: become the payer, so
+    /// sharing comes back. The server decides who came first.
+    func claimPayer(operationID: UUID) async throws
 }
 
 /// What the screens hold: the state, and one way to run an operation.
@@ -115,6 +146,7 @@ final class FamilyNotebookSharing: ObservableObject {
     static let shared = FamilyNotebookSharing(service: FamilyNotebookPrototypeSharing())
 
     @Published private(set) var state: FamilySharingState = .checking
+    @Published private(set) var pause: FamilySharingPause?
     @Published var failure: FamilySharingError?
     @Published private(set) var isWorking = false
     let service: any FamilyNotebookSharingService
@@ -124,8 +156,10 @@ final class FamilyNotebookSharing: ObservableObject {
     }
 
     func refresh() async {
-        do { state = try await service.loadState() }
-        catch { failure = error as? FamilySharingError ?? .serviceUnavailable }
+        do {
+            state = try await service.loadState()
+            pause = state.membership == nil ? nil : try await service.loadPause()
+        } catch { failure = error as? FamilySharingError ?? .serviceUnavailable }
     }
 
     /// Runs one operation with a fresh ID, then reads the state again.
@@ -150,12 +184,37 @@ final class FamilyNotebookSharing: ObservableObject {
 @MainActor
 final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
     private var model: FamilyNotebookPrototype { .shared }
+    /// Test only, kept in memory: the payer left, and whether this person
+    /// became the payer afterwards.
+    private var pretendedPause: FamilySharingPause?
+    private var claimedPayer = false
 
     var sendsInvitations: Bool { false }
 
+    private var isPayer: Bool {
+        claimedPayer || (!model.joinedSomeonesFamily && pretendedPause == nil)
+    }
+
     func loadState() async throws -> FamilySharingState {
         guard model.hasFamily else { return .notInFamily }
-        return .inFamily(FamilyMembership(role: model.joinedSomeonesFamily ? .member : .payer))
+        return .inFamily(FamilyMembership(role: isPayer ? .payer : .member))
+    }
+
+    func loadPause() async throws -> FamilySharingPause? {
+        model.hasFamily ? pretendedPause : nil
+    }
+
+    /// 「払う人が抜けたときを試す」: as the server would say it, with this
+    /// person's Plus as the only thing deciding `canClaim`.
+    func pretendPayerLeft(hasPlus: Bool) {
+        pretendedPause = .noPayer(canClaim: hasPlus, handoverPending: false)
+        claimedPayer = false
+    }
+
+    func claimPayer(operationID: UUID) async throws {
+        guard case .noPayer(canClaim: true, _)? = pretendedPause else { throw FamilySharingError.plusRequired }
+        pretendedPause = nil
+        claimedPayer = true
     }
 
     func createFamily(operationID: UUID) async throws {
@@ -184,17 +243,19 @@ final class FamilyNotebookPrototypeSharing: FamilyNotebookSharingService {
     /// tried family on this iPhone ends.
     func leaveFamily(operationID: UUID) async throws -> FamilyExitResult {
         try model.leavePrototypeFamily()
+        pretendedPause = nil; claimedPayer = false
         return .confirmed
     }
 
     func removeMember(personID: String, operationID: UUID) async throws {
-        guard model.hasFamily, !model.joinedSomeonesFamily else { throw FamilySharingError.notAllowed }
+        guard model.hasFamily, isPayer else { throw FamilySharingError.notAllowed }
         model.removeMember(personID: personID)
     }
 
     func dissolveFamily(operationID: UUID) async throws -> FamilyExitResult {
-        guard model.hasFamily, !model.joinedSomeonesFamily else { throw FamilySharingError.notAllowed }
+        guard model.hasFamily, isPayer else { throw FamilySharingError.notAllowed }
         model.endPrototypeFamily()
+        pretendedPause = nil; claimedPayer = false
         return .confirmed
     }
 }
