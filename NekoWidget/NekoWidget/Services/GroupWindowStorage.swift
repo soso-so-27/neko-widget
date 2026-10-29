@@ -83,6 +83,12 @@ struct GroupDeviceIdentity: Codable, Sendable {
     }
 }
 
+struct GroupNameCheckpoint: Codable, Sendable {
+    let rosterRevision: Int
+    let nameRevision: Int
+    let ciphertextHash: Data
+}
+
 struct GroupLocalWindow: Codable, Sendable {
     let anchor: GroupTrustAnchor
     var packet: SignedGroupRoster?
@@ -92,6 +98,8 @@ struct GroupLocalWindow: Codable, Sendable {
     var rosterHashes: [String: Data]
     var left: Bool
     var minimumAdmissionRevision: Int
+    var nameCheckpoint: GroupNameCheckpoint? = nil
+    var closed: Bool? = nil
     static func empty(anchor: GroupTrustAnchor) -> Self {
         .init(anchor: anchor, packet: nil, pinnedRevision: 0, pinnedHash: Data(), keys: [:], rosterHashes: [:], left: false, minimumAdmissionRevision: 0)
     }

@@ -22,9 +22,26 @@ enum GroupAPIModel {
         struct Metadata: Decodable {
             let windowID: String; let revision: Int; let keyEpoch: Int; let rotationRequired: Bool
             let encryptedName: Data; let nameKeyEpoch: Int; let nameRosterRevision: Int
+            let nameRevision: Int?; let nameProof: WindowNameProof?
             let deliveryStatus: GroupDeliveryStatus?; let deliveryReason: GroupDeliveryReason?; let ownerParticipantID: String?
         }
         let window: Metadata; let roster: SignedGroupRoster; let rosterHash: Data
+    }
+    struct WindowNameProof: Decodable {
+        let nameRevision: Int; let signerDeviceID: String; let operationID: String; let signature: Data
+    }
+    struct RenameWindowInput: Codable {
+        let operationID: String; let expectedRevision: Int; let keyEpoch: Int
+        let expectedNameRevision: Int; let encryptedName: Data; let ownerSignature: Data
+    }
+    struct CloseWindowInput: Codable {
+        let operationID: String; let expectedRevision: Int; let keyEpoch: Int; let ownerSignature: Data
+    }
+    struct RenameWindowReply: Decodable {
+        let operationID: String; let windowID: String; let revision: Int; let keyEpoch: Int; let nameRevision: Int
+    }
+    struct CloseWindowReply: Decodable {
+        let operationID: String; let windowID: String; let revision: Int; let keyEpoch: Int; let state: String
     }
     struct MemberRow: Decodable {
         let id: String; let personID: String; let role: GroupRole; let state: GroupMemberState

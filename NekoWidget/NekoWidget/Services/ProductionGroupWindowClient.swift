@@ -22,6 +22,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     // Only fully verified, in-process snapshots. The relay still authorizes
     // every heart against its current membership and epoch.
     private var verifiedWindows: [String: GroupWindow] = [:]
+    private var closedWindows = Set<String>()
+    private var managementInFlight = Set<UUID>()
     private struct VerifiedListEntry {
         let window: GroupWindow
         let encryptedName: Data
@@ -150,7 +152,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         guard stored.intentHash == GroupCanonical.hash(Data(intent.utf8)), stored.operationID == operationID else { throw GroupClientError.idempotencyConflict }
         return stored
     }
-    private func mutation(operationID: UUID, intent: String, path: String, body: Data, billingAccountID: String? = nil) async throws -> Data {
+    private func mutation(operationID: UUID, intent: String, path: String, body: Data, billingAccountID: String? = nil,
+                          preserveBody: Bool = false, validateResponse: ((Data) throws -> Void)? = nil) async throws -> Data {
         guard !inFlight.contains(operationID) else { throw GroupClientError.unavailable }
         inFlight.insert(operationID); defer { inFlight.remove(operationID) }
         var operation: GroupPendingHTTP
@@ -161,7 +164,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             operation = .init(operationID: operationID, path: path, body: body, intentHash: GroupCanonical.hash(Data(intent.utf8)), createdAt: Date(), response: nil)
             try save(operation, "op:" + operationID.uuidString.lowercased(), createOnly: true)
         }
-        if let response = operation.response { return response }
+        if let response = operation.response { try validateResponse?(response); return response }
         // Server mutation receipts last 48 hours. Beyond that horizon, blindly
         // retrying an unknown result could repeat a completed action. Keep the
         // local body/copy for explicit reconciliation; never invent a new ID.
@@ -172,13 +175,16 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         let response = try await raw(path, body: operation.body, identity: id, billingAccountID: billingAccountID)
         guard let object = try JSONSerialization.jsonObject(with: response) as? [String: Any],
               object["operationId"] as? String == operationID.uuidString.lowercased() else { throw GroupClientError.invalidResponse }
-        operation.response = response; operation.body = Data()
+        try validateResponse?(response)
+        operation.response = response
+        if !preserveBody { operation.body = Data() }
         try save(operation, "op:" + operationID.uuidString.lowercased())
         return response
     }
     private func local(_ windowID: String) throws -> GroupLocalWindow {
         guard GroupCanonical.validID(windowID), let value = try load(GroupLocalWindow.self, "window:" + windowID),
-              value.anchor.windowID == windowID, !value.left else { throw GroupClientError.notMember }
+              value.anchor.windowID == windowID, !value.left, value.closed != true,
+              !closedWindows.contains(windowID) else { throw GroupClientError.notMember }
         return value
     }
     private func pin(_ anchor: GroupTrustAnchor) throws {
@@ -220,6 +226,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
             let identity = try await registeredIdentity()
             var result: [GroupWindow] = []
             for item in items {
+                if closedWindows.contains(item.windowID) { continue }
                 if let cached = try cachedListWindow(item, identity: identity) {
                     result.append(cached)
                 } else {
@@ -242,6 +249,11 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         defer { GroupListMeasurement.current?.recordCache(outcome, seconds: ProcessInfo.processInfo.systemUptime - started) }
         guard let entry = verifiedListEntries[item.windowID] else { outcome = "不採用・検証済みデータなし"; return nil }
         let stored = try local(item.windowID), cached = entry.window
+        if let pin = stored.nameCheckpoint,
+           pin.rosterRevision != cached.revision || pin.nameRevision != (cached.nameRevision ?? 0)
+            || pin.ciphertextHash != GroupCanonical.hash(entry.encryptedName) {
+            outcome = "不採用・名前の確認済み版の変更"; return nil
+        }
         // Keep every authorization/key/pin check. Only the diagnostic reason is new.
         guard item.rotationRequired == false, cached.state == .active else {
             outcome = "不採用・鍵更新待ちまたは旧応答"; return nil
@@ -343,16 +355,47 @@ actor ProductionGroupWindowClient: GroupWindowClient {
                 }))
         }
         let name = try GroupNameCrypto.open(reply.window.encryptedName, slot: "window", key: key, roster: head)
+        try verifyAndPinName(reply.window, roster: head)
         let result = GroupWindow(id: windowID, name: name, revision: head.roster.revision, keyEpoch: head.roster.keyEpoch,
             myParticipantID: me.member.participantID, myRole: GroupRole(rawValue: me.member.role.rawValue)!,
             state: reply.window.rotationRequired ? .rotationRequired : .active, members: members,
             deliveryStatus: reply.window.deliveryStatus, deliveryReason: reply.window.deliveryReason,
-            ownerParticipantID: reply.window.ownerParticipantID)
+            ownerParticipantID: reply.window.ownerParticipantID, nameRevision: reply.window.nameRevision)
         verifiedWindows[windowID] = result
         verifiedListEntries[windowID] = .init(window: result, encryptedName: reply.window.encryptedName,
             rosterHash: head.hash, keyHash: GroupCanonical.hash(key.withUnsafeBytes { Data($0) }),
             personID: identity.personID, deviceID: myDeviceID)
         return result
+    }
+
+    private func verifyAndPinName(_ metadata: GroupAPIModel.WindowReply.Metadata, roster: VerifiedGroupRoster) throws {
+        let nameRevision = metadata.nameRevision ?? 0
+        guard (0...9_007_199_254_740_991).contains(nameRevision) else { throw GroupClientError.invalidResponse }
+        let hash = GroupCanonical.hash(metadata.encryptedName)
+        if nameRevision == 0 {
+            guard metadata.nameProof == nil else { throw GroupClientError.invalidResponse }
+        } else {
+            guard let proof = metadata.nameProof, proof.nameRevision == nameRevision,
+                  UUID(uuidString: proof.operationID)?.uuidString.lowercased() == proof.operationID,
+                  let signer = roster.device(id: proof.signerDeviceID), signer.member.role == .owner,
+                  proof.signature.count == 64,
+                  try Curve25519.Signing.PublicKey(rawRepresentation: signer.device.signingPublicKey).isValidSignature(proof.signature,
+                    for: GroupManagementCanonical.rename(windowID: metadata.windowID, revision: roster.roster.revision,
+                        keyEpoch: roster.roster.keyEpoch, rosterHash: roster.hash, nameRevision: nameRevision,
+                        operationID: proof.operationID, ciphertextHash: hash)) else { throw GroupClientError.invalidResponse }
+        }
+        var stored = try local(metadata.windowID)
+        guard stored.pinnedRevision == roster.roster.revision else { throw GroupClientError.invalidResponse }
+        if let pin = stored.nameCheckpoint {
+            guard pin.rosterRevision <= roster.roster.revision else { throw GroupClientError.invalidResponse }
+            if pin.rosterRevision == roster.roster.revision {
+                guard nameRevision >= pin.nameRevision,
+                      nameRevision != pin.nameRevision || hash == pin.ciphertextHash else { throw GroupClientError.invalidResponse }
+                if nameRevision == pin.nameRevision { return }
+            }
+        }
+        stored.nameCheckpoint = .init(rosterRevision: roster.roster.revision, nameRevision: nameRevision, ciphertextHash: hash)
+        try save(stored, "window:" + metadata.windowID)
     }
 
     private func material(roster: GroupRoster, names: [String: String], windowName: String, identity: GroupDeviceIdentity,
@@ -703,6 +746,119 @@ extension ProductionGroupWindowClient {
     func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow {
         try await changeMembership(windowID: windowID, kind: "rotate", targetID: windowID, operation: operation)
     }
+    func renameWindow(windowID: String, name: String, expectedNameRevision: Int,
+                      operation: GroupOperation) async throws -> GroupWindow {
+        let text: String
+        do { text = try GroupWire.name(name) } catch { throw GroupWindowManagementError.invalidName }
+        guard GroupCanonical.validID(windowID), operation.expectedRevision > 0,
+              (0...9_007_199_254_740_990).contains(expectedNameRevision) else { throw GroupClientError.invalidResponse }
+        guard managementInFlight.insert(operation.id).inserted else { throw GroupClientError.unavailable }
+        defer { managementInFlight.remove(operation.id) }
+        let intent = "rename:\(windowID):\(operation.expectedRevision):\(expectedNameRevision):" + GroupWire.base64(GroupCanonical.hash(Data(text.utf8)))
+        let body: Data
+        if let stored = try pending(operation.id, intent: intent) {
+            try requireManagementRetry(stored)
+            body = stored.body
+        } else {
+            let current = try await managementWindow(windowID, operation: operation)
+            guard current.state == .active else { throw GroupClientError.rotationPending }
+            guard current.nameRevision == expectedNameRevision else { throw GroupWindowManagementError.staleNameRevision }
+            let identity = try identity(), record = try local(windowID)
+            guard let roster = try record.verified(), let rawKey = record.keys[String(current.keyEpoch)], rawKey.count == 32 else {
+                throw GroupClientError.invalidResponse
+            }
+            let ciphertext = try GroupNameCrypto.seal(text, slot: "window", key: SymmetricKey(data: rawKey), roster: roster,
+                signerID: identity.deviceID, signingKey: identity.signingKey)
+            let proof = try GroupManagementCanonical.rename(windowID: windowID, revision: current.revision, keyEpoch: current.keyEpoch,
+                rosterHash: roster.hash, nameRevision: expectedNameRevision + 1, operationID: operation.id.uuidString.lowercased(),
+                ciphertextHash: GroupCanonical.hash(ciphertext))
+            body = try GroupWire.encode(GroupAPIModel.RenameWindowInput(operationID: operation.id.uuidString.lowercased(),
+                expectedRevision: operation.expectedRevision, keyEpoch: current.keyEpoch, expectedNameRevision: expectedNameRevision,
+                encryptedName: ciphertext, ownerSignature: identity.signingKey.signature(for: proof)))
+        }
+        let input = try GroupWire.decode(GroupAPIModel.RenameWindowInput.self, body)
+        guard input.operationID == operation.id.uuidString.lowercased(), input.expectedRevision == operation.expectedRevision,
+              input.expectedNameRevision == expectedNameRevision, input.keyEpoch > 0 else { throw GroupClientError.invalidResponse }
+        _ = try await mutation(operationID: operation.id, intent: intent, path: "/v3/group-windows/\(windowID)/name", body: body,
+            preserveBody: true, validateResponse: { data in
+                let reply = try GroupWire.decode(GroupAPIModel.RenameWindowReply.self, data)
+                guard reply.operationID == input.operationID, reply.windowID == windowID, reply.revision == input.expectedRevision,
+                      reply.keyEpoch == input.keyEpoch, reply.nameRevision == input.expectedNameRevision + 1 else { throw GroupClientError.invalidResponse }
+            })
+        verifiedWindows.removeValue(forKey: windowID); verifiedListEntries.removeValue(forKey: windowID)
+        do {
+            var record = try local(windowID)
+            if record.pinnedRevision == input.expectedRevision {
+                let hash = GroupCanonical.hash(input.encryptedName), next = input.expectedNameRevision + 1
+                if let pin = record.nameCheckpoint, pin.rosterRevision == input.expectedRevision, pin.nameRevision >= next {
+                    guard pin.nameRevision != next || pin.ciphertextHash == hash else { throw GroupClientError.invalidResponse }
+                } else {
+                    record.nameCheckpoint = .init(rosterRevision: input.expectedRevision, nameRevision: next, ciphertextHash: hash)
+                    try save(record, "window:" + windowID)
+                }
+            }
+            return try await window(id: windowID)
+        } catch {
+            // The receipt is already durable. Repeat the SAME operation to
+            // refresh state; never turn this into a second rename request.
+            throw GroupWindowManagementError.stateRefreshRequired
+        }
+    }
+
+    func closeWindow(windowID: String, operation: GroupOperation) async throws -> GroupWindowClosure {
+        guard GroupCanonical.validID(windowID), operation.expectedRevision > 0 else { throw GroupClientError.invalidResponse }
+        guard managementInFlight.insert(operation.id).inserted else { throw GroupClientError.unavailable }
+        defer { managementInFlight.remove(operation.id) }
+        let intent = "close:\(windowID):\(operation.expectedRevision)", body: Data
+        if let stored = try pending(operation.id, intent: intent) {
+            try requireManagementRetry(stored)
+            body = stored.body
+        } else {
+            let current = try await managementWindow(windowID, operation: operation), identity = try identity()
+            guard let roster = try local(windowID).verified() else { throw GroupClientError.invalidResponse }
+            let transcript = try GroupManagementCanonical.close(windowID: windowID, revision: current.revision,
+                keyEpoch: current.keyEpoch, rosterHash: roster.hash, operationID: operation.id.uuidString.lowercased())
+            body = try GroupWire.encode(GroupAPIModel.CloseWindowInput(operationID: operation.id.uuidString.lowercased(),
+                expectedRevision: operation.expectedRevision, keyEpoch: current.keyEpoch,
+                ownerSignature: identity.signingKey.signature(for: transcript)))
+        }
+        let input = try GroupWire.decode(GroupAPIModel.CloseWindowInput.self, body)
+        guard input.operationID == operation.id.uuidString.lowercased(), input.expectedRevision == operation.expectedRevision,
+              input.keyEpoch > 0 else { throw GroupClientError.invalidResponse }
+        _ = try await mutation(operationID: operation.id, intent: intent, path: "/v3/group-windows/\(windowID)/close", body: body,
+            preserveBody: true, validateResponse: { data in
+                let reply = try GroupWire.decode(GroupAPIModel.CloseWindowReply.self, data)
+                guard reply.operationID == input.operationID, reply.windowID == windowID, reply.revision == input.expectedRevision,
+                      reply.keyEpoch == input.keyEpoch, reply.state == "closed" else { throw GroupClientError.invalidResponse }
+            })
+        closedWindows.insert(windowID)
+        verifiedWindows.removeValue(forKey: windowID); verifiedListEntries.removeValue(forKey: windowID)
+        do {
+            guard var record = try load(GroupLocalWindow.self, "window:" + windowID), record.anchor.windowID == windowID else {
+                throw GroupClientError.invalidResponse
+            }
+            record.closed = true; record.left = true
+            try save(record, "window:" + windowID)
+        } catch { throw GroupWindowManagementError.stateRefreshRequired }
+        // Retain keys, received photos, report drafts and unsent local copies.
+        return .init(windowID: windowID, operationID: operation.id, revision: input.expectedRevision, keyEpoch: input.keyEpoch)
+    }
+
+    private func requireManagementRetry(_ stored: GroupPendingHTTP) throws {
+        if stored.response == nil, Date().timeIntervalSince(stored.createdAt) >= 172_800 {
+            throw GroupWindowManagementError.reconciliationRequired
+        }
+    }
+    private func managementWindow(_ windowID: String, operation: GroupOperation) async throws -> GroupWindow {
+        if closedWindows.contains(windowID) { throw GroupWindowManagementError.closed }
+        if try load(GroupLocalWindow.self, "window:" + windowID)?.closed == true { throw GroupWindowManagementError.closed }
+        let current = try await window(id: windowID)
+        guard current.myRole == .owner else { throw GroupClientError.ownerRequired }
+        guard current.revision == operation.expectedRevision else { throw GroupClientError.staleRevision(current: current.revision) }
+        guard current.nameRevision != nil else { throw GroupWindowManagementError.unavailable }
+        return current
+    }
+
     func leave(windowID: String, operation: GroupOperation) async throws {
         let intent = "leave:\(windowID):\(operation.expectedRevision)"
         if try pending(operation.id, intent: intent)?.response != nil {
