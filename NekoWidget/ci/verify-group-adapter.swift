@@ -443,6 +443,26 @@ private struct GroupAdapterChecks {
         _ = try await client.stageInvitation(url: link)
         try rejects("invitation query is rejected") { _ = try GroupInvitationCapability(url: URL(string: link.absoluteString.replacingOccurrences(of: "/join#", with: "/join?tracking=1#"))!) }
         try await verifyListCache(memory: memory, relay: relay, folder: folder, endpoint: endpoint, room: room, identity: firstIdentity)
+        // EchoTransport models exactly one created window. Give this separate
+        // intent its own relay; otherwise it returns the earlier window/name.
+        let creatorOperation = UUID(), nameRelay = EchoTransport()
+        let creatingClient: any GroupWindowClient = try ProductionGroupWindowClient(endpoint: endpoint, secrets: MemorySecrets(), transport: nameRelay,
+            outboxDirectory: folder.appendingPathComponent("named-creator"), billingSigner: SyntheticBillingSigner())
+        do { _ = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: "そや", operationID: creatorOperation); throw Failure.check("creator response was not dropped") }
+        catch GroupClientError.offline { }
+        let named = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: "そや", operationID: creatorOperation)
+        try check(named.members.first(where: { $0.role == .owner })?.displayName == "そや", "creator name survives signed encryption round trip through protocol")
+        let namedRetry = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: "そや", operationID: creatorOperation)
+        try check(namedRetry.id == named.id, "creator-name retry reuses the original creation")
+        do { _ = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: "別の名前", operationID: creatorOperation); throw Failure.check("creator name changed within the same intent") }
+        catch GroupClientError.idempotencyConflict { }
+        let namedStats = await nameRelay.stats()
+        for invalidName in ["", "  ", "名前\u{0000}", String(repeating: "あ", count: 27)] {
+            do { _ = try await creatingClient.createWindow(name: "みんなのまど", ownerDisplayName: invalidName, operationID: UUID()); throw Failure.check("invalid creator name accepted") }
+            catch GroupClientError.invalidResponse { }
+        }
+        let afterInvalidName = await nameRelay.stats()
+        try check(namedStats.1.count == afterInvalidName.1.count, "invalid creator name makes no creation request")
         print("Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed")
     }
 
