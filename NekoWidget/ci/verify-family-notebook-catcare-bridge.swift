@@ -31,7 +31,9 @@ enum FamilyNotebookCatCareBridgeVerifier {
                     "private photo references must not cross phones")
         let again = try FamilyNotebookCatCareBridge.apply(destination.snapshot(), to: received)
         try require(again == received, "repeated projection must not write or duplicate records")
-        let remoteRecord = try destination.snapshot().mappings.first { $0.recordID != nil && $0.sourceKey.contains(":weight:") }!.recordID!
+        let remoteRecord = try destination.snapshot().mappings.first {
+            FamilyNotebookCatCareBridge.localRecordID($0, cat: imported.catID, collection: .weight) == imported.activeWeights[0].id
+        }!.recordID!
         var edited = received; edited.cats[1].weights[0].grams = 4600
         edited.cats[1].weights[0].editedAt = Date(); edited.cats[1].weights[0].editedBy = "receiver"
         var selected = edited; selected.cats = [edited.cats[1]]
