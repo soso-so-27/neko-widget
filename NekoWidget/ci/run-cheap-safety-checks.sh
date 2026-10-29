@@ -120,8 +120,10 @@ xcrun --sdk macosx swiftc -parse-as-library \
 # PairingView and AppRootView are reserved for the window and Widget entries.
 # GroupWindowSetupView opens it only for "このまどを続ける" (continueWindow).
 # GroupWindowView opens it only for "まどを作る" (createWindow), in GroupWindowCreateScreen.
+# AlbumPrototypeView opens it only for 月のまとめ (monthlySummary), in AlbumWorkGate.
 plus_offer_allowed="NekoWidget/App/AppRootView.swift
 NekoWidget/Services/MembershipOfferModel.swift
+NekoWidget/Views/AlbumPrototypeView.swift
 NekoWidget/Views/GroupWindowSetupView.swift
 NekoWidget/Views/GroupWindowView.swift
 NekoWidget/Views/MainTabView.swift
