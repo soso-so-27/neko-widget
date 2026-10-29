@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { route } from '../src/index';
 import { familyNotebookPayer } from '../src/family-notebook-payer';
 import { errorResponse } from '../src/errors';
 import type { Env } from '../src/env';
 import { connection, billing, gates, pauseOwner, plusOwner, settings } from './group-billing-fixture';
 import { create, db, ok, person, send, signed, type Person, type Reply } from './group-fixture';
 
-const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES' };
+const enabled: Env = { ...settings, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES', FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'YES' };
 type Operation = 'leave' | 'claim';
 function path(id: string, operation?: Operation) {
   return `/v3/family-notebooks/${id}` + (operation === 'leave' ? '/leave' : operation === 'claim' ? '/payer/claim' : '/payer');
@@ -14,7 +15,7 @@ async function call(p: Person, id: string, operation?: Operation, generation = 1
   operationId = crypto.randomUUID(), env: Env = enabled): Promise<Reply> {
   const request = await signed(p, path(id, operation), operation ? { operationId, expectedGeneration: generation } : undefined);
   let response: Response;
-  try { response = await familyNotebookPayer(request, env, id, operation); }
+  try { response = await route(request, env); }
   catch (error) { response = errorResponse(error); }
   return { status: response.status, data: await response.json() as Reply['data'] };
 }
@@ -55,7 +56,7 @@ describe('family notebook payer: authenticated, atomic, not publicly connected',
     expect((await call(p, id)).data.error.code).toBe('family_notebook_disabled');
     const f = await family([p], p);
     expect((await call(p, f, undefined, 1, crypto.randomUUID(), { ...enabled, FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'NO' })).status).toBe(503);
-    expect((await send(await signed(p, path(f)), enabled)).status).toBe(404);
+    expect((await send(await signed(p, path(f)), { ...enabled, FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'NO' })).status).toBe(404);
   });
 
   it('retains the family and other members when the payer leaves, then lets an already-Plus member claim', async () => {

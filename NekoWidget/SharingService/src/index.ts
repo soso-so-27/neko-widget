@@ -111,6 +111,7 @@ import {
 import { getWindowName, putWindowName } from "./window-name";
 import { familyRecords, runFamilyRecordCleanup } from "./family-records";
 import { groupAPI } from './group-api';
+import { familyNotebookAPI } from './family-notebook-api';
 import { runGroupRelayCleanup } from './group-cleanup';
 import { isGroupReportPath } from './group-reports';
 import { groupReplyPath } from './group-moderation-replies';
@@ -137,6 +138,13 @@ export async function route(
     billingRuntimeGatePromise ??= loadBillingRuntimeGate(env);
     return billingRuntimeGatePromise;
   };
+
+  // A separate opt-in is required even when lower family/payer pilot gates
+  // are open. Absent/NO retains the previous unreachable public surface.
+  if ((pathname === '/v3/family-notebooks' || pathname.startsWith('/v3/family-notebooks/'))
+      && env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED === 'YES') {
+    return familyNotebookAPI(request, env);
+  }
 
   if (pathname === '/v3/group-identities' || pathname.startsWith('/v3/group-identities/')
       || pathname === '/v3/group-windows' || pathname.startsWith('/v3/group-windows/')) {
