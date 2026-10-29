@@ -318,6 +318,7 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0044_group_appstore_subscription.sql", 7],
     ["0045_group_encrypted_reports.sql", 26],
     ["0046_group_push_delivery.sql", 5],
+    ["0047_group_window_management.sql", 5],
     ["0049_moderation_review_duration.sql", 5],
     ["0050_group_moderation_operator.sql", 19],
     ["0051_group_moderation_restrictions.sql", 7],

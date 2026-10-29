@@ -16,20 +16,20 @@ CREATE TABLE group_window_names (
 ) STRICT;
 CREATE TRIGGER group_name_insert BEFORE INSERT ON group_window_names
 BEGIN
-  SELECT CASE WHEN NEW.name_revision<>COALESCE((SELECT CASE WHEN key_epoch=NEW.key_epoch AND roster_revision=NEW.roster_revision
-    THEN name_revision ELSE 0 END FROM group_window_names WHERE space_id=NEW.space_id),0)+1
-    THEN RAISE(ABORT,'group_name_stale_revision') END;
-  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM group_windows WHERE space_id=NEW.space_id AND mode='active'
+  SELECT (CASE WHEN NEW.name_revision<>COALESCE((SELECT (CASE WHEN key_epoch=NEW.key_epoch AND roster_revision=NEW.roster_revision
+    THEN name_revision ELSE 0 END) FROM group_window_names WHERE space_id=NEW.space_id),0)+1
+    THEN RAISE(ABORT,'group_name_stale_revision') END);
+  SELECT (CASE WHEN NOT EXISTS (SELECT 1 FROM group_windows WHERE space_id=NEW.space_id AND mode='active'
     AND rotation_required=0 AND revision=NEW.roster_revision AND key_epoch=NEW.key_epoch AND roster_hash=NEW.roster_hash)
-    THEN RAISE(ABORT,'group_stale_revision_or_epoch') END;
+    THEN RAISE(ABORT,'group_stale_revision_or_epoch') END);
 END;
 CREATE TRIGGER group_name_update BEFORE UPDATE ON group_window_names
 BEGIN
-  SELECT CASE WHEN NEW.space_id<>OLD.space_id OR NEW.name_revision<>(CASE WHEN OLD.key_epoch=NEW.key_epoch AND OLD.roster_revision=NEW.roster_revision
-    THEN OLD.name_revision ELSE 0 END)+1 THEN RAISE(ABORT,'group_name_stale_revision') END;
-  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM group_windows WHERE space_id=NEW.space_id AND mode='active'
+  SELECT (CASE WHEN NEW.space_id<>OLD.space_id OR NEW.name_revision<>(CASE WHEN OLD.key_epoch=NEW.key_epoch AND OLD.roster_revision=NEW.roster_revision
+    THEN OLD.name_revision ELSE 0 END)+1 THEN RAISE(ABORT,'group_name_stale_revision') END);
+  SELECT (CASE WHEN NOT EXISTS (SELECT 1 FROM group_windows WHERE space_id=NEW.space_id AND mode='active'
     AND rotation_required=0 AND revision=NEW.roster_revision AND key_epoch=NEW.key_epoch AND roster_hash=NEW.roster_hash)
-    THEN RAISE(ABORT,'group_stale_revision_or_epoch') END;
+    THEN RAISE(ABORT,'group_stale_revision_or_epoch') END);
 END;
 -- One terminal receipt, not a history of member activity or photograph content.
 CREATE TABLE group_window_closures (
