@@ -96,9 +96,17 @@ export async function getGroupWindow(env:Env,actor:GroupActor,windowId:string):P
   const roster=await loadStoredGroupRoster(env.DB,windowId);
   const metadata=await env.DB.prepare("SELECT encrypted_name AS encryptedName,key_epoch AS nameKeyEpoch,roster_revision AS nameRosterRevision FROM group_window_metadata WHERE space_id=?")
     .bind(windowId).first();
+  // Gate OFF candidates retain the old query path and do not need migration
+  // 0047. A roster rotation replaces the name and starts a new name counter.
+  const nameProof=env.GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED==='YES'?await env.DB.prepare(`SELECT n.name_revision AS nameRevision,
+    n.signer_device_id AS signerDeviceId,n.operation_id AS operationId,n.signature FROM group_window_names n
+    JOIN group_window_metadata m ON m.space_id=n.space_id AND m.encrypted_name=n.encrypted_name
+      AND m.key_epoch=n.key_epoch AND m.roster_revision=n.roster_revision
+    WHERE n.space_id=? AND n.roster_hash=?`).bind(windowId,roster.hash).first():null;
   await env.DB.batch(groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}));
   const policy=(await groupDeliveryPolicies(env,[windowId])).get(windowId);
-  return jsonResponse({window:{windowId,revision:access.revision,keyEpoch:access.keyEpoch,rotationRequired:access.rotationRequired===1,...metadata,...policy},
+  return jsonResponse({window:{windowId,revision:access.revision,keyEpoch:access.keyEpoch,rotationRequired:access.rotationRequired===1,...metadata,...policy,
+    ...(env.GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED==='YES'?{nameRevision:nameProof?.nameRevision??0,nameProof}: {})},
     roster:roster.packet,rosterHash:roster.hash,serverNow:actor.now});
 }
 
