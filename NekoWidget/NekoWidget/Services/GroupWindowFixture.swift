@@ -94,6 +94,11 @@ actor GroupWindowFixture: GroupWindowClient {
         // Default fixture represents a free owner who already has one window.
         throw GroupClientError.ownedWindowLimit
     }
+    func createWindow(name: String, ownerDisplayName: String, operationID: UUID) async throws -> GroupWindow {
+        // Keep the fixture's existing occupied-window scenario. No supplied
+        // display name is silently stored as a successful creation.
+        try await createWindow(name: name, operationID: operationID)
+    }
     func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation {
         try validate(windowID)
         let key = "invite:\(operation.id.uuidString)"

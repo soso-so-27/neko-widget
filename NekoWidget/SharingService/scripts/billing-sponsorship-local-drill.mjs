@@ -66,6 +66,7 @@ const expectedMigrationNames = [
   "0044_group_appstore_subscription.sql",
   "0045_group_encrypted_reports.sql",
   "0046_group_push_delivery.sql",
+  "0047_group_window_management.sql",
   "0049_moderation_review_duration.sql",
   "0050_group_moderation_operator.sql",
   "0051_group_moderation_restrictions.sql",
