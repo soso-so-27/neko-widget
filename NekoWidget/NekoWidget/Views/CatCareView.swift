@@ -173,6 +173,10 @@ struct CatCareDetailView: View {
     @State private var showsLifeDatesEditor = false
     @State private var showsFarewellEditor = false
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
+    /// Whether this cat's farewell day is shared with the family (1029h).
+    /// Nil outside a family, or when it could not be read.
+    @State private var farewellSharing: FamilyFarewellSharingState?
+    @State private var showsFarewellSharing = false
 
     /// Test builds only, as the rest of the prototype.
     private var farewell: CatCareDay? {
@@ -287,6 +291,14 @@ struct CatCareDetailView: View {
                 farewellJSON = CatFarewell.setting(day, for: subject.key, in: farewellJSON)
             }
         }
+        .sheet(isPresented: $showsFarewellSharing) {
+            if let catID {
+                FamilyFarewellShareSheet(toolCatID: catID) { Task { await loadFarewellSharing() } }
+            }
+        }
+        .task(id: "\(catID?.uuidString ?? "")|\(farewellJSON)|\(familyNotebook.hasFamily)") {
+            await loadFarewellSharing()
+        }
         .sheet(isPresented: $showsLifeDatesEditor) {
             if case let .profile(profile) = subject {
                 CatProfileLifeReferenceEditor(profile: profile, save: profileActions.updateLifeDates)
@@ -398,6 +410,18 @@ struct CatCareDetailView: View {
                 }
                 .foregroundStyle(.primary)
                 .accessibilityIdentifier("cat-care-farewell")
+            }
+            if let farewellSharing, farewell != nil || farewellSharing.sharedDay != nil {
+                Button { showsFarewellSharing = true } label: {
+                    HStack {
+                        LabeledContent(farewell == nil ? "家族が共有した旅立った日" : "家族の手帳",
+                                       value: FamilyNotebookWords.farewellStatus(farewellSharing))
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
+                .accessibilityIdentifier("cat-care-farewell-family")
             }
             Picker("性別", selection: $draft.sex) {
                 Text("未記入").tag(CatCareSex.unknown)
@@ -569,6 +593,14 @@ struct CatCareDetailView: View {
     }
 
     // MARK: Summaries
+
+    private func loadFarewellSharing() async {
+        guard familyNotebook.hasFamily, AlbumPrototype.isOn(albumPrototypeStored), let catID else {
+            farewellSharing = nil
+            return
+        }
+        farewellSharing = try? await FamilyNotebookSharing.shared.service.loadFarewellSharing(toolCatID: catID)
+    }
 
     private var currentRecord: CatCareRecord? { catID.flatMap { store.state?.record(catID: $0) } }
 

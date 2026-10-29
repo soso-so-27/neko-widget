@@ -984,6 +984,188 @@ extension FamilyNotebookView {
     }
 }
 
+/// Sharing a farewell day with the family (1029h): only after this person
+/// saw the cat, the day and what it means, and only what they saw. Saying
+/// yes saves it for sending; it is never shown as delivered from that alone.
+struct FamilyFarewellShareSheet: View {
+    let toolCatID: UUID
+    var changed: () -> Void = {}
+    @Environment(\.dismiss) private var dismiss
+    @State private var state: FamilyFarewellSharingState?
+    @State private var preview: FamilyFarewellPreview?
+    /// Kept until the outcome is known, so a retry is the same operation.
+    @State private var consentOperation: UUID?
+    @State private var revokeOperation: UUID?
+    @State private var working = false
+    @State private var errorMessage: String?
+    @State private var confirmsRevoke = false
+
+    private var service: any FamilyNotebookSharingService { FamilyNotebookSharing.shared.service }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let preview {
+                    previewSections(preview)
+                } else if let state {
+                    stateSections(state)
+                } else if errorMessage == nil {
+                    ProgressView().frame(maxWidth: .infinity)
+                }
+                if let errorMessage {
+                    Section { Label(errorMessage, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("旅立った日")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    if preview != nil {
+                        Button("戻る") { preview = nil; consentOperation = nil; errorMessage = nil }
+                    } else {
+                        Button("閉じる") { dismiss() }
+                    }
+                }
+            }
+            .confirmationDialog("家族との共有をやめますか？", isPresented: $confirmsRevoke, titleVisibility: .visible) {
+                Button("共有をやめる", role: .destructive) { Task { await revoke() } }
+            } message: {
+                Text(state?.revocationExplanation ?? "")
+            }
+            .interactiveDismissDisabled(working)
+        }
+        .task { await load() }
+    }
+
+    @ViewBuilder
+    private func previewSections(_ preview: FamilyFarewellPreview) -> some View {
+        Section {
+            LabeledContent("猫", value: preview.catName)
+            LabeledContent("旅立った日", value: FamilyNotebookWords.dayText(preview.day))
+        } footer: {
+            Text(preview.explanation)
+        }
+        if let current = preview.currentSharedDay, current != preview.day {
+            Section {
+                Text("いま家族の手帳には、\(preview.currentSharedAuthor?.displayName ?? "家族")が共有した\(FamilyNotebookWords.dayText(current))が出ています。共有すると、この日付に替わります。")
+                    .font(.subheadline)
+            }
+        }
+        Section {
+            Button {
+                Task { await consent(preview) }
+            } label: {
+                Group {
+                    if working { ProgressView() } else { Text("共有する").font(.headline) }
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(working)
+            .listRowBackground(Color.clear)
+            .accessibilityIdentifier("family-farewell-consent")
+        }
+    }
+
+    @ViewBuilder
+    private func stateSections(_ state: FamilyFarewellSharingState) -> some View {
+        Section {
+            LabeledContent("このiPhoneの日付", value: state.localDay.map(FamilyNotebookWords.dayText) ?? "記録なし")
+            if let shared = state.sharedDay {
+                LabeledContent("家族の手帳", value: FamilyNotebookWords.dayText(shared))
+            }
+        } footer: {
+            Text(FamilyNotebookWords.farewellDetail(state))
+        }
+        .accessibilityIdentifier("family-farewell-state")
+        if state.localDay != nil, !state.hasConsentForLocalDay, !state.sharingPending {
+            Section {
+                Button(state.consentedDay == nil ? "家族と共有する" : "この日付を共有し直す") {
+                    Task { await loadPreview() }
+                }
+                .disabled(working)
+                .accessibilityIdentifier("family-farewell-share")
+            } footer: {
+                Text("共有するまでは、この日付を家族に送りません。")
+            }
+        }
+        if state.consentedDay != nil, !state.revocationPending {
+            Section {
+                Button("共有をやめる", role: .destructive) { confirmsRevoke = true }
+                    .disabled(working)
+                    .accessibilityIdentifier("family-farewell-revoke")
+            } footer: {
+                if state.mayAlreadyHaveBeenShared {
+                    Text("すでに家族に届いている可能性があります。届いた日付は回収できません。")
+                }
+            }
+        }
+    }
+
+    private func load() async {
+        do {
+            state = try await service.loadFarewellSharing(toolCatID: toolCatID)
+        } catch {
+            errorMessage = (error as? FamilySharingError ?? .serviceUnavailable).message
+        }
+    }
+
+    private func loadPreview() async {
+        working = true; defer { working = false }
+        errorMessage = nil
+        do {
+            preview = try await service.previewFarewellSharing(toolCatID: toolCatID)
+            consentOperation = nil
+        } catch {
+            errorMessage = (error as? FamilySharingError ?? .serviceUnavailable).message
+        }
+    }
+
+    private func consent(_ preview: FamilyFarewellPreview) async {
+        working = true; defer { working = false }
+        errorMessage = nil
+        let operation = consentOperation ?? UUID()
+        consentOperation = operation
+        do {
+            try await service.consentToShareFarewell(previewID: preview.id, operationID: operation)
+            consentOperation = nil
+            self.preview = nil
+            await finish()
+        } catch {
+            let failure = error as? FamilySharingError ?? .unknownOutcome
+            // Unknown or not sent yet: the same operation next time. A changed
+            // date or family needs a new look first.
+            if failure == .farewellPreviewChanged { self.preview = nil }
+            if failure.recovery != .retry && failure != .unknownOutcome { consentOperation = nil }
+            errorMessage = failure.message
+        }
+    }
+
+    private func revoke() async {
+        working = true; defer { working = false }
+        errorMessage = nil
+        let operation = revokeOperation ?? UUID()
+        revokeOperation = operation
+        do {
+            try await service.revokeFarewellSharing(toolCatID: toolCatID, operationID: operation)
+            revokeOperation = nil
+            await finish()
+        } catch {
+            let failure = error as? FamilySharingError ?? .unknownOutcome
+            if failure.recovery != .retry && failure != .unknownOutcome { revokeOperation = nil }
+            errorMessage = failure.message
+        }
+    }
+
+    /// Saved for sending; the family's state is read again, and that is
+    /// what says whether it went.
+    private func finish() async {
+        await FamilyNotebookSharing.shared.refresh()
+        await load()
+        changed()
+    }
+}
+
 /// One person's page, as in Apple's family settings: what can be done about
 /// this person, and what happens. The payer may also leave without choosing
 /// to dissolve the family. Three operations, never one.
@@ -1447,6 +1629,43 @@ enum FamilyNotebookWords {
         if asked { return "\(payer)から、払う人を引き継いでほしいと頼まれています。" }
         if asking { return "\(nominee)に払う人を頼みました。引き受けてもらうまでは、あなたが払う人のままです。" }
         return "\(nominee)が引き受けると、払う人が替わります。"
+    }
+
+    /// "YYYY-MM-DD" as people write it.
+    static func dayText(_ day: String) -> String {
+        let parts = day.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return day }
+        return "\(parts[0])年\(parts[1])月\(parts[2])日"
+    }
+
+    /// One line for 「この子のこと」. Saved is not delivered: pending says so.
+    static func farewellStatus(_ state: FamilyFarewellSharingState) -> String {
+        if state.revocationPending { return "共有をやめる準備をしています" }
+        if state.sharingPending { return "家族に送る準備をしています" }
+        if state.hasConsentForLocalDay { return "家族と共有しています" }
+        if state.consentedDay != nil { return "前の日付を共有しています" }
+        if state.localDay == nil, let shared = state.sharedDay { return dayText(shared) }
+        return "共有していません"
+    }
+
+    static func farewellDetail(_ state: FamilyFarewellSharingState) -> String {
+        var lines: [String] = []
+        if let shared = state.sharedDay, let author = state.sharedAuthor,
+           !(state.consentedDay == shared && state.hasConsentForLocalDay) {
+            lines.append("家族の手帳の日付は、\(author.displayName)が共有しました。")
+        }
+        if state.revocationPending {
+            lines.append("共有をやめる更新を、次につながったときに送ります。")
+        } else if state.sharingPending {
+            lines.append("共有する日付を、次につながったときに送ります。")
+        } else if state.hasConsentForLocalDay {
+            lines.append("この日付を家族と共有しています。")
+        } else if state.consentedDay != nil {
+            lines.append("前に共有した日付と、このiPhoneの日付が違います。")
+        } else if state.localDay != nil {
+            lines.append("この日付は、まだ家族に送っていません。")
+        }
+        return lines.joined(separator: "")
     }
 
     static func byline(_ operation: FamilyNotebookOperation) -> String {
