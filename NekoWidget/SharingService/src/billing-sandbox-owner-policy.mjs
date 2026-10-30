@@ -13,7 +13,7 @@ export function parseOwnerAdmission(text, now = Date.now(), allowExpired = false
       || !Number.isSafeInteger(now) || now < 0
       || !Number.isSafeInteger(value.startsAtMs) || value.startsAtMs < 0
       || !Number.isSafeInteger(value.expiresAtMs)
-      || value.expiresAtMs <= value.startsAtMs || value.expiresAtMs - value.startsAtMs > 86400000
+      || value.expiresAtMs <= value.startsAtMs || value.expiresAtMs - value.startsAtMs > 7 * 86400000
       || (!allowExpired && (now < value.startsAtMs || now >= value.expiresAtMs))) fail();
   return Object.freeze(value);
 }
