@@ -315,7 +315,8 @@ final class GroupWindowScreenModel: ObservableObject {
         return PreparedPhoto(jpeg: picked.jpeg, photoIdentifier: item.itemIdentifier)
     }
 
-    /// Sends the confirmed photo. The memo stays on this iPhone, on the photo's own memo.
+    /// Sends the confirmed photo with its ひとこと (encrypted with the window's
+    /// key). The same words stay on this iPhone as the photo's own memo.
     func deliver(_ prepared: PreparedPhoto, memo: String) async {
         guard canSend, let me = window?.myParticipantID else { return }
         isSending = true
@@ -324,7 +325,8 @@ final class GroupWindowScreenModel: ObservableObject {
         defer { isSending = false }
         do {
             let operationID = prepared.operationID
-            let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, windowID: windowID, operationID: operationID)
+            let sent = try await client.sendPhoto(normalizedJPEG: prepared.jpeg, caption: memo,
+                                                  windowID: windowID, operationID: operationID)
             await receive(sent, me: me, outgoingOperationID: operationID)
             await saveMemo(memo, for: prepared.photoIdentifier)
             sendCompleted = true
@@ -1077,17 +1079,14 @@ private struct GroupLibraryDeliveryStep: View {
                                 .accessibilityLabel("届ける写真")
                         }
                     }
-                    Section {
-                        TextField("例：おなかを見せて寝ていた", text: $memo, axis: .vertical).lineLimit(2...5)
-                    } header: { Text("メモ") }
-                      footer: { Text("メモはこのiPhoneにだけ残り、まどには届きません。") }
+                    GroupCaptionField(text: $memo)
                     if let message = model.message {
                         Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
                     }
                 }
                 .safeAreaInset(edge: .bottom) {
                     Button {
-                        Task { await model.deliver(prepared, memo: String(memo.prefix(500))) }
+                        Task { await model.deliver(prepared, memo: memo) }
                     } label: {
                         Group {
                             if model.isSending {
@@ -1099,7 +1098,7 @@ private struct GroupLibraryDeliveryStep: View {
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isSending)
+                    .disabled(model.isSending || GroupPhotoCaption.validationMessage(for: memo) != nil)
                     .accessibilityIdentifier("group-library-delivery-send")
                     .padding().background(.regularMaterial)
                 }
@@ -1128,8 +1127,8 @@ private struct GroupLibraryDeliveryStep: View {
     }
 }
 
-/// Shown after a photo is picked: the photo, where it goes, and a memo for
-/// this iPhone only. Nothing is sent until 「届ける」.
+/// Shown after a photo is picked: the photo, where it goes, and ひとこと for
+/// the window. Nothing is sent until 「届ける」.
 private struct GroupSendConfirmSheet: View {
     let photo: GroupWindowScreenModel.PreparedPhoto
     let windowName: String
@@ -1147,12 +1146,7 @@ private struct GroupSendConfirmSheet: View {
                             .accessibilityLabel("届ける写真")
                     }
                 }
-                Section {
-                    TextField("例：おなかを見せて寝ていた", text: $memo, axis: .vertical)
-                        .lineLimit(2...5)
-                        .accessibilityIdentifier("group-window-send-memo")
-                } header: { Text("メモ") }
-                  footer: { Text("メモはこのiPhoneにだけ残り、まどには届きません。写真タブで見返せます。") }
+                GroupCaptionField(text: $memo)
             }
             .navigationTitle("「\(windowName)」に届ける")
             .navigationBarTitleDisplayMode(.inline)
@@ -1160,15 +1154,34 @@ private struct GroupSendConfirmSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
             }
             .safeAreaInset(edge: .bottom) {
-                Button { deliver(String(memo.prefix(500))) } label: {
+                Button { deliver(memo) } label: {
                     Label("届ける", systemImage: "paperplane").font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(GroupPhotoCaption.validationMessage(for: memo) != nil)
                 .accessibilityIdentifier("group-window-send-confirm")
                 .padding().background(.regularMaterial)
             }
         }
+    }
+}
+
+/// ひとこと on the send confirmation: what the window will read, and that the
+/// same words stay as this iPhone's memo. Empty sends the photo alone.
+private struct GroupCaptionField: View {
+    @Binding var text: String
+
+    var body: some View {
+        Section {
+            TextField("例：おなかを見せて寝ていた", text: $text, axis: .vertical)
+                .lineLimit(2...5)
+                .accessibilityIdentifier("group-window-send-caption")
+            if let message = GroupPhotoCaption.validationMessage(for: text) {
+                Text(message).font(.footnote).foregroundStyle(.orange)
+            }
+        } header: { Text("ひとこと") }
+          footer: { Text("まどのみんなに届きます（\(GroupPhotoCaption.maximumCharacters)文字・改行\(GroupPhotoCaption.maximumLineBreaks)つまで）。書かなくても届けられます。同じ文が、このiPhoneの写真のメモにも残ります。") }
     }
 }
 
@@ -1208,6 +1221,14 @@ private struct GroupPhotoDetail: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 if let current {
                     details(current)
+                    if let caption = current.caption, !current.isHidden,
+                       !safety.hasReported(current.id, in: model.windowID) {
+                        Text(caption)
+                            .font(.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                            .accessibilityIdentifier("group-photo-caption")
+                    }
                     actions(current)
                 }
                 if let message = model.actionMessage {
@@ -2146,7 +2167,7 @@ struct GroupReportSheet: View {
                     } header: {
                         Text("理由")
                     } footer: {
-                        Text("この写真の暗号化したコピーだけを運営へ送ります。確認のため 7 日間扱い、そのあと削除します。まどの鍵やほかの写真は送りません。送ると、この写真はこのiPhoneで見えなくなります。")
+                        Text("この写真の暗号化したコピーだけを運営へ送ります。ひとことは送りません。確認のため 7 日間扱い、そのあと削除します。まどの鍵やほかの写真は送りません。送ると、この写真はこのiPhoneで見えなくなります。")
                     }
                     if let record, record.progress == .retryable {
                         Section {
