@@ -3127,7 +3127,7 @@ struct FamilyWindowView: View {
                 Link("問題を問い合わせる", destination: url)
             }
             if !model.isEncryptedReportAvailable {
-                Text("安全上の問題は、「問題を問い合わせる」から知らせてください。写真・招待コード・確認フレーズ・鍵は添付しないでください。相手は安全メニューからブロックして、共有を終えられます。")
+                Text("この限定ベータではアプリ内通報を停止しています。安全上の問題は、写真・招待コード・確認フレーズ・鍵を添付せず、TestFlightのベータ版フィードバックから連絡してください。相手は安全メニューからブロックして共有を終了できます。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
