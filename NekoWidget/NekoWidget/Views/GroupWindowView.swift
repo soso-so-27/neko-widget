@@ -1260,6 +1260,8 @@ private struct GroupPhotoDetail: View {
                                     showsBlockConfirmation = true
                                 }
                                 .accessibilityIdentifier("group-photo-block")
+                            } else if SharingAPIConfiguration.current.isOwnerInternalReportsDisabled {
+                                Text("この内部版では通報の受付を停止しています")
                             }
                         }
                         Button("このiPhoneから消す", systemImage: "trash", role: .destructive) {

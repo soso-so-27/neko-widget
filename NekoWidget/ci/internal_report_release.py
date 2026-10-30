@@ -24,6 +24,11 @@ def settings(requested, mode, approval, scope, billing_requested=False):
 
 
 def verify_info(info, expected, *, extension=False):
+    if expected.get("OwnerInternalReportsDisabled") is True:
+        from distribution_profile import verify_info as verify_owner_info
+        verify_owner_info(info, extension=extension)
+    elif info.get("OwnerInternalReportsDisabled") == "YES":
+        raise ValueError("Owner internal artifact cannot use reviewed distribution metadata.")
     flag, scope = (False, "") if extension else (expected[ENABLED], expected[SCOPE_KEY])
     if type(info.get(ENABLED)) is not bool or info[ENABLED] is not flag or info.get(SCOPE_KEY) != scope:
         raise ValueError("Compiled internal report settings do not match the release boundary.")
@@ -42,6 +47,16 @@ def verify_info(info, expected, *, extension=False):
 
 
 def metadata_settings(metadata):
+    from distribution_profile import OWNER_SCHEMA, OWNER, OFF_KEY
+    if metadata.get("schema") == OWNER_SCHEMA:
+        if (metadata.get("distributionProfile") != OWNER or metadata.get("releaseMode") != "media-staging"
+                or metadata.get("internalEncryptedReportEnabled") is not False
+                or metadata.get("internalEncryptedReportScope") != ""
+                or metadata.get("testFlightInternalTestingOnly") is not True
+                or metadata.get("moderationKeyId") != "moderation-v2"
+                or metadata.get("moderationPublicKey") != PUBLIC_KEY):
+            raise ValueError("Owner internal metadata boundary changed.")
+        return {ENABLED: False, SCOPE_KEY: "", OFF_KEY: True}
     if metadata.get("schema") == "jp.nekowidget.moderation-release-metadata.v2":
         if ENABLED in metadata or "internalEncryptedReportEnabled" in metadata or "internalEncryptedReportScope" in metadata:
             raise ValueError("Legacy metadata cannot authorize reports.")
@@ -89,7 +104,10 @@ def main():
     parser.add_argument("--widget-info-plist", type=Path)
     parser.add_argument("--export-options-plist", type=Path)
     parser.add_argument("--ipa", type=Path)
+    parser.add_argument("--distribution-profile", choices=("owner-internal", "existing-reviewed"), default="existing-reviewed")
     args = parser.parse_args()
+    from distribution_profile import validate, OWNER, OFF_KEY
+    validate(args.distribution_profile, args.mode, args.requested == "true")
     expected = settings(args.requested == "true", args.mode, args.approval, args.scope, args.billing_requested == "true")
     if args.app_source_info_plist:
         info = plistlib.loads(args.app_source_info_plist.read_bytes())
@@ -105,6 +123,8 @@ def main():
     else:
         if json.loads(args.settings_file.read_text()) != expected:
             raise ValueError("Prepared report settings changed.")
+        if args.distribution_profile == OWNER:
+            expected[OFF_KEY] = True
         if args.app_info_plist:
             if not args.share_info_plist or not args.widget_info_plist:
                 raise ValueError("Both compiled extensions are required.")

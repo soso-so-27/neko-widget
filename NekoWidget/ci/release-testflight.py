@@ -686,6 +686,7 @@ def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
     plan = {
         "repository": REPOSITORY, "sha": sha, "previous_reserved_build": highest, "ci": evidence,
         "inputs": {
+            "distribution_profile": "existing-reviewed",
             "expected_main_sha": sha, "build_number": build, "release_mode": "media-staging",
             "official_window_feed_url": release_config.validated_url("media-staging", release_config.PREVIEW_FEED_URL),
             "upload_to_testflight": "true", "retain_signed_artifacts": "true",
@@ -703,6 +704,8 @@ def prepare(gh: GitHub, sha: str, build: str, run_id: int, now: dt.datetime,
 def main(argv: list[str] | None = None) -> int:
     global ROOT
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--distribution-profile", choices=("existing-reviewed",), required=True,
+                        help="This legacy evidence CLI only supports existing-reviewed. Owner internal uses the workflow directly.")
     parser.add_argument("--sha", required=True)
     parser.add_argument("--build-number", required=True)
     parser.add_argument("--ci-run", "--main-ci-run", dest="main_ci_run", required=True, type=int)

@@ -229,3 +229,26 @@ xcrun simctl spawn "$device" launchctl list | awk -v pid="$pid" -v bundle="$bund
 '
 mkdir -p "$RUNNER_TEMP/ci-screenshots"
 xcrun simctl io "$device" screenshot "$RUNNER_TEMP/ci-screenshots/first-launch.png"
+
+# Owner-only reporting-OFF products: compile, inspect all three products, and
+# execute the configuration policy against those exact plists. Do not install
+# this staging-connected product or contact services from CI.
+xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
+  -configuration Release -sdk iphonesimulator -xcconfig Config.MediaStaging.xcconfig \
+  -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
+  -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
+  SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+  OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO \
+  SHARING_API_BASE_URL=https://neko-window-sharing-staging.nakanishisoya.workers.dev \
+  SHARING_MODERATION_KEY_ID=moderation-v2 \
+  SHARING_MODERATION_PUBLIC_KEY=T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg \
+  SHARING_PRIVACY_URL=https://soso-so-27.github.io/neko-widget/privacy/ \
+  SHARING_SUPPORT_URL=https://soso-so-27.github.io/neko-widget/support/ \
+  SHARING_COMMUNITY_STANDARDS_URL=https://soso-so-27.github.io/neko-widget/community/ \
+  build
+python3 ci/distribution_profile.py --profile owner-internal --mode media-staging \
+  --internal-reports false --app "$app"
+xcrun --sdk macosx swiftc -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
+  ci/verify-owner-internal-products.swift -o "$RUNNER_TEMP/owner-internal-products"
+"$RUNNER_TEMP/owner-internal-products" "$app"

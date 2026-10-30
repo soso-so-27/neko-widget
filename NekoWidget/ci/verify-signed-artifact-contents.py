@@ -179,7 +179,7 @@ def main() -> None:
             fail(f"Embedded release metadata is invalid: {error}")
         if not isinstance(release_metadata, dict):
             fail("Embedded release metadata root must be an object.")
-        if release_metadata.get("schema") == "jp.nekowidget.moderation-release-metadata.v3":
+        if release_metadata.get("schema") in ("jp.nekowidget.moderation-release-metadata.v3", "jp.nekowidget.moderation-release-metadata.v4"):
             try:
                 report_settings = metadata_settings(release_metadata)
                 for relative, extension in (("Info.plist", False), ("PlugIns/NekoWidgetShareExtension.appex/Info.plist", True), ("PlugIns/NekoWidgetWidgetExtension.appex/Info.plist", True)):

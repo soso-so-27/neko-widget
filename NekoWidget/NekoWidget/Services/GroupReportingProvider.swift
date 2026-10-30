@@ -7,13 +7,13 @@ import UIKit
 enum GroupReportingProvider {
     static func make() -> any GroupReportingService {
 #if os(iOS)
-        // An explicit internal build setting, absent/NO in ordinary builds.
-        // The prototype remains the 310 UI; setting this cannot open the relay.
-        let selected = Bundle.main.object(forInfoDictionaryKey: "GroupReportingProductionEnabled") as? String == "YES"
-        guard selected else { return GroupReportingPrototype() }
         let config = SharingAPIConfiguration.current
+        // Owner OFF reads existing records locally (including hidden photos),
+        // but never uses the successful-send prototype or opens a network path.
+        let selected = Bundle.main.object(forInfoDictionaryKey: "GroupReportingProductionEnabled") as? String == "YES"
+        guard selected || config.isOwnerInternalReportsDisabled else { return GroupReportingPrototype() }
         guard (InternalBuildPresentationAvailability.isAvailable || config.releaseMode == "production"),
-              config.isEncryptedReportAvailable,
+              (config.isEncryptedReportAvailable || config.isOwnerInternalReportsDisabled),
               GroupWindowClientProvider.production != nil, let endpoint = config.baseURL,
               let publicKey = config.moderationPublicKey,
               let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {

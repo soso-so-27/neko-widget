@@ -300,11 +300,11 @@ private final class ReportingEnvironment {
         evidence = ReportingEvidence(windowID: windowID, photoID: photoID, jpeg: jpeg)
         echo = try ReportingEcho(identity: identity, windowID: windowID, photoID: photoID)
     }
-    func service() throws -> ProductionGroupReporting {
+    func service(reportsDisabled: Bool = false) throws -> ProductionGroupReporting {
         let evidence = self.evidence
         return try reportingStoreContext(directory.lastPathComponent + ".service-init") {
             try ProductionGroupReporting(endpoint: URL(string: ProductionGroupReporting.stagingEndpoint)!,
-                secrets: secrets, transport: echo, directory: directory, publicKey: GroupReportCrypto.moderationPublicKey) { window, photo in
+                secrets: secrets, transport: echo, directory: directory, publicKey: GroupReportCrypto.moderationPublicKey, reportsDisabled: reportsDisabled) { window, photo in
                     try evidence.read(windowID: window, photoID: photo)
                 }
         }
@@ -342,6 +342,7 @@ private struct VerifyGroupReporting {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try await reportingPhase("physical parent and rejected symlink leaf") { try await storePaths(root, jpeg) }
+        try await reportingPhase("owner reporting OFF preserves pending evidence") { try await ownerOff(root, jpeg) }
         try await reportingPhase("selected evidence") { try await selectedEvidence(root, jpeg) }
         try await reportingPhase("intentional persistence failures") { try await persistence(root, jpeg) }
         for (name, loss) in [("reserve", ReportingLoss.reserve), ("upload", .upload), ("commit", .commit), ("before-commit", .beforeCommit)] {
@@ -599,6 +600,24 @@ private struct VerifyGroupReporting {
         try await fails(.conflict, "same block operation cannot change intent") { try await restarted.setBlock(windowID: env.windowID, participantID: target, active: false, operationID: operation) }
         try await fails(.blockSelf, "cannot block self") { try await restarted.setBlock(windowID: env.windowID, participantID: env.participantID, active: true, operationID: UUID()) }
         try require(await env.mutationLog().count == 2, "invalid block intents never sent")
+    }
+    private static func ownerOff(_ root: URL, _ jpeg: Data) async throws {
+        let env = try ReportingEnvironment(root: root, name: "owner-off", jpeg: jpeg)
+        let enabled = try env.service()
+        let id = try await env.prepare(enabled)
+        let before = try GroupWire.encode(env.draft(id))
+        let requests = await env.echo.log().count, photoReads = env.evidence.reads()
+        let off = try env.service(reportsDisabled: true)
+        await off.refreshAvailability()
+        try require(!off.isAvailable, "owner OFF cannot use live availability")
+        try await fails(.disabled, "owner OFF cannot prepare") { _ = try await env.prepare(off) }
+        try await fails(.disabled, "owner OFF cannot submit") { _ = try await off.submitReport(draftID: id) }
+        try await fails(.disabled, "owner OFF cannot resume") { _ = try await off.resumeReport(draftID: id) }
+        try await fails(.disabled, "owner OFF cannot refresh") { _ = try await off.refreshReport(draftID: id) }
+        try require(await off.reports(windowID: env.windowID).contains { $0.id == id }, "pending records still cover reported photos")
+        try require(try GroupWire.encode(env.draft(id)) == before, "pending ciphertext and intent unchanged")
+        try require(await env.echo.log().count == requests && env.evidence.reads() == photoReads,
+                    "owner OFF makes zero HTTP requests and reads no photo")
     }
     private static func disabled(_ root: URL, _ jpeg: Data) async throws {
         let env = try ReportingEnvironment(root: root, name: "off", jpeg: jpeg), service = try env.service()

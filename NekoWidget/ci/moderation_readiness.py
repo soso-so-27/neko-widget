@@ -30,3 +30,18 @@ def verify_v2_rollout(policy: dict) -> None:
         raise SystemExit('Moderation v2 readiness is unavailable or invalid.') from error
     if response.returncode != 0:
         raise SystemExit('Moderation v2 readiness verification failed: ' + response.stderr.strip()[:160])
+
+
+def verify_distribution_readiness(policy: dict, *, profile, mode, internal_reports):
+    # Keep the exemption decision inside the already-signed code surface.
+    # Distribution helpers must not be able to skip the existing signed path.
+    if profile not in ("owner-internal", "existing-reviewed") or type(internal_reports) is not bool:
+        raise ValueError("Explicit distribution profile and report boolean required.")
+    if profile == "owner-internal":
+        if mode != "media-staging" or internal_reports:
+            raise ValueError("Owner internal requires staging and real reports OFF.")
+        if policy.get("clientKeyId") != "moderation-v2" or policy.get("v2ClientReleaseAllowed") is not True:
+            raise ValueError("Owner internal must retain the reviewed v2 recipient policy.")
+        return
+    if mode == "media-staging":
+        verify_v2_rollout(policy)

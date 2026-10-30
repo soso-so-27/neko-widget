@@ -80,6 +80,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     let releaseMode: String
     let isInternalEncryptedReportEnabled: Bool
     let internalEncryptedReportScope: String
+    let isOwnerInternalReportsDisabled: Bool
     let isProductionReportingEnabled: Bool
 
     init(
@@ -97,6 +98,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         releaseMode: String = "",
         isInternalEncryptedReportEnabled: Bool = false,
         internalEncryptedReportScope: String = "",
+        isOwnerInternalReportsDisabled: Bool = false,
         isProductionReportingEnabled: Bool = false
     ) {
         self.isEnabled = isEnabled
@@ -113,6 +115,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         self.releaseMode = releaseMode
         self.isInternalEncryptedReportEnabled = isInternalEncryptedReportEnabled
         self.internalEncryptedReportScope = internalEncryptedReportScope
+        self.isOwnerInternalReportsDisabled = isOwnerInternalReportsDisabled
         self.isProductionReportingEnabled = isProductionReportingEnabled
     }
 
@@ -143,6 +146,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     /// release. Key presence alone never enables reporting. The server still
     /// checks admission, consent, source-photo access and the current key.
     var isEncryptedReportAvailable: Bool {
+        guard !isOwnerInternalReportsDisabled else { return false }
         if releaseMode == "production" {
             return isProductionReportingEnabled && isGroupRuntimeAvailable
                 && !isInternalEncryptedReportEnabled && internalEncryptedReportScope.isEmpty
@@ -237,6 +241,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             internalEncryptedReportScope: exactNonemptyString(
                 info["SharingInternalEncryptedReportScope"] as? String
             ) ?? "",
+            isOwnerInternalReportsDisabled: explicitFlag(info["OwnerInternalReportsDisabled"]),
             isProductionReportingEnabled: explicitFlag(info["GroupReportingProductionEnabled"])
         )
     }
