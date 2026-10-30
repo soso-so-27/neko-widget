@@ -14,12 +14,15 @@ enum InternalBuildPresentationAvailability {
 
 /// The 1.0 shape, read by the app and the Widget alike: 写真・まど・アルバム・
 /// ツール, the album of works that arrive, 旅立った日, 公式のまど. Internal
-/// builds show it always (no switch). Public builds keep the shape they have
-/// until 1.0 ships: then `isOn` becomes true, in this one place. What is not
+/// builds show it always (no switch). The explicit public production mode
+/// enables the same 1.0 shape without enabling internal tools. What is not
 /// part of 1.0 (the photobook check, test tools) stays behind
 /// InternalBuildPresentationAvailability.
 enum Version1 {
-    static var isOn: Bool { InternalBuildPresentationAvailability.isAvailable }
+    static var isOn: Bool {
+        InternalBuildPresentationAvailability.isAvailable
+            || (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "production"
+    }
 }
 
 /// The build-owned registry defines which public windows the app offers.

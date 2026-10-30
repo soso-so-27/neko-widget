@@ -8,10 +8,11 @@ enum PersonalArchiveRecordState: String, Codable, Sendable {
 enum PersonalArchiveError: String, Error, Codable, LocalizedError, Sendable {
     case notConfigured, notSignedIn, accountChanged, quotaExceeded, networkUnavailable
     case zoneMissing, archiveChanged, conflict, corruptedState, storageUnavailable, invalidJPEG
-    case textTooLong, emptyRecord, cancelled
+    case textTooLong, emptyRecord, cancelled, readOnly
 
     var errorDescription: String? {
         switch self {
+        case .readOnly: "以前のiCloud記録は、読み出しと書き出しだけ利用できます。未送信の内容はこのiPhoneに残しています。"
         case .notConfigured: "記録の保管はまだ利用できません。"
         case .notSignedIn: "設定でiCloudへのサインインと、このアプリのiCloud利用を確認してください。"
         case .accountChanged: "iCloudのアカウントが変わりました。入力内容を控え、保管画面を開き直してください。"
@@ -244,6 +245,10 @@ enum PersonalArchiveFiles {
 actor PersonalArchiveStore {
     static let shared = PersonalArchiveStore(transport: PersonalArchiveCloudConfiguration.makeClient())
     nonisolated static var isConfigured: Bool { PersonalArchiveCloudConfiguration.containerIdentifier != nil }
+    nonisolated static var legacyReadOnly: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "PersonalArchiveReadOnly") as? String) == "YES"
+    }
+    nonisolated let isReadOnly: Bool
     nonisolated static let maximumCharacters = 500
     nonisolated static let maximumJPEGBytes = 20 * 1024 * 1024
 
@@ -278,8 +283,10 @@ actor PersonalArchiveStore {
     private let jpegReader: @Sendable (URL) throws -> Data
 
     init(directory: URL? = nil, transport: (any PersonalArchiveTransport)?,
+         readOnly: Bool = PersonalArchiveStore.legacyReadOnly,
          jpegReader: @escaping @Sendable (URL) throws -> Data = { try Data(contentsOf: $0) }) {
         self.directory = directory; self.transport = transport; self.jpegReader = jpegReader
+        self.isReadOnly = readOnly
     }
 
     func accountContext() async throws -> String { try await currentAccount().context }
@@ -314,6 +321,7 @@ actor PersonalArchiveStore {
     }
 
     func retryRecord(id: UUID, expectedAccount: String) async throws -> PersonalArchiveRecord? {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let account = try await checkedAccount(expectedAccount)
         try await attempt(id, account: account)
         try await assertCurrent(account)
@@ -355,6 +363,7 @@ actor PersonalArchiveStore {
     func deleteWords(id: UUID, operationID: UUID, expectedRevision: String,
                      expectedAccount: String, sourceSnapshot: PersonalArchiveSourceSnapshot? = nil,
                      replacementContext: PersonalArchiveContext? = nil, replacesContext: Bool = false) async throws -> PersonalArchiveRecord {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let account = try await checkedAccount(expectedAccount)
         guard let entry = try readState(account).entries[id.uuidString] else { throw PersonalArchiveError.conflict }
         let context = replacesContext ? replacementContext : entry.payload.context
@@ -425,6 +434,7 @@ actor PersonalArchiveStore {
     func preserve(source: PersonalArchiveSourceSnapshot, jpegData: Data?, text: String,
                   capturedAt: Date?, context: PersonalArchiveContext?, expectedAccount: String,
                   recreateDeleted: Bool = false) async throws -> PersonalArchiveRecord {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let account = try await checkedAccount(expectedAccount)
         let normalized = try validatedText(text, jpegData: jpegData, capturedAt: capturedAt, context: context)
         guard !source.revision.isEmpty, source.revision.utf8.count <= 1024,
@@ -468,6 +478,7 @@ actor PersonalArchiveStore {
     func update(id: UUID, operationID: UUID, expectedRevision: String, text: String, capturedAt: Date?,
                 context: PersonalArchiveContext?, expectedAccount: String,
                 sourceSnapshot: PersonalArchiveSourceSnapshot? = nil) async throws -> PersonalArchiveRecord {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let account = try await checkedAccount(expectedAccount)
         try update(account) { state, _ in
             guard let existing = state.entries[id.uuidString], !existing.payload.isDeleted else { throw PersonalArchiveError.conflict }
@@ -513,6 +524,7 @@ actor PersonalArchiveStore {
 
     @discardableResult
     func delete(id: UUID, operationID: UUID, expectedRevision: String, expectedAccount: String) async throws -> PersonalArchiveRecordState {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let account = try await checkedAccount(expectedAccount)
         try update(account) { state, _ in
             guard let existing = state.entries[id.uuidString] else { throw PersonalArchiveError.conflict }
@@ -560,6 +572,7 @@ actor PersonalArchiveStore {
                              text: String, sourceSnapshot: PersonalArchiveSourceSnapshot? = nil,
                              expectedAccount: String, replacementContext: PersonalArchiveContext? = nil,
                              replacesContext: Bool = false) async throws -> PersonalArchiveRecord {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let account = try await checkedAccount(expectedAccount)
         try update(account) { state, _ in
             guard let entry = state.entries[id.uuidString] else { throw PersonalArchiveError.conflict }
@@ -633,6 +646,7 @@ actor PersonalArchiveStore {
 
     @discardableResult
     func save(id: UUID, jpegData: Data?, text: String, capturedAt: Date?, expectedAccount: String) async throws -> PersonalArchiveRecord {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalized.count <= Self.maximumCharacters, normalized.utf8.count <= 65_536 else { throw PersonalArchiveError.textTooLong }
         guard !normalized.isEmpty || jpegData != nil else { throw PersonalArchiveError.emptyRecord }
@@ -686,6 +700,7 @@ actor PersonalArchiveStore {
     }
 
     func retryPending() async throws {
+        guard !isReadOnly else { throw PersonalArchiveError.readOnly }
         let account = try await currentAccount()
         let pending = try readState(account).entries.values.filter { $0.state == .pending }.map { $0.payload.id }
         guard !pending.isEmpty else { return }

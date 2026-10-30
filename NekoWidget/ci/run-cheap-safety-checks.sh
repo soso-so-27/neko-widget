@@ -203,3 +203,30 @@ xcrun swiftc \
   -o "$RUNNER_TEMP/verify-moment-sharing-core"
 "$RUNNER_TEMP/verify-moment-sharing-core" \
   ci/fixtures/window-name-protocol-v1.json
+
+# Production runtime policy and legacy CloudKit reading; synthetic data only.
+xcrun swiftc -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
+  ci/verify-production-configuration.swift -o "$RUNNER_TEMP/verify-production-configuration"
+"$RUNNER_TEMP/verify-production-configuration"
+xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" \
+  NekoWidget/Services/PersonalArchiveStore.swift NekoWidget/Services/PersonalArchiveCloudClient.swift \
+  NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoCoordinator.swift \
+  ci/verify-personal-archive.swift -o "$RUNNER_TEMP/verify-personal-archive"
+"$RUNNER_TEMP/verify-personal-archive"
+
+# Cheap direct Xcode resource-resolution probe; no build, launch, or upload.
+xcodebuild -project NekoWidget.xcodeproj -target NekoWidget -configuration Release \
+  -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json \
+  > "$RUNNER_TEMP/production-settings.json"
+python3 ci/validate-production-settings.py "$RUNNER_TEMP/production-settings.json" --allow-unconfigured
+xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Release \
+  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+  -xcconfig Config.Production.xcconfig -derivedDataPath "$RUNNER_TEMP/ProductionProbe" \
+  CODE_SIGNING_ALLOWED=NO -dry-run build > "$RUNNER_TEMP/production-resource-plan.txt"
+python3 - "$RUNNER_TEMP/production-resource-plan.txt" <<'PY'
+from pathlib import Path
+import sys
+plan=Path(sys.argv[1]).read_text()
+assert 'Production/PrivacyInfo.xcprivacy' in plan, 'production manifest did not resolve in Xcode resource plan'
+print('PASS production privacy resource resolves (archive contents require release-time validation)')
+PY

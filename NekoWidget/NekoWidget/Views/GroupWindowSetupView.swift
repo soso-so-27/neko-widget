@@ -1379,13 +1379,15 @@ final class GroupInvitationInbox: ObservableObject {
 enum GroupWindowClientProvider {
     /// Fixed in the staging rollout plan (10/20). Changing it starts a new
     /// identity, so it never follows build numbers; production uses another.
-    static let namespace = "jp.nekowidget.app.group-v3.staging"
+    static var namespace: String {
+        SharingAPIConfiguration.current.releaseMode == "production"
+            ? "jp.nekowidget.app.group-v3.production" : "jp.nekowidget.app.group-v3.staging"
+    }
 
     static let production: ProductionGroupWindowClient? = {
         let configuration = SharingAPIConfiguration.current
         guard (Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String) == "YES",
-              configuration.releaseMode == "media-staging",
-              configuration.isMediaEnabled,
+              configuration.isGroupRuntimeAvailable,
               let endpoint = configuration.baseURL
         else { return nil }
         return try? ProductionGroupWindowClient(endpoint: endpoint, namespace: namespace)

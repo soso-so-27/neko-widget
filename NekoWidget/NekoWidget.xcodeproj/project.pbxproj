@@ -410,7 +410,7 @@
 		DA7200010000000000000002 /* MainlineMovieAcceptance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainlineMovieAcceptance.swift; sourceTree = "<group>"; };
 		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000204 /* NekoWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidget.entitlements; sourceTree = "<group>"; };
-		F00000000000000000000205 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F00000000000000000000205 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = "$(APP_PRIVACY_MANIFEST_PATH)"; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000206 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000210 /* JSONExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONExporter.swift; sourceTree = "<group>"; };
 		F00000000000000000000211 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };

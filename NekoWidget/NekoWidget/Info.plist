@@ -6,6 +6,8 @@
 	<string>$(MEMBERSHIP_ACCESS_ENFORCED)</string>
 	<key>PersonalArchiveEnabled</key>
 	<string>$(PERSONAL_ARCHIVE_ENABLED)</string>
+	<key>PersonalArchiveReadOnly</key>
+	<string>$(PERSONAL_ARCHIVE_READ_ONLY)</string>
 	<key>PersonalArchiveContainerIdentifier</key>
 	<string>$(PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER)</string>
 	<key>ManagedPreservationEnabled</key>

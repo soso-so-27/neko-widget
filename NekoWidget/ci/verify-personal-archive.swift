@@ -201,7 +201,8 @@ enum PersonalArchiveVerifier {
         try await unifiedMemoConcurrency(root.appendingPathComponent("memo-concurrency"))
         try await reconcileDuringLocalSave(root.appendingPathComponent("reconcile-save"))
         try await measurementReflection(root.appendingPathComponent("measurement"))
-        print("Personal archive verifier passed: 16 boundary groups; no CloudKit network or account access")
+        try await legacyReadOnly(root.appendingPathComponent("read-only"))
+        print("Personal archive verifier passed: 17 boundary groups; no CloudKit network or account access")
     }
 
     private static func measurementReflection(_ root: URL) async throws {
@@ -270,6 +271,36 @@ enum PersonalArchiveVerifier {
         let upgraded = await legacyCloud.payload(oldCopy.id)
         try require(upgraded?.context?.weight == weight.value && upgraded?.memoSchema == 2,
                     "first weight upload could not recover after reconnect")
+    }
+
+    private static func legacyReadOnly(_ root: URL) async throws {
+        let cloud = ArchiveCloudFixture()
+        let writer = PersonalArchiveStore(directory: root, transport: cloud, readOnly: false)
+        let account = try await writer.accountContext()
+        let stored = try await writer.save(id: UUID(), jpegData: nil, text: "existing", capturedAt: nil, expectedAccount: account)
+        await cloud.failNext(.beforeCommit)
+        let pending = try await writer.save(id: UUID(), jpegData: nil, text: "unsent", capturedAt: nil, expectedAccount: account)
+        let before = await cloud.counts()
+        let reader = PersonalArchiveStore(directory: root, transport: cloud, readOnly: true)
+        let records = try await reader.records()
+        try require(records.contains { $0.id == stored.id && $0.text == "existing" }, "read-only keeps existing content")
+        try require(records.contains { $0.id == pending.id && $0.text == "unsent" }, "read-only keeps unsent content")
+        let refreshed = try await reader.refresh()
+        try require(refreshed.contains { $0.id == stored.id }, "CloudKit legacy read remains available")
+        for action in 0..<3 {
+            do {
+                switch action {
+                case 0: _ = try await reader.save(id: UUID(), jpegData: nil, text: "new", capturedAt: nil, expectedAccount: account)
+                case 1: try await reader.retryPending()
+                default: _ = try await reader.delete(id: stored.id, operationID: UUID(), expectedRevision: stored.revision, expectedAccount: account)
+                }
+                throw Failure(message: "read-only mutation accepted")
+            } catch PersonalArchiveError.readOnly { }
+        }
+        let after = await cloud.counts()
+        try require(before.uploads == after.uploads && before.creations == after.creations, "read-only caused no remote writes")
+        let kept = try await reader.records()
+        try require(kept.contains { $0.id == pending.id && $0.text == "unsent" }, "failed retry must preserve unsent draft")
     }
 
     private static func unifiedMemoOutbox(_ root: URL) async throws {

@@ -18,10 +18,11 @@ struct GroupHostBillingSigner: GroupBillingSigner {
 #if os(iOS)
     private func credential(endpoint: URL) throws -> BillingCredential {
         let config = BillingClientConfiguration.current
-        guard config.isConfigured, endpoint.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
-                "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+        let sharing = SharingAPIConfiguration.current
+        guard sharing.isGroupRuntimeAvailable, config.isConfigured,
+              endpoint == sharing.baseURL,
               config.baseURL?.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
-                "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+                endpoint.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
               let saved = try BillingKeychainStore.load() else { throw GroupClientError.authenticationRequired }
         let value = try saved.validated()
         guard value.phase == .registered,

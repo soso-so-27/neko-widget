@@ -80,6 +80,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     let releaseMode: String
     let isInternalEncryptedReportEnabled: Bool
     let internalEncryptedReportScope: String
+    let isProductionReportingEnabled: Bool
 
     init(
         isEnabled: Bool,
@@ -95,7 +96,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         privacyURL: URL? = nil,
         releaseMode: String = "",
         isInternalEncryptedReportEnabled: Bool = false,
-        internalEncryptedReportScope: String = ""
+        internalEncryptedReportScope: String = "",
+        isProductionReportingEnabled: Bool = false
     ) {
         self.isEnabled = isEnabled
         self.isMediaEnabled = isMediaEnabled
@@ -111,9 +113,17 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         self.releaseMode = releaseMode
         self.isInternalEncryptedReportEnabled = isInternalEncryptedReportEnabled
         self.internalEncryptedReportScope = internalEncryptedReportScope
+        self.isProductionReportingEnabled = isProductionReportingEnabled
     }
 
     var isAvailable: Bool { isEnabled && baseURL != nil }
+
+    var isGroupRuntimeAvailable: Bool {
+        if releaseMode == "production" {
+            return isMediaAvailable && baseURL?.host?.contains("staging") == false
+        }
+        return releaseMode == "media-staging" && isMediaEnabled && baseURL != nil
+    }
 
     var hasOperationalSafetyConfiguration: Bool {
         moderationKeyID.map { Self.reviewedModerationKeyIDs.contains($0) } == true
@@ -133,7 +143,15 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     /// release. Key presence alone never enables reporting. The server still
     /// checks admission, consent, source-photo access and the current key.
     var isEncryptedReportAvailable: Bool {
-        isInternalEncryptedReportEnabled
+        if releaseMode == "production" {
+            return isProductionReportingEnabled && isGroupRuntimeAvailable
+                && !isInternalEncryptedReportEnabled && internalEncryptedReportScope.isEmpty
+                && !isReviewPreviewEnabled && !isShareExtensionSendEnabled
+                && moderationKeyID == "moderation-v2"
+                // Never reuse staging's evidence recipient in a public build.
+                && moderationPublicKey != Self.decodeCanonicalBase64URL("T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg")
+        }
+        return isInternalEncryptedReportEnabled
             && internalEncryptedReportScope == "internal-owner-first-connection"
             && releaseMode == "media-staging"
             && baseURL?.absoluteString == "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
@@ -218,7 +236,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             ),
             internalEncryptedReportScope: exactNonemptyString(
                 info["SharingInternalEncryptedReportScope"] as? String
-            ) ?? ""
+            ) ?? "",
+            isProductionReportingEnabled: explicitFlag(info["GroupReportingProductionEnabled"])
         )
     }
 
