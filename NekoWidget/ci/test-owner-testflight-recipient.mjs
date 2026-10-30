@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRecipient, reader } from './check-owner-testflight-recipient.mjs';
+import { checkRecipient, reader, failureMessage } from './check-owner-testflight-recipient.mjs';
 import { check as checkReportOff } from '../SharingService/scripts/check-owner-internal-report-off.mjs';
 
 const groupID = 'owner-group-id', testerID = 'owner-tester-id';
@@ -43,4 +43,16 @@ test('report OFF is observed, never set; ON and unknown stop release', async () 
   await checkReportOff(fake({ error: { code: 'group_reports_disabled' } }));
   await assert.rejects(checkReportOff(fake({ protocolVersion: 3, reportingAvailable: true })));
   await assert.rejects(checkReportOff(fake({ protocolVersion: 3 })));
+});
+
+test('failure diagnostics identify the boundary without printing IDs, responses or credentials', async () => {
+  const secret = 'synthetic-private-token-and-owner-id';
+  assert.equal(failureMessage(new Error(secret)), 'ASC read or credential processing failed; details suppressed.');
+  try { await reader(secret, async () => ({ status: 403 }))('/v1/apps/private-id/betaGroups'); }
+  catch (error) {
+    assert.equal(failureMessage(error), 'ASC beta groups read unavailable (HTTP 403); do not distribute.');
+    assert.ok(!failureMessage(error).includes(secret));
+    assert.ok(!failureMessage(error).includes('private-id'));
+  }
+  await assert.rejects(run([]), error => failureMessage(error) === 'Pinned owner group is not in the expected app.');
 });

@@ -1,0 +1,40 @@
+name: Read-only owner TestFlight recipient check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recipient:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: testflight
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+      - name: Check existing owner recipient with GET only
+        shell: bash
+        env:
+          OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
+          OWNER_INTERNAL_TESTER_ID: ${{ secrets.OWNER_INTERNAL_TESTER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          # Recipient pins mirror the existing IDs as masked values, including
+          # the runner's environment header. They do not grant any new access.
+          umask 077
+          key_directory="$HOME/.appstoreconnect/private_keys"
+          key_path="$key_directory/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          mkdir -p "$key_directory"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 --decode > "$key_path"
+          node NekoWidget/ci/check-owner-testflight-recipient.mjs
