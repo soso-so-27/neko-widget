@@ -1676,10 +1676,9 @@ jobs:
 
           run_altool_stage() {
             local stage="$1"
-            local success_marker="$2"
             local log_path="$RUNNER_TEMP/altool-${stage}.log"
             local -a statuses
-            shift 2
+            shift
 
             set +e
             xcrun altool "$@" 2>&1 | tee "$log_path"
@@ -1694,23 +1693,16 @@ jobs:
               echo "Could not preserve the altool ${stage} log (tee status ${statuses[1]})." >&2
               exit "${statuses[1]}"
             fi
-            if grep -Eiq 'ERROR:|Failed to (validate|upload)|ENTITY_ERROR|UPLOAD FAILED|VALIDATION FAILED' "$log_path"; then
-              echo "altool ${stage} reported an App Store Connect error despite exiting successfully." >&2
-              exit 1
-            fi
-            if ! grep -Fq "$success_marker" "$log_path"; then
-              echo "altool ${stage} did not emit the required success marker: ${success_marker}" >&2
-              exit 1
-            fi
+            python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/altool-result.py" "$stage" "$log_path"
           }
 
-          run_altool_stage validate "VERIFY SUCCEEDED with no errors" \
+          run_altool_stage validate \
             --validate-app \
             -f "$IPA_PATH" \
             -t ios \
             --apiKey "$APP_STORE_CONNECT_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
-          run_altool_stage upload "UPLOAD SUCCEEDED with no errors" \
+          run_altool_stage upload \
             --upload-app \
             -f "$IPA_PATH" \
             -t ios \

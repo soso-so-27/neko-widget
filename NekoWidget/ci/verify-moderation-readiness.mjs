@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const root=path.resolve(import.meta.dirname,'../..');
 export const codePaths=Object.freeze([
- '.github/workflows/testflight.yml',
+ '.github/workflows/testflight.yml','NekoWidget/ci/altool-result.py',
  'NekoWidget/ci/moderation_readiness.py','NekoWidget/ci/verify-moderation-readiness.mjs','NekoWidget/ci/write-moderation-release-metadata.py',
  'NekoWidget/ci/internal_report_release.py','NekoWidget/ci/release-testflight.py',
  'NekoWidget/ci/verify-moderation-upload-payload.py','NekoWidget/ci/verify-signed-artifact-contents.py',

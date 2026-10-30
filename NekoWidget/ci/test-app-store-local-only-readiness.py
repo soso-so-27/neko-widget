@@ -1405,9 +1405,10 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         self.assertIn('statuses=("${PIPESTATUS[@]}")', release_workflow)
         self.assertIn("statuses[0] != 0", release_workflow)
         self.assertIn("statuses[1] != 0", release_workflow)
-        self.assertIn("ERROR:|Failed to (validate|upload)|ENTITY_ERROR", release_workflow)
-        self.assertIn('"VERIFY SUCCEEDED with no errors"', release_workflow)
-        self.assertIn('"UPLOAD SUCCEEDED with no errors"', release_workflow)
+        self.assertIn(
+            'python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/altool-result.py" "$stage" "$log_path"',
+            release_workflow,
+        )
         self.assertIn("${{ runner.temp }}/altool-*.log", release_workflow)
         upload_index = release_workflow.index("Validate and upload IPA to TestFlight")
         writer_index = release_workflow.index("Write local-only signed release evidence")
