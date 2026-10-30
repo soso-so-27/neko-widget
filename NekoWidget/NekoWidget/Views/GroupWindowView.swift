@@ -1636,7 +1636,7 @@ struct GroupWindowCreateScreen: View {
     }
 }
 
-/// Under 「作る」 and 「参加を頼む」: pressing it is agreeing to the community
+/// Under 「作る」 and 「参加する」: pressing it is agreeing to the community
 /// standards, said before the press, with the standards one tap away (1.2).
 struct GroupWindowStandardsAgreement: View {
     let action: String

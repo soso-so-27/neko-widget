@@ -187,7 +187,8 @@ final class GroupWindowMembersModel: ObservableObject {
     }
 
     var canInvite: Bool {
-        guard let window, window.canManage, window.state == .active else { return false }
+        guard let window, window.canManage, window.state == .active,
+              !GroupWindowPresentation.isPaused(window) else { return false }
         return window.memberCount < GroupWindowPresentation.memberLimit
     }
 
@@ -408,8 +409,6 @@ struct GroupWindowMembersView: View {
     /// After leaving: closes the window the members screen was opened from.
     var onLeft: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @State private var approvalTarget: GroupJoinRequest?
-    @State private var showsApproval = false
     @State private var removalTarget: GroupMember?
     @State private var showsRemoval = false
     @State private var showsRevokeConfirmation = false
@@ -478,18 +477,6 @@ struct GroupWindowMembersView: View {
                     showsPlusOffer = false
                 }
             }
-        }
-        .confirmationDialog(
-            approvalTarget.map { "「\($0.displayName)」に参加してもらいますか？" } ?? "参加してもらいますか？",
-            isPresented: $showsApproval,
-            titleVisibility: .visible,
-            presenting: approvalTarget
-        ) { request in
-            Button("承認する") { Task { await model.approve(request) } }
-                .accessibilityIdentifier("group-window-approve-confirm")
-            Button("戻る", role: .cancel) {}
-        } message: { request in
-            Text("本人に確認の言葉を聞いて、「\(request.verificationPhrase)」と答えたら「参加してもらう」を押してください。")
         }
         .confirmationDialog(
             removalTarget.map { "\(GroupDisplayName.withSan($0.displayName))をこのまどから外しますか？" } ?? "外しますか？",
@@ -688,7 +675,7 @@ struct GroupWindowMembersView: View {
             } header: {
                 Text("参加を待っている人")
             } footer: {
-                Text("知らない人は入れないでください。")
+                Text("入れたあとでも、違っていたら外せます。入る前の写真は届きません。")
             }
         }
         Section {
@@ -765,9 +752,11 @@ struct GroupWindowMembersView: View {
             }
             if window.canManage {
                 HStack(spacing: 12) {
+                    // One press, no phrase to compare: a join request can only be
+                    // signed by someone holding the link, and a wrong person is
+                    // removed afterwards (10/30). Photos from before never reach them.
                     Button {
-                        approvalTarget = request
-                        showsApproval = true
+                        Task { await model.approve(request) }
                     } label: {
                         Text("参加してもらう")
                             .frame(maxWidth: .infinity, minHeight: 44)
@@ -837,6 +826,10 @@ struct GroupWindowMembersView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-create-invitation")
+            } else if GroupWindowPresentation.isPaused(window) {
+                Text("止まっている間は、招待を作れません。Plusを続けると、また招待できます。")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("group-window-invite-paused")
             } else if window.memberCount >= GroupWindowPresentation.memberLimit {
                 Text(GroupWindowPresentation.message(for: GroupClientError.memberLimit))
                     .foregroundStyle(.secondary)
@@ -848,7 +841,7 @@ struct GroupWindowMembersView: View {
         } header: {
             Text("招待")
         } footer: {
-            Text("リンクは24時間有効で、何人でも使えます。あなたが「参加してもらう」を押した人だけが入れます。")
+            Text("リンクは24時間有効で、何人でも使えます。参加したい人が来たら、上に名前が出ます。「参加してもらう」を押すと入れます。")
         }
     }
 
@@ -1148,7 +1141,7 @@ struct GroupJoinView: View {
             Button {
                 Task { await model.apply() }
             } label: {
-                Label("参加を頼む", systemImage: "person.badge.plus")
+                Label("参加する", systemImage: "person.badge.plus")
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -1159,33 +1152,28 @@ struct GroupJoinView: View {
             Text("招待されたまど")
         } footer: {
             VStack(alignment: .leading, spacing: 8) {
-                Text("申し込むと、まどを作った人にこの名前が届きます。承認されるまで、写真は見られません。参加する前の写真は届きません。")
-                GroupWindowStandardsAgreement(action: "参加を頼む")
+                Text("まどを作った人に、この名前が届きます。作った人のiPhoneで受け付けられると入れます。参加する前の写真は届きません。")
+                GroupWindowStandardsAgreement(action: "参加する")
             }
         }
     }
 
     private func pendingSection(_ request: GroupJoinRequest) -> some View {
         Section {
-            Label("頼みました", systemImage: "paperplane")
+            Label("受け付けを待っています", systemImage: "hourglass")
                 .font(.headline)
                 .accessibilityIdentifier("group-join-pending")
-            Text("まどを作った人の承認を待っています。承認されると、ここに表示されます。")
+            Text("まどを作った人のiPhoneで受け付けられると、ここに表示されます。それまで、この画面を開いておいてください。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if request.admissionPaused == true {
-                Label("いまは参加の受付をお休みしています。再開すると、そのまま承認を待つ形にもどります。", systemImage: "hourglass")
+                Label("いまは参加の受付をお休みしています。再開すると、そのまま受け付けを待つ形にもどります。", systemImage: "pause.circle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("group-join-admission-paused")
             }
-            LabeledContent("確認の言葉", value: request.verificationPhrase)
-                .accessibilityIdentifier("group-join-verification-phrase")
-            Text("作った人に聞かれたら、この言葉を伝えてください。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
             Button("参加をやめる", role: .destructive) {
                 Task { await model.cancel() }
             }

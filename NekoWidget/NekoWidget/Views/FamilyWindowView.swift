@@ -1498,8 +1498,13 @@ struct FamilyWindowView: View {
 
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
         guard let item else { return }
-        guard membershipAccess.decision(for: deliveryMembershipOperation) == .allowed else {
+        let access = membershipAccess.decision(for: deliveryMembershipOperation)
+        guard access == .allowed else {
             selectedPhotoItem = nil
+            // Never drop the pick in silence: say why, and what brings it back.
+            photoSelectionMessage = access == .verificationRequired
+                ? "Plusを確かめられないため、いまは届けられません。通信できるところで、もう一度開いてください。"
+                : "Plusが切れているため、このまどに写真を届けられません。Plusを続けると、また届けられます。"
             return
         }
         let generation = UUID()
