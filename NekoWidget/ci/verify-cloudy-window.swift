@@ -21,7 +21,8 @@ private struct Fixture {
     let profiles: [String: String]
     let revision: String
 
-    init(count: Int, cats: Int = 0, burstPair: Bool = false) throws {
+    init(count: Int, cats: Int = 0, burstPair: Bool = false,
+         enabled: Bool = true, installed: Bool = true) throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("cloudy-check-\(UUID().uuidString)")
         authority = PersonalRediscoveryStore(containerURL: directory)
         store = CloudyWindowStore(containerURL: directory, internalPresentation: true)
@@ -62,8 +63,12 @@ private struct Fixture {
                 burstIdentifier: burstPair && index < 2 ? "burst" : nil,
                 profileIDs: cats > 0 ? ["cat-\(index % cats)"] : [], previouslyShown: false))
         })
-        try store.configure(enabled: true, strength: .light)
+        try store.configure(enabled: enabled, strength: .strong)
         try store.synchronize(metadata: metadata, profiles: profiles, now: baseline)
+        if installed {
+            try store.synchronizeInstalledSources(Set([CloudyWindowStore.personalScope]
+                + profiles.keys.map { CloudyWindowStore.profilePrefix + $0 }))
+        }
         let configuration = store.configuration()
         prepared = candidates.enumerated().map { index, candidate in
             func files(_ kind: String) -> WidgetCacheFilenames {
@@ -71,9 +76,9 @@ private struct Fixture {
                       large: "cloudy-\(kind)-\(index)-large.jpg")
             }
             return .init(source: candidate.item, clear: files("clear"), cloudy: files("blur"),
-                         strength: .light, visualHash: UInt64(index), preparedAt: baseline)
+                         strength: .strong, visualHash: UInt64(index), preparedAt: baseline)
         }
-        for photo in prepared.prefix(CloudyWindowStore.maximumPhotoCount) {
+        for photo in prepared.prefix(installed ? CloudyWindowStore.maximumPhotoCount : 0) {
             try store.publish(photo, files: Dictionary(uniqueKeysWithValues: photo.filenames.map { ($0, image) }),
                               authorityRevision: revision, configurationRevision: configuration.revision, now: baseline)
         }
@@ -85,6 +90,7 @@ private struct Fixture {
 private enum CloudyWindowVerifier {
     static func main() throws {
         try dailyReveal()
+        try widgetSelectionWithoutSwitch()
         try rotationAndSmallPools()
         try catScopesAndExpiry()
         try permissionAndPublicBoundary()
@@ -99,6 +105,46 @@ private enum CloudyWindowVerifier {
 
     private static var closing: Date {
         Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 1))!
+    }
+
+    private static func widgetSelectionWithoutSwitch() throws {
+        let f = try Fixture(count: 6, cats: 2, enabled: false, installed: false)
+        defer { f.cleanup() }
+        let scope = CloudyWindowStore.profilePrefix + "cat-1"
+        try check(f.store.profiles().count == 2, "all cats listed before installing a cloudy Widget")
+        try check(f.store.preparation(now: baseline) == nil, "no blur preparation before installation")
+        try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope, "unknown"])
+        try check(f.store.preparation(now: baseline) == nil, "ordinary personal Widget does not enable blur")
+        try f.store.synchronizeInstalledSources([scope])
+        let plan = try f.store.preparation(now: baseline)!
+        try check(!plan.configuration.enabled && plan.configuration.strength == .strong,
+                  "cat Widget works at fixed strength without changing the legacy switch")
+        let baseURL = f.directory.appendingPathComponent("widget-cache").appendingPathComponent(f.candidates[0].item.cacheFilename)
+        let image = try Data(contentsOf: baseURL)
+        for photo in f.prepared {
+            try f.store.publish(photo, files: Dictionary(uniqueKeysWithValues: photo.filenames.map { ($0, image) }),
+                authorityRevision: plan.authorityRevision, configurationRevision: plan.configuration.revision, now: baseline)
+        }
+        try deliver(f, now: closing)
+        let first = try f.store.timeline(scopeID: scope, now: closing)[0]
+        try check(first.photo.photoID == "photo-05" && first.selection.albumPeriod == "2026-10",
+                  "cat's monthly cover arrives without the app switch")
+        try check(f.store.reveal(selectionID: first.selection.id, scopeID: scope, photoID: first.photo.photoID,
+                               now: closing), "cat Widget reveals without legacy switch")
+        try check(f.store.albumPeriod(for: .init(selectionID: first.selection.id), now: closing) == "2026-10",
+                  "revealed cat cover opens the monthly work")
+        try check(f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: closing).isEmpty,
+                  "ordinary personal Widget retains its ordinary behavior")
+        try f.store.synchronizeInstalledSources([])
+        try check(f.store.preparation(now: closing) == nil, "last Widget removal stops preparation")
+        try check(f.store.imageURL(filename: first.photo.clear.small, scopeID: scope) == nil,
+                  "last Widget removal releases derived cache")
+        try check(FileManager.default.fileExists(atPath: baseURL.path), "base photo cache preserved")
+        do {
+            try f.store.publish(f.prepared[0], files: [:], authorityRevision: plan.authorityRevision,
+                configurationRevision: plan.configuration.revision, now: closing)
+            throw Failure.failed("removed Widget's in-flight render accepted")
+        } catch PersonalRediscoveryStore.Error.staleRevision { }
     }
 
     private static func deliver(_ f: Fixture, photoID: String = "photo-05", now: Date = closing,
@@ -348,7 +394,7 @@ private enum CloudyWindowVerifier {
         let f = try Fixture(count: 2)
         defer { f.cleanup() }
         let plan = try f.store.preparation(now: baseline)!
-        try f.store.configure(enabled: true, strength: .strong)
+        try f.store.configure(enabled: true, strength: .light)
         do {
             try f.store.publish(f.prepared[0], files: [:], authorityRevision: f.revision,
                                 configurationRevision: plan.configuration.revision, now: baseline)

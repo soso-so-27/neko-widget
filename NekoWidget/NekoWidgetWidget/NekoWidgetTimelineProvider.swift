@@ -299,7 +299,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     private func cloudyTimeline(sourceID: String, now: Date, variant: WidgetImageVariant) -> Timeline<NekoWidgetEntry>? {
         let isProfile = sourceID.hasPrefix(CloudyWindowStore.profilePrefix)
         guard sourceID == WidgetPhotoSource.personalLibraryID || isProfile else { return nil }
-        guard CloudyWindowStore.shared.configuration().enabled else {
+        guard CloudyWindowStore.shared.isCloudySource(sourceID) else {
             return isProfile ? Timeline(entries: [.empty(at: now, imageVariant: variant,
                 photoSourceIdentifier: sourceID, emptyStateReason: .sourceUnavailable)], policy: .never) : nil
         }
