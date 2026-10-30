@@ -91,7 +91,7 @@ export async function route(request: Request, services: Services, context?: Pick
   const url = new URL(request.url);
   if (url.protocol !== 'https:') throw new ServiceError('HTTPS_REQUIRED');
   const path = url.pathname;
-  if (!['/v1/records', '/v1/export-page', '/v1/tool-cleanup'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
+  if (!['/v1/records', '/v1/export-page', '/v1/tool-cleanup', '/v1/usage'].includes(path) && url.search) throw new ServiceError('INVALID_REQUEST');
   if (request.method === 'POST' && path === '/v1/auth/challenges') {
     const input = await body(request, 1024);
     if (Object.keys(input).some(key => key !== 'devicePublicKey')) throw new ServiceError('INVALID_REQUEST');
@@ -195,8 +195,8 @@ export async function route(request: Request, services: Services, context?: Pick
   }
   if (request.method === 'GET' && path === '/v1/usage') {
     const version = url.searchParams.get('productQuotaVersion');
-    if (version !== null && version !== '1' || url.searchParams.getAll('productQuotaVersion').length > 1) throw new ServiceError('INVALID_REQUEST');
-    return response(await services.archive.usage(token, version === '1' ? 1 : 0));
+    if ([...url.searchParams.keys()].some(key=>key!=='productQuotaVersion') || version !== null && !['1','2'].includes(version) || url.searchParams.getAll('productQuotaVersion').length > 1) throw new ServiceError('INVALID_REQUEST');
+    return response(await services.archive.usage(token, version === '2' ? 2 : 0));
   }
   if (request.method === 'POST' && path === '/v1/product-quota/recount') {
     const input = await body(request,1024);

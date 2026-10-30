@@ -26,10 +26,10 @@ export function productQuotaPolicy(settings: ProductQuotaSettings = {}) {
   const visibleRecords = setting(settings.PRODUCT_VISIBLE_RECORDS, 3_000);
   if (trialBytes > plusBytes) throw new ServiceError('PRODUCT_QUOTA_NOT_CONFIGURED', 503);
   return {
-    version: 1 as const,
+    version: 2 as const,
     byteUnit: 'decimal' as const,
     recordUnit: 'visible-records-v1' as const,
-    plus: { limitBytes: plusBytes, maximumRecords: visibleRecords, includesAppleFamily: true as const },
+    plus: { limitBytes: plusBytes, maximumRecords: visibleRecords, includesAppleFamily: false as const },
     trial: { limitBytes: trialBytes, maximumRecords: visibleRecords, durationDays: 14 as const },
     familyParticipationRequiresPersonalStoragePurchase: false as const,
   };

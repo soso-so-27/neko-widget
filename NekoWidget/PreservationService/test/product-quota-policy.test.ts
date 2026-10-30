@@ -3,7 +3,8 @@ import { pendingProductQuota, productQuotaPolicy } from '../src/product-quota-po
 
 it('keeps approved decimal limits separate from implementation record counts', () => {
   const policy = productQuotaPolicy();
-  expect(policy.plus).toEqual({ limitBytes: 3_000_000_000, maximumRecords: 3000, includesAppleFamily: true });
+  expect(policy.version).toBe(2);
+  expect(policy.plus).toEqual({ limitBytes: 3_000_000_000, maximumRecords: 3000, includesAppleFamily: false });
   expect(policy.trial).toEqual({ limitBytes: 250_000_000, maximumRecords: 3000, durationDays: 14 });
   expect(policy.recordUnit).toBe('visible-records-v1');
   expect(policy.familyParticipationRequiresPersonalStoragePurchase).toBe(false);

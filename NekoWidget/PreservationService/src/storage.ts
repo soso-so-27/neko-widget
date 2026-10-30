@@ -8,7 +8,7 @@ import type { OwnerRecoveryCopy } from './owner-recovery-copy';
 import type { ToolOwnerTrial } from './tool-owner-trial';
 import { exportPage } from './export-page';
 import { ToolMetadataBatches } from './tool-metadata-batches';
-import { pendingProductQuota, type ProductQuotaSettings } from './product-quota-policy';
+import { type ProductQuotaSettings } from './product-quota-policy';
 import { measureProductRecord, productUsage, requireProductCapacity, type LogicalUsage, type ProductCounters } from './product-usage';
 
 interface Row {
@@ -406,11 +406,13 @@ export class ArchiveStore {
     const limitBytes = trial ? Math.max(1, Math.min(this.d.quotaBytes, allocated + trial.remainingBytes)) : this.d.quotaBytes;
     const maximumRecords = trial ? Math.max(1, Math.min(this.d.maximumRecords,
       row.saved_records + row.pending_records + trial.remainingRecords)) : this.d.maximumRecords;
-    const product = productQuotaVersion === 1 && this.d.productQuotaSettings
+    // Old readers require the retired Apple-family flag to be true. Omit only
+    // the optional product extension for them; keep their legacy usage intact.
+    const product = productQuotaVersion === 2 && this.d.productQuotaSettings
       ? productUsage(this.d.productQuotaSettings, await this.d.db.prepare(
         'SELECT product_bytes,product_records,product_unknown FROM pa_owner_record_counters WHERE owner_id=?')
         .bind(session.ownerId).first<ProductCounters>(), !!trial)
-      : this.d.productQuotaSettings ? pendingProductQuota(this.d.productQuotaSettings) : null;
+      : null;
     await this.d.auth.requireSession(token);
     return { version: 1, accounting: 'encrypted-records-v1', toolSnapshots: { maximumIndexVersion: trial ? 3 : 4, strictPartDeletion: true, supportedTools: Object.keys(toolManifests).sort(), metadataBatchVersion: this.d.requireOwnerRecovery && !!this.d.auth.requireToolMetadataBatchSession && this.d.ownerRecovery?.supportsMetadataBatch() ? 1 : 0 },
       storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes,

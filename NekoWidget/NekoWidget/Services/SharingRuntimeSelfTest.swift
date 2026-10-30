@@ -11123,10 +11123,18 @@ actor SharingRuntimeSelfTestRunner {
         }
         let legacy = try read(["saved": 2, "pending": 0, "creationLimitReached": false])
         guard legacy.records.maximumRecords == nil else { throw ManagedPreservationError.invalidResponse }
-        let policy: [String: Any] = ["version": 1, "byteUnit": "decimal", "recordUnit": "visible-records-v1",
-            "plus": ["limitBytes": 3_000_000_000, "maximumRecords": 3000, "includesAppleFamily": true],
+        let policy: [String: Any] = ["version": 2, "byteUnit": "decimal", "recordUnit": "visible-records-v1",
+            "plus": ["limitBytes": 3_000_000_000, "maximumRecords": 3000, "includesAppleFamily": false],
             "trial": ["limitBytes": 250_000_000, "maximumRecords": 3000, "durationDays": 14],
             "familyParticipationRequiresPersonalStoragePurchase": false]
+        var unsupported = policy
+        unsupported["plus"] = ["limitBytes": 3_000_000_000, "maximumRecords": 3000, "includesAppleFamily": true]
+        var rejectedFamilyFlag = false
+        do {
+            _ = try read(["saved": 2, "pending": 0, "creationLimitReached": false], productQuota:
+                ["policy": unsupported, "configurationStatus": "valid", "accountingStatus": "not_available", "enforcementStatus": "not_enabled"])
+        } catch { rejectedFamilyFlag = true }
+        guard rejectedFamilyFlag else { throw ManagedPreservationError.invalidResponse }
         let pending: [String: Any] = ["policy": policy, "configurationStatus": "valid",
             "accountingStatus": "not_available", "enforcementStatus": "not_enabled", "usage": NSNull()]
         let records: [String: Any] = ["saved": 6000, "pending": 0, "maximumRecords": 200000, "creationLimitReached": false]
