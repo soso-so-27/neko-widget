@@ -1464,7 +1464,8 @@ final class GroupAdmissionService: ObservableObject {
         running = true; defer { running = false }
         repeat {
             rerun = false
-            guard !Task.isCancelled, let client = GroupWindowClientProvider.production else { return }
+            guard !Task.isCancelled, let client = GroupWindowClientProvider.production,
+                  (try? await client.hasLocalGroupState()) == true else { return }
             var settings = await UNUserNotificationCenter.current().notificationSettings()
             if permissionRequested, settings.authorizationStatus == .notDetermined {
                 _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge])

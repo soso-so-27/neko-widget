@@ -788,11 +788,16 @@ extension ProductionGroupWindowClient {
         }
         return results
     }
+    func hasLocalGroupState() throws -> Bool {
+        guard try secrets.read("identity") != nil else { return false }
+        return !(try secrets.accounts(prefix: "window:")).isEmpty
+    }
     /// Notification routes are hints only. No route can pin a new window or import a key.
     func acceptsNotification(windowID: String, requestID: String?, kind: String) throws -> Bool {
         if kind == "join_approved" {
             guard let requestID, let saved = try load(GroupLocalJoin.self, "join:" + requestID) else { return false }
-            return saved.windowID == windowID && saved.request.personID == (try identity().personID)
+            let currentPerson = try identity().personID
+            return saved.windowID == windowID && saved.request.personID == currentPerson
         }
         guard let record = try load(GroupLocalWindow.self, "window:" + windowID), !record.left, record.closed != true,
               let roster = try record.verified(),
@@ -1390,7 +1395,7 @@ enum GroupAdmissionProofVerifier {
             String(proof.challengeExpiresAt), proof.operationID, row.personID, row.candidateDeviceID].map(GroupCanonical.text)
             + [GroupCanonical.hash(row.encryptedDisplayName), row.personAuthorization])
         guard try Curve25519.Signing.PrivateKey(rawRepresentation: cap.privateKey).publicKey.isValidSignature(proof.inviteProof, for: transcript),
-              Curve25519.Signing.PublicKey(rawRepresentation: row.signingPublicKey).isValidSignature(proof.deviceSignature, for: transcript)
+              try Curve25519.Signing.PublicKey(rawRepresentation: row.signingPublicKey).isValidSignature(proof.deviceSignature, for: transcript)
         else { throw GroupProtocolError.invalidSignature }
     }
 }
