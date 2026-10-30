@@ -11,6 +11,7 @@ export const toolManifests: Record<string, string> = {
   CareHandoff: 'plan.json', EvacuationPreparation: 'plan.json', VeterinaryVisits: 'state.json',
   ShowcasePhotos: 'selected.json', LostCatDrafts: 'drafts.json', CatPreparedness: 'records.json',
   PhotoMemoryNotes: 'state.json', CatIdentity: 'state.json',
+  CatCare: 'state.json', FamilyNotebook: 'state.json',
 };
 /** Wire IDs are permanent. New names must never shift an existing saved bit. */
 export const toolBits: Readonly<Record<string, number>> = Object.freeze({

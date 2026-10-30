@@ -4565,9 +4565,12 @@ class CatCareTests(unittest.TestCase):
                               "WidgetCenter", "GroupWindowClient", "MomentSharing"):
                 self.assertNotIn(forbidden, text)
         self.assertEqual(core.count("import "), 1)  # Foundation only; runs in CI
-        # A new file; the recognition state and tool records are not rewritten.
-        self.assertIn('appendingPathComponent("CatCare", isDirectory: true)', store)
-        for forbidden in ("CatHouseholdIdentityStore", "AppRecordDataset", "CareHandoffStore.shared.update",
+        # CatCare follows the atomic restore dataset; it still cannot rewrite
+        # recognition or other tools. Stale editors cannot save to a new root.
+        self.assertIn('AppRecordDataset.directory("CatCare")', store)
+        self.assertIn("guard loadedURL == fileURL", store)
+        self.assertIn("AppRecordDataset.requireWritable(fileURL)", store)
+        for forbidden in ("CatHouseholdIdentityStore", "CareHandoffStore.shared.update",
                           "EvacuationStore.shared.update"):
             self.assertNotIn(forbidden, store)
         self.assertIn("guard canSave", store)

@@ -10,6 +10,16 @@ const child = { prefix: '8', snapshotID: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
   fileCount: 2, nodeCount: 1, toolMask: 32, manifestMask: 32 };
 const branch = { version: 4, snapshotID: golden.snapshotID, uploadSnapshotID:golden.snapshotID, createdAt: 1, prefix: '', children: [child] };
 
+it('assigns only new bits to care and notebook manifests without changing the old fixture',()=>{
+  for(const [tool,bit] of [['CatCare',256],['FamilyNotebook',512]] as const){
+    const files=[{...golden.files[0]!,path:tool+'/state.json'}];
+    const node=parseToolNode(part({...golden,prefix:'',files}));
+    if(node.version!==4)throw Error('wrong version');
+    expect(summarizeToolNode(node)).toEqual({fileCount:1,nodeCount:1,toolMask:bit,manifestMask:bit});
+    expect(isCompleteToolRoot(node)).toBe(true);
+  }
+});
+
 it('decodes a shared golden leaf and computes fixed tool bits, direct refs and prefix membership', async () => {
   const node = parseToolNode(part(golden));
   expect(node).toEqual(golden);

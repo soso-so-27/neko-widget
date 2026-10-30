@@ -29,10 +29,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     private var realAuthor: FamilyNotebookAuthor?
     private var realMemberIDs: [String] = []
     private var applyingRemote = false
-    private struct LocalBinding: Codable {
-        let directory: URL; let familyID: UUID; let deviceID: String; let author: FamilyNotebookAuthor
-    }
-    private static let bindingKey = "familyNotebook.localBinding.v1"
+    private static let bindingKey = FamilyNotebookLocalBinding.key
     var isReal: Bool { FamilyNotebookServiceFactory.productionRequested }
     var currentAuthor: FamilyNotebookAuthor? { isReal ? realAuthor : Self.me }
     func isMe(_ author: FamilyNotebookAuthor) -> Bool { author.personID == currentAuthor?.personID }
@@ -86,8 +83,9 @@ final class FamilyNotebookPrototype: ObservableObject {
         if let author = service.author { realAuthor = author }
         realMemberIDs = service.lastMembers.map(\.personID)
         if let store, let author = realAuthor, let saved = try? store.snapshot(),
-           let bytes = try? JSONEncoder().encode(LocalBinding(directory: store.localDirectory, familyID: saved.familyID,
-                                                             deviceID: store.localDeviceID, author: author)) {
+           let binding = try? FamilyNotebookLocalBinding(directory: store.localDirectory, support: AppRecordDataset.support,
+               familyID: saved.familyID, deviceID: store.localDeviceID, author: author),
+           let bytes = try? JSONEncoder().encode(binding) {
             UserDefaults.standard.set(bytes, forKey: Self.bindingKey)
         }
         reload()
@@ -125,14 +123,12 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     private init() {
         if !isReal, let id = UserDefaults.standard.string(forKey: Self.familyKey).flatMap(UUID.init(uuidString:)) { open(id) }
-        if isReal, let bytes = UserDefaults.standard.data(forKey: Self.bindingKey) {
+        if isReal {
             do {
-                let binding = try JSONDecoder().decode(LocalBinding.self, from: bytes)
-                let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("FamilyNotebook-v1", isDirectory: true).standardizedFileURL.resolvingSymlinksInPath().path + "/"
-                guard binding.directory.standardizedFileURL.resolvingSymlinksInPath().path.hasPrefix(root) else { throw FamilyNotebookError.unsafePath }
-                store = try .init(directory: binding.directory, familyID: binding.familyID, deviceID: binding.deviceID)
-                realAuthor = binding.author; reload()
+                if let binding = try FamilyNotebookLocalBinding.load(support: AppRecordDataset.support) {
+                    store = try .init(directory: binding.directory(support: AppRecordDataset.support), familyID: binding.familyID, deviceID: binding.deviceID)
+                    realAuthor = binding.author; reload()
+                }
             } catch { message = "家族の手帳を読み込めませんでした。記録は消していません。" }
         }
         CatCareStore.shared.willSave = { [weak self] before, after in
@@ -318,7 +314,8 @@ final class FamilyNotebookPrototype: ObservableObject {
         guard hasFamily, let store, let snapshot else {
             // If a retained binding exists but could not be opened, do not let
             // a personal save hide an unresolved shared edit.
-            if self.snapshot == nil && UserDefaults.standard.data(forKey: Self.bindingKey) != nil {
+            if self.snapshot == nil && (UserDefaults.standard.data(forKey: Self.bindingKey) != nil
+                || UserDefaults.standard.data(forKey: FamilyNotebookLocalBinding.legacyKey) != nil) {
                 throw FamilyNotebookError.storageUnavailable
             }
             return
@@ -659,6 +656,9 @@ struct FamilyNotebookView: View {
     }
     @ToolbarContentBuilder private var closeToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
+        ToolbarItem(placement: .primaryAction) {
+            NavigationLink("保存した手帳") { FamilyNotebookSavedCopiesView() }
+        }
     }
 
     var body: some View {
@@ -1444,6 +1444,64 @@ struct FamilyNotebookButton: View {
         .accessibilityLabel(model.hasFamily ? "家族の手帳" : "家族と一緒に書く")
         .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
+    }
+}
+
+/// A retained backup is readable without joining or resuming its old outbox.
+private struct FamilyNotebookSavedCopiesView: View {
+    @State private var copies: [FamilyNotebookBackup.Copy] = []
+    @State private var failed = false
+    var body: some View {
+        List {
+            Section {
+                if failed { Text("保存した手帳を読み込めませんでした。記録は消していません。") }
+                else if copies.isEmpty { Text("保存した手帳はまだありません。") }
+                ForEach(copies) { copy in
+                    NavigationLink {
+                        FamilyNotebookSavedCopyView(copy: copy)
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(title(copy.snapshot))
+                            if let date = copy.state.operations.map(\.editedAt).max() {
+                                Text(date, format: .dateTime.year().month().day()).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            } footer: { Text("この iPhone だけで見る控えです。家族への送信は再開しません。") }
+        }
+        .navigationTitle("保存した手帳")
+        .task { do { copies = try FamilyNotebookBackup.copies() } catch { failed = true } }
+    }
+    private func title(_ snapshot: FamilyNotebookSnapshot) -> String {
+        let ids = Set(snapshot.operations.map { $0.target.familyCatID }).sorted { $0.uuidString < $1.uuidString }
+        let names = ids.compactMap { id in
+            FamilyNotebookWords.text(snapshot.fieldState(for: .init(familyCatID: id, field: .name))?.operation.value, .name)
+        }
+        return names.isEmpty ? "家族の手帳" : names.joined(separator: "・")
+    }
+}
+
+private struct FamilyNotebookSavedCopyView: View {
+    let copy: FamilyNotebookBackup.Copy
+    var body: some View {
+        List {
+            Section {
+                // Keep the full history, including unsent text and deletion
+                // events. Reading it never constructs a sharing service.
+                ForEach(copy.state.operations.sorted { $0.version > $1.version }) { operation in
+                    VStack(alignment: .leading, spacing: 6) {
+                        let name = FamilyNotebookWords.text(copy.snapshot.fieldState(for: .init(familyCatID: operation.target.familyCatID, field: .name))?.operation.value, .name) ?? "猫の記録"
+                        Text(name).font(.headline)
+                        if let field = operation.target.field {
+                            Text(FamilyNotebookWords.label(field)).font(.caption).foregroundStyle(.secondary)
+                            Text(FamilyNotebookWords.text(operation.value, field) ?? "空欄にしました")
+                        } else { Text("削除の記録") }
+                        Text(FamilyNotebookWords.byline(operation)).font(.caption).foregroundStyle(.secondary)
+                    }.textSelection(.enabled)
+                }
+            } footer: { Text("保存した時点までの書き込みの履歴です。ここで開いても家族には送られません。") }
+        }.navigationTitle("手帳の控え")
     }
 }
 

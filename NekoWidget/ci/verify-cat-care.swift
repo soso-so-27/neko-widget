@@ -18,7 +18,27 @@ struct VerifyCatCare {
         try decoding()
         try lostCat()
         try memoWeights()
+        try portableBackup()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
+    }
+
+    static func portableBackup() throws {
+        var state = CatCareState(deviceID: "old-phone", now: t0)
+        var cat = CatCareRecord(catID: UUID())
+        let name = UUID().uuidString + ".jpg"
+        cat.facePhoto = .init(value: .init(fileName: name, sourceAssetID: "device-photo"), editedAt: t0, editedBy: "old-phone")
+        cat.vaccinations = [.init(kind: "ワクチン", givenOn: day, proof: .init(fileName: name, sourceAssetID: "another-photo"), editedAt: t0, editedBy: "old-phone")]
+        state.cats = [cat]
+        let bytes = try CatCareDecoding.encode(state)
+        let restored = try CatCareDecoding.backupState(CatCareDecoding.portable(bytes, deviceID: "new-phone"))
+        try check(restored.deviceID == "new-phone", "restored care uses local device ID")
+        try check(restored.cats[0].facePhoto?.value?.sourceAssetID == nil && restored.cats[0].vaccinations[0].proof?.sourceAssetID == nil, "portable photos omit device links")
+        try check(try CatCareDecoding.backupPhotoNames(bytes) == [name], "photo references are deduplicated")
+        try check(try CatCareDecoding.backupState(bytes) == state, "backup leaves source intact")
+        state.cats[0].facePhoto?.value?.fileName = "../outside.jpg"
+        do { _ = try CatCareDecoding.backupPhotoNames(CatCareDecoding.encode(state)) }
+        catch { return }
+        throw Failure.check("unsafe photo path accepted")
     }
 
     static func values() throws {
