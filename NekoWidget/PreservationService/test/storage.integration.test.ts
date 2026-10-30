@@ -763,7 +763,8 @@ it('usage starts empty without creating inventory and never queries membership, 
   const archive = new ArchiveStore({ ...f.options, membership: { status: unavailable },
     keys: { seal: unavailable, open: unavailable }, photos: { validateJPEG: unavailable } });
   expect(await archive.usage(f.session.token)).toEqual({ version: 1, accounting: 'encrypted-records-v1',
-    toolSnapshots: { maximumIndexVersion: 4, strictPartDeletion: true, metadataBatchVersion: 0 },
+    toolSnapshots: { maximumIndexVersion: 4, strictPartDeletion: true, metadataBatchVersion: 0,
+      supportedTools: ['CareHandoff','CatIdentity','CatPreparedness','EvacuationPreparation','LostCatDrafts','PhotoMemoryNotes','ShowcasePhotos','VeterinaryVisits'] },
     storage: { usedBytes: 0, reservedBytes: 0, limitBytes: 100_000, availableBytes: 100_000, overLimit: false },
     records: { saved: 0, pending: 0, maximumRecords: 100, creationLimitReached: false } });
   expect(await binding.DB.prepare('SELECT 1 FROM pa_inventory WHERE owner_id=?').bind(f.session.ownerId).first()).toBeNull();

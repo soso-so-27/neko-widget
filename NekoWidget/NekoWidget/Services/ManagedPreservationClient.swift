@@ -37,6 +37,8 @@ struct ManagedPreservationConfiguration: Sendable {
 }
 
 enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
+    enum ProductLimit: String, Sendable { case storage, records, both }
+    case productQuotaExceeded(ProductLimit)
     enum AuthenticationStep: String, Sendable {
         case appleResponse = "A01", credential = "A02", challenge = "A03", state = "A04"
         case challengeExpired = "A05", payload = "A06", sessionExpired = "A07"
@@ -65,7 +67,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .servicePaused: "S08"
         case .invalidRecord, .responseTooLarge: "S09"
         case .conflict: "S10"
-        case .capacityReached, .accountingUnavailable: "S11"
+        case .capacityReached, .accountingUnavailable, .productQuotaExceeded: "S11"
         case .membershipRequired, .accessUnconfirmed: "S12"
         default: "S99"
         }
@@ -100,6 +102,9 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .unavailable: "保管先と通信できませんでした。変更結果は再読み込みで確認してください。"
         case .interrupted: "操作を中断しました。変更が届いた可能性があるため、記録を読み込み直してください。"
         case .capacityReached: "保管できる容量または件数の上限に達しています。既存の記録は削除せず、保管先の案内を確認してください。"
+        case .productQuotaExceeded(.storage): "保存できる容量の上限を超えています。元の写真と記録は残っています。"
+        case .productQuotaExceeded(.records): "保存できる記録の件数を超えています。元の写真と記録は残っています。"
+        case .productQuotaExceeded(.both): "保存できる容量と記録の件数を超えています。元の写真と記録は残っています。"
         case .accessUnconfirmed: "会員資格を確認できないため、新しい保管はまだ行えません。既存の記録は引き続き利用できます。"
         case .photoReplacement: "保管済みの写真は差し替えられません。別の写真は新しい記録として選び直してください。"
         case .rateLimited, .exportThrottled: "操作が続いたため一時的に制限されています。時間をおいてお試しください。"
@@ -351,6 +356,15 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
             let familyParticipationRequiresPersonalStoragePurchase: Bool
         }
         struct Usage: Decodable, Equatable, Sendable {
+            struct Storage: Decodable, Equatable, Sendable {
+                let usedBytes: Int64; let limitBytes: Int64; let availableBytes: Int64; let overLimit: Bool
+            }
+            struct Records: Decodable, Equatable, Sendable {
+                let saved: Int64; let maximumRecords: Int64; let available: Int64; let overLimit: Bool
+            }
+            let version: Int
+            let accounting: String
+            let tier: String
             let storage: Storage
             let records: Records
         }
@@ -361,10 +375,13 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
         let usage: Usage?
 
         func validate() throws {
-            guard accountingStatus == "not_available", enforcementStatus == "not_enabled", usage == nil else {
+            guard ["not_available", "ready"].contains(accountingStatus),
+                  ["not_enabled", "enabled"].contains(enforcementStatus),
+                  (accountingStatus == "ready") == (usage != nil),
+                  accountingStatus == "ready" || enforcementStatus == "not_enabled" else {
                 throw ManagedPreservationError.invalidResponse
             }
-            if configurationStatus == "invalid", policy == nil { return }
+            if configurationStatus == "invalid", policy == nil, usage == nil { return }
             guard configurationStatus == "valid", let policy,
                   policy.version == 1, policy.byteUnit == "decimal", policy.recordUnit == "visible-records-v1",
                   policy.plus.limitBytes > 0, policy.plus.limitBytes <= 9_007_199_254_740_991,
@@ -375,12 +392,52 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
                   !policy.familyParticipationRequiresPersonalStoragePurchase else {
                 throw ManagedPreservationError.invalidResponse
             }
+            if let usage {
+                let limit = usage.tier == "trial" ? policy.trial.limitBytes : policy.plus.limitBytes
+                let maximum = policy.plus.maximumRecords
+                guard usage.version == 1, usage.accounting == "committed-visible-records-v1",
+                      ["plus", "trial"].contains(usage.tier),
+                      usage.storage.usedBytes >= 0, usage.storage.usedBytes <= 9_007_199_254_740_991,
+                      usage.storage.limitBytes == limit,
+                      usage.storage.availableBytes == max(0, limit - usage.storage.usedBytes),
+                      usage.storage.overLimit == (usage.storage.usedBytes > limit),
+                      usage.records.saved >= 0, usage.records.saved <= 9_007_199_254_740_991,
+                      usage.records.maximumRecords == maximum,
+                      usage.records.available == max(0, maximum - usage.records.saved),
+                      usage.records.overLimit == (usage.records.saved > maximum) else {
+                    throw ManagedPreservationError.invalidResponse
+                }
+            }
         }
+
+        #if DEBUG
+        enum PrototypeScenario: CaseIterable {
+            case unknown, withinLimits, storageExceeded, recordsExceeded, bothExceeded
+        }
+        /// UI fixtures only: no requests, billing, settings or real records.
+        static func prototype(_ scenario: PrototypeScenario) -> Self {
+            let policy = Policy(version: 1, byteUnit: "decimal", recordUnit: "visible-records-v1",
+                plus: .init(limitBytes: 3_000_000_000, maximumRecords: 3_000, includesAppleFamily: true),
+                trial: .init(limitBytes: 250_000_000, maximumRecords: 3_000, durationDays: 14),
+                familyParticipationRequiresPersonalStoragePurchase: false)
+            guard scenario != .unknown else {
+                return .init(policy: policy, configurationStatus: "valid", accountingStatus: "not_available",
+                             enforcementStatus: "not_enabled", usage: nil)
+            }
+            let bytes: Int64 = [.storageExceeded, .bothExceeded].contains(scenario) ? 3_000_000_001 : 1_000_000
+            let records: Int64 = [.recordsExceeded, .bothExceeded].contains(scenario) ? 3_001 : 10
+            return .init(policy: policy, configurationStatus: "valid", accountingStatus: "ready",
+                enforcementStatus: "not_enabled", usage: .init(version: 1, accounting: "committed-visible-records-v1", tier: "plus",
+                    storage: .init(usedBytes: bytes, limitBytes: 3_000_000_000, availableBytes: max(0, 3_000_000_000 - bytes), overLimit: bytes > 3_000_000_000),
+                    records: .init(saved: records, maximumRecords: 3_000, available: max(0, 3_000 - records), overLimit: records > 3_000)))
+        }
+        #endif
     }
     struct ToolSnapshots: Decodable, Equatable, Sendable {
         let maximumIndexVersion: Int
         let strictPartDeletion: Bool
         var metadataBatchVersion: Int? = nil
+        var supportedTools: [String]? = nil
     }
     struct Storage: Decodable, Equatable, Sendable {
         let usedBytes: Int64
@@ -915,13 +972,29 @@ actor ManagedPreservationClient {
 
     /// The server's authenticated snapshot is independent of membership.
     func usage() async throws -> ManagedPreservationUsage {
-        let data = try await authenticated("GET", path: "/v1/usage", maximumBytes: 4096)
+        let data = try await authenticated("GET", path: "/v1/usage",
+            query: [.init(name: "productQuotaVersion", value: "1")], maximumBytes: 4096)
         do {
             let result: ManagedPreservationUsage = try decode(data)
             return try result.validated()
         } catch ManagedPreservationError.invalidResponse {
             throw ManagedPreservationError.accountingUnavailable
         }
+    }
+
+    struct ProductQuotaRecount: Decodable, Sendable {
+        let version: Int; let processed: Int; let nextCursor: String?
+    }
+    /// Explicitly refreshes at most 20 old archive records; UI can continue by
+    /// cursor. Never run a full decrypt scan as part of an ordinary usage read.
+    func refreshProductQuota(after: String? = nil) async throws -> ProductQuotaRecount {
+        struct Input: Encodable { let after: String? }
+        let data = try await authenticated("POST", path: "/v1/product-quota/recount",
+            body: try JSONEncoder().encode(Input(after: after)), maximumBytes: 4096)
+        let result: ProductQuotaRecount = try decode(data)
+        guard result.version == 1, (0...20).contains(result.processed),
+              result.nextCursor.map({ UUID(uuidString: $0) != nil }) ?? true else { throw ManagedPreservationError.invalidResponse }
+        return result
     }
 
     func noticeContact() async throws -> ManagedPreservationNoticeContact {
@@ -1460,6 +1533,10 @@ actor ManagedPreservationClient {
                 case "TOOL_SNAPSHOT_ABANDONED": throw ManagedPreservationError.snapshotAbandoned
                 case "RECORD_NOT_FOUND", "RECORD_DELETED": throw ManagedPreservationError.notFound
                 case "ARCHIVE_CAPACITY_REACHED": throw ManagedPreservationError.capacityReached
+                case "PRODUCT_STORAGE_LIMIT_EXCEEDED": throw ManagedPreservationError.productQuotaExceeded(.storage)
+                case "PRODUCT_RECORD_LIMIT_EXCEEDED": throw ManagedPreservationError.productQuotaExceeded(.records)
+                case "PRODUCT_STORAGE_AND_RECORD_LIMIT_EXCEEDED": throw ManagedPreservationError.productQuotaExceeded(.both)
+                case "PRODUCT_QUOTA_ACCOUNTING_UNAVAILABLE": throw ManagedPreservationError.accountingUnavailable
                 case "ACCESS_UNCONFIRMED": throw ManagedPreservationError.accessUnconfirmed
                 case "PHOTO_REPLACEMENT_REQUIRES_NEW_RECORD": throw ManagedPreservationError.photoReplacement
                 case "ARCHIVE_INTEGRITY_FAILED", "ARCHIVE_PHOTO_UNAVAILABLE": throw ManagedPreservationError.integrityFailure

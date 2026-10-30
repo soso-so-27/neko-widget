@@ -101,6 +101,11 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
         "VeterinaryVisits": "state.json", "ShowcasePhotos": "selected.json",
         "LostCatDrafts": "drafts.json", "CatPreparedness": "records.json",
         "PhotoMemoryNotes": "state.json", "CatIdentity": "state.json"]
+    // Permanent wire bits; alphabetical insertion must never renumber old v4.
+    static let toolBits = ["CareHandoff": 1, "CatIdentity": 2, "CatPreparedness": 4,
+        "EvacuationPreparation": 8, "LostCatDrafts": 16, "PhotoMemoryNotes": 32,
+        "ShowcasePhotos": 64, "VeterinaryVisits": 128, "CatCare": 256, "FamilyNotebook": 512]
+    static var supportedToolMask: Int { manifests.keys.reduce(0) { $0 | toolBits[$1]! } }
     static func hash(_ bytes: Data) -> String { AppRecordJSON.hash(bytes) }
     static func validatePath(_ path: String, fragments: Bool = false) throws {
         let pieces = path.split(separator: "/", omittingEmptySubsequences: false)
@@ -157,14 +162,13 @@ enum ToolBackupTree {
                 guard children == nil, !files.isEmpty, files.count <= 128,
                       files.reduce(0, { $0 + $1.records.count }) <= 256 else { throw ToolBackupError.invalid }
                 var tools = 0, manifests = 0
-                let names = ToolBackupIndex.manifests.keys.sorted()
                 for file in files {
                     try ToolBackupIndex.validatePath(file.path, fragments: true)
                     guard ToolBackupIndex.hash(Data(file.path.utf8)).hasPrefix(prefix),
                           let tool = file.path.split(separator: "/").first.map(String.init),
-                          let bit = names.firstIndex(of: tool) else { throw ToolBackupError.invalid }
-                    tools |= 1 << bit
-                    if file.path == tool + "/" + ToolBackupIndex.manifests[tool]! { manifests |= 1 << bit }
+                          let bit = ToolBackupIndex.toolBits[tool] else { throw ToolBackupError.invalid }
+                    tools |= bit
+                    if file.path == tool + "/" + ToolBackupIndex.manifests[tool]! { manifests |= bit }
                 }
                 return .init(fileCount: files.count, toolMask: tools, manifestMask: manifests, nodeCount: 1)
             }
@@ -177,7 +181,9 @@ enum ToolBackupTree {
                       child.prefix.allSatisfy({ "0123456789abcdef".contains($0) }), child.snapshotID != snapshotID,
                       child.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
                       child.fileCount > 0, child.fileCount <= 100_000, child.nodeCount > 0, child.nodeCount <= 8192,
-                      (1...255).contains(child.toolMask), (0...255).contains(child.manifestMask),
+                      (1...ToolBackupIndex.supportedToolMask).contains(child.toolMask),
+                      (0...ToolBackupIndex.supportedToolMask).contains(child.manifestMask),
+                      child.toolMask & ToolBackupIndex.supportedToolMask == child.toolMask,
                       child.manifestMask & child.toolMask == child.manifestMask else { throw ToolBackupError.invalid }
                 count += child.fileCount; nodes += child.nodeCount; tools |= child.toolMask; manifests |= child.manifestMask
             }

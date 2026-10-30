@@ -11108,6 +11108,11 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     static func testManagedPreservationUsageBoundary() throws {
+        #if DEBUG
+        for scenario in ManagedPreservationUsage.ProductQuota.PrototypeScenario.allCases {
+            try ManagedPreservationUsage.ProductQuota.prototype(scenario).validate()
+        }
+        #endif
         func read(_ records: [String: Any], productQuota: [String: Any]? = nil) throws -> ManagedPreservationUsage {
             var body: [String: Any] = ["version": 1, "accounting": "encrypted-records-v1",
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 5_000_000_000,
