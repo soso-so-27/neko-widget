@@ -4254,13 +4254,13 @@ class GroupWindowUITests(unittest.TestCase):
         self.assertIn("item: invitation.shareText", invitation)
         self.assertEqual(view.count("shareText"), 1)
 
-        # Approval is one press by the creator, with no phrase to compare
-        # (10/30: the request is already signed with the link's secret, and a
-        # wrong person is removed afterwards). Nothing approves alone yet.
+        # 1030q: admission is automatic after the adapter verifies the invitation
+        # signature and current owner/window/limits. UI exposes results, never a manual approval.
         self.assertNotIn("verificationPhrase", view)
         request_row = section(view, "private func requestRow(", "private func invitationSection(")
-        self.assertIn("Task { await model.approve(request) }", request_row)
-        self.assertNotIn("autoApprove", view)
+        self.assertNotIn("model.approve(request)", request_row)
+        self.assertIn("client.reconcileAdmissions()", view)
+        self.assertIn("admissionResults", view)
 
         # Waiting states refresh by themselves (M2); no manual check button.
         self.assertEqual(view.count(".task(id: model.shouldAutoRefresh)"), 1)
@@ -4326,8 +4326,8 @@ class GroupWindowUITests(unittest.TestCase):
 class GroupInvitationLinkTests(unittest.TestCase):
     def test_invitation_link_reaches_the_join_screen_without_leaking_keys(self) -> None:
         link = source("NekoWidget/Services/GroupInvitationLink.swift")
-        # Foundation only; the parsed keys never reach logs or storage.
-        self.assertEqual(link.count("import "), 1)
+        # CryptoKit authenticates fragment display context; keys never reach logs or UI storage.
+        self.assertIn("import CryptoKit", link)
         for forbidden in ("print(", "SharedLog", "UserDefaults", "Keychain", "URLSession"):
             self.assertNotIn(forbidden, link)
         self.assertIn('static let host = "nekonomado.com"', link)

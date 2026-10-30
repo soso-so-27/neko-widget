@@ -6,6 +6,10 @@ protocol GroupSecretStore: Sendable {
     func read(_ account: String) throws -> Data?
     func write(_ data: Data, account: String, createOnly: Bool) throws
     func remove(_ account: String) throws
+    func accounts(prefix: String) throws -> [String]
+}
+extension GroupSecretStore {
+    func accounts(prefix: String) throws -> [String] { [] }
 }
 
 /// App-private Keychain only. No access group, synchronizable item, Widget
@@ -40,6 +44,16 @@ final class GroupKeychainStore: GroupSecretStore, Sendable {
             guard SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess
             else { throw GroupClientError.authenticationRequired }
         } else if status != errSecSuccess { throw GroupClientError.authenticationRequired }
+    }
+    func accounts(prefix: String) throws -> [String] {
+        let request: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service, kSecAttrSynchronizable as String: false,
+            kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess, let rows = result as? [[String: Any]] else { throw GroupClientError.authenticationRequired }
+        return rows.compactMap { $0[kSecAttrAccount as String] as? String }.filter { $0.hasPrefix(prefix) }.sorted()
     }
     func remove(_ account: String) throws {
         let status = SecItemDelete(query(account) as CFDictionary)
@@ -127,22 +141,15 @@ struct GroupInvitationCapability: Codable, Sendable {
     let privateKey: Data
     let ownerRoot: Data
     var expiresAt: Date
+    var contextCiphertext: Data? = nil
 
     init(url: URL, now: Date = Date()) throws {
-        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme == "https",
-              parts.host == "nekonomado.com", parts.port == nil, parts.user == nil, parts.password == nil,
-              ["/join", "/join/"].contains(parts.path), parts.query == nil,
-              let fragment = parts.fragment, fragment.utf8.count <= 1024,
-              let query = URLComponents(string: "https://invalid/?" + fragment)?.queryItems, query.count == 5,
-              Set(query.map(\.name)) == Set(["v", "w", "i", "s", "o"])
-        else { throw GroupClientError.invalidResponse }
-        let fields = Dictionary(uniqueKeysWithValues: query.map { ($0.name, $0.value ?? "") })
-        guard fields["v"] == "3", let window = fields["w"], let invite = fields["i"],
-              try GroupWire.bytes(window, count: 16).count == 16,
-              try GroupWire.bytes(invite, count: 16).count == 16 else { throw GroupClientError.invalidResponse }
-        windowID = window; invitationID = invite
-        privateKey = try GroupWire.bytes(fields["s"] ?? "", count: 32)
-        ownerRoot = try GroupWire.bytes(fields["o"] ?? "", count: 32)
+        guard let link = GroupInvitationLink(url: url),
+              try GroupWire.bytes(link.windowID, count: 16).count == 16,
+              try GroupWire.bytes(link.invitationID, count: 16).count == 16 else { throw GroupClientError.invalidResponse }
+        windowID = link.windowID; invitationID = link.invitationID
+        privateKey = link.inviteSecret; ownerRoot = link.ownerIdentityPublicKey
+        contextCiphertext = link.contextCiphertext
         expiresAt = now.addingTimeInterval(86_400)
     }
     init(windowID: String, invitationID: String, privateKey: Data, ownerRoot: Data, expiresAt: Date) {
@@ -155,6 +162,7 @@ struct GroupInvitationCapability: Codable, Sendable {
         fragment.queryItems = [URLQueryItem(name: "v", value: "3"), .init(name: "w", value: windowID),
             .init(name: "i", value: invitationID), .init(name: "s", value: GroupWire.base64(privateKey)),
             .init(name: "o", value: GroupWire.base64(ownerRoot))]
+        if let contextCiphertext { fragment.queryItems?.append(.init(name: "c", value: GroupWire.base64(contextCiphertext))) }
         url.fragment = fragment.percentEncodedQuery
         guard let result = url.url else { throw GroupClientError.invalidResponse }
         return result

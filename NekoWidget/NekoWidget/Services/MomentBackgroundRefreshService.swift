@@ -229,6 +229,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // app. Reconcile on every foreground activation; the signed PUT is
         // idempotent and extends the server-side bounded subscription lease.
         reconcileRemoteNotificationRegistration()
+        Task { await GroupAdmissionService.shared.refresh() }
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
@@ -255,6 +256,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         tokenRegistrationEpoch &+= 1
         let callbackEpoch = tokenRegistrationEpoch
         tokenRegistration = Task {
+            await GroupAdmissionService.shared.register(deviceToken: deviceToken, epoch: callbackEpoch)
             await MomentPushSubscriptionService.shared.register(
                 deviceToken: deviceToken,
                 callbackEpoch: callbackEpoch
@@ -288,6 +290,13 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
             return
         }
 #endif
+        if let route = GroupNotificationRoute.parse(userInfo) {
+            Task {
+                let accepted = await GroupAdmissionService.shared.receive(route, open: false)
+                completionHandler(accepted ? .newData : .noData)
+            }
+            return
+        }
         guard let route = MomentNotificationRoutePayload.route(from: userInfo) else {
             // A malformed or unknown envelope must never be interpreted as a
             // generic wake for whichever private window happens to be active.
@@ -351,6 +360,11 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         guard !Self.suppressesNormalServicesForDebugLaunch else { return }
 #endif
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           let route = GroupNotificationRoute.parse(response.notification.request.content.userInfo) {
+            _ = await GroupAdmissionService.shared.receive(route, open: true)
+            return
+        }
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
            response.notification.request.content.userInfo[AlbumArrivalNotice.userInfoKey] != nil {
             AlbumArrivalOpenInbox.shared.showsAlbum = true
             return
@@ -397,6 +411,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
                 return
             }
             let protectedDataAvailable = UIApplication.shared.isProtectedDataAvailable
+            if protectedDataAvailable { await GroupAdmissionService.shared.refresh() }
             let result = await MomentBackgroundRefreshService.shared.refresh(
                 protectedDataAvailable: protectedDataAvailable
             )
@@ -1423,5 +1438,59 @@ enum MomentNotificationAuthorizationState: Equatable, Sendable {
         @unknown default:
             self = .denied
         }
+    }
+}
+
+/// Single foreground/background coordinator. Admission remains recoverable without notifications.
+@MainActor
+final class GroupAdmissionService: ObservableObject {
+    static let shared = GroupAdmissionService()
+    @Published private(set) var results: [GroupAdmissionResult] = []
+    private var token: Data?
+    private var tokenEpoch: UInt64 = 0
+    private var running = false
+    private var rerun = false
+    private var permissionRequested = false
+
+    func register(deviceToken: Data, epoch: UInt64) async {
+        guard epoch >= tokenEpoch else { return }
+        tokenEpoch = epoch; token = deviceToken
+        await refresh()
+    }
+    func refresh(requestPermission: Bool = false) async {
+        permissionRequested = permissionRequested || requestPermission
+        rerun = true
+        guard !running else { return }
+        running = true; defer { running = false }
+        repeat {
+            rerun = false
+            guard !Task.isCancelled, let client = GroupWindowClientProvider.production else { return }
+            var settings = await UNUserNotificationCenter.current().notificationSettings()
+            if permissionRequested, settings.authorizationStatus == .notDetermined {
+                _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge])
+                settings = await UNUserNotificationCenter.current().notificationSettings()
+            }
+            permissionRequested = false
+            let allowed = [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus)
+            if allowed && token == nil { UIApplication.shared.registerForRemoteNotifications() }
+            if let refreshed = try? await client.reconcileAdmissions(), !refreshed.isEmpty { results = refreshed }
+#if DEBUG
+            let environment = "development"
+#else
+            let environment = "production"
+#endif
+            if allowed, let token { try? await client.updatePushSubscriptions(deviceToken: token, environment: environment) }
+            else if !allowed { try? await client.updatePushSubscriptions(deviceToken: nil, environment: environment) }
+        } while rerun && !Task.isCancelled
+    }
+    func receive(_ route: GroupNotificationRoute, open: Bool) async -> Bool {
+        guard let client = GroupWindowClientProvider.production,
+              (try? await client.acceptsNotification(windowID: route.windowID, requestID: route.requestID, kind: route.kind)) == true else { return false }
+        await refresh()
+        // Explicit tap may navigate only AFTER authenticated membership, roster and key loading.
+        if open, (try? await client.window(id: route.windowID)) != nil {
+            GroupWindowOpenInbox.shared.open(windowID: route.windowID)
+        }
+        return true
     }
 }

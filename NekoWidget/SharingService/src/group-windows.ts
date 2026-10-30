@@ -1,7 +1,7 @@
 import { base64urlDecode, randomBase64url } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
-import { groupAuthorizationStatements,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,
+import { groupId,groupAuthorizationStatements,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,
   type GroupActor,type GroupScope } from "./group-auth";
 import { loadStoredGroupRoster,verifyGroupEnvelopes,verifyGroupRoster,
   type GroupKeyEnvelope,type SignedGroupRoster,type VerifiedGroupRoster } from "./group-protocol";
@@ -139,4 +139,16 @@ export async function revokeGroupInvitation(env:Env,actor:GroupActor,windowId:st
     env.DB.prepare("UPDATE group_join_requests SET state='cancelled' WHERE invitation_id=? AND state='pending'").bind(invitationId),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response);
+}
+
+// Read-only, authenticated owner lookup. Re-sharing never extends the original expiry.
+export async function groupInvitationStatus(env:Env,actor:GroupActor,windowId:string,body:JsonRecord):Promise<Response> {
+  exactKeys(body,['invitationId']);
+  const access=await requireGroupMember(env,actor,windowId,true);
+  const invitationId=groupId(stringField(body,'invitationId'));
+  const row=await env.DB.prepare('SELECT proof_public_key AS proofPublicKey,expires_at AS expiresAt,revoked_at AS revokedAt FROM group_invitations WHERE id=? AND space_id=?')
+    .bind(invitationId,windowId).first();
+  if(!row)throw new ApiError(404,'not_found','The invitation was not found.');
+  await env.DB.batch(groupNonceStatements(env,actor,{windowId,owner:true,expectedRevision:access.revision}));
+  return jsonResponse({...row,invitationId,serverNow:actor.now});
 }

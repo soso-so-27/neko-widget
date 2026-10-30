@@ -144,6 +144,7 @@ enum GroupWindowPresentation {
 final class GroupWindowMembersModel: ObservableObject {
     @Published private(set) var window: GroupWindow?
     @Published private(set) var invitation: GroupInvitation?
+    @Published private(set) var admissionResults: [GroupAdmissionResult] = []
     @Published private(set) var pendingRequests: [GroupJoinRequest] = []
     @Published private(set) var isWorking = false
     @Published private(set) var loadFailureMessage: String?
@@ -179,7 +180,7 @@ final class GroupWindowMembersModel: ObservableObject {
     }
 
     /// An invitation made on an earlier visit. Only its ID and expiry are kept
-    /// on this iPhone, never the link, so it can be revoked but not re-sent.
+    /// on this iPhone. The production client recovers the capability from its private store.
     var earlierInvitation: GroupInvitationMemory.Saved? {
         guard activeInvitation == nil, let saved = GroupInvitationMemory.saved(windowID: windowID),
               saved.expiresAt > now() else { return nil }
@@ -206,6 +207,8 @@ final class GroupWindowMembersModel: ObservableObject {
 
     func load() async {
         do {
+            let results = (try? await client.reconcileAdmissions()) ?? []
+            admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
             var latest = transform(try await client.window(id: windowID))
             if latest.state == .rotationRequired, latest.canManage,
                let renewed = try? await client.rotate(
@@ -219,6 +222,7 @@ final class GroupWindowMembersModel: ObservableObject {
             }
             window = latest
             pendingRequests = requests
+            if latest.canManage { invitation = try await client.reusableInvitation(windowID: windowID) }
             loadFailureMessage = nil
         } catch {
             // Keep the last known window and requests. Only say that the
@@ -248,19 +252,6 @@ final class GroupWindowMembersModel: ObservableObject {
             )
             self.invitation = nil
             GroupInvitationMemory.forget(windowID: windowID)
-        }
-    }
-
-    func approve(_ request: GroupJoinRequest) async {
-        await perform("approve:\(request.id)") { operation in
-            _ = try await client.approve(
-                requestID: request.id,
-                windowID: windowID,
-                operation: operation
-            )
-        }
-        if actionErrorMessage == nil {
-            actionCompletionMessage = "\(GroupDisplayName.withSan(request.displayName))が参加しました。"
         }
     }
 
@@ -752,18 +743,8 @@ struct GroupWindowMembersView: View {
             }
             if window.canManage {
                 HStack(spacing: 12) {
-                    // One press, no phrase to compare: a join request can only be
-                    // signed by someone holding the link, and a wrong person is
-                    // removed afterwards (10/30). Photos from before never reach them.
-                    Button {
-                        Task { await model.approve(request) }
-                    } label: {
-                        Text("参加してもらう")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.isWorking || window.state != .active || request.admissionPaused == true)
-                    .accessibilityIdentifier("group-window-approve")
+                    Text("この iPhone で参加を受け付けています。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button {
                         Task { await model.reject(request) }
                     } label: {
@@ -980,15 +961,17 @@ final class GroupJoinModel: ObservableObject {
     @Published private(set) var errorMessage: String?
 
     let invitationID: String
+    let invitationContext: GroupInvitationContext?
     /// Nil until the production adapter exists in this build; the screen
     /// then explains that applying is not available yet.
     private let client: (any GroupWindowClient)?
     /// Kept so an offline retry resends the same application, not a second.
     private let applyOperationID = UUID()
 
-    init(client: (any GroupWindowClient)?, invitationID: String) {
+    init(client: (any GroupWindowClient)?, invitationID: String, context: GroupInvitationContext? = nil) {
         self.client = client
         self.invitationID = invitationID
+        self.invitationContext = context
         displayName = GroupDisplayName.remembered
     }
 
@@ -1003,6 +986,15 @@ final class GroupJoinModel: ObservableObject {
     var isPending: Bool {
         if case .pending = phase { return true }
         return false
+    }
+
+    func resume() async {
+        guard let client else { return }
+        do {
+            if let saved = try await client.resumableJoin(invitationID: invitationID) {
+                displayName = saved.displayName; update(with: saved)
+            }
+        } catch { errorMessage = GroupWindowPresentation.message(for: error) }
     }
 
     func apply() async {
@@ -1022,6 +1014,7 @@ final class GroupJoinModel: ObservableObject {
             )
             GroupDisplayName.remember(trimmedName)
             update(with: request)
+            Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
         } catch {
             errorMessage = GroupWindowPresentation.message(for: error)
         }
@@ -1091,7 +1084,7 @@ struct GroupJoinView: View {
             case .cancelled:
                 resultSection(
                     "参加をやめました。",
-                    detail: "参加するときは、招待リンクをもう一度開いてください。",
+                    detail: "参加するときは、新しい招待リンクを送ってもらってください。",
                     systemImage: "arrow.uturn.backward.circle"
                 )
             }
@@ -1105,6 +1098,7 @@ struct GroupJoinView: View {
         }
         .navigationTitle("まどに参加")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await model.resume() }
         .task(id: model.isPending) {
             // Approval shows up by itself; nothing to press while waiting (M2).
             guard model.isPending else { return }
@@ -1119,6 +1113,9 @@ struct GroupJoinView: View {
 
     @ViewBuilder
     private var nameSection: some View {
+        if let context = model.invitationContext {
+            Section { Text("\(GroupDisplayName.withSan(context.inviterName))から『\(context.windowName)』に招待されています") }
+        }
         if !model.isAvailable {
             Section {
                 Label("この招待はまだ開けません", systemImage: "hourglass")
@@ -1450,7 +1447,7 @@ struct GroupInvitationJoinSheet: View {
                 .task {
                     guard model == nil else { return }
                     if let joined = await GroupWindowClientProvider.joinClient(for: invitation) {
-                        model = GroupJoinModel(client: joined.client, invitationID: joined.invitationID)
+                        model = GroupJoinModel(client: joined.client, invitationID: joined.invitationID, context: invitation.context)
                     } else {
                         model = GroupJoinModel(client: nil, invitationID: invitation.invitationID)
                     }

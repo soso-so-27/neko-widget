@@ -34,6 +34,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
     private var verifiedListEntries: [String: VerifiedListEntry] = [:]
     private var heartOperations = Set<UUID>()
+    private var reconcilingAdmissions = false
 
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
         self.endpoint = endpoint; self.secrets = try GroupKeychainStore(namespace: namespace)
@@ -570,15 +571,20 @@ extension ProductionGroupWindowClient {
         let capability = try GroupInvitationCapability(url: url)
         try pin(.init(windowID: capability.windowID, ownerPersonID: GroupWire.base64(GroupCanonical.hash(capability.ownerRoot)),
                       ownerIdentityPublicKey: capability.ownerRoot))
-        try save(capability, "invite:" + capability.invitationID)
+        if let existing = try load(GroupInvitationCapability.self, "invite:" + capability.invitationID) {
+            guard existing.windowID == capability.windowID, existing.privateKey == capability.privateKey,
+                  existing.ownerRoot == capability.ownerRoot else { throw GroupProtocolError.invalidSignature }
+        } else { try save(capability, "invite:" + capability.invitationID) }
         return capability.invitationID
     }
     func createInvitation(windowID: String, operation: GroupOperation) async throws -> GroupInvitation {
+        if let existing = try await reusableInvitation(windowID: windowID) { return existing }
         let intent = "invite:\(windowID):\(operation.expectedRevision)"
         var secret = try load(GroupLocalInvitation.self, "invite-op:" + operation.id.uuidString.lowercased())
         if secret == nil {
             let current = try await window(id: windowID)
             guard current.canManage else { throw GroupClientError.ownerRequired }
+            guard current.state == .active, current.deliveryStatus != .paused else { throw GroupSubscriptionError.windowPaused }
             guard current.revision == operation.expectedRevision else { throw GroupClientError.staleRevision(current: current.revision) }
             secret = .init(windowID: windowID, operationID: operation.id, privateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
                            invitationID: nil, expiresAt: nil)
@@ -591,10 +597,17 @@ extension ProductionGroupWindowClient {
         let reply = try GroupWire.decode(GroupAPIModel.InviteReply.self, await mutation(operationID: operation.id, intent: intent,
             path: "/v3/group-windows/\(windowID)/invitations", body: GroupWire.encode(payload)))
         guard reply.operationID == operation.id.uuidString.lowercased(), reply.revision == operation.expectedRevision else { throw GroupClientError.invalidResponse }
-        let capability = GroupInvitationCapability(windowID: windowID, invitationID: reply.invitationID, privateKey: secret.privateKey,
+        var capability = GroupInvitationCapability(windowID: windowID, invitationID: reply.invitationID, privateKey: secret.privateKey,
             ownerRoot: try local(windowID).anchor.ownerIdentityPublicKey, expiresAt: Date(timeIntervalSince1970: TimeInterval(reply.expiresAt)))
+        let current = try await window(id: windowID)
+        let inviter = current.members.first { $0.id == current.myParticipantID }?.displayName ?? "まどを作った人"
+        capability.contextCiphertext = try GroupInvitationContext(windowName: current.name, inviterName: inviter)
+            .seal(secret: capability.privateKey, windowID: windowID, invitationID: capability.invitationID, owner: capability.ownerRoot)
         secret.invitationID = reply.invitationID; secret.expiresAt = capability.expiresAt
         try save(secret, "invite-op:" + operation.id.uuidString.lowercased()); try save(capability, "invite:" + reply.invitationID)
+        try save(true, "owner-invite:" + reply.invitationID)
+        var invitations = try load([String: String].self, "owner-invitation-index") ?? [:]
+        invitations[windowID] = reply.invitationID; try save(invitations, "owner-invitation-index")
         return .init(id: reply.invitationID, windowID: windowID, expiresAt: capability.expiresAt, revoked: false,
                      shareText: try capability.shareURL().absoluteString)
     }
@@ -608,7 +621,20 @@ extension ProductionGroupWindowClient {
     func apply(invitationID: String, displayName: String, operationID: UUID) async throws -> GroupJoinRequest {
         guard let capability = try load(GroupInvitationCapability.self, "invite:" + invitationID), capability.invitationID == invitationID
         else { throw GroupClientError.invitationExpired }
-        let name = try GroupWire.name(displayName), identity = try await registeredIdentity()
+        let identity = try await registeredIdentity()
+        if let prior = try await resumableJoin(invitationID: invitationID) { return prior }
+        var attempts = try load([String: GroupJoinAttempt].self, "join-attempts") ?? [:]
+        let attempt: GroupJoinAttempt
+        if let saved = attempts[invitationID] {
+            guard saved.personID == identity.personID, saved.deviceID == (try identity.deviceID),
+                  saved.windowID == capability.windowID else { throw GroupProtocolError.invalidSignature }
+            attempt = saved
+        } else {
+            attempt = .init(invitationID: invitationID, windowID: capability.windowID, personID: identity.personID,
+                deviceID: try identity.deviceID, operationID: operationID, displayName: try GroupWire.name(displayName))
+            attempts[invitationID] = attempt; try save(attempts, "join-attempts")
+        }
+        let name = attempt.displayName, operationID = attempt.operationID
         let intent = "apply:\(invitationID):" + GroupWire.base64(GroupCanonical.hash(Data(name.utf8)))
         let path = "/v3/group-windows/\(capability.windowID)/join-requests", body: Data
         if let stored = try pending(operationID, intent: intent) { body = stored.body }
@@ -637,7 +663,170 @@ extension ProductionGroupWindowClient {
             displayName: name, verificationPhrase: GroupWire.phrase(identity.personPublicKey), expiresAt: Date(timeIntervalSince1970: TimeInterval(reply.expiresAt)),
             state: reply.state, admissionPaused: reply.state == .pending ? reply.admissionPaused : false)
         try save(GroupLocalJoin(windowID: capability.windowID, request: result), "join:" + reply.requestID)
+        var joins = try load([String: String].self, "join-index") ?? [:]
+        joins[invitationID] = reply.requestID; try save(joins, "join-index")
+        attempts.removeValue(forKey: invitationID); try save(attempts, "join-attempts")
         return result
+    }
+    func resumableJoin(invitationID: String) async throws -> GroupJoinRequest? {
+        let actor = try identity()
+        let index = try load([String: String].self, "join-index") ?? [:]
+        let accounts = Set(try secrets.accounts(prefix: "join:") + index.values.map { "join:" + $0 })
+        for account in accounts.sorted() {
+            guard let saved = try load(GroupLocalJoin.self, account), saved.request.invitationID == invitationID else { continue }
+            guard saved.request.personID == actor.personID, saved.request.candidateDeviceID == (try actor.deviceID) else { throw GroupProtocolError.invalidSignature }
+            if [.pending, .approved].contains(saved.request.state) { return try await joinStatus(requestID: saved.request.id) }
+            return saved.request
+        }
+        return nil
+    }
+    private func ownsInvitation(_ cap: GroupInvitationCapability) throws -> Bool {
+        if try secrets.read("owner-invite:" + cap.invitationID) != nil { return true }
+        // Recover existing, locally created links without treating a staged guest link as authority.
+        for account in try secrets.accounts(prefix: "invite-op:") {
+            if let old = try load(GroupLocalInvitation.self, account), old.windowID == cap.windowID,
+               old.invitationID == cap.invitationID, old.privateKey == cap.privateKey {
+                try save(true, "owner-invite:" + cap.invitationID); return true
+            }
+        }
+        return false
+    }
+    func reusableInvitation(windowID: String) async throws -> GroupInvitation? {
+        let current = try await window(id: windowID)
+        guard current.canManage, current.state == .active, current.deliveryStatus != .paused else { return nil }
+        let index = try load([String: String].self, "owner-invitation-index") ?? [:]
+        let accounts = Set(try secrets.accounts(prefix: "invite:") + [index[windowID]].compactMap { $0 }.map { "invite:" + $0 })
+        for account in accounts.sorted() {
+            guard let cap = try load(GroupInvitationCapability.self, account), cap.windowID == windowID, cap.expiresAt > Date() else { continue }
+            // Only invitations made by this owner iPhone are reshared. A staged guest link is never an owner authority.
+            guard try ownsInvitation(cap) else { continue }
+            let status = try GroupWire.decode(GroupAPIModel.InvitationStatus.self,
+                await signed("/v3/group-windows/\(windowID)/invitations/status", GroupAPIModel.InvitationInput(invitationID: cap.invitationID)))
+            guard status.invitationID == cap.invitationID, status.proofPublicKey == (try Curve25519.Signing.PrivateKey(rawRepresentation: cap.privateKey).publicKey.rawRepresentation),
+                  status.expiresAt == Int(cap.expiresAt.timeIntervalSince1970) else { throw GroupProtocolError.invalidSignature }
+            guard status.revokedAt == nil, status.expiresAt > status.serverNow else { continue }
+            return .init(id: cap.invitationID, windowID: windowID, expiresAt: cap.expiresAt, revoked: false,
+                         shareText: try cap.shareURL().absoluteString)
+        }
+        return nil
+    }
+    private func verifyAutomaticAdmission(_ row: GroupAPIModel.PendingJoin, windowID: String) throws {
+        guard let cap = try load(GroupInvitationCapability.self, "invite:" + row.invitationID), try ownsInvitation(cap) else { throw GroupProtocolError.invalidSignature }
+        try GroupAdmissionProofVerifier.verify(row, capability: cap, windowID: windowID)
+    }
+    func reconcileAdmissions() async throws -> [GroupAdmissionResult] {
+        guard !reconcilingAdmissions else { return [] }
+        reconcilingAdmissions = true; defer { reconcilingAdmissions = false }
+        var results = try load([GroupAdmissionResult].self, "admission-results") ?? []
+        func remember(_ result: GroupAdmissionResult) throws {
+            if !results.contains(where: { $0.id == result.id }) { results.append(result) }
+            results = Array(results.suffix(100)); try save(results, "admission-results")
+        }
+        var approvals = try load([String: GroupAdmissionResult].self, "auto-approval-index") ?? [:]
+        for (requestID, result) in approvals {
+            do {
+                guard let row = try load(GroupAPIModel.PendingJoin.self, "candidate:\(result.windowID):\(requestID)"),
+                      let op = try load(GroupOperation.self, "auto-approve:" + requestID) else { continue }
+                let current = try await window(id: result.windowID)
+                if current.activeMembers.contains(where: { $0.personID == row.personID && $0.devices.contains(where: { $0.id == row.candidateDeviceID }) }) {
+                    try remember(result); approvals.removeValue(forKey: requestID)
+                } else if current.canManage, current.state == .active, current.deliveryStatus != .paused {
+                    // Reuse the exact persisted HTTP body on response loss; server CAS/pause checks remain authoritative.
+                    _ = try await approve(requestID: requestID, windowID: result.windowID, operation: op)
+                    try remember(result); approvals.removeValue(forKey: requestID)
+                }
+            } catch GroupClientError.staleRevision { try? secrets.remove("auto-approve:" + requestID); approvals.removeValue(forKey: requestID) }
+            catch GroupClientError.requestNotPending { approvals.removeValue(forKey: requestID) }
+            catch GroupClientError.invitationExpired { approvals.removeValue(forKey: requestID) }
+            catch GroupClientError.invitationRevoked { approvals.removeValue(forKey: requestID) }
+            catch { continue }
+        }
+        try save(approvals, "auto-approval-index")
+        // Retry even an application whose response was lost before its request ID was saved.
+        let attempts = try load([String: GroupJoinAttempt].self, "join-attempts") ?? [:]
+        for attempt in attempts.values {
+            if Task.isCancelled { break }
+            do { _ = try await apply(invitationID: attempt.invitationID, displayName: attempt.displayName, operationID: attempt.operationID) }
+            catch { continue }
+        }
+        let index = try load([String: String].self, "join-index") ?? [:]
+        for account in Set(try secrets.accounts(prefix: "join:") + index.values.map { "join:" + $0 }).sorted() {
+            if Task.isCancelled { break }
+            do {
+                guard let saved = try load(GroupLocalJoin.self, account), [.pending, .approved].contains(saved.request.state),
+                      !results.contains(where: { $0.id == saved.request.id && $0.joinedLocally }) else { continue }
+                let request = try await joinStatus(requestID: saved.request.id)
+                if request.state == .approved {
+                    try remember(.init(id: request.id, windowID: saved.windowID, displayName: request.displayName, joinedLocally: true))
+                }
+            } catch { continue }
+        }
+        for item in try await windows() where item.canManage && item.state == .active && item.deliveryStatus != .paused {
+            if Task.isCancelled { break }
+            do {
+                for request in try await pendingRequests(windowID: item.id) where request.admissionPaused != true {
+                    if Task.isCancelled { break }
+                    do {
+                        guard let candidate = try load(GroupAPIModel.PendingJoin.self, "candidate:\(item.id):\(request.id)") else { continue }
+                        try verifyAutomaticAdmission(candidate, windowID: item.id)
+                        let current = try await window(id: item.id)
+                        guard current.canManage, current.state == .active, current.deliveryStatus != .paused,
+                              current.memberCount < 6 || current.activeMembers.contains(where: { $0.personID == request.personID }) else { continue }
+                        let key = "auto-approve:" + request.id
+                        let op = try load(GroupOperation.self, key) ?? GroupOperation(expectedRevision: current.revision)
+                        try save(op, key)
+                        approvals[request.id] = .init(id: request.id, windowID: item.id, displayName: request.displayName, joinedLocally: false)
+                        try save(approvals, "auto-approval-index")
+                        do {
+                            _ = try await approve(requestID: request.id, windowID: item.id, operation: op)
+                            try remember(.init(id: request.id, windowID: item.id, displayName: request.displayName, joinedLocally: false))
+                            approvals.removeValue(forKey: request.id); try save(approvals, "auto-approval-index")
+                        } catch GroupClientError.staleRevision { try secrets.remove(key) }
+                    } catch { continue }
+                }
+            } catch { continue }
+        }
+        return results
+    }
+    /// Notification routes are hints only. No route can pin a new window or import a key.
+    func acceptsNotification(windowID: String, requestID: String?, kind: String) throws -> Bool {
+        if kind == "join_approved" {
+            guard let requestID, let saved = try load(GroupLocalJoin.self, "join:" + requestID) else { return false }
+            return saved.windowID == windowID && saved.request.personID == (try identity().personID)
+        }
+        guard let record = try load(GroupLocalWindow.self, "window:" + windowID), !record.left, record.closed != true,
+              let roster = try record.verified(),
+              let member = roster.roster.members.first(where: { $0.personID == (try? identity().personID) }) else { return false }
+        return kind != "join_requested" || member.role == .owner
+    }
+    func updatePushSubscriptions(deviceToken: Data?, environment: String) async throws {
+        struct Registration: Codable { let digest: Data; let environment: String; let renewAt: Date }
+        let windows = try await windows()
+        var scopes = Set(windows.map { $0.id + "/push-subscription" })
+        let joins = try load([String: String].self, "join-index") ?? [:]
+        for account in Set(try secrets.accounts(prefix: "join:") + joins.values.map { "join:" + $0 }) {
+            if let saved = try load(GroupLocalJoin.self, account), [.pending, .approved].contains(saved.request.state), saved.request.expiresAt > Date() {
+                scopes.insert(saved.windowID + "/join-push-subscription")
+            }
+        }
+        for scope in scopes.sorted() {
+            if Task.isCancelled { return }
+            do {
+                let cache = "push-registration:" + scope
+                if let deviceToken {
+                    let digest = GroupCanonical.hash(deviceToken)
+                    if let saved = try load(Registration.self, cache), saved.digest == digest,
+                       saved.environment == environment, saved.renewAt > Date() { continue }
+                    let op = UUID()
+                    _ = try await signed("/v3/group-windows/" + scope,
+                        GroupAPIModel.PushInput(operationID: op.uuidString.lowercased(), token: deviceToken, environment: environment))
+                    try save(Registration(digest: digest, environment: environment, renewAt: Date().addingTimeInterval(3600)), cache)
+                } else {
+                    _ = try await signed("/v3/group-windows/" + scope + "/remove", GroupAPIModel.PushRemoval(operationID: UUID().uuidString.lowercased()))
+                    try secrets.remove(cache)
+                }
+            } catch { continue } // Push is optional; registration must never block admission.
+        }
     }
     func joinStatus(requestID: String) async throws -> GroupJoinRequest {
         guard var saved = try load(GroupLocalJoin.self, "join:" + requestID) else { throw GroupClientError.requestNotPending }
@@ -653,6 +842,7 @@ extension ProductionGroupWindowClient {
                   revision >= record.minimumAdmissionRevision else { throw GroupClientError.invalidResponse }
             record.left = false; record.minimumAdmissionRevision = max(record.minimumAdmissionRevision, revision)
             try save(record, "window:" + saved.windowID)
+            _ = try await window(id: saved.windowID)
         }
         return saved.request
     }
@@ -1177,5 +1367,30 @@ extension ProductionGroupWindowClient {
         var result = try await displayPhoto(row, current: current)
         result.caption = caption
         return result
+    }
+}
+
+/// Independent invitation-holder proof, in addition to roster and device identity verification.
+enum GroupAdmissionProofVerifier {
+    static func verify(_ row: GroupAPIModel.PendingJoin, capability cap: GroupInvitationCapability, windowID: String, now: Date = Date()) throws {
+        guard let proof = row.admissionProof, cap.windowID == windowID, cap.invitationID == row.invitationID,
+              cap.expiresAt > now, row.expiresAt > Int(now.timeIntervalSince1970), row.expiresAt <= Int(cap.expiresAt.timeIntervalSince1970),
+              row.state == .pending, row.admissionPaused != true,
+              proof.challengeExpiresAt <= row.expiresAt, proof.challengeExpiresAt > 0,
+              UUID(uuidString: proof.operationID) != nil, UUID(uuidString: proof.challengeID) != nil,
+              (try? GroupWire.bytes(proof.challenge, count: 32)) != nil,
+              row.personID == GroupWire.base64(GroupCanonical.hash(row.identityPublicKey)),
+              row.candidateDeviceID == GroupWire.base64(GroupCanonical.hash(try GroupCanonical.fields([row.signingPublicKey, row.hpkePublicKey])))
+        else { throw GroupProtocolError.invalidSignature }
+        let device = GroupRosterDevice(id: row.candidateDeviceID, signingPublicKey: row.signingPublicKey,
+            hpkePublicKey: row.hpkePublicKey, personAuthorization: row.personAuthorization)
+        guard try Curve25519.Signing.PublicKey(rawRepresentation: row.identityPublicKey).isValidSignature(row.personAuthorization,
+            for: device.authorizationBytes(windowID: windowID, personID: row.personID)) else { throw GroupProtocolError.invalidSignature }
+        let transcript = try GroupCanonical.fields(["NW3.JOIN", "3", windowID, row.invitationID, proof.challengeID, proof.challenge,
+            String(proof.challengeExpiresAt), proof.operationID, row.personID, row.candidateDeviceID].map(GroupCanonical.text)
+            + [GroupCanonical.hash(row.encryptedDisplayName), row.personAuthorization])
+        guard try Curve25519.Signing.PrivateKey(rawRepresentation: cap.privateKey).publicKey.isValidSignature(proof.inviteProof, for: transcript),
+              Curve25519.Signing.PublicKey(rawRepresentation: row.signingPublicKey).isValidSignature(proof.deviceSignature, for: transcript)
+        else { throw GroupProtocolError.invalidSignature }
     }
 }
