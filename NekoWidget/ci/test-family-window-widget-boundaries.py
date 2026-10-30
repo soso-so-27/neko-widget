@@ -4254,9 +4254,12 @@ class GroupWindowUITests(unittest.TestCase):
         self.assertIn("item: invitation.shareText", invitation)
         self.assertEqual(view.count("shareText"), 1)
 
-        # Approval asks for the verification phrase; nothing approves alone.
-        self.assertIn("\\(request.verificationPhrase)", view)
-        self.assertIn('Button("承認する") { Task { await model.approve(request) } }', view)
+        # Approval is one press by the creator, with no phrase to compare
+        # (10/30: the request is already signed with the link's secret, and a
+        # wrong person is removed afterwards). Nothing approves alone yet.
+        self.assertNotIn("verificationPhrase", view)
+        request_row = section(view, "private func requestRow(", "private func invitationSection(")
+        self.assertIn("Task { await model.approve(request) }", request_row)
         self.assertNotIn("autoApprove", view)
 
         # Waiting states refresh by themselves (M2); no manual check button.
