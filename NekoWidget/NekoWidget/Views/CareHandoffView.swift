@@ -60,6 +60,7 @@ struct CareHandoffView: View {
             }
         }
         .navigationTitle("預けるとき").navigationBarTitleDisplayMode(.inline)
+        .familyNotebookToolSync()
         .task {
             guard selectedCatID == nil, store.loadError == nil,
                   let first = stripCats.first(where: { $0.id == lastCatID }) ?? stripCats.first else { return }
@@ -205,6 +206,14 @@ private struct CareCatEditor: View {
             }
         })
     }
+    private func contextText(_ key: WritableKeyPath<CareHandoffContext, String>, fallback: String) -> Binding<String> {
+        Binding(get: { cat?.familyContext?[keyPath: key] ?? fallback }, set: { value in
+            store.editCat(id) { cat in
+                var context = cat.familyContext ?? .init()
+                context[keyPath: key] = value; cat.familyContext = context
+            }
+        })
+    }
     /// Common signs to call about. The owner picks; nothing is judged here.
     static let callWhenChoices = ["丸1日ごはんを食べない", "何度も吐く", "おしっこが出ていない",
                                   "隠れて出てこない", "ぐったりしている", "けがをした", "外に出てしまった"]
@@ -271,7 +280,15 @@ private struct CareCatEditor: View {
                     }
                     .accessibilityIdentifier("care-call-when-choices")
                 } footer: { Text("「こんな時は連絡を」は、預かる人が迷わないための目安です。") }
-                if let householdSection { householdSection }
+                if let context = cat.familyContext {
+                    Section("この子への今回のお願い") {
+                        CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-family-recipient", text: contextText(\.recipient, fallback: context.recipient))
+                        CareField(label: "期間", example: "例：金曜の夜まで", identifier: "care-family-period", text: contextText(\.period, fallback: context.period))
+                        CareField(label: "今回のお願い", example: "例：終わったら写真を1枚", identifier: "care-family-request", text: contextText(\.request, fallback: context.request))
+                    }
+                    Section { NavigationLink("連絡先") { CareRequestEditor(store: store, showsRequest: false) } }
+                } else if let householdSection { householdSection }
+                if cat.familyDetached == true { Text("家族の共有から外れた、この iPhone の控えです。").font(.footnote).foregroundStyle(.secondary) }
                 Section {
                     ToolImportantInformation(text: "書いた内容は自動で保存します。薬は「この子のこと」に、獣医師に言われたとおりに書いてください。")
                 }
@@ -314,6 +331,7 @@ private struct CareCatEditor: View {
 
 private struct CareRequestEditor: View {
     @ObservedObject var store: CareHandoffStore
+    var showsRequest = true
     @ObservedObject private var catCare = CatCareStore.shared
     /// 「この子のこと」's household value; the older entry here only until it is set.
     private func household(_ key: WritableKeyPath<CatCareHousehold, CatCareStamped<String>?>,
@@ -326,11 +344,13 @@ private struct CareRequestEditor: View {
     }
     var body: some View {
         Form {
+            if showsRequest {
             Section {
                 CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: text(\.recipient))
                 CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: text(\.period))
                 CareField(label: "今回のお願い", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: text(\.request))
             } footer: { Text("次に預けるときは、ここだけ書き換えて使えます。住所や鍵の番号は別の方法で伝えてください。") }
+            }
             Section {
                 CareField(label: "飼い主の連絡先", example: "名前と電話番号など", identifier: "care-contact",
                           text: household(\.ownerContact, legacy: store.plan.contact))

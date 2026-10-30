@@ -264,7 +264,7 @@ enum AppRecordDataset {
                 // Even an empty plan may contain owner-authored contacts or lists.
                 return false
             case "VeterinaryVisits":
-                guard object["schema"] as? Int == 1, let visits = object["visits"] as? [Any] else { throw ToolBackupError.invalid }
+                guard let schema = object["schema"] as? Int, [1,2].contains(schema), let visits = object["visits"] as? [Any] else { throw ToolBackupError.invalid }
                 if !visits.isEmpty || !(object["retiredPhotoFiles"] as? [Any] ?? []).isEmpty { return false }
             case "ShowcasePhotos":
                 guard let entries = object["entries"] as? [Any] else { throw ToolBackupError.invalid }

@@ -191,6 +191,7 @@
 		CC2610280000000000000004 /* GroupReporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610280000000000000003 /* GroupReporting.swift */; };
 		FA2610260000000000000004 /* FamilyNotebookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000003 /* FamilyNotebookStore.swift */; };
 		FA2610300000000000000002 /* FamilyNotebookBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610300000000000000001 /* FamilyNotebookBackup.swift */; };
+		FA2610300000000000000004 /* FamilyNotebookToolBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610300000000000000003 /* FamilyNotebookToolBridge.swift */; };
 		FA2610260000000000000006 /* FamilyNotebookMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610260000000000000005 /* FamilyNotebookMigration.swift */; };
 		CC2610200000000000000016 /* CatCareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000015 /* CatCareView.swift */; };
 		CC2610270000000000000002 /* FamilyNotebookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610270000000000000001 /* FamilyNotebookView.swift */; };
@@ -489,6 +490,7 @@
 		CC2610280000000000000003 /* GroupReporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupReporting.swift; sourceTree = "<group>"; };
 		FA2610260000000000000003 /* FamilyNotebookStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookStore.swift; sourceTree = "<group>"; };
 		FA2610300000000000000001 /* FamilyNotebookBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookBackup.swift; sourceTree = "<group>"; };
+		FA2610300000000000000003 /* FamilyNotebookToolBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookToolBridge.swift; sourceTree = "<group>"; };
 		FA2610260000000000000005 /* FamilyNotebookMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookMigration.swift; sourceTree = "<group>"; };
 		CC2610200000000000000015 /* CatCareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCareView.swift; sourceTree = "<group>"; };
 		CC2610270000000000000001 /* FamilyNotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookView.swift; sourceTree = "<group>"; };
@@ -881,6 +883,7 @@
 				C0261028F000000000000001 /* ProductionGroupReporting.swift */,
 				FA2610260000000000000003 /* FamilyNotebookStore.swift */,
 				FA2610300000000000000001 /* FamilyNotebookBackup.swift */,
+				FA2610300000000000000003 /* FamilyNotebookToolBridge.swift */,
 				FA2610260000000000000005 /* FamilyNotebookMigration.swift */,
 				AB2610200000000000000071 /* GroupWindowOperationStore.swift */,
 				AB261020000000000000006F /* GroupWindowPhotoValidation.swift */,
@@ -1437,6 +1440,7 @@
 				C0261028F000000000000002 /* ProductionGroupReporting.swift in Sources */,
 				FA2610260000000000000004 /* FamilyNotebookStore.swift in Sources */,
 				FA2610300000000000000002 /* FamilyNotebookBackup.swift in Sources */,
+				FA2610300000000000000004 /* FamilyNotebookToolBridge.swift in Sources */,
 				FA2610260000000000000006 /* FamilyNotebookMigration.swift in Sources */,
 				CC2610200000000000000016 /* CatCareView.swift in Sources */,
 				CC2610270000000000000002 /* FamilyNotebookView.swift in Sources */,

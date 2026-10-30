@@ -104,7 +104,7 @@ struct VeterinaryVisitsView: View {
                     noticeBar
                     VeterinaryConsultationView(initialVisit: current, photos: photos, noteStore: noteStore,
                         store: store, initialRecord: initialRecord, profiles: profiles,
-                        pastVisits: Array(visits.filter { $0.completedAt != nil && $0.catID == current.catID }.reversed()),
+                        pastVisits: Array(visits.filter { $0.id != current.id && $0.catID == current.catID }.reversed()),
                         openPast: { selected = $0 },
                         onDeleted: {
                             let cat = PhotoMemoryNoteCat(id: current.catID, name: current.catName)
@@ -119,6 +119,11 @@ struct VeterinaryVisitsView: View {
             }
         }
         .navigationTitle("病院で見せる").navigationBarTitleDisplayMode(.inline)
+        .familyNotebookToolSync()
+        .onReceive(NotificationCenter.default.publisher(for: .appRecordsCommitted).receive(on: DispatchQueue.main)) { note in
+            guard let url = note.object as? URL, url.path.contains("/VeterinaryVisits") else { return }
+            Task { await reload() }
+        }
         .task {
             await reload()
             guard current == nil,
@@ -294,6 +299,7 @@ private struct VeterinaryConsultationView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store)
                             if !entry.text.isEmpty { Text(entry.text) }
+                            if entry.familyRetained == true { Text("家族の共有から外れた、この iPhone の控え").font(.caption).foregroundStyle(.secondary) }
                             if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
                             VeterinaryEntryDates(entry: entry)
                             if visit.completedAt == nil {
@@ -358,6 +364,13 @@ private struct VeterinaryConsultationView: View {
         .onChange(of: questions) { _, _ in scheduleSave() }
         .onChange(of: hasStartedDay) { _, _ in scheduleSave() }
         .onChange(of: startedDay) { _, _ in scheduleSave() }
+        .onReceive(NotificationCenter.default.publisher(for: .appRecordsCommitted).receive(on: DispatchQueue.main)) { note in
+            guard let url = note.object as? URL, url.path.contains("/VeterinaryVisits"), !changes, !busy else { return }
+            Task {
+                guard let id = visit?.id, let latest = try? await store.visits().first(where: { $0.id == id }), !changes, !busy else { return }
+                adopt(latest)
+            }
+        }
         .onDisappear {
             // Leaving another way than 「閉じる」 still saves what was written.
             autosaveTask?.cancel()
@@ -435,12 +448,22 @@ private struct VeterinaryConsultationView: View {
     private func save(completing: Bool = false) async {
         guard var draft = visit, !busy, completing || changes,
               observations.count <= 500, questions.count <= 500 else { return }
+        let base = draft
         busy = true; defer { busy = false }
         draft.observations = observations; draft.questions = questions
         draft.startedOn = hasStartedDay ? VeterinaryVisit.day(startedDay) : nil
         if completing { draft.completedAt = Date() }
-        do { visit = try await store.save(draft, expectedRevision: draft.revision); error = nil }
+        do { adopt(try await store.save(draft, expectedRevision: draft.revision, base: base)); error = nil }
         catch { self.error = veterinaryErrorMessage(error) }
+    }
+    private func adopt(_ value: VeterinaryVisit) {
+        visit = value; observations = value.observations; questions = value.questions
+        hasStartedDay = value.startedOn != nil
+        if let day = value.startedOn {
+            let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
+            startedDay = formatter.date(from: day) ?? startedDay
+        }
     }
     private func remove(_ entry: VeterinaryVisitEntry) async {
         guard let visit, !busy else { return }

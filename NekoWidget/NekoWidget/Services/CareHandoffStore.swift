@@ -32,6 +32,16 @@ final class CareHandoffStore: ObservableObject {
             pendingPhotoCleanup = loaded.pendingPhotoCleanup > 0
         } catch { repository = nil; loadError = CareHandoffError.unreadable.errorDescription }
     }
+    func receiveFamilyChanges() throws {
+        // A failed local save is still an editor's draft; do not replace it.
+        guard saveError == nil, loadError == nil, let repository,
+              directory.standardizedFileURL == AppRecordDataset.directory("CareHandoff").standardizedFileURL else { return }
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        let next = try FamilyNotebookToolSharing.handoffReceived(plan)
+        guard next != plan else { return }
+        try repository.commit(next, familyProjection: true)
+        plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
+    }
     @discardableResult
     func update(_ change: (inout CareHandoffPlan) -> Void) -> Bool {
         guard repository != nil, loadError == nil else { return false }
@@ -200,9 +210,14 @@ final class CareHandoffStore: ObservableObject {
             }
             // Everyday care and health come from 「この子のこと」, one place for each cat.
             let care = CatCareSummary.record(toolCatID: cat.toolCatID ?? cat.id, profileIdentifier: cat.profileID)
-            let fields = disclosure.fields(cat: cat,
+            var fields = disclosure.fields(cat: cat,
                 everyday: CatCareSummary.careHandoffLines(care, legacy: cat),
                 health: CatCareSummary.careHandoffHealthLines(care, legacy: cat))
+            if plan.cats.contains(where: { disclosure.catIDs.contains($0.id) && $0.familyContext != nil }) {
+                let context = cat.familyContext ?? .init(recipient: plan.recipient, period: plan.period, request: plan.request)
+                fields = [("お願いする相手", context.recipient), ("お願いする期間", context.period), ("今回のお願い", context.request)]
+                    .filter { !$0.1.isEmpty } + fields
+            }
             return CareHandoffShareRecord.Cat(name: cat.displayName, photo: photo,
                 fields: fields, updatedAt: cat.updatedAt)
         }
