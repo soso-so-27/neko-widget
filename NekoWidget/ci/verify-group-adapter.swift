@@ -120,6 +120,8 @@ private actor EchoTransport: GroupHTTPTransport {
     private var joinRow: [String: Any]?
     private var joinReceipts: [String: [String: Any]] = [:]
     private var registrations: [String: [String: Any]] = [:]
+    private var corruptJoinProof = false
+    func setCorruptJoinProof(_ value: Bool) { corruptJoinProof = value }
     private var dropJoin = true
     private var dropApproval = true
     private var approvalCalls = 0
@@ -254,7 +256,11 @@ private actor EchoTransport: GroupHTTPTransport {
                 "expiresAt": joinRow["expiresAt"]!, "resultRevision": joinRow["resultRevision"] ?? NSNull()])
         }
         if path == root + "/join-requests/list" {
-            return try reply(["items": joinRow.map { ($0["state"] as? String) == "pending" ? [$0] : [] } ?? [], "next": NSNull()])
+            var shown = joinRow
+            if corruptJoinProof, var proof = shown?["admissionProof"] as? [String: Any] {
+                proof["inviteProof"] = GroupWire.base64(Data(repeating: 0, count: 64)); shown?["admissionProof"] = proof
+            }
+            return try reply(["items": shown.map { ($0["state"] as? String) == "pending" ? [$0] : [] } ?? [], "next": NSNull()])
         }
         if path.hasSuffix("/approve"), let joined = joinRow {
             approvalCalls += 1
@@ -455,6 +461,14 @@ private struct GroupAdapterChecks {
         altered["encryptedDisplayName"] = GroupWire.base64(Data(repeating: 1, count: 32))
         let forged = try GroupWire.decode(GroupAPIModel.PendingJoin.self, JSONSerialization.data(withJSONObject: altered))
         try rejects("invitation signature binds applicant encrypted name") { try GroupAdmissionProofVerifier.verify(forged, capability: capability, windowID: room.id) }
+        stage = "changed proof between preflight and final admission"
+        await relay.setCorruptJoinProof(true)
+        do {
+            _ = try await owner.approve(requestID: joined.id, windowID: room.id, operation: GroupOperation(expectedRevision: room.revision))
+            throw Failure.check("fresh candidate proof was not rechecked")
+        } catch GroupProtocolError.invalidSignature { }
+        try check(await relay.admissionStats().0 == 0, "changed proof never reaches the approval endpoint")
+        await relay.setCorruptJoinProof(false)
         stage = "pause owner admission"
         await relay.setDelivery("paused")
         _ = try await owner.reconcileAdmissions()

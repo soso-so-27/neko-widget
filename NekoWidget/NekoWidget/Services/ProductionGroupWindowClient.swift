@@ -925,6 +925,8 @@ extension ProductionGroupWindowClient {
         }
         _ = try await pendingRequests(windowID: windowID)
         guard let row = try load(GroupAPIModel.PendingJoin.self, "candidate:\(windowID):\(requestID)") else { throw GroupClientError.requestNotPending }
+        // Recheck the exact freshly loaded candidate that will receive the key; a preflight row is not authority.
+        try verifyAutomaticAdmission(row, windowID: windowID)
         return try await changeMembership(windowID: windowID, kind: "admit", targetID: requestID, operation: operation, candidate: row)
     }
     func reject(requestID: String, windowID: String, operation: GroupOperation) async throws {
