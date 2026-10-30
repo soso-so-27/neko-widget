@@ -2,6 +2,7 @@ import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// Test builds only: the album as "works that arrive" and the monthly story.
 /// Turned on in 設定 → テスト用. Public builds never read the switch (always off).
@@ -1046,6 +1047,88 @@ struct MonthlyStoryView: View {
 final class AlbumArrivalOpenInbox: ObservableObject {
     static let shared = AlbumArrivalOpenInbox()
     @Published var pending: CloudyWindowAlbumRoute?
+    /// A tap on 「作品がとどきました」: just the album tab, where the work waits.
+    @Published var showsAlbum = false
+}
+
+/// The day a work arrives, said once: 「10月の作品がとどきました」 on the 1st at
+/// 9:00, 「2026年の作品がとどきました」 on 12/6. Only for a work that will really
+/// come (this month already makes one, this year has its nine), and only when
+/// notifications are already allowed: the album never asks. A tap opens the album.
+enum AlbumArrivalNotice {
+    static let userInfoKey = "albumArrival"
+    private static let monthID = "album-arrival.month"
+    private static let yearID = "album-arrival.year"
+    private static let tryID = "album-arrival.try"
+    private static let hour = 9
+
+    /// The next 1st at 9:00, and the month whose work it brings.
+    static func nextMonthDelivery(after now: Date = Date()) -> (month: Date, at: Date)? {
+        let calendar = Calendar.current
+        guard let thisMonth = calendar.dateInterval(of: .month, for: now)?.start,
+              let firstAt = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: thisMonth) else { return nil }
+        if now < firstAt, let previous = calendar.date(byAdding: .month, value: -1, to: thisMonth) {
+            return (previous, firstAt)
+        }
+        guard let next = calendar.date(byAdding: .month, value: 1, to: thisMonth),
+              let at = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: next) else { return nil }
+        return (thisMonth, at)
+    }
+
+    static func yearDelivery(_ year: Int) -> Date? {
+        AlbumPrototype.yearArrivalDate(year).flatMap {
+            Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: $0)
+        }
+    }
+
+    /// Replaces what was set before; nil takes that notice away.
+    static func schedule(month: (start: Date, at: Date)?, year: (year: Int, at: Date)?) async {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [monthID, yearID])
+        guard await isAllowed(center) else { return }
+        if let month {
+            let number = Calendar.current.component(.month, from: month.start)
+            await add(monthID, "\(number)月の作品がとどきました。", trigger: calendarTrigger(month.at))
+        }
+        if let year {
+            await add(yearID, "\(year.year)年の作品がとどきました。", trigger: calendarTrigger(year.at))
+        }
+    }
+
+    /// Test only: last month's notice in 5 seconds, to see how it reads and
+    /// where a tap goes. Asks for notifications the first time. False: not allowed.
+    static func tryNow() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        if await center.notificationSettings().authorizationStatus == .notDetermined {
+            _ = try? await center.requestAuthorization(options: [.alert])
+        }
+        guard await isAllowed(center) else { return false }
+        let calendar = Calendar.current
+        let last = calendar.date(byAdding: .month, value: -1, to: Date()) ?? Date()
+        await add(tryID, "\(calendar.component(.month, from: last))月の作品がとどきました。",
+                  trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false))
+        return true
+    }
+
+    private static func isAllowed(_ center: UNUserNotificationCenter) async -> Bool {
+        let status = await center.notificationSettings().authorizationStatus
+        return [UNAuthorizationStatus.authorized, .provisional, .ephemeral].contains(status)
+    }
+
+    private static func calendarTrigger(_ date: Date) -> UNCalendarNotificationTrigger {
+        let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        return UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)
+    }
+
+    /// Text only, as the window notices: no photo, no cat's name.
+    private static func add(_ id: String, _ body: String, trigger: UNNotificationTrigger) async {
+        let content = UNMutableNotificationContent()
+        content.title = "ねこのまど"
+        content.body = body
+        content.userInfo = [userInfoKey: true]
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: id, content: content, trigger: trigger))
+    }
 }
 
 /// The year's work: the year large, each month's own photo in turn, the year
