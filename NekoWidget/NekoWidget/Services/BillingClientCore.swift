@@ -88,15 +88,15 @@ enum BillingClientError: Error, Equatable, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .configurationUnavailable:
-            return "課金機能は現在利用できません。"
+            return "いまは購入の手続きができません。"
         case .protectedDataUnavailable:
             return "購入情報を確認できませんでした。iPhoneのロックを解除して、もう一度お試しください。"
         case .keychainUnavailable, .localStateUnavailable, .malformedCredential:
-            return "購入情報を安全に確認できませんでした。"
+            return "購入情報を確認できませんでした。少し待ってから、もう一度お試しください。"
         case .billingCredentialMissing:
-            return "このiPhoneには購入情報がありません。"
+            return "このiPhoneにはPlusの購入情報がありません。"
         case .installationChanged:
-            return "このiPhoneの購入情報を引き継ぐ必要があります。"
+            return "購入情報を、このiPhoneに引き継いでください。"
         case .billingAccountRecoveryRequired:
             return "購入情報を引き継いでから、もう一度お試しください。"
         case .billingAccountRecoveryUnavailable:
@@ -104,7 +104,7 @@ enum BillingClientError: Error, Equatable, LocalizedError, Sendable {
         case .billingAccountRecoveryEvidenceChanged:
             return "購入情報が変わりました。引き継ぎを最初からやり直してください。"
         case .windowSponsorshipAttemptPending:
-            return "このまどのPlus設定を確認中です。もう一度お試しください。"
+            return "このまどのPlusを確認しています。少し待ってから、もう一度お試しください。"
         case .freshAccountAuthorizationExpired:
             return "購入情報をもう一度確認してください。"
         case .credentialChanged:

@@ -12,12 +12,12 @@ enum CatHouseholdIdentityStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .unsupportedSchema(version):
-            "猫プロフィールの保存形式（\(version)）をこのアプリでは読み込めません。"
+            "猫のプロフィールを読み込めません（形式 \(version)）。アプリをアップデートしてください。"
         case .missingState:
-            "猫プロフィールをまだ保存していません。"
+            "猫のプロフィールがまだありません。"
         case .lockUnavailable, .cannotCreateTemporaryFile, .atomicCommitFailed,
              .securityAttributesUnavailable:
-            "猫プロフィールを安全に保存できませんでした。"
+            "猫のプロフィールを保存できませんでした。もう一度お試しください。"
         }
     }
 }

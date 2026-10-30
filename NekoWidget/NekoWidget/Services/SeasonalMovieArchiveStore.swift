@@ -13,19 +13,19 @@ enum SeasonalMovieArchiveError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .unsupportedCatalogVersion(version):
-            return "この作品履歴は新しい形式（\(version)）です。アプリを更新してください。"
+            return "これまでのムービーは新しい形式（\(version)）で保存されています。アプリをアップデートしてください。"
         case .invalidRecord:
-            return "作品履歴の内容を確認できませんでした。"
+            return "これまでのムービーを読み込めませんでした。"
         case .periodNotFound:
             return "この季節のムービーが見つかりませんでした。"
         case .sceneNotFound:
-            return "この場面は作品に含まれていません。"
+            return "この場面はムービーに入っていません。"
         case .minimumSceneCount:
-            return "作品には8場面以上必要です。"
+            return "ムービーには8場面以上必要です。"
         case .catalogLimit:
-            return "作品履歴の上限に達しました。"
+            return "残せるムービーの数がいっぱいです。"
         case .catalogTooLarge:
-            return "作品履歴が大きすぎるため保存できません。"
+            return "残しているムービーが多すぎて、保存できません。"
         }
     }
 }
@@ -469,7 +469,7 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
         } catch {
             lastErrorDescription = archiveMessage(
                 for: error,
-                fallback: "作品履歴を読み込めませんでした。"
+                fallback: "これまでのムービーを読み込めませんでした。"
             )
         }
     }
@@ -492,7 +492,7 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
         } catch {
             lastErrorDescription = archiveMessage(
                 for: error,
-                fallback: "作品を保存できませんでした。"
+                fallback: "ムービーを保存できませんでした。"
             )
             // The Today card routes through the archive period ID. Showing an
             // unsaved draft would create a card that cannot be opened.
@@ -522,7 +522,7 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
             // failed enrichment must not hide or replace it in the UI.
             lastErrorDescription = archiveMessage(
                 for: error,
-                fallback: "動画を含む作品へ更新できませんでした。"
+                fallback: "動画入りのムービーにできませんでした。"
             )
             return draft.presentation
         }
@@ -540,7 +540,7 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
         } catch {
             lastErrorDescription = archiveMessage(
                 for: error,
-                fallback: "作品を固定できませんでした。"
+                fallback: "ムービーをこのまま残せませんでした。"
             )
             throw error
         }
@@ -564,7 +564,7 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
         } catch {
             lastErrorDescription = archiveMessage(
                 for: error,
-                fallback: "作品を更新できませんでした。"
+                fallback: "ムービーを更新できませんでした。"
             )
             throw error
         }

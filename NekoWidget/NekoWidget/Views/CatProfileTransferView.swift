@@ -34,8 +34,8 @@ struct CatProfileTransferView: View {
     var body: some View {
         Form {
             Section {
-                Text("猫の名前・誕生日・迎えた日と、写真の所属を別のiPhoneへ引き継げます。")
-                Text("この端末で確認でき、撮影日時がある写真の所属が対象です。写真そのものは含みません。原画像は別途写真ライブラリの同期などが必要です。撮影日時とサイズが一致する候補を新しいiPhoneで確かめて選びます。見つからない写真は同期やアクセス範囲を確認し、あとで読み直せます。お気に入り、共有まど、写真アルバムの連携設定は含みません。")
+                Text("猫の名前・誕生日・迎えた日と、どの写真がどの子かを、別のiPhoneへ引き継げます。")
+                Text("写真は「どの子が写っているか」だけを引き継ぎます（撮影日時がある写真のみ）。写真そのもの、お気に入り、まど、つないだアルバムは含まれないので、写真はiCloud写真などで新しいiPhoneに移してください。")
                     .foregroundStyle(.secondary)
             }
             Section("このiPhoneから") {
@@ -54,7 +54,7 @@ struct CatProfileTransferView: View {
             } header: {
                 Text("このiPhoneへ")
             } footer: {
-                Text("適用前に内容を確認できます。登録済みのプロフィールや写真設定は上書きしません。")
+                Text("引き継ぐ前に内容を確かめられます。今あるプロフィールや写真の設定は上書きされません。")
             }
         }
         .navigationTitle("機種変更のときの引き継ぎ")
@@ -89,21 +89,21 @@ struct CatProfileTransferView: View {
             NavigationStack {
                 List {
                     Section {
-                        Text(item.isUnchanged ? "名前と日付は登録済みです。選んだ写真の所属を追加できます。" : "この内容をこのiPhoneに登録します。")
+                        Text(item.isUnchanged ? "名前と日付はもう入っています。選んだ写真を、それぞれの猫の写真に加えられます。" : "この内容をこのiPhoneに登録します。")
                     }
                     ForEach(item.transfer.profiles) { profile in
                         Section(profile.name) {
                             Text(dateText("誕生日", profile.dates.birthday, approximate: profile.dates.birthdayIsApproximate))
                             Text(dateText("迎えた日", profile.dates.adoptionDay, approximate: profile.dates.adoptionDayIsApproximate))
                             if let kind = profile.primaryKind {
-                                Text("成長の表示基準：\(kind == .birthday ? "誕生日" : "迎えた日")")
+                                Text("成長アルバムで使う日：\(kind == .birthday ? "誕生日" : "迎えた日")")
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
                     if !(item.transfer.photos ?? []).isEmpty {
-                        Section("写真の所属を確認") {
-                            Text("撮影日時・サイズが一致する候補です。同じ写真か確かめて選んでください。選ばない写真は取り込みません。")
+                        Section("引き継ぐ写真を選ぶ") {
+                            Text("撮った日時と大きさが同じ写真です。同じ写真か見比べて選んでください（選ばなかった写真は引き継ぎません）。")
                             Text("\(selectedPhotos.count)枚を選択／\((item.transfer.photos ?? []).count)枚")
                         }
                         ForEach(item.transfer.photos ?? []) { photo in
@@ -112,7 +112,7 @@ struct CatProfileTransferView: View {
                         }
                     }
                     Section {
-                        Text("選んだ写真の所属だけを引き継ぎます。写真そのものやアルバム連携設定は取り込みません。")
+                        Text("引き継ぐのは、どの写真がどの子かだけです。写真そのものや、つないだアルバムは引き継ぎません。")
                             .foregroundStyle(.secondary)
                         if !item.isUnchanged || !selectedPhotos.isEmpty {
                             Button("この内容を引き継ぐ") {
@@ -123,7 +123,7 @@ struct CatProfileTransferView: View {
                                 Task { @MainActor in
                                     switch await actions.importProfileDates(confirmed) {
                                     case let .success(changed):
-                                        pendingNotice = changed ? "猫と選んだ写真の所属を引き継ぎました。" : "登録済みの内容と同じでした。変更はありません。"
+                                        pendingNotice = changed ? "猫のプロフィールと、選んだ写真がどの子かを引き継ぎました。" : "今の内容と同じだったので、変わったところはありません。"
                                     case let .failure(error):
                                         pendingNotice = (error as? LocalizedError)?.errorDescription
                                             ?? "引き継ぎを完了できませんでした。ファイルを選び直してください。"
@@ -166,7 +166,7 @@ struct CatProfileTransferView: View {
         Section {
             Text(photo.metadata.creationDate.formatted(date: .abbreviated, time: .shortened))
             if candidates.isEmpty {
-                Text("一致する写真が見つかりません。写真の同期やアクセス範囲を確認し、あとでファイルを読み直せます。")
+                Text("同じ写真が見つかりません。iCloud写真の読み込みや写真へのアクセスを確かめてから、もう一度ファイルを読み込めます。")
                     .foregroundStyle(.secondary)
             } else {
                 if candidates.count > 1 { Text("候補が複数あります。写真を見比べて選んでください。") }

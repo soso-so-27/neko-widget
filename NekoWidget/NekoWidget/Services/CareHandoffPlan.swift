@@ -64,10 +64,10 @@ struct CareCat: Codable, Equatable, Identifiable {
     }
     var healthText: String {
         switch healthStatus {
-        case .unknown: "薬・アレルギーは未確認。飼い主に確認してください。"
+        case .unknown: "薬・アレルギーは書いていません。飼い主に聞いてください。"
         case .none: "薬・アレルギーはなし（飼い主の記入）"
         case .recorded: healthDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "薬・アレルギーあり。詳しい内容は飼い主に確認してください。" : healthDetails
+            ? "薬・アレルギーがあります。くわしくは飼い主に聞いてください。" : healthDetails
         }
     }
 }
@@ -101,7 +101,7 @@ enum CareHandoffError: LocalizedError {
     case unreadable, photoUnavailable, tooLarge, noSelection
     var errorDescription: String? {
         switch self {
-        case .unreadable: "お世話メモを開けません。元の記録は変更していません。"
+        case .unreadable: "お世話メモを開けませんでした。書いた内容は消えていません。"
         case .photoUnavailable: "写真を開けません。写真を選び直してください。"
         case .tooLarge: "メモが長すぎます。長い欄を短くしてから、もう一度お試しください。"
         case .noSelection: "渡す猫を選んでください。"
@@ -231,7 +231,7 @@ struct CareHandoffDisclosure {
     func fields(cat: CareCat) -> [(String, String)] {
         var fields: [(String, String)] = [("まず伝えたいこと", Self.value(cat.important))]
         if let callWhen = cat.callWhen, !callWhen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            fields.append(("こんな時は連絡を", callWhen))
+            fields.append(("こんなときは連絡を", callWhen))
         }
         if let food = cat.usualFood, !food.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             fields.append(("いつものごはん", food))
@@ -246,7 +246,7 @@ struct CareHandoffDisclosure {
         return fields
     }
     static func value(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未記入・飼い主に確認" : text
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未記入（飼い主に聞いてください）" : text
     }
 
     /// The handed-over copy for one cat: this time's notes from the tool, then
@@ -254,7 +254,7 @@ struct CareHandoffDisclosure {
     func fields(cat: CareCat, everyday: [(String, String)], health healthLines: [(String, String)]) -> [(String, String)] {
         var fields: [(String, String)] = [("まず伝えたいこと", Self.value(cat.important))]
         if let callWhen = cat.callWhen, !callWhen.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            fields.append(("こんな時は連絡を", callWhen))
+            fields.append(("こんなときは連絡を", callWhen))
         }
         fields += everyday
         if health { fields += healthLines }

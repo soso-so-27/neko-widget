@@ -10,6 +10,6 @@ struct ShowcaseControl: ControlWidget {
             }
         }
         .displayName("うちのこを見せる")
-        .description("準備した猫の写真だけを開きます。")
+        .description("選んでおいた猫の写真だけを開きます。")
     }
 }

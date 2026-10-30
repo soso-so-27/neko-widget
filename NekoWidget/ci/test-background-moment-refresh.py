@@ -543,8 +543,8 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("expectedSpaceID: target.spaceID", handler)
         self.assertIn("pendingFamilyNotificationRoute = route", handler)
         self.assertIn("isFamilyWindowPresented = true", handler)
-        self.assertIn("この写真のまどを開けませんでした", handler)
-        self.assertIn("この写真のまどを特定できませんでした", handler)
+        self.assertIn("この写真が届いたまどを開けませんでした", handler)
+        self.assertIn("この写真が届いたまどが見つかりませんでした。「まど」タブから開いてください。", handler)
         self.assertNotIn("withoutTarget()", handler)
         self.assertLess(
             handler.index("PairingInstallationGuard.activatePrivateWindowAsync"),
@@ -661,12 +661,12 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("item: $selectedSharedPhoto", self.family_window)
         self.assertNotIn("item: $selectedSentRecord", self.family_window)
         self.assertNotIn("item: $selectedMomentForDetail", self.family_window)
-        self.assertIn("選んだ写真を開いています…", self.family_window)
+        self.assertIn("写真を開いています…", self.family_window)
         self.assertIn("family-window-notification-route-progress", self.family_window)
         self.assertIn("family-window-notification-route-retry", self.family_window)
         self.assertIn("family-window-notification-route-dismiss", self.family_window)
-        self.assertIn("選んだ写真を表示できません", self.family_window)
-        self.assertIn("選んだ写真を確認できません", self.family_window)
+        self.assertIn("この写真を表示できません", self.family_window)
+        self.assertIn("写真を読み込めません", self.family_window)
         self.assertIn("resolvePendingNotificationRoute()", self.family_window)
         self.assertIn("finishPendingNotificationResolutionIfNeeded()", self.family_window)
         self.assertIn("consumePendingNotificationRoute()", self.family_window)
@@ -685,13 +685,13 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
     def test_denied_notification_permission_links_to_ios_settings(self) -> None:
         self.assertIn("family-window-notification-open-settings", self.family_window)
         self.assertIn("UIApplication.openSettingsURLString", self.family_window)
-        self.assertIn("目立つ通知にする", self.family_window)
+        self.assertIn("バナーで知らせる", self.family_window)
 
     def test_notification_copy_does_not_claim_immediate_delivery(self) -> None:
         self.assertIn("写真とハートの通知", self.family_window)
-        self.assertIn("このiPhoneの通知を許可できます", self.family_window)
-        self.assertIn("iPhoneで静かな通知に設定中", self.family_window)
-        self.assertIn("iPhoneで許可済み", self.family_window)
+        self.assertIn("まだオンにしていません", self.family_window)
+        self.assertIn("通知センターにだけ表示", self.family_window)
+        self.assertIn("オン", self.family_window)
         self.assertNotIn("選択中のまどの通知", self.family_window)
         self.assertNotIn("写真やハートが届いたら必ずすぐ通知します", self.family_window)
 

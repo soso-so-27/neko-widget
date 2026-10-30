@@ -17,7 +17,7 @@ struct EvacuationPreparationView: View {
         Group {
             if let error = store.loadError {
                 ContentUnavailableView {
-                    Label("備えを開けません", systemImage: "exclamationmark.folder")
+                    Label("避難の備えを開けませんでした", systemImage: "exclamationmark.folder")
                 } description: { Text(error) } actions: { Button("もう一度読み込む") { store.reload() } }
             } else {
                 List {
@@ -25,7 +25,7 @@ struct EvacuationPreparationView: View {
                         Section {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("半年ごとの見直し").font(.headline)
-                                Text("前の確認から半年以上たちました。フードや薬の期限、猫の写真、行き先の受入条件を確かめましょう。")
+                                Text("前に確かめてから半年以上たちました。フードや薬の期限、猫の写真、行き先の受け入れの条件を見直しましょう。")
                                     .font(.subheadline)
                             }
                             Button("閉じる") { reminderDismissedAt = Date().timeIntervalSince1970 }
@@ -76,9 +76,9 @@ struct EvacuationPreparationView: View {
             CatCareStore.shared.importBirthdays(profiles)
         }
         .confirmationDialog("1冊のPDFを作ります", isPresented: $confirmBook, titleVisibility: .visible) {
-            Button("PDFを作って渡す") { makeBook() }
+            Button("PDFを作る") { makeBook() }
         } message: {
-            Text("病歴・薬、連絡先、ワクチン・マイクロチップを含みます。紙で持つための控えで、あとから編集しても更新されません。")
+            Text("病歴・薬、連絡先、ワクチン・マイクロチップ番号も載ります。あとで書き直しても、作ったPDFは変わりません。")
         }
         .sheet(item: $book, onDismiss: {
             // The item is already cleared here; remove the copy this screen made.
@@ -94,7 +94,7 @@ struct EvacuationPreparationView: View {
             bookError = nil
         } catch {
             bookError = (error as? EvacuationStorageError)?.errorDescription
-                ?? "PDFを作れませんでした。空き容量や記録の長さを確認してください。元の記録は残っています。"
+                ?? "PDFを作れませんでした。空き容量や記録の長さを確かめてください（書いた内容は残っています）。"
         }
     }
 
@@ -138,8 +138,8 @@ private struct EvacuationSaveNotice: View {
                 .accessibilityIdentifier("evacuation-save-error")
         } else if store.pendingPhotoCleanup {
             VStack(spacing: 8) {
-                Text("使わなくなった写真の削除が完了していません。").font(.footnote)
-                Button("使わない写真をもう一度片付ける") { store.retrySave() }
+                Text("使わなくなった写真のコピーが残っています。").font(.footnote)
+                Button("コピーを消す") { store.retrySave() }
             }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
         }
     }
@@ -166,11 +166,11 @@ private struct EvacuationPackingView: View {
                             Image(systemName: store.plan.carriedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
                                 .font(.title2).foregroundStyle(Color.accentColor)
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(item.title.isEmpty ? "名前未設定の持ち物" : item.title).foregroundStyle(.primary)
+                                Text(item.title.isEmpty ? "名前のない持ち物" : item.title).foregroundStyle(.primary)
                                 if let cat = store.plan.cats.first(where: { $0.id == item.catID }) {
                                     Text(cat.displayName).font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text([item.quantity, item.location.isEmpty ? "置き場所は未設定" : item.location]
+                                Text([item.quantity, item.location.isEmpty ? "置き場所は未記入" : item.location]
                                     .filter { !$0.isEmpty }.joined(separator: "・"))
                                     .font(.subheadline).foregroundStyle(.secondary)
                             }
@@ -178,7 +178,7 @@ private struct EvacuationPackingView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityValue(store.plan.carriedIDs.contains(item.id) ? "持出確認済み" : "未確認")
+                    .accessibilityValue(store.plan.carriedIDs.contains(item.id) ? "持った" : "まだ")
                     .accessibilityIdentifier("evacuation-supply-\(item.id.uuidString)")
                 }
             } header: {
@@ -186,21 +186,21 @@ private struct EvacuationPackingView: View {
                     .accessibilityIdentifier("evacuation-packing-count")
             } footer: {
                 if let date = store.plan.checkStartedAt {
-                    Text("確認を始めた日：\(date.formatted(date: .numeric, time: .shortened))")
-                } else { Text("持ったものにチェックします。備えが万全かを判定するものではありません。") }
+                    Text("チェックを始めた日：\(date.formatted(date: .numeric, time: .shortened))")
+                } else { Text("持ったものにチェックを付けます。全部付いても、備えが十分とは限りません。") }
             }
             Section {
                 NavigationLink("リストと置き場所を編集") { EvacuationSuppliesEditor(store: store) }
-                Button("次の確認を始める") { resetRequested = true }
+                Button("チェックをやり直す") { resetRequested = true }
                     .disabled(store.plan.carriedIDs.isEmpty)
             }
         }
         .navigationTitle("持ち出すもの").navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("今回のチェックだけを消します", isPresented: $resetRequested, titleVisibility: .visible) {
-            Button("チェックを消す", role: .destructive) {
+        .confirmationDialog("チェックをすべて外しますか？", isPresented: $resetRequested, titleVisibility: .visible) {
+            Button("すべて外す", role: .destructive) {
                 store.update { $0.carriedIDs = []; $0.checkStartedAt = nil }
             }
-        } message: { Text("持ち物と置き場所の記録は残ります。") }
+        } message: { Text("持ち物と置き場所は消えません。") }
         .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
 }
@@ -213,8 +213,8 @@ private struct EvacuationSuppliesEditor: View {
                 ForEach(store.plan.supplies) { item in
                     NavigationLink { EvacuationSupplyEditor(id: item.id, store: store) } label: {
                         VStack(alignment: .leading) {
-                            Text(item.title.isEmpty ? "名前未設定の持ち物" : item.title)
-                            Text(item.isNeeded ? (item.location.isEmpty ? "置き場所を追加" : item.location) : "持ったか確かめる一覧に入れない")
+                            Text(item.title.isEmpty ? "名前のない持ち物" : item.title)
+                            Text(item.isNeeded ? (item.location.isEmpty ? "置き場所を追加" : item.location) : "チェックリストに入れていない")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -225,9 +225,9 @@ private struct EvacuationSuppliesEditor: View {
                 Button("おすすめの持ち物を足す", systemImage: "checklist") { addRecommended() }
                     .disabled(store.plan.supplies.count >= 200)
                     .accessibilityIdentifier("evacuation-add-recommended")
-            } footer: { Text("共通の持ち物は1項目にまとめ、猫ごとの薬やフードは対象の猫を指定できます。") }
+            } footer: { Text("家族共通の持ち物は1つにまとめ、薬やフードなど猫ごとのものは、どの猫のものか選べます。") }
             Section("備蓄の目安") {
-                Text("フード・水は最低5日分、できれば7日分が目安です。実際の量や持ち出し方は、この子とご家庭に合わせて確認してください。")
+                Text("フード・水は最低5日分、できれば7日分が目安です。実際の量や持ち出し方は、猫とご家庭に合わせて決めてください。")
                     .font(.subheadline)
                 Link("東京都の公式案内（通信が必要）", destination: URL(string: "https://www.hokeniryo.metro.tokyo.lg.jp/kankyo/aigo/bousai/doukou-hinan")!)
             }
@@ -283,8 +283,8 @@ private struct EvacuationSupplyEditor: View {
                         Text("家で共通").tag(Optional<UUID>.none)
                         ForEach(store.plan.cats) { Text($0.displayName).tag(Optional($0.id)) }
                     }
-                    Toggle("持ったか確かめる一覧に入れる", isOn: value(\.isNeeded, fallback: true))
-                } footer: { Text("変更は自動で保存します。編集した項目の持出チェックは外れます。") }
+                    Toggle("チェックリストに入れる", isOn: value(\.isNeeded, fallback: true))
+                } footer: { Text("書いた内容は自動で保存されます。直した持ち物は、チェックが外れます。") }
                 Section { Button("この持ち物を削除", role: .destructive) { deleteRequested = true } }
             }
         }.navigationTitle("持ち物と置き場所").navigationBarTitleDisplayMode(.inline)
@@ -466,9 +466,9 @@ private struct EvacuationCatView: View {
                     ToolImportantInformation(text: "病歴・連絡先・マイクロチップ番号は、必要な相手にだけ見せてください。")
                 }
                 Section {
-                    Text("内容確認日：" + (cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
+                    Text("内容を確かめた日：" + (cat.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
                         .font(.footnote).foregroundStyle(.secondary)
-                    Button("この子の内容を確認した") {
+                    Button("内容を確かめた") {
                         store.update { plan in
                             if let index = plan.cats.firstIndex(where: { $0.id == id }) {
                                 plan.cats[index].reviewedAt = Date()
@@ -476,7 +476,7 @@ private struct EvacuationCatView: View {
                             }
                         }
                     }
-                    Button("この子の備えを削除", role: .destructive) { deleteRequested = true }
+                    Button("この子の避難用の記録を削除", role: .destructive) { deleteRequested = true }
                 }
             }
         }.navigationTitle("猫の情報を見せる").navigationBarTitleDisplayMode(.inline)
@@ -486,10 +486,10 @@ private struct EvacuationCatView: View {
                     do { preview = EvacuationPreviewItem(record: try store.shareRecord(catID: id, disclosure: disclosure)); error = nil }
                     catch {
                         self.error = (error as? EvacuationStorageError)?.errorDescription
-                            ?? "表示する記録を開けませんでした。元の記録は変更していません。"
+                            ?? "表示できませんでした。書いた内容は消えていません。"
                     }
                 } label: {
-                    Label("控えを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    Label("できあがりを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.saveError != nil || cat == nil)
@@ -501,7 +501,7 @@ private struct EvacuationCatView: View {
                 Button("避難用の記録を削除", role: .destructive) {
                     if store.update({ $0.removeCat(id) }) { dismiss() }
                 }
-            } message: { Text("この子用の持ち物も削除します。元の写真・猫プロフィール・迷子の記録は残ります。") }
+            } message: { Text("この子用の持ち物も一緒に削除します。元の写真や猫のプロフィール、「迷子のとき」の内容は消えません。") }
             .safeAreaInset(edge: .bottom) { EvacuationSaveNotice(store: store) }
     }
 }
@@ -554,7 +554,7 @@ private struct EvacuationCatEditor: View {
                     }
                 }
                 Section {
-                    Text("特徴・ごはん・接し方・薬・連絡先は「この子のこと」で書きます。前の画面の「この子のことを直す」から開けます。")
+                    Text("特徴・ごはん・接し方・薬・連絡先は「この子のこと」で書きます。前の画面から開けます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -605,9 +605,9 @@ private struct EvacuationPhotoPicker: View {
             Section {
                 PhotosPicker(selection: $item, matching: .images) { Label("写真アプリから選ぶ", systemImage: "photo.badge.plus") }
                     .disabled(busy)
-            } footer: { Text("選んだ写真のコピーをこのiPhoneに保存します。顔や柄が分かる写真を選んでください。") }
+            } footer: { Text("顔や柄が分かる写真を選んでください。選んだ写真は、通信がなくても開けます。") }
             if !ownPhotos.isEmpty { grid("この子の写真", ownPhotos) }
-            if !remaining.isEmpty { grid("ほかの猫写真から選ぶ", remaining) }
+            if !remaining.isEmpty { grid("ほかの猫の写真", remaining) }
             if let error { Section { Text(error).foregroundStyle(.red) } }
         }
         .navigationTitle(role.title).navigationBarTitleDisplayMode(.inline)
@@ -622,7 +622,7 @@ private struct EvacuationPhotoPicker: View {
                     guard let data = try await value.loadTransferable(type: Data.self) else { throw EvacuationStorageError.photoUnavailable }
                     try store.replacePhoto(data, catID: catID, role: role)
                     busy = false; dismiss()
-                } catch { self.error = "写真を保存できませんでした。元の写真は変更していません。通信や空き容量を確認して、選び直してください。"; busy = false; item = nil }
+                } catch { self.error = "写真を保存できませんでした。通信や空き容量を確かめて、もう一度選んでください。"; busy = false; item = nil }
             }
         }
     }
@@ -637,7 +637,7 @@ private struct EvacuationPhotoPicker: View {
                                 let data = try await PhotoLibraryJPEGExporter().export(localIdentifier: photo.localIdentifier)
                                 try store.replacePhoto(data.jpeg, catID: catID, role: role)
                                 busy = false; dismiss()
-                            } catch { self.error = "この写真を保存できません。写真アプリから選び直すこともできます。"; busy = false }
+                            } catch { self.error = "この写真は使えませんでした。「写真アプリから選ぶ」から選び直せます。"; busy = false }
                         }
                     } label: {
                         PhotoAssetImageView(localIdentifier: photo.localIdentifier,
@@ -673,7 +673,7 @@ private struct EvacuationDisplayView: View {
             VStack(alignment: .leading, spacing: 22) {
                 Text(record.name).font(.largeTitle.bold())
                 ForEach(Array(record.photos.enumerated()), id: \.offset) { _, photo in
-                    Image(uiImage: photo).resizable().scaledToFit().accessibilityLabel("共有に含める写真")
+                    Image(uiImage: photo).resizable().scaledToFit().accessibilityLabel("載せる写真")
                 }
                 if record.photos.isEmpty { Label("見分けるための写真はまだありません", systemImage: "photo").foregroundStyle(.secondary) }
                 ForEach(Array(record.fields.enumerated()), id: \.offset) { _, field in
@@ -688,7 +688,7 @@ private struct EvacuationDisplayView: View {
                         Image(uiImage: attachment.1).resizable().scaledToFit().accessibilityLabel(attachment.0)
                     }
                 }
-                Text("内容確認日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
+                Text("内容を確かめた日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"))
                     .font(.footnote).foregroundStyle(.secondary)
                 if let error { Text(error).foregroundStyle(.red) }
 
@@ -704,11 +704,11 @@ private struct EvacuationDisplayView: View {
         }
         .accessibilityIdentifier("evacuation-share-preview")
         .disabled(busy)
-        .confirmationDialog("表示中の内容を控えにします", isPresented: $confirmShare, titleVisibility: .visible) {
+        .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {
             Button(wantsPrint == true ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
         } message: {
-            Text((record.includesPrivateInformation ? "病歴・連絡先・飼い主の写真のうち、選択した内容を含みます。渡す相手を確認してください。\n" : "")
-                 + "渡した控えは、あとから編集しても更新されません。長い内容は複数ページになります。")
+            Text((record.includesPrivateInformation ? "病歴・連絡先・飼い主の写真のうち、選んだものが載ります。渡す相手を確かめてください。\n" : "")
+                 + "渡したあとに書き直しても、相手の手元の内容は変わりません。長いときは何ページかに分かれます。")
         }
         .sheet(item: $export, onDismiss: {
             if let retainedDirectory { EvacuationExporter.remove(retainedDirectory) }
@@ -731,7 +731,7 @@ private struct EvacuationDisplayView: View {
         do {
             let made = try EvacuationExporter.create(record, printCopy: wantsPrint == true)
             retainedDirectory = made.directory; export = made; error = nil
-        } catch { self.error = "控えを作れませんでした。空き容量や記録の長さを確認してください。元の記録は残っています。" }
+        } catch { self.error = "作れませんでした。空き容量や記録の長さを確かめてください（書いた内容は残っています）。" }
         busy = false
     }
 }
@@ -753,7 +753,7 @@ private struct EvacuationDestinationsView: View {
                     NavigationLink { EvacuationDestinationEditor(id: place.id, store: store) } label: {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(place.name.isEmpty ? "行き先の候補" : place.name).font(.headline)
-                            Text(place.checkedAt.map { "受け入れの条件を確かめた日：" + $0.formatted(date: .numeric, time: .omitted) } ?? "受入条件は未確認")
+                            Text(place.checkedAt.map { "受け入れの条件を確かめた日：" + $0.formatted(date: .numeric, time: .omitted) } ?? "受け入れの条件はまだ確かめていません")
                                 .font(.subheadline).foregroundStyle(.secondary)
                             if !place.conditions.isEmpty { Text(place.conditions).font(.subheadline) }
                             if !place.telephone.isEmpty { Text(place.telephone).font(.subheadline) }
@@ -764,7 +764,7 @@ private struct EvacuationDestinationsView: View {
                     store.update { $0.destinations.append(EvacuationDestination()) }
                 }.disabled(store.plan.destinations.count >= 30)
             } footer: { Text("猫を受け入れてもらえるか、前もって自治体や施設に確かめてください。") }
-            Section("家族の集合メモ") {
+            Section("家族の集合場所と連絡方法") {
                 TextField("家族で決めた場所や連絡方法", text: Binding(get: {
                     CatCareStore.shared.state?.household.meetingPlace == nil
                         ? store.plan.familyMeetingMemo : CatCareStore.shared.householdText(\.meetingPlace)
@@ -808,11 +808,11 @@ private struct EvacuationDestinationEditor: View {
                     TextField("施設名", text: text(\.name))
                     TextField("電話番号（任意）", text: text(\.telephone))
                     TextField("確かめた受け入れの条件", text: text(\.conditions), axis: .vertical)
-                    TextField("確認先（窓口や公式ページなど）", text: text(\.source), axis: .vertical)
+                    TextField("どこで確かめたか（窓口や公式ページなど）", text: text(\.source), axis: .vertical)
                 }
                 Section {
                     if let date = place.checkedAt {
-                        DatePicker("自分で確認した日", selection: Binding(get: { date }, set: { new in
+                        DatePicker("確かめた日", selection: Binding(get: { date }, set: { new in
                             store.update { plan in
                                 if let index = plan.destinations.firstIndex(where: { $0.id == id }) { plan.destinations[index].checkedAt = new }
                             }
@@ -825,7 +825,7 @@ private struct EvacuationDestinationEditor: View {
                             }
                         }.disabled([place.name, place.conditions, place.source].contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
                     }
-                } footer: { Text("自分で確かめた日を残します。今の空きは施設に確かめてください。書き直すと「未確認」に戻ります。") }
+                } footer: { Text("確かめた日を残せます（書き直すと消えます）。避難するときの空きは、そのときに施設に確かめてください。") }
                 Section { Button("この候補を削除", role: .destructive) { deleteRequested = true } }
             }
         }.navigationTitle("候補を編集").navigationBarTitleDisplayMode(.inline)

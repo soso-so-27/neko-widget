@@ -14,11 +14,11 @@ struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
     func title(at now: Date) -> String {
         switch phase {
         case .accepted: return "届けました"
-        case .supportRequired: return "このまどへの送信はお休み中です"
-        case .supportUnverified: return "送信条件を確認できません"
-        case .quotaWaiting: return "送信できる時刻を待っています"
+        case .supportRequired: return "いまはこのまどに届けられません"
+        case .supportUnverified: return "届けられるか確かめられません"
+        case .quotaWaiting: return "届けられる時間まで待っています"
         case .attention: return "確認が必要です"
-        case .resultUnknown: return "送信結果を確認できません"
+        case .resultUnknown: return "届いたか分かりません"
         case .waiting: return "時間がかかっています"
         default:
             if now.timeIntervalSince(startedAt) >= 10 { return "時間がかかっています" }
@@ -29,15 +29,15 @@ struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
     func detail(at now: Date) -> String? {
         switch phase {
         case .accepted: return nil
-        case .supportRequired: return "写真は保持しています。このまどの支援が再開したら、送信を再確認できます。"
-        case .supportUnverified: return "写真は保持して、あとで確認します。再購入は不要です。"
-        case .attention: return "送信状況から、必要な操作を確認できます。"
-        case .resultUnknown: return "届いている可能性があるため、送り直す前に送信状況を確認してください。"
-        case .quotaWaiting: return "写真は保持しています。送り直しは不要です。"
-        case .waiting: return "写真は保持しています。送り直しは不要です。"
+        case .supportRequired: return "写真はこのiPhoneに残しています。まどを作った人がPlusを続けると、また届けられます。"
+        case .supportUnverified: return "写真は残してあり、あとでもう一度試します。買い直す必要はありません。"
+        case .attention: return "タップして、どうすればいいか確かめてください。"
+        case .resultUnknown: return "届いているかもしれません。送り直す前に、「届けている写真」で確かめてください。"
+        case .quotaWaiting: return "届けられる時間になったら自動で届けます。送り直さなくて大丈夫です。"
+        case .waiting: return "自動でもう一度試すので、送り直さなくて大丈夫です。"
         default:
             return now.timeIntervalSince(startedAt) >= 10
-                ? "写真は保持しています。送り直しは不要です。" : nil
+                ? "写真は残してあるので、送り直さなくて大丈夫です。" : nil
         }
     }
 
@@ -340,26 +340,26 @@ struct MomentOutgoingOutcomeGroupPresentation: Equatable, Identifiable, Sendable
 
     var title: String {
         switch reason {
-        case .sensitiveContent: "安全確認により送信しなかった写真 \(count)枚"
-        case .invalidPhoto: "安全に準備できなかった写真 \(count)枚"
-        case .photoTooLarge: "送信上限に収まらなかった写真 \(count)枚"
-        case .preparationExpired: "期限内に準備できなかった写真 \(count)枚"
-        case .preparationFailed: "準備を完了できなかった写真 \(count)枚"
+        case .sensitiveContent: "安全のため届けなかった写真 \(count)枚"
+        case .invalidPhoto: "準備できなかった写真 \(count)枚"
+        case .photoTooLarge: "大きすぎて届けられなかった写真 \(count)枚"
+        case .preparationExpired: "時間内に準備できなかった写真 \(count)枚"
+        case .preparationFailed: "途中で止まった写真 \(count)枚"
         }
     }
 
     var detail: String {
         switch reason {
         case .sensitiveContent:
-            "センシティブな内容の可能性があるため送信せず、端末内の一時データを削除対象にしました。"
+            "センシティブな内容の可能性があるため、届けませんでした。届けるために用意したコピーは削除します。"
         case .invalidPhoto:
-            "写真を安全に準備できなかったため送信せず、端末内の一時データを削除対象にしました。"
+            "写真をうまく準備できなかったため、届けませんでした。届けるために用意したコピーは削除します。"
         case .photoTooLarge:
-            "画質を保ったまま送信上限に収められなかったため送信せず、端末内の一時データを削除対象にしました。"
+            "写真が大きすぎて、届けられませんでした。届けるために用意したコピーは削除します。"
         case .preparationExpired:
-            "端末内の準備期限までに完了できなかったため送信せず、一時データを削除対象にしました。"
+            "準備に時間がかかりすぎたため、届けませんでした。届けるために用意したコピーは削除します。"
         case .preparationFailed:
-            "端末の送信状態が変わったため準備を中止し、送信せずに一時データを削除対象にしました。"
+            "途中で止まったため届けず、届けるために用意したコピーは削除します。もう一度お試しください。"
         }
     }
 }
@@ -401,85 +401,85 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
 
     var title: String {
         switch kind {
-        case .supportRequired: "このまどへの送信はお休み中です（\(count)枚）"
-        case .supportUnverified: "送信条件を確認できません（\(count)枚）"
-        case .safetyCheckWaiting: "安全確認待ち \(count)枚"
+        case .supportRequired: "いまは届けられない写真（\(count)枚）"
+        case .supportUnverified: "届けられるか確かめられない写真（\(count)枚）"
+        case .safetyCheckWaiting: "準備を待っている写真 \(count)枚"
         case .preparing: "写真を準備中 \(count)枚"
-        case .preparationRetryWaiting: "準備の再試行待ち \(count)枚"
+        case .preparationRetryWaiting: "準備をやり直す写真 \(count)枚"
         case .waiting:
             hasOtherRetryReason || isServerRuntimeUnavailable
-                ? "送信できていません（\(count)枚）"
-                : "送信待ち \(count)枚"
-        case .dailyQuotaWaiting: "1日の送信上限に達しました（\(count)枚待機）"
-        case .sending: "送信処理中 \(count)枚"
-        case .confirming: "配信結果を確認中 \(count)枚"
-        case .resultUnknown: "送信結果を確認できない写真 \(count)枚"
-        case .failed: "送信できなかった写真 \(count)枚"
+                ? "まだ届けられていません（\(count)枚）"
+                : "届ける順番待ち \(count)枚"
+        case .dailyQuotaWaiting: "今日届けられる上限に達しました（\(count)枚が待っています）"
+        case .sending: "届けています \(count)枚"
+        case .confirming: "届いたか確かめています \(count)枚"
+        case .resultUnknown: "届いたか分からない写真 \(count)枚"
+        case .failed: "届けられなかった写真 \(count)枚"
         }
     }
 
     var detail: String {
         switch kind {
         case .supportRequired:
-            return "このまどに有効な会員支援がありません。送る写真はこのiPhoneに保持しています。届いている写真は引き続き見られます。"
+            return "まどを作った人のPlusが切れているため、いまは届けられません。写真はこのiPhoneに残してあり、届いた写真もこれまでどおり見られます。"
         case .supportUnverified:
-            return "写真は保持して、あとで送信条件を確認します。未契約と確認されたわけではないため、再購入は不要です。"
+            return "このまどに届けられるか確かめられなかったため、写真を残してあとでもう一度試します。買い直す必要はありません。"
         case .safetyCheckWaiting:
-            return "共有シートから端末内へ一時保存しました。まだ暗号化・送信していません。"
+            return "これから届ける準備をします。まだ届けていません。"
         case .preparing:
-            return "端末内で安全確認と暗号化をしています。まだ送信していません。"
+            return "届ける準備をしています。まだ届けていません。"
         case .preparationRetryWaiting:
             var reasons: [String] = []
             if requiresSensitiveContentWarning {
                 reasons.append(
-                    "この中には、iPhoneの「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにする必要がある写真があります。"
+                    "「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにすると届けられる写真があります。"
                 )
             }
             if isOutboxCapacityBlocked {
-                reasons.append("この中には、端末内の送信待ちに空きができるまで保留している写真があります。")
+                reasons.append("届ける写真がたまっているため、順番を待っている写真があります。")
             }
             if hasOtherRetryReason || reasons.isEmpty {
-                reasons.append("この中には、安全確認または暗号化の再試行を待っている写真があります。")
+                reasons.append("準備をもう一度試すのを待っている写真があります。")
             }
-            reasons.append("どの写真もまだ送信していません。")
+            reasons.append("どの写真もまだ届けていません。")
             return reasons.joined(separator: " ")
         case .waiting:
             var reasons: [String] = []
             if isServerRuntimeUnavailable {
-                reasons.append("この中には、共有サーバーの準備待ちで配信受付をまだ確認できていない写真があります。")
+                reasons.append("つながりにくいため、届いたかまだ分からない写真があります。")
             }
             if hasOtherRetryReason {
-                reasons.append("送信を完了できなかった写真があります。同じ写真を保持して、時間をおいて再試行します。")
+                reasons.append("届けられなかった写真があります。時間をおいて自動でもう一度試します。")
             }
             if reasons.isEmpty {
-                return "暗号化済みの写真が、送信開始を待っています。"
+                return "届ける順番を待っています。"
             }
-            reasons.append("配信完了ではありません。")
+            reasons.append("まだ届いていません。")
             return reasons.joined(separator: " ")
         case .dailyQuotaWaiting:
-            return "この写真はまだ送信していません。送信できる時刻まで、このiPhoneに保存して待ちます。時刻を過ぎた後の更新で再試行するので、送り直す必要はありません。"
+            return "まだ届けていません。届けられる時間になったら自動で届けるので、送り直さなくて大丈夫です。"
         case .sending:
             var reasons: [String] = []
             if isServerRuntimeUnavailable {
-                reasons.append("この中には、共有サーバーの準備待ちで配信受付をまだ確認できていない写真があります。")
+                reasons.append("つながりにくいため、届いたかまだ分からない写真があります。")
             }
             if hasOtherRetryReason {
-                reasons.append("この中には、暗号文の送信を再試行する写真があります。")
+                reasons.append("届けるのをもう一度試している写真があります。")
             }
             if reasons.isEmpty {
-                return "暗号文を送信しています。まだ配信完了ではありません。"
+                return "届けています。まだ相手には届いていません。"
             }
-            reasons.append("まだ配信完了ではありません。")
+            reasons.append("まだ届いていません。")
             return reasons.joined(separator: " ")
         case .confirming:
-            return "サーバーの配信受付を確認しています。受付が確定するまでは取り消せません。相手の受取済みとも表示しません。"
+            return "届いたか確かめています。終わるまでは取り消せません。"
         case .resultUnknown:
-            return "サーバーが配信を受け付けた可能性がありますが、結果を確認できませんでした。相手に届かなかったとは断定できません。暗号化済みの一時データは今後送信せず、端末から削除対象にしました。"
+            return "届いたかどうか分かりませんでした。届いている場合もあるため自動では送り直さず、届けるために用意したコピーは削除します。"
         case .failed:
             if isSharedPhotoCapacityBlocked {
-                return "このまどに残せる写真・メモの上限に達しました。今回の写真は送信していません。これまでの写真は残っています。"
+                return "このまどに残せる写真・メモがいっぱいです。今回の写真は届けていません（これまでの写真は残っています）。"
             }
-            return "送信は完了していません。暗号化済みの一時データは今後送信せず、端末から削除対象にしました。"
+            return "届けられませんでした（自動では送り直しません）。届けるために用意したコピーは削除するので、必要ならもう一度写真を選んでください。"
         }
     }
 }
@@ -491,13 +491,13 @@ struct MomentLatestServerAcceptancePresentation: Equatable, Sendable {
     let unreceivedExpiresAt: Date?
     let recipientCount: Int?
 
-    var title: String { "直近の配信受付" }
+    var title: String { "最後に届けた写真" }
 
     var detail: String {
         if let recipientCount {
-            return "サーバーが\(recipientCount)人分の配信受付を確認しました。相手の受取・閲覧確認ではありません。"
+            return "\(recipientCount)人に届けました。相手のiPhoneに届いたか、見たかどうかは、まだ分かりません。"
         }
-        return "サーバーが配信受付を確認しました。相手の受取・閲覧確認ではありません。"
+        return "届けました。相手のiPhoneに届いたか、見たかどうかは、まだ分かりません。"
     }
 }
 
@@ -550,17 +550,17 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
 
     var title: String {
         switch deliveryState {
-        case .serverAccepted: "サーバー受付済み"
-        case .recipientDeviceArrivalConfirmed: "相手端末へ到着"
+        case .serverAccepted: "届けました"
+        case .recipientDeviceArrivalConfirmed: "相手に届きました"
         }
     }
 
     var detail: String {
         switch deliveryState {
         case .serverAccepted:
-            "サーバーが配信を受け付けました。相手の端末への到着、閲覧、既読はまだ確認していません。"
+            "届けました。相手のiPhoneに届いたかは、まだ分かりません。"
         case .recipientDeviceArrivalConfirmed:
-            "相手の端末への到着を確認しました。写真を開いたことや見たことを示す、閲覧・既読の確認ではありません。"
+            "相手のiPhoneに届きました。相手が写真を見たかどうかは分かりません。"
         }
     }
 }
@@ -622,7 +622,7 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
         guard !statuses.isEmpty || !outcomes.isEmpty else { return nil }
         if statuses.count == 1, outcomes.isEmpty,
            let status = statuses.first, status.kind == .dailyQuotaWaiting {
-            return "送信上限で待機 \(status.count)枚"
+            return "上限のため待っています \(status.count)枚"
         }
         let unknown = statuses.filter { $0.kind == .resultUnknown }.reduce(0) { $0 + $1.count }
         let failed = statuses.filter { $0.kind == .failed }.reduce(0) { $0 + $1.count }
@@ -639,15 +639,15 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
         var parts: [String] = []
         let paused = statuses.filter { $0.kind == .supportRequired }.reduce(0) { $0 + $1.count }
         let unverified = statuses.filter { $0.kind == .supportUnverified }.reduce(0) { $0 + $1.count }
-        if paused > 0 { parts.append("送信お休み中 \(paused)枚") }
-        if unverified > 0 { parts.append("送信条件の確認待ち \(unverified)枚") }
-        if unknown > 0 { parts.append("結果不明 \(unknown)枚") }
-        if failed > 0 { parts.append("送信できなかった \(failed)枚") }
-        if outcomeCount > 0 { parts.append("送信しなかった \(outcomeCount)枚") }
-        if settings > 0 { parts.append("準備待ち \(settings)枚（設定の確認あり）") }
-        if retrying > 0 { parts.append("再試行待ち \(retrying)枚") }
-        if waiting > 0 { parts.append("送信待ち \(waiting)枚") }
-        if progressing > 0 { parts.append("送信・準備中 \(progressing)枚") }
+        if paused > 0 { parts.append("いまは届けられない \(paused)枚") }
+        if unverified > 0 { parts.append("届けられるか確認中 \(unverified)枚") }
+        if unknown > 0 { parts.append("届いたか分からない \(unknown)枚") }
+        if failed > 0 { parts.append("届けられなかった \(failed)枚") }
+        if outcomeCount > 0 { parts.append("届けなかった \(outcomeCount)枚") }
+        if settings > 0 { parts.append("設定の変更が必要 \(settings)枚") }
+        if retrying > 0 { parts.append("もう一度試す予定 \(retrying)枚") }
+        if waiting > 0 { parts.append("順番待ち \(waiting)枚") }
+        if progressing > 0 { parts.append("届けている途中 \(progressing)枚") }
         return parts.joined(separator: "・")
     }
 

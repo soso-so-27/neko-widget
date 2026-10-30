@@ -12,21 +12,21 @@ enum PersonalArchiveError: String, Error, Codable, LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .readOnly: "以前のiCloud記録は、読み出しと書き出しだけ利用できます。未送信の内容はこのiPhoneに残しています。"
-        case .notConfigured: "記録の保管はまだ利用できません。"
+        case .readOnly: "以前のiCloud記録は、見ることと書き出すことだけできます。まだ保存していない内容は、このiPhoneに残っています。"
+        case .notConfigured: "iCloudへの保存は、まだ使えません。"
         case .notSignedIn: "設定でiCloudへのサインインと、このアプリのiCloud利用を確認してください。"
-        case .accountChanged: "iCloudのアカウントが変わりました。入力内容を控え、保管画面を開き直してください。"
-        case .quotaExceeded: "iCloudの空き容量が不足しています。空き容量を確認して、もう一度お試しください。"
+        case .accountChanged: "iCloudのアカウントが変わりました。書いた内容をコピーしてから、画面を開き直してください。"
+        case .quotaExceeded: "iCloudの空き容量が足りません。容量を空けてから、もう一度お試しください。"
         case .networkUnavailable: "iCloudに接続できませんでした。通信を確認して、もう一度お試しください。"
-        case .zoneMissing: "iCloudの保管先が見つかりません。以前の記録を守るため、自動では作り直していません。"
-        case .archiveChanged: "iCloudの保管先が変更されています。以前の記録を戻さないよう、保存待ちの送信を止めました。"
-        case .conflict: "同じ記録に異なる内容が見つかりました。手元の内容は残し、上書きしていません。"
-        case .corruptedState: "記録の一部を読み込めません。手元にある内容は変更していません。"
-        case .storageUnavailable: "このiPhoneに記録を保存できません。空き容量やロック状態を確認してください。"
-        case .invalidJPEG: "この写真を保管できません。20MB以下の写真を選び直してください。"
-        case .textTooLong: "言葉は500文字以内で入力してください。"
-        case .emptyRecord: "写真か言葉を追加してください。"
-        case .cancelled: "保管を中断しました。保存待ちの記録は残っています。"
+        case .zoneMissing: "iCloudに保存した記録が見つかりません。以前の記録が消えないよう、新しく作り直すことはしません。"
+        case .archiveChanged: "iCloudの保存先が変わっています。古い記録で上書きしないよう、保存待ちの分は止めています。"
+        case .conflict: "同じ記録に、違う内容が見つかりました。このiPhoneの内容は上書きせずに残しています。"
+        case .corruptedState: "記録の一部を読み込めません。このiPhoneの内容はそのままです。"
+        case .storageUnavailable: "このiPhoneに記録を保存できません。空き容量があるか、ロックが解除されているかを確かめてください。"
+        case .invalidJPEG: "この写真は保存できません。20MB以下の写真を選び直してください。"
+        case .textTooLong: "メモは500文字以内で入力してください。"
+        case .emptyRecord: "写真かメモを追加してください。"
+        case .cancelled: "保存が途中で止まりました。保存待ちの記録は残っています。"
         }
     }
 }

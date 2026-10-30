@@ -7,7 +7,7 @@ struct RestoredToolsView: View {
     var body: some View {
         List {
             Section {
-                Text("保存時点のツールの記録です。元の記録とは別に開けます。通信がなくても使えます。")
+                Text("保存したときのツールの記録です。いまの記録とは別に、オフラインでも開けます。")
                 Text("連絡先・薬・受診内容は保存当時の情報です。渡す前に、いまの内容を確認してください。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -22,8 +22,8 @@ struct RestoredToolsView: View {
                     }
                 }
             }
-            if failed { Text("復元した記録を読み込めませんでした。記録は削除していません。") }
-            else if backups.isEmpty { Text("まだ復元したツールはありません。サービスの保管一覧から復元できます。") }
+            if failed { Text("復元した記録を読み込めませんでした。記録は消えていません。") }
+            else if backups.isEmpty { Text("復元したツールはまだありません。「保存した記録」から復元できます。") }
         }
         .navigationTitle("復元したツール")
         .task {
@@ -70,10 +70,10 @@ private struct RestoredToolWorkspace: View {
                 Text(saved.index.createdAt, format: .dateTime.year().month().day().hour().minute())
                 Text(saved.index.contentsSummary)
                     .accessibilityIdentifier("restored-tool-contents-summary")
-                Text("保存当時の記録です。ここでの編集は、この復元した記録だけに反映されます。")
+                Text("保存したときの記録です。ここで直しても、変わるのはこの復元した記録だけです。")
                     .font(.footnote).foregroundStyle(.secondary)
                 if ManagedPreservationConfiguration.current.isEnabled {
-                    NavigationLink("この記録をサービスに保管する") {
+                    NavigationLink("この記録を保存する") {
                         ManagedPreservationView(toolBackupSource: saved.id)
                     }
                 }

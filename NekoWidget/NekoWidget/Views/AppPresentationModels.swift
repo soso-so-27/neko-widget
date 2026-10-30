@@ -695,8 +695,8 @@ struct ScanPresentation: Equatable {
 }
 
 enum PhotoRangePresentation: String, CaseIterable, Identifiable {
-    case all = "全期間"
-    case recentYear = "直近1年"
+    case all = "すべての期間"
+    case recentYear = "この1年"
 
     var id: String { rawValue }
 }

@@ -37,7 +37,7 @@ private final class LogViewModel: ObservableObject {
                 "Diagnostic log export failed",
                 metadata: SharedLog.errorMetadata(error, category: .diagnostics)
             )
-            errorMessage = "診断ログを書き出せませんでした。iPhoneの空き容量を確認して、もう一度お試しください。"
+            errorMessage = "診断情報を書き出せませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。"
             return nil
         }
     }
@@ -66,7 +66,7 @@ struct LogView: View {
             Divider()
             actionBar
         }
-        .navigationTitle("診断ログ")
+        .navigationTitle("診断情報")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await viewModel.refresh()
@@ -80,7 +80,7 @@ struct LogView: View {
         }
         .onDisappear(perform: cleanupDiagnosticExport)
         .confirmationDialog(
-            "Appとウィジェットのログをすべて削除しますか？",
+            "診断情報をすべて削除しますか？",
             isPresented: $showsClearConfirmation,
             titleVisibility: .visible
         ) {
@@ -89,13 +89,13 @@ struct LogView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("削除後に新しいイベントが発生すると、ログは再び作成されます。")
+            Text("削除しても、アプリを使うとまた記録されます。")
         }
         .alert("コピーしました", isPresented: $showsCopiedConfirmation) {
             Button("閉じる", role: .cancel) {}
         }
         .alert(
-            "ログを書き出せません",
+            "書き出せませんでした",
             isPresented: Binding(
                 get: { viewModel.errorMessage != nil },
                 set: { if !$0 { viewModel.errorMessage = nil } }
@@ -105,7 +105,7 @@ struct LogView: View {
                 viewModel.errorMessage = nil
             }
         } message: {
-            Text(viewModel.errorMessage ?? "不明なエラー")
+            Text(viewModel.errorMessage ?? "もう一度お試しください。")
         }
     }
 
@@ -117,13 +117,13 @@ struct LogView: View {
             }
             Text("\(viewModel.entries.count.formatted())件")
                 .font(.caption.weight(.semibold))
-            Text("App / Widget を時刻順に統合")
+            Text("アプリとウィジェットの記録（時刻順）")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
             if viewModel.malformedLineCount > 0 {
                 Label(
-                    "読み飛ばし \(viewModel.malformedLineCount)行",
+                    "読めなかった記録 \(viewModel.malformedLineCount)行",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)
@@ -166,7 +166,7 @@ struct LogView: View {
             Button(role: .destructive) {
                 showsClearConfirmation = true
             } label: {
-                Label("消去", systemImage: "trash")
+                Label("削除", systemImage: "trash")
             }
             .disabled(viewModel.entries.isEmpty)
         }
@@ -181,7 +181,7 @@ struct LogView: View {
             return "読み込み中…"
         }
         if viewModel.entries.isEmpty {
-            return "ログはまだありません。\nアプリのスキャンやウィジェット表示後に更新してください。"
+            return "まだ記録はありません。\nアプリやウィジェットを使ったあとに、もう一度開いてください。"
         }
         return viewModel.formattedText
     }

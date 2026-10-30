@@ -377,10 +377,10 @@ struct FamilyWindowView: View {
                 NavigationStack {
                     Group {
                         if isResolvingWidgetPhoto {
-                            ProgressView("写真を確認しています…")
+                            ProgressView("写真を読み込んでいます…")
                         } else {
                             ContentUnavailableView("この写真は表示できません", systemImage: "photo",
-                                description: Text("写真が削除されたか、表示期間が終了しました。"))
+                                description: Text("写真が削除されたか、見られる期間が過ぎました。"))
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -531,7 +531,7 @@ struct FamilyWindowView: View {
             case .checking:
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("まどを確認しています…")
+                    Text("まどを読み込んでいます…")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -558,7 +558,7 @@ struct FamilyWindowView: View {
         .alert("ブロックしました", isPresented: $showsBlockCompleted) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("この相手との写真共有を終了しました。ブロックは、設定の「ブロックした相手」から解除できます。")
+            Text("この相手とのまどを終了しました。ブロックは、設定の「ブロックした相手」から解除できます。")
         }
         .task {
             await model.bootstrap()
@@ -658,7 +658,7 @@ struct FamilyWindowView: View {
                     .accessibilityIdentifier("family-window-bootstrap-retry")
                 }
 
-                Text("保存済みの写真と接続情報は削除していません。")
+                Text("写真や設定はそのまま残っています。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -671,7 +671,7 @@ struct FamilyWindowView: View {
                         NavigationLink {
                             LogView()
                         } label: {
-                            Label("診断情報を確認・共有", systemImage: "stethoscope")
+                            Label("診断情報を見る・送る", systemImage: "stethoscope")
                         }
                         .accessibilityIdentifier("family-window-open-diagnostics")
 
@@ -705,7 +705,7 @@ struct FamilyWindowView: View {
             NavigationLink {
                 PairingView()
             } label: {
-                Label("共有の同意を更新", systemImage: "checkmark.shield")
+                Label("内容を確認して同意する", systemImage: "checkmark.shield")
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("family-window-consent-renewal")
@@ -739,7 +739,7 @@ struct FamilyWindowView: View {
             reportButton("その他", reason: .other)
             Button("キャンセル", role: .cancel) { reportTarget = nil }
         } message: {
-            Text("確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。このまどの暗号鍵は送りません。")
+            Text("確認のため、この写真1枚のコピーだけを運営に送ります（届いてから7日後に削除）。このまどのほかの写真は、運営からは見えません。")
         }
         .confirmationDialog(
             "この写真を削除しますか？",
@@ -789,7 +789,7 @@ struct FamilyWindowView: View {
             .disabled(model.isShowingLastKnownState || model.isReportOnly)
             Button("キャンセル", role: .cancel) { blockTarget = nil }
         } message: { _ in
-            Text("この相手との写真共有を終了し、このまどに届いた写真をこのiPhoneから削除します。ブロックは設定から解除できますが、削除した写真や以前の共有は戻りません。")
+            Text("この相手とのまどを終了し、届いた写真をこのiPhoneから削除します。ブロックはあとで解除できますが、まどや写真は戻りません。")
         }
         .confirmationDialog(
             memorySaveDialogTitle,
@@ -857,52 +857,52 @@ struct FamilyWindowView: View {
     private var cleanupDialogs: some View {
         photoActionDialogs(baseContent, isDetail: false)
         .confirmationDialog(
-            "この端末の暗号化済み送信待ちをすべて取り消しますか？",
+            "届ける前の写真をすべて取り消しますか？",
             isPresented: $showsPendingCancelConfirmation,
             titleVisibility: .visible
         ) {
-            Button("この端末の送信待ちをすべて取り消す", role: .destructive) {
+            Button("すべて取り消す", role: .destructive) {
                 Task { await model.discardPendingOutbox() }
             }
             .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("この端末にある全てのまどの配信確定前の送信を停止し、暗号化済みの一時データを削除対象にします。サーバーに一時保存済みの暗号文は期限で削除されます。配信結果を確認中の写真は、重複を防ぐため残します。")
+            Text("すべてのまどで、まだ届いていない写真を取り消します。届いたか確かめている途中の写真は、二重に届かないよう残します。")
         }
         .confirmationDialog(
-            "この端末で準備中の写真をすべて取り消しますか？",
+            "準備中の写真をすべて取り消しますか？",
             isPresented: $showsPreparationCancelConfirmation,
             titleVisibility: .visible
         ) {
-            Button("この端末の準備中をすべて取り消す", role: .destructive) {
+            Button("すべて取り消す", role: .destructive) {
                 Task { await model.discardPendingPreparations() }
             }
             .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("この端末にある全てのまどの準備中データを削除対象にします。すでに暗号化済みの送信待ちへ進んだ写真はこの操作の対象外で、送信状況に残ります。")
+            Text("すべてのまどで、準備中の写真を取り消します。準備が終わって届ける順番を待っている写真は残ります。")
         }
         .confirmationDialog(
-            "送信結果の表示をすべて消しますか？",
+            "届けられなかった写真の表示をすべて消しますか？",
             isPresented: $showsTerminalResultDismissConfirmation,
             titleVisibility: .visible
         ) {
-            Button("送信結果の表示をすべて消す", role: .destructive) {
+            Button("表示をすべて消す", role: .destructive) {
                 Task { await model.discardFailedOutbox() }
             }
             .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("「送信できなかった写真」と「届いた可能性はあるものの確認できない写真」の表示をすべて消します。写真を再送する操作ではありません。")
+            Text("「届けられなかった写真」と「届いたか分からない写真」の表示を消します。写真が送り直されることはありません。")
         }
     }
 
     private var guidanceDialogs: some View {
         cleanupDialogs
-        .alert("この写真は更新されました", isPresented: $showsStaleWidgetPhotoAlert) {
+        .alert("ホーム画面の写真が変わりました", isPresented: $showsStaleWidgetPhotoAlert) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("ホーム画面の新しい写真で、もう一度お試しください。")
+            Text("ホーム画面の新しい写真から、もう一度開いてください。")
         }
         .sheet(item: $preparedDelivery, onDismiss: {
             deliveryCaption = ""
@@ -1080,7 +1080,7 @@ struct FamilyWindowView: View {
                 }
             } else {
                 ContentUnavailableView("この写真は表示できません", systemImage: "photo",
-                    description: Text(model.errorMessage ?? "写真が削除されたか、表示期間が終了しました。"))
+                    description: Text(model.errorMessage ?? "写真が削除されたか、見られる期間が過ぎました。"))
             }
         }
     }
@@ -1091,7 +1091,7 @@ struct FamilyWindowView: View {
                 if model.isEncryptedReportAvailable && !model.isShowingLastKnownState {
                     Button { showsReportResponses = true } label: {
                         HStack {
-                            Label("通報への返答", systemImage: "text.bubble")
+                            Label("通報の結果", systemImage: "text.bubble")
                             Spacer(minLength: 12)
                             Image(systemName: "chevron.right")
                                 .accessibilityHidden(true)
@@ -1103,7 +1103,7 @@ struct FamilyWindowView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
-                    .accessibilityHint("運営からの返答を確認します")
+                    .accessibilityHint("通報の結果を見ます")
                     .accessibilityIdentifier("family-window-report-responses")
                 }
 
@@ -1217,7 +1217,7 @@ struct FamilyWindowView: View {
         }
 
         if !model.safetyHiddenMoments.isEmpty {
-            Text("安全確認で非表示")
+            Text("安全のため表示していない写真")
                 .font(.headline)
             ForEach(model.safetyHiddenMoments) { item in
                 safetyHiddenCard(item)
@@ -1227,7 +1227,7 @@ struct FamilyWindowView: View {
         // An image-less delivery record is useful for support, but it must not
         // become a blank tile among the photos or imply a recoverable archive.
         if !unavailable.isEmpty {
-            DisclosureGroup("写真のない送信履歴", isExpanded: $showsUnavailablePhotoHistory) {
+            DisclosureGroup("写真が残っていない記録", isExpanded: $showsUnavailablePhotoHistory) {
                 VStack(spacing: 10) {
                     ForEach(unavailable.prefix(sentRecordDisplayLimit)) { record in
                         Button { selectedSentRecord = record } label: {
@@ -1251,20 +1251,20 @@ struct FamilyWindowView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("＋から写真を1枚選び、確認して相手と共有します。写真や自分だけのメモが自動で共有されることはありません。")
+                    Text("下の「写真を届ける」から1枚選んで、相手に届けます。写真や自分だけのメモが勝手に届くことはありません。")
                 }
-                Section("追加した写真") {
-                    Text("新しい写真とメモはこのまどに残り、まどのメンバーで見返せます。ホーム画面の写真（ウィジェット）にも届きます。")
+                Section("これから届ける写真") {
+                    Text("写真とメモはこのまどに残り、2人でいつでも見返せます。ホーム画面の写真（ウィジェット）にも出ます。")
                 }
-                Section("以前に送った写真") {
-                    Text("「表示期限あり」の写真は以前の期限のままです。写真を開いてメモを追加すると、このまどに残せます。期限のある写真は書き出しに含まれません。")
+                Section("前に届けた写真") {
+                    Text("前に届けた写真は、見られる期限がこれまでどおりです。写真を開いてメモを付けると、このまどに残せます（期限のある写真は書き出しに入りません）。")
                 }
-                Section("持ち出しと共有終了") {
-                    Text("写真とメモは「このまどの写真」の…から書き出せます。共有を終了すると、このまどの写真とメモは開けなくなります。")
-                    Text("無期限の保管や、二人の全端末を失った場合の復元は保証していません。")
+                Section("書き出しと、まどの終了") {
+                    Text("写真とメモは「このまどの写真」の「…」から書き出せます。まどを終了すると、写真とメモは開けなくなります。")
+                    Text("いつまでも残ることや、2人ともすべてのiPhoneをなくしたときに元に戻せることは、保証していません。")
                 }
                 Section("残せる量") {
-                    Text("まどごとに写真100枚・メモ1,000件まで。上限に達しても古い写真は自動で消しません。")
+                    Text("まどごとに写真100枚・メモ1,000件まで。いっぱいになっても、古い写真が勝手に消えることはありません。")
                 }
             }
             .navigationTitle("このまどの写真")
@@ -1320,7 +1320,7 @@ struct FamilyWindowView: View {
 
         if !model.receivedMoments.isEmpty {
             Label(
-                "届いた写真は最長90日です。保存するには「自分のお気に入りに追加」を選びます。",
+                "届いた写真が見られるのは最長90日です。残したい写真は「自分のお気に入りに追加」を押してください。",
                 systemImage: "info.circle"
             )
             .font(.caption)
@@ -1439,7 +1439,7 @@ struct FamilyWindowView: View {
                     .foregroundStyle(.secondary)
                 if !model.isWorking {
                     HStack(spacing: 14) {
-                        Button("共有状況を更新") {
+                        Button("もう一度読み込む") {
                             notificationRouteResolutionFailed = false
                             Task { await resolvePendingNotificationRoute() }
                         }
@@ -1470,22 +1470,22 @@ struct FamilyWindowView: View {
 
     private var notificationRouteResolutionTitle: String {
         if notificationRouteResolutionFailed {
-            return "選んだ写真を表示できません"
+            return "この写真を表示できません"
         }
         if notificationRouteHasSynchronizationError {
-            return "選んだ写真を確認できません"
+            return "写真を読み込めません"
         }
-        return "選んだ写真を開いています…"
+        return "写真を開いています…"
     }
 
     private var notificationRouteResolutionDetail: String {
         if notificationRouteResolutionFailed {
-            return "写真が期限切れ、削除済み、または安全確認で非表示の可能性があります。別の写真は表示しません。"
+            return "写真の期限が切れたか、削除されたか、安全のため表示していない可能性があります。"
         }
         if notificationRouteHasSynchronizationError {
-            return "共有データを更新できませんでした。時間をおいてもう一度確認してください。"
+            return "写真を読み込めませんでした。少し待ってから、もう一度お試しください。"
         }
-        return "選んだ写真を確認しています。"
+        return "写真を読み込んでいます。"
     }
 
     /// ADR-027: まどは作った人がPlusで続ける。作った人（`inviter`。追加した
@@ -1537,7 +1537,7 @@ struct FamilyWindowView: View {
                 } catch {
                     guard deliverySelectionGeneration == generation else { return }
                     photoSelectionMessage =
-                        "共有先を確認できませんでした。まどの状態を確認して、もう一度お試しください。"
+                        "届け先のまどを読み込めませんでした。もう一度お試しください。"
                     return
                 }
                 guard deliverySelectionGeneration == generation, !Task.isCancelled else { return }
@@ -1550,7 +1550,7 @@ struct FamilyWindowView: View {
             } catch {
                 guard deliverySelectionGeneration == generation else { return }
                 photoSelectionMessage =
-                    "写真を読み込めませんでした。iCloudの通信状態を確認するか、別の写真をお試しください。"
+                    "写真を読み込めませんでした。インターネットにつながっているか確かめるか、別の写真を選んでください。"
             }
         }
     }
@@ -1627,7 +1627,7 @@ struct FamilyWindowView: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(compactMomentAccessibilityLabel(item, caption: caption))
-        .accessibilityHint("写真を大きく表示して操作します")
+        .accessibilityHint("写真を大きく表示します")
         .accessibilityIdentifier("family-window-photo-thumbnail-\(item.id)")
     }
 
@@ -1644,7 +1644,7 @@ struct FamilyWindowView: View {
             parts.append("お気に入りに追加しました")
         }
         if model.heartOutboxItem(for: item)?.phase == .sent {
-            parts.append("ハートを送信済みです")
+            parts.append("ハートを送りました")
         }
         return parts.joined(separator: "。")
     }
@@ -1655,7 +1655,7 @@ struct FamilyWindowView: View {
                 .font(.footnote)
                 .foregroundStyle(.orange)
             if model.isShowingLastKnownState {
-                Text("最後に安全に確認できた内容を表示しています。更新が完了するまで、送信や変更は行いません。")
+                Text("前回読み込んだ内容を表示しています。もう一度読み込めるまで、写真を届けたり変更したりはできません。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1663,7 +1663,7 @@ struct FamilyWindowView: View {
                 Button {
                     Task { await model.synchronize() }
                 } label: {
-                    Label("共有状況を更新", systemImage: "arrow.clockwise")
+                    Label("もう一度読み込む", systemImage: "arrow.clockwise")
                         .font(.subheadline.weight(.semibold))
                 }
                 .buttonStyle(.bordered)
@@ -1729,7 +1729,7 @@ struct FamilyWindowView: View {
                     sharingManagementLink
                     if WindowSupportResumeAvailability.isEnabled {
                         Button(action: openWindowSupport) {
-                            Label("送信を再開", systemImage: "arrow.triangle.2.circlepath")
+                            Label("このまどを続ける", systemImage: "arrow.triangle.2.circlepath")
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(16)
                                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
@@ -1756,7 +1756,7 @@ struct FamilyWindowView: View {
         .alert("まどの名前", isPresented: $showsNameEditor) {
             TextField("名前", text: $windowNameDraft)
                 .accessibilityIdentifier("family-window-name-field")
-            Button("保存して共有") { Task { await saveWindowName() } }
+            Button("保存") { Task { await saveWindowName() } }
                 .disabled(windowNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("キャンセル", role: .cancel) {}
         } message: {
@@ -1860,7 +1860,7 @@ struct FamilyWindowView: View {
         guard canRenameWindow, model.pairingState?.spaceID == spaceID,
               nameModel.state?.spaceID == spaceID, nameModel.canPersistWindowDisplayName,
               nameModel.bootstrapRetryMessage == nil else {
-            nameEditError = "名前を変更できる状態か確認できませんでした。まどを開き直してください。"
+            nameEditError = "いまは名前を変更できません。まどを開き直してください。"
             return
         }
         nameEditingSpaceID = spaceID
@@ -1877,7 +1877,7 @@ struct FamilyWindowView: View {
 #endif
         guard canRenameWindow, let spaceID = nameEditingSpaceID,
               model.pairingState?.spaceID == spaceID else {
-            nameEditError = "まどの状態が変わったため、名前を変更しませんでした。まどを開き直してください。"
+            nameEditError = "まどに変更があったため、名前は変わっていません。まどを開き直してください。"
             return
         }
         if await nameModel.updateWindowDisplayName(windowNameDraft, expectedSpaceID: spaceID) {
@@ -1899,7 +1899,7 @@ struct FamilyWindowView: View {
                     Text("ホーム画面に置く")
                         .font(.subheadline.weight(.semibold))
                     if model.isReportOnly {
-                        Text("共有が終了したため、写真は表示されません")
+                        Text("このまどは終了したため、写真は表示されません")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -1916,7 +1916,7 @@ struct FamilyWindowView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityHint("ホーム画面に表示するまどの選び方を確認します")
+        .accessibilityHint("ホーム画面にこのまどを置く方法を見ます")
         .accessibilityIdentifier("family-window-widget-guide")
     }
 
@@ -2089,7 +2089,7 @@ struct FamilyWindowView: View {
             Button {
                 Task { await requestVisibleNotificationAuthorization() }
             } label: {
-                Text("目立つ通知にする").frame(minHeight: 44)
+                Text("バナーで知らせる").frame(minHeight: 44)
             }
             .font(.caption.weight(.semibold))
             .accessibilityIdentifier("family-window-notification-enable")
@@ -2111,10 +2111,10 @@ struct FamilyWindowView: View {
     private var notificationStatusText: String {
         switch notificationAuthorizationState {
         case .checking: "確認中"
-        case .notRequested: "このiPhoneの通知を許可できます"
-        case .enabled: "iPhoneで許可済み"
-        case .quiet: "iPhoneで静かな通知に設定中"
-        case .denied: "iPhoneの設定でオフ"
+        case .notRequested: "まだオンにしていません"
+        case .enabled: "オン"
+        case .quiet: "通知センターにだけ表示"
+        case .denied: "オフ（iPhoneの設定で変えられます）"
         }
     }
 
@@ -2188,7 +2188,7 @@ struct FamilyWindowView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityHint("このまどに参加している人を確認します")
+        .accessibilityHint("このまどのメンバーを見ます")
         .accessibilityIdentifier("family-window-members")
     }
 
@@ -2208,12 +2208,12 @@ struct FamilyWindowView: View {
             HStack(spacing: 12) {
                 settingsSymbol("person.2.fill")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("接続と端末")
+                    Text("相手とiPhone")
                         .font(.subheadline.weight(.semibold))
                     if model.isReportOnly || model.isShowingLastKnownState {
                         Text(model.isReportOnly
-                            ? "共有は終了しています"
-                            : "接続状態を確認できません")
+                            ? "このまどは終了しています"
+                            : "読み込めませんでした")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -2230,22 +2230,22 @@ struct FamilyWindowView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityHint("接続相手と、使っているiPhoneを確認します")
+        .accessibilityHint("相手と、使っているiPhoneを見ます")
         .accessibilityIdentifier("family-window-sharing-settings")
     }
 
     private var reportOnlyCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("\(model.windowDisplayName)の共有は終了しました", systemImage: "hand.raised.fill")
+            Label("\(model.windowDisplayName)は終了しました", systemImage: "hand.raised.fill")
                 .font(.headline)
                 .foregroundStyle(.orange)
             if model.isEncryptedReportAvailable,
                let until = model.reportOnlyUntil {
-                Text("\(until.formatted(.dateTime.month().day().hour().minute()))までは、届いていた写真の通報だけ利用できます。新しい送受信は行いません。")
+                Text("\(until.formatted(.dateTime.month().day().hour().minute()))までは、届いた写真を通報できます。写真のやりとりはもうできません。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Text("新しい送受信は行いません。安全上の問題は、写真や招待のリンクを添付せずに、サポートから連絡してください。")
+                Text("このまどでは、もう写真を届け合えません。困ったことがあれば、写真や招待コードは添えずにサポートへ連絡してください。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if let url = SharingAPIConfiguration.current.supportURL {
@@ -2279,7 +2279,7 @@ struct FamilyWindowView: View {
                         Image(systemName: model.outgoingPresentation.activityNeedsAttention
                             ? "exclamationmark.circle" : "arrow.triangle.2.circlepath")
                             .foregroundStyle(model.outgoingPresentation.activityNeedsAttention ? Color.orange : .secondary)
-                        Text(model.outgoingPhotoProgress.isEmpty ? summary : "送信状況を見る")
+                        Text(model.outgoingPhotoProgress.isEmpty ? summary : "届けている写真を見る")
                             .font(.subheadline).lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: "chevron.right").font(.caption)
@@ -2290,8 +2290,8 @@ struct FamilyWindowView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(model.outgoingPhotoProgress.isEmpty ? summary : "送信状況を見る")
-                .accessibilityHint("詳しい送信状況と、できる操作を開きます")
+                .accessibilityLabel(model.outgoingPhotoProgress.isEmpty ? summary : "届けている写真を見る")
+                .accessibilityHint("届けている写真の様子と、できることを表示します")
                 .accessibilityIdentifier("family-window-outgoing-summary")
             }
 
@@ -2305,7 +2305,7 @@ struct FamilyWindowView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let message = model.errorMessage { sharingErrorCard(message) }
                     if model.outgoingPresentation.activitySummary == nil {
-                        Text("確認が必要な送信や、送信待ちの写真はありません。")
+                        Text("届けている途中の写真はありません。")
                             .foregroundStyle(.secondary)
                     }
                     ForEach(model.outgoingPresentation.statuses) { status in
@@ -2319,7 +2319,7 @@ struct FamilyWindowView: View {
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("送信状況").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("届けている写真").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("閉じる", systemImage: "xmark") { showsOutgoingDetails = false }
@@ -2370,13 +2370,13 @@ struct FamilyWindowView: View {
     private var outgoingManagementMenu: some View {
         Menu {
             if model.outgoingPresentation.outcomeCount > 0 {
-                Button("送信しなかった結果を消す") {
+                Button("届けなかった写真の表示を消す") {
                     Task { await model.clearOutgoingOutcomes() }
                 }
                 .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
             if model.outgoingPresentation.terminalDeliveryResultCount > 0 {
-                Button("送信結果をすべて消す", role: .destructive) {
+                Button("届けられなかった写真の表示を消す", role: .destructive) {
                     requestOutgoingConfirmation(.terminalResults)
                 }
                 .disabled(model.isPerformingAction || model.isShowingLastKnownState)
@@ -2390,13 +2390,13 @@ struct FamilyWindowView: View {
             }
             if !model.isReportOnly,
                model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0 {
-                Button("送信待ちを取り消す", role: .destructive) {
+                Button("届ける前の写真を取り消す", role: .destructive) {
                     requestOutgoingConfirmation(.deliveries)
                 }
                 .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
         } label: {
-            Label("送信を管理", systemImage: "ellipsis.circle")
+            Label("整理する", systemImage: "ellipsis.circle")
                 .font(.subheadline)
         }
         .disabled(model.isShowingLastKnownState)
@@ -2423,7 +2423,7 @@ struct FamilyWindowView: View {
         .accessibilityLabel(sentRecordAccessibilityLabel(record, caption: caption))
         .accessibilityHint(
             isNotificationTarget
-                ? "選んだ写真です"
+                ? "通知から開いた写真です"
                 : "写真を開きます"
         )
         .accessibilityFocused(
@@ -2443,7 +2443,7 @@ struct FamilyWindowView: View {
         _ record: MomentSentRecordPresentation, caption: String?
     ) -> String {
         var parts = [
-            "送った写真",
+            "届けた写真",
             record.serverAcceptedAt.formatted(.dateTime.month().day())
         ]
         if record.hasReceivedHeart {
@@ -2488,7 +2488,7 @@ struct FamilyWindowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if status.kind == .supportRequired {
-                    Button(WindowSupportResumeAvailability.isEnabled ? "送信を再開" : "送信の再開を確認") {
+                    Button(WindowSupportResumeAvailability.isEnabled ? "このまどを続ける" : "もう一度読み込む") {
                         if WindowSupportResumeAvailability.isEnabled { openWindowSupport() }
                         else { Task { await model.synchronize(isManual: true) } }
                     }
@@ -2496,16 +2496,16 @@ struct FamilyWindowView: View {
                     .accessibilityIdentifier("window-support-recheck")
                 }
                 if status.destinationCount > 1 {
-                    Text("\(status.destinationCount)個のまどへの送信があります")
+                    Text("\(status.destinationCount)個のまどに届けています")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 if let resetAt = status.quotaResetAt {
-                    Text("送信再開 \(resetAt.formatted(.dateTime.month().day().hour().minute())) 以降")
+                    Text("\(resetAt.formatted(.dateTime.month().day().hour().minute()))以降に届けます")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if let retryAt = status.nextRetryAt {
-                    Text("再試行予定 \(retryAt.formatted(.dateTime.month().day().hour().minute()))")
+                    Text("\(retryAt.formatted(.dateTime.month().day().hour().minute()))にもう一度試します")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -2537,7 +2537,7 @@ struct FamilyWindowView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if let expiresAt = acceptance.unreceivedExpiresAt {
-                    Text("未受取の暗号文は \(expiresAt.formatted(.dateTime.month().day().hour().minute())) に削除対象です")
+                    Text("相手が受け取らなかった場合、\(expiresAt.formatted(.dateTime.month().day().hour().minute()))に削除されます")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -2813,7 +2813,7 @@ struct FamilyWindowView: View {
 
     private func memorySaveActionTitle(for item: MomentInboxItem) -> String {
         model.hasImportedMemory(item)
-            ? "自分のお気に入りに再追加"
+            ? "もう一度お気に入りに追加"
             : "自分のお気に入りに追加"
     }
 
@@ -2821,7 +2821,7 @@ struct FamilyWindowView: View {
         if model.hasImportedMemory(item) {
             return "写真アプリにある写真を、もう一度お気に入りに追加します。相手には通知しません。"
         }
-        return "写真アプリへコピーして、お気に入りに追加します。iCloud写真の設定により、iCloudにも同期される場合があります。相手には通知しません。"
+        return "写真アプリに保存して、お気に入りに追加します（iCloud写真を使っていれば、iCloudにも保存されます）。相手には知らされません。"
     }
 
     private func performMemoryAction(
@@ -3050,7 +3050,7 @@ struct FamilyWindowView: View {
                 .frame(width: 44, height: 44)
                 .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 13))
             VStack(alignment: .leading, spacing: 3) {
-                Text("内容を表示していません")
+                Text("表示していない写真")
                     .font(.subheadline.weight(.semibold))
                 Text(safetyHiddenExplanation(item))
                     .font(.caption)
@@ -3079,7 +3079,7 @@ struct FamilyWindowView: View {
                 Button(role: .destructive) {
                     deleteReceivedTarget = item
                 } label: {
-                    Label("この受信を削除", systemImage: "trash")
+                    Label("この写真を削除", systemImage: "trash")
                 }
                 Divider()
                 if !model.isReportOnly {
@@ -3094,7 +3094,7 @@ struct FamilyWindowView: View {
                     .font(.title3)
             }
             .disabled(model.isWorking || model.isShowingLastKnownState)
-            .accessibilityLabel("非表示にした受信の安全メニュー")
+            .accessibilityLabel("表示していない写真の操作")
         }
         .padding(14)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
@@ -3132,20 +3132,20 @@ struct FamilyWindowView: View {
                 Link("問題を問い合わせる", destination: url)
             }
             if !model.isEncryptedReportAvailable {
-                Text("この限定ベータではアプリ内通報を停止しています。安全上の問題は、写真・招待コード・確認フレーズ・鍵を添付せず、TestFlightのベータ版フィードバックから連絡してください。相手は安全メニューからブロックして共有を終了できます。")
+                Text("このベータ版では、アプリから通報できません。困ったときは、写真・招待コード・確認フレーズ・鍵を添付せず、TestFlightのベータ版フィードバックから連絡してください。相手のブロックは、写真の「…」からできます。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             Text("写真は公開されません。届けるために預かる暗号化した写真は、受け取られてから7日（受け取られないときは30日）でサーバーから消します。届いた写真は、このiPhoneに最長90日・500枚まで残ります。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。別のiPhoneや再インストール後には表示されません。")
+            Text("届けた写真の控えは、このiPhoneに最長30日・200件まで残ります。ほかのiPhoneや、入れ直したアプリでは見られません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("自分のお気に入りに追加した写真は、位置情報を除いて写真アプリへ保存します。個人のお気に入りと写真まとめに入り、相手へは通知しません。")
+            Text("お気に入りに追加した写真は、位置情報を消して写真アプリに保存され、自分のお気に入りと写真まとめに入ります。相手には知らされません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("取り込んだ写真はiCloud写真の設定に従って同期される場合があり、お気に入りから外す、共有解除、ブロック、アプリ削除のあとも写真アプリに残ります。")
+            Text("写真アプリに保存した写真は、お気に入りから外したり、まどを終了・ブロックしたり、アプリを削除したりしても残ります。iCloud写真を使っていれば、iCloudにも保存されます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -3181,19 +3181,19 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoDeletionMessage(_ item: MomentInboxItem) -> String {
         if model.isSavedMemory(item) {
-            return "このiPhoneの共有写真の一覧から削除します。自分のお気に入り、相手の写真一覧とまどはそのままです。取り消せません。"
+            return "このiPhoneから削除します（元に戻せません）。自分のお気に入りはそのままで、相手の画面からも消えません。"
         }
         if model.hasImportedMemory(item) {
-            return "このiPhoneの共有写真の一覧から削除します。写真アプリへ取り込んだ写真、相手の写真一覧とまどはそのままです。取り消せません。"
+            return "このiPhoneから削除します（元に戻せません）。写真アプリに保存した写真はそのままで、相手の画面からも消えません。"
         }
-        return "このiPhoneの共有写真の一覧から削除します。相手の写真一覧とまどはそのままです。取り消せません。"
+        return "このiPhoneから削除します（元に戻せません）。相手の画面からは消えません。"
     }
 
     private func safetyHiddenExplanation(_ item: MomentInboxItem) -> String {
         if item.state == .revoked {
-            return "共有が終了した写真です。内容は表示しません。"
+            return "この写真はもう見られません。"
         }
-        return "端末の安全確認を通せなかったため、内容を表示していません。"
+        return "安全のため、この写真は表示していません。"
     }
 
     private func captureLabel(_ item: MomentInboxItem) -> String {
@@ -3240,7 +3240,7 @@ struct MomentReceivedPhotoActions: View {
         var title: String {
             switch self {
             case .ready: "ハートを送る"
-            case .retry: "ハートを再送"
+            case .retry: "ハートをもう一度送る"
             case .unavailable: "ハートを送れません"
             case .sent: "ハートを送りました"
             }
@@ -3258,9 +3258,9 @@ struct MomentReceivedPhotoActions: View {
         var accessibilityLabel: String {
             switch self {
             case .ready: "写真を届けた相手にハートを送る"
-            case .retry: "送信待ちのハートをもう一度送る"
+            case .retry: "届いていないハートをもう一度送る"
             case .unavailable: "この写真にはハートを送れません"
-            case .sent: "ハートを送信済みです"
+            case .sent: "ハートを送りました"
             }
         }
     }
@@ -3352,7 +3352,7 @@ struct MomentReceivedPhotoActions: View {
                     } else {
                         Image(systemName: "bookmark")
                     }
-                    Text(hasImportedMemory ? "自分のお気に入りに再追加" : "自分のお気に入りに追加")
+                    Text(hasImportedMemory ? "もう一度お気に入りに追加" : "自分のお気に入りに追加")
                 }
                 .font(.caption.weight(.semibold))
                 .multilineTextAlignment(.center)
@@ -3763,7 +3763,7 @@ private struct MomentSentPhotoDetail: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showsInformation = true } label: { Image(systemName: "info.circle") }
-                        .accessibilityLabel("送信の詳細").disabled(record == nil)
+                        .accessibilityLabel("届けた写真の詳細").disabled(record == nil)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("閉じる", systemImage: "xmark", action: onClose)
@@ -3792,22 +3792,22 @@ private struct MomentSentPhotoDetail: View {
                 NavigationStack {
                     Form {
                         if let record {
-                            Section("送信状況") {
+                            Section("届いたかどうか") {
                                 Text(record.title)
                                 Text(record.detail).font(.footnote).foregroundStyle(.secondary)
-                                Text("到着は、相手が写真を開いたことを示しません。")
+                                Text("「相手に届きました」は、相手が写真を見たという意味ではありません。")
                                     .font(.footnote).foregroundStyle(.secondary)
                             }
-                            Section("送った日") {
+                            Section("届けた日") {
                                 Text(record.serverAcceptedAt.formatted(.dateTime.month().day().hour().minute()))
                             }
                             Section("このiPhoneの控え") {
-                                Text("控えは最長30日・最大200件まで保持します。以前の送信には小さな控えだけが残っている場合があります。")
+                                Text("届けた写真の控えは、最長30日・200件まで残ります。前に届けた写真は、小さな控えしか残っていないことがあります。")
                                     .font(.footnote)
                             }
                         }
                     }
-                    .navigationTitle("送信の詳細").navigationBarTitleDisplayMode(.inline)
+                    .navigationTitle("届けた写真の詳細").navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .topBarTrailing) {
                         Button("閉じる", systemImage: "xmark") { showsInformation = false }
                             .labelStyle(.iconOnly)
@@ -3863,7 +3863,7 @@ private struct MomentSentPhotoDetail: View {
                     } else {
                         Image(systemName: "arrow.clockwise").accessibilityHidden(true)
                     }
-                    Text(isLoading ? "このiPhoneの写真を確認中" : "このiPhoneの写真を再確認")
+                    Text(isLoading ? "写真を読み込んでいます" : "もう一度読み込む")
                 }
                 .font(.subheadline)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -3871,7 +3871,7 @@ private struct MomentSentPhotoDetail: View {
             }
             .buttonStyle(.bordered)
             .disabled(isLoading)
-            .accessibilityHint("送信時にこのiPhoneへ保存した写真を確認します")
+            .accessibilityHint("届けたときに保存した写真を、もう一度読み込みます")
             .accessibilityIdentifier("family-window-sent-detail-retry")
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -4220,13 +4220,13 @@ private struct MomentReportResponsesView: View {
                             }.accessibilityIdentifier("report-response-" + response.templateCode.rawValue)
                         }
                         if visible.isEmpty && !loading && !failed {
-                            Text("現在、表示できる返答はありません。")
+                            Text("まだ結果は届いていません。")
                                 .accessibilityIdentifier("report-responses-empty")
                         }
                     }
-                    if loading { ProgressView("返答を確認中") }
+                    if loading { ProgressView("読み込んでいます…") }
                     if failed {
-                        Text("返答を確認できませんでした。時間をおいて読み込み直してください。")
+                        Text("読み込めませんでした。少し待ってから、もう一度お試しください。")
                             .accessibilityIdentifier("report-responses-failed")
                     }
                     if hasMore && !loading && !failed && readWindowOpen && identity != nil {
@@ -4238,7 +4238,7 @@ private struct MomentReportResponsesView: View {
                         .accessibilityIdentifier("report-responses-reload")
                 }
             }
-            .navigationTitle("通報への返答")
+            .navigationTitle("通報の結果")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
         }

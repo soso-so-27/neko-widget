@@ -15,7 +15,7 @@ struct WidgetPhotoSource: AppEntity {
     static let officialWindow = WidgetPhotoSource(
         id: OfficialWindowCatalog.sourceID,
         name: "どこかの猫 · 公式のまど",
-        detail: "公開用に提供された猫の一枚"
+        detail: "運営から届く猫の写真"
     )
     static let familyWindowIDPrefix = "family-window:"
     static func publicWindow(_ definition: PublicWindowDefinition) -> WidgetPhotoSource {
@@ -73,14 +73,14 @@ struct WidgetPhotoSource: AppEntity {
             if let profile = CloudyWindowStore.shared.profiles().first(where: { $0.id == profileID }) {
                 return WidgetPhotoSource(id: id, name: profile.name, detail: "この子のくもりのまど")
             }
-            return WidgetPhotoSource(id: id, name: "利用できないまど", detail: "ウィジェットを編集してください")
+            return WidgetPhotoSource(id: id, name: "使えなくなったまど", detail: "別のまどを選んでください")
         }
         if let windowID = PublicWindowDefinition.windowID(from: id) {
             if let definition = OfficialWindowConfiguration.definition(for: windowID) {
                 return publicWindow(definition)
             }
             // A retired public source must never become the personal-library default.
-            return WidgetPhotoSource(id: id, name: "利用できないまど", detail: "ウィジェットを編集してください")
+            return WidgetPhotoSource(id: id, name: "使えなくなったまど", detail: "別のまどを選んでください")
         }
         if id == personalLibraryID { return .personalLibrary }
         if id == familyWindowID { return .familyWindow }
@@ -88,7 +88,7 @@ struct WidgetPhotoSource: AppEntity {
             // Same rule as a removed two-person window: never fall back to
             // this iPhone's personal photos.
             guard let entry = GroupWidgetCache.entry(windowID: groupWindowID) else {
-                return WidgetPhotoSource(id: id, name: "利用できないまど", detail: "ウィジェットを編集してください")
+                return WidgetPhotoSource(id: id, name: "使えなくなったまど", detail: "別のまどを選んでください")
             }
             return groupWindow(entry)
         }
@@ -104,8 +104,8 @@ struct WidgetPhotoSource: AppEntity {
         // to this iPhone's personal photos.
         return WidgetPhotoSource(
             id: id,
-            name: "利用できないまど",
-            detail: "ウィジェットを編集してください"
+            name: "使えなくなったまど",
+            detail: "別のまどを選んでください"
         )
     }
 
@@ -204,7 +204,7 @@ struct WidgetPhotoSourceQuery: EntityQuery {
 struct NekoWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "表示する写真を選ぶ"
     static var description = IntentDescription(
-        "このiPhoneの猫写真、または利用できるまどに届いた一枚を選びます。"
+        "このiPhoneの猫写真か、まどに届いた写真を選びます。"
     )
     // This intent belongs to WidgetKit's edit UI, not Siri or Shortcuts.
     static var isDiscoverable = false

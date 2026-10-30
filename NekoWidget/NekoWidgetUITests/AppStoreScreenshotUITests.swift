@@ -303,7 +303,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The local-only Photos privacy page did not finish preparing.", application: app)
             return
         }
-        guard app.staticTexts["・写真や動画を開発者のサーバーへ自動送信しません"].exists else {
+        guard app.staticTexts["・写真や動画を、勝手にiPhoneの外へ送りません"].exists else {
             fail("The disabled-build privacy statement was not visible.", application: app)
             return
         }

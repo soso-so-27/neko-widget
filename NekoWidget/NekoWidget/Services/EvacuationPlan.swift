@@ -29,10 +29,10 @@ struct EvacuationCat: Codable, Equatable, Identifiable {
     var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "名前未設定の猫" : name }
     var medicalText: String {
         switch medicalStatus {
-        case .unknown: "病歴・薬は不明・未確認"
+        case .unknown: "病歴・薬は書いていません"
         case .none: "病歴・薬はなし（飼い主の記入）"
         case .recorded: medicalDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "病歴・薬あり。詳しい内容は飼い主に確認" : medicalDetails
+            ? "病歴・薬があります。くわしくは飼い主に聞いてください。" : medicalDetails
         }
     }
 }
@@ -133,9 +133,9 @@ enum EvacuationStorageError: LocalizedError {
     case invalidRecord, unreadable, photoUnavailable, tooLarge
     var errorDescription: String? {
         switch self {
-        case .invalidRecord, .unreadable: "保存した備えを読み込めません。元の記録は変更していません。"
-        case .photoUnavailable: "保存した写真を開けません。写真を選び直してください。"
-        case .tooLarge: "記録の量が上限を超えています。長い記録を分けてください。"
+        case .invalidRecord, .unreadable: "避難の備えを開けませんでした。書いた内容は消えていません。"
+        case .photoUnavailable: "写真を開けませんでした。もう一度選んでください。"
+        case .tooLarge: "内容が長すぎます。長い欄を短くしてください。"
         }
     }
 }

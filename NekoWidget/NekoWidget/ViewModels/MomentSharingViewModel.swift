@@ -226,7 +226,7 @@ final class MomentSharingViewModel: ObservableObject {
                 errorMessage = synchronizationMessage
             } else if !synchronizationSucceeded {
                 errorMessage = preliminaryFailureMessage
-                    ?? "写真の共有状況を更新できませんでした。時間をおいて、もう一度確認してください。"
+                    ?? "最新の写真を読み込めませんでした。少し待ってから、もう一度お試しください。"
             } else {
                 errorMessage = nil
             }
@@ -243,11 +243,11 @@ final class MomentSharingViewModel: ObservableObject {
                     && errorMessage == nil
                 if !synchronizationSucceeded {
                     manualRefreshMessage =
-                        "更新できませんでした。時間をおいて、もう一度確認してください。"
+                        "読み込めませんでした。少し待ってから、もう一度お試しください。"
                 } else {
                     manualRefreshMessage = errorMessage == nil
-                        ? "まどの写真を確認しました。"
-                        : "更新しました。画面の案内を確認してください。"
+                        ? "最新の写真を読み込みました。"
+                        : "読み込みました。画面のお知らせを見てください。"
                 }
             }
         }
@@ -262,7 +262,7 @@ final class MomentSharingViewModel: ObservableObject {
             if isManual {
                 manualRefreshCompletedAt = .now
                 manualRefreshSucceeded = false
-                manualRefreshMessage = "更新できませんでした。時間をおいて、もう一度確認してください。"
+                manualRefreshMessage = "読み込めませんでした。少し待ってから、もう一度お試しください。"
             }
         }
     }
@@ -388,7 +388,7 @@ final class MomentSharingViewModel: ObservableObject {
                   admission.bindingSHA256 == confirmedDestination.bindingSHA256,
                   admission.displayName == confirmedDestination.displayName
             else {
-                errorMessage = "届け先の状態が変わりました。写真を選び直してください。"
+                errorMessage = "届け先のまどが変わりました。写真を選び直してください。"
                 isPerformingAction = false
                 return false
             }
@@ -545,7 +545,7 @@ final class MomentSharingViewModel: ObservableObject {
             } else if heartOutboxItem(for: item) == nil {
                 errorMessage = "この写真にはハートを送れませんでした。"
             } else {
-                showHeartActionMessage("ハートは送信待ちです")
+                showHeartActionMessage("ハートはあとで届きます")
             }
             if heartOutboxItem(for: item) != nil {
                 errorMessage = nil
@@ -704,13 +704,13 @@ final class MomentSharingViewModel: ObservableObject {
             )
             errorMessage = nil
             try reload()
-            showMemoryActionMessage("写真を取り込み、お気に入りに追加しました")
+            showMemoryActionMessage("写真アプリに保存して、お気に入りに追加しました")
         } catch {
             memoryActionMessage = nil
             errorMessage = photosWriteCompleted
-                ? "写真アプリへの保存は完了しました。お気に入りの登録確認に失敗したため、写真は再コピーせず次回に復旧確認します。"
+                ? "写真アプリには保存しました。お気に入りに入っていなければ、もう一度追加してください（写真は二重に保存されません）。"
                 : ((error as? LocalizedError)?.errorDescription
-                    ?? "お気に入りへ取り込めませんでした。時間をおいて、もう一度お試しください。")
+                    ?? "お気に入りに追加できませんでした。少し待ってから、もう一度お試しください。")
             SharedLog.app.warning(
                 "saved-moment",
                 "Received moment bookmark could not be changed",
@@ -864,7 +864,7 @@ final class MomentSharingViewModel: ObservableObject {
 
     func reportActionTitle(_ item: MomentInboxItem, hidden: Bool = false) -> String {
         if hasReported(item) { return "通報済み" }
-        if reportDeliveryIsUnknown(item) { return "通報結果を確認できません" }
+        if reportDeliveryIsUnknown(item) { return "通報が届いたか分かりません" }
         return hidden ? "表示せずに通報" : "通報"
     }
 
@@ -876,9 +876,9 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func reportStatusText(_ item: MomentInboxItem) -> String? {
-        if hasReported(item) { return "通報を受け付けました" }
+        if hasReported(item) { return "通報しました" }
         if reportDeliveryIsUnknown(item) {
-            return "通報結果を確認できません（重複を避けるため再送しません）"
+            return "通報が届いたか分かりません（二重にならないよう、自動では送り直しません）"
         }
         return nil
     }
@@ -1161,9 +1161,9 @@ final class MomentSharingViewModel: ObservableObject {
     ) -> String? {
         switch notice {
         case .inboundModerationDisabled:
-            return "受け取った写真の安全確認を待っています。このiPhoneで「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにし、「\(windowDisplayName)」を更新してください。写真はまだ表示せず、受取確認も送っていません。"
+            return "届いた写真を表示するには、iPhoneの「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてから、「\(windowDisplayName)」をもう一度読み込んでください。"
         case .inboundModerationUnavailable:
-            return "受け取った写真の安全確認を完了できませんでした。写真はまだ表示せず、受取確認も送っていません。少し待ってから「\(windowDisplayName)」を更新してください。"
+            return "届いた写真の安全確認ができませんでした。少し待ってから「\(windowDisplayName)」をもう一度読み込んでください。"
         case nil:
             return nil
         }
@@ -1172,20 +1172,20 @@ final class MomentSharingViewModel: ObservableObject {
     private nonisolated static func userFacingMessage(for error: Error) -> String {
         if let momentError = error as? MomentSharingError {
             return momentError.errorDescription
-                ?? "写真共有の処理を完了できませんでした。時間をおいて、もう一度お試しください。"
+                ?? "うまくいきませんでした。少し待ってから、もう一度お試しください。"
         }
         if let bootstrapError = error as? PairingInstallationGuard.RetryableBootstrapError {
             return bootstrapError.errorDescription
-                ?? "共有の状態を一時的に確認できませんでした。時間をおいて、もう一度お試しください。"
+                ?? "まどを読み込めませんでした。少し待ってから、もう一度お試しください。"
         }
         if let pairingError = error as? PairingError {
             return pairingError.errorDescription
-                ?? "共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
+                ?? "まどを読み込めませんでした。少し待ってから、もう一度お試しください。"
         }
         if error is URLError {
-            return "通信を完了できませんでした。接続を確認すると自動で再試行します。"
+            return "インターネットにつながりませんでした。つながると自動でもう一度試します。"
         }
-        return "写真共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
+        return "まどを読み込めませんでした。少し待ってから、もう一度お試しください。"
     }
 
     private nonisolated static func presentationPhase(

@@ -32,9 +32,9 @@ struct CatCandidateCurationView: View {
             Section {
                 if excludedPhotos.isEmpty {
                     ContentUnavailableView(
-                        "除外した写真はありません",
+                        "外した写真はありません",
                         systemImage: "cat",
-                        description: Text("写真を開いた「…」や、アルバムの長押しから「猫の写真から外す」を選べます。")
+                        description: Text("写真の「…」や、アルバムで写真を長押しして「猫の写真から外す」を選ぶと外せます。")
                     )
                     .frame(maxWidth: .infinity, minHeight: 230)
                     .listRowBackground(Color.clear)
@@ -51,7 +51,7 @@ struct CatCandidateCurationView: View {
                         showsRestoreAllConfirmation = true
                     } label: {
                         Label(
-                            isRestoringAll ? "復元中…" : "すべて猫の写真に戻す",
+                            isRestoringAll ? "戻しています…" : "すべて猫の写真に戻す",
                             systemImage: "arrow.uturn.backward.circle"
                         )
                     }
@@ -60,13 +60,13 @@ struct CatCandidateCurationView: View {
             } header: {
                 Text("猫の写真から外した写真")
             } footer: {
-                Text("ここでの除外や復元は、アプリの「写真」・ウィジェット・「自動アルバム」の候補だけに影響します。写真アプリの写真は削除・変更されません。")
+                Text("外した写真は、このアプリの写真・アルバム・ウィジェットに出なくなるだけです。写真アプリの写真は消えません。")
             }
         }
-        .navigationTitle(showsSourceSettings ? "写真の整理" : "除外した写真")
+        .navigationTitle(showsSourceSettings ? "写真の整理" : "外した写真")
         .task { await refreshSourceAlbums() }
         .confirmationDialog(
-            "除外した写真をすべて候補に戻しますか？",
+            "外した写真をすべて猫の写真に戻しますか？",
             isPresented: $showsRestoreAllConfirmation,
             titleVisibility: .visible
         ) {
@@ -79,7 +79,7 @@ struct CatCandidateCurationView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("写真アプリの写真自体は変更されません。")
+            Text("写真アプリの写真はそのままです。")
         }
     }
 
@@ -98,7 +98,7 @@ struct CatCandidateCurationView: View {
 
             if sourceStatus == .unavailable {
                 Label(
-                    "選択したアルバムを利用できません。対象を選び直すまで、以前の結果を保持します。",
+                    "選んだアルバムが見つかりません。選び直すまでは、前に見つけた写真を表示します。",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.footnote)
@@ -109,7 +109,7 @@ struct CatCandidateCurationView: View {
                 Button("写真を追加で選ぶ", action: chooseMorePhotos)
             }
         } header: {
-            Text("写真の対象・上級設定")
+            Text("どの写真から探すか")
         } footer: {
             Text("ふつうは写真全体から探します。アルバムを選ぶと、その中だけを探します。")
         }
@@ -122,7 +122,7 @@ struct CatCandidateCurationView: View {
         case let .selected(album):
             album.title
         case .unavailable:
-            "利用できません"
+            "見つかりません"
         }
     }
 }
@@ -144,7 +144,7 @@ private struct ExcludedCatPhotoRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(photo.creationDate?.formatted(.dateTime.year().month().day()) ?? "撮影日不明")
                     .font(.subheadline.weight(.semibold))
-                Text("除外：\(photo.excludedAt.formatted(.dateTime.year().month().day()))")
+                Text("外した日：\(photo.excludedAt.formatted(.dateTime.year().month().day()))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -176,7 +176,7 @@ struct PhotoSourceAlbumSelectionView: View {
                 Section {
                     if status == .unavailable {
                         Label(
-                            "選択したアルバムを利用できません。対象を選び直すまで、以前の結果を保持します。",
+                            "選んだアルバムが見つかりません。選び直すまでは、前に見つけた写真を表示します。",
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .font(.footnote)
@@ -191,7 +191,7 @@ struct PhotoSourceAlbumSelectionView: View {
                 sourceButton(
                     identifier: nil,
                     title: "すべての写真",
-                    subtitle: "写真ライブラリ全体",
+                    subtitle: "アルバムを選ばずに、全体から探します",
                     isSelected: status == .allLibrary
                 )
 
@@ -199,18 +199,18 @@ struct PhotoSourceAlbumSelectionView: View {
                     sourceButton(
                         identifier: album.localIdentifier,
                         title: album.title,
-                        subtitle: "アクセス可能な写真 \(album.accessibleAssetCount.formatted())枚",
+                        subtitle: "写真 \(album.accessibleAssetCount.formatted())枚",
                         isSelected: selectedIdentifier == album.localIdentifier
                     )
                 }
 
                 if albums.isEmpty {
-                    Text("選べるユーザー作成アルバムがありません。写真アプリでアルバムを作るか、写真へのアクセス範囲を確認してください。")
+                    Text("選べるアルバムがありません。写真アプリでアルバムを作るか、写真へのアクセスを見直してください。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } footer: {
-                Text("対象を変えると、写真を探し直します。選んだアルバムが消えたときは、前の結果を残します。")
+                Text("対象を変えると、写真を探し直します。選んだアルバムが見つからないときは、前に見つけた写真を残します。")
             }
         }
         .navigationTitle("写真の対象")

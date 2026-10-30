@@ -55,7 +55,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .createWindow: "まどを作るのは、Plusの機能です。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
         case .continueFamily: "家族の手帳は、家族の誰か1人のPlusで続きます。"
-        case .preservation: "保存は、Plusの機能です。"
+        case .preservation: "写真やメモの保存は、Plusの機能です。"
         }
     }
 
@@ -102,12 +102,12 @@ struct MembershipOfferPresentation: Equatable {
     static func monthly(displayPrice: String, trialPeriod: String?, isPreview: Bool) -> Self {
         let price = "月額\(displayPrice)"
         guard let trialPeriod else {
-            return Self(priceText: price, renewalText: "1か月ごとに自動更新されます。",
+            return Self(priceText: price, renewalText: "1か月ごとに自動で更新されます。次の更新日の24時間前までに解約すれば、次の料金はかかりません。",
                         trialText: nil, purchaseTitle: "Plusを始める（\(price)）",
                         afterTrialText: nil, isPreview: isPreview)
         }
         return Self(priceText: price,
-                    renewalText: "無料期間が終わると、1か月ごとに自動更新されます。終わる前にやめれば請求されません。",
+                    renewalText: "無料期間が終わると、1か月ごとに自動で更新されます。無料期間が終わる24時間前までに解約すれば、料金はかかりません。",
                     trialText: "\(trialPeriod)無料", purchaseTitle: "\(trialPeriod)無料で始める",
                     afterTrialText: "その後は\(price)", isPreview: isPreview)
     }
@@ -210,17 +210,17 @@ final class MembershipOfferModel: ObservableObject {
             if result == .completed { isWaiting = false }
         case .waiting:
             isWaiting = true
-            message = "購入の確認を待っています。追加の申し込みはせず、あとで購入を復元してください。"
+            message = "Appleでの購入手続きが終わるのを待っています。もう一度購入せずに、しばらくしてから「購入を復元」を押してください。"
         case .nothingToRestore:
-            message = "有効な購入が見つかりませんでした。購入時のApple Accountをご確認ください。"
+            message = "Plusの購入が見つかりませんでした。購入したときと同じApple Accountでサインインしているか確かめてください。"
         case .unavailable:
-            message = "現在、購入手続きを利用できません。写真やメモはそのままです。"
+            message = "いまは購入できません。写真やメモはそのままです。"
         case .failed:
             message = restoring
                 ? "購入を確認できませんでした。写真やメモはそのままです。"
-                : "申し込みを確認できませんでした。購入を復元して状況を確認できます。"
+                : "購入できたか確認できませんでした。「購入を復元」で確かめられます。"
         case .offerChanged:
-            message = "料金または無料期間の情報が更新されました。表示内容を確認してからお申し込みください。"
+            message = "料金か無料期間が変わりました。表示を確かめてから、もう一度お申し込みください。"
         }
     }
 
@@ -327,11 +327,11 @@ final class MembershipOfferModel: ObservableObject {
         } else if isWaiting {
             purchaseTitle = "購入の確認待ちです"
             message = purchases?.pendingProductID != nil || fixtureStatus == .applePending
-                ? "Appleの購入確認を待っています。追加の申し込みはしないでください。"
-                : "購入の確認を待っています。追加の申し込みはせず、購入状況を再確認してください。"
+                ? "Appleでの購入手続きが終わるのを待っています。もう一度購入しないでください。"
+                : "購入の確認を待っています。もう一度購入せずに、「購入状況を再確認」を押してください。"
         } else if verificationRequired {
             purchaseTitle = "購入状況の確認が必要です"
-            message = "購入状況を確認できません。追加の申し込みはせず、購入状況を再確認してください。"
+            message = "購入状況を確認できません。もう一度購入せずに、「購入状況を再確認」を押してください。"
         } else {
             purchaseTitle = nil
             message = nil

@@ -271,7 +271,7 @@ struct NekoWidgetView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("ハートを送る")
-            .accessibilityHint("アプリを開かずに送信します")
+            .accessibilityHint("アプリを開かずに送ります")
         case .pending:
             Button(
                 intent: SendFamilyWidgetHeartIntent(
@@ -282,13 +282,13 @@ struct NekoWidgetView: View {
                 heartMark(status: .pending)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("ハートは送信待ちです")
-            .accessibilityHint("押すとアプリを開かずに再試行します")
+            .accessibilityLabel("ハートはまだ送れていません")
+            .accessibilityHint("押すと、もう一度送ります")
         case .serverAccepted:
             heartMark(status: .serverAccepted)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("ハートを送りました")
-                .accessibilityHint("相手が確認したことを示す表示ではありません")
+                .accessibilityHint("相手が見たかどうかは分かりません")
         case .hidden:
             unavailableHeartSlot
         }
@@ -339,14 +339,14 @@ struct NekoWidgetView: View {
                 memoryMark(isSelected: true)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("お気に入りの写真")
-                    .accessibilityHint("外すときはアプリのお気に入りから行えます")
+                    .accessibilityHint("アプリのお気に入りから外せます")
             } else if entry.isBookmarkInteractionEnabled,
                       let memoryActionURL = entry.memoryActionURL {
                 Link(destination: memoryActionURL) {
                     memoryMark(isSelected: false)
                 }
                 .accessibilityLabel("お気に入りに追加")
-                .accessibilityHint("アプリを開いて、写真アプリへの保存を確認します")
+                .accessibilityHint("アプリを開いて、お気に入りに追加します")
             } else {
                 // Keep the caption centered when the target cannot be checked.
                 unavailableHeartSlot
@@ -376,7 +376,7 @@ struct NekoWidgetView: View {
                         memoryMark(isSelected: true)
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("お気に入りの写真")
-                            .accessibilityHint("解除はアプリのお気に入りから確認して行えます")
+                            .accessibilityHint("アプリのお気に入りから外せます")
                     } else {
                         Button(
                             intent: ToggleWidgetLikeIntent(
@@ -425,8 +425,8 @@ struct NekoWidgetView: View {
                 dailyPersonalPhotoMark(isUsed: true)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("今日はめくりました")
-            .accessibilityHint("この一枚を翌日まで表示します")
+            .accessibilityLabel("きょうはめくりました")
+            .accessibilityHint("あしたまで、この写真を表示します")
             .accessibilityIdentifier("personal-widget-turned")
         case .unavailable:
             EmptyView()
@@ -552,12 +552,12 @@ struct NekoWidgetView: View {
 
     private var emptyStateTitle: String {
         if let windowID = PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) {
-            guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return "このまどは利用できません" }
+            guard let definition = OfficialWindowConfiguration.definition(for: windowID) else { return "このまどは表示できません" }
             if definition.endpoint == nil { return "公式のまどを準備中" }
             return OfficialWindowStore.forWindow(definition).snapshot().isSubscribed ? "いま届いている写真はありません" : definition.displayName
         }
         if effectiveEmptyStateReason == .sourceUnavailable {
-            return "このまどは利用できません"
+            return "このまどは表示できません"
         }
         if effectiveEmptyStateReason == .needsApp {
             if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "くもりのまどを準備しています" }

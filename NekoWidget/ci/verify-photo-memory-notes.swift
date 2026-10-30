@@ -377,7 +377,7 @@ enum PhotoMemoryNoteVerifier {
         let retained = try await store.note(for: "photo-a")
         try require(retained == first, "failed write published a new revision")
         try manager.setAttributes([.posixPermissions: NSNumber(value: 0o700)], ofItemAtPath: directory.path)
-        let retry = try await saved(store, text: "もう一度保存", id: "photo-a", revision: first.revision)
+        let retry = try await saved(store, text: "もう一度保存する", id: "photo-a", revision: first.revision)
         let reread = try await PhotoMemoryNoteStore(fileURL: url).note(for: "photo-a")
         let untouched = try await store.note(for: "photo-b")
         try require(reread == retry && untouched == other, "retry did not preserve unrelated notes")

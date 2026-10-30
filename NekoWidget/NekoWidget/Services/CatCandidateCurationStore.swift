@@ -8,9 +8,9 @@ enum CatCandidateCurationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .unsupportedSchema(version):
-            "除外設定の保存形式（\(version)）をこのアプリでは読み込めません。"
+            "外した写真の一覧を読み込めません（形式 \(version)）。アプリをアップデートしてください。"
         case .selectedSourceUnavailable:
-            "選択した写真アルバムを利用できません。設定から写真の対象を選び直してください。"
+            "選んだアルバムが見つかりません。設定で写真の対象を選び直してください。"
         }
     }
 }
@@ -21,7 +21,7 @@ enum CatProfilePhotoAlbumError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unavailable:
-            "選択した写真アルバムを利用できません。写真へのアクセス範囲を確認するか、別のアルバムを選んでください。"
+            "選んだアルバムを開けません。写真へのアクセスを見直すか、別のアルバムを選んでください。"
         }
     }
 }
@@ -225,6 +225,6 @@ enum PhotoSourceAlbumCatalog {
 
     private static func normalizedTitle(_ input: String?) -> String {
         let value = input?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return value.isEmpty ? "名称未設定のアルバム" : value
+        return value.isEmpty ? "名前のないアルバム" : value
     }
 }

@@ -36,7 +36,7 @@ enum ShowcaseOpenTarget: String, AppEnum {
 
 struct OpenShowcaseIntent: OpenIntent {
     static var title: LocalizedStringResource = "うちのこを見せる"
-    static var description = IntentDescription("準備した猫の写真だけを開きます。")
+    static var description = IntentDescription("選んでおいた猫の写真だけを開きます。")
 
     @Parameter(title: "開く写真") var target: ShowcaseOpenTarget
 

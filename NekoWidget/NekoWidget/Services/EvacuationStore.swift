@@ -59,7 +59,7 @@ final class EvacuationStore: ObservableObject {
             pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return true
         } catch {
-            saveError = "変更を保存できませんでした。空き容量を確認して再試行してください。"
+            saveError = "保存できませんでした。空き容量を確かめて、もう一度お試しください。"
             return false
         }
     }
@@ -89,7 +89,7 @@ final class EvacuationStore: ObservableObject {
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return true
         } catch {
-            saveError = "登録した猫とのつながりを保存できませんでした。もう一度保存してから、猫を選び直してください。"
+            saveError = "猫を選べませんでした。「もう一度保存する」を押してから、選び直してください。"
             return false
         }
     }
@@ -137,7 +137,7 @@ final class EvacuationStore: ObservableObject {
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return cat.id
         } catch {
-            saveError = "猫の情報を保存できませんでした。元の記録は残っています。もう一度保存してから、この子を選び直してください。"
+            saveError = "この子を追加できませんでした。「もう一度保存する」を押してから、選び直してください。"
             return nil
         }
     }
@@ -241,34 +241,34 @@ final class EvacuationStore: ObservableObject {
         let needed = plan.supplies.filter(\.isNeeded)
         let supplies = needed.map { item -> (String, String) in
             let owner = plan.cats.first { $0.id == item.catID }.map { "（\($0.displayName)）" } ?? ""
-            let title = (trimmed(item.title).isEmpty ? "名前未設定の持ち物" : item.title) + owner
-            let detail = [item.quantity, item.location.isEmpty ? "置き場所は未設定" : item.location]
+            let title = (trimmed(item.title).isEmpty ? "名前のない持ち物" : item.title) + owner
+            let detail = [item.quantity, item.location.isEmpty ? "置き場所は未記入" : item.location]
                 .filter { !$0.isEmpty }.joined(separator: "・")
             return ("□ " + title, detail)
         }
         var places: [(String, String)] = plan.destinations.map { place in
             let lines = [
-                trimmed(place.conditions).isEmpty ? nil : "受入条件：" + place.conditions,
+                trimmed(place.conditions).isEmpty ? nil : "受け入れの条件：" + place.conditions,
                 trimmed(place.telephone).isEmpty ? nil : "電話：" + place.telephone,
-                "確認日：" + (place.checkedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認")
+                "確かめた日：" + (place.checkedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認")
             ].compactMap { $0 }
             return (trimmed(place.name).isEmpty ? "行き先の候補" : place.name, lines.joined(separator: "\n"))
         }
         let household = CatCareStore.shared.state?.household
         let meeting = household?.meetingPlace == nil ? trimmed(plan.familyMeetingMemo) : trimmed(household?.meetingPlace?.value)
-        if !meeting.isEmpty { places.append(("家族の集合メモ", meeting)) }
+        if !meeting.isEmpty { places.append(("家族の集合場所と連絡方法", meeting)) }
         let contact = trimmed(plan.contact).isEmpty ? trimmed(household?.ownerContact?.value) : plan.contact
         if !contact.isEmpty { places.append(("飼い主の連絡先", contact)) }
-        if !trimmed(household?.backupContact?.value).isEmpty { places.append(("予備の連絡先", trimmed(household?.backupContact?.value))) }
+        if !trimmed(household?.backupContact?.value).isEmpty { places.append(("つながらないときの連絡先", trimmed(household?.backupContact?.value))) }
         if let vet = household?.vet?.value, !vet.isEmpty {
             places.append(("かかりつけ病院", [vet.name, vet.phone].filter { !$0.isEmpty }.joined(separator: " ")))
         }
         var records = [
             EvacuationShareRecord(name: "持ち出すもの（\(needed.count)）", photos: [],
-                fields: supplies.isEmpty ? [("持ち物", "未設定")] : supplies, reviewedAt: nil,
+                fields: supplies.isEmpty ? [("持ち物", "まだありません")] : supplies, reviewedAt: nil,
                 includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false),
             EvacuationShareRecord(name: "行き先と連絡先", photos: [],
-                fields: places.isEmpty ? [("行き先", "未設定")] : places, reviewedAt: nil,
+                fields: places.isEmpty ? [("行き先", "まだありません")] : places, reviewedAt: nil,
                 includesPrivateInformation: true, heading: "避難の備え", showsReviewDate: false)
         ]
         // The owner's own copy: everything, chip and proofs included.

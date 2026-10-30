@@ -69,7 +69,7 @@ struct InitialScanView: View {
                                 : "このiPhoneの猫写真を探しています")
                                 .font(.title3.weight(.semibold))
                             Text(scan.isPreparingGroupedAlbums
-                                ? "いっしょ・おでかけなどに必要な情報を、端末内で確認しています。"
+                                ? "「人といっしょ」「おでかけ」などのアルバムを作っています。"
                                 : "まず新しい写真500枚を調べます。")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -200,9 +200,9 @@ struct InitialScanView: View {
                             ? Double(quickScanned) / Double(quickTotal)
                             : 0
                     )
-                    Text("最新 \(quickScanned.formatted()) / \(quickTotal.formatted())枚を確認中")
+                    Text("新しい写真 \(quickScanned.formatted()) / \(quickTotal.formatted())枚を調べています")
                         .font(.caption.monospacedDigit())
-                    Text("これは速報値です。全件の確定値は引き続き計算します。")
+                    Text("今見つかっている数です。すべて調べ終えると変わることがあります。")
                         .font(.caption)
                         .multilineTextAlignment(.center)
                 }
@@ -334,7 +334,7 @@ private struct ResultBadge: View {
 
     private var label: String {
         if !isFinal { return "探している途中" }
-        return deferredAssets > 0 ? "読めた分は済み" : "探し終えた"
+        return deferredAssets > 0 ? "読める分は探し終えた" : "探し終えた"
     }
 
     var body: some View {

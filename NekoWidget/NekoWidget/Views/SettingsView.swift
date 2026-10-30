@@ -266,7 +266,7 @@ struct SettingsView: View {
             Section {
                 if let url = AppPublicLinksConfiguration.current.supportURL {
                     Link(destination: url) {
-                        ExternalLinkRow("サポート・問い合わせ", systemImage: "questionmark.circle")
+                        ExternalLinkRow("お問い合わせ", systemImage: "questionmark.circle")
                     }
                     .accessibilityIdentifier("settings-support-page")
                 }
@@ -289,7 +289,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-group-hidden-members")
                 }
             } header: {
-                Text("困ったとき")
+                Text("サポート")
             } footer: {
                 // Read-only facts live in the footer, not in a row that looks tappable.
                 Text("ねこのまど バージョン \(appVersion)・iOS 17.1以上")
@@ -442,8 +442,8 @@ struct SettingsView: View {
     }
 
     private var photoSettingsSummary: String {
-        guard hasPhotoAccess else { return "未許可" }
-        let access = isLimitedAccess ? "選択した写真" : "許可済み"
+        guard hasPhotoAccess else { return "許可していません" }
+        let access = isLimitedAccess ? "選んだ写真だけ" : "すべての写真"
         return "\(access)・\(settings.range.rawValue)"
     }
 
@@ -454,7 +454,7 @@ struct SettingsView: View {
             if ManagedPreservationConfiguration.current.isEnabled {
                 Section {
                     NavigationLink { AppRecordSettingsView() } label: {
-                        Label("自動の保存", systemImage: "checkmark.icloud")
+                        Label("自動保存", systemImage: "checkmark.icloud")
                     }
                     .accessibilityIdentifier("settings-managed-preservation")
                     NavigationLink { RestoredToolsView() } label: {
@@ -462,9 +462,9 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-restored-tools")
                 } header: {
-                    Text("このiPhoneの保存")
+                    Text("Plusの保存")
                 } footer: {
-                    Text("Plus の保存です。猫の情報・メモ・ツールの入力を、このiPhoneの外にも残します。")
+                    Text("猫の情報・メモ・ツールに書いたことを、iPhoneの外にも保存します。")
                 }
             }
             Section {
@@ -478,7 +478,7 @@ struct SettingsView: View {
             } header: {
                 Text("別のiPhoneへ")
             } footer: {
-                Text("猫の名前・誕生日・写真の所属を、ファイルにして新しいiPhoneへ。")
+                Text("猫の名前・誕生日・どの写真がどの猫かを、ファイルにして新しいiPhoneへ移せます。")
             }
             Section {
                 NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
@@ -492,7 +492,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("自分で持つ")
+                Text("手元に残す")
             }
         }
         .navigationTitle("保存と引き継ぎ")
@@ -513,11 +513,11 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings-photo-permission")
                 }
             } header: {
-                Text("アクセス")
+                Text("写真へのアクセス")
             } footer: {
                 Text(hasPhotoAccess
                      ? (isLimitedAccess ? "選んだ写真だけを使っています。" : "すべての写真を使えます。")
-                     : "写真へのアクセスがまだありません。")
+                     : "まだ写真へのアクセスを許可していません。")
             }
 
             Section {
@@ -552,7 +552,7 @@ struct SettingsView: View {
                     )
                 } label: {
                     LabeledContent(
-                        "除外した写真",
+                        "外した写真",
                         value: excludedCatPhotos.isEmpty
                             ? "なし"
                             : "\(excludedCatPhotos.count.formatted())枚"
@@ -572,7 +572,7 @@ struct SettingsView: View {
                     Label("写真アプリの「うちの子」アルバム", systemImage: "rectangle.stack.badge.plus")
                 }
                 // Which cat photos the Widget may show; the scan itself covers every photo.
-                Picker("まどに出す写真", selection: $draft.range) {
+                Picker("ウィジェットに出す写真", selection: $draft.range) {
                     ForEach(PhotoRangePresentation.allCases) { range in
                         Text(range.rawValue).tag(range)
                     }
@@ -596,7 +596,7 @@ struct SettingsView: View {
             } header: {
                 Text("困ったとき")
             } footer: {
-                Text("猫の写真が見つからない、見分けがおかしいと感じたときに。ふだんは、新しい写真は自動で探します。")
+                Text("猫の写真が見つからないときや、猫ではない写真が混ざるときに。ふだんは新しい写真を自動で探します。")
             }
 
             if isSaving {
@@ -904,9 +904,9 @@ struct SettingsView: View {
         case .allLibrary:
             "すべての写真"
         case .selected:
-            "アルバム指定"
+            "選んだアルバム"
         case .unavailable:
-            "対象を確認"
+            "見つかりません"
         }
     }
 
@@ -940,13 +940,13 @@ private struct PhotoLibraryAlbumSettingsView: View {
             Section {
                 Stepper(value: $albumLimit, in: 50...1_000, step: 50) {
                     LabeledContent(
-                        "写真アプリの「うちの子」の枚数上限",
+                        "アルバムに入れる最大枚数",
                         value: "\(albumLimit.formatted())枚"
                     )
                 }
 
                 if isSavingSettings {
-                    Label("枚数上限を保存しています…", systemImage: "arrow.triangle.2.circlepath")
+                    Label("枚数を保存しています…", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -961,7 +961,7 @@ private struct PhotoLibraryAlbumSettingsView: View {
             } header: {
                 Text("写真アプリの「うちの子」")
             } footer: {
-                Text("写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。上限を変えても、お気に入りの写真は消えません。")
+                Text("見つけた猫写真を、写真アプリのアルバムにまとめます（写真は複製しません）。枚数を変えても、お気に入りの写真は残ります。")
             }
 
             Section {
@@ -969,7 +969,7 @@ private struct PhotoLibraryAlbumSettingsView: View {
                     showsPhotoShuffleGuide = true
                 }
             } footer: {
-                Text("写真シャッフルはOS側の機能です。アルバム更新後は、壁紙側でアルバムを選び直す必要があります。")
+                Text("写真シャッフルはiPhoneの機能です。アルバムを更新したら、ロック画面の設定でアルバムを選び直してください。")
             }
         }
         .navigationTitle("写真アプリの「うちの子」アルバム")
@@ -983,7 +983,7 @@ private struct PhotoLibraryAlbumSettingsView: View {
     private var status: some View {
         switch state {
         case .idle:
-            Text("まだ写真アプリへ反映していません")
+            Text("まだアルバムを作っていません")
                 .foregroundStyle(.secondary)
         case .updating:
             HStack {
@@ -992,10 +992,10 @@ private struct PhotoLibraryAlbumSettingsView: View {
             }
         case let .ready(photoCount, updatedAt):
             VStack(alignment: .leading, spacing: 4) {
-                Label("\(photoCount.formatted())枚を反映しました", systemImage: "checkmark.circle.fill")
+                Label("\(photoCount.formatted())枚をアルバムに入れました", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                 if let updatedAt {
-                    Text("更新: \(updatedAt.formatted(.dateTime.month().day().hour().minute()))")
+                    Text("最後の更新：\(updatedAt.formatted(.dateTime.month().day().hour().minute()))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1009,7 +1009,7 @@ private struct PhotoLibraryAlbumSettingsView: View {
     private var updateTitle: String {
         switch state {
         case .idle: "アルバムを作る"
-        case .updating: "更新中"
+        case .updating: "更新しています…"
         case .ready: "アルバムを更新する"
         case .failed: "もう一度試す"
         }

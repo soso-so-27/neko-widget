@@ -274,13 +274,13 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 }
             }
             if !canShowRecords {
-                Label("接続を確認できません", systemImage: "wifi.exclamationmark")
+                Label("いまは写真を表示できません", systemImage: "wifi.exclamationmark")
                     .font(.subheadline).foregroundStyle(.secondary)
                     .accessibilityIdentifier("family-collection-unavailable")
             } else if model.error != nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(value.items.isEmpty && value.withdrawn.isEmpty
-                          ? "写真を読み込めませんでした" : "最新の写真を確認できませんでした",
+                          ? "写真を読み込めませんでした" : "新しい写真を読み込めませんでした",
                           systemImage: "wifi.exclamationmark")
                         .font(.subheadline).foregroundStyle(.secondary)
                         .accessibilityIdentifier("family-collection-load-failed")
@@ -291,16 +291,16 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 }
             } else if value.items.isEmpty && value.withdrawn.isEmpty && !model.loading && model.error == nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(hasImageLessHistory ? "写真の控えがありません" : "いまは写真がありません",
+                    Label(hasImageLessHistory ? "表示できる写真はありません" : "いまは写真がありません",
                           systemImage: "photo.on.rectangle")
                         .font(.headline)
                     Text(hasImageLessHistory
-                        ? "写真のない送信履歴で、以前の送信状況を確認できます。"
+                        ? "前に届けた記録は、写真なしで確かめられます。"
                         : canSendPhoto
                             ? "まどに届いた写真はここに並びます。下の「写真を届ける」から、1枚選んで届けられます。"
                             : addPhotoAction != nil
-                                ? "相手からの写真はここに届きます。＋から写真を1枚選び、相手と共有することもできます。"
-                                : "相手からの写真はここに届きます。")
+                                ? "相手から届いた写真は、ここに並びます。＋から写真を1枚選んで、このまどに追加することもできます。"
+                                : "相手から届いた写真は、ここに並びます。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -319,15 +319,15 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                 .accessibilityIdentifier("family-window-shared-photos")
                 ForEach(value.withdrawn) { row in
                     Button { destination = .record(row.id) } label: {
-                        Label("写真を取り下げたメモ", systemImage: "text.bubble")
+                        Label("写真が取り下げられたメモ", systemImage: "text.bubble")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }.accessibilityIdentifier("family-collection-withdrawn-\(row.id)")
                 }
             }
-            if model.loading { ProgressView("写真を確認中").font(.footnote) }
+            if model.loading { ProgressView("写真を読み込んでいます…").font(.footnote) }
             if exporter.preparing {
                 HStack {
-                    ProgressView("写真とメモを準備中")
+                    ProgressView("書き出しを準備しています…")
                     Spacer()
                     Button("取り消す") { exporter.cancelPreparation() }
                 }
@@ -351,7 +351,7 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     .disabled(exporter.preparing || exporter.payload != nil)
                     .accessibilityIdentifier("family-record-export")
                 }
-                Button("写真の共有と保存について", systemImage: "info.circle", action: showInformation)
+                Button("このまどの写真について", systemImage: "info.circle", action: showInformation)
                     .accessibilityIdentifier("family-window-shared-photo-info")
             } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
                 .accessibilityLabel("このまどの写真の操作")
@@ -495,8 +495,8 @@ private struct FamilyRecordSourceEditor: View {
                     Group {
                         if failed {
                             ContentUnavailableView("この写真を追加できません", systemImage: "photo",
-                                description: Text("まどの状態と写真を確認して、開き直してください。"))
-                        } else { ProgressView("写真を確認中") }
+                                description: Text("閉じてから、もう一度お試しください。"))
+                        } else { ProgressView("写真を読み込んでいます…") }
                     }
                     .toolbar { ToolbarItem(placement: .cancellationAction) {
                         Button("閉じる") { dismiss() }
@@ -778,10 +778,10 @@ struct FamilyRecordView: View {
                 if let error = model.error {
                     Section { Text(error); Button("もう一度読み込む") { Task { await model.reload() } } }
                 }
-                if model.loading { ProgressView("写真を確認中") }
+                if model.loading { ProgressView("写真を読み込んでいます…") }
                 if exporter.preparing {
                     Section {
-                        ProgressView("写真とメモを準備しています…")
+                        ProgressView("書き出しを準備しています…")
                         Button("書き出しを取り消す") { exporter.cancelPreparation() }
                     }
                 }
@@ -820,12 +820,12 @@ struct FamilyRecordView: View {
                                 .disabled(exporter.preparing || exporter.payload != nil)
                                 .accessibilityIdentifier("family-record-export")
                             }
-                            Button("写真の共有について", systemImage: "info.circle") { showingInformation = true }
+                            Button("このまどの写真について", systemImage: "info.circle") { showingInformation = true }
                                 .accessibilityIdentifier("family-record-information")
                         } label: { Label("写真の操作", systemImage: "ellipsis") }
                             .accessibilityIdentifier("family-record-menu")
                     } else {
-                        Button("写真の共有について", systemImage: "info.circle") { showingInformation = true }
+                        Button("このまどの写真について", systemImage: "info.circle") { showingInformation = true }
                             .accessibilityIdentifier("family-record-information")
                     }
                 }
@@ -859,15 +859,15 @@ struct FamilyRecordView: View {
                 .onDisappear { exportSheetPresented = false; exporter.finishSharing(value) }
         }
         .onDisappear { exporter.cancelPreparation() }
-        .confirmationDialog("この記録から取り下げますか？", isPresented: Binding(
+        .confirmationDialog("このまどから取り下げますか？", isPresented: Binding(
             get: { withdrawing != nil }, set: { if !$0 { withdrawing = nil } })) {
                 if let row = withdrawing {
                     Button("取り下げる", role: .destructive) { Task { await withdraw(row) } }
                 }
             } message: {
                 Text(withdrawing?.kind == .words
-                     ? "自分が書いたこのメモだけを取り下げます。写真や相手のメモは残ります。すでに個人保存されたコピーは回収できません。"
-                     : "写真を取り下げても、書かれたメモは残ります。相手がすでに個人保存したコピーは回収できません。")
+                     ? "このメモだけを取り下げます。写真や相手のメモは残ります。相手がすでに保存したものは消せません。"
+                     : "写真を取り下げても、メモは残ります。相手がすでに保存した写真は消せません。")
             }
     }
 
@@ -890,7 +890,7 @@ struct FamilyRecordView: View {
                 $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt
             }
             if photos.isEmpty && currentEntryID != nil {
-                Section { Text("この写真のメモを開けません。写真の詳細に戻って、もう一度お試しください。") }
+                Section { Text("このメモを開けません。写真に戻って、もう一度お試しください。") }
             } else if photos.isEmpty {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
@@ -953,7 +953,7 @@ struct FamilyRecordView: View {
             }
         }
         if !withdrawnPhotos.isEmpty {
-            Section("写真を取り下げた記録") {
+            Section("取り下げた写真") {
                 ForEach(withdrawnPhotos) { photo in
                     Button { selectedEntryID = photo.id } label: {
                         HStack(spacing: 12) {
@@ -1060,20 +1060,20 @@ struct FamilyRecordView: View {
                     Text("自分が書いたメモは編集・取り下げできます。相手のメモは変更できません。")
                     Text("写真を取り下げられるのは、追加した本人だけです。写真を取り下げても、二人が書いたメモは残ります。")
                 }
-                Section("共有を終了すると") {
-                    Text("共有を解除・ブロックすると、このまどの写真とメモは開けなくなります。退出だけで追加済みの写真とメモが自動削除されるわけではありません。")
+                Section("このまどをやめると") {
+                    Text("このまどをやめたり、相手をブロックしたりすると、このまどの写真とメモは開けなくなります。それだけで、追加した写真とメモが消えるわけではありません。")
                         .accessibilityIdentifier("family-record-ending-explanation")
-                    Text("取り下げたい自分の写真やメモは、共有を終了する前に操作してください。相手がすでに保存したコピーは回収できません。")
+                    Text("自分の写真やメモを消したいときは、やめる前に取り下げてください。相手がすでに保存したものは消せません。")
                 }
-                Section("写真の保管と引き継ぎ") {
-                    Text("新しくまどに追加した写真とメモを、一緒に保管します。一覧の日付は、まどへ追加した日です。鑑賞用の写真コピーなので、写真アプリの原本はそのままにしてください。")
-                    Text("参加資格と共有鍵がある端末で利用します。二人のすべての端末を失ったときの復元や、無期限の保存には対応していません。")
+                Section("写真の保存について") {
+                    Text("まどに追加した写真とメモは、ここに残ります。日付は、まどに追加した日です。ここの写真は見るためのコピーなので、元の写真は写真アプリに残しておいてください。")
+                    Text("このまどに参加しているiPhoneで見られます。二人ともiPhoneをなくすと元に戻せず、いつまでも残せるわけでもありません。")
                 }
                 Section("残せる量") {
-                    Text("一つのまどに写真100件・メモ1,000件までです。取り下げ済みの記録も件数に含みます。上限に達しても、古い記録を自動で消すことはありません。")
+                    Text("1つのまどに、写真100枚・メモ1,000件まで残せます。取り下げたものも数に入ります。いっぱいになっても、古いものが消えることはありません。")
                 }
             }
-            .navigationTitle("写真の共有について")
+            .navigationTitle("このまどの写真について")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1091,7 +1091,7 @@ struct FamilyRecordView: View {
             if let mutation { try await model.client.save(mutation) }
             mutation = nil
             await model.reload()
-        } catch { model.error = "取り下げを確認できませんでした。再読み込みして現在の状態を確認してください。" }
+        } catch { model.error = "取り下げられたか確かめられませんでした。読み込み直してください。" }
     }
 }
 
@@ -1119,7 +1119,7 @@ private struct FamilyRecordPhoto: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             } else if let image, client.isVisible(entryID: row.entryID) {
                 Image(uiImage: image).resizable().scaledToFit()
-                    .accessibilityLabel("共有写真")
+                    .accessibilityLabel("まどの写真")
                     .accessibilityIdentifier("family-record-loaded-photo")
             }
             else { photoPlaceholder }
@@ -1203,21 +1203,21 @@ private struct FamilyRecordEditor: View {
                     }
                 }
                 if scenePhase == .active, !sourceUnavailable, let sourcePhoto, let caption = sourcePhoto.caption, !caption.isEmpty {
-                    Section(sourcePhoto.canReuseCaption ? "送った写真のメモ" : "相手が添えたメモ") {
+                    Section(sourcePhoto.canReuseCaption ? "届けた写真のメモ" : "相手が添えたメモ") {
                         Text(verbatim: caption).textSelection(.enabled)
                         if sourcePhoto.canReuseCaption {
                             Button("このメモを添える") { text = caption }
                                 .disabled(busy || prepared || !text.isEmpty)
                                 .accessibilityIdentifier("family-record-reuse-caption")
                         } else {
-                            Text("相手のメモは参照のみです。ここから自分のメモとして追加されることはありません。")
+                            Text("相手のメモは見るだけです。自分のメモとして追加されることはありません。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
                 Section(target == nil ? "メモ（任意）" : "自分のメモ") {
                     PhotoNoteInput(text: $text, focus: $focused, maximumCharacters: 500,
-                        audience: "\(windowName)の相手と共有", identifier: "family-record-words-input")
+                        audience: "\(windowName)の相手にも見えます", identifier: "family-record-words-input")
                         .disabled(busy || prepared)
                     Text("この写真と、ここに書いたメモだけを共有します。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -1226,15 +1226,15 @@ private struct FamilyRecordEditor: View {
                         Text("この写真とメモをまどに残します。相手もあとから見返せます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if photoAdded { Text("写真は追加済みです。メモの追加を確認しています。") }
+                if photoAdded { Text("写真は追加しました。メモの追加はまだ終わっていません。") }
                 if sourceUnavailable {
-                    Text("写真またはまどの状態が変わりました。入力したメモはここに残っています。閉じて現在の状態を確認してください。")
+                    Text("写真かまどに変更があったため、追加できません。書いたメモはここに残っています。閉じてから、もう一度お試しください。")
                 }
                 if let message { Text(message).foregroundStyle(.red) }
                 if (prepared && message != nil) || sourceUnavailable {
-                    Button("入力したメモをコピー") { UIPasteboard.general.string = text }
+                    Button("メモをコピー") { UIPasteboard.general.string = text }
                 }
-                Button(prepared ? "同じ操作を再確認" : (target?.row == nil ? "このまどに追加" : "メモの変更を共有")) { Task { await save() } }
+                Button(prepared ? "もう一度試す" : (target?.row == nil ? "このまどに追加" : "変更を保存")) { Task { await save() } }
                     .disabled(busy || sourceUnavailable || text.count > 500 || (target == nil ? photo == nil : text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                     .accessibilityIdentifier("family-record-save")
                 if busy { ProgressView() }
@@ -1290,11 +1290,11 @@ private struct FamilyRecordEditor: View {
         .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)
             .receive(on: DispatchQueue.main)) { _ in validateSource() }
         .interactiveDismissDisabled(busy || text != (target?.text ?? "") || !pending.isEmpty)
-        .confirmationDialog("入力を閉じますか？", isPresented: $showsDiscardConfirmation) {
-            Button("入力を破棄して閉じる", role: .destructive) { dismiss() }
-            Button("入力を続ける", role: .cancel) {}
+        .confirmationDialog("閉じますか？", isPresented: $showsDiscardConfirmation) {
+            Button("破棄して閉じる", role: .destructive) { dismiss() }
+            Button("編集を続ける", role: .cancel) {}
         } message: {
-            Text(prepared ? "確認できていない操作があります。追加済みの写真やメモは取り消されません。" : "まだ追加していないメモは保存されません。")
+            Text(prepared ? "まだ追加が終わっていないものがあります。追加済みの写真やメモは、閉じても残ります。" : "まだ追加していないメモは保存されません。")
         }
         .appRecordEditing(retainWhileHidden: text != (target?.text ?? "") || photoAdded || selection != nil || busy || !pending.isEmpty || picking)
     }
@@ -1330,12 +1330,12 @@ private struct FamilyRecordEditor: View {
         } catch {
             switch MomentOutboxRetryPolicy.supportErrorCode(for: error) {
             case MomentOutboxRetryPolicy.supportRequiredErrorCode:
-                message = "このまどへの追加はお休み中です。入力は残しています。届いている写真は引き続き見られます。"
+                message = "このまどのPlusが止まっているため、いまは追加できません。書いたメモは残っています。届いた写真はこれまでどおり見られます。"
             case MomentOutboxRetryPolicy.supportUnavailableErrorCode:
-                message = "送信条件を確認できませんでした。入力は残しています。再購入せず、あとで確認してください。"
+                message = "いまは追加できるか確かめられませんでした。書いたメモは残っています。Plusを買い直さずに、少し待ってから、もう一度お試しください。"
             default:
                 message = (error as? FamilyRecordError)?.errorDescription
-                    ?? "追加を確認できませんでした。入力を残しています。再確認しても同じ記録を重複追加しません。"
+                    ?? "追加できたか確かめられませんでした。書いたメモは残っています。もう一度試しても、二重に追加されることはありません。"
             }
         }
     }

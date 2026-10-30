@@ -415,12 +415,12 @@ struct LostCatPublicDraft {
     var message: String {
         var parts = ["猫を探しています。"]
         if !name.isEmpty { parts.append(name) }
-        if !features.isEmpty { parts.append("特徴: \(features)") }
-        if !collar.isEmpty { parts.append("首輪: \(collar)") }
-        parts.append("最後に見た場所: \(lastSeenNear)")
-        parts.append("日時: \(lastSeenDescription)")
+        if !features.isEmpty { parts.append("特徴：\(features)") }
+        if !collar.isEmpty { parts.append("首輪：\(collar)") }
+        parts.append("最後に見かけた場所：\(lastSeenNear)")
+        parts.append("日時：\(lastSeenDescription)")
         if !approachAdvice.isEmpty { parts.append(approachAdvice) }
-        parts.append("連絡先: \(contact)")
+        parts.append("連絡先：\(contact)")
         return parts.joined(separator: "\n")
     }
 }
@@ -670,7 +670,7 @@ enum LostCatFlyerRenderer {
                     "place": "場所を少し短くしてください。",
                     "features": "特徴を少し短くしてください。",
                     "collar": "首輪の説明を少し短くしてください。",
-                    "advice": "見つけた方への文を少し短くしてください。",
+                    "advice": "「見かけた方へ」を少し短くしてください。",
                     "contact": "連絡先を少し短くしてください。"
                 ][id]
             }
@@ -699,7 +699,7 @@ enum LostCatFlyerRenderer {
         var bottom = canvas.height - margin
         let lowerTextStart = texts.count
         let contactValue = draft.contact.trimmingCharacters(in: .whitespacesAndNewlines)
-        if contactValue.isEmpty { issues["contact"] = "公開する連絡先を入力してください。" }
+        if contactValue.isEmpty { issues["contact"] = "画像とチラシに載せる連絡先を入れてください。" }
         let contact = field("連絡先  \(contactValue)", id: "contact",
                             maxSize: paper ? (compact ? 18 : 26) : 48, minSize: paper ? 18 : 37,
                             lines: 3, weight: .bold,
@@ -761,7 +761,7 @@ enum LostCatFlyerRenderer {
             }
             photoHeight = minimumPhoto
         } else if photoHeight < minimumPhoto {
-            issues["layout"] = "A4の1枚に収まりません。特徴・場所・連絡先の説明を短くしてください。入力した内容は残っています。"
+            issues["layout"] = "A4の1枚に入りきりません。特徴・場所・連絡先を短くしてください。"
         }
         let photoRect = CGRect(x: margin, y: top, width: width,
                                height: max(1, photoHeight))

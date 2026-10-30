@@ -35,12 +35,12 @@ enum ToolBackupError: Error, LocalizedError {
     case invalid, changed, empty, capacity, storage, uncertain
     var errorDescription: String? {
         switch self {
-        case .invalid: "ツールの記録を確認できませんでした。不足や破損がない保存データを選び直してください。"
-        case .changed: "準備中に記録が変わりました。保存内容を確認して、もう一度お試しください。"
+        case .invalid: "ツールの記録を読み込めませんでした。別の保存したコピーを選んでください。"
+        case .changed: "準備の途中で記録が変わりました。もう一度お試しください。"
         case .empty: "保存するツールの記録がまだありません。"
-        case .capacity: "この保存に必要な空き容量・件数が足りません。記録を途中まで保存した状態を、保存完了として扱うことはありません。"
+        case .capacity: "容量か件数が足りないため、保存できませんでした。元の記録はそのままです。"
         case .storage: "ツールの保存・復元を完了できませんでした。元の記録はそのまま残っています。"
-        case .uncertain: "直前の送信結果をまだ確認できません。中断した保管を再開して結果を確認してから、取り消してください。"
+        case .uncertain: "前回の保存が終わったか、まだ分かりません。「保存を再開する」で続けてから、取り消してください。"
         }
     }
 }
@@ -50,7 +50,7 @@ enum ToolBackupError: Error, LocalizedError {
 enum ToolBackupJournalError: String, Error, LocalizedError {
     case read = "J1", decode = "J2", index = "J3", identity = "J4"
     var errorDescription: String? {
-        "途中の整理記録を確認できませんでした。端末の記録と保存済みのコピーは残しています。（確認コード: \(rawValue)）"
+        "途中の片づけの情報を読み込めませんでした。このiPhoneの記録と保存したコピーは残っています。（確認コード: \(rawValue)）"
     }
 }
 
@@ -84,7 +84,7 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     var recordIDs: Set<UUID> { Set(files.flatMap(\.records) + (nodes ?? []).compactMap { UUID(uuidString: $0.snapshotId) } + [snapshotID]) }
     var contentsSummary: String {
         let photos = files.filter { $0.path.hasSuffix(".jpg") }.count
-        return "ツールの入力内容・添付写真\(photos)枚"
+        return "ツールの内容・写真\(photos)枚"
     }
     static func contentsSummary(for part: ToolBackupPart) -> String? {
         guard part.kind == "index", (try? part.validate(photo: false)) != nil,

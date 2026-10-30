@@ -68,9 +68,9 @@ struct MomentReportResponse: Decodable, Equatable, Identifiable, Sendable {
 
         var message: String {
             switch self {
-            case .hide: "通報いただいた共有写真を一時的に非表示にしました。"
-            case .release: "確認の結果、この通報による非表示を解除しました。他の制限や共有期限がある場合は表示されません。"
-            case .noAction: "通報いただいた内容を確認しました。今回は追加の対応は行いません。"
+            case .hide: "通報いただいた写真を、いったん見えないようにしました。"
+            case .release: "確認の結果、写真を元どおり見られるようにしました。期限が切れている場合などは表示されません。"
+            case .noAction: "通報いただいた内容を確認しました。今回は、写真はそのままにします。"
             }
         }
     }
@@ -520,54 +520,54 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
         case .featureDisabled:
             "写真を届けるまどはまだ利用できません。"
         case .notPaired:
-            "先に非公開のまどを作るか、招待へ参加してください。"
+            "先にまどを作るか、招待されたまどに参加してください。"
         case .consentRequired:
-            "まどの設定で写真共有の内容を確認してください。"
+            "写真を届ける前に、まどの設定で内容を読んで同意してください。"
         case .moderationDisabled:
-            "iPhoneの「センシティブな内容の警告」を利用できないため送信しません。設定を有効にしてからもう一度お試しください。"
+            "「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてから、もう一度お試しください。"
         case .moderationUnavailable:
-            "安全確認を完了できなかったため送信しません。時間をおいてもう一度お試しください。"
+            "写真の安全確認ができなかったため、届けませんでした。少し待ってから、もう一度お試しください。"
         case .sensitiveContent:
-            "この写真は送信できません。別の写真を選んでください。"
+            "この写真は届けられません。別の写真を選んでください。"
         case .invalidPayload:
-            "送信する写真を安全に準備できませんでした。"
+            "写真を準備できませんでした。別の写真をお試しください。"
         case .payloadTooLarge:
-            "画質を保ったまま送信上限に収められませんでした。"
+            "写真が大きすぎて届けられません。別の写真を選んでください。"
         case .outboxFull:
-            "送信待ちが多いため追加できません。アプリのまどで再試行または取り消してください。"
+            "届ける途中の写真が多いため、いまは追加できません。まどの「届けている写真」から取り消すか、少し待ってください。"
         case .stateUnavailable:
-            "送信状態を保存できませんでした。"
+            "うまく保存できませんでした。もう一度お試しください。"
         case let .reportOnly(until):
-            "このまどの共有は終了しました。\(until.formatted(.dateTime.month().day().hour().minute()))までは通報だけ利用できます。"
+            "このまどは終了しました。\(until.formatted(.dateTime.month().day().hour().minute()))までは、届いた写真を通報できます。"
         case .retryableServer:
-            "通信が完了しませんでした。あとで再試行します。"
+            "うまくつながりませんでした。あとで自動でもう一度試します。"
         case let .requestRejected(status, code, _):
             switch code {
             case "family_record_capacity":
-                "このまどに残せる写真・メモの上限に達しました。今回の写真は送信していません。これまでの写真は残っています。"
+                "このまどに残せる写真・メモがいっぱいです。今回の写真は届けていません（これまでの写真は残っています）。"
             case "window_support_required" where status == 403:
-                "このまどへの送信はお休み中です。届いている写真は引き続き見られます。"
+                "まどを作った人のPlusが切れているため、いまは届けられません。届いた写真はこれまでどおり見られます。"
             case "window_support_unavailable" where status == 503:
-                "このまどの送信条件を確認できませんでした。写真は保持して、あとで確認します。"
+                "このまどに届けられるか確かめられませんでした。写真は残して、あとでもう一度試します。"
             case "sharing_revoked":
-                "このまどの共有は終了しました。もう一度招待してください。"
+                "このまどは終了しました。また届け合うには、新しく招待してください。"
             case "invalid_authentication":
-                "共有の認証を一時的に確認できませんでした。まどは解除せず、あとで再試行します。"
+                "いまはまどにつながりません。まどはそのままで、あとで自動でもう一度試します。"
             case "reservation_expired":
-                "送信の準備期限が切れました。保存済みの続きから再試行します。"
+                "時間がかかったため、続きから自動でもう一度試します。"
             case "report_window_closed":
-                "このまどの通報受付期間は終了しました。"
+                "このまどの写真は、もう通報できません。"
             case "moment_daily_quota_exceeded" where status == 429:
-                "1日の送信上限に達しました。上限更新後に同じ写真の送信を再試行します。"
+                "今日届けられる枚数の上限に達しました。上限が戻ったら、自動で届けます。"
             case "report_daily_quota_exceeded":
-                "今日受け付けられる通報数に達しました。緊急の場合はサポートへ連絡してください。"
+                "今日はこれ以上通報できません。急ぎのときは、サポートへ連絡してください。"
             default:
                 if status == 429 {
                     "操作が続いたため、少し待ってからもう一度お試しください。"
                 } else if status >= 500 {
-                    "共有サーバーが一時的に利用できません。あとで再試行します。"
+                    "いまはつながりにくくなっています。あとで自動でもう一度試します。"
                 } else {
-                    "写真共有の処理を完了できませんでした。時間をおいて、もう一度お試しください。"
+                    "うまくいきませんでした。少し待ってから、もう一度お試しください。"
                 }
             }
         }
@@ -757,8 +757,8 @@ enum MomentCaption {
     }
 
     private static func violation(_ value: String) -> String? {
-        if value.utf8.count > maximumUTF8Bytes { return "ひとことを短くしてください。" }
-        if value.count > maximumCharacters { return "ひとことは100文字までです。" }
+        if value.utf8.count > maximumUTF8Bytes { return "メモを短くしてください。" }
+        if value.count > maximumCharacters { return "メモは100文字までです。" }
         if value.filter({ $0 == "\n" }).count > maximumLineBreaks {
             return "改行は2個までです。"
         }

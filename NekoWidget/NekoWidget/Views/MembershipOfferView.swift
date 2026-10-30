@@ -26,11 +26,11 @@ struct MembershipOfferView: View {
     static let values = [
         ("毎日、新しい1枚がホーム画面に", "photo"),
         ("自動でたまるアルバムと月のまとめ", "rectangle.stack"),
-        ("まどを作って家族と続ける", "person.2"),
+        ("まどを作って、家族と写真を届け合う", "person.2"),
     ]
     static let reassurances = [
-        "いつでもやめられます",
-        "やめても写真・まど・メモは消えません",
+        "いつでも解約できます",
+        "解約しても、写真・まど・メモは消えません",
         "招待した家族はずっと無料です",
     ]
     /// Apple's own instructions; the app never cancels on the person's behalf.

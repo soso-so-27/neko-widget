@@ -8,8 +8,8 @@ enum CatProfileTransferError: LocalizedError {
         case .invalidFile: "プロフィールの引き継ぎファイルを読み込めませんでした。"
         case .unsupportedVersion: "この引き継ぎファイルには新しいバージョンのアプリが必要です。"
         case .emptyProfiles: "書き出す猫のプロフィールがありません。"
-        case .existingSettings: "このiPhoneには猫のプロフィールや写真設定があります。上書きせず、引き継ぎを中止しました。"
-        case .changedState: "確認中に設定が変わりました。ファイルを選び直してください。"
+        case .existingSettings: "このiPhoneにはもう猫のプロフィールや写真の設定があるため、上書きせずに引き継ぎをやめました。"
+        case .changedState: "読み込んでいる間に、猫のプロフィールや写真の設定が変わりました。もう一度ファイルを選んでください。"
         case .notReady: "プロフィールの読み込みが終わってから、もう一度お試しください。"
         }
     }

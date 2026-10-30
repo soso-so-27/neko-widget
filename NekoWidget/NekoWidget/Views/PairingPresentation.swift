@@ -55,17 +55,17 @@ enum FailedPairingConnectionIssue: Equatable {
         switch self {
         case .invitationExpired: "招待の期限が切れています"
         case .invitationUnavailable: "招待コードを表示できません"
-        case .approvalExpired: "参加の手続きが終了しています"
-        case .sharingEnded: "このまどの接続は終了しています"
+        case .approvalExpired: "参加の期限が切れました"
+        case .sharingEnded: "このまどは終了しています"
         }
     }
 
     var detail: String {
         switch self {
-        case .invitationExpired: "相手の参加は確認できませんでした。新しい招待から設定できます。"
-        case .invitationUnavailable: "このiPhoneに招待コードが残っていません。新しい招待から設定できます。"
-        case .approvalExpired: "この参加手続きは続けられません。新しい招待から設定できます。"
-        case .sharingEnded: "接続先で終了を確認しました。新しい招待から設定できます。"
+        case .invitationExpired: "相手の参加を確かめられませんでした。新しい招待からやり直せます。"
+        case .invitationUnavailable: "招待コードが見つかりません。新しい招待を作ってください。"
+        case .approvalExpired: "この招待は使えなくなりました。新しい招待からやり直せます。"
+        case .sharingEnded: "新しい招待からやり直せます。"
         }
     }
 }
@@ -80,31 +80,31 @@ struct FailedPairingRecoveryPresentation: Equatable, Sendable {
 
     static func make(_ state: PairingState) -> Self {
         let action = FailedPairingRecoveryAction.resolve(state)
-        let title = "まどの接続が未完了です"
+        let title = "まどがまだつながっていません"
         switch action {
         case .restartLocalDraft:
             return Self(action: action, title: title,
-                        detail: "つなぎ方を選び直して、設定を始められます。",
-                        buttonTitle: "設定をやり直す")
+                        detail: "最初からやり直せます。",
+                        buttonTitle: "最初からやり直す")
         case .resumeCreate:
             return Self(action: action, title: title,
                         detail: "途中まで進めた招待の作成を、もう一度試せます。",
                         buttonTitle: "招待の作成を再開")
         case .resumeJoin:
             return Self(action: action, title: title,
-                        detail: "入力済みの招待で、参加をもう一度試せます。",
+                        detail: "入力した招待コードで、もう一度参加できます。",
                         buttonTitle: "参加を再開")
         case .checkConnection:
             return Self(action: action, title: title,
-                        detail: "設定を残したまま、続きから接続できるか確認します。",
-                        buttonTitle: "接続を確認")
+                        detail: "設定はそのままで、つながるかもう一度試します。",
+                        buttonTitle: "もう一度試す")
         case .resumeCancellation:
-            return Self(action: action, title: "設定の終了を確認できていません",
-                        detail: "前回選んだ終了の手続きが残っています。同じ手続きをもう一度確認できます。",
-                        buttonTitle: "終了の手続きを再開")
+            return Self(action: action, title: "まどの取り消しが終わっていません",
+                        detail: "前回の取り消しが途中で止まっています。続きから再開できます。",
+                        buttonTitle: "取り消しを再開")
         case .unavailable:
             return Self(action: action, title: title,
-                        detail: "再開に必要な情報を確認できません。調査に使う診断情報を開けます。",
+                        detail: "続きから再開できませんでした。困ったときは、診断情報をサポートに送ってください。",
                         buttonTitle: "診断情報を開く")
         }
     }
@@ -138,15 +138,15 @@ struct PairingAvailabilityPresentation: Equatable, Sendable {
 
     static func temporarilyUnavailable(detail: String) -> Self {
         Self(
-            title: "まどを一時的に確認できません",
+            title: "まどを読み込めません",
             detail: detail,
-            retryButtonTitle: "もう一度確認する"
+            retryButtonTitle: "もう一度読み込む"
         )
     }
 
     static let consentRequired = Self(
-        title: "相手と接続済み",
-        detail: "写真を届ける前に、共有内容への同意を更新してください。",
+        title: "相手とつながっています",
+        detail: "写真を届けるには、新しい内容を読んで同意してください。",
         retryButtonTitle: nil
     )
 }
@@ -249,7 +249,7 @@ struct PairingGuidancePresentation: Equatable, Sendable {
             return Self(
                 roleTitle: "あなたは、まどを作った人です",
                 nextActionTitle: "次は、招待コードを相手へ送ってください",
-                nextActionDetail: "相手がコードを入力したあと、参加したか確認します。",
+                nextActionDetail: "相手がコードを入力したら、「相手が参加したか確認」を押してください。",
                 refreshButtonTitle: "相手が参加したか確認"
             )
         case .joining:
@@ -261,21 +261,21 @@ struct PairingGuidancePresentation: Equatable, Sendable {
             )
         case .claimingRecovery:
             return Self(
-                roleTitle: "この端末：追加するiPhone",
+                roleTitle: "このiPhone：追加するiPhone",
                 nextActionTitle: "追加コードを確認しています",
                 nextActionDetail: "相手のiPhoneが作った追加コードで、同じまどを使えるようにします。",
                 refreshButtonTitle: nil
             )
         case .pendingRecoveryApproval:
             return Self(
-                roleTitle: "この端末：追加するiPhone",
-                nextActionTitle: "接続済みの相手と12語を比べてください",
+                roleTitle: "このiPhone：追加するiPhone",
+                nextActionTitle: "相手と12語を見比べてください",
                 nextActionDetail: "相手のiPhoneで同じ12語を確認してもらいます。すでに使っているiPhoneは解除されません。",
                 refreshButtonTitle: "承認されたか確認"
             )
         case .recoveryAwaitingCompletion:
             return Self(
-                roleTitle: "この端末：追加するiPhone",
+                roleTitle: "このiPhone：追加するiPhone",
                 nextActionTitle: "iPhoneの追加を完了しています",
                 nextActionDetail: "相手のiPhoneによる承認は済んでいます。この画面を閉じずに少しお待ちください。",
                 refreshButtonTitle: "完了したか確認"
@@ -283,40 +283,40 @@ struct PairingGuidancePresentation: Equatable, Sendable {
         case .pendingApproval:
             return Self(
                 roleTitle: "あなたは、招待された人です",
-                nextActionTitle: "作った人と12語を比べ、承認を待ってください",
-                nextActionDetail: "12語が違う場合は、そのまま進めず招待をやり直してください。",
+                nextActionTitle: "まどを作った人と12語を見比べてください",
+                nextActionDetail: "12語が違うときは進めずに、招待をやり直してください。",
                 refreshButtonTitle: "承認されたか確認"
             )
         case .approvalRequired:
             return Self(
                 roleTitle: "あなたは、まどを作った人です",
                 nextActionTitle: "相手と12語が同じなら承認してください",
-                nextActionDetail: "12語がすべて同じことを確認するまで、写真の鍵は相手へ渡りません。",
+                nextActionDetail: "承認するまで、相手は写真を見られません。",
                 refreshButtonTitle: nil
             )
         case .awaitingCompletion:
             return Self(
                 roleTitle: "あなたは、まどを作った人です",
-                nextActionTitle: "相手のiPhoneで承認を確認してもらってください",
-                nextActionDetail: "相手が確認すると、このまどの設定が完了します。",
-                refreshButtonTitle: "接続が完了したか確認"
+                nextActionTitle: "相手のiPhoneで完了するのを待っています",
+                nextActionDetail: "相手のiPhoneで完了すると、まどがつながります。",
+                refreshButtonTitle: "つながったか確認"
             )
         case .paired:
             return Self(
                 roleTitle: role == .invitee
                     ? "あなたは、招待された人です"
                     : "あなたは、まどを作った人です",
-                nextActionTitle: "このまどは接続されています",
-                nextActionDetail: "写真は共有シートで明示した1枚だけを届けます。",
-                refreshButtonTitle: "接続状態を確認"
+                nextActionTitle: "このまどはつながっています",
+                nextActionDetail: "写真は、自分で選んだものだけを1枚ずつ届けます。",
+                refreshButtonTitle: "もう一度読み込む"
             )
         case .failed:
             return Self(
                 roleTitle: role == .invitee
-                    ? "招待されたまどを確認できませんでした"
-                    : "まどの準備を完了できませんでした",
-                nextActionTitle: "まどの接続が未完了です",
-                nextActionDetail: "保存されている設定に応じて、再開できる操作を表示します。",
+                    ? "招待されたまどに参加できませんでした"
+                    : "まどを作れませんでした",
+                nextActionTitle: "まどがまだつながっていません",
+                nextActionDetail: "下のボタンから続けてください。",
                 refreshButtonTitle: nil
             )
         }
@@ -345,21 +345,21 @@ struct DeviceChangeGuidancePresentation: Equatable, Sendable {
         switch currentDevice {
         case .newIPhone:
             return Self(
-                newIPhoneTitle: "追加するiPhone（この端末）",
+                newIPhoneTitle: "追加するiPhone（このiPhone）",
                 newIPhoneDetail: "相手のiPhoneから届いた追加コードを入力します。",
                 previousIPhoneTitle: "すでに使っているiPhone",
-                previousIPhoneDetail: "操作は不要です。そのまま使い続けられます。",
+                previousIPhoneDetail: "何もしなくて大丈夫です。そのまま使えます。",
                 partnerIPhoneTitle: "相手のiPhone",
                 partnerIPhoneDetail: "追加コードを作り、12語を確認してこのiPhoneを承認します。"
             )
         case .partnerIPhone:
             return Self(
                 newIPhoneTitle: "追加するiPhone",
-                newIPhoneDetail: "この端末から届いた追加コードを入力します。",
+                newIPhoneDetail: "このiPhoneで作った追加コードを入力します。",
                 previousIPhoneTitle: "相手がすでに使っているiPhone",
-                previousIPhoneDetail: "操作は不要です。そのまま使い続けられます。",
-                partnerIPhoneTitle: "相手のiPhone（この端末）",
-                partnerIPhoneDetail: "接続済みのこの端末から、相手のiPhone追加を承認します。"
+                previousIPhoneDetail: "何もしなくて大丈夫です。そのまま使えます。",
+                partnerIPhoneTitle: "相手のiPhone（このiPhone）",
+                partnerIPhoneDetail: "このiPhoneで、相手のiPhoneの追加を承認します。"
             )
         }
     }

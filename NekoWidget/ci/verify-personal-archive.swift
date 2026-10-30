@@ -243,7 +243,7 @@ enum PersonalArchiveVerifier {
         _ = try await other.update(id: current.id, operationID: UUID(), expectedRevision: current.revision,
             text: "別端末の内容", capturedAt: nil, context: remoteContext, expectedAccount: account)
         _ = try await store.refresh()
-        let pending = try await coordinator.saveLocal(text: "この端末の内容", recordID: local.id,
+        let pending = try await coordinator.saveLocal(text: "このiPhoneの内容", recordID: local.id,
             expectedRevision: local.note.revision, expectedAccount: account, weightChange: .set(weight))
         guard let conflict = try await store.memoRecord(id: archived.id, expectedAccount: account), let latest = pending.localRecord else { throw Failure(message: "conflict missing") }
         try require(conflict.state == .conflict && conflict.conflictingContext?.weight?.grams == 4100, "conflict lost remote measurement")

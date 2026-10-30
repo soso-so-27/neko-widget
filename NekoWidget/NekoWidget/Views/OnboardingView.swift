@@ -161,7 +161,7 @@ private struct OnboardingScanErrorPage: View {
                     .foregroundStyle(.orange)
                     .accessibilityHidden(true)
 
-                Text("写真を確認できませんでした")
+                Text("写真を探せませんでした")
                     .font(.title2.bold())
                     .multilineTextAlignment(.center)
 
@@ -183,7 +183,7 @@ private struct OnboardingScanErrorPage: View {
                     .controlSize(.large)
                     .accessibilityIdentifier("onboarding-scan-retry")
 
-                Button("写真画面へ進む", action: continueToApp)
+                Button("このまま進む", action: continueToApp)
                     .buttonStyle(.bordered)
                     .controlSize(.large)
                     .accessibilityIdentifier("onboarding-scan-skip")
@@ -236,7 +236,7 @@ private struct OnboardingPurposePage: View {
                 .accessibilityIdentifier("onboarding-purpose-start")
                 if let joinInvitation {
                     Button(action: joinInvitation) {
-                        Text("招待を受け取った")
+                        Text("招待リンクから参加する")
                             .font(.headline).frame(maxWidth: .infinity)
                             .padding(.vertical, 5)
                     }
@@ -429,7 +429,7 @@ private struct OnboardingScanPage: View {
                 .padding(.top, 28)
 
                 if isFinalZero {
-                    Text("写真を探し終えました。猫が大きく写った写真を写真アプリに入れるか、写真へのアクセスの範囲を確かめて、もう一度探してください。")
+                    Text("猫が大きく写った写真を写真アプリに入れるか、写真へのアクセスを確かめてから、もう一度探してください。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     VStack(spacing: 10) {
@@ -467,7 +467,7 @@ private struct OnboardingScanPage: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("onboarding-partial-scan-error")
                     } else if scan.hasDeferredAssets, scan.hasFinalResult {
-                        Text("読み込めなかった\(scan.deferredAssets.formatted())枚は、設定の「写真の表示と整理」からもう一度調べられます。")
+                        Text("読み込めなかった\(scan.deferredAssets.formatted())枚は、設定の「写真の表示と整理」からもう一度探せます。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -525,7 +525,7 @@ private struct OnboardingScanPage: View {
                 .buttonStyle(.plain)
                 // Keep the image's loaded/loading/failed label: a fixed button
                 // label hides its failure state.
-                .accessibilityHint("タップして写真を開きます")
+                .accessibilityHint("写真を開きます")
                 .accessibilityIdentifier("initial-scan-photo-\(photo.localIdentifier)")
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -633,14 +633,14 @@ struct OnboardingInvitationHelpView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("届いた招待リンクを開いてください", systemImage: "link")
                         .font(.headline)
-                    Text("メッセージやLINEで届いた「nekonomado.com/join」から始まるリンクを押すと、このアプリでまどに参加する画面が開きます。")
+                    Text("メッセージやLINEで届いた「nekonomado.com/join」で始まるリンクを開くと、参加の画面が出ます。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 6)
             }
         }
-        .navigationTitle("招待を受け取った")
+        .navigationTitle("招待リンクから参加する")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("onboarding-invitation-help")
     }

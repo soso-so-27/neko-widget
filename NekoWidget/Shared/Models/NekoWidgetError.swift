@@ -14,11 +14,11 @@ enum NekoWidgetError: LocalizedError, Sendable {
         case .photoAccessDenied:
             return "写真へのアクセスが許可されていません。"
         case .albumCreationFailed:
-            return "アルバムの作成結果を確認できませんでした。"
+            return "アルバムを作れませんでした。"
         case .noCatPhotos:
             return "表示できる猫の写真がまだありません。"
         case .exportFailed:
-            return "JSONを書き出せませんでした。"
+            return "データを書き出せませんでした。"
         }
     }
 }

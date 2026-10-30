@@ -147,11 +147,11 @@ enum ReceivedPhotoMemoryImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            "受信写真をお気に入りに追加するには写真へのアクセスが必要です。iPhoneの設定で「ねこのまど」の写真アクセスを許可してください。"
+            "届いた写真をお気に入りに追加するには、写真へのアクセスが必要です。iPhoneの設定で「ねこのまど」に写真へのアクセスを許可してください。"
         case .recoveryRequiresFullAccess:
-            "前回の取り込み結果を安全に確認するため、写真アクセスを「すべての写真」に変更してから、もう一度お試しください。写真を重複して保存しないための確認です。"
+            "写真が二重に保存されないよう、すべての写真へのアクセスを許可してから、もう一度お試しください。"
         case .importFailed:
-            "写真をお気に入りへ取り込めませんでした。時間をおいて、もう一度お試しください。"
+            "写真をお気に入りに追加できませんでした。時間をおいて、もう一度お試しください。"
         }
     }
 }

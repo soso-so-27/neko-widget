@@ -46,7 +46,7 @@ private func veterinaryErrorMessage(_ error: any Error) -> String {
     if let known = error as? VeterinaryVisitError { message = known.errorDescription }
     else if let known = error as? PhotoMemoryNoteStoreError { message = known.errorDescription }
     else { message = nil }
-    return message ?? "操作の結果を確認できませんでした。開き直して保存状況を確認してください。"
+    return message ?? "うまくいったか確かめられませんでした。開き直して、保存されているか見てください。"
 }
 
 struct VeterinaryVisitsView: View {
@@ -147,7 +147,7 @@ struct VeterinaryVisitsView: View {
 
     @ViewBuilder private var notices: some View {
         if let error { Section { Text(error); Button("もう一度読み込む") { Task { await reload() } } } }
-        if cleanupPending { Section { Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote); Button("もう一度片付ける") { Task { await reload() } } } }
+        if cleanupPending { Section { Text("使わなくなった写真のコピーが残っています。").font(.footnote); Button("コピーを消す") { Task { await reload() } } } }
     }
 
     /// The same notices, as one line above the memo.
@@ -156,8 +156,8 @@ struct VeterinaryVisitsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 if let error { Text(error).font(.footnote).foregroundStyle(.secondary) }
                 if cleanupPending {
-                    Text("使わなくなった診察用写真の削除が完了していません。").font(.footnote).foregroundStyle(.secondary)
-                    Button("もう一度片付ける") { Task { await reload() } }.font(.footnote)
+                    Text("使わなくなった写真のコピーが残っています。").font(.footnote).foregroundStyle(.secondary)
+                    Button("コピーを消す") { Task { await reload() } }.font(.footnote)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -187,7 +187,7 @@ struct VeterinaryVisitsView: View {
             let notes: [PhotoMemoryNoteRecord]
             var sourceError: String?
             do { notes = try await noteStore.records() }
-            catch { notes = []; sourceError = "元のメモを読み込めません。保存済みの診察メモは開けます。" }
+            catch { notes = []; sourceError = "写真のメモを読み込めませんでした。これまでの診察メモは開けます。" }
             var seen = Set<UUID>()
             let known = profiles.compactMap { profile in UUID(uuidString: profile.identifier).map { PhotoMemoryNoteCat(id: $0, name: profile.displayName) } }
             let savedTools = SavedToolCatChoices.cats(care: careStore, evacuation: evacuationStore)
@@ -206,7 +206,7 @@ struct VeterinaryVisitsView: View {
             cats = candidates.filter { seen.insert($0.id).inserted }
             toolSources = Dictionary(uniqueKeysWithValues: savedTools.map { ($0.id, $0.source) })
             if careStore.loadError != nil || careStore.saveError != nil || evacuationStore.loadError != nil || evacuationStore.saveError != nil {
-                let message = "入力済みの猫を一部読み込めません。これまでの診察メモは使えます。"
+                let message = "「預けるとき」「避難に備える」の猫を一部読み込めませんでした。これまでの診察メモは使えます。"
                 sourceError = sourceError.map { $0 + "\n" + message } ?? message
             }
             visits = loaded; ready = true; error = sourceError
@@ -264,7 +264,7 @@ private struct VeterinaryConsultationView: View {
                 if !registered || visit.completedAt != nil {
                     Section {
                         if !registered { Label(visit.catName, systemImage: "cat").font(.headline) }
-                        if visit.completedAt != nil { Text("診察済みの控え").font(.caption).foregroundStyle(.secondary) }
+                        if visit.completedAt != nil { Text("診察済み").font(.caption).foregroundStyle(.secondary) }
                     }
                 }
                 // What the owner came to write goes first; the cat's facts follow.
@@ -299,7 +299,7 @@ private struct VeterinaryConsultationView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             VeterinaryEntryPhoto(entry: entry, visitID: visit.id, store: store)
                             if !entry.text.isEmpty { Text(entry.text) }
-                            if entry.familyRetained == true { Text("家族の共有から外れた、この iPhone の控え").font(.caption).foregroundStyle(.secondary) }
+                            if entry.familyRetained == true { Text("家族の手帳から外れた記録です（このiPhoneにだけ残っています）").font(.caption).foregroundStyle(.secondary) }
                             if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
                             VeterinaryEntryDates(entry: entry)
                             if visit.completedAt == nil {
@@ -319,7 +319,7 @@ private struct VeterinaryConsultationView: View {
                 }
                 Section {
                     if visit.completedAt == nil {
-                        Button("診察済みとして残す", systemImage: "checkmark") { finishing = true }.disabled(changes)
+                        Button("診察済みにする", systemImage: "checkmark") { finishing = true }.disabled(changes)
                     }
                     if changes { Text("変更を自動保存しています。").font(.caption).foregroundStyle(.secondary) }
                     Button("この診察メモを削除", role: .destructive) { deletesVisit = true }
@@ -350,11 +350,11 @@ private struct VeterinaryConsultationView: View {
                 if error != nil, changes {
                     Button("もう一度保存する") { Task { await save() } }.accessibilityIdentifier("vet-save")
                 }
-                Text(observations.count > 500 || questions.count > 500 ? "各項目は500文字以内で入力してください"
-                     : changes ? (error != nil ? "保存できませんでした" : "保存中…") : "自動保存済み")
+                Text(observations.count > 500 || questions.count > 500 ? "500文字を超えている欄があります"
+                     : changes ? (error != nil ? "保存できませんでした" : "保存中…") : "保存しました")
                     .font(.caption).foregroundStyle(.secondary)
                 Button { showing = true } label: {
-                    Label("控えを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    Label("できあがりを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("vet-show").disabled(changes || busy)
@@ -415,13 +415,13 @@ private struct VeterinaryConsultationView: View {
                  ? "500文字を超えた欄があると保存できません。短くしてから閉じてください。"
                  : (error ?? "保存できませんでした。") + " 画面に戻って、もう一度お試しください。")
         }
-        .confirmationDialog("診察済みの控えとして残しますか？", isPresented: $finishing, titleVisibility: .visible) {
-            Button("残す") { Task { await save(completing: true) } }; Button("キャンセル", role: .cancel) {}
-        } message: { Text("次の診察は空のメモから作れます。この控えは自分だけの記録として残ります。") }
+        .confirmationDialog("診察済みにしますか？", isPresented: $finishing, titleVisibility: .visible) {
+            Button("診察済みにする") { Task { await save(completing: true) } }; Button("キャンセル", role: .cancel) {}
+        } message: { Text("このメモは記録として残り、次の診察は新しいメモから始められます。") }
         .confirmationDialog("この診察メモを削除しますか？", isPresented: $deletesVisit, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("この診察用の控えだけを削除します。元の写真・メモ・保管した記録は残ります。") }
+        } message: { Text("この診察メモだけを削除します。元の写真やメモは消えません。") }
         .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || pendingSource != nil)
     }
     private func scheduleSave() {
@@ -501,7 +501,7 @@ private struct VeterinaryRecordPicker: View {
                                 Text(record.note.text.isEmpty ? "体重の記録" : record.note.text).lineLimit(3).foregroundStyle(.primary)
                                 if let weight = record.note.weight { PhotoMemoWeightLabel(weight: weight.value) }
                                 if let selected = visit.entries.first(where: { $0.sourceNoteID == record.id }) {
-                                    Text(selected.sourceRevision == record.note.revision ? "追加済み" : "元のメモが変更されています · 内容を確認して更新")
+                                    Text(selected.sourceRevision == record.note.revision ? "追加済み" : "元のメモが書き直されています。選ぶと新しい内容にできます")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             }.padding(.vertical, 4)
@@ -577,10 +577,10 @@ private struct VeterinaryRecordConfirmation: View {
                     Toggle("この記録は\(visit.catName)のものです", isOn: $confirmed)
                         .accessibilityIdentifier("vet-confirm-target")
                     if wrongCat { Text("この体重は別の猫のものです。元のメモで猫を確かめてください。") }
-                    Button(visit.entries.contains { $0.sourceNoteID == source.id } ? "選んだ記録を更新" : "診察メモに追加") { Task { await add() } }
+                    Button(visit.entries.contains { $0.sourceNoteID == source.id } ? "新しい内容にする" : "診察メモに追加") { Task { await add() } }
                         .disabled(!confirmed || wrongCat || busy).accessibilityIdentifier("vet-add-confirmed")
-                    if busy { ProgressView("写真の控えを準備しています…") }
-                } footer: { Text("選んだこの記録だけを追加します。まどに届けることはありません。") }
+                    if busy { ProgressView("写真を準備しています…") }
+                } footer: { Text("選んだ記録だけを診察メモに入れます。まどには届きません。") }
                 if let error { Text(error).accessibilityIdentifier("vet-add-error") }
             }
             .navigationTitle("内容を確認").navigationBarTitleDisplayMode(.inline)
@@ -633,7 +633,7 @@ private struct VeterinaryRecordConfirmation: View {
 private struct VeterinaryEntryDates: View {
     let entry: VeterinaryVisitEntry
     var body: some View {
-        Text("撮影日 \(entry.capturedAt.map(VeterinaryVisit.day) ?? "不明") · メモ日 \(entry.writtenAt.map(VeterinaryVisit.day) ?? "不明")")
+        Text("撮影日 \(entry.capturedAt.map(VeterinaryVisit.day) ?? "不明") · メモを書いた日 \(entry.writtenAt.map(VeterinaryVisit.day) ?? "不明")")
             .font(.caption).foregroundStyle(.secondary)
     }
 }
@@ -647,7 +647,7 @@ private struct VeterinaryEntryPhoto: View {
     var body: some View {
         Group {
             if let bytes { MemoArchivePhoto(data: bytes, allowsExpansion: true).frame(maxHeight: 260) }
-            else if failed { Label("写真の控えを開けません", systemImage: "photo").font(.caption) }
+            else if failed { Label("写真を開けません", systemImage: "photo").font(.caption) }
             else if entry.photoFile != nil { ProgressView() }
         }.task(id: entry) {
             bytes = nil; failed = false
@@ -708,7 +708,7 @@ private struct VeterinaryReadView: View {
                 }
                 .padding().background(.regularMaterial)
             }
-            .confirmationDialog("病院に渡す控えを作ります", isPresented: Binding(
+            .confirmationDialog("病院に渡すメモを作りますか？", isPresented: Binding(
                 get: { pendingExportIsPDF != nil }, set: { if !$0 { pendingExportIsPDF = nil } }),
                 titleVisibility: .visible) {
                 Button(pendingExportIsPDF == true ? "PDFを作って渡す" : "画像を作って渡す") {
@@ -717,9 +717,9 @@ private struct VeterinaryReadView: View {
                     Task { await makeExport(pdf: pdf) }
                 }
             } message: {
-                Text("薬・アレルギー・体重など体の情報と、選んだ写真を含みます。渡す相手を確かめてください。渡した控えは、あとから編集しても更新されません。")
+                Text("薬・アレルギー・体重などと選んだ写真が載るので、渡す相手を確かめてください。渡したあとに書き直しても、相手の手元の内容は変わりません。")
             }
-            .alert("書き出せませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+            .alert("作れませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("閉じる", role: .cancel) {}
             } message: { Text(exportError ?? "") }
             .sheet(item: $export, onDismiss: {
@@ -773,7 +773,7 @@ private struct VeterinaryReadView: View {
             let made = try CareHandoffExporter.create(record, pdf: pdf)
             retainedDirectory = made.directory; export = made
         }
-        catch { exportError = "空き容量やメモの長さを確認してください。元の記録は残っています。" }
+        catch { exportError = "空き容量やメモの長さを確かめてください。書いた内容は残っています。" }
     }
 }
 

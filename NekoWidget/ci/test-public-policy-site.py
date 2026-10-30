@@ -340,7 +340,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertIn("PHAssetCreationRequest.forAsset()", service)
         self.assertIn("request.addResource", service)
         self.assertIn(
-            "写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。",
+            "見つけた猫写真を、写真アプリのアルバムにまとめます（写真は複製しません）。",
             settings,
         )
         self.assertIn("NSPhotoLibraryAddUsageDescription", info)

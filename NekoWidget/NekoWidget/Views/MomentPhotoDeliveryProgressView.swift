@@ -98,7 +98,7 @@ private struct MomentPhotoDeliveryProgressRow: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .contain)
-                .accessibilityHint("送信状況の詳細を開きます")
+                .accessibilityHint("届けている写真の詳細を開きます")
             } else {
                 content
                     .accessibilityElement(children: .contain)
@@ -179,7 +179,7 @@ private struct MomentPhotoDeliveryProgressRow: View {
     private var statusAccessibilityLabel: String {
         switch photo.phase {
         case .accepted:
-            "届けました。サーバーで受け付けました"
+            "届けました"
         default:
             photo.title(at: now)
         }

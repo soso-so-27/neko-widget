@@ -67,7 +67,7 @@ struct MomentDeliveryComposer: View {
                                             in: RoundedRectangle(cornerRadius: 16))
                                 .id("composer-note-input")
                                 .disabled(isSending)
-                            Text("送るメモは100文字・改行2個まで。自分の元のメモは変わりません。")
+                            Text("届けるメモは100文字・改行2回まで。自分だけのメモは変わりません。")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else if caption.isEmpty,
                                   let personalMemo, !personalMemo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -127,7 +127,7 @@ struct MomentDeliveryComposer: View {
                             .accessibilityIdentifier("photo-window-change-destination")
                         }
                     }
-                    Text("写真と送るメモがこのまどに届き、あとから一緒に見返せます。")
+                    Text("写真とメモがこのまどに届き、あとから2人で見返せます。")
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if isEditingCaption {
@@ -190,14 +190,14 @@ struct MomentDeliveryComposer: View {
                         Button { showsSharingInformation = true } label: {
                             Image(systemName: "info.circle")
                         }
-                        .accessibilityLabel("写真の共有について")
+                        .accessibilityLabel("届ける写真について")
                     }
                 }
             }
-            .alert("写真の共有について", isPresented: $showsSharingInformation) {
+            .alert("届ける写真について", isPresented: $showsSharingInformation) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真の位置情報を除き、この画面で添えたメモと一緒に、選んだまどへ届けます。ホーム画面の写真（ウィジェット）にも表示されます。共有を終了すると、このまどの写真とメモは開けなくなります。必要なものは終了前に書き出せます。")
+                Text("写真は位置情報を消してメモと一緒に届き、ホーム画面の写真（ウィジェット）にも出ます。まどを終了すると開けなくなるので、残したいものは先に書き出してください。")
             }
             .alert("送るメモを破棄しますか？", isPresented: $showsDiscardConfirmation) {
                 Button("破棄してやめる", role: .destructive, action: onCancel)
@@ -239,7 +239,7 @@ struct MomentDeliveryComposer: View {
                 .background(Color.black)
                 .contentShape(Rectangle())
                 .onTapGesture { finishCaptionEditing() }
-                .accessibilityLabel("追加する写真")
+                .accessibilityLabel("届ける写真")
             ZStack(alignment: .bottom) {
               if !isEditingCaption {
                     Button {
@@ -335,7 +335,7 @@ enum MomentSharedPhoto: Identifiable {
 
 struct MomentSharedAlbumHeading: View {
     var body: some View {
-        Label("相手と共有", systemImage: "person.2")
+        Label("このまどの写真", systemImage: "person.2")
             .font(.subheadline)
             .foregroundStyle(.secondary)
     }
@@ -449,7 +449,7 @@ struct MomentSentRecordCard: View {
                     Image(systemName: "photo")
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("写真を表示できない履歴")
+                        Text("写真が残っていない記録")
                             .font(.caption)
                         Text(record.serverAcceptedAt.formatted(.dateTime.month().day()))
                             .font(.caption2)

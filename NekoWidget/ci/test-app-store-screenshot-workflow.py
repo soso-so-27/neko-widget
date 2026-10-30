@@ -309,7 +309,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             captures += self.widget_ui_test.count(f'captureScreenshot(named: "{name}"')
             self.assertEqual(captures, 1)
             self.assertEqual(self.exporter.count(f'"{name}"'), 1)
-        self.assertIn("写真や動画を開発者のサーバーへ自動送信しません", self.ui_test)
+        self.assertIn("写真や動画を、勝手にiPhoneの外へ送りません", self.ui_test)
         self.assertIn("--app-store-screenshot-fixture", self.ui_test)
         self.assertIn("app.wait(for: .runningForeground", self.widget_ui_test)
         self.assertIn(

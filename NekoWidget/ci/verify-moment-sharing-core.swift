@@ -547,7 +547,7 @@ require(
         status: 429,
         code: "moment_daily_quota_exceeded",
         message: "relay-internal-detail-must-not-appear"
-    ).localizedDescription == "1日の送信上限に達しました。上限更新後に同じ写真の送信を再試行します。",
+    ).localizedDescription == "今日届けられる枚数の上限に達しました。上限が戻ったら、自動で届けます。",
     "moment quota guidance was not preserved"
 )
 
@@ -726,7 +726,7 @@ func responsePage(_ rows: [[String: Any]], cursor: String, more: Bool = false, v
     return try JSONDecoder().decode(MomentReportResponsesPage.self, from: data)
 }
 let response = try responsePage([responseRow], cursor: responseID).validated(after: nil, now: responseNow)
-require(response.responses[0].templateCode.message == "通報いただいた共有写真を一時的に非表示にしました。",
+require(response.responses[0].templateCode.message == "通報いただいた写真を、いったん見えないようにしました。",
     "report response did not use the fixed template")
 let responseDeadline = responseNow.addingTimeInterval(1)
 require(response.responses[0].isVisible(reportOnlyUntil: responseDeadline, now: responseNow),
