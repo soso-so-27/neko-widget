@@ -812,10 +812,6 @@ struct ManagedPreservationView: View {
     }
 }
 
-#if DEBUG
-/// Runs the shipping screen with a synthetic session, billing key and transport.
-/// No Apple sign-in, purchase, photo-library access or external service is used.
-@MainActor
 /// The Plus quota in two lines, for 自動の保存. The bars and the test cases
 /// are in 以前の保管記録 (ManagedPreservationView).
 struct ProductQuotaSummary: View {
@@ -840,6 +836,10 @@ struct ProductQuotaSummary: View {
     }
 }
 
+#if DEBUG
+/// Runs the shipping screen with a synthetic session, billing key and transport.
+/// No Apple sign-in, purchase, photo-library access or external service is used.
+@MainActor
 struct ManagedPreservationMembershipFixture: View {
     @State private var fixture: PreservationNativeFixture?
     @State private var failure: String?
