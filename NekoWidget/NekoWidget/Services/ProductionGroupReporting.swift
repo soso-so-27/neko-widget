@@ -19,17 +19,20 @@ final class ProductionGroupReporting: GroupReportingService {
     private let blockStore: any GroupSecretStore
     private let evidence: (String, String) async throws -> GroupReportEvidence
     private let publicKey: Data
+    private var reportsDisabled: Bool
     private var availabilityUntil = Date.distantPast
     private var availabilityIdentity: String?
     private var inFlight = Set<String>()
 
     init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport,
-         directory: URL, publicKey: Data,
+         directory: URL, publicKey: Data, reportsDisabled: Bool = false,
          evidence: @escaping (String, String) async throws -> GroupReportEvidence) throws {
+        self.reportsDisabled = reportsDisabled
         var approved = endpoint.absoluteString == Self.stagingEndpoint
             && publicKey == (try? GroupWire.bytes("T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg", count: 32))
 #if os(iOS)
         let configuration = SharingAPIConfiguration.current
+        self.reportsDisabled = reportsDisabled || configuration.isOwnerInternalReportsDisabled
         if configuration.releaseMode == "production" {
             approved = configuration.isEncryptedReportAvailable
                 && endpoint == configuration.baseURL && publicKey == configuration.moderationPublicKey
@@ -45,11 +48,12 @@ final class ProductionGroupReporting: GroupReportingService {
     }
 
     var isAvailable: Bool {
-        guard Date() < availabilityUntil, let current = try? identity() else { return false }
+        guard !reportsDisabled, Date() < availabilityUntil, let current = try? identity() else { return false }
         return availabilityIdentity == (try? current.deviceID)
     }
     func refreshAvailability() async {
         availabilityUntil = .distantPast; availabilityIdentity = nil
+        guard !reportsDisabled else { return }
         do {
             let actor = try identity()
             let data = try await request("/v3/group-identities/reporting-availability", actor: actor)
@@ -102,6 +106,7 @@ final class ProductionGroupReporting: GroupReportingService {
     }
     private func request(_ path: String, body: Data? = nil, actor: GroupDeviceIdentity,
                          method: String? = nil, ciphertext: Bool = false) async throws -> Data {
+        guard !reportsDisabled else { throw GroupSafetyError.disabled }
         try sameIdentity(actor)
         var request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: body, identity: actor, method: method)
         if ciphertext { request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type") }
@@ -228,6 +233,7 @@ final class ProductionGroupReporting: GroupReportingService {
         return r
     }
     func submitReport(draftID: String) async throws -> GroupReportRecord {
+        guard !reportsDisabled else { throw GroupSafetyError.disabled }
         guard inFlight.insert(draftID).inserted else { throw GroupSafetyError.conflict }
         defer { inFlight.remove(draftID) }
         var (draft, actor) = try owned(draftID)
@@ -296,6 +302,7 @@ final class ProductionGroupReporting: GroupReportingService {
             && $0.deviceID == (try? actor.deviceID) && $0.record.windowID == windowID }.map(\.record).sorted { $0.sentAt > $1.sentAt }
     }
     func refreshReport(draftID: String) async throws -> GroupReportRecord {
+        guard !reportsDisabled else { throw GroupSafetyError.disabled }
         guard inFlight.insert(draftID).inserted else { throw GroupSafetyError.conflict }
         defer { inFlight.remove(draftID) }
         return try await reconcile(draftID: draftID)

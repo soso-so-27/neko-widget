@@ -245,6 +245,7 @@ class ReleaseTests(unittest.TestCase):
     def test_fixed_inputs_and_full_plan_are_verified_without_dispatch(self):
         result = self.prepare()
         self.assertEqual(result["inputs"], {
+            "distribution_profile": "existing-reviewed",
             "expected_main_sha": self.sha, "build_number": "165", "release_mode": "media-staging",
             "official_window_feed_url": release.release_config.PREVIEW_FEED_URL,
             "upload_to_testflight": "true", "retain_signed_artifacts": "true",
@@ -861,7 +862,7 @@ class ReleaseTests(unittest.TestCase):
             return original(gh, sha)
         with tempfile.TemporaryDirectory() as directory:
             selected = Path(directory).resolve()
-            args = ["--sha", self.sha, "--build-number", "165", "--ci-run", "20", "--checkout", str(selected)]
+            args = ["--distribution-profile", "existing-reviewed", "--sha", self.sha, "--build-number", "165", "--ci-run", "20", "--checkout", str(selected)]
             with patch.object(release, "GitHub", return_value=self.gh), patch.object(release, "check_checkout", side_effect=checked), \
                     patch.object(release.os, "chdir"), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(release.main(args), 0)
@@ -874,7 +875,7 @@ class ReleaseTests(unittest.TestCase):
         original_git = release.git
         with tempfile.TemporaryDirectory() as directory:
             selected = Path(directory).resolve()
-            args = ["--sha", self.sha, "--build-number", "165", "--ci-run", "20", "--checkout", str(selected), "--dispatch"]
+            args = ["--distribution-profile", "existing-reviewed", "--sha", self.sha, "--build-number", "165", "--ci-run", "20", "--checkout", str(selected), "--dispatch"]
             for bad_args, value in (
                 (("rev-parse", "HEAD"), "b" * 40),
                 (("status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=none"), " M source.swift"),
@@ -943,7 +944,7 @@ class ReleaseTests(unittest.TestCase):
             self.prepare()
 
     def test_cli_defaults_to_dry_run_and_explicit_dispatch_posts_once(self):
-        args = ["--sha", self.sha, "--build-number", "165", "--main-ci-run", "20"]
+        args = ["--distribution-profile", "existing-reviewed", "--sha", self.sha, "--build-number", "165", "--main-ci-run", "20"]
         with patch.object(release, "GitHub", return_value=self.gh), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(release.main(args), 0)
             self.assertEqual(self.gh.dispatches, [])
@@ -973,7 +974,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.gh.requests.count(("GET", release.recent_runs_path(1))), 2)
 
     def test_dispatch_rechecks_main_and_duplicate_index(self):
-        args = ["--sha", self.sha, "--build-number", "165", "--main-ci-run", "20", "--dispatch"]
+        args = ["--distribution-profile", "existing-reviewed", "--sha", self.sha, "--build-number", "165", "--main-ci-run", "20", "--dispatch"]
         for guard in ("check_checkout", "check_duplicates"):
             original = getattr(release, guard)
             calls = 0

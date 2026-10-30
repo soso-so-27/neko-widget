@@ -15,6 +15,8 @@ xcrun swiftc -parse-as-library -D OFFICIAL_WINDOW_CHECKS \
 python3 ci/test-disabled-release-config.py
 python3 ci/test-disabled-release-build-settings.py
 python3 ci/test-group-window-release.py
+python3 ci/test-distribution-profile.py
+node --test ci/test-owner-testflight-recipient.mjs
 python3 ci/test-pairing-only-release-config.py
 python3 ci/test-media-staging-release-config.py
 python3 ci/test-validate-sharing-release.py

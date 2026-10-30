@@ -90,6 +90,8 @@
 	<string>$(SHARING_API_BASE_URL)</string>
 	<key>SharingReleaseMode</key>
 	<string>$(SHARING_RELEASE_MODE)</string>
+	<key>OwnerInternalReportsDisabled</key>
+	<string>$(OWNER_INTERNAL_REPORTS_DISABLED)</string>
 	<key>SharingInternalEncryptedReportEnabled</key>
 	<false/>
 	<key>SharingInternalEncryptedReportScope</key>

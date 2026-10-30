@@ -19,7 +19,8 @@ import re
 import stat
 import struct
 from pathlib import Path
-from moderation_readiness import verify_v2_rollout
+from distribution_profile import OWNER, REVIEWED, OWNER_SCHEMA, OFF_KEY
+from moderation_readiness import verify_distribution_readiness
 from internal_report_release import ENABLED, SCOPE_KEY, verify_info, verify_ipa
 
 
@@ -207,7 +208,7 @@ def is_x25519_small_order_public_key(value: bytes) -> bool:
     return bytes(normalized) in X25519_SMALL_ORDER_PUBLIC_KEYS
 
 
-def load_rollout_policy(path: Path, *, release_mode: str = "media-staging") -> tuple[dict[str, object], str]:
+def load_rollout_policy(path: Path, *, release_mode: str = "media-staging", distribution_profile: str = REVIEWED, internal_reports: bool = False) -> tuple[dict[str, object], str]:
     try:
         raw = path.read_text(encoding="utf-8")
         value = json.loads(raw, object_pairs_hook=strict_object)
@@ -244,8 +245,7 @@ def load_rollout_policy(path: Path, *, release_mode: str = "media-staging") -> t
         fail("Moderation rollout policy cannot allow v2 while selecting v1.")
     if value["clientKeyId"] == "moderation-v2" and not value["v2ClientReleaseAllowed"]:
         fail("Moderation rollout policy cannot select v2 without readiness permission.")
-    if release_mode == "media-staging":
-        verify_v2_rollout(value)
+    verify_distribution_readiness(value, profile=distribution_profile, mode=release_mode, internal_reports=internal_reports)
     return value, hashlib.sha256(canonical_json(value)).hexdigest()
 
 
@@ -346,6 +346,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--release-environment", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--release-mode", required=True)
+    parser.add_argument("--distribution-profile", choices=(OWNER, REVIEWED), default=REVIEWED)
     parser.add_argument("--export-options-plist", type=Path)
     parser.add_argument("--internal-reports", choices=("true", "false"), default="false")
     parser.add_argument("--internal-report-scope", default="")
@@ -364,7 +365,8 @@ def parse_arguments() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_arguments()
-    policy, policy_sha256 = load_rollout_policy(args.rollout_policy, release_mode=args.release_mode)
+    policy, policy_sha256 = load_rollout_policy(args.rollout_policy, release_mode=args.release_mode,
+        distribution_profile=args.distribution_profile, internal_reports=args.internal_reports == "true")
     if str(policy["revision"]) != args.expected_rollout_policy_revision:
         fail("Release metadata rollout policy revision mismatch.")
     if (
@@ -393,6 +395,8 @@ def main() -> None:
         args.moderation_public_key,
     )
     report_settings = {ENABLED: args.internal_reports == "true", SCOPE_KEY: args.internal_report_scope}
+    if args.distribution_profile == OWNER:
+        report_settings[OFF_KEY] = True
     from internal_report_release import SCOPE
     if report_settings[SCOPE_KEY] != (SCOPE if report_settings[ENABLED] else ""):
         fail("Internal report metadata scope mismatch.")
@@ -407,7 +411,7 @@ def main() -> None:
         internal_export = load_dictionary_plist(args.export_options_plist, "Export options").get("testFlightInternalTestingOnly", False)
         if type(internal_export) is not bool:
             fail("Internal export restriction must be an explicit boolean.")
-    if report_settings[ENABLED] and internal_export is not True:
+    if (report_settings[ENABLED] or args.distribution_profile == OWNER) and internal_export is not True:
         fail("Internal reports require internal-only IPA export.")
     version = info.get("CFBundleShortVersionString")
     build_number = info.get("CFBundleVersion")
@@ -486,6 +490,9 @@ def main() -> None:
         "archiveSha256": archive_content_sha256(args.archive),
         "ipaSha256": regular_file_sha256(args.ipa, "Release IPA"),
     }
+    if args.distribution_profile == OWNER:
+        metadata["schema"] = OWNER_SCHEMA
+        metadata["distributionProfile"] = OWNER
     try:
         with args.output.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(metadata, stream, ensure_ascii=True, indent=2, sort_keys=True)

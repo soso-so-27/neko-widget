@@ -13,6 +13,15 @@ on:
         description: "CFBundleVersion。空欄ならこのworkflowのrun numberを使います"
         required: false
         type: string
+      distribution_profile:
+        description: "明示必須。owner-internalは本人用・本物の通報OFF。existing-reviewedは従来の署名付き経路"
+        required: true
+        default: select-required
+        type: choice
+        options:
+          - select-required
+          - owner-internal
+          - existing-reviewed
       release_mode:
         description: "配布範囲。App Store候補はdisabled、review-previewは画面確認、pairing-onlyは内部限定、media-stagingは内部またはBuild 71候補の外部1人限定"
         required: true
@@ -82,6 +91,8 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       PROJECT_DIRECTORY: NekoWidget
       RELEASE_SOURCE_SHA: ${{ inputs.expected_main_sha || github.sha }}
+      DISTRIBUTION_PROFILE: ${{ inputs.distribution_profile }}
+      INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
       GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
       GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
 
@@ -121,6 +132,16 @@ jobs:
             # Do not mix a changed signing workflow with an older candidate.
             git diff --exit-code "$EXPECTED_MAIN_SHA" "$GITHUB_SHA" -- .github/workflows/testflight.yml
           fi
+
+      - name: Require explicit distribution profile
+        shell: bash
+        env:
+          SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/distribution_profile.py" \
+            --profile "$DISTRIBUTION_PROFILE" --mode "$SELECTED_RELEASE_MODE" \
+            --internal-reports "$INTERNAL_REPORTS_REQUESTED"
 
       - name: Verify Xcode installation
         shell: bash
@@ -303,7 +324,7 @@ jobs:
           from urllib.parse import urlparse
           from pathlib import Path
           sys.path.insert(0, str(Path(os.environ["PROJECT_DIRECTORY"]).resolve() / "ci"))
-          from moderation_readiness import verify_v2_rollout
+          from moderation_readiness import verify_distribution_readiness
 
           (
               mode,
@@ -618,7 +639,8 @@ jobs:
                   raise SystemExit(
                       "Canonical moderation trust manifest does not match the tracked rollout policy."
                   )
-              verify_v2_rollout(rollout_policy)
+              verify_distribution_readiness(rollout_policy, profile=os.environ["DISTRIBUTION_PROFILE"],
+                               mode=mode, internal_reports=os.environ["INTERNAL_REPORTS_REQUESTED"] == "true")
               for policy_url, label in (
                   (privacy_url, "SHARING_STAGING_PRIVACY_URL"),
                   (support_url, "SHARING_STAGING_SUPPORT_URL"),
@@ -756,6 +778,11 @@ jobs:
               node scripts/check-staging-runtime.mjs --expected limited-external-beta
           fi
 
+      - name: Require group reporting OFF for owner internal
+        if: ${{ inputs.distribution_profile == 'owner-internal' }}
+        working-directory: NekoWidget/SharingService
+        run: node scripts/check-owner-internal-report-off.mjs
+
       - name: Prepare internal preservation release settings
         shell: bash
         env:
@@ -794,6 +821,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$PROJECT_DIRECTORY/ci/internal_report_release.py" \
+            --distribution-profile "$DISTRIBUTION_PROFILE" \
             --requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${INTERNAL_REPORTS_APPROVAL:-}" \
@@ -1232,7 +1260,11 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          xcodebuild \
+          owner_build_args=()
+          if [[ "$DISTRIBUTION_PROFILE" == "owner-internal" ]]; then
+            owner_build_args+=(OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO)
+          fi
+          xcodebuild "${owner_build_args[@]}" \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
             -configuration Release \
@@ -1309,6 +1341,7 @@ jobs:
             --widget-info-plist "$widget_path/Info.plist" \
             --app-info-plist "$app_path/Info.plist"
           python3 "$PROJECT_DIRECTORY/ci/internal_report_release.py" \
+            --distribution-profile "$DISTRIBUTION_PROFILE" \
             --requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${INTERNAL_REPORTS_APPROVAL:-}" \
@@ -1471,6 +1504,7 @@ jobs:
             --settings-file "$RUNNER_TEMP/preservation-release-settings.json" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           python3 "$PROJECT_DIRECTORY/ci/internal_report_release.py" \
+            --distribution-profile "$DISTRIBUTION_PROFILE" \
             --requested "${INTERNAL_REPORTS_REQUESTED:-false}" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${INTERNAL_REPORTS_APPROVAL:-}" \
@@ -1484,6 +1518,11 @@ jobs:
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --app-info-plist "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist" \
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
+          python3 "$PROJECT_DIRECTORY/ci/distribution_profile.py" \
+            --profile "$DISTRIBUTION_PROFILE" --mode "$SHARING_EXPECTED_MODE" \
+            --internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
+            --app "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app" \
+            --prepare-export "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Export IPA
@@ -1510,6 +1549,15 @@ jobs:
             --ipa "$ipa_path" \
             --verify-export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
 
+      - name: Verify exported distribution boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/distribution_profile.py" \
+            --profile "$DISTRIBUTION_PROFILE" --mode "$SHARING_EXPECTED_MODE" \
+            --internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
+            --ipa "$IPA_PATH" --verify-export "$RUNNER_TEMP/ExportOptions.plist"
+
       - name: Generate build-bound moderation release metadata
         if: ${{ inputs.retain_signed_artifacts }}
         shell: bash
@@ -1527,6 +1575,7 @@ jobs:
             --archive "$RUNNER_TEMP/NekoWidget.xcarchive" \
             --ipa "$IPA_PATH" \
             --rollout-policy "$PROJECT_DIRECTORY/ci/moderation-client-rollout-policy.json" \
+            --distribution-profile "$DISTRIBUTION_PROFILE" \
             --release-environment "$RELEASE_ENVIRONMENT" \
             --source-commit "$RELEASE_SOURCE_SHA" \
             --release-mode "$SHARING_EXPECTED_MODE" \
@@ -1650,6 +1699,8 @@ jobs:
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          OWNER_INTERNAL_GROUP_ID: ${{ vars.OWNER_INTERNAL_GROUP_ID }}
+          OWNER_INTERNAL_TESTER_ID: ${{ vars.OWNER_INTERNAL_TESTER_ID }}
           SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail
@@ -1669,6 +1720,7 @@ jobs:
               --expected-build-number "$RELEASE_BUILD_NUMBER" \
               --expected-github-run-id "$GITHUB_RUN_ID" \
               --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --expected-distribution-profile "$DISTRIBUTION_PROFILE" \
               --expected-release-mode "$SHARING_EXPECTED_MODE" \
               --expected-internal-reports "$RELEASE_INTERNAL_REPORTS_ENABLED" \
               --expected-internal-report-scope "$RELEASE_INTERNAL_REPORTS_SCOPE"
@@ -1696,6 +1748,9 @@ jobs:
             python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/altool-result.py" "$stage" "$log_path"
           }
 
+          if [[ "$DISTRIBUTION_PROFILE" == "owner-internal" ]]; then
+            node "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/check-owner-testflight-recipient.mjs"
+          fi
           run_altool_stage validate \
             --validate-app \
             -f "$IPA_PATH" \

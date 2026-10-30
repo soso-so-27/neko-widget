@@ -458,6 +458,8 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
 
         public_dns_stub = (
             f"import os\nos.environ['PROJECT_DIRECTORY'] = {str(ROOT)!r}\n"
+            "os.environ['DISTRIBUTION_PROFILE'] = 'existing-reviewed'\n"
+            "os.environ['INTERNAL_REPORTS_REQUESTED'] = 'false'\n"
             "import socket\n"
             "socket.getaddrinfo = lambda *args, **kwargs: "
             "[(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))]\n"
@@ -592,6 +594,8 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         )
         public_dns_stub = (
             f"import os\nos.environ['PROJECT_DIRECTORY'] = {str(ROOT)!r}\n"
+            "os.environ['DISTRIBUTION_PROFILE'] = 'existing-reviewed'\n"
+            "os.environ['INTERNAL_REPORTS_REQUESTED'] = 'false'\n"
             "import socket\n"
             "socket.getaddrinfo = lambda *args, **kwargs: "
             "[(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))]\n"

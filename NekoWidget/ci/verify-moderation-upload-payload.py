@@ -15,6 +15,7 @@ import re
 import stat
 from pathlib import Path
 from internal_report_release import metadata_settings, verify_ipa
+from distribution_profile import OWNER, REVIEWED, OWNER_SCHEMA, OFF_KEY
 
 
 METADATA_SCHEMA = "jp.nekowidget.moderation-release-metadata.v3"
@@ -88,6 +89,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--expected-github-run-id", required=True)
     parser.add_argument("--expected-github-run-attempt", required=True)
     parser.add_argument("--expected-release-mode", required=True)
+    parser.add_argument("--expected-distribution-profile", choices=(OWNER, REVIEWED), default=REVIEWED)
     parser.add_argument("--expected-internal-reports", choices=("true", "false"), default="false")
     parser.add_argument("--expected-internal-report-scope", default="")
     return parser.parse_args()
@@ -106,10 +108,14 @@ def main() -> None:
         )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         fail(f"Release metadata is invalid: {error}")
-    fields = EXPECTED_FIELDS | {"internalEncryptedReportEnabled", "internalEncryptedReportScope", "testFlightInternalTestingOnly"} if isinstance(metadata, dict) and metadata.get("schema") == METADATA_SCHEMA else EXPECTED_FIELDS
+    fields = EXPECTED_FIELDS | {"internalEncryptedReportEnabled", "internalEncryptedReportScope", "testFlightInternalTestingOnly"} if isinstance(metadata, dict) and metadata.get("schema") in (METADATA_SCHEMA, OWNER_SCHEMA) else EXPECTED_FIELDS
+    if isinstance(metadata, dict) and metadata.get("schema") == OWNER_SCHEMA:
+        fields = fields | {"distributionProfile"}
     if not isinstance(metadata, dict) or set(metadata) != fields:
         fail("Release metadata has unexpected or missing fields.")
-    if metadata["schema"] not in {METADATA_SCHEMA, LEGACY_SCHEMA}:
+    if (metadata.get("schema") == OWNER_SCHEMA) != (args.expected_distribution_profile == OWNER):
+        fail("Distribution profile does not match upload context.")
+    if metadata["schema"] not in {METADATA_SCHEMA, LEGACY_SCHEMA, OWNER_SCHEMA}:
         fail("Release metadata schema is unsupported.")
     if metadata["releaseEnvironment"] != "testflight":
         fail("Release metadata environment must be exactly testflight.")
@@ -135,9 +141,12 @@ def main() -> None:
     try:
         report_settings = metadata_settings(metadata)
         from internal_report_release import ENABLED, SCOPE_KEY
-        if report_settings != {ENABLED: args.expected_internal_reports == "true", SCOPE_KEY: args.expected_internal_report_scope}:
+        expected = {ENABLED: args.expected_internal_reports == "true", SCOPE_KEY: args.expected_internal_report_scope}
+        if args.expected_distribution_profile == OWNER:
+            expected[OFF_KEY] = True
+        if report_settings != expected:
             fail("Internal report metadata does not match upload context.")
-        if metadata["schema"] == METADATA_SCHEMA:
+        if metadata["schema"] in (METADATA_SCHEMA, OWNER_SCHEMA):
             verify_ipa(args.ipa, report_settings)
     except ValueError as error:
         fail(str(error))
