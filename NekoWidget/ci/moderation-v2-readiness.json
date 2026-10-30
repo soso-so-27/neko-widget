@@ -60,9 +60,9 @@
       "NekoWidget/ci/release-testflight.py": "b7216b610f2e7e68504af31d883eba37a982f3be2cc706e823f08b5af4390d78",
       "NekoWidget/ci/verify-moderation-upload-payload.py": "e4d2d45b2193f84442257e96096804f655405b0414f54df03b0d0e8e479617a3",
       "NekoWidget/ci/verify-signed-artifact-contents.py": "db15bfbd307acdc691aa739089131ff52e64e47d84899299307d607bf252c9bc",
-      "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "0366ead5852907345c0d22f35c7cc4e7e228dcb586cdc7d38f8f882f055fdebf",
+      "NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift": "a97b9d26e70ed4c31a53132c1539dc7d6f5ded887043cdd290655d5b98c45bba",
       "NekoWidget/NekoWidget/Views/FamilyWindowView.swift": "cf2f13513ec536634156cad38c189da593aa48b512eac51d4a58c8b73380f730",
-      "NekoWidget/NekoWidget/Info.plist": "57801b1c19bc538f768eef7e695fee8cb0324ca6e72860cec9a876c982356c4c",
+      "NekoWidget/NekoWidget/Info.plist": "eb9b75c4a3fc424b393c92e3d8e5cabf83f8433564a023c0a471c0811500a1a8",
       "NekoWidget/NekoWidgetShareExtension/Info.plist": "6aaf8d0b7e21456642a54b8a92864cd77838cfcf9ae85ac169c98c88033d01aa",
       "NekoWidget/NekoWidgetWidget/Info.plist": "d474f29788b924d3219c3af67c3cf8bb67837b89f3588903e78ad0c94bdf6f57",
       "NekoWidget/SharingService/scripts/check-staging-runtime.mjs": "25999ee100e8f1b5d3e8e6b82ff864f91c7c61554bc7e6fd340915c7c1f83162",
@@ -89,12 +89,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "ieDxgQkad6fB4yYRbdIyHKzua3hTkzczoQYr24bunqx0DHEUoJNjvqdllgK9qtyG5J3y7mDHRwa7BXtVL75BAw"
+      "signatureBase64url": "WQWUVKtqI0ywBEh7Jm8tsiYxuVqDeJ-A17fpWLKjurq63HDu2FdhC7f-6h8VUJctUHcD5w1HH7qbiJ6oj4c3AA"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "fwiUFGtA2t3sZ0QsEL167t37MfpWp06I0z6hJsK3iHP1RswSDcSO-uLdFRqYXsj0cQw4cs_fOL9nYhQB0LFFBA"
+      "signatureBase64url": "-weNrxrnPXLIY4ptgmKcCAP5f3AgFdaVxR16f8CLh7CJNC7gg9UpaUMllEUzq4LReYUARoTGWQvzhV7BUz1CBA"
     }
   ]
 }
