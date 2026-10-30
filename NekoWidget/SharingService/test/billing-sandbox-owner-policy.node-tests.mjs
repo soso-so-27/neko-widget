@@ -7,8 +7,17 @@ test('owner policy accepts only one bounded public enrollment and closes on malf
   assert.throws(() => parseOwnerAdmission(JSON.stringify(value), 999));
   assert.throws(() => parseOwnerAdmission(JSON.stringify(value), 2000));
   assert.deepEqual(parseOwnerAdmission(JSON.stringify(value), 2000, true), value, 'rollback schema validation may accept expired policy');
-  for (const change of [ { bootstrapClientRequestId: [value.bootstrapClientRequestId] }, { initialPublicKeySHA256: 'A'.repeat(64) }, { extra: 'identity' }, { expiresAtMs: 86401001 }, { startsAtMs: -1 }, { expiresAtMs: 1000 }, { version: 2 }, { expiresAtMs: 2000.5 } ]) {
+  for (const change of [ { bootstrapClientRequestId: [value.bootstrapClientRequestId] }, { initialPublicKeySHA256: 'A'.repeat(64) }, { extra: 'identity' }, { expiresAtMs: value.startsAtMs + 7 * 86400000 + 1 }, { startsAtMs: -1 }, { expiresAtMs: 1000 }, { version: 2 }, { expiresAtMs: 2000.5 } ]) {
     assert.throws(() => parseOwnerAdmission(JSON.stringify({ ...value, ...change }), 1500));
   }
   for (const text of [undefined, null, '{}', '[]', 'null', 'x'.repeat(513)]) assert.throws(() => parseOwnerAdmission(text, 1500));
+});
+
+test('seven-day owner admission works after day one and closes exactly at expiry', () => {
+  const sevenDays = { ...value, expiresAtMs: value.startsAtMs + 7 * 86400000 };
+  const text = JSON.stringify(sevenDays);
+  assert.deepEqual(parseOwnerAdmission(text, value.startsAtMs + 86400000), sevenDays);
+  assert.deepEqual(parseOwnerAdmission(text, sevenDays.expiresAtMs - 1), sevenDays);
+  assert.throws(() => parseOwnerAdmission(text, sevenDays.expiresAtMs));
+  assert.throws(() => parseOwnerAdmission(text, value.startsAtMs - 1));
 });
