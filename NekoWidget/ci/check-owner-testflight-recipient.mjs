@@ -8,7 +8,13 @@ import { pathToFileURL } from 'node:url';
 const origin = 'https://api.appstoreconnect.apple.com';
 const appID = '6801962436';
 const ownerEmail = 'nakanishisoya@gmail.com';
-const requireValue = (value, message) => { if (!value) throw Error(message); };
+class RecipientCheckError extends Error {}
+const requireValue = (value, message) => { if (!value) throw new RecipientCheckError(message); };
+// Only our fixed messages may reach logs. Fetch/JSON/crypto errors can contain
+// URLs, IDs or credential material and must never be logged verbatim.
+export function failureMessage(error) {
+  return error instanceof RecipientCheckError ? error.message : 'ASC read or credential processing failed; details suppressed.';
+}
 const resourceID = value => typeof value === 'string' && /^[A-Za-z0-9-]{8,80}$/.test(value);
 
 export async function checkRecipient({ groupID, testerID, get }) {
@@ -42,7 +48,9 @@ export function reader(token, fetcher = fetch) {
       seen.add(url.href);
       const response = await fetcher(url, { method: 'GET', redirect: 'error',
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-      requireValue(response.status === 200, `ASC read unavailable (${response.status}); do not distribute.`);
+      const route = url.pathname.endsWith('/betaGroups') ? 'beta groups'
+        : url.pathname.endsWith('/betaTesters') ? 'group testers' : 'pagination';
+      requireValue(response.status === 200, `ASC ${route} read unavailable (HTTP ${response.status}); do not distribute.`);
       const body = await response.json();
       requireValue(Array.isArray(body.data) && body.links, 'Incomplete ASC pagination.');
       result.push(...body.data);
@@ -76,5 +84,5 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => { console.error('Owner ASC recipient verification failed or unavailable. Upload is blocked; no ASC setting changed.'); process.exitCode = 1; });
+  main().catch(error => { console.error(`Owner ASC recipient verification stopped: ${failureMessage(error)} Upload is blocked; no ASC setting changed.`); process.exitCode = 1; });
 }
