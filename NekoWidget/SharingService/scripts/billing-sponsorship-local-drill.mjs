@@ -77,6 +77,7 @@ const expectedMigrationNames = [
   "0056_family_notebook_encrypted_history.sql",
   "0057_family_notebook_governance.sql",
   "0058_group_photo_captions.sql",
+  "0059_group_photo_jst_day.sql",
 ];
 
 const databaseGateColumns = [
