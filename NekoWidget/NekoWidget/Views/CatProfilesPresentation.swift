@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 enum CatIndividualRecognitionCopy {
-    static let unavailable = "いまは自動で見分けることができません。"
+    static let unavailable = "どの猫が写っているかは、いまは自動では見分けられません。"
 }
 
 enum CatProfileBoundingBoxSelector {
@@ -127,7 +127,7 @@ struct CatProfilePhotoAlbumLinkPresentation: Equatable {
     var profilePhotoCount: Int
     var isAvailable: Bool
 
-    var displayTitle: String { title ?? "利用できないアルバム" }
+    var displayTitle: String { title ?? "見つからないアルバム" }
 
     init(
         identifier: String,

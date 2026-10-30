@@ -252,7 +252,7 @@ private struct CatChip: View {
         .frame(width: 72)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(profile.displayName)、この子のこと \(progress.filled)／\(progress.total)")
+        .accessibilityLabel("\(profile.displayName)、この子のこと \(progress.total)項目中\(progress.filled)項目")
     }
 }
 
@@ -678,8 +678,8 @@ struct MainTabView: View {
         .environment(\.showcaseAddTargets, showcaseAddScopes.map {
             ShowcaseAddTarget(id: $0, title: showcaseScopeTitle($0))
         })
-        .alert("見せる写真を準備できませんでした", isPresented: $showcasePreparationError) {
-            Button("編集画面を開く") { showsShowcasePreparation = true }
+        .alert("見せる写真を用意できませんでした", isPresented: $showcasePreparationError) {
+            Button("自分で選ぶ") { showsShowcasePreparation = true }
             Button("閉じる", role: .cancel) {}
         }
         .fullScreenCover(item: $showcaseSession) { session in
@@ -1004,13 +1004,13 @@ struct MainTabView: View {
                 // The cats are the door, but small: a row of faces above the
                 // tools, each opening the cat's page. The tools stay tools.
                 catStrip
-                toolSection("いつも") {
+                toolSection("ふだん") {
                     showcaseToolCard
                 }
                 if !preparingShowcaseScopes.isEmpty {
-                    ProgressView("見せる写真を準備中")
+                    ProgressView("見せる写真を用意しています…")
                 }
-                toolSection("もしも") {
+                toolSection("もしものとき") {
                     NavigationLink {
                         LostCatEmergencyEntryView(
                             profiles: catProfilesPresentation.profiles,
@@ -1018,7 +1018,7 @@ struct MainTabView: View {
                         )
                     } label: {
                         ToolTile(title: "迷子のとき", systemImage: "magnifyingglass",
-                                 subtitle: "探す画像を作る", tint: ToolTint.emergency)
+                                 subtitle: "探すための画像を作る", tint: ToolTint.emergency)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-lost-cat-open")
@@ -1027,7 +1027,7 @@ struct MainTabView: View {
                                         unregisteredPhotos: unregisteredCatPhotos)
                     } label: {
                         ToolTile(title: "預けるとき", systemImage: "hand.raised.fill",
-                                 subtitle: "お世話を渡す", tint: ToolTint.emergencyWarm)
+                                 subtitle: "お世話のメモを渡す", tint: ToolTint.emergencyWarm)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-care-open")
@@ -1073,19 +1073,19 @@ struct MainTabView: View {
             } else { openPreparedShowcase(scopeID: "") }
         } label: {
             ToolTile(title: "写真を見せる", systemImage: "square.grid.3x3.fill",
-                     subtitle: "自慢の 9 枚を作る", tint: ToolTint.everydayLight)
+                     subtitle: "自慢の9枚を選ぶ", tint: ToolTint.everydayLight)
         }
         .buttonStyle(ToolCardButtonStyle())
         .accessibilityIdentifier("tools-showcase-open")
-        .alert(hasPhotoAccess ? "猫の写真を準備しましょう" : "写真の許可が必要です", isPresented: $showsShowcaseNoPhotos) {
-            Button(hasPhotoAccess ? "写真を開く" : "写真の許可を確認") {
+        .alert(hasPhotoAccess ? "まだ猫の写真がありません" : "写真へのアクセスが必要です", isPresented: $showsShowcaseNoPhotos) {
+            Button(hasPhotoAccess ? "「写真」タブを開く" : "写真へのアクセスを許可") {
                 selectedTab = .photos
                 photoLibrarySelection.select(.all)
                 if !hasPhotoAccess { requestPhotoAccess() }
             }
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」で猫の写真とアクセス範囲を確認してください。")
+            Text(scan.isScanning ? "猫の写真を探しています。見つかると使えるようになります。" : "「写真」タブで、猫の写真と写真へのアクセスを確かめてください。")
         }
     }
 
@@ -1383,13 +1383,13 @@ struct MainTabView: View {
             ForEach(catProfilesPresentation.profiles) { profile in
                 photoLibraryCatButton(profile.displayName, identifier: profile.identifier)
             }
-            photoLibraryCatButton("未指定", identifier: "unassigned")
+            photoLibraryCatButton("未分類", identifier: "unassigned")
             Divider()
             Button("猫のプロフィール", systemImage: "cat.fill") { showsCatProfiles = true }
                 .accessibilityIdentifier("photos-cat-profiles")
         } label: {
             HStack(spacing: 6) {
-                Text((photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未指定" } ?? "すべての猫") + "の写真")
+                Text((photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未分類" } ?? "すべての猫") + "の写真")
                     .font(.title3.bold())
                 Image(systemName: "chevron.down").font(.caption.weight(.bold)).foregroundStyle(.secondary)
             }
@@ -1584,7 +1584,7 @@ struct MainTabView: View {
                 Label("この写真は開けません", systemImage: "photo")
                     .accessibilityIdentifier("unavailable-widget-photo")
             } description: {
-                Text("現在、表示する写真の範囲から外れています。")
+                Text("いまの設定では表示しない写真です。")
             } actions: {
                 Button {
                     photosPath = NavigationPath()
@@ -1619,7 +1619,7 @@ struct MainTabView: View {
                             openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                       description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
+                                       description: Text("いまの設定では表示しない写真か、写真へのアクセスが許可されていません。"))
                     .accessibilityIdentifier("unavailable-widget-photo")
             }
         }
@@ -1637,7 +1637,7 @@ struct MainTabView: View {
                             openRelatedAlbumOverride: openRelatedAlbum)
             } else {
                 ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                       description: Text("現在、表示する写真の範囲から外れているか、写真にアクセスできません。"))
+                                       description: Text("いまの設定では表示しない写真か、写真へのアクセスが許可されていません。"))
                     .accessibilityIdentifier("unavailable-first-run-photo")
             }
         }
@@ -1821,8 +1821,8 @@ struct MainTabView: View {
     }
 
     private var unavailableRediscoveryView: some View {
-        ContentUnavailableView("この写真の続きを開けません", systemImage: "photo.on.rectangle",
-                               description: Text("写真の範囲や猫の指定が変わりました。前の画面に戻って選び直してください。"))
+        ContentUnavailableView("続きの写真を開けません", systemImage: "photo.on.rectangle",
+                               description: Text("表示する写真や猫が変わりました。前の画面から選び直してください。"))
             .navigationTitle("写真")
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("photo-rediscovery-unavailable")
@@ -1904,7 +1904,7 @@ struct MainTabView: View {
 
     private var unavailablePersonalPhotoView: some View {
         ContentUnavailableView("この写真は開けません", systemImage: "photo",
-            description: Text("写真へのアクセスや表示する写真の範囲が変更されました。戻って選び直してください。"))
+            description: Text("写真へのアクセスか、表示する写真の設定が変わりました。前の画面から選び直してください。"))
             .navigationTitle("写真")
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier("personal-photo-unavailable")
@@ -2073,7 +2073,7 @@ struct MainTabView: View {
             albumsView(scope: .profile(identifier), showsHighlightArchive: showsHighlightArchive)
         } else {
             ContentUnavailableView("この猫のアルバムを開けません", systemImage: "cat",
-                description: Text("プロフィールが変更されました。アルバムに戻って選び直してください。"))
+                description: Text("猫のプロフィールが変わりました。アルバムから選び直してください。"))
         }
     }
 
@@ -2150,7 +2150,7 @@ struct MainTabView: View {
             ContentUnavailableView(
                 "この季節のムービーを開けません",
                 systemImage: "film.stack",
-                description: Text("元の写真や動画がこのiPhoneにあるか確認してください。")
+                description: Text("元の写真や動画が、このiPhoneに残っているか確かめてください。")
             )
         }
     }
@@ -3063,9 +3063,9 @@ struct MainTabView: View {
 
     private var missingAlbumView: some View {
         ContentUnavailableView(
-            "アルバムを更新しています",
+            "アルバムが新しくなりました",
             systemImage: "rectangle.stack",
-            description: Text("写真を探し終えました。アルバムの一覧に戻って、もう一度開いてください。")
+            description: Text("アルバムの一覧に戻って、もう一度開いてください。")
         )
     }
 
@@ -3247,7 +3247,7 @@ private struct WindowListView: View {
         let discoverable = publicWindows.filter { publicStates[$0.id]?.isSubscribed != true }
         if !discoverable.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("見つける")
+                Text("公式のまどを追加")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
@@ -3266,7 +3266,7 @@ private struct WindowListView: View {
 
     private func addButton(_ source: PublicWindowPresentationSource) -> some View {
         Button { add(source) } label: {
-            Text("加える")
+            Text("追加")
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -3296,7 +3296,7 @@ private struct WindowListView: View {
             }
         } catch {
             reloadPublicStates()
-            addPublicWindowError = "加えられませんでした。もう一度お試しください。"
+            addPublicWindowError = "追加できませんでした。もう一度お試しください。"
             addingPublicWindowID = nil
         }
     }
@@ -3331,7 +3331,7 @@ private struct WindowListView: View {
             .frame(maxWidth: 520)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle("相手とつなぐ")
+        .navigationTitle("まどを作る・参加する")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier("window-connection-options")
@@ -3368,7 +3368,7 @@ private struct WindowListView: View {
                         .accessibilityIdentifier("window-list-receiving")
                     }
                     if isLoading, windows.isEmpty {
-                        ProgressView("まどを確認しています…")
+                        ProgressView("まどを読み込んでいます…")
                             .frame(maxWidth: .infinity, minHeight: 240)
                     } else if windows.isEmpty, let message = availabilityMessage {
                         unavailableWindowContent(message: message)
@@ -3470,7 +3470,7 @@ private struct WindowListView: View {
         NavigationLink { connectionOptions } label: {
             Image(systemName: "person.badge.plus")
         }
-        .accessibilityLabel("相手とつなぐ")
+        .accessibilityLabel("まどを作る・参加する")
         .accessibilityIdentifier("window-list-connect")
     }
 
@@ -3481,12 +3481,12 @@ private struct WindowListView: View {
     private func unavailableWindowContent(message: String) -> some View {
         VStack(spacing: 16) {
             ContentUnavailableView(
-                "みんなのまどを確認できません",
+                "みんなのまどを読み込めません",
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text(message)
             )
 
-            Button("もう一度確認する") {
+            Button("もう一度試す") {
                 Task { await reload() }
             }
             .buttonStyle(.borderedProminent)
@@ -3497,7 +3497,7 @@ private struct WindowListView: View {
     private func cachedWindowWarning(message: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(
-                "最後に確認できたまどを表示しています",
+                "前回読み込んだまどを表示しています",
                 systemImage: "exclamationmark.triangle.fill"
             )
             .font(.subheadline.weight(.semibold))
@@ -3507,11 +3507,11 @@ private struct WindowListView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Text("更新が終わるまで、まどの切り替えや追加はできません。")
+            Text("読み込みが終わるまで、まどの切り替えや追加はできません。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Button("もう一度確認する") {
+            Button("もう一度試す") {
                 Task { await reload() }
             }
             .buttonStyle(.bordered)
@@ -3545,7 +3545,7 @@ private struct WindowListView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
                         .font(.body.weight(.semibold))
-                    Text("猫カフェや保護猫の写真を、見るだけで受け取れます")
+                    Text("猫カフェや保護猫の写真を、見るだけで楽しめます")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -3566,7 +3566,7 @@ private struct WindowListView: View {
             if supportsPrivateWindows {
                 VStack(alignment: .leading, spacing: 8) {
                     NavigationLink { connectionOptions } label: {
-                        Label("相手とつなぐ", systemImage: "person.badge.plus")
+                        Label("まどを作る・参加する", systemImage: "person.badge.plus")
                             .frame(minHeight: 44)
                     }
                     .buttonStyle(.bordered)
@@ -3577,12 +3577,12 @@ private struct WindowListView: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 NavigationLink { discovery } label: {
-                    Label("公式の写真を受け取る", systemImage: "photo")
+                    Label("公式のまどを見る", systemImage: "photo")
                         .frame(minHeight: 44)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("window-list-start")
-                Text("まどを選んで写真を見られます。写真の投稿や、相手の招待は必要ありません。")
+                Text("選ぶだけで写真が届きます。投稿や招待はいりません。")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }
@@ -3595,7 +3595,7 @@ private struct WindowListView: View {
     private var windowAdditionControl: some View {
         if let pending = setupWindows.first {
             Button { open(pending) } label: {
-                Label("\(pending.displayName)の設定を開く", systemImage: "arrow.right.circle")
+                Label("\(pending.displayName)の設定を続ける", systemImage: "arrow.right.circle")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
@@ -3604,8 +3604,8 @@ private struct WindowListView: View {
         } else if windows.count >= PrivateWindowCatalogState.maximumProductWindowCount {
             Label(
                 windows.count > PrivateWindowCatalogState.maximumProductWindowCount
-                    ? "現在は新しいまどを追加できません。既存のまどはそのまま使えます"
-                    : "まどは、合計\(PrivateWindowCatalogState.maximumProductWindowCount)個までです",
+                    ? "いまは新しいまどを追加できません。今あるまどはそのまま使えます"
+                    : "まどは\(PrivateWindowCatalogState.maximumProductWindowCount)つまで使えます",
                 systemImage: "rectangle.stack"
             )
             .font(.footnote)
@@ -3626,14 +3626,14 @@ private struct WindowListView: View {
             } else {
                 setupAction("新しいまどを作る", path: .create, identifier: "window-list-create")
             }
-            setupAction("招待されたまどに参加", path: .join, identifier: "window-list-join")
-            setupAction("以前のまどにこのiPhoneを追加", path: .recover, identifier: "window-list-recover")
+            setupAction("招待されたまどに参加する", path: .join, identifier: "window-list-join")
+            setupAction("このiPhoneで以前のまどを使う", path: .recover, identifier: "window-list-recover")
         }
         if pausesWindowChanges {
-            Text(availabilityMessage ?? "みんなのまどを確認しています…")
+            Text(availabilityMessage ?? "みんなのまどを読み込んでいます…")
                 .font(.footnote).foregroundStyle(.secondary)
             if availabilityMessage != nil {
-                Button("もう一度確認する") { Task { await reload() } }
+                Button("もう一度試す") { Task { await reload() } }
                     .frame(minHeight: 44)
             }
         }
@@ -3746,7 +3746,7 @@ private struct WindowListView: View {
                         }
                         .overlay(alignment: .bottomLeading) {
                             if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
-                                Label("\(pendingCount.formatted())枚 準備中", systemImage: "clock")
+                                Label("\(pendingCount.formatted())枚 届ける準備中", systemImage: "clock")
                                     .font(.caption.weight(.semibold))
                                     .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
                             }
@@ -3761,11 +3761,11 @@ private struct WindowListView: View {
                 || (pausesWindowChanges && !isActive)
         )
         .accessibilityIdentifier("window-list-row-\(window.localWindowID)")
-        .accessibilityLabel(isSetup ? window.displayName : "\(window.displayName)、相手と送り合うまど")
+        .accessibilityLabel(isSetup ? window.displayName : "\(window.displayName)、写真を届け合うまど")
         .accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup, at: now))
         .accessibilityHint(
             pausesWindowChanges && !isActive
-                ? "更新が完了すると、このまどを開けます"
+                ? "読み込みが終わると、このまどを開けます"
                 : "このまどを開きます"
         )
     }
@@ -3798,27 +3798,27 @@ private struct WindowListView: View {
         var parts = [isSetup ? windowPrimaryStatusLabel(for: window)
                      : visiblePhoto != nil ? "写真あり" : coverPlaceholder(for: window)]
         if !isSetup, let visiblePhoto {
-            parts.append(visiblePhoto.origin == .received ? "相手から届いた写真" : "送った写真")
+            parts.append(visiblePhoto.origin == .received ? "相手から届いた写真" : "届けた写真")
         }
         if windowErrors.contains(window.localWindowID) {
-            parts.append(isSetup ? "設定を開いて確認" : "開いて共有の状態を確認")
+            parts.append(isSetup ? "設定を開いて確認" : "開いて確かめてください")
         }
         if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
-            parts.append("送信準備中 \(pendingCount.formatted())枚")
+            parts.append("届ける準備中 \(pendingCount.formatted())枚")
         }
         return parts.joined(separator: "、")
     }
 
     private func coverPlaceholder(for window: PrivateWindowCatalogEntry) -> String {
         guard let status = coverPhotos[window.localWindowID]?.status else {
-            return availabilityMessage == nil ? "写真を確認中" : "写真を確認できません"
+            return availabilityMessage == nil ? "写真を読み込み中" : "写真を読み込めません"
         }
         switch status {
         case .noPhotos: return "いまは写真がありません"
-        case .noRetainedImage: return "写真の控えがありません"
-        case .unavailable: return "写真を確認できません"
-        case .notConnected: return "接続を確認してください"
-        case .photo: return "写真の保存期間が過ぎました"
+        case .noRetainedImage: return "写真が残っていません"
+        case .unavailable: return "写真を読み込めません"
+        case .notConnected: return "まだつながっていません"
+        case .photo: return "写真の表示期間が終わりました"
         }
     }
 
@@ -3921,8 +3921,8 @@ private struct WindowListView: View {
             guard revision == catalogReloadRevision else { return }
             coverPhotos = [:]
             catalogLoadMessage = windows.isEmpty
-                ? "保存済みのまどを読み込めませんでした。時間をおいて、もう一度お試しください。"
-                : "まどの一覧を更新できませんでした。保存済みの一覧は変更していません。"
+                ? "まどを読み込めませんでした。少し時間をおいて、もう一度お試しください。"
+                : "まどの一覧を新しくできませんでした。前回の一覧を表示しています。"
         }
     }
 
@@ -3990,7 +3990,7 @@ private struct WindowListView: View {
         for window: PrivateWindowCatalogEntry
     ) -> String {
         guard let phase = pairingPhases[window.localWindowID] else {
-            return window.spaceID == nil ? "設定を続ける" : "接続状態を確認中"
+            return window.spaceID == nil ? "設定を続ける" : "読み込んでいます…"
         }
         switch phase {
         case .unpaired:
@@ -4002,21 +4002,21 @@ private struct WindowListView: View {
         case .joining:
             return "招待を確認中"
         case .claimingRecovery:
-            return "このiPhoneを追加中"
+            return "このiPhoneで使えるようにしています…"
         case .pendingRecoveryApproval:
-            return "iPhone追加の承認待ち"
+            return "相手の承認を待っています"
         case .recoveryAwaitingCompletion:
-            return "iPhone追加の完了待ち"
+            return "もうすぐ使えます"
         case .pendingApproval:
-            return "相手の承認待ち"
+            return "相手の承認を待っています"
         case .approvalRequired:
-            return "相手の確認が必要"
+            return "参加を承認してください"
         case .awaitingCompletion:
-            return "接続の完了待ち"
+            return "相手の確認を待っています"
         case .paired:
-            return "相手と送り合う"
+            return "写真を届け合えます"
         case .failed:
-            return "設定を完了できませんでした"
+            return "設定を終えられませんでした"
         }
     }
 

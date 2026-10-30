@@ -13,13 +13,13 @@ struct BlockedSharingView: View {
     var body: some View {
         List {
             if !hasLoaded && errorMessage == nil {
-                ProgressView("ブロックの記録を確認しています…")
+                ProgressView("読み込んでいます…")
             }
             if let errorMessage {
                 Section {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
-                    Button("もう一度確認する") { Task { await reload() } }
+                    Button("もう一度読み込む") { Task { await reload() } }
                         .disabled(isWorking)
                 }
             }
@@ -32,7 +32,7 @@ struct BlockedSharingView: View {
             if hasLoaded && entries.isEmpty {
                 ContentUnavailableView(
                     "ブロックした相手はいません", systemImage: "hand.raised",
-                    description: Text("このiPhoneで行ったブロックを、ここから解除できます。")
+                    description: Text("このiPhoneでブロックした相手が、ここに表示されます。")
                 )
             }
             ForEach(entries) { entry in
@@ -41,15 +41,15 @@ struct BlockedSharingView: View {
                     Text(entry.createdAt, style: .date)
                         .font(.caption).foregroundStyle(.secondary)
                     if entry.phase == .withdrawn {
-                        Label("ブロック解除済み・共有は停止中", systemImage: "checkmark.shield")
+                        Label("ブロックを解除しました（まどは終了したままです）", systemImage: "checkmark.shield")
                             .font(.subheadline)
-                        Button("新しいまどで共有を始める") {
+                        Button("新しいまどを作る") {
                             Task { await startNewWindow() }
                         }
                         .accessibilityIdentifier("blocked-sharing-start-new")
                     } else {
                         if entry.phase == .pending {
-                            Text("ブロックの結果を確認できていません。取り消す場合は、下のボタンから確認できます。")
+                            Text("ブロックが済んだか確かめられていません。解除するときは、下の「ブロックを解除」を押してください。")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         Button("ブロックを解除") { confirmationTarget = entry }
@@ -60,7 +60,7 @@ struct BlockedSharingView: View {
             }
             Section {
                 Text("ブロックを解除しても、前のまどは戻りません。もう一度届け合うには、新しいまどを作ります。")
-                Text("別のiPhoneや前の版でしたブロックは、ここには出ません。")
+                Text("ほかのiPhoneや、前のバージョンでブロックした相手は表示されません。")
             }
             .font(.footnote).foregroundStyle(.secondary)
         }
@@ -84,7 +84,7 @@ struct BlockedSharingView: View {
             }
             Button("キャンセル", role: .cancel) { confirmationTarget = nil }
         } message: { _ in
-            Text("共有は自動で再開しません。もう一度写真を送り合うには、新しい招待から双方で確認します。削除した写真は戻りません。")
+            Text("前のまどや削除した写真は戻りません。また届け合うときは、新しいまどを作って招待してください。")
         }
         .navigationDestination(isPresented: $showsNewWindow) {
             PairingView(initialSetupPath: .create)
@@ -106,7 +106,7 @@ struct BlockedSharingView: View {
         } catch {
             entries = []
             hasLoaded = false
-            errorMessage = "ブロックの記録を確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+            errorMessage = "読み込めませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
         }
     }
 
@@ -128,11 +128,11 @@ struct BlockedSharingView: View {
                 NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
             }
             entries = try MomentBlockWithdrawalStore.entries(installationMarker: marker)
-            completionMessage = "ブロックを解除しました。写真の共有はまだ再開していません。"
+            completionMessage = "ブロックを解除しました。また届け合うときは、新しいまどを作ってください。"
         } catch {
             // Keep the capability and request ID after any unknown result so
             // a retry can finish the same withdrawal without claiming success.
-            errorMessage = "ブロックの解除を確認できませんでした。通信状態を確認して、もう一度「ブロックを解除」をお試しください。"
+            errorMessage = "ブロックを解除できたか確かめられませんでした。インターネットにつながるところで、もう一度「ブロックを解除」を押してください。"
         }
         isWorking = false
     }
@@ -149,11 +149,11 @@ struct BlockedSharingView: View {
             showsNewWindow = true
             NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
         } catch PrivateWindowCatalogStore.Error.windowLimitReached {
-            errorMessage = "まどは合計3個までです。使わないまどの共有を終了してからお試しください。"
+            errorMessage = "まどは全部で\(PrivateWindowCatalogState.maximumProductWindowCount)個までです。使わないまどを終了してから、もう一度お試しください。"
         } catch PrivateWindowCatalogStore.Error.setupWindowAlreadyExists {
-            errorMessage = "設定中のまどがあります。先にその設定を完了するか、取り消してください。"
+            errorMessage = "途中まで作ったまどがあります。先にそのまどを完了するか、取り消してください。"
         } catch {
-            errorMessage = "新しいまどの準備を完了できませんでした。もう一度お試しください。"
+            errorMessage = "新しいまどを作れませんでした。もう一度お試しください。"
         }
     }
 }

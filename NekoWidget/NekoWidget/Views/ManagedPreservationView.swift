@@ -41,21 +41,21 @@ struct ManagedPreservationView: View {
         Group {
             if coordinator.isEnabled { content }
             else {
-                ContentUnavailableView("保管先は準備中です", systemImage: "externaldrive.badge.person.crop",
-                                       description: Text("この構成ではサービス保管を利用できません。写真やメモは送信されません。"))
+                ContentUnavailableView("この機能は準備中です", systemImage: "externaldrive.badge.person.crop",
+                                       description: Text("このバージョンでは、まだ使えません。写真やメモが送られることはありません。"))
             }
         }
-        .navigationTitle("サービスに保管")
+        .navigationTitle("保存した記録")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(coordinator.hasUnsecuredMemo)
         .interactiveDismissDisabled(coordinator.hasUnsecuredMemo)
         .onChange(of: coordinator.hasUnsecuredMemo) { _, value in onUnsecuredMemoChange?(value) }
-        .confirmationDialog("端末に残せない未送信メモを破棄しますか？",
+        .confirmationDialog("保存できていないメモを破棄しますか？",
                             isPresented: $confirmsDraftDiscard, titleVisibility: .visible) {
-            Button("未送信の編集を破棄", role: .destructive) { coordinator.discardUnsecuredMemos() }
+            Button("メモを破棄", role: .destructive) { coordinator.discardUnsecuredMemos() }
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("この画面だけに残っている編集は失われます。サービスに保管済みのメモは変更しません。必要な文章を控えてから破棄してください。")
+            Text("この画面にしかない編集は消えます。保存済みのメモはそのままです。必要なら、先に文章をコピーしてください。")
         }
     }
 
@@ -98,34 +98,34 @@ struct ManagedPreservationView: View {
 
     var body: some View {
         lifecycleContent
-        .confirmationDialog("サービスに保管したコピーを削除しますか？",
+        .confirmationDialog("保存したコピーを削除しますか？",
                             isPresented: $confirmsDeletion, titleVisibility: .visible) {
-            Button("保管コピーを削除", role: .destructive) { coordinator.deleteSelectedCopy() }
+            Button("コピーを削除", role: .destructive) { coordinator.deleteSelectedCopy() }
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("この保管先からは取り戻せません。端末の元の写真・メモは削除しません。")
+            Text("削除すると元に戻せません。このiPhoneの写真やメモは消えません。")
         }
-        .confirmationDialog("中断した保管を取り消しますか？", isPresented: $confirmsToolDiscard, titleVisibility: .visible) {
-            Button("途中の保管コピーを削除", role: .destructive) { coordinator.discardPendingToolBackup() }
+        .confirmationDialog("途中で止まった保存を取り消しますか？", isPresented: $confirmsToolDiscard, titleVisibility: .visible) {
+            Button("途中のコピーを削除", role: .destructive) { coordinator.discardPendingToolBackup() }
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("途中まで送信した内容と、送信用に用意したコピーを削除します。ツールの元の記録と復元済みの記録は残ります。削除後は、いまの内容で保存し直せます。")
+            Text("途中まで保存した内容を削除します。ツールの記録と、復元した記録は残ります。あとで、いまの内容で保存し直せます。")
         }
-        .confirmationDialog("保管サービスのアカウントを削除しますか？",
+        .confirmationDialog("保存用のアカウントを削除しますか？",
                             isPresented: $confirmsAccountDeletion, titleVisibility: .visible) {
-            Button("アカウントと保管したコピーを削除", role: .destructive) { coordinator.deleteServiceAccount() }
+            Button("アカウントと保存したコピーを削除", role: .destructive) { coordinator.deleteServiceAccount() }
                 .accessibilityIdentifier("preservation-account-delete-confirm")
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("サービスに保管した写真・メモと復旧用コピーをすべて削除し、Appleとの連携を解除します。取り消せません。必要な記録は先に書き出してください。端末の写真・メモ、以前のiCloud保管、まどの写真は残ります。会員の定期購読は別途Appleで解約してください。")
+            Text("保存した写真・メモと復旧用のコピーをすべて削除し、Appleとの連携も解除します。元に戻せないので、必要な記録は先に書き出してください。このiPhoneの写真・メモ、以前iCloudに保存したもの、まどの写真は残ります。Plusは自動では解約されないので、App Storeのサブスクリプションから解約してください。")
         }
-        .confirmationDialog("この保管先に会員情報を接続しますか？",
+        .confirmationDialog("このアカウントにPlusを連携しますか？",
                             isPresented: $confirmsMembershipLink, titleVisibility: .visible) {
-            Button("確認して接続する") { coordinator.connectMembership(consent: true) }
+            Button("連携する") { coordinator.connectMembership(consent: true) }
                 .accessibilityIdentifier("preservation-membership-confirm")
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("Appleで本人確認した保管先に、このiPhoneの会員情報を結び付けます。あとから別の本人への付け替えはできません。この操作で購入・自動更新・写真の送信は始まりません。")
+            Text("Appleでサインインしたこのアカウントに、このiPhoneのPlusを連携します。あとから別のアカウントに付け替えることはできません。ここで購入や自動更新、写真の保存が始まることはありません。")
         }
         .appRecordEditing(retainWhileHidden: coordinator.hasUnsecuredMemo)
     }
@@ -136,8 +136,8 @@ struct ManagedPreservationView: View {
                 exportAuthenticationSection
             } else {
             Section {
-                Text("選んだ写真・メモのコピーを、ねこのまどのサービスに保管します。写真原本や動画のバックアップではありません。")
-                Text("既存のiCloud保管とは別の保管先です。自動移行や、全写真の自動アップロードは行いません。")
+                Text("選んだ写真とメモのコピーを、ねこのまどに保存します。写真アプリの写真や動画のバックアップではありません。")
+                Text("以前iCloudに保存したものとは別で、自動では移りません。写真がまとめて自動で保存されることもありません。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if let error = coordinator.errorMessage {
@@ -151,7 +151,7 @@ struct ManagedPreservationView: View {
                 Section {
                     DisclosureGroup("エラーの詳細") {
                         if let message = coordinator.saveFailureMessage { Text(message) }
-                        Text("保管エラー番号：\(code)").textSelection(.enabled)
+                        Text("エラー番号：\(code)").textSelection(.enabled)
                             .accessibilityIdentifier("preservation-save-error-code")
                     }.font(.footnote).foregroundStyle(.secondary)
                 }
@@ -179,7 +179,7 @@ struct ManagedPreservationView: View {
             if coordinator.isBusy {
                 Section {
                     ProgressView(coordinator.copyState == .saving || coordinator.copyState == .checking
-                                 ? coordinator.copyState.title : "保管先に確認しています…")
+                                 ? coordinator.copyState.title : "確認しています…")
                 }
             }
             if exporter.preparing {
@@ -196,25 +196,25 @@ struct ManagedPreservationView: View {
                 Section {
                     Text(warning).foregroundStyle(.red)
                     if coordinator.hasUnsecuredMemo {
-                        Button("未送信メモを端末に保存し直す") { coordinator.retryPendingMemoStorage() }
+                        Button("メモの保存をもう一度試す") { coordinator.retryPendingMemoStorage() }
                         if !coordinator.editedText.isEmpty {
                             ShareLink("メモを控える", item: coordinator.editedText)
                         }
-                        Button("保存できない未送信メモを破棄", role: .destructive) { confirmsDraftDiscard = true }
+                        Button("保存できていないメモを破棄", role: .destructive) { confirmsDraftDiscard = true }
                     }
                 }
             }
             if coordinator.isSignedIn && coordinator.accountDeletionState == nil {
                 Section {
-                    Button("この端末の保管用ログインを解除", role: .destructive) { coordinator.signOut() }
+                    Button("サインアウト", role: .destructive) { coordinator.signOut() }
                         .disabled(coordinator.isBusy)
                     if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
-                        Button("保管サービスのアカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
+                        Button("保存用のアカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
                             .disabled(coordinator.hasUnsecuredMemo)
                             .accessibilityIdentifier("preservation-account-delete")
                     }
                 } footer: {
-                    Text("ログインを解除しても保管記録は残ります。アカウントを削除すると、サービスに保管したコピーはすべて消えます。定期購読は別途Appleで解約してください。")
+                    Text("サインアウトしても、保存した記録は残ります。アカウントを削除すると、保存したコピーはすべて消えます。Plusの解約は、App Store のサブスクリプションから別に行ってください。")
                 }
             }
             }
@@ -224,9 +224,9 @@ struct ManagedPreservationView: View {
 
     private var exportAuthenticationSection: some View {
         Section {
-            Text("本人確認をして書き出しを続けます")
+            Text("サインインして書き出しを続けます")
                 .font(.headline).accessibilityIdentifier("preservation-export-reauthentication")
-            Text("準備済みの分はこの端末に一時保存しています。同じApple Accountで確認すると、続きから再開します。")
+            Text("準備できた分は、このiPhoneに一時的に残しています。同じApple Accountでサインインすると、続きから書き出せます。")
             if let progress = coordinator.exportProgress, progress.total > 0 {
                 Text("\(progress.completed) / \(progress.total) 件を準備済み")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -240,16 +240,16 @@ struct ManagedPreservationView: View {
                     .accessibilityIdentifier("preservation-export-signin")
                     .disabled(coordinator.isBusy)
             } else {
-                Button("Appleで本人確認を準備") { coordinator.prepareExportSignIn() }
+                Button("Appleでサインイン") { coordinator.prepareExportSignIn() }
                     .accessibilityIdentifier("preservation-export-prepare-reauthentication")
                     .disabled(coordinator.isBusy)
             }
-            if coordinator.isBusy { ProgressView("本人確認を進めています…") }
+            if coordinator.isBusy { ProgressView("サインインしています…") }
             Button("書き出しをやめる", role: .cancel) {
                 exporter.cancelPreparation(); coordinator.cancelExportReauthentication()
             }.accessibilityIdentifier("preservation-export-cancel-reauthentication")
         } footer: {
-            Text("この画面を閉じるかアプリを離れると、準備中のファイルを消して終了します。保管した写真・メモは残ります。購入や新しい保管は始まりません。")
+            Text("この画面を閉じたりアプリを離れたりすると、書き出しは中止されます。保存した写真やメモは残ります。")
         }
     }
 
@@ -257,30 +257,30 @@ struct ManagedPreservationView: View {
         Section {
             switch state {
             case .unconfirmed, .resolvingPending:
-                Text("削除の受付を確認しています")
-                Text("通信が途切れたため、受付結果を確認してください。")
+                Text("削除の依頼が届いたか確かめています")
+                Text("通信が途切れました。削除の依頼が届いたか、下のボタンで確かめてください。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("受付結果を確認") { coordinator.checkAccountDeletion() }
+                Button("届いたか確かめる") { coordinator.checkAccountDeletion() }
                 if state == .unconfirmed && coordinator.isSignedIn {
-                    Button("削除依頼を再送", role: .destructive) { coordinator.deleteServiceAccount() }
+                    Button("もう一度削除を依頼する", role: .destructive) { coordinator.deleteServiceAccount() }
                 }
             case .processing:
                 Text("アカウントを削除しています")
-                Text("保管した写真・メモと復旧用コピーを削除しています。この画面を閉じても処理は続きます。")
+                Text("保存した写真・メモと復旧用のコピーを削除しています。この画面を閉じても、削除は続きます。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("削除状況を確認") { coordinator.checkAccountDeletion() }
             case .completed:
-                Label("保管サービスのアカウントを削除しました", systemImage: "checkmark.circle")
+                Label("保存用のアカウントを削除しました", systemImage: "checkmark.circle")
                 Button("閉じる") { coordinator.dismissCompletedDeletion() }
             case .requestedElsewhere:
-                Text("別の端末で削除を受け付けています")
-                Text("削除を依頼した端末で、処理状況を確認してください。")
+                Text("ほかのiPhoneでアカウントを削除しています")
+                Text("削除を依頼したiPhoneで、状況を確かめてください。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("この端末の表示を閉じる") { coordinator.dismissCompletedDeletion() }
+                Button("閉じる") { coordinator.dismissCompletedDeletion() }
             }
-            Link("Appleのサブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+            Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
         } footer: {
-            Text("端末の写真・メモ、以前のiCloud保管、まどの写真は残ります。会員の定期購読はこの操作では解約されません。")
+            Text("このiPhoneの写真・メモ、以前iCloudに保存したもの、まどの写真は残ります。Plusは、アカウントを削除しても解約されません。")
         }
         .accessibilityIdentifier("preservation-account-deletion-status")
     }
@@ -296,19 +296,19 @@ struct ManagedPreservationView: View {
                 } onCompletion: { result in coordinator.completeSignIn(result) }
                     .frame(height: 48)
                     .signInWithAppleButtonStyle(.black)
-                Button("本人確認を準備し直す") { coordinator.prepareSignIn() }
+                Button("サインインをやり直す") { coordinator.prepareSignIn() }
             } else if coordinator.isBusy {
-                ProgressView("Appleログインを準備しています…")
+                ProgressView("サインインの準備をしています…")
             } else {
-                Button("Appleログインを準備し直す") { coordinator.prepareSignIn() }
+                Button("Appleでサインイン") { coordinator.prepareSignIn() }
             }
-        } header: { Text("保管用の本人確認") }
+        } header: { Text("サインイン") }
         footer: {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Appleで同じ本人と確認できた場合に、その本人の保管記録を読み込みます。ログインだけで保管や購入は始まりません。")
-                Text("Appleで確認したメールアドレスは、保管終了時の持ち出し・削除予告の連絡先として使います。写真やメモはメールに含めません。")
-                Text("未送信のメモはこの端末だけに保持します。同じ本人で確認できるまで文章を表示せず、別の本人へ引き継いだり、自動で送信したりしません。")
-                Button("この端末に残っている本人確認情報を解除") { coordinator.signOut() }
+                Text("Appleでサインインすると、そのアカウントで保存した記録を読み込みます。サインインしただけでは、保存や購入は始まりません。")
+                Text("Appleのメールアドレスは、保存を続けられなくなったときの、書き出しや削除のお知らせに使います。メールに写真やメモは入りません。")
+                Text("まだ保存していないメモは、このiPhoneだけに残ります。同じアカウントでサインインするまで表示されず、ほかのアカウントに移ったり、自動で保存されたりすることもありません。")
+                Button("このiPhoneのサインイン情報を消す") { coordinator.signOut() }
             }
         }
     }
@@ -332,7 +332,7 @@ struct ManagedPreservationView: View {
 
     private var membershipSection: some View {
         Section {
-            if coordinator.membershipLoading { ProgressView("保管できるか確認しています…") }
+            if coordinator.membershipLoading { ProgressView("保存できるか確認しています…") }
             if let membership = coordinator.membership {
                 if membership.access == .pilot, let end = membership.pilotEndsAt {
                     Text("内部テストの保管枠")
@@ -340,35 +340,35 @@ struct ManagedPreservationView: View {
                     Text("利用期限 \(Date(timeIntervalSince1970: Double(end) / 1000), format: .dateTime.year().month().day())")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else if membership.canSave {
-                    Label("新しい写真を保管できます", systemImage: "checkmark.circle.fill")
+                    Label("新しい写真を保存できます", systemImage: "checkmark.circle.fill")
                         .accessibilityIdentifier("preservation-membership-ready")
                 } else if membership.linked {
-                    Label("会員情報は接続済みです", systemImage: "person.crop.circle.badge.checkmark")
+                    Label("Plusは連携済みです", systemImage: "person.crop.circle.badge.checkmark")
                         .accessibilityIdentifier("preservation-membership-linked")
                     Text(membership.status == .expired
-                         ? "新しい保管は停止中です。同じ会員情報で再契約した後、「会員情報を確認」で保管を再開できます。保管済みの写真は引き続き開けます。"
-                         : "会員資格をまだ確認できません。保管済みの写真は下の一覧から開けます。")
+                         ? "Plusが切れているため、新しく保存できません。同じApple AccountでPlusを再開したら、「購入状況を再確認」を押してください。保存した写真はこれまでどおり開けます。"
+                         : "Plusをまだ確認できません。保存した写真は下の一覧から開けます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
-                    Text("会員情報が未接続です")
-                    Button("会員情報を接続") { confirmsMembershipLink = true }
+                    Text("Plusがまだ連携されていません")
+                    Button("Plusを連携する") { confirmsMembershipLink = true }
                         .accessibilityIdentifier("preservation-membership-connect")
                 }
             } else {
-                Text("新しく保管する前に、会員情報を確認します。")
+                Text("新しく保存するには、Plusの確認が必要です。")
                     .font(.subheadline)
             }
             plusOfferEntry
             Button(coordinator.membership?.access == .pilot ? "保管枠を確認"
-                   : coordinator.membershipMessage == nil ? "会員情報を確認" : "接続状況を確認") {
+                   : coordinator.membershipMessage == nil ? "購入状況を再確認" : "購入状況を再確認") {
                 coordinator.checkMembership()
             }.accessibilityIdentifier("preservation-membership-check")
                 .disabled(coordinator.membershipLoading)
             if let message = coordinator.membershipMessage {
                 Text(message).font(.footnote).foregroundStyle(.secondary)
             }
-        } header: { Text("新しい写真の保管") }
-        footer: { Text("見る・取り出すだけなら、会員情報の接続や有効な契約は不要です。") }
+        } header: { Text("新しい写真の保存") }
+        footer: { Text("保存した記録を見たり書き出したりするだけなら、Plusは必要ありません。") }
     }
 
     private var noticeContactSection: some View {
@@ -378,18 +378,18 @@ struct ManagedPreservationView: View {
                     Text(email).textSelection(.enabled)
                         .accessibilityIdentifier("preservation-notice-contact-email")
                 } else {
-                    Text("連絡先が確認できていません")
+                    Text("お知らせ用のメールアドレスを確認できません")
                         .accessibilityIdentifier("preservation-notice-contact-missing")
                 }
             } else {
-                Text("この保管先の連絡先を確認できます")
+                Text("お知らせを受け取るメールアドレスを確認できます")
                     .foregroundStyle(.secondary)
             }
             Button("連絡先を確認") { coordinator.checkNoticeContact() }
                 .accessibilityIdentifier("preservation-notice-contact-check")
-        } header: { Text("保管終了時の連絡先") }
+        } header: { Text("お知らせの送り先") }
         footer: {
-            Text("Appleで確認されたメールアドレスだけを表示します。連絡先がない、または予告の到達を確認できない場合、保管記録の削除は進めません。")
+            Text("Appleのメールアドレスを表示しています。お知らせが届いたと確認できるまで、保存した記録は削除されません。")
         }
     }
 
@@ -402,7 +402,7 @@ struct ManagedPreservationView: View {
                 productUsage(product, policy: policy)
             } else if let quota = shownProductQuota, let policy = quota.policy {
                 // Not counted yet: the limits, never a bar made up from them.
-                Text("Plus は \(Self.capacity(policy.plus.limitBytes))・記録 \(policy.plus.maximumRecords.formatted()) 件まで保管できます。")
+                Text("Plusは \(Self.capacity(policy.plus.limitBytes))・記録 \(policy.plus.maximumRecords.formatted()) 件まで保存できます。")
                     .accessibilityIdentifier("preservation-quota-limits")
                 Text("いま使っている量は、数え終わると表示されます。")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -419,11 +419,11 @@ struct ManagedPreservationView: View {
                 Text("空き容量 \(Self.capacity(usage.storage.availableBytes))")
                     .font(.subheadline)
                 if usage.storage.reservedBytes > 0 {
-                    Text("保存準備中 \(Self.capacity(usage.storage.reservedBytes)) を空き容量から除いています。")
+                    Text("保存の準備中の \(Self.capacity(usage.storage.reservedBytes)) は、空き容量に含めていません。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if usage.storage.availableBytes == 0 || usage.records.creationLimitReached {
-                    Text("新しい記録は追加できません。保管済みの記録は引き続き利用できます。")
+                    Text("いっぱいのため、新しく保存できません。保存した記録はこれまでどおり使えます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             } else if coordinator.usageLoading {
@@ -440,8 +440,8 @@ struct ManagedPreservationView: View {
                 }
                 .accessibilityIdentifier("preservation-quota-trial")
             }
-        } header: { Text("保管できる量") }
-        footer: { Text("保管した写真のコピー・メモ・記録の量です。iPhoneの写真原本は含みません。") }
+        } header: { Text("保存できる量") }
+        footer: { Text("保存した写真のコピー・メモ・記録の量です。写真アプリの写真そのものは含みません。") }
     }
 
     private var shownProductQuota: ManagedPreservationUsage.ProductQuota? {
@@ -479,7 +479,7 @@ struct ManagedPreservationView: View {
                 .font(.subheadline)
                 .accessibilityIdentifier("preservation-quota-over")
         } else if storage.usedBytes * 10 >= storage.limitBytes * 9 || records.saved * 10 >= records.maximumRecords * 9 {
-            Text("残りがわずかです。いっぱいになると、新しく保管できなくなります。")
+            Text("残りがわずかです。いっぱいになると、新しく保存できなくなります。")
                 .font(.footnote).foregroundStyle(.secondary)
         }
         if usage.tier == "trial" {
@@ -497,7 +497,7 @@ struct ManagedPreservationView: View {
         case (false, true): what = "記録の件数の上限"
         case (false, false): return nil
         }
-        return "\(what)を超えたため、新しく保管できません。保管したコピーを削除すると、また保管できます。保管済みの写真とメモは、そのまま見られて書き出せます。"
+        return "\(what)を超えたため、新しく保存できません。保存したコピーを削除すると、また保存できます。保存した写真とメモは、これまでどおり見たり書き出したりできます。"
     }
 
     /// Test builds: each state of the quota on one iPhone, no requests or records.
@@ -555,35 +555,35 @@ struct ManagedPreservationView: View {
             if let retention = coordinator.retention {
                 switch retention.status {
                 case .active, .grace:
-                    Text("保管中です。持ち出し期限は始まっていません。")
+                    Text("保存されています。書き出しの期限はまだありません。")
                 case .expired:
-                    Text("新しい保管は停止中。写真とメモは閲覧・一括書き出しできます。")
+                    Text("新しく保存することはできません。写真とメモは、これまでどおり見たり、まとめて書き出したりできます。")
                     if let dueAt = retention.dueAt {
                         Text(retention.finalNoticeDeliveredAt == nil
-                             ? "持ち出し期限の目安（削除予告によって延長）"
-                             : "現在の持ち出し期限")
+                             ? "書き出せる期限の目安（削除のお知らせメールが届くと、延びることがあります）"
+                             : "書き出せる期限")
                             .font(.footnote).foregroundStyle(.secondary)
                         Text(Self.deadline(dueAt))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     Text(retention.finalNoticeDeliveredAt == nil
-                         ? "削除予告の送達はまだ確認されていません。"
-                         : "削除予告が宛先のメールサーバーに受理されました。開封は未確認です。")
+                         ? "削除のお知らせメールが届いたかは、まだ確認できていません。"
+                         : "削除のお知らせメールを送りました。読まれたかどうかはわかりません。")
                         .font(.footnote).foregroundStyle(.secondary)
                 case .unknown:
-                    Text("会員資格を確認できません。保管済みの記録はそのまま残します。")
+                    Text("Plusを確認できません。保存した記録はそのまま残っています。")
                 case .unlinked:
-                    Text("会員情報が未接続です。持ち出し期間はまだ表示できません。")
+                    Text("Plusが連携されていないため、書き出せる期間はまだ表示できません。")
                 }
             } else {
-                Text("現在の持ち出し期間を確認できます")
+                Text("書き出せる期間を確認できます")
                     .foregroundStyle(.secondary)
             }
-            Button("持ち出し期間を確認") { coordinator.checkRetention() }
+            Button("書き出せる期間を確認") { coordinator.checkRetention() }
                 .accessibilityIdentifier("preservation-retention-check")
-        } header: { Text("保管終了後の持ち出し") }
+        } header: { Text("Plusが終わったあとの書き出し") }
         footer: {
-            Text("会員期限切れから12か月間は持ち出せます。削除予告の送達後、少なくとも30日の猶予も確保します。同じ会員情報の再契約を確認すると、持ち出し期限は解除されます。")
+            Text("Plusが切れてから12か月間は書き出せます。削除のお知らせメールが届いてからも、30日以上は書き出せます。同じApple AccountでPlusを再開すると、期限はなくなります。")
         }
     }
 
@@ -607,15 +607,15 @@ struct ManagedPreservationView: View {
         Section {
             ForEach(coordinator.pendingMemoDrafts) { memo in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(memo.text.isEmpty ? "メモを空にする未送信の編集" : memo.text)
+                    Text(memo.text.isEmpty ? "メモを空にする編集（まだ保存していません）" : memo.text)
                         .font(.footnote).textSelection(.enabled)
-                    Button("この未送信メモを再開") { coordinator.resumePendingMemo(memo) }
+                    Button("このメモの編集を続ける") { coordinator.resumePendingMemo(memo) }
                     if coordinator.hasUnsecuredMemo { ShareLink("メモを控える", item: memo.text) }
                 }
             }
-        } header: { Text("この本人の未送信メモ") }
+        } header: { Text("保存できていないメモ") }
         footer: {
-            Text("通信中断前の下書きです。送信済みの可能性もあるため自動で上書きしません。記録が更新・削除されている場合は再開せず、この文章を控えて最新の記録と比べてください。")
+            Text("通信が途切れる前の下書きです。すでに保存されていることもあるため、自動では上書きしません。記録が変わっていたら、続きを書かずに文章をコピーして、いまの記録と見比べてください。")
         }
     }
 
@@ -624,7 +624,7 @@ struct ManagedPreservationView: View {
             if let photo = draft.jpegData {
                 ManagedPreservationPhotoPreview(data: photo, maximumHeight: 220)
                     .id(draft.recordID)
-                    .accessibilityLabel("今回保管する写真のコピー")
+                    .accessibilityLabel("保存する写真のコピー")
                     .accessibilityIdentifier("preservation-copy-photo")
             }
             if !draft.document.text.isEmpty { Text(draft.document.text) }
@@ -633,49 +633,49 @@ struct ManagedPreservationView: View {
                   ? "checkmark.icloud" : "iphone")
                 .accessibilityIdentifier("preservation-copy-status")
             if coordinator.copyState == .needsConfirmation {
-                Text("保管できたか、まだ確認できません。元の写真とメモは端末に残っています。")
+                Text("保存できたか、まだ確認できません。元の写真とメモはこのiPhoneに残っています。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("保管結果を確認") { coordinator.confirmCopyResult() }
+                Button("保存できたか確かめる") { coordinator.confirmCopyResult() }
                     .accessibilityIdentifier("preservation-copy-confirm")
             } else if !coordinator.draftWasSaved {
                 copyEligibility
-                Toggle("この保管方法に同意する", isOn: $coordinator.consentToNewSave)
-                Text("暗号化して保管しますが、運営者は技術的に復号できます。エンドツーエンド暗号化ではありません。選んだ写真とメモだけを送ります。")
+                Toggle("内容を確認して、保存に同意する", isOn: $coordinator.consentToNewSave)
+                Text("選んだ写真とメモだけを保存します。暗号化しますが、運営者は技術的には中身を読むことができます（エンドツーエンド暗号化ではありません）。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button(coordinator.copyState == .failed ? "もう一度保管する" : "選んだコピーを保管") {
+                Button(coordinator.copyState == .failed ? "もう一度保存する" : "保存する") {
                     coordinator.saveSelectedCopy()
                 }
                     .disabled(!coordinator.consentToNewSave || coordinator.membership?.canSave != true)
                     .accessibilityIdentifier("preservation-copy-save")
             }
-        } header: { Text("今回選んだ記録") }
+        } header: { Text("選んだ記録") }
         footer: {
             Text(coordinator.membership?.access == .pilot
                  ? "利用期間内は購入なしで保管できます。期限後も保管済みの記録を開き、書き出せます。写真原本や端末の元メモは変更しません。"
-                 : "新しい保管には会員資格が必要です。保管済みの記録の閲覧・メモ編集・削除・持ち出しに会員資格は必要ありません。写真原本や端末の元メモは変更しません。")
+                 : "新しく保存するにはPlusが必要です。保存した記録を見たり、メモを直したり、削除や書き出しをしたりするのに、Plusはいりません。写真アプリの写真やこのiPhoneのメモはそのままです。")
         }
     }
 
     @ViewBuilder private var copyEligibility: some View {
         if coordinator.membershipLoading {
-            ProgressView("保管できるか確認しています…")
+            ProgressView("保存できるか確認しています…")
                 .accessibilityIdentifier("preservation-eligibility-loading")
         } else if coordinator.membership == nil {
-            Text(coordinator.membershipMessage ?? "保管先を確認できませんでした。")
+            Text(coordinator.membershipMessage ?? "保存できるか確認できませんでした。")
                 .font(.footnote).foregroundStyle(.secondary)
             Button("もう一度確認") { coordinator.checkMembership() }
                 .accessibilityIdentifier("preservation-eligibility-retry")
         } else if coordinator.membership?.canSave != true {
             plusOfferEntry
             if coordinator.membership?.linked == false {
-                Text("新しく保管するには、会員情報の接続が必要です。")
+                Text("新しく保存するには、Plusの連携が必要です。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("会員情報を接続") { confirmsMembershipLink = true }
+                Button("Plusを連携する") { confirmsMembershipLink = true }
                     .accessibilityIdentifier("preservation-membership-connect")
             } else {
-                Text("現在、新しい保管は利用できません。保管済みの記録は下の一覧から開けます。")
+                Text("いまは新しく保存できません。保存した記録は下の一覧から開けます。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("利用状況を確認し直す") { coordinator.checkMembership() }
+                Button("購入状況を再確認") { coordinator.checkMembership() }
                     .accessibilityIdentifier("preservation-eligibility-retry")
             }
         }
@@ -683,7 +683,7 @@ struct ManagedPreservationView: View {
 
     private var recordsSection: some View {
         Section {
-            Button { coordinator.refresh() } label: { Label("保管先から読み直す", systemImage: "arrow.clockwise") }
+            Button { coordinator.refresh() } label: { Label("一覧を更新", systemImage: "arrow.clockwise") }
             ForEach(coordinator.records.filter { $0.document.toolBackup == nil || $0.document.toolBackup?.kind == "index" }) { record in
                 Button { coordinator.open(record) } label: {
                     VStack(alignment: .leading, spacing: 4) {
@@ -702,22 +702,22 @@ struct ManagedPreservationView: View {
                 .accessibilityIdentifier("preservation-record-" + record.id.uuidString.lowercased())
             }
             if coordinator.records.isEmpty && !coordinator.isBusy && coordinator.errorMessage == nil {
-                Text("この本人の保管記録はまだありません。")
+                Text("保存した記録はまだありません。")
                     .foregroundStyle(.secondary)
             }
             if coordinator.hasMore { Button("続きを読み込む") { coordinator.loadMore() } }
             if coordinator.canExport && !coordinator.records.isEmpty {
-                Button("保管した記録をすべて書き出す") { coordinator.exportAllCopies(using: exporter) }
+                Button("保存した記録をすべて書き出す") { coordinator.exportAllCopies(using: exporter) }
                     .accessibilityIdentifier("preservation-export-all")
             }
-        } header: { Text("保管したコピー") }
+        } header: { Text("保存したコピー") }
     }
 
     @ViewBuilder private var detailSection: some View {
         if let snapshot = coordinator.selected {
             if snapshot.document.toolBackup != nil {
                 Section {
-                    Button("保管一覧に戻る") { coordinator.closeDetail() }
+                    Button("一覧に戻る") { coordinator.closeDetail() }
                     Text("ツールの記録と、そこで使う写真を保存したコピーです。連絡先や健康の情報を含む場合があります。")
                     if let part = snapshot.document.toolBackup,
                        let summary = ToolBackupIndex.contentsSummary(for: part) {
@@ -725,46 +725,46 @@ struct ManagedPreservationView: View {
                     }
                     if let written = snapshot.document.writtenAt { Text(written, format: .dateTime.year().month().day().hour().minute()) }
                     if snapshot.document.toolBackup?.kind == "index" {
-                        Button("この端末に復元する") { coordinator.restoreTools(snapshot.record) }
+                        Button("このiPhoneに復元する") { coordinator.restoreTools(snapshot.record) }
                             .accessibilityIdentifier("preservation-restore-tools")
                     }
                     NavigationLink("復元したツールを開く") { RestoredToolsView() }
                     if let progress = coordinator.toolBackupProgress { Text(progress) }
-                    Text("元の記録を上書きせず、保存時点の内容を別に開けるようにします。")
+                    Text("いまの記録は上書きせず、保存したときの内容を別に開けます。")
                         .font(.footnote).foregroundStyle(.secondary)
-                    Button("このツールの保管コピーを削除", role: .destructive) { confirmsDeletion = true }
-                    Text("このコピーだけで使う添付写真もサービスから削除します。ほかのコピーに必要な写真と、端末に復元した記録は残ります。途中で止まった場合は「ツールの保存・復元」から削除を再開できます。")
+                    Button("このコピーを削除", role: .destructive) { confirmsDeletion = true }
+                    Text("このコピーだけで使っている写真も削除します。ほかのコピーで使う写真と、このiPhoneに復元した記録は残ります。途中で止まったときは「ツールの保存・復元」から続きを削除できます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             } else {
             Section {
-                Button("保管一覧に戻る") { coordinator.closeDetail() }
+                Button("一覧に戻る") { coordinator.closeDetail() }
                     .accessibilityIdentifier("preservation-detail-back")
                 if let photo = snapshot.jpegData {
                     ManagedPreservationPhotoPreview(data: photo, maximumHeight: 360)
                         .id(snapshot.record.id)
-                        .accessibilityLabel("サービスに保管された写真のコピー")
+                        .accessibilityLabel("保存した写真のコピー")
                 }
                 if !snapshot.document.catNames.isEmpty {
                     Text(snapshot.document.catNames.joined(separator: "・"))
                 }
                 TextEditor(text: $coordinator.editedText)
-                    .frame(minHeight: 120).accessibilityLabel("保管コピーのメモ")
+                    .frame(minHeight: 120).accessibilityLabel("保存したメモ")
                     .onChange(of: coordinator.editedText) { _, _ in coordinator.retainUnsentEdit() }
                 if let weight = snapshot.document.weight { PhotoMemoWeightLabel(weight: weight) }
                 Text("\(coordinator.editedText.count) / 500文字")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("保管コピーのメモを更新") { coordinator.saveEditedNote() }
+                Button("メモを保存") { coordinator.saveEditedNote() }
                     .disabled(coordinator.editedText == snapshot.document.text)
                 if coordinator.canExport {
                     Button("この記録を書き出す") { coordinator.exportSelectedCopy() }
                 } else {
-                    Text("この構成では書き出し画面はまだ接続されていません。")
+                    Text("このバージョンでは、まだ書き出せません。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Button("保管コピーを削除", role: .destructive) { confirmsDeletion = true }
+                Button("コピーを削除", role: .destructive) { confirmsDeletion = true }
             } footer: {
-                Text("ここでの編集は保管したコピーだけに反映されます。未送信の編集はこの端末だけに保持し、本人確認が切れた場合は同じ本人で確認し直すまで隠します。")
+                Text("ここでメモを直しても、変わるのは保存したコピーだけです。まだ保存していない編集はこのiPhoneだけに残り、サインインが切れたときは、同じアカウントでサインインし直すまで表示されません。")
             }
             }
         }
@@ -772,30 +772,30 @@ struct ManagedPreservationView: View {
 
     private var toolBackupSection: some View {
         Section("ツールの保存・復元") {
-            Text("保存・復元中は、この画面を開いたままにしてください。別のアプリへの移動や画面ロックで中断します。途中まで送れた分から再開できます。")
+            Text("保存・復元が終わるまで、この画面を開いたままにしてください。ほかのアプリに切り替えたり画面をロックしたりすると止まりますが、続きから再開できます。")
                 .font(.footnote).foregroundStyle(.secondary)
                 .accessibilityIdentifier("preservation-transfer-foreground-guidance")
             ForEach(coordinator.pendingToolDeletions) { pending in
                 VStack(alignment: .leading) {
-                    Text("削除が途中の保管コピーがあります")
+                    Text("削除が途中で止まったコピーがあります")
                     Text(pending.index.createdAt, format: .dateTime.year().month().day().hour().minute()).font(.caption)
-                    Button("このコピーの削除を再開") { coordinator.resumeToolDeletion(pending) }
+                    Button("続きを削除") { coordinator.resumeToolDeletion(pending) }
                         .disabled(coordinator.isBusy)
                         .accessibilityIdentifier("preservation-resume-tool-deletion")
                 }
             }
-            Text("写真を見せる・預けるとき・病院で見せる・迷子のとき・避難に備える、の入力内容と添付写真をまとめて保管します。")
-            Text("連絡先や健康の情報を含みます。共有相手には送られません。端末に保存済みの内容が対象です。")
+            Text("「写真を見せる」「預けるとき」「病院で見せる」「迷子のとき」「避難に備える」の内容と写真を、まとめて保存します。")
+            Text("連絡先や健康の情報も含みます。このiPhoneに保存済みの内容だけが対象で、まどの相手には送られません。")
                 .font(.footnote).foregroundStyle(.secondary)
-            Text("変わっていない添付写真は前の保管コピーと共用し、重複して送信しません。コピーを削除しても、ほかのコピーに必要な写真は残ります。")
+            Text("前回から変わっていない写真は、二重には保存しません。コピーを削除しても、ほかのコピーで使う写真は残ります。")
                 .font(.footnote).foregroundStyle(.secondary)
-            Toggle("内容を確認し、サービスへの保管に同意する", isOn: $coordinator.consentToToolBackup)
+            Toggle("内容を確認して、保存に同意する", isOn: $coordinator.consentToToolBackup)
             if let date = coordinator.pendingToolBackupDate {
-                Text("中断した保存があります。次の日時に用意した内容から再開します。")
+                Text("途中で止まった保存があります。「保存を再開する」を押すと、下の日時の内容から続けます。")
                 Text(date, format: .dateTime.year().month().day().hour().minute())
-                Button("中断した保管を取り消す", role: .destructive) { confirmsToolDiscard = true }
+                Button("途中の保存を取り消す", role: .destructive) { confirmsToolDiscard = true }
             }
-            Button(coordinator.pendingToolBackupDate == nil ? "ツールを保管する" : "中断した保管を再開する") { coordinator.saveTools() }
+            Button(coordinator.pendingToolBackupDate == nil ? "ツールを保存する" : "保存を再開する") { coordinator.saveTools() }
                 .disabled(!coordinator.consentToToolBackup || coordinator.membership?.canSave != true || coordinator.isBusy)
                 .accessibilityIdentifier("preservation-save-tools")
             if coordinator.pendingToolBackupDate != nil, let error = coordinator.errorMessage {
@@ -804,7 +804,7 @@ struct ManagedPreservationView: View {
             }
             if let progress = coordinator.toolBackupProgress {
                 Text(progress)
-                Text("処理中は自動ロックを一時停止しています。完了すると元に戻ります。")
+                Text("終わるまで、画面が自動でロックされないようにしています。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             NavigationLink("復元したツールを開く") { RestoredToolsView() }
@@ -830,7 +830,7 @@ struct ProductQuotaSummary: View {
                 Label(over, systemImage: "exclamationmark.circle").font(.footnote)
             }
         } else if let policy = quota.policy {
-            Text("Plus は \(ManagedPreservationView.capacity(policy.plus.limitBytes))・記録 \(policy.plus.maximumRecords.formatted()) 件まで保管できます。いま使っている量は、数え終わると表示されます。")
+            Text("Plusは \(ManagedPreservationView.capacity(policy.plus.limitBytes))・記録 \(policy.plus.maximumRecords.formatted()) 件まで保存できます。いま使っている量は、数え終わると表示されます。")
                 .font(.footnote)
         }
     }
@@ -979,7 +979,7 @@ struct ManagedPreservationPhotoView: View {
         NavigationStack {
             Group {
                 if !configuration.isEnabled && !usesEntryFixture {
-                    ContentUnavailableView("保管先は準備中です", systemImage: "externaldrive")
+                    ContentUnavailableView("この機能は準備中です", systemImage: "externaldrive")
                 } else if draft != nil {
                     preparedCopy
                 } else if let errorMessage {
@@ -1066,7 +1066,7 @@ struct ManagedPreservationPhotoView: View {
         } catch {
             guard token == attempt else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription
-                ?? "写真とメモを読み込めませんでした。元の内容は変更していません。"
+                ?? "写真とメモを読み込めませんでした。元の内容はそのままです。"
         }
     }
 }

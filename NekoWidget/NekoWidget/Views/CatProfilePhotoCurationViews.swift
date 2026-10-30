@@ -223,7 +223,7 @@ struct CatProfileDetailView: View {
                         .foregroundStyle(.red)
                 }
             } footer: {
-                Text("削除しても、写真とツールの入力は残ります。")
+                Text("削除しても、写真やツールで入れた記録は残ります。")
             }
         }
         .disabled(isDeleting || isSavingName)
@@ -248,7 +248,7 @@ struct CatProfileDetailView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("写真やツールの入力は残ります。この子への写真の指定とアルバム連携だけを外します。")
+            Text("写真やツールで入れた記録は残ります。この子に選んだ写真と、つないだアルバムが外れるだけです。")
         }
         .sheet(isPresented: $showsFarewellEditor) {
             CatFarewellEditor(name: profile.displayName, recorded: CatFarewell.days(farewellJSON)[profile.identifier]) { day in
@@ -279,9 +279,9 @@ struct CatProfileDetailView: View {
 extension CatProfilePresentation {
     /// 「推定の誕生日 2020/5/1」「両方設定済み」「未設定」: the 誕生日・迎えた日 row.
     var lifeDatesSummary: String {
-        if lifeDates.hasBothDates { return "両方設定済み" }
+        if lifeDates.hasBothDates { return "どちらも入力済み" }
         guard let reference = lifeDates.birthday ?? lifeDates.adoptionDay ?? lifeReference else { return "未設定" }
-        let prefix = reference.isApproximate ? "推定の" : ""
+        let prefix = reference.isApproximate ? "だいたいの" : ""
         return "\(prefix)\(reference.kind.title) \(reference.date.formatted(date: .numeric, time: .omitted))"
     }
 
@@ -313,7 +313,7 @@ private struct CatProfilePhotoAlbumSelectionView: View {
             if let link = profile.photoAlbumLink, !link.isAvailable {
                 Section {
                     Label(
-                        "現在つないでいるアルバムを利用できません。写真へのアクセス範囲を確認するか、別のアルバムを選んでください。",
+                        "つないでいるアルバムを開けません。写真へのアクセスを見直すか、別のアルバムを選んでください。",
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .font(.footnote)
@@ -324,8 +324,8 @@ private struct CatProfilePhotoAlbumSelectionView: View {
             Section {
                 albumButton(
                     identifier: nil,
-                    title: "連携しない",
-                    subtitle: "手動で追加した写真だけを使う",
+                    title: "つながない",
+                    subtitle: "自分で追加した写真だけを使う",
                     isSelected: profile.photoAlbumLink == nil
                 )
 
@@ -333,25 +333,25 @@ private struct CatProfilePhotoAlbumSelectionView: View {
                     albumButton(
                         identifier: album.identifier,
                         title: album.title,
-                        subtitle: "アクセス可能な写真 \(album.accessiblePhotoCount.formatted())枚",
+                        subtitle: "写真 \(album.accessiblePhotoCount.formatted())枚",
                         isSelected: profile.photoAlbumLink?.identifier
                             == album.identifier
                     )
                 }
 
                 if albums.isEmpty {
-                    Text("選べる通常アルバムがありません。写真アプリでアルバムを作るか、写真へのアクセス範囲を確認してください。")
+                    Text("選べるアルバムがありません。写真アプリでアルバムを作るか、写真へのアクセスを見直してください。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("\(profile.displayName)の写真")
             } footer: {
-                Text("写真アプリで自分が作った通常アルバムを、\(profile.displayName)の明示的な所属として読み取ります。アルバムの写真は変更しません。連携を外しても、アプリで手動追加した写真は残ります。")
+                Text("写真アプリで作ったアルバムをつなぐと、その写真を\(profile.displayName)の写真として表示します。アルバム自体は変わらず、つなぐのをやめても自分で追加した写真は残ります。")
             }
             if saveFailed {
                 Section {
-                    Text("アルバムの連携を保存できませんでした。もう一度お試しください。")
+                    Text("アルバムをつなげませんでした。もう一度お試しください。")
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
@@ -429,13 +429,13 @@ struct CatProfileLifeReferenceEditor: View {
                 dateSection(.adoptionDay)
                 if dates.hasBothDates {
                     Section {
-                        Picker("成長の基準", selection: primaryKind) {
+                        Picker("成長アルバムで使う日", selection: primaryKind) {
                             ForEach(CatProfileLifeReferenceKindPresentation.allCases) { kind in
                                 Text(kind.title).tag(kind)
                             }
                         }
                     } footer: {
-                        Text("この子の成長アルバムをまとめる基準です。")
+                        Text("この子の成長アルバムを、どちらの日からまとめるかを選びます。")
                     }
                 }
                 if saveFailed {
@@ -482,7 +482,7 @@ struct CatProfileLifeReferenceEditor: View {
                     in: ...Date.now,
                     displayedComponents: .date
                 )
-                Toggle("推定の日付", isOn: approximateDate(kind))
+                Toggle("だいたいの日付", isOn: approximateDate(kind))
             }
         } header: {
             Text(kind.title)
@@ -738,10 +738,10 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("\(profile.displayName)への所属だけを外します。他の子や「すべての猫」には残ります。")
+            Text("\(profile.displayName)の写真から外すだけです。ほかの子や「すべての猫」には残ります。")
         }
         .confirmationDialog(
-            "候補から外しますか？",
+            "猫の写真から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
@@ -752,7 +752,7 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("すべてのプロフィール、アルバム、ウィジェットから除外します。写真ライブラリからは削除しません。")
+            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
         }
     }
 
@@ -912,7 +912,7 @@ struct UnassignedCatPhotosView: View {
             )
         }
         .confirmationDialog(
-            "候補から外しますか？",
+            "猫の写真から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
@@ -923,7 +923,7 @@ struct UnassignedCatPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("すべてから除外します。写真ライブラリからは削除しません。")
+            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
         }
     }
 
@@ -941,7 +941,7 @@ struct UnassignedCatPhotosView: View {
     private var actionBar: some View {
         VStack(spacing: 10) {
             if saveFailed {
-                Text("追加できませんでした。選択は残っています。もう一度お試しください。")
+                Text("追加できませんでした。選んだままなので、もう一度お試しください。")
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
@@ -1050,7 +1050,7 @@ struct CatPhotoAssignmentSheet: View {
                                 case .some:
                                     Image(systemName: "minus.circle.fill")
                                         .foregroundStyle(.orange)
-                                        .accessibilityLabel("一部の写真に設定済み")
+                                        .accessibilityLabel("一部の写真だけ")
                                 case .none:
                                     Image(systemName: "circle")
                                         .foregroundStyle(.secondary)
@@ -1060,9 +1060,9 @@ struct CatPhotoAssignmentSheet: View {
                         .buttonStyle(.plain)
                     }
                 } header: {
-                    Text("写っている猫・複数選べます")
+                    Text("写っている猫（何匹でも選べます）")
                 } footer: {
-                    Text("一緒に写っている猫を複数選べます。−は一部の写真だけに設定済みです。変更しなければ、そのまま残ります。")
+                    Text("「−」は、選んだ写真の一部にだけ付いている猫です。そのままにしておけば変わりません。")
                 }
 
                 if saveFailed {
@@ -1110,7 +1110,7 @@ struct LegacyCatExclusionReviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("以前の「この子じゃない」は単頭向けでした。戻すと手動の所属は未判定になります。つないだ写真アルバムに含まれる場合は、そのプロフィールに再び表示されます。写真ライブラリからは削除されません。")
+            Text("前のバージョンで「この子じゃない」にした写真です。戻すと「未分類」の写真になり、つないだアルバムに入っていれば、その子の写真にまた表示されます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1119,7 +1119,7 @@ struct LegacyCatExclusionReviewView: View {
 
             LegacySelectablePhotoGrid(photos: photos, selection: $selection)
         }
-        .navigationTitle("以前除外した写真")
+        .navigationTitle("前に外した写真")
         .safeAreaInset(edge: .bottom) {
             Button {
                 Task {

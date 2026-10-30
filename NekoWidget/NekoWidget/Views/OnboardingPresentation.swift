@@ -66,39 +66,39 @@ enum OnboardingPresentationCopy {
     /// Page one has one job: the Photos permission. People come from the
     /// site knowing what the app is, so it says what happens next, answers
     /// the one worry (the photos stay on the iPhone), and asks. No feature list.
-    static let purposeTitle = "このiPhoneの中の猫を、全部見つけます。"
+    static let purposeTitle = "iPhoneの中の猫の写真を、ぜんぶ見つけます。"
     static let purposeBody = "写真はiPhoneの中だけで探します。外には送りません。"
     static let purposeAction = "猫を探す"
     static let purposeFootnote = ""
 
     static let permissionTitleLines = [
-        "このiPhoneの猫の写真や動画を",
-        "端末内で見つけます。"
+        "このiPhoneの中から、",
+        "猫の写真と動画を見つけます。"
     ]
     static func permissionPrivacyLines(isMediaAvailable: Bool) -> [String] {
         if isMediaAvailable {
             return [
-                "・解析はすべてこの端末の中で行います",
-                "・共有は別に同意した後、選んだ縮小写真1枚だけを送ります",
-                "・写真や動画の自動送信・削除・変更はしません"
+                "・猫を探すのは、このiPhoneの中だけです",
+                "・まどに届けるのは、自分で選んだ写真だけです（小さくしてから届けます）",
+                "・写真や動画を、勝手に送ったり消したり変えたりしません"
             ]
         }
         return [
-            "・解析はすべてこの端末の中で行います",
-            "・写真や動画を開発者のサーバーへ自動送信しません",
-            "・写真や動画を消したり変更したりしません"
+            "・猫を探すのは、このiPhoneの中だけです",
+            "・写真や動画を、勝手にiPhoneの外へ送りません",
+            "・写真や動画を消したり変えたりしません"
         ]
     }
 
     static func homePermissionBody(isMediaAvailable: Bool) -> String {
         if isMediaAvailable {
-            return "解析はこの端末内で行います。共有は別に同意した後、選んだ縮小写真1枚だけを送ります。写真や動画の自動送信・削除・変更はしません。あとから許可できます。"
+            return "猫を探すのはこのiPhoneの中だけで、写真を勝手に送ったり消したりしません。まどに届けるのは、自分で選んだ写真だけです。"
         }
-        return "解析はこの端末内で行い、写真や動画を開発者のサーバーへ自動送信しません。変更や削除もしません。あとから許可できます。"
+        return "猫を探すのはこのiPhoneの中だけです。写真や動画を勝手に外へ送ったり、消したり変えたりしません。"
     }
-    static let permissionLimitedAccessNote = "「すべての写真」がおすすめです。「選択した写真のみ」でも動きます。"
+    static let permissionLimitedAccessNote = "すべての写真へのアクセスがおすすめです。一部の写真だけでも使えます。"
     static let permissionAction = "写真へのアクセスを許可"
-    static let permissionSkipAction = "あとで（スキップ）"
+    static let permissionSkipAction = "あとで"
 
     /// Page three shows the cats as they are found: a grid that fills, a count,
     /// and the one next step (place the Widget). The count reads 「いま 32枚」
@@ -106,7 +106,7 @@ enum OnboardingPresentationCopy {
     static let scanTitle = "猫を探しています"
     static let scanFoundTitle = "猫の写真が見つかりました"
     static let scanBodyLines = [
-        "アプリを開いている間、新しい写真から順に調べます。"
+        "アプリを開いている間、新しい写真から順に探します。"
     ]
     static let scanCountLead = "いま"
     static let scanWidgetAction = "まどを置く"
@@ -117,7 +117,7 @@ enum OnboardingPresentationCopy {
         "ホーム画面に、",
         "猫写真をひとつ。"
     ]
-    static let widgetBody = "見つけた猫写真を、自分のホーム画面でも楽しめます。\n追加はホーム画面で行います。"
+    static let widgetBody = "見つけた猫写真を、ホーム画面でも楽しめます。\n置き方は下のとおりです。"
     static let widgetModernPlacementSteps = [
         "ホーム画面の何もないところを長押し",
         "左上の「編集」→「ウィジェットを追加」",
@@ -129,7 +129,7 @@ enum OnboardingPresentationCopy {
         "「ねこのまど」を探し、好きな大きさで追加"
     ]
     static let widgetReturnHint = "追加してアプリへ戻ると、自動で確認します。"
-    static let widgetAction = "手順を確認した"
+    static let widgetAction = "完了"
     static let widgetLaterAction = "あとで"
 
 }

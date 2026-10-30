@@ -27,7 +27,7 @@ struct PhotoWindowDeliveryActions {
             },
             send: { photo, destination, caption in
                 let staged = await model.deliverLibraryPhoto(photo, to: destination, caption: caption)
-                return staged ? nil : (model.errorMessage ?? "送信を開始できませんでした。時間をおいてお試しください。")
+                return staged ? nil : (model.errorMessage ?? "届けられませんでした。少し待ってから、もう一度お試しください。")
             }
         )
     }
@@ -220,10 +220,10 @@ struct PhotoWindowDeliveryView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                         .accessibilityLabel("届ける写真")
                     if isLoading || isPreparing {
-                        ProgressView(isPreparing ? "写真を準備しています…" : "届け先を確認しています…")
+                        ProgressView(isPreparing ? "写真を準備しています…" : "まどを読み込んでいます…")
                     } else if destinations.isEmpty && errorMessage == nil {
                         ContentUnavailableView("届け先のまどがありません", systemImage: "rectangle.grid.2x2",
-                            description: Text("「まど」で共有相手と接続してください。"))
+                            description: Text("先にまどを作って、相手を招待してください。"))
                             .accessibilityIdentifier("photo-window-no-destinations")
                     } else {
                         VStack(spacing: 10) {
@@ -243,13 +243,13 @@ struct PhotoWindowDeliveryView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("photo-window-destination-\(choice.localWindowID)")
-                                .accessibilityHint("このまどへ届ける写真を確認します")
+                                .accessibilityHint("このまどを届け先にします")
                             }
                         }
                     }
                     if let errorMessage {
                         Text(errorMessage).font(.subheadline).foregroundStyle(.orange)
-                        Button("もう一度確認") {
+                        Button("もう一度読み込む") {
                             preparationTask = Task { await loadDestinations() }
                         }
                     }

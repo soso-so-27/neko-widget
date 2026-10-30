@@ -24,9 +24,9 @@ enum SharedLogErrorCategory: String, CaseIterable, Sendable {
 enum DiagnosticLogPrivacy {
     static let redactedValue = "[redacted]"
     static let persistedPairingFailureCopy =
-        "前回のペアリング操作を完了できませんでした。もう一度お試しください。"
+        "前回、まどの設定を最後まで進められませんでした。もう一度お試しください。"
     static let persistedScanFailureCopy =
-        "前回の写真確認を完了できませんでした。もう一度お試しください。"
+        "前回、写真を最後まで探せませんでした。もう一度お試しください。"
     private static let maximumMetadataFieldCount = 64
 
     private static let allowedMomentOutboxErrorCodes: Set<String> = [

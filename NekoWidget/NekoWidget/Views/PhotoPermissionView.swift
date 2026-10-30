@@ -37,7 +37,7 @@ struct PhotoPermissionView: View {
             .accessibilityIdentifier("photo-permission-primary")
 
             if status == .notDetermined {
-                Text("「制限付きアクセス」でも使えます。\n写真本体をアプリ内に複製することはありません。")
+                Text("一部の写真だけを許可しても使えます。\n元の写真をアプリにコピーすることはありません。")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -62,14 +62,14 @@ struct PhotoPermissionView: View {
         case .denied:
             "設定で写真へのアクセスを許可すると、猫の写真を整理し、猫が写る動画を季節のムービーに使えます。"
         case .restricted:
-            "スクリーンタイムや端末管理の設定により、写真を読み込めません。"
+            "スクリーンタイムなどの制限で、写真を読み込めません。"
         default:
-            "写真から猫が写る場面を整理し、季節のムービーでは端末内で確認できた動画も使います。"
+            "写真から猫が写っているものを探して整理します。季節のムービーには、猫が写る動画も使います。"
         }
     }
 
     private var buttonTitle: String {
-        status == .notDetermined ? "写真を選ぶ" : "設定を開く"
+        status == .notDetermined ? "写真へのアクセスを許可" : "設定を開く"
     }
 
     private func primaryAction() {
@@ -93,7 +93,7 @@ struct LimitedAccessBanner: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("選んだ写真だけを探しています")
                     .font(.subheadline.weight(.semibold))
-                Text("後からいつでも対象を増やせます。")
+                Text("あとからいつでも写真を追加できます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

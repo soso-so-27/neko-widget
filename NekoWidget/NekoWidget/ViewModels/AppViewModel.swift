@@ -1209,7 +1209,7 @@ final class AppViewModel: ObservableObject {
         guard let curationStore else {
             if legacyCurationIsCanonical {
                 errorMessage = curationStoreInitializationError
-                    ?? "除外設定を保存できません。アプリを開き直して再度お試しください。"
+                    ?? "設定を保存できませんでした。アプリを開き直して、もう一度お試しください。"
                 return
             }
             // In profiled mode the identity ledger is canonical. Continue to
@@ -1283,7 +1283,7 @@ final class AppViewModel: ObservableObject {
         guard let curationStore else {
             if legacyCurationIsCanonical {
                 errorMessage = curationStoreInitializationError
-                    ?? "除外設定を保存できません。アプリを開き直して再度お試しください。"
+                    ?? "設定を保存できませんでした。アプリを開き直して、もう一度お試しください。"
                 return
             }
             if catHouseholdIdentity != nil {
@@ -2388,7 +2388,7 @@ final class AppViewModel: ObservableObject {
         if GroupInvitationLink.isCandidate(url) {
             guard let invitation = GroupInvitationLink(url: url) else {
                 SharedLog.app.warning("deeplink", "Rejected malformed group invitation link")
-                errorMessage = "招待リンクを読み取れませんでした。新しい招待を受け取ってください。"
+                errorMessage = "この招待リンクは開けませんでした。招待した人に、新しいリンクを送ってもらってください。"
                 return
             }
             GroupInvitationInbox.shared.receive(invitation)
@@ -2416,7 +2416,7 @@ final class AppViewModel: ObservableObject {
             )
         case let .familyWindow(localWindowID, sourceDigest, action):
             guard SharingAPIConfiguration.current.isReviewVisible else {
-                errorMessage = "共有を現在利用できないため、このまどを開けませんでした。"
+                errorMessage = "いまはこのまどを開けません。"
                 SharedLog.app.info(
                     "deeplink",
                     "Ignored family window deep link because sharing is unavailable"
@@ -2436,7 +2436,7 @@ final class AppViewModel: ObservableObject {
                             trigger: "widget-window-selection"
                         )
                     } catch {
-                        self.errorMessage = "このまどを開けませんでした。まどの接続状態を確認してください。"
+                        self.errorMessage = "このまどを開けませんでした。「まど」タブから開き直してください。"
                         Self.logError(
                             error,
                             category: "family-window",
@@ -2466,7 +2466,7 @@ final class AppViewModel: ObservableObject {
                             // An exact-photo tap must not silently become a
                             // different photo. Use the existing app alert before
                             // presenting any new sheet when its target is gone.
-                            self.errorMessage = "ウィジェットに表示された写真を開けませんでした。表示期間が終了したか、削除された可能性があります。"
+                            self.errorMessage = "この写真は開けませんでした。表示できる期間が終わったか、削除されたのかもしれません。"
                             SharedLog.app.info(
                                 "deeplink",
                                 "Exact Widget photo is no longer available"
@@ -2534,7 +2534,7 @@ final class AppViewModel: ObservableObject {
         generation: Int
     ) async {
         guard SharingAPIConfiguration.current.isMediaAvailable else {
-            errorMessage = "共有を現在利用できないため、この写真を開けませんでした。"
+            errorMessage = "いまはこの写真を開けません。"
             SharedLog.app.info(
                 "moment-notification",
                 "Ignored notification route because sharing is unavailable"
@@ -2546,7 +2546,7 @@ final class AppViewModel: ObservableObject {
             do {
                 guard let catalog = try PrivateWindowCatalogStore.load()
                 else {
-                    errorMessage = "この写真のまどを開けませんでした。接続情報を確認してください。"
+                    errorMessage = "この写真が届いたまどを開けませんでした。「まど」タブから開いてください。"
                     SharedLog.app.info(
                         "moment-notification",
                         "Ignored notification because its private window was unavailable",
@@ -2556,7 +2556,7 @@ final class AppViewModel: ObservableObject {
                 }
                 let matches = catalog.windows.filter { $0.spaceID == target.spaceID }
                 guard matches.count == 1, let targetWindow = matches.first else {
-                    errorMessage = "この写真のまどを特定できませんでした。まどの接続状態を確認してください。"
+                    errorMessage = "この写真が届いたまどが見つかりませんでした。「まど」タブから開いてください。"
                     SharedLog.app.info(
                         "moment-notification",
                         "Ignored notification because its private window could not be resolved",
@@ -2602,7 +2602,7 @@ final class AppViewModel: ObservableObject {
                 )
                 return
             } catch {
-                errorMessage = "この写真のまどを開けませんでした。時間をおいて、まどからもう一度確認してください。"
+                errorMessage = "この写真が届いたまどを開けませんでした。少し時間をおいて、「まど」タブから開いてください。"
                 Self.logError(
                     error,
                     category: "moment-notification",
@@ -4071,9 +4071,9 @@ final class AppViewModel: ObservableObject {
         if let value = error as? NekoWidgetError {
             switch value {
             case .appGroupUnavailable:
-                return "アプリの保存領域を利用できません。アプリを更新して、もう一度お試しください。"
+                return "データを保存できませんでした。アプリをアップデートして、もう一度お試しください。"
             case .photoAccessDenied:
-                return "写真へのアクセスが許可されていません。iPhoneの設定を確認してください。"
+                return "写真へのアクセスが許可されていません。iPhoneの「設定」で、「ねこのまど」に写真へのアクセスを許可してください。"
             case .albumCreationFailed:
                 return "写真アルバムを更新できませんでした。写真へのアクセスと空き容量を確認してください。"
             case .noCatPhotos:
@@ -4084,30 +4084,30 @@ final class AppViewModel: ObservableObject {
         }
         if let value = error as? CatCandidateCurationError {
             return value.errorDescription
-                ?? "写真の対象設定を確認できませんでした。設定を開き直してください。"
+                ?? "写真の対象を読み込めませんでした。設定を開き直してください。"
         }
         if let value = error as? CatProfilePhotoAlbumError {
             return value.errorDescription
-                ?? "選択した写真アルバムを利用できません。写真へのアクセス範囲を確認してください。"
+                ?? "選んだアルバムが見つかりません。写真へのアクセスを確かめてください。"
         }
         if let value = error as? CatHouseholdIdentityStoreError {
             return value.errorDescription
-                ?? "猫プロフィールを安全に読み書きできませんでした。もう一度お試しください。"
+                ?? "猫のプロフィールを保存できませんでした。もう一度お試しください。"
         }
         if let value = error as? SharedLikeStoreError {
             switch value {
             case .appGroupUnavailable:
-                return "「お気に入り」の保存領域を利用できません。アプリを更新して、もう一度お試しください。"
+                return "「お気に入り」を保存できませんでした。アプリをアップデートして、もう一度お試しください。"
             case .lockOpenFailed, .lockFailed:
-                return "「お気に入り」を安全に保存できませんでした。少し待って、もう一度お試しください。"
+                return "「お気に入り」を保存できませんでした。少し待って、もう一度お試しください。"
             case .measurementNotInitialized:
                 return "アプリを一度開き直してから、もう一度お試しください。"
             }
         }
         if error is URLError {
-            return "通信を完了できませんでした。接続を確認して、もう一度お試しください。"
+            return "インターネットにつながりませんでした。通信環境を確かめて、もう一度お試しください。"
         }
-        return "処理を完了できませんでした。写真へのアクセスとiPhoneの空き容量を確認して、もう一度お試しください。"
+        return "うまくいきませんでした。写真へのアクセスとiPhoneの空き容量を確かめて、もう一度お試しください。"
     }
 
     private func logCandidateAuthorityUnavailable(operation: String) {

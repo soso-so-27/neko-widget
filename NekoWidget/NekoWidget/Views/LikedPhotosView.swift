@@ -114,7 +114,7 @@ struct AlbumView: View {
             }
             if scan.hasFailed {
                 VStack(alignment: .leading, spacing: 5) {
-                    Label("アルバムの確認を完了できませんでした", systemImage: "exclamationmark.triangle")
+                    Label("写真を最後まで探せませんでした", systemImage: "exclamationmark.triangle")
                         .font(.subheadline.weight(.semibold))
                     Text("写真へのアクセスを確認し、設定からもう一度探してください。")
                         .font(.caption)
@@ -127,7 +127,7 @@ struct AlbumView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Label("一部の写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
                         .font(.subheadline.weight(.semibold))
-                    Text("読み込めた写真のアルバムを表示しています。")
+                    Text("読み込めた写真だけで、アルバムを表示しています。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -447,7 +447,7 @@ struct AlbumView: View {
             Label("新しいアルバムを準備しています", systemImage: "sparkles.rectangle.stack")
                 .font(.headline)
 
-            Text("人といっしょ・おでかけなどに必要な情報を端末内で確認し、準備できた写真から追加します。")
+            Text("「人といっしょ」「おでかけ」などのアルバムを作っています。できたものから順に追加します。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -465,7 +465,7 @@ struct AlbumView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Text("写真を探すのは、アプリを開いている間に進みます。")
+            Text("写真は、アプリを開いている間に探します。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -801,7 +801,7 @@ struct CuratedAlbumDetailView: View {
             }
         }
         .confirmationDialog(
-            "候補から外しますか？",
+            "猫の写真から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
@@ -816,7 +816,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("写真は削除せず、アプリの候補から外します（設定で戻せます）。")
+            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -1159,12 +1159,12 @@ struct LikedPhotosView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     if isPhotoSourceUnavailable {
                         ContentUnavailableView {
-                            Label("写真の対象を確認してください", systemImage: "photo.on.rectangle")
+                            Label("選んでいたアルバムが見つかりません", systemImage: "photo.on.rectangle")
                         } description: {
-                            Text("選んだ写真アプリのアルバムを読み込めません。写真タブで選び直してください。")
+                            Text("「写真」タブから、写真の対象を選び直してください。")
                         } actions: {
                             Button(action: recoverPhotoSource) {
-                                Label("写真の対象を確認", systemImage: "arrow.right")
+                                Label("「写真」タブを開く", systemImage: "arrow.right")
                                     .frame(minHeight: 44)
                             }
                             .accessibilityIdentifier("albums-source-recovery")
@@ -1196,7 +1196,7 @@ struct LikedPhotosView: View {
                                 memoLoadFailed = false
                                 memoRetryRevision &+= 1
                             } label: {
-                                Label("メモを再読み込み", systemImage: "arrow.clockwise")
+                                Label("もう一度読み込む", systemImage: "arrow.clockwise")
                                     .frame(minHeight: 44)
                             }
                             .accessibilityIdentifier("albums-memo-retry")
@@ -1209,7 +1209,7 @@ struct LikedPhotosView: View {
                             Text("写真を見られるようにすると、月のまとめや成長がここにできます。猫かどうかは、このiPhoneの中で見分けます。")
                         } actions: {
                             Button(action: openPhotos) {
-                                Label("写真の許可を確認", systemImage: "arrow.right")
+                                Label("「写真」タブで許可する", systemImage: "arrow.right")
                                     .frame(minHeight: 44)
                             }
                             .buttonStyle(.borderedProminent)
@@ -1939,7 +1939,7 @@ struct SavedMemoriesGalleryView: View {
             }
         }
         .alert(
-            "PDFを作成できませんでした",
+            "PDFを作れませんでした",
             isPresented: Binding(
                 get: { photoBookErrorMessage != nil },
                 set: { isPresented in
@@ -1972,20 +1972,20 @@ struct SavedMemoriesGalleryView: View {
     @ViewBuilder
     private var emptyGalleryState: some View {
         if !hasPhotoAccess {
-            ContentUnavailableView("写真許可を確認してください", systemImage: "photo",
-                description: Text("お気に入りの写真を表示するには、写真へのアクセスが必要です。設定で写真許可を確認してください。"))
+            ContentUnavailableView("写真へのアクセスを許可してください", systemImage: "photo",
+                description: Text("お気に入りの写真を表示するには、写真へのアクセスが必要です。設定で許可してください。"))
                 .accessibilityIdentifier("saved-memories-photo-access-unavailable")
         } else if savedStateReadFailed {
-            ContentUnavailableView("お気に入りを確認できませんでした", systemImage: "exclamationmark.triangle",
-                description: Text("お気に入りを読み込めませんでした。時間をおいて、もう一度開いてください。"))
+            ContentUnavailableView("お気に入りを開けませんでした", systemImage: "exclamationmark.triangle",
+                description: Text("時間をおいて、もう一度開いてください。"))
                 .accessibilityIdentifier("saved-memories-state-read-failed")
         } else if unavailableSavedPhotoCount > 0 {
             ContentUnavailableView("お気に入りの写真を表示できません", systemImage: "photo",
-                description: Text("お気に入りに入れた写真が\(unavailableSavedPhotoCount.formatted())枚ありますが、今は読み込めません。写真許可や元の写真を確認してください。"))
+                description: Text("お気に入りに入れた写真が\(unavailableSavedPhotoCount.formatted())枚ありますが、今は読み込めません。写真へのアクセスや、元の写真が残っているかを確かめてください。"))
                 .accessibilityIdentifier("saved-memories-photos-unavailable")
         } else if !photos.isEmpty {
             ContentUnavailableView("この範囲にはまだありません", systemImage: "bookmark",
-                description: Text("別の切り替えから、お気に入りの写真を確認できます。"))
+                description: Text("上の切り替えで、ほかのお気に入りを見られます。"))
         } else {
             ContentUnavailableView("まだありません", systemImage: "bookmark",
                 description: Text("写真で「お気に入りに追加」を押すと、ここに並びます"))
@@ -1996,11 +1996,11 @@ struct SavedMemoriesGalleryView: View {
     private var unavailableSavedPhotosBanner: some View {
         VStack(alignment: .leading, spacing: 4) {
             if savedStateReadFailed {
-                Label("お気に入りの保存状態を確認できませんでした", systemImage: "exclamationmark.triangle")
-                Text("表示できる写真は残しています。時間をおいて、もう一度開いてください。")
+                Label("お気に入りの一部を読み込めませんでした", systemImage: "exclamationmark.triangle")
+                Text("表示できる写真だけ並べています。時間をおいて、もう一度開いてください。")
             } else {
                 Label("表示できないお気に入りが\(unavailableSavedPhotoCount.formatted())枚あります", systemImage: "photo")
-                Text("写真許可や元の写真を確認してください。表示できる写真は下に並んでいます。")
+                Text("写真へのアクセスや、元の写真が残っているかを確かめてください。表示できる写真は下に並んでいます。")
             }
         }
         .font(.caption).foregroundStyle(.secondary)
@@ -2024,8 +2024,8 @@ struct SavedMemoriesGalleryView: View {
     }
 
     private var galleryAccessibilityValue: String {
-        guard hasPhotoAccess else { return "お気に入り、写真許可を確認してください" }
-        if savedStateReadFailed { return "お気に入り、表示できる写真\(visiblePhotos.count.formatted())枚、保存状態は確認できません" }
+        guard hasPhotoAccess else { return "お気に入り、写真へのアクセスが必要です" }
+        if savedStateReadFailed { return "お気に入り、表示できる写真\(visiblePhotos.count.formatted())枚、一部を読み込めませんでした" }
         if unavailableSavedPhotoCount > 0 {
             return "お気に入り、表示できる写真\(visiblePhotos.count.formatted())枚、表示できない写真\(unavailableSavedPhotoCount.formatted())枚"
         }
@@ -2246,9 +2246,9 @@ struct SavedMemoriesGalleryView: View {
             } catch {
                 if let exportError = error as? PhotoBookPDFExportError {
                     photoBookErrorMessage = exportError.errorDescription
-                        ?? "写真PDFを作成できませんでした。写真へのアクセスを確認して、もう一度お試しください。"
+                        ?? "写真のPDFを作れませんでした。写真へのアクセスを確かめて、もう一度お試しください。"
                 } else {
-                    photoBookErrorMessage = "写真PDFを作成できませんでした。写真へのアクセスとiPhoneの空き容量を確認して、もう一度お試しください。"
+                    photoBookErrorMessage = "写真のPDFを作れませんでした。写真へのアクセスとiPhoneの空き容量を確かめて、もう一度お試しください。"
                 }
             }
         }
@@ -2836,9 +2836,9 @@ struct PhotoBrowserView: View {
                 }
                 if personalNote.state(for: selectedPhoto.localIdentifier) == .failed {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("メモを読み込めませんでした。保存済みの内容は変更していません。")
+                        Text("メモを読み込めませんでした。書いたメモは消えていません。")
                             .font(.subheadline)
-                        Button("メモを再読み込み", systemImage: "arrow.clockwise") {
+                        Button("もう一度読み込む", systemImage: "arrow.clockwise") {
                             let identifier = selectedPhoto.localIdentifier
                             Task { await personalNote.load(for: identifier) }
                         }
@@ -3173,7 +3173,7 @@ struct PhotoBrowserView: View {
             Text(widgetTimingMessage)
         }
         .confirmationDialog(
-            "候補から外しますか？",
+            "猫の写真から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
@@ -3186,7 +3186,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("写真は削除せず、アプリの候補から外します（設定で戻せます）。")
+            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -3507,7 +3507,7 @@ struct PhotoBrowserView: View {
         if let widgetShownAt {
             lines.append(lastChangedText(since: widgetShownAt, now: .now))
         }
-        lines.append("更新時刻は目安で、iOSにより前後します")
+        lines.append("切り替わる時刻は目安で、iPhoneの都合で前後します")
         return lines.joined(separator: "\n")
     }
 
@@ -3849,7 +3849,7 @@ struct DayPhotosView: View {
                 ContentUnavailableView(
                     "この日の写真を表示できません",
                     systemImage: "photo.stack",
-                    description: Text("写真ライブラリの対象範囲が変わった可能性があります。")
+                    description: Text("写真へのアクセスや、写真の対象が変わったのかもしれません。")
                 )
                 .frame(maxWidth: .infinity, minHeight: 420)
             } else {

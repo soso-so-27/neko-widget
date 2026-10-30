@@ -99,9 +99,9 @@ enum PairingInstallationGuard {
             switch reason {
             case .privateWindowMigrationUnavailable:
                 let code = migrationRecoveryStage?.diagnosticCode ?? "PW-00"
-                return "共有データの更新を完了できませんでした。データは削除せず保護しています。診断コード：\(code)"
+                return "まどのデータを更新できませんでした。写真や設定は消えていません。（コード：\(code)）"
             default:
-                return "共有の状態を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+                return "まどを読み込めませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
             }
         }
     }

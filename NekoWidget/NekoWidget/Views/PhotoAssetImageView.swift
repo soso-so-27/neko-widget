@@ -149,7 +149,7 @@ struct PhotoAssetImageView: View {
                         Text(
                             networkAccessAllowed
                                 ? "写真の許可と、iCloud写真の読み込みが終わっているかを確かめてください。"
-                                : "このiPhoneに保存されている写真だけを使います。"
+                                : "iCloudにだけある写真は、ここでは表示できません。"
                         )
                     } actions: {
                         Button {
@@ -199,7 +199,7 @@ struct PhotoAssetImageView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("写真をもう一度読み込む")
-                .accessibilityHint("読み込みを完了できませんでした。表示中の写真を保ったまま読み直します")
+                .accessibilityHint("読み込めませんでした。今の写真を表示したまま、もう一度読み込みます")
                 .accessibilityIdentifier("local-photo-retry")
                 .padding(12)
             }

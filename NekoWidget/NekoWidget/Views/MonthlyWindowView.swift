@@ -37,7 +37,7 @@ struct MonthlyWindowView: View {
             } else {
                 ContentUnavailableView(
                     "この月の写真を開けません", systemImage: "photo.stack",
-                    description: Text("写真へのアクセスや表示する写真の範囲を確認してください。")
+                    description: Text("写真へのアクセスの許可と、表示する写真の範囲を見直してください。")
                 )
             }
         }

@@ -901,7 +901,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             app,
         )
         self.assertIn(
-            "写真へのアクセスとiPhoneの空き容量を確認して、もう一度お試しください。",
+            "写真へのアクセスとiPhoneの空き容量を確かめて、もう一度お試しください。",
             app,
         )
 
@@ -916,21 +916,21 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
         self.assertIn("if let momentError = error as? MomentSharingError", moment)
         self.assertIn("if let pairingError = error as? PairingError", moment)
         self.assertIn(
-            "写真共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。",
+            "まどを読み込めませんでした。少し待ってから、もう一度お試しください。",
             moment,
         )
 
         share = source(targets[3])
         self.assertIn("sharingError.errorDescription", share)
         self.assertIn(
-            "この写真を一時保存できませんでした。iPhoneの空き容量を確認して、もう一度お試しください。",
+            "写真を保存できませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。",
             share,
         )
 
         log_view = source(targets[4])
         self.assertIn("SharedLog.errorMetadata(error, category: .diagnostics)", log_view)
         self.assertIn(
-            "診断ログを書き出せませんでした。iPhoneの空き容量を確認して、もう一度お試しください。",
+            "診断情報を書き出せませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。",
             log_view,
         )
 

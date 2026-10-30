@@ -491,7 +491,7 @@ struct HomeView: View {
 
     private var photoAccessCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("このiPhoneの猫写真を見つけるには、写真へのアクセスが必要です", systemImage: "photo.on.rectangle.angled")
+            Label("猫の写真を見つけるには、写真へのアクセスを許可してください", systemImage: "photo.on.rectangle.angled")
                 .font(.headline)
 
             Text(OnboardingPresentationCopy.homePermissionBody(
@@ -545,9 +545,9 @@ struct HomeView: View {
 
     private var partialScanStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(scan.hasFailed ? "写真の確認を完了できませんでした"
+            Label(scan.hasFailed ? "写真を最後まで探せませんでした"
                   : scan.hasDeferredAssets ? "まだ読み込めない写真があります"
-                  : scan.isPaused ? "写真の確認が一時停止しています" : "写真を確認しています",
+                  : scan.isPaused ? "写真を探すのを一時停止しています" : "猫の写真を探しています",
                   systemImage: scan.hasFailed ? "exclamationmark.triangle" : "photo.badge.clock")
                 .font(.subheadline)
             if scan.hasFailed || scan.hasDeferredAssets || scan.isPaused {
@@ -725,8 +725,8 @@ struct HomeView: View {
         } label: {
             Label {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("写真の対象を確認")
-                    Text("選んだアルバムを利用できません")
+                    Text("写真の対象を選び直す")
+                    Text("選んだアルバムが見つかりません")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -735,7 +735,7 @@ struct HomeView: View {
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
-        .accessibilityHint("選んだアルバムを利用できません。写真の対象を確認します")
+        .accessibilityHint("選んだアルバムが見つかりません。写真の対象を選び直す画面を開きます")
         .accessibilityIdentifier("photo-hub-source-recovery")
     }
 
@@ -748,7 +748,7 @@ struct HomeView: View {
     private var emptyPhotoState: some View {
         if scan.hasFailed {
             ContentUnavailableView {
-                Label("写真の確認を完了できませんでした", systemImage: "exclamationmark.triangle")
+                Label("写真を最後まで探せませんでした", systemImage: "exclamationmark.triangle")
             } description: {
                 Text("写真へのアクセスを確認して、もう一度探してください。")
             } actions: {
@@ -764,15 +764,15 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, minHeight: 320)
             .accessibilityIdentifier("photo-hub-scan-failed")
         } else if let readingPositionKey, readingPositionKey != "all", !scan.isScanning {
-            ContentUnavailableView("この表示の写真がありません", systemImage: "photo.on.rectangle",
-                description: Text("猫の選択と写真の許可を確認してください。"))
+            ContentUnavailableView("表示できる写真がありません", systemImage: "photo.on.rectangle",
+                description: Text("選んでいる猫と、写真へのアクセスを確かめてください。"))
                 .frame(maxWidth: .infinity, minHeight: 280)
                 .accessibilityIdentifier("photo-library-scoped-empty")
         } else if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
                 Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")
             } description: {
-                Text("猫の写真を追加するか、写真の許可を確認してください。")
+                Text("写真アプリに猫の写真を入れるか、写真へのアクセスを確かめてください。")
             } actions: {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
@@ -857,14 +857,14 @@ struct PhotoShuffleGuideView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("猫写真をロック画面にも")
                             .font(.title2.bold())
-                        Text("アルバムを作ったら、Apple標準の写真シャッフルに一度設定します。")
+                        Text("iPhoneの「写真シャッフル」に、写真アプリの「うちの子」アルバムを一度設定します。")
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(spacing: 0) {
                         GuideStep(number: 1, title: "ロック画面を長押し", detail: "「＋」をタップします。")
                         GuideStep(number: 2, title: "「写真シャッフル」を選ぶ", detail: "上部のカテゴリから開きます。")
-                        GuideStep(number: 3, title: "「アルバム」を選ぶ", detail: "写真アプリの「うちの子」アルバムを指定します。")
+                        GuideStep(number: 3, title: "「アルバム」を選ぶ", detail: "写真アプリの「うちの子」アルバムを選びます。")
                         GuideStep(number: 4, title: "頻度を「ロック時」に", detail: "ロック解除のたびに別の1枚を楽しめます。", isLast: true)
                     }
                     .padding(.horizontal, 16)

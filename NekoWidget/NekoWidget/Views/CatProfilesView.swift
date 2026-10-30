@@ -143,7 +143,7 @@ struct CatProfilesView: View {
                         Text(CatIndividualRecognitionCopy.unavailable)
                     }
                     Section {
-                        Text("猫の登録は任意です。名前や写真の振り分けは、このiPhone内で管理します。")
+                        Text("猫を登録しなくても使えます。名前や写真の分け方は、このiPhoneに保存されます。")
                     }
                 }
                 .navigationTitle("猫ごとの写真について")
@@ -274,7 +274,7 @@ struct CatProfilesView: View {
                 Button {
                     organizationDestination = .excluded
                 } label: {
-                    Label("以前除外した写真", systemImage: "arrow.uturn.backward")
+                    Label("前に外した写真", systemImage: "arrow.uturn.backward")
                 }
                 .accessibilityIdentifier("cat-profiles-excluded")
             }
@@ -653,15 +653,15 @@ private struct AddCatProfileView: View {
                         LabeledContent(reference.kind.title) {
                             Text(reference.date, format: .dateTime.year().month().day())
                         }
-                        Button("この日付を引き継がない") { draft.lifeReference = nil }
+                        Button("この日付は使わない") { draft.lifeReference = nil }
                     } footer: {
-                        Text("以前設定した日付です。この猫のプロフィールに引き継ぎます。")
+                        Text("前に入れた日付です。この子のプロフィールに使います。")
                     }
                 }
 
                 if saveFailed {
                     Section {
-                        Text("追加できませんでした。入力は残っています。もう一度お試しください。")
+                        Text("追加できませんでした。入力はそのままなので、もう一度お試しください。")
                             .font(.footnote)
                             .foregroundStyle(.red)
                     }
@@ -889,7 +889,7 @@ struct ToolPromoteCatButton: View {
     @State private var failed = false
     @State private var createdID: String?
     var body: some View {
-        Button(createdID == nil ? "プロフィールにする" : "プロフィールとの接続を再試行") {
+        Button(createdID == nil ? "プロフィールにする" : "もう一度試す") {
             busy = true
             Task {
                 let id: String?
@@ -900,9 +900,9 @@ struct ToolPromoteCatButton: View {
                 busy = false
             }
         }.disabled(busy)
-        .alert("プロフィールとの接続を完了できませんでした", isPresented: $failed) {
+        .alert("プロフィールにできませんでした", isPresented: $failed) {
             Button("閉じる", role: .cancel) {}
-        } message: { Text("元の記録と写真は残っています。保存状態を確認して再試行してください。") }
+        } message: { Text("記録と写真はそのままです。少し待ってから、もう一度お試しください。") }
     }
 }
 

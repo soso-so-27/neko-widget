@@ -202,7 +202,7 @@ struct AppRootView: View {
         }
         .alert(item: $presentedError) { error in
             Alert(
-                title: Text("完了できませんでした"),
+                title: Text("うまくいきませんでした"),
                 message: Text(error.message),
                 dismissButton: .default(Text("閉じる")) {
                     viewModel.clearError()
@@ -234,8 +234,8 @@ struct AppRootView: View {
                     if let definition = OfficialWindowConfiguration.definition(for: route.windowID) {
                         OfficialWindowView(initialPhotoID: route.photoID, store: .forWindow(definition))
                     } else {
-                        ContentUnavailableView("このまどは利用できません", systemImage: "rectangle.slash",
-                                               description: Text("まど一覧から、受け取るまどを選べます。"))
+                        ContentUnavailableView("このまどは開けません", systemImage: "rectangle.slash",
+                                               description: Text("「まど」タブから、ほかのまどを選べます。"))
                     }
                 }
                     .id(officialWindowPresentationID)
@@ -282,7 +282,7 @@ struct AppRootView: View {
                     if let definition = OfficialWindowConfiguration.definition(for: route.windowID) {
                         OfficialWindowView(initialPhotoID: route.photoID, store: .forWindow(definition))
                     } else {
-                        ContentUnavailableView("このまどは利用できません", systemImage: "rectangle.slash")
+                        ContentUnavailableView("このまどは開けません", systemImage: "rectangle.slash")
                     }
                 }
                 .toolbar {
@@ -295,11 +295,11 @@ struct AppRootView: View {
                     Group {
                         switch viewModel.widgetPhotoLibraryLoadSucceeded {
                         case nil:
-                            ProgressView("写真を確認しています…")
+                            ProgressView("写真を読み込んでいます…")
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         case .some(false):
                             ContentUnavailableView("この写真は開けません", systemImage: "photo",
-                                                   description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                                                   description: Text("写真へのアクセスと、設定の「写真の表示と整理」を確かめてください。"))
                         case .some(true):
                             mainTabContent.widgetPhotoDestination(
                                 for: localIdentifier, shownAt: shownAt

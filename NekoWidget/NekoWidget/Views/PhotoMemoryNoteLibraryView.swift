@@ -167,8 +167,8 @@ private struct MemoryReadingItem: Identifiable {
         switch preserved.state {
         case .stored: return ""
         case .pending: return "iCloudへの保管待ち"
-        case .partial: return "写真を取り戻せていません"
-        case .conflict: return "内容の確認が必要です"
+        case .partial: return "iCloudから写真を戻せていません"
+        case .conflict: return "iCloudに別の変更があります"
         }
     }
 }
@@ -298,7 +298,7 @@ struct PhotoMemoryNotesListView: View {
                     ContentUnavailableView {
                         Label(selectedProfileIdentifier == nil ? "メモを付けた写真が並びます" : "この条件のメモはありません", systemImage: "note.text")
                     } description: {
-                        Text("写真を開き、鉛筆から書けます。")
+                        Text("写真を開いて、鉛筆のボタンから書けます。")
                     } actions: {
                         Button("写真を選ぶ", action: openPhotos)
                         if archiveEnabled {
@@ -489,10 +489,10 @@ struct PhotoMemoryNotesListView: View {
                 if !currentNames.isEmpty {
                     Text(currentNames.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
                 } else if !item.cats.isEmpty {
-                    Text("記録時：" + item.cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
+                    Text("メモを書いたとき：" + item.cats.joined(separator: "・")).font(.subheadline).foregroundStyle(.secondary)
                 }
                 if identifiers(for: item).isEmpty {
-                    Text("写っている猫は未指定").font(.caption).foregroundStyle(.secondary)
+                    Text("写っている猫を選んでいません").font(.caption).foregroundStyle(.secondary)
                 }
                 Text("\(sort == .updated ? "更新" : item.dateLabel) \(sortingDate(item).formatted(.dateTime.month().day()))")
                     .font(.caption).foregroundStyle(.secondary)
@@ -791,7 +791,7 @@ struct PhotoMemoryNoteDetailView: View {
                     Button("診察メモに追加", systemImage: "cross.case") { addsToVet = true }
                         .accessibilityIdentifier("memory-note-add-vet")
                     if reflection == .pending || reflection == .conflict || reflection == .accountChanged {
-                        Text(reflection == .conflict ? "別の変更があります。" : "iCloudへの反映待ち")
+                        Text(reflection == .conflict ? "iCloudに別の変更があります。" : "iCloudへの保管待ち")
                             .font(.caption).foregroundStyle(.secondary)
                         if archivedRecord != nil {
                             Button("保管状況を確認") { showsArchiveDetails = true }
@@ -852,7 +852,7 @@ struct PhotoMemoryNoteDetailView: View {
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("写真とお気に入りはそのまま残ります。文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。診察メモに選んだ控えは残ります。") }
+        } message: { Text("写真とお気に入り、診察メモに入れた分は残ります。メモの文章・体重・測定日は削除します（iCloudのメモも書き換える設定なら、iCloudからも消えます）。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }
@@ -949,11 +949,11 @@ struct PhotoMemoryNoteDetailView: View {
                            expectedAccount: nil, weightChange: .set(nil))
             if result.reflection == .stored || result.reflection == .localOnly { dismiss() }
             else {
-                self.error = "このiPhoneのメモを削除しました。iCloudへの反映はまだ完了していません。"
+                self.error = "このiPhoneのメモは削除しました。iCloudのメモはまだ消えていません。"
                 await reload()
             }
         } catch {
-            self.error = "メモが変更されたか、削除できませんでした。保存済みの内容は変更していません。一覧に戻って確認してください。"
+            self.error = "メモを削除できませんでした。一覧に戻ってから、もう一度お試しください。"
         }
     }
 }

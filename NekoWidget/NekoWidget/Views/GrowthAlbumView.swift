@@ -64,13 +64,13 @@ struct GrowthAlbumDetailView: View {
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
-        .alert("この比べ方について", isPresented: $showsAboutSelection) {
+        .alert("写真の選び方について", isPresented: $showsAboutSelection) {
             Button("閉じる", role: .cancel) {}
         } message: {
             Text(aboutSelectionMessage)
         }
         .confirmationDialog(
-            "候補から外しますか？",
+            "猫の写真から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
@@ -83,7 +83,7 @@ struct GrowthAlbumDetailView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("アプリの「写真」・ウィジェット・「アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             if let identifier = pendingAssignmentIdentifier {
@@ -153,7 +153,7 @@ struct GrowthAlbumDetailView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel("この比べ方について")
+        .accessibilityLabel("写真の選び方について")
     }
 
     @ViewBuilder
@@ -326,10 +326,10 @@ struct GrowthAlbumDetailView: View {
     }
 
     private var aboutSelectionMessage: String {
-        let source = "このiPhoneにある対象写真から、撮影時期ごとに一枚ずつ自動で選んでいます。"
+        let source = "写真の対象から、撮った時期ごとに1枚ずつ自動で選んでいます。"
         let edit = "選び直しても、写真アプリの元の写真は変わりません。"
         if album.id == .householdGrowth {
-            return "\(source) 猫を見分けて同じ猫だと判定しているわけではありません。\(edit)"
+            return "\(source) 同じ猫かどうかまでは見分けていません。\(edit)"
         }
         return "\(source) \(edit)"
     }

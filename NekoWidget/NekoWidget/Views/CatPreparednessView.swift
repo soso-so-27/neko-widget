@@ -233,7 +233,7 @@ struct LostCatDraftView: View {
                         if loaded { saveNow() }
                         else { load(initialKey, name: initialName) }
                     } label: {
-                        Label("もう一度保存", systemImage: "arrow.clockwise")
+                        Label("もう一度保存する", systemImage: "arrow.clockwise")
                             .frame(maxWidth: .infinity, minHeight: 36)
                     }
                     .buttonStyle(.bordered)
@@ -252,13 +252,13 @@ struct LostCatDraftView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 4) {
                 if !requiredFields.isEmpty {
-                    Text("\(requiredFields.joined(separator: "・"))を入れると作成できます")
+                    Text("\(requiredFields.joined(separator: "・"))を入れると作れます")
                         .font(.caption).foregroundStyle(.secondary)
                 } else if !issues.isEmpty {
-                    Text("直す項目があります。各欄の説明を確かめてください")
+                    Text("直すところがあります。赤い文字の欄を見てください")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Button("控えを見る") { openPreview() }
+                Button("できあがりを見る") { openPreview() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canPreview)
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -299,7 +299,7 @@ struct LostCatDraftView: View {
                     selectedRole = nil
                 } catch {
                     guard !Task.isCancelled, photoRequest == request, key == owner else { return }
-                    photoError = "読み込めませんでした。別の写真を選ぶか、もう一度お試しください。"
+                    photoError = "写真を読み込めませんでした。別の写真を選ぶか、もう一度お試しください。"
                 }
                 if photoRequest == request { photoBusy = false; pendingPhotoItem = nil }
             }
@@ -362,7 +362,7 @@ struct LostCatDraftView: View {
             if let photoError {
                 Text(photoError).font(.footnote).foregroundStyle(.red)
                 if faceImage != nil {
-                    Button("今表示している写真を使う") { self.photoError = nil }
+                    Button("いまの写真のままにする") { self.photoError = nil }
                 }
             }
             if faceImage == nil, catCarePhoto(.face) != nil {
@@ -393,7 +393,7 @@ struct LostCatDraftView: View {
             Text("猫の写真と特徴")
         } footer: {
             if !(draft.prefilledFields ?? []).isEmpty {
-                Text("前に入れた内容を入れています。今の姿に合わせて直せます。")
+                Text("前に書いた内容を入れておきました。いまの姿に合わせて直してください。")
                     .accessibilityIdentifier("lost-cat-prefill-note")
             }
         }
@@ -439,7 +439,7 @@ struct LostCatDraftView: View {
                 if draft.contact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    let owner = catCareStore.state?.household.ownerContact?.value
                     .trimmingCharacters(in: .whitespacesAndNewlines), !owner.isEmpty {
-                    Button("「この子のこと」の連絡先を入れる", systemImage: "person.crop.circle") { draft.contact = owner }
+                    Button("「この子のこと」の連絡先を使う", systemImage: "person.crop.circle") { draft.contact = owner }
                         .buttonStyle(.borderless)
                         .accessibilityIdentifier("lost-cat-use-cat-care-contact")
                 }
@@ -447,9 +447,9 @@ struct LostCatDraftView: View {
             textEntry("見かけた方へ（任意）", text: $draft.approachAdvice, field: .advice,
                       limit: LostCatFlyerRenderer.adviceLimit,
                       example: "例：追いかけず、見かけた場所をお知らせください", minimumLines: 2)
-        } header: { Text("見つけた方からの連絡") }
+        } header: { Text("見かけた方からの連絡") }
           footer: {
-            Text("この連絡先は画像・チラシに公開されます。")
+            Text("この連絡先は画像とチラシに載り、だれでも見られます。")
         }
     }
 
@@ -484,7 +484,7 @@ struct LostCatDraftView: View {
         do {
             if faceImage == nil, let face = catCarePhoto(.face) { try commitPhoto(face, role: .face) }
             if bodyImage == nil, let body = catCarePhoto(.body) { try commitPhoto(body, role: .body) }
-        } catch { photoError = "読み込めませんでした。別の写真を選ぶか、もう一度お試しください。" }
+        } catch { photoError = "写真を読み込めませんでした。別の写真を選ぶか、もう一度お試しください。" }
     }
 
     /// A new draft starts from 「この子のこと」: coat, marks and photos, so a
@@ -560,7 +560,7 @@ struct LostCatDraftView: View {
             Form {
                 DatePicker("最後に見かけた日時", selection: $pendingDate, in: ...Date())
                     .datePickerStyle(.graphical)
-                Button("日時は不明") { draft.lastSeenAt = nil; showsDatePicker = false }
+                Button("日時がわからない") { draft.lastSeenAt = nil; showsDatePicker = false }
             }
             .navigationTitle("最後に見かけた日時")
             .toolbar {
@@ -568,7 +568,7 @@ struct LostCatDraftView: View {
                     Button("キャンセル") { showsDatePicker = false }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("決定") { draft.lastSeenAt = pendingDate; showsDatePicker = false }
+                    Button("完了") { draft.lastSeenAt = pendingDate; showsDatePicker = false }
                 }
             }
         }
@@ -648,9 +648,9 @@ struct LostCatDraftView: View {
                 if let image {
                     Menu {
                         Button("写真を選び直す", systemImage: "photo") { selectedRole = role }
-                        Button("範囲を調整", systemImage: "crop") { cropRequest = LostCatCropRequest(role: role, image: image) }
+                        Button("切り取る", systemImage: "crop") { cropRequest = LostCatCropRequest(role: role, image: image) }
                         if role == .body {
-                            Button("2枚目を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
+                            Button("全身の写真を外す", systemImage: "minus.circle", role: .destructive) { removeSecondPhoto() }
                         }
                     } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityLabel("\(title)の操作")
@@ -658,7 +658,7 @@ struct LostCatDraftView: View {
                 }
             }
             if role == .body && faceImage == nil {
-                Text("先に顔の写真を選ぶと選べます").font(.caption).foregroundStyle(.secondary)
+                Text("先に「顔・毛柄」の写真を選んでください").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -738,7 +738,7 @@ struct LostCatDraftView: View {
             return true
         } catch {
             if photoRequest == request, key == owner {
-                photoError = "読み込めませんでした。別の写真を選ぶか、もう一度お試しください。"
+                photoError = "写真を読み込めませんでした。別の写真を選ぶか、もう一度お試しください。"
                 photoBusy = false
             }
             return false
@@ -778,7 +778,7 @@ private struct LostCatPhotoChoiceView: View {
             }
             if photos.isEmpty {
                 ContentUnavailableView("猫の写真がありません", systemImage: "photo", description:
-                    Text("右上の「…」から、iPhoneのすべての写真からも選べます。"))
+                    Text("右上の「…」を押すと、iPhoneのすべての写真から選べます。"))
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 12) {
                     ForEach(photos) { photo in
@@ -851,7 +851,7 @@ private struct LostCatPhotoCropView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                Text("拡大して動かし、猫が見える範囲に調整します。")
+                Text("拡大して動かし、猫がよく見えるようにします。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 GeometryReader { geometry in
                     let scale = min(geometry.size.width / image.size.width, geometry.size.height / image.size.height)
@@ -892,7 +892,7 @@ private struct LostCatPhotoCropView: View {
                 if failed { Text("保存できませんでした。もう一度お試しください。").font(.footnote).foregroundStyle(.red) }
             }
             .padding()
-            .navigationTitle("写真の範囲")
+            .navigationTitle("切り取り")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() } }
@@ -943,14 +943,14 @@ private struct LostCatGuideView: View {
         NavigationStack {
             List {
                 Section("1  家の中・近くを探す") {
-                    Text("室内の隠れ場所を確認し、家の周囲の狭く暗い場所も探します。")
+                    Text("家の中の隠れ場所と、家のまわりの狭くて暗い場所を探します。")
                 }
-                Section("2  届け出・保護情報の確認") {
+                Section("2  届け出て、保護されていないか確かめる") {
                     Text("いなくなった地域の動物愛護センター・保健所、警察、動物病院へ連絡します。")
                     Link("地域の窓口・保護情報を調べる", destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/shuyo/")!)
                 }
                 Section("3  写真で周囲に知らせる") {
-                    Text("この画面で作る画像はLINEやSNSに、A4チラシは印刷して渡せます。掲示は管理者に確認してください。")
+                    Text("ここで作る画像はLINEやSNSに載せられ、A4チラシは印刷して配れます。貼るときは、その場所の管理者に確かめてください。")
                 }
                 Section {
                     Link("環境省の詳しい案内", destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/shuyo/if.html")!)
@@ -1002,7 +1002,7 @@ private struct LostCatPreviewView: View {
                         ForEach(issues.keys.sorted(), id: \.self) { key in
                             Text(issues[key] ?? "").foregroundStyle(.red)
                         }
-                        Button("入力を直す") { dismiss() }
+                        Button("戻って直す") { dismiss() }
                             .accessibilityIdentifier("lost-cat-edit-text")
                         Divider()
                         Text(draft.message).textSelection(.enabled)
@@ -1022,7 +1022,7 @@ private struct LostCatPreviewView: View {
                 }
             }
             if exportError {
-                Text("作成できませんでした。内容は残っています。もう一度お試しください。")
+                Text("作れませんでした。書いた内容は残っているので、もう一度お試しください。")
                     .font(.footnote).foregroundStyle(.red).padding()
             }
         }

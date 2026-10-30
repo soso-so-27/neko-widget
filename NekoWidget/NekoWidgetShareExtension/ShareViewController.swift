@@ -31,11 +31,11 @@ final class ShareViewController: UIViewController {
         view.layer.cornerRadius = 22
         view.clipsToBounds = true
 
-        titleLabel.text = "今の一枚を届ける"
+        titleLabel.text = "まどに届ける"
         titleLabel.font = .preferredFont(forTextStyle: .title2)
         titleLabel.adjustsFontForContentSizeCategory = true
 
-        detailLabel.text = "この1枚を\(PrivateWindowDisplayName.fallback)へ届ける準備をします。アプリで送信後は、そのまどに写真が残り、相手と見返せます。位置情報は除きます。"
+        detailLabel.text = "この写真を\(PrivateWindowDisplayName.fallback)に届けます。届けた写真はまどに残り、相手と見返せます（位置情報は付きません）。"
         detailLabel.font = .preferredFont(forTextStyle: .subheadline)
         detailLabel.textColor = .secondaryLabel
         detailLabel.numberOfLines = 0
@@ -63,7 +63,7 @@ final class ShareViewController: UIViewController {
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .secondaryLabel
         statusLabel.numberOfLines = 0
-        statusLabel.text = "写真を確認しています…"
+        statusLabel.text = "写真を読み込んでいます…"
         statusLabel.accessibilityIdentifier = "moment-share-status"
 
         imageView.contentMode = .scaleAspectFit
@@ -146,7 +146,7 @@ final class ShareViewController: UIViewController {
         cancelButton.isEnabled = false
         spinner.startAnimating()
         statusLabel.textColor = .secondaryLabel
-        statusLabel.text = "送信準備として一時保存しています…"
+        statusLabel.text = "保存しています…"
         Task {
             do {
                 try await ingressService.stage(
@@ -169,22 +169,22 @@ final class ShareViewController: UIViewController {
                     switch sharingError {
                     case .notPaired:
                         resetDestinationSelection()
-                        detailLabel.text = "選んだ届け先の有効期限が切れたか、接続が解除されました。別のまどへ自動で切り替えることはありません。"
-                        statusLabel.text = "届け先を確認できません。アプリを開いてまどを確認してください。"
+                        detailLabel.text = "選んだまどには、もう届けられません。ほかのまどに勝手に届くことはありません。"
+                        statusLabel.text = "アプリを開いて、まどを確かめてください。"
                     case .outboxFull:
-                        statusLabel.text = "送信準備中の写真が3枚あります。アプリを開いてから、もう一度試してください。"
+                        statusLabel.text = "まだ届けていない写真が3枚あります。アプリで届けてから、もう一度お試しください。"
                     case .stateUnavailable:
-                        statusLabel.text = "この写真を一時保存できませんでした。空き容量を確認して、もう一度お試しください。"
+                        statusLabel.text = "写真を保存できませんでした。空き容量を確かめて、もう一度お試しください。"
                         continueButton.isEnabled = true
                     case .invalidPayload, .payloadTooLarge:
-                        statusLabel.text = "この写真を一時保存できませんでした。写真を選び直してください。"
+                        statusLabel.text = "この写真は保存できませんでした。別の写真を選んでください。"
                     default:
                         statusLabel.text = sharingError.errorDescription
-                            ?? "送信準備を完了できませんでした。アプリでまどの状態を確認して、もう一度お試しください。"
+                            ?? "うまく保存できませんでした。アプリでまどを確かめて、もう一度お試しください。"
                         continueButton.isEnabled = true
                     }
                 } else {
-                    statusLabel.text = "この写真を一時保存できませんでした。iPhoneの空き容量を確認して、もう一度お試しください。"
+                    statusLabel.text = "写真を保存できませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。"
                     continueButton.isEnabled = true
                 }
                 cancelButton.isEnabled = true
@@ -210,7 +210,7 @@ final class ShareViewController: UIViewController {
             provider = try selectedImageProvider()
         } catch {
             statusLabel.textColor = .systemOrange
-            statusLabel.text = "写真を1枚だけ選び直してください。"
+            statusLabel.text = "写真は1枚だけ選んでください。"
             return
         }
 
@@ -226,9 +226,9 @@ final class ShareViewController: UIViewController {
             statusLabel.textColor = .systemOrange
             if let sharingError = error as? MomentSharingError,
                sharingError == .payloadTooLarge {
-                statusLabel.text = "画質を保ったまま準備できませんでした。別の写真を選んでください。"
+                statusLabel.text = "この写真は大きすぎて届けられません。別の写真を選んでください。"
             } else {
-                statusLabel.text = "この写真を準備できませんでした。別の写真を1枚選んでください。"
+                statusLabel.text = "この写真は読み込めませんでした。別の写真を選んでください。"
             }
             return
         }
@@ -248,11 +248,11 @@ final class ShareViewController: UIViewController {
                 destinationButton.menu = nil
                 selectAdmission(admission)
                 statusLabel.textColor = .secondaryLabel
-                statusLabel.text = "このまどへ一時保存します。保存後はアプリの「まど」から「\(admission.displayName)」を開くと、安全確認して届けます。"
+                statusLabel.text = "アプリの「まど」で「\(admission.displayName)」を開くと、写真が届きます。"
             } else if admissions.isEmpty {
                 resetDestinationSelection()
                 statusLabel.textColor = .systemOrange
-                statusLabel.text = "届けられるまどがありません。「ねこのまど」アプリで接続状態を確認してください。"
+                statusLabel.text = "届けられるまどがありません。「ねこのまど」アプリで、まどを確かめてください。"
             } else {
                 configureDestinationMenu(admissions)
             }
@@ -260,7 +260,7 @@ final class ShareViewController: UIViewController {
             return
         } catch {
             statusLabel.textColor = .systemOrange
-            statusLabel.text = "共有するまどを確認できません。アプリを開いてから、もう一度お試しください。"
+            statusLabel.text = "まどを読み込めませんでした。アプリを一度開いてから、もう一度お試しください。"
         }
     }
 
@@ -274,10 +274,10 @@ final class ShareViewController: UIViewController {
         destinationLabel.accessibilityLabel = "届け先、\(admission.displayName)"
         destinationButton.configuration?.title = pickerTitle ?? admission.displayName
         destinationButton.accessibilityLabel = "届け先、\(admission.displayName)"
-        detailLabel.text = "この1枚を\(admission.displayName)へ届ける準備をします。アプリで送信後は、そのまどに写真が残り、相手と見返せます。位置情報は除きます。"
+        detailLabel.text = "この写真を\(admission.displayName)に届けます。届けた写真はまどに残り、相手と見返せます（位置情報は付きません）。"
         continueButton.isEnabled = preparedPhoto != nil
         statusLabel.textColor = .secondaryLabel
-        statusLabel.text = "選んだまどへだけ一時保存します。保存後はアプリの「まど」から「\(admission.displayName)」を開くと、安全確認して届けます。"
+        statusLabel.text = "アプリの「まど」で「\(admission.displayName)」を開くと、写真が届きます。"
     }
 
     @MainActor
@@ -285,8 +285,8 @@ final class ShareViewController: UIViewController {
         _ admissions: [MomentShareDestinationAdmission]
     ) {
         resetDestinationSelection()
-        destinationLabel.text = "届け先　未選択"
-        destinationLabel.accessibilityLabel = "届け先、未選択"
+        destinationLabel.text = "届け先　まだ選んでいません"
+        destinationLabel.accessibilityLabel = "届け先、まだ選んでいません"
         destinationButton.configuration?.title = "届け先を選ぶ"
         destinationButton.accessibilityLabel = "届け先を選ぶ"
         destinationButton.isHidden = false
@@ -301,10 +301,10 @@ final class ShareViewController: UIViewController {
             titles: titles,
             ambiguousNames: ambiguousNames
         )
-        detailLabel.text = "この1枚を届けるまどを選んでください。選んだまど以外へ保存・送信することはありません。"
+        detailLabel.text = "この写真を届けるまどを選んでください。選んだまどにだけ届きます。"
         if ambiguousNames.isEmpty {
             statusLabel.textColor = .secondaryLabel
-            statusLabel.text = "届け先を選ぶと、送信準備へ進めます。"
+            statusLabel.text = "届け先を選ぶと、次に進めます。"
         } else {
             statusLabel.textColor = .systemOrange
             statusLabel.text = "同じ名前のまどは選べません。アプリの「まど」で名前を変えてから、もう一度お試しください。"
@@ -347,7 +347,7 @@ final class ShareViewController: UIViewController {
     ) -> [UUID: String] {
         Dictionary(uniqueKeysWithValues: admissions.map { admission in
             let title = ambiguousNames.contains(admission.displayName)
-                ? "\(admission.displayName)（名前を変更してください）"
+                ? "\(admission.displayName)（名前を変えてください）"
                 : admission.displayName
             return (admission.id, title)
         })
@@ -369,8 +369,8 @@ final class ShareViewController: UIViewController {
         continueButton.isEnabled = false
         destinationButton.isHidden = true
         destinationButton.menu = nil
-        destinationLabel.text = "届け先　未選択"
-        destinationLabel.accessibilityLabel = "届け先、未選択"
+        destinationLabel.text = "届け先　まだ選んでいません"
+        destinationLabel.accessibilityLabel = "届け先、まだ選んでいません"
     }
 
     private func selectedImageProvider() throws -> NSItemProvider {

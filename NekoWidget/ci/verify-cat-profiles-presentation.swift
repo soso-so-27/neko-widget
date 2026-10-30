@@ -19,7 +19,7 @@ enum CatProfilesPresentationVerifier {
     private static func verifiesIndividualRecognitionCopy() throws {
         try require(
             CatIndividualRecognitionCopy.unavailable
-                == "いまは自動で見分けることができません。",
+                == "どの猫が写っているかは、いまは自動では見分けられません。",
             "deprecated individual-recognition guidance changed"
         )
     }
@@ -114,7 +114,7 @@ enum CatProfilesPresentationVerifier {
         )
         try require(
             !unavailable.isAvailable
-                && unavailable.displayTitle == "利用できないアルバム",
+                && unavailable.displayTitle == "見つからないアルバム",
             "missing linked album silently looked available"
         )
 

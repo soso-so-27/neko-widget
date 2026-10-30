@@ -35,29 +35,29 @@ enum DailySharingError: LocalizedError, Equatable {
         case .featureDisabled:
             return "このビルドでは写真の共有が有効になっていません。"
         case .notPaired:
-            return "写真を共有するには、先にペアリングを完了してください。"
+            return "写真を届けるには、先に相手とまどを作ってください。"
         case .invalidLocalManifest:
-            return "今日のウィジェット写真を安全に固定できませんでした。"
+            return "写真を準備できませんでした。もう一度お試しください。"
         case .localPhotoUnavailable:
-            return "端末内にある写真だけでは今日の共有画像を作れませんでした。"
+            return "今日の写真を準備できませんでした。"
         case .degradedPhoto:
-            return "低品質の一時画像しか取得できなかったため、昨日の写真を維持します。"
+            return "写真をきれいに読み込めなかったため、前の写真のままにします。"
         case .insufficientPhotoResolution:
-            return "表示に必要な画質を保てないため、昨日の写真を維持します。"
+            return "写真の画質が足りないため、前の写真のままにします。"
         case .canonicalEncodingFailed:
-            return "共有用の小さい画像を作れませんでした。"
+            return "写真を準備できませんでした。"
         case .invalidSharedManifest, .invalidCiphertext:
-            return "相手から届いた共有データを確認できませんでした。"
+            return "届いた写真を開けませんでした。"
         case .responseTooLarge:
-            return "共有サーバーから想定より大きな応答が届きました。"
+            return "うまく読み込めませんでした。少し待ってから、もう一度お試しください。"
         case .retryableServer:
-            return "共有サーバーが一時的に混み合っています。保存済みの続きから再試行します。"
+            return "混み合っています。少し待ってから自動でもう一度試します。"
         case .waitingForReconciliation:
-            return "共有世代の期限を確認してから安全に再開します。"
+            return "少し待ってから、自動で続きを再開します。"
         case .stateUnavailable:
-            return "写真共有の状態を読み込めませんでした。"
+            return "まどを読み込めませんでした。"
         case .stateChanged:
-            return "別の共有更新が先に完了したため、最新の状態から再開します。"
+            return "ほかの変更が先に終わったため、最新の内容から続けます。"
         }
     }
 }

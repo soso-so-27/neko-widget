@@ -69,7 +69,7 @@ actor AppLogStore {
     func makeExportFile() throws -> URL {
         TemporaryExportFileLifecycle.removeManagedFiles(kinds: [.diagnosticLog])
         let result = SharedLog.readAll()
-        var text = "# 猫ウィジェット 診断ログ\n"
+        var text = "# ねこのまど 診断情報\n"
         text += "# generatedAt=\(ISO8601DateFormatter().string(from: .now))\n"
         text += "# malformedLines=\(result.malformedLineCount)\n"
         text += "# PhotoKit local identifiers and photo content are intentionally omitted.\n\n"

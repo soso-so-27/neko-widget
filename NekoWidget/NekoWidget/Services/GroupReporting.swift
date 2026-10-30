@@ -72,20 +72,20 @@ enum GroupSafetyError: Error, Equatable, Sendable {
     var message: String {
         switch self {
         case .notAuthorized: "いまは送れません。届いた写真はそのままです。"
-        case .notFound: "この写真の状態を確かめられませんでした。"
+        case .notFound: "この写真が見つかりませんでした。"
         case .alreadyReported: "この写真はもう通報しています。"
-        case .conflict: "送信の内容が合いませんでした。開き直してからお試しください。"
-        case .consentRequired: "もう一度、送る内容を確かめてください。"
-        case .reservationExpired: "受付の期限が切れました。"
+        case .conflict: "うまく送れませんでした。写真を開き直して、もう一度お試しください。"
+        case .consentRequired: "理由を選んで、もう一度「送る」を押してください。"
+        case .reservationExpired: "時間がたったため、送れませんでした。もう一度通報してください。"
         case .dailyLimit: "きょうはこれ以上通報できません。明日お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
-        case .disabled: "いまは通報を受け付けていません。"
-        case .unknownOutcome, .offline: "送れたか確かめられませんでした。「もう一度送る」で続きから送ります。"
-        case .authenticationRequired: "もう一度サインインしてください。"
+        case .disabled: "いまは通報できません。"
+        case .unknownOutcome, .offline: "送れたかどうか分かりませんでした。「もう一度送る」を押してください。"
+        case .authenticationRequired: "まどを開き直してから、もう一度お試しください。"
         case .invalidResponse: "いまは使えません。少し待ってから、もう一度お試しください。"
         case .blockSelf: "自分はブロックできません。"
-        case .storageUnavailable: "送信内容をこのiPhoneに保存できませんでした。空き容量などを確認してください。"
-        case .evidenceUnavailable: "選んだ写真を確認できませんでした。写真を開き直してください。"
+        case .storageUnavailable: "通報を保存できませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。"
+        case .evidenceUnavailable: "この写真を読み込めませんでした。写真を開き直してください。"
         }
     }
 }

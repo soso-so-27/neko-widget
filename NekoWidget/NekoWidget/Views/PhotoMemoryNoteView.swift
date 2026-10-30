@@ -126,7 +126,7 @@ struct MemoryNoteExportView: View {
                 .disabled(exporter.preparing || exporter.payload != nil)
                 .accessibilityIdentifier("memory-note-export-start")
             } footer: {
-                Text("このiPhoneのメモ・日時・猫の名前を、テキストとJSONのZIPファイルにします。写真は含みません。保管した写真は、各記録の「…」から取り出せます。")
+                Text("このiPhoneのメモと日付、猫の名前を1つのファイルにまとめて書き出します（写真は入りません）。保管した写真は、それぞれのメモの「…」から書き出せます。")
             }
             if exporter.preparing { ProgressView() }
             if let error = exporter.error {
@@ -237,7 +237,7 @@ struct PhotoMemoWeightLabel: View {
         VStack(alignment: .leading, spacing: 4) {
             Label("体重 \(weight.kilogramsText) kg", systemImage: "scalemass")
                 .font(.headline).accessibilityIdentifier("memory-note-weight")
-            Text("\(weight.catName ?? "対象未指定") · 測定日 \(weight.measuredOn ?? "不明")")
+            Text("\(weight.catName ?? "猫を選んでいません") · 測定日 \(weight.measuredOn ?? "不明")")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -483,7 +483,7 @@ struct PhotoMemoryNoteEditor: View {
         if isLoaded && createsNewMemo && membershipAccess.enforcementEnabled
             && !hasCurrentPhoto {
             Section {
-                Text("元の写真を確認できません。写真へのアクセスを確認して、写真を選び直してください。")
+                Text("元の写真が見つかりません。写真へのアクセスを確かめて、写真を選び直してください。")
             }
         } else if isLoaded && createsNewMemo && membershipAccess.decision(for: .createPersonalMemo) != .allowed {
             Section {
@@ -507,10 +507,10 @@ struct PhotoMemoryNoteEditor: View {
                             .accessibilityIdentifier("memo-weight-input")
                         Text("kg").foregroundStyle(.secondary)
                     }
-                    if !weightKg.isEmpty && !validWeight { Text("kgで入力してください（小数第3位まで）。").font(.caption).foregroundStyle(.secondary) }
+                    if !weightKg.isEmpty && !validWeight { Text("kgで、小数点以下3けたまで入力できます。").font(.caption).foregroundStyle(.secondary) }
                     if !weightCats.isEmpty {
                         Picker("測定した猫", selection: $weightCatID) {
-                            Text(weightCatID == nil && weightCatName != nil ? "\(weightCatName!)（対象を確認）" : "未指定").tag(Optional<UUID>.none)
+                            Text(weightCatID == nil && weightCatName != nil ? "\(weightCatName!)（どの子か選んでください）" : "選ばない").tag(Optional<UUID>.none)
                             ForEach(weightCats, id: \.id) { cat in Text(weightCatLabel(cat)).tag(Optional(cat.id)) }
                         }.onChange(of: weightCatID) { _, id in weightCatName = weightCats.first { $0.id == id }?.name }
                             .accessibilityIdentifier("memo-weight-cat-picker")
@@ -518,12 +518,12 @@ struct PhotoMemoryNoteEditor: View {
                     Toggle("測定日を指定", isOn: $weightDateKnown).accessibilityIdentifier("memo-weight-date-toggle")
                     if weightDateKnown { DatePicker("測定日", selection: $weightDate, displayedComponents: .date) }
                 }
-            } footer: { Text("任意の記録です。測定日は撮影日とは別に残します。") }
+            } footer: { Text("体重は入れなくてもかまいません。測った日は、写真を撮った日とは別に残せます。") }
                 .disabled(isSaving || savedNotice != nil || accountChanged)
             if let savedNotice { Section { Text(savedNotice).foregroundStyle(.secondary) } }
         } else if loadFailed {
             Section {
-                Text("メモを読み込めませんでした。保存されている内容は変更していません。")
+                Text("メモを読み込めませんでした。書いたメモは消えていません。")
                 Button("もう一度読み込む") { Task { await load() } }
                     .disabled(isLoading)
             }
@@ -571,20 +571,20 @@ struct PhotoMemoryNoteEditor: View {
                 }
             }
             .confirmationDialog("変更を保存せずに閉じますか？", isPresented: $confirmsDiscard, titleVisibility: .visible) {
-                Button("変更を破棄", role: .destructive) { dismiss() }
+                Button("保存せずに閉じる", role: .destructive) { dismiss() }
                 Button("編集を続ける", role: .cancel) {}
             }
-            .confirmationDialog("iCloudのメモにも変更を反映しますか？", isPresented: $confirmsArchiveUpdates, titleVisibility: .visible) {
-                Button("反映して保存") { Task { await save(normalizedText) } }
+            .confirmationDialog("iCloudのメモも書き換えますか？", isPresented: $confirmsArchiveUpdates, titleVisibility: .visible) {
+                Button("iCloudにも保存") { Task { await save(normalizedText) } }
                 Button("編集に戻る", role: .cancel) {}
             } message: {
-                Text("この写真はiCloudにも保管されています。これからは文章・体重・測定日の編集と削除を保管先にも反映します。")
+                Text("この写真はiCloudにも保管しています。これからは、メモを直したり消したりすると、iCloudのメモも同じように変わります。")
             }
             .confirmationDialog("この写真のメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
                 Button("削除", role: .destructive) { Task { await save("") } }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("写真とお気に入りはそのまま残ります。メモの文章・体重・測定日を削除し、反映を有効にした保管先にも反映します。")
+                Text("写真とお気に入りは残ります。メモの文章・体重・測定日は削除します（iCloudのメモも書き換える設定なら、iCloudからも消えます）。")
             }
             .alert("メモを保存できませんでした", isPresented: Binding(
                 get: { saveError != nil }, set: { if !$0 { saveError = nil } }
@@ -614,7 +614,7 @@ struct PhotoMemoryNoteEditor: View {
                 // tied to an archive account keep the existing invalidation.
                 guard archiveAccount != nil || enrollmentAccount != nil else { return }
                 accountChanged = true
-                saveError = "Apple Accountが変わりました。入力内容を控えてから開き直してください。"
+                saveError = "Apple Accountが変わりました。書いた文をコピーしてから、開き直してください。"
             }
         }
         .appRecordEditing(retainWhileHidden: hasChanges || isSaving)
@@ -692,7 +692,7 @@ struct PhotoMemoryNoteEditor: View {
         guard isLoaded, !isSaving else { return }
         guard !createsNewMemo || (value.isEmpty && !weightEnabled)
                 || membershipAccess.decision(for: .createPersonalMemo) == .allowed else {
-            saveError = "会員情報を確認してください。入力した文章はそのままです。"
+            saveError = "新しくメモを書くにはPlusが必要です。書いた文章はそのままです。"
             return
         }
         isSaving = true
@@ -727,14 +727,14 @@ struct PhotoMemoryNoteEditor: View {
             switch result.reflection {
             case .localOnly, .stored: dismiss()
             case .pending:
-                savedNotice = "このiPhoneに保存しました。iCloudには接続後に反映します。"
+                savedNotice = "このiPhoneに保存しました。iCloudには、つながったときに保存されます。"
             case .conflict:
-                savedNotice = "このiPhoneに保存しました。iCloudに別の変更があるため、保管状況で確認してください。"
+                savedNotice = "このiPhoneに保存しました。iCloudに別の変更があるので、「保管状況を確認」から確かめてください。"
             case .accountChanged:
-                savedNotice = "このiPhoneに保存しました。Apple Accountを確認してから、保管状況を開いてください。"
+                savedNotice = "このiPhoneに保存しました。Apple Accountを確かめてから、「保管状況を確認」を押してください。"
             }
         } catch PhotoMemoryNoteStoreError.conflict {
-            saveError = "別の画面でメモが変更されました。入力内容をコピーしてから開き直してください。保存済みの内容は上書きしていません。"
+            saveError = "ほかの画面でメモが変更されました。書いた文をコピーしてから、開き直してください。"
         } catch {
             saveError = (error as? LocalizedError)?.errorDescription
                 ?? "入力内容は残っています。もう一度保存してください。"

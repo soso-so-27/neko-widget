@@ -58,7 +58,7 @@ final class CareHandoffStore: ObservableObject {
             saveError = nil; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return true
         } catch {
-            saveError = "変更を保存できません。空き容量やメモの長さを確認し、再試行してください。"
+            saveError = "保存できませんでした。空き容量やメモの長さを確かめて、もう一度お試しください。"
             return false
         }
     }
@@ -88,7 +88,7 @@ final class CareHandoffStore: ObservableObject {
             plan = next; pendingPhotoCleanup = repository.pendingPhotoCleanup > 0
             return true
         } catch {
-            saveError = "登録した猫とのつながりを保存できませんでした。もう一度保存してから、猫を選び直してください。"
+            saveError = "猫を選べませんでした。「もう一度保存する」を押してから、選び直してください。"
             return false
         }
     }
@@ -140,7 +140,7 @@ final class CareHandoffStore: ObservableObject {
             return cat.id
         } catch {
             if error is MembershipActionDenied { return nil }
-            saveError = "猫の情報を保存できませんでした。元の記録は残っています。もう一度保存してから、この子を選び直してください。"
+            saveError = "この子を追加できませんでした。「もう一度保存する」を押してから、選び直してください。"
             return nil
         }
     }

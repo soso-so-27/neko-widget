@@ -18,17 +18,17 @@ enum GroupWindowPresentation {
         if let error = error as? GroupWindowManagementError {
             switch error {
             case .invalidName:
-                return "名前を確認してください。空欄や改行は使えません。長い名前は短くしてください。"
+                return "名前を1行で入れてください。長いときは短くしてください。"
             case .unavailable:
-                return "このまどでは、まだこの操作を利用できません。"
+                return "このまどでは、まだこの機能を使えません。"
             case .staleNameRevision:
-                return "ほかのiPhoneで名前が変わりました。最新の名前を確認してください。"
+                return "名前がすでに変わっていました。いまの名前を確かめて、もう一度お試しください。"
             case .closed:
-                return "このまどの共有は終了しています。"
+                return "このまどは閉じられています。"
             case .stateRefreshRequired:
-                return "操作は受け付けられました。最新の状態を確認しています。"
+                return "完了しました。画面に出るまで、少しお待ちください。"
             case .reconciliationRequired:
-                return "前の操作の結果を確認できません。最新の状態を確認してください。"
+                return "前の変更がうまくいったか分かりませんでした。画面を下に引いて、いまの内容を確かめてください。"
             }
         }
         if let error = error as? GroupSubscriptionError {
@@ -40,23 +40,23 @@ enum GroupWindowPresentation {
             }
         }
         guard let error = error as? GroupClientError else {
-            return "まどの情報を確認できませんでした。時間をおいてもう一度お試しください。"
+            return "まどを読み込めませんでした。少し待ってから、もう一度お試しください。"
         }
         switch error {
         case .offline:
             return "接続できません。電波のあるところで、もう一度お試しください。"
         case .unavailable:
-            return "まどの仕組みをいま利用できません。時間をおいてもう一度お試しください。"
+            return "いまはまどを使えません。少し待ってから、もう一度お試しください。"
         case .invitationPaused:
             return invitationPausedMessage
         case .authenticationRequired:
-            return "このiPhoneの確認が必要です。まどを開き直してください。"
+            return "まどを開き直してから、もう一度お試しください。"
         case .notMember:
             return "このまどのメンバーではありません。"
         case .ownerRequired:
             return "この操作は、まどを作った人だけができます。"
         case .staleRevision:
-            return "まどの情報が変わりました。最新の一覧を確認して、もう一度お試しください。"
+            return "まどの内容が変わっていました。いまの内容を確かめて、もう一度お試しください。"
         case .staleEpoch, .rotationPending:
             return "まどを作った人がアプリを開くと、続けられます。少し待ってから、もう一度お試しください。"
         case .memberLimit:
@@ -64,29 +64,29 @@ enum GroupWindowPresentation {
         case .deviceLimit:
             return "1人が使えるiPhoneは\(deviceLimitPerPerson)台までです。"
         case .totalWindowLimit:
-            return "まどは全部で\(totalWindowLimit)個までです。使っていないまどから抜けると、新しく作ったり入ったりできます。"
+            return "まどは全部で\(totalWindowLimit)個までです。使っていないまどから抜けると、新しく作ったり参加したりできます。"
         case .ownedWindowLimit:
             return "これ以上、自分でまどを作れません。"
         case .invitationExpired:
-            return "招待の期限が切れました。新しい招待を受け取ってください。"
+            return "招待リンクの期限が切れました。新しいリンクを送ってもらってください。"
         case .invitationRevoked:
-            return "この招待は取り消されました。新しい招待を受け取ってください。"
+            return "この招待リンクは取り消されています。新しいリンクを送ってもらってください。"
         case .requestNotPending:
-            return "この人は、もう参加しているか、取り消されています。"
+            return "この人は、もう参加したか、参加をやめています。"
         case .cannotRemoveOwner:
             return "まどを作った人は外せません。"
         case .ownerCannotLeave:
             return "まどを作った人は抜けられません。"
         case .invalidResponse:
-            return "まどの情報を読み取れませんでした。もう一度お試しください。"
+            return "まどを読み込めませんでした。もう一度お試しください。"
         case .idempotencyConflict:
-            return "うまく続けられませんでした。画面を開き直して、もう一度お試しください。"
+            return "うまくいきませんでした。画面を開き直して、もう一度お試しください。"
         }
     }
 
     /// The team paused new invitations and new people joining. Windows in use
     /// carry on; nobody is told why, and nothing is lost.
-    static let invitationPausedMessage = "いまは、新しい招待と参加の受付をお休みしています。いまのまどは、このまま使えます。少し時間をおいて、もう一度お試しください。"
+    static let invitationPausedMessage = "いまは、新しく招待したり参加したりできません。いまのまどは、このまま使えます。"
 
     /// The window keeps everything; only new photos stop. Never says
     /// "deleted", never blames the members.
@@ -128,7 +128,7 @@ enum GroupWindowPresentation {
         if member.id == window.myParticipantID { parts.append("あなた") }
         if member.role == .owner { parts.append("まどを作った人") }
         if member.devices.count > 1 { parts.append("iPhone \(member.devices.count)台") }
-        return parts.isEmpty ? "参加しました" : parts.joined(separator: " · ")
+        return parts.isEmpty ? "メンバー" : parts.joined(separator: " · ")
     }
 
     static func initial(_ name: String) -> String {
@@ -445,7 +445,7 @@ struct GroupWindowMembersView: View {
                 Section {
                     HStack {
                         ProgressView()
-                        Text("まどを確認しています…")
+                        Text("読み込んでいます…")
                     }
                 }
             }
@@ -502,7 +502,7 @@ struct GroupWindowMembersView: View {
             Button("招待を取り消す", role: .destructive) { Task { await model.revokeInvitation() } }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("取り消すと、このリンクからは参加できなくなります。まだ入れていない人も入れなくなります。")
+            Text("取り消すと、このリンクからは誰も参加できなくなります。")
         }
         .sheet(isPresented: $showsRename) {
             if let window = model.window {
@@ -522,7 +522,7 @@ struct GroupWindowMembersView: View {
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("このまどの共有を終了します。参加している人は、このまどで新しく共有できなくなります。端末に保存した写真は残ります。")
+            Text("閉じると、メンバー全員がこのまどに写真を届けられなくなります。届いた写真は、それぞれのiPhoneに残ります。")
         }
         .confirmationDialog(
             "このまどから抜けますか？",
@@ -554,12 +554,12 @@ struct GroupWindowMembersView: View {
                 }
                 if let url = configuration.privacyURL { Link("プライバシーポリシー", destination: url) }
                 if let url = configuration.communityStandardsURL { Link("コミュニティ基準", destination: url) }
-                if let url = configuration.supportURL { Link("問題を問い合わせる", destination: url) }
+                if let url = configuration.supportURL { Link("問い合わせる", destination: url) }
             } header: {
                 Text("安全と決まり")
             } footer: {
                 Text(reports
-                     ? "困る写真が届いたときは、写真の「…」から、通報・ブロック・その人の写真を表示しないようにできます。"
+                     ? "困る写真が届いたら、写真の「…」から通報やブロックができます。その人の写真を表示しないようにもできます。"
                      : "困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
             }
         }
@@ -641,7 +641,7 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("group-window-rotation-pending")
                 } else if window.state == .closed {
-                    Label("このまどの参加は終了しました。保存済みの写真は残ります。", systemImage: "person.2.slash")
+                    Label("このまどは閉じられました。届いた写真は残ります。", systemImage: "person.2.slash")
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("group-window-closed")
                 }
@@ -688,9 +688,9 @@ struct GroupWindowMembersView: View {
                         .listRowBackground(Color.yellow.opacity(0.18))
                 }
             } header: {
-                Text("参加を待っている人")
+                Text("これから参加する人")
             } footer: {
-                Text("入れたあとでも、違っていたら外せます。入る前の写真は届きません。")
+                Text("参加したあとでも外せます。参加する前の写真は届きません。")
             }
         }
         Section {
@@ -706,7 +706,7 @@ struct GroupWindowMembersView: View {
         } footer: {
             if window.canManage {
                 if model.pendingRequests.isEmpty {
-                    Text("参加したい人は、ここの上に出ます。")
+                    Text("招待リンクから参加した人が、ここに並びます。")
                 }
             }
         }
@@ -759,7 +759,7 @@ struct GroupWindowMembersView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(request.displayName)
                         .font(.body.weight(.semibold))
-                    Text(request.admissionPaused == true ? "参加の受付をお休み中です" : "参加を待っています")
+                    Text(request.admissionPaused == true ? "いまは参加できません" : "まもなく参加します")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -767,7 +767,7 @@ struct GroupWindowMembersView: View {
             }
             if window.canManage {
                 HStack(spacing: 12) {
-                    Text("まもなく参加します。")
+                    Text("知らない人なら断れます。")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
                         Task { await model.reject(request) }
@@ -813,7 +813,7 @@ struct GroupWindowMembersView: View {
                 .accessibilityIdentifier("group-window-revoke-invitation")
             } else if let earlier = model.earlierInvitation {
                 LabeledContent("前に作った招待", value: earlier.expiresAt.formatted(.dateTime.month().day().hour().minute()) + "まで有効")
-                Text("リンクはこのiPhoneに残していません。送り直すときは、取り消してから新しく作ってください。")
+                Text("前に作ったリンクは、ここからは送れません。送り直すときは、取り消してから新しく作ってください。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("招待を取り消す", role: .destructive) {
                     showsRevokeConfirmation = true
@@ -832,7 +832,7 @@ struct GroupWindowMembersView: View {
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-create-invitation")
             } else if GroupWindowPresentation.isPaused(window) {
-                Text("止まっている間は、招待を作れません。Plusを続けると、また招待できます。")
+                Text("止まっている間は招待できません。Plusを続けると、また招待できます。")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("group-window-invite-paused")
             } else if window.memberCount >= GroupWindowPresentation.memberLimit {
@@ -840,13 +840,13 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("group-window-member-limit")
             } else {
-                Text("いまは招待を作れません。")
+                Text("いまは招待できません。")
                     .foregroundStyle(.secondary)
             }
         } header: {
             Text("招待")
         } footer: {
-            Text("リンクは24時間有効で、何人でも使えます。リンクから「参加する」を押した人は、そのままメンバーになります。違っていたら、あとで外せます。")
+            Text("リンクは24時間使えて、何人にでも送れます。リンクから「参加する」を押した人は、そのままメンバーになります。")
         }
     }
 
@@ -1102,7 +1102,7 @@ struct GroupJoinView: View {
             case .expired:
                 resultSection(
                     GroupWindowPresentation.message(for: GroupClientError.invitationExpired),
-                    detail: "まどを作った人に、新しい招待リンクを送ってもらってください。",
+                    detail: "招待リンクは、作られてから24時間だけ使えます。",
                     systemImage: "clock.badge.xmark"
                 )
             case .cancelled:
@@ -1138,14 +1138,14 @@ struct GroupJoinView: View {
     @ViewBuilder
     private var nameSection: some View {
         if let context = model.invitationContext {
-            Section { Text("\(GroupDisplayName.withSan(context.inviterName))から『\(context.windowName)』に招待されています") }
+            Section { Text("\(GroupDisplayName.withSan(context.inviterName))から「\(context.windowName)」に招待されています") }
         }
         if !model.isAvailable {
             Section {
-                Label("この招待はまだ開けません", systemImage: "hourglass")
+                Label("いまのアプリでは参加できません", systemImage: "hourglass")
                     .font(.headline)
                     .accessibilityIdentifier("group-join-unavailable")
-                Text("この版では、招待からの参加を準備中です。アプリを最新にしてから、もう一度リンクを開いてください。")
+                Text("アプリを最新にしてから、もう一度リンクを開いてください。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1184,12 +1184,12 @@ struct GroupJoinView: View {
             Label("参加の手続き中です", systemImage: "hourglass")
                 .font(.headline)
                 .accessibilityIdentifier("group-join-pending")
-            Text("まどを作った人のiPhoneに届くと、参加が終わります。この画面は閉じても大丈夫です。参加できたら、お知らせします。")
+            Text("参加できたら、お知らせします。この画面は閉じても大丈夫です。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if request.admissionPaused == true {
-                Label("いまは参加の受付をお休みしています。再開すると、そのまま手続きが進みます。", systemImage: "pause.circle")
+                Label("いまは一時的に参加できません。再開したら、このまま参加できます。", systemImage: "pause.circle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1465,7 +1465,7 @@ struct GroupInvitationJoinSheet: View {
                         dismiss()
                     })
                 } else {
-                    ProgressView("招待を確認しています…")
+                    ProgressView("招待を開いています…")
                 }
             }
                 .task {

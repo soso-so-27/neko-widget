@@ -114,7 +114,7 @@ struct MembershipAccessNotice: View {
             // Just after launch: the answer is on its way. Nothing to do yet.
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Plus を確認しています…").font(.subheadline).foregroundStyle(.secondary)
+                Text("Plusを確認しています…").font(.subheadline).foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(maxWidth: .infinity)
@@ -132,13 +132,13 @@ struct MembershipAccessNotice: View {
             Text(title).font(.headline)
             switch decision {
             case .verificationRequired:
-                Text("写真やメモはそのままです。接続を確認して、購入を復元できます。")
+                Text("写真やメモはそのままです。インターネットにつながってから、「購入を確認する」を押してください。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Button("購入を確認する") { showsRestore = true }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("membership-access-restore")
             case .windowSupportRequired:
-                Text("届いている写真は引き続き見られます。")
+                Text("まどを作った人のPlusが切れています。届いた写真はこれまでどおり見られます。")
                     .font(.subheadline).foregroundStyle(.secondary)
             case .membershipRequired, .allowed:
                 Text("写真やメモはそのままです。")
@@ -159,8 +159,8 @@ struct MembershipAccessNotice: View {
         switch decision {
         case .allowed: ""
         case .membershipRequired: "Plusの機能です"
-        case .verificationRequired: "購入状況を確認できません"
-        case .windowSupportRequired: "このまどへの送信はお休み中です"
+        case .verificationRequired: "Plusを確かめられませんでした"
+        case .windowSupportRequired: "いまはこのまどに写真を届けられません"
         }
     }
 }
@@ -172,7 +172,7 @@ struct MembershipRestoreSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                Text("購入済みのPlusを確認します。")
+                Text("以前に購入したPlusを、このiPhoneで使えるようにします。")
                 Button("購入を復元") {
                     Task {
                         if await model.restore() == .completed { dismiss() }
@@ -180,7 +180,7 @@ struct MembershipRestoreSheet: View {
                 }.buttonStyle(.borderedProminent).disabled(!model.canRestore)
                 if model.isWorking { ProgressView() }
                 if let message = model.message { Text(message).font(.footnote) }
-            }.padding().navigationTitle("購入の確認").navigationBarTitleDisplayMode(.inline)
+            }.padding().navigationTitle("購入を復元").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
         }.task { await model.load() }
     }

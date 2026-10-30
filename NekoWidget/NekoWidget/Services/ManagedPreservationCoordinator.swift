@@ -264,12 +264,12 @@ final class ManagedPreservationCoordinator: ObservableObject {
 
         var title: String {
             switch self {
-            case .deviceOnly: "この端末のみ"
-            case .saving: "保管中…"
-            case .stored: "サービスに保管済み"
-            case .failed: "保管できませんでした"
-            case .needsConfirmation: "保管結果を確認してください"
-            case .checking: "保管結果を確認中…"
+            case .deviceOnly: "このiPhoneだけ"
+            case .saving: "保存中…"
+            case .stored: "保存済み"
+            case .failed: "保存できませんでした"
+            case .needsConfirmation: "保存できたか確かめてください"
+            case .checking: "保存できたか確かめています…"
             }
         }
     }
@@ -422,7 +422,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             case .failure(let error):
                 await self.client.cancelSignIn()
                 if (error as? ASAuthorizationError)?.code == .canceled {
-                    self.statusMessage = "本人確認をキャンセルしました。写真やメモは送信していません。"
+                    self.statusMessage = "サインインをキャンセルしました。写真やメモは送られていません。"
                     return
                 }
                 if let appleError = error as? ASAuthorizationError {
@@ -441,7 +441,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         run { ticket in
             try await self.client.signOut()
             try self.check(ticket)
-            self.statusMessage = "この端末の保管用ログインを解除しました。保管記録は削除していません。"
+            self.statusMessage = "サインアウトしました。保存した記録は消えていません。"
         }
     }
 
@@ -534,7 +534,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func connectMembership(consent: Bool) {
         guard isSignedIn, consent, !isBusy else { return }
         membershipTask?.cancel(); membershipTask = nil; membershipRequestID = UUID(); membershipLoading = false
-        membership = nil; membershipMessage = "接続結果が不明な場合は「接続状況を確認」で確かめられます。"
+        membership = nil; membershipMessage = "連携できたか分からないときは、「購入状況を再確認」で確かめられます。"
         retention = nil
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
@@ -542,7 +542,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
             self.membership = result; self.membershipMessage = nil
             self.retention = nil
-            self.statusMessage = "会員情報を接続しました。購入や写真の送信は行っていません。"
+            self.statusMessage = "Plusを連携しました。購入や写真の保存は始まっていません。"
         }
     }
 
@@ -612,14 +612,14 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 if let known = error as? ManagedPreservationError,
                    known == .membershipRequired || known == .accessUnconfirmed {
                     self.membership = nil
-                    self.membershipMessage = "会員資格の確認が必要です。接続状況を確認してから、もう一度お試しください。"
+                    self.membershipMessage = "Plusを確認できませんでした。「購入状況を再確認」を押してから、もう一度お試しください。"
                 }
                 throw error
             }
             try self.check(ticket)
             self.setCopyState(.stored, owner: owner)
             self.saveFailureCode = nil; self.saveFailureMessage = nil
-            self.statusMessage = "選んだ記録のコピーを保管しました。元の写真・メモは変更していません。"
+            self.statusMessage = "選んだ記録のコピーを保存しました。元の写真やメモはそのままです。"
             try await self.loadFirstPage(ticket)
         }
     }
@@ -628,7 +628,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard consentToToolBackup, membership?.canSave == true, !isBusy else { return }
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
-            self.toolBackupProgress = "ツールの保存内容を確認中…"
+            self.toolBackupProgress = "保存する内容を確認しています…"
             defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             let sourceID = self.toolBackupSource
             let pending = try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: sourceID)
@@ -652,7 +652,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("保存", completed: completed, total: total) } }
             }
             guard try await self.requireCurrentOwner(ticket) == owner else { throw ManagedPreservationError.staleSession }
-            self.statusMessage = "ツールの記録と添付写真を保管しました。保存時点の内容を復元できます。"
+            self.statusMessage = "ツールの記録と写真を保存しました。この時点の内容に復元できます。"
             self.consentToToolBackup = false
             try await self.loadFirstPage(ticket)
         }
@@ -677,14 +677,14 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard !isBusy else { return }
         run { ticket in
             guard try await self.requireCurrentOwner(ticket) == saved.owner else { throw ManagedPreservationError.staleSession }
-            self.toolBackupProgress = "中断したコピーの削除を再開中…"
+            self.toolBackupProgress = "コピーの削除を続けています…"
             defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             try await ToolBackupTransfer.delete(saved.index, client: self.client) { completed, total in
                 await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
             }
             try self.check(ticket)
             self.pendingToolDeletions = try ToolBackupFiles.pendingDeletions(owner: saved.owner)
-            self.statusMessage = "この保管コピーを削除しました。別のコピーに必要な写真は残っています。"
+            self.statusMessage = "このコピーを削除しました。ほかのコピーで使う写真は残っています。"
             try await self.loadFirstPage(ticket)
         }
     }
@@ -694,7 +694,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
             guard let pending = try ToolBackupFiles.pending(owner: owner, sourceSnapshotID: self.toolBackupSource) else { return }
-            self.toolBackupProgress = "中断した保管コピーを削除中…"
+            self.toolBackupProgress = "途中のコピーを削除しています…"
             defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
             try await ToolBackupTransfer.confirmPendingAttemptBeforeDeletion(pending, client: self.client)
             try await ToolBackupTransfer.delete(pending.index, client: self.client) { completed, total in
@@ -708,7 +708,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
             }
             self.pendingToolBackupDate = nil
-            self.statusMessage = "中断した保管コピーを削除しました。ツールの元の記録は残っています。新しく保存し直せます。"
+            self.statusMessage = "途中のコピーを削除しました。ツールの記録は残っているので、保存し直せます。"
             try await self.loadFirstPage(ticket)
         }
     }
@@ -734,13 +734,13 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
                 self.setCopyState(.stored, owner: owner)
                 self.saveFailureCode = nil; self.saveFailureMessage = nil
-                self.statusMessage = "選んだ写真とメモが保管済みであることを確認しました。"
+                self.statusMessage = "選んだ写真とメモは保存されています。"
                 try await self.loadFirstPage(ticket)
             } catch {
                 try self.check(ticket)
                 if self.copyState != .stored, (error as? ManagedPreservationError) == .notFound {
                     self.setCopyState(.failed, owner: owner)
-                    self.statusMessage = "この記録は保管されていませんでした。元の写真とメモは端末に残っています。もう一度保管できます。"
+                    self.statusMessage = "この記録は保存されていませんでした。元の写真とメモはこのiPhoneに残っているので、もう一度保存できます。"
                     return
                 }
                 if self.copyState != .stored {
@@ -772,7 +772,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             }
             self.removePendingMemo(self.editingDraftID, owner: owner)
             self.selected = updated; self.editedText = updated.document.text
-            self.statusMessage = "保管したコピーのメモを更新しました。端末の元メモは変更していません。"
+            self.statusMessage = "保存したコピーのメモを更新しました。このiPhoneのメモはそのままです。"
             self.records = self.records.map { $0.id == updated.record.id ? updated.record : $0 }
             self.nextCursor = nil; self.hasMore = false
         }
@@ -786,7 +786,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 guard part.kind == "index", let bytes = Data(base64Encoded: part.payload) else { throw ToolBackupError.invalid }
                 let index = try JSONDecoder().decode(ToolBackupIndex.self, from: bytes)
                 guard index.snapshotID == original.record.id else { throw ToolBackupError.invalid }
-                self.toolBackupProgress = "保管コピーを削除中…"
+                self.toolBackupProgress = "コピーを削除しています…"
                 defer { if self.viewEpoch == ticket { self.toolBackupProgress = nil } }
                 try await ToolBackupTransfer.delete(index, client: self.client) { completed, total in
                     await MainActor.run { if self.viewEpoch == ticket { self.toolBackupProgress = ToolBackupProgress.message("削除", completed: completed, total: total) } }
@@ -794,7 +794,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             } else { try await self.client.delete(original.record) }
             try self.check(ticket)
             self.selected = nil; self.editedText = ""
-            self.statusMessage = "保管したコピーを削除しました。端末の元の写真・メモは削除していません。"
+            self.statusMessage = "保存したコピーを削除しました。このiPhoneの写真やメモは消えていません。"
             try await self.loadFirstPage(ticket)
         }
     }
@@ -1007,7 +1007,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         pendingToolBackupDate = (try? ToolBackupFiles.pending(owner: owner, sourceSnapshotID: toolBackupSource))?.index.createdAt
         do { pendingToolDeletions = try ToolBackupFiles.pendingDeletions(owner: owner) }
         catch {
-            errorMessage = "途中の削除の記録を読み込めませんでした。ほかの保管コピーは引き続き確認できます。" +
+            errorMessage = "途中で止まった削除の情報を読み込めませんでした。ほかのコピーはこれまでどおり見られます。" +
                 ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
         }
         copyState = copyStates[owner] ?? .deviceOnly
@@ -1015,7 +1015,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         do {
             ownDrafts = Dictionary(uniqueKeysWithValues: try draftStore.pendingMemos(ownerId: owner).map { ($0.id, $0) })
         } catch {
-            draftRecoveryWarning = "端末の未送信メモを読み込めません。ロック解除後に一覧を更新してください。保管済みの記録は引き続き開けます。"
+            draftRecoveryWarning = "まだ保存していないメモを読み込めません。iPhoneのロックを解除してから、一覧を更新してください。保存した記録は開けます。"
         }
         for value in volatileDrafts.values where value.ownerId == owner { ownDrafts[value.id] = value }
         pendingMemoDrafts = ownDrafts.values.sorted { $0.id.uuidString < $1.id.uuidString }
@@ -1149,7 +1149,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             guard current.record.revision == memo.baseRevision else { throw ManagedPreservationError.conflict }
             self.editingDraftID = memo.id
             self.selected = current; self.editedText = memo.text
-            self.statusMessage = "同じ本人の未送信メモを戻しました。まだ送信していません。内容を確認して更新してください。"
+            self.statusMessage = "保存していなかったメモを戻しました。内容を確かめて、「メモを保存」を押してください。"
         }
     }
 
@@ -1165,7 +1165,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             self.hasUnsecuredMemo = !self.unsecuredMemoIDs.isEmpty
             if !self.hasUnsecuredMemo {
                 self.draftRecoveryWarning = nil
-                self.statusMessage = "未送信メモをこの端末に残しました。サービスにはまだ送信していません。"
+                self.statusMessage = "メモをこのiPhoneに残しました。「メモを保存」を押すまで、保存したコピーは変わりません。"
             }
         }
     }
@@ -1206,7 +1206,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
         catch {
             unsecuredMemoIDs.insert(memo.id)
-            draftRecoveryWarning = "未送信メモは安全な端末保存に失敗し、この画面のメモリだけに残っています。アプリや画面を閉じると失われる可能性があります。同じ本人で確認し直し、文章を控えてください。"
+            draftRecoveryWarning = "メモをこのiPhoneに保存できず、いまはこの画面にだけ残っています。閉じると消えるおそれがあるので、文章をコピーしておいてください。"
         }
         if isSignedIn {
             pendingMemoDrafts.removeAll { $0.id == memo.id }
@@ -1224,7 +1224,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             hasUnsecuredMemo = !unsecuredMemoIDs.isEmpty
             if !hasUnsecuredMemo { draftRecoveryWarning = nil }
         } catch {
-            draftRecoveryWarning = "更新前の下書きを端末から片付けられませんでした。保管先の最新内容と比較し、重ねて送信しないでください。"
+            draftRecoveryWarning = "前の下書きを消せませんでした。保存されている最新のメモと見比べて、同じ内容を二重に保存しないようにしてください。"
         }
     }
 

@@ -61,11 +61,11 @@ enum PhotoMemoryNoteExportError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .emptyRecords: "書き出すメモがありません。"
-        case .invalidMetadata: "メモの日付を確認できないため、書き出せませんでした。"
-        case .invalidJPEG: "保管した写真を確認できないため、書き出せませんでした。"
+        case .invalidMetadata: "メモの日付が読み取れず、書き出せませんでした。"
+        case .invalidJPEG: "保管した写真を読み込めず、書き出せませんでした。"
         case .tooLarge: "書き出す内容が大きすぎます。元の写真とメモはそのまま残っています。"
-        case .storageUnavailable: "書き出しを準備できませんでした。空き容量などを確認してください。"
-        case .cleanupFailed: "書き出し用の一時ファイルを片付けられませんでした。"
+        case .storageUnavailable: "書き出せませんでした。iPhoneの空き容量を確かめてから、もう一度お試しください。"
+        case .cleanupFailed: "書き出しに使ったファイルを片づけられませんでした。"
         }
     }
 }

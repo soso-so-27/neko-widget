@@ -87,7 +87,7 @@ struct PersonalRediscoveryHistoryView: View {
     }
 
     private func unavailablePhoto(previous: Bool) -> some View {
-        Label(previous ? "直前の写真は表示できません" : "めくった一枚は表示できません", systemImage: "photo")
+        Label(previous ? "直前の写真は表示できません" : "選び直した一枚は表示できません", systemImage: "photo")
             .font(.footnote).foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, minHeight: 100)
             .accessibilityIdentifier("personal-rediscovery-\(previous ? "previous" : "result")-unavailable")
@@ -104,11 +104,11 @@ struct PersonalRediscoveryHistoryView: View {
             .accessibilityHint("1日に1回、このiPhoneのまどの写真を切り替えます")
             .accessibilityIdentifier("personal-rediscovery-turn")
         } else if let next = snapshot?.nextAvailableAt, next > displayDate {
-            Label("今日はめくりました", systemImage: "checkmark.circle")
+            Label("今日はもう選び直しました", systemImage: "checkmark.circle")
                 .font(.subheadline).foregroundStyle(.secondary)
                 .accessibilityIdentifier("personal-rediscovery-used")
         } else {
-            Text("別の写真を用意できたら、ここでもめくれます。")
+            Text("ほかの写真が見つかったら、ここで選び直せます。")
                 .font(.footnote).foregroundStyle(.secondary)
                 .accessibilityIdentifier("personal-rediscovery-not-ready")
         }
@@ -116,7 +116,7 @@ struct PersonalRediscoveryHistoryView: View {
 
     private func photoCard(grant: PersonalRediscoveryGrant, previous: Bool) -> some View {
         let identifier = previous ? grant.previousPhotoID : grant.photoID
-        let title = previous ? "直前の写真" : "めくった一枚"
+        let title = previous ? "直前の写真" : "選び直した一枚"
         return Button { open(grant: grant, previous: previous) } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Group {
@@ -151,8 +151,8 @@ struct PersonalRediscoveryHistoryView: View {
     }
 
     private func historyHeading(_ grant: PersonalRediscoveryGrant) -> String {
-        if Calendar.current.isDate(grant.committedAt, inSameDayAs: displayDate) { return "今日めくった写真" }
-        return grant.committedAt.formatted(.dateTime.month().day()) + "にめくった写真"
+        if Calendar.current.isDate(grant.committedAt, inSameDayAs: displayDate) { return "今日選び直した写真" }
+        return grant.committedAt.formatted(.dateTime.month().day()) + "に選び直した写真"
     }
 
     private func thumbnailKey(grant: PersonalRediscoveryGrant, previous: Bool) -> String {
@@ -201,10 +201,10 @@ struct PersonalRediscoveryHistoryView: View {
             let outcome = try store.perform(token: token, operationID: UUID().uuidString,
                                             operationCreatedAt: date, now: date)
             switch outcome {
-            case .committed: message = "もう一枚を選びました。"
-            case .existing: message = "今日はめくりました。ここから同じ写真を何度でも開けます。"
-            case .refreshRequired: message = "操作の状態を更新しました。もう一度お試しください。"
-            case .unavailable: message = "別の写真を選べませんでした。今日の回数は使っていません。"
+            case .committed: message = "別の一枚に選び直しました。"
+            case .existing: message = "今日はもう選び直しました。ここから同じ写真を何度でも開けます。"
+            case .refreshRequired: message = "画面を新しくしました。もう一度お試しください。"
+            case .unavailable: message = "別の写真を選べませんでした。今日の1回はまだ残っています。"
             }
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
         } catch {

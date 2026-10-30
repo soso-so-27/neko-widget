@@ -42,13 +42,13 @@ final class CatCareStore: ObservableObject {
 
     func reload() {
         guard let fileURL else {
-            loadError = "この子のことを保存する場所を用意できませんでした。"
+            loadError = "「この子のこと」を開けませんでした。アプリを開き直してください。"
             return
         }
         loadedURL = fileURL
         #if os(iOS)
         do { try AppRecordDataset.requirePreviouslyPresentManifest("CatCare/state.json", at: fileURL) }
-        catch { state = nil; loadError = "この子のことを読み込めませんでした。記録は消していません。"; return }
+        catch { state = nil; loadError = "「この子のこと」を開けませんでした。書いた内容は消えていません。"; return }
         #endif
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             state = CatCareState()
@@ -63,7 +63,7 @@ final class CatCareStore: ObservableObject {
             loadError = nil
         } catch {
             state = nil
-            loadError = "この子のことを読み込めませんでした。アプリを最新にしてください。記録は消していません。"
+            loadError = "「この子のこと」を開けませんでした。アプリを最新にしてください（書いた内容は消えていません）。"
         }
     }
 

@@ -64,9 +64,9 @@ enum EvacuationExporter {
             append(value, size: fontSize)
         }
         if record.showsReviewDate {
-            append("内容確認日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"), size: fontSize - 3)
+            append("内容を確かめた日：" + (record.reviewedAt?.formatted(date: .numeric, time: .omitted) ?? "未確認"), size: fontSize - 3)
         }
-        append("作成日：" + Date().formatted(date: .numeric, time: .omitted), size: fontSize - 3)
+        append("作った日：" + Date().formatted(date: .numeric, time: .omitted), size: fontSize - 3)
         let framesetter = CTFramesetterCreateWithAttributedString(body)
         func bodyRect(first: Bool) -> CGRect {
             let top = margin + 35 + (first ? CGFloat(record.photos.count) * (photoHeight + 12) : 0)

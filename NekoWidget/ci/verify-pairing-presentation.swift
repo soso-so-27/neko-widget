@@ -26,27 +26,27 @@ enum PairingPresentationVerifier {
             phase: .pendingApproval,
             role: .invitee,
             roleText: "あなたは、招待された人です",
-            actionText: "作った人と12語を比べ、承認を待ってください",
+            actionText: "まどを作った人と12語を見比べてください",
             refreshText: "承認されたか確認"
         )
         try verify(
             phase: .claimingRecovery,
             role: .invitee,
-            roleText: "この端末：追加するiPhone",
+            roleText: "このiPhone：追加するiPhone",
             actionText: "追加コードを確認しています",
             refreshText: nil
         )
         try verify(
             phase: .pendingRecoveryApproval,
             role: .invitee,
-            roleText: "この端末：追加するiPhone",
-            actionText: "接続済みの相手と12語を比べてください",
+            roleText: "このiPhone：追加するiPhone",
+            actionText: "相手と12語を見比べてください",
             refreshText: "承認されたか確認"
         )
         try verify(
             phase: .recoveryAwaitingCompletion,
             role: .invitee,
-            roleText: "この端末：追加するiPhone",
+            roleText: "このiPhone：追加するiPhone",
             actionText: "iPhoneの追加を完了しています",
             refreshText: "完了したか確認"
         )
@@ -61,15 +61,15 @@ enum PairingPresentationVerifier {
             phase: .awaitingCompletion,
             role: .inviter,
             roleText: "あなたは、まどを作った人です",
-            actionText: "相手のiPhoneで承認を確認してもらってください",
-            refreshText: "接続が完了したか確認"
+            actionText: "相手のiPhoneで完了するのを待っています",
+            refreshText: "つながったか確認"
         )
         try verify(
             phase: .paired,
             role: .invitee,
             roleText: "あなたは、招待された人です",
-            actionText: "このまどは接続されています",
-            refreshText: "接続状態を確認"
+            actionText: "このまどはつながっています",
+            refreshText: "もう一度読み込む"
         )
         try verifyDeviceChangeGuidance()
         try verifyAvailabilityGuidance()
@@ -82,7 +82,7 @@ enum PairingPresentationVerifier {
                 code: "invitation_unavailable",
                 message: "relay-internal-detail-must-not-appear"
             ),
-            expected: "この招待は利用できません。新しい招待コードが必要です。"
+            expected: "この招待は使えません。新しい招待コードで、もう一度お試しください。"
         )
         try verifySafeError(
             PairingError.requestRejected(
@@ -90,7 +90,7 @@ enum PairingPresentationVerifier {
                 code: "recovery_unavailable",
                 message: "relay-internal-detail-must-not-appear"
             ),
-            expected: "端末追加コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
+            expected: "追加コードの期限が切れました。相手に新しいコードを作ってもらってください。"
         )
     }
 
@@ -98,7 +98,7 @@ enum PairingPresentationVerifier {
         let unavailable = PairingAvailabilityPresentation.temporarilyUnavailable(
             detail: "一時的な確認エラー"
         )
-        guard unavailable.title == "まどを一時的に確認できません",
+        guard unavailable.title == "まどを読み込めません",
               unavailable.detail == "一時的な確認エラー",
               unavailable.retryButtonTitle == "もう一度確認する"
         else {
@@ -108,7 +108,7 @@ enum PairingPresentationVerifier {
         }
 
         let consent = PairingAvailabilityPresentation.consentRequired
-        guard consent.title == "相手と接続済み",
+        guard consent.title == "相手とつながっています",
               consent.detail.contains("同意を更新"),
               consent.retryButtonTitle == nil
         else {
@@ -193,7 +193,7 @@ enum PairingPresentationVerifier {
         let replacement = DeviceChangeGuidancePresentation.make(
             currentDevice: .newIPhone
         )
-        guard replacement.newIPhoneTitle == "追加するiPhone（この端末）",
+        guard replacement.newIPhoneTitle == "追加するiPhone（このiPhone）",
               replacement.previousIPhoneTitle == "すでに使っているiPhone",
               replacement.partnerIPhoneTitle == "相手のiPhone",
               !replacement.newIPhoneDetail.isEmpty,
@@ -210,7 +210,7 @@ enum PairingPresentationVerifier {
         )
         guard partner.newIPhoneTitle == "追加するiPhone",
               partner.previousIPhoneTitle == "相手がすでに使っているiPhone",
-              partner.partnerIPhoneTitle == "相手のiPhone（この端末）",
+              partner.partnerIPhoneTitle == "相手のiPhone（このiPhone）",
               !partner.newIPhoneDetail.isEmpty,
               !partner.previousIPhoneDetail.isEmpty,
               !partner.partnerIPhoneDetail.isEmpty

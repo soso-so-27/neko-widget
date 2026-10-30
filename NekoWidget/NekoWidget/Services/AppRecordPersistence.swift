@@ -444,7 +444,7 @@ final class AppRecordPersistence: ObservableObject {
         var requiredDatasetID: UUID? = nil
     }
     static let consentVersion = "app-records-automatic-v1"
-    @Published private(set) var title = "自動保存は未設定です"
+    @Published private(set) var title = "自動保存はオフです"
     @Published private(set) var detail: String?
     @Published private(set) var enabled = false
     @Published private(set) var busy = false
@@ -504,17 +504,17 @@ final class AppRecordPersistence: ObservableObject {
         requested = true
         if cleanup, stillSaved(accepted) {
             title = "保存済み"
-            detail = "変更は保存されています。以前の保存データの整理は、アプリを開いている間に自動で再試行します。" +
+            detail = "変更は保存されています。前に保存したデータの片づけは、アプリを開いている間に自動でやり直します。" +
                 ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
             nextAttempt = Date().addingTimeInterval(60)
         } else if error is CancellationError {
-            title = "未送信の変更があります"
-            detail = "保存を中断しました。アプリを開いている間に自動で再開します。"
+            title = "まだ保存していない変更があります"
+            detail = "保存が途中で止まりました。アプリを開いている間に自動で再開します。"
             nextAttempt = .distantPast
         } else {
             report(error)
             if cleanup, error is ToolBackupError || error is ToolBackupJournalError {
-                detail = "以前の保存データの整理を確認できず、送信を待っています。端末の記録は残っています。" +
+                detail = "前に保存したデータを片づけられたか確かめられないため、保存を待っています。このiPhoneの記録は残っています。" +
                     ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
             }
         }
@@ -532,7 +532,7 @@ final class AppRecordPersistence: ObservableObject {
                     // A delayed notification (including a migration during
                     // restore) must not relabel already acknowledged bytes.
                     if let saved = try? self.binding(), let current = try? AppRecordDataset.fingerprint(), saved.fingerprint == current { return }
-                    self.title = "変更を保存待ち"
+                    self.title = "保存待ちの変更があります"
                 }
             }
         }
@@ -546,7 +546,7 @@ final class AppRecordPersistence: ObservableObject {
             }
         }
         do { enabled = try binding()?.enabled == true }
-        catch { detail = "保存設定を読み込めません。端末の記録は残っています。" }
+        catch { detail = "自動保存の設定を読み込めません。このiPhoneの記録は残っています。" }
     }
     private func binding() throws -> Binding? {
         guard FileManager.default.fileExists(atPath: bindingURL.path) else { return nil }
@@ -638,7 +638,7 @@ final class AppRecordPersistence: ObservableObject {
         do {
             guard var value = try binding() else { return }
             value.enabled = false; try write(value)
-            title = "自動保存を停止しています"
+            title = "自動保存はオフです"
         } catch { report(error) }
     }
     func retry() async { requested = true; conflict = false; nextAttempt = .distantPast; await synchronize() }
@@ -673,7 +673,7 @@ final class AppRecordPersistence: ObservableObject {
             }
             value.revision = remote.0.revision; value.snapshotID = remote.1.snapshotID
             try await require(value, restoredCheckpoint); try write(value)
-            conflict = false; requested = true; detail = "切替前の記録もこの端末に残しています。"
+            conflict = false; requested = true; detail = "切り替える前の記録も、このiPhoneに残っています。"
         } catch { report(error) }
         busy = false
         if !conflict { await synchronize() }
@@ -712,7 +712,7 @@ final class AppRecordPersistence: ObservableObject {
         var accepted: AcceptedSave?
         var cleanup = false
         do {
-            guard var value = try binding(), value.enabled else { title = "自動保存は未設定です"; return }
+            guard var value = try binding(), value.enabled else { title = "自動保存はオフです"; return }
             try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
             // Every live store commit and foreground entry requests work. An
             // idle timer must not reassemble years of notes every eight seconds.
@@ -873,7 +873,7 @@ final class AppRecordPersistence: ObservableObject {
             // The publication is complete before any old snapshot is removed.
             accepted = try await acceptedSave(value, checkpoint: checkpoint)
             releaseUploadedPayload(saved.id, owner: value.owner)
-            title = try AppRecordDataset.fingerprint() == value.fingerprint ? "保存済み" : "変更を保存待ち"
+            title = try AppRecordDataset.fingerprint() == value.fingerprint ? "保存済み" : "保存待ちの変更があります"
             detail = nil
             // Reclaim only the previous automatically published index, after
             // the new CAS head is durable. Shared pieces are server-protected.
@@ -886,12 +886,12 @@ final class AppRecordPersistence: ObservableObject {
             }
         } catch AppRecordEditingError.inProgress {
             waitingForEditor = true
-            title = "入力中の内容を優先しています"
-            detail = "入力を保存・終了すると、別の端末の記録の復元を続けます。"
+            title = "入力が終わるのを待っています"
+            detail = "入力を終えると、ほかのiPhoneの記録の復元を続けます。"
             requested = true; nextAttempt = Date().addingTimeInterval(8)
         } catch ToolBackupError.changed {
-            title = "変更を保存待ち"; requested = true; nextAttempt = .distantPast
-            detail = "保存の処理中に記録が変わりました。端末の記録を残して、自動で続きを保存します。"
+            title = "保存待ちの変更があります"; requested = true; nextAttempt = .distantPast
+            detail = "保存の途中で記録が変わりました。自動で続きを保存します。"
 #if DEBUG
             if CommandLine.arguments.contains("--app-records-ui-fixture") { detail = "再試行工程: " + phase }
 #endif
@@ -903,8 +903,8 @@ final class AppRecordPersistence: ObservableObject {
     }
     private func report(_ error: Error) {
         if error is AppRecordEditingError {
-            title = "入力中の内容を優先しています"
-            detail = "入力を保存・終了してから、復元を再開してください。"
+            title = "入力が終わるのを待っています"
+            detail = "入力を終えてから、もう一度復元してください。"
             requested = true; nextAttempt = .distantPast; return
         }
         nextAttempt = Date().addingTimeInterval(60)
@@ -913,11 +913,11 @@ final class AppRecordPersistence: ObservableObject {
             nextAttempt = Date().addingTimeInterval(300)
         }
         if error as? ManagedPreservationError == .conflict {
-            conflict = true; title = "別の端末の記録と確認が必要です"
-            detail = "両方の記録を残して停止しました。自動では上書きしません。"
+            conflict = true; title = "ほかのiPhoneの記録と内容が違います"
+            detail = "どちらの記録も残っています。下から、使う方を選んでください。"
         } else {
-            title = "未送信の変更があります"
-            detail = (error as? LocalizedError)?.errorDescription ?? "保存を完了できませんでした。端末の記録は残っています。"
+            title = "まだ保存していない変更があります"
+            detail = (error as? LocalizedError)?.errorDescription ?? "保存できませんでした。このiPhoneの記録は残っています。"
         }
     }
 
@@ -926,7 +926,7 @@ final class AppRecordPersistence: ObservableObject {
         do { guard try await client.appleAuthorizationDidChange() else { return } }
         catch { return /* Unknown status or a newer login must remain intact. */ }
         requested = true; nextAttempt = .distantPast
-        title = "未送信の変更があります"
+        title = "まだ保存していない変更があります"
         detail = ManagedPreservationError.authenticationRequired.errorDescription
     }
 #if DEBUG
@@ -1029,7 +1029,7 @@ final class AppRecordPersistence: ObservableObject {
             let current = try binding()
             if current?.pending == nil, current?.snapshotID != priorID,
                current?.fingerprint == (try AppRecordDataset.fingerprint()) { accepted = current; break }
-            guard title == "変更を保存待ち" else { throw ToolBackupError.storage }
+            guard title == "保存待ちの変更があります" else { throw ToolBackupError.storage }
         }
         guard let accepted, let id = accepted.snapshotID else { throw ToolBackupError.storage }
         let uploaded = try JSONDecoder().decode(ToolBackupFiles.Saved.self, from: ToolBackupFiles.read(
@@ -1063,20 +1063,20 @@ struct AppRecordSettingsView: View {
                 Label(persistence.title, systemImage: "checkmark.icloud")
                     .accessibilityIdentifier("app-record-save-status")
                 if let detail = persistence.detail { Text(detail).font(.footnote) }
-                Text("Plus の機能です。初回の設定後は、写真メモ・ツールの入力と添付写真、猫の名前・誕生日などの変更を自動で保存します。")
-                Text("写真ライブラリ全体、写真原本、動画は対象ではありません。写真ライブラリの写真選びは、その端末に残します。共有相手には送られません。")
+                Text("Plusの機能です。一度設定すると、写真メモ、ツールに書いた内容と写真、猫の名前や誕生日などを自動で保存します。")
+                Text("写真アプリの写真や動画そのものは保存しません。どの写真を選んだかはこのiPhoneだけに残り、保存した記録がまどの相手に送られることもありません。")
                     .font(.footnote).foregroundStyle(.secondary)
-            } header: { Text("記録の保存・復元") }
+            } header: { Text("自動保存") }
             if authentication.isSignedIn,
                let quota = ManagedPreservationView.shownQuota(authentication.usage?.productQuota, trial: quotaTrial) {
                 Section {
                     ProductQuotaSummary(quota: quota)
-                } header: { Text("保管できる量") }
-                footer: { Text("詳しい内訳は「保管した記録・書き出し・アカウントの削除」で見られます。") }
+                } header: { Text("保存できる量") }
+                footer: { Text("くわしい内訳は「保存した記録とアカウント」で見られます。") }
             }
             if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
             if authentication.accountDeletionState != nil {
-                Section { Text("アカウントの削除状況を確認してください。自動保存は始めません。") }
+                Section { Text("アカウントを削除している途中のため、自動保存は使えません。削除の状況は「保存した記録とアカウント」で確かめられます。") }
             } else if !authentication.isSignedIn {
                 Section {
                     if let challenge = authentication.preparedSignIn {
@@ -1084,59 +1084,59 @@ struct AppRecordSettingsView: View {
                             request.requestedScopes = [.email]; request.nonce = challenge.nonce; request.state = challenge.state
                         } onCompletion: { authentication.completeSignIn($0) }
                             .frame(height: 48).accessibilityIdentifier("app-record-signin")
-                    } else { Button("Appleで本人確認") { authentication.prepareSignIn() } }
-                } footer: { Text("同じ本人の記録だけを読み込みます。ログインだけでは購入や自動保存を始めません。") }
+                    } else { Button("Appleでサインイン") { authentication.prepareSignIn() } }
+                } footer: { Text("サインインしたアカウントの記録だけを読み込みます。サインインしただけでは、購入や自動保存は始まりません。") }
             } else if !persistence.enabled {
                 Section {
-                    Toggle("保存方法を確認し、自動保存に同意する", isOn: $consent)
+                    Toggle("内容を確認して、自動保存に同意する", isOn: $consent)
                         .accessibilityIdentifier("app-record-consent")
-                    Text("連絡先・健康情報を含むアプリ内の記録を保存します。通信できない間は端末に残し、アプリを開くと再試行します。暗号化しますが、運営者は技術的に復号できます。エンドツーエンド暗号化ではありません。")
+                    Text("連絡先や健康の情報を含む、アプリの記録を保存します。暗号化しますが、運営者は技術的には中身を読むことができます（エンドツーエンド暗号化ではありません）。通信できないときはこのiPhoneに残し、アプリを開いたときにもう一度保存します。")
                         .font(.footnote)
                     Button("自動保存を使う") { Task { await persistence.enable() } }
                         .disabled(!consent || persistence.busy)
                         .accessibilityIdentifier("app-record-enable")
-                } footer: { Text("有効な会員資格がある場合に送信します。この操作で購入は始まりません。") }
+                } footer: { Text("Plusを使っている間だけ保存します。ここで購入が始まることはありません。") }
             } else {
                 Section {
-                    Text("通常の画面で記録すると、自動で保存されます。別の保管操作は不要です。")
+                    Text("いつもどおり記録するだけで、自動で保存されます。")
                     if persistence.conflict {
-                        Button("この端末の記録を続ける") { confirmsLocal = true }
-                        Button("別の端末で保存した記録を使う") { confirmsRemote = true }
+                        Button("このiPhoneの記録を使う") { confirmsLocal = true }
+                        Button("ほかのiPhoneの記録を使う") { confirmsRemote = true }
                     } else {
                         Button("保存状況を再確認") { Task { await persistence.retry() } }
                     }
-                    Button("この端末の自動保存を停止") { persistence.pause() }
+                    Button("このiPhoneの自動保存をオフにする") { persistence.pause() }
                 }
             }
             if authentication.isSignedIn, authentication.accountDeletionState == nil {
                 Section {
-                    if authentication.membershipLoading { ProgressView("会員情報を確認中…") }
+                    if authentication.membershipLoading { ProgressView("Plusを確認しています…") }
                     if let membership = authentication.membership {
-                        if membership.canSave { Label("変更を保存できる会員情報です", systemImage: "checkmark.circle") }
+                        if membership.canSave { Label("Plusで自動保存できます", systemImage: "checkmark.circle") }
                         else if !membership.linked {
-                            Text("保存を始める前に、このiPhoneの会員情報を接続します。")
-                            Button("会員情報を接続") { confirmsMembership = true }
+                            Text("保存を始めるには、このアカウントにPlusを連携してください。")
+                            Button("Plusを連携する") { confirmsMembership = true }
                                 .disabled(authentication.isBusy)
                                 .accessibilityIdentifier("app-record-membership-connect")
-                        } else { Text("会員の有効期間を確認できるまで、新しい変更の送信を待ちます。保存済みの記録は復元できます。") }
+                        } else { Text("Plusを確認できるまで、新しい変更は保存されません。保存した記録は復元できます。") }
                     }
                     if let message = authentication.membershipMessage { Text(message).font(.footnote) }
-                    Button("会員情報を確認") { authentication.checkMembership() }
+                    Button("購入状況を再確認") { authentication.checkMembership() }
                         .disabled(authentication.isBusy || authentication.membershipLoading)
                     if authentication.membership?.linked == true {
-                        Button("Appleの契約を確認") { showsSubscriptionManagement = true }
+                        Button("サブスクリプションを管理") { showsSubscriptionManagement = true }
                             .disabled(authentication.isBusy)
                             .accessibilityIdentifier("app-record-membership-manage")
                     }
-                } header: { Text("会員情報") }
+                } header: { Text("Plus") }
             }
             Section {
-                NavigationLink("保管した記録・書き出し・アカウントの削除") { ManagedPreservationView() }
+                NavigationLink("保存した記録とアカウント") { ManagedPreservationView() }
             } footer: {
-                Text("以前に保存したコピーは残っています。会員終了後も既存記録の取り出しはできます。")
+                Text("これまでに保存したコピーは残っています。Plusが切れたあとも、書き出すことができます。")
             }
         }
-        .navigationTitle("保存・復元")
+        .navigationTitle("自動保存")
         .manageSubscriptionsSheet(isPresented: $showsSubscriptionManagement)
         .onChange(of: showsSubscriptionManagement) { _, presented in
             if !presented { authentication.checkMembership() }
@@ -1150,17 +1150,17 @@ struct AppRecordSettingsView: View {
         .onChange(of: authentication.membership?.canSave) { _, canSave in
             if canSave == true, persistence.enabled { Task { await persistence.retry() } }
         }
-        .confirmationDialog("この本人に会員情報を接続しますか？", isPresented: $confirmsMembership, titleVisibility: .visible) {
-            Button("確認して接続する") { authentication.connectMembership(consent: true) }
+        .confirmationDialog("このアカウントにPlusを連携しますか？", isPresented: $confirmsMembership, titleVisibility: .visible) {
+            Button("連携する") { authentication.connectMembership(consent: true) }
         } message: {
-            Text("Appleで本人確認した保存先に、このiPhoneの会員情報を結び付けます。あとから別の本人へ付け替えることはできません。この操作で購入は始まりません。")
+            Text("Appleでサインインしたこのアカウントに、このiPhoneのPlusを連携します。あとから別のアカウントに付け替えることはできません。ここで購入が始まることはありません。")
         }
-        .confirmationDialog("この端末の内容で続きを保存しますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
-            Button("この端末の記録を続ける") { Task { await persistence.resolveConflict(useRemote: false) } }
-        } message: { Text("別の端末の記録も、この端末にコピーを残してから切り替えます。") }
-        .confirmationDialog("保存先の記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
-            Button("保存先の記録を使う") { Task { await persistence.resolveConflict(useRemote: true) } }
-        } message: { Text("現在の端末の記録を残し、復元した内容をいつもの画面で開きます。") }
+        .confirmationDialog("このiPhoneの記録で保存を続けますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
+            Button("このiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: false) } }
+        } message: { Text("ほかのiPhoneの記録も、コピーをこのiPhoneに残しておきます。") }
+        .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
+            Button("ほかのiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: true) } }
+        } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
     }
 }
 

@@ -19,7 +19,7 @@ struct CatCareEntryView: View {
                 ContentUnavailableView(
                     "まだ猫のプロフィールがありません",
                     systemImage: "cat",
-                    description: Text("ツールの「猫のプロフィール」で猫を入れると、ここで猫ごとの情報をまとめられます。")
+                    description: Text("ツールの「猫のプロフィール」で猫を登録すると、ここに1匹ずつ情報をまとめられます。")
                 )
             } else if let profile = selectedProfile {
                 CatCareDetailView(profile: profile, otherProfiles: profiles.count > 1 ? profiles : [],
@@ -117,7 +117,7 @@ struct CatFarewellEditor: View {
                 Section {
                     DatePicker("旅立った日", selection: $date, in: ...Date(), displayedComponents: .date)
                 } footer: {
-                    Text("写真や記録は、すべてそのまま残ります。ホーム画面のウィジェットもそのままです。変えたいときは、ウィジェットを長押しして「ウィジェットを編集」から選べます。")
+                    Text("写真や記録、ホーム画面のウィジェットは、すべてそのまま残ります。ウィジェットを変えたいときは、長押しして「ウィジェットを編集」から選べます。")
                 }
                 if recorded != nil {
                     Section {
@@ -222,7 +222,7 @@ struct CatCareDetailView: View {
                 Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             } else if store.unreadableCatCount > 0 {
                 Section {
-                    Label("読み込めない記録があるため、いまは保存できません。アプリを最新にしてください。記録は消していません。",
+                    Label("開けない記録があるので、いまは保存できません。アプリを最新にしてください（記録は消えていません）。",
                           systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
@@ -248,7 +248,7 @@ struct CatCareDetailView: View {
                     // Test builds only (a family can be made only there).
                     Text("家族と書いています（試作・まだ送りません）。")
                 } else {
-                    Text("このiPhoneの中だけに保存し、外には送りません。")
+                    Text("このiPhoneの中だけに保存され、ほかには送られません。")
                 }
             }
             .font(.footnote)
@@ -279,7 +279,7 @@ struct CatCareDetailView: View {
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("入れた内容は画面に残っています。少し待ってから、もう一度お試しください。")
+            Text("書いた内容は画面に残っています。少し待ってから、もう一度お試しください。")
         }
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor, catID: catID) { result in
@@ -337,8 +337,8 @@ struct CatCareDetailView: View {
                     .frame(width: 58, height: 58)
                     .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(progress.filled >= progress.total ? "すべて入っています"
-                             : "\(progress.filled) / \(progress.total) 入っています")
+                        Text(progress.filled >= progress.total ? "すべて書けています"
+                             : "\(progress.filled) / \(progress.total) 書けています")
                             .font(.headline)
                         if let hint = progress.nextHint {
                             Text(hint).font(.footnote).foregroundStyle(.secondary)
@@ -356,19 +356,19 @@ struct CatCareDetailView: View {
                             }
                             .frame(maxWidth: .infinity, minHeight: 64)
                             .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            Text(sheet.isComplete ? "できた" : "\(sheet.done) / \(sheet.total)")
+                            Text(sheet.isComplete ? "完成" : "\(sheet.done) / \(sheet.total)")
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(sheet.isComplete ? Color.green : Color.secondary)
                         }
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(sheet.title)、\(sheet.isComplete ? "できています" : "\(sheet.done)／\(sheet.total)")")
+                        .accessibilityLabel("\(sheet.title)、\(sheet.isComplete ? "完成" : "\(sheet.done)／\(sheet.total)")")
                     }
                 }
             }
             .padding(.vertical, 6)
             .accessibilityIdentifier("cat-care-progress")
         } footer: {
-            Text("入れるほど、迷子の画像・預けるメモ・病院の控えが埋まります。")
+            Text("ここに書くほど、「迷子のとき」「預けるとき」「病院で見せる」で使える内容が増えます。")
         }
     }
 
@@ -414,7 +414,7 @@ struct CatCareDetailView: View {
             if let farewellSharing, farewell != nil || farewellSharing.sharedDay != nil {
                 Button { showsFarewellSharing = true } label: {
                     HStack {
-                        LabeledContent(farewell == nil ? "家族が共有した旅立った日" : "家族の手帳",
+                        LabeledContent(farewell == nil ? "家族が記録した旅立った日" : "家族の手帳",
                                        value: FamilyNotebookWords.farewellStatus(farewellSharing))
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                     }
@@ -452,7 +452,7 @@ struct CatCareDetailView: View {
                     .font(.body.monospacedDigit())
                     .accessibilityIdentifier("cat-care-microchip")
                 if microchipInvalid {
-                    Label("15桁の数字で入れると保存します。", systemImage: "exclamationmark.circle")
+                    Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
@@ -553,7 +553,7 @@ struct CatCareDetailView: View {
     private var livingSection: some View {
         Section("暮らし") {
             listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
-            TextField("療法食・別々に与えるなど（何匹もいるとき大事）", text: $draft.specialDiet, axis: .vertical)
+            TextField("療法食や、ほかの猫と分けてあげることなど", text: $draft.specialDiet, axis: .vertical)
                 .lineLimit(1...3)
                 .familyNotebookNote(catID, .specialDiet)
             TextField("水", text: $draft.water)
@@ -569,7 +569,7 @@ struct CatCareDetailView: View {
     private var householdSection: some View {
         Section {
             TextField("飼い主の連絡先", text: $draft.ownerContact)
-            TextField("予備の連絡先", text: $draft.backupContact)
+            TextField("つながらないときの連絡先", text: $draft.backupContact)
             TextField("かかりつけ病院の名前", text: $draft.vetName)
                 .familyNotebookNote(catID, .vetName)
             TextField("かかりつけ病院の電話", text: $draft.vetPhone)
@@ -579,7 +579,7 @@ struct CatCareDetailView: View {
         } header: {
             Text("家の情報")
         } footer: {
-            Text("ほかの猫と共通です。1回入れると、どの猫にも載ります。")
+            Text("ほかの猫とも共通です。一度書けば、どの猫にも載ります。")
         }
     }
 
@@ -729,7 +729,7 @@ struct CatCareProgress {
     var nextHint: String? {
         sheets.filter { !$0.isComplete }
             .min { ($0.total - $0.done, $0.title) < ($1.total - $1.done, $1.title) }
-            .map { "あと\($0.total - $0.done)つで「\($0.title)」の控えが完成" }
+            .map { "「\($0.title)」はあと\($0.total - $0.done)つで完成" }
     }
 }
 
@@ -1026,7 +1026,7 @@ struct CatCareListEntrySheet: View {
                     TextField("種類（例：3種混合）", text: $name)
                     DatePicker("接種した日", selection: $date, in: ...Date(), displayedComponents: .date)
                     PhotosPicker(selection: $proofItem, matching: .images) {
-                        Label(proof == nil ? "証明の写真を写真から選ぶ" : "証明の写真を選び直す", systemImage: "photo")
+                        Label(proof == nil ? "証明の写真を選ぶ" : "証明の写真を選び直す", systemImage: "photo")
                     }
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
                         Button { showsCamera = true } label: {
@@ -1179,7 +1179,7 @@ struct ToolCatCareSection<Extra: View>: View {
             }
             .accessibilityIdentifier(identifier)
             if filled.isEmpty {
-                Text("まだ何も書いていません。「この子のことを直す」から書くと、ここと渡す控えに載ります。")
+                Text("まだ何も書いていません。下のボタンから「この子のこと」を開いて書けます。")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(identifier + "-empty")
             }
@@ -1190,7 +1190,7 @@ struct ToolCatCareSection<Extra: View>: View {
             }
             extra()
             if let subject {
-                NavigationLink("この子のことを直す") { CatCareSubjectView(subject: subject) }
+                NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject) }
                     .accessibilityIdentifier(editIdentifier)
             }
         } header: { Text(title) }
@@ -1311,7 +1311,7 @@ enum CatCareSummary {
 
     /// For 「病院で見せる」: what a vet usually asks first.
     static func veterinaryFields(_ record: CatCareRecord?, household: CatCareHousehold?) -> [(String, String)] {
-        let empty = "未記入・飼い主に確認"
+        let empty = "未記入"
         func text(_ value: String?) -> String {
             let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? empty : trimmed
@@ -1336,7 +1336,7 @@ enum CatCareSummary {
         let allergy: String = switch record?.allergy?.value.status ?? .unknown {
         case .none: "なし（飼い主の記入）"
         case .recorded: text(record?.allergy?.value.text)
-        case .unknown: "未確認・飼い主に確認"
+        case .unknown: "未確認"
         }
         fields.append(("アレルギー", allergy))
         let medications = (record?.activeMedications ?? []).map { medication in
@@ -1387,7 +1387,7 @@ enum CatCareSummary {
         case .none: fields.append(("アレルギー", "なし（飼い主の記入）"))
         case .recorded:
             let text = (record?.allergy?.value.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            fields.append(("アレルギー", text.isEmpty ? "あり・飼い主に確認" : text))
+            fields.append(("アレルギー", text.isEmpty ? "あり（くわしくは飼い主に聞いてください）" : text))
         case .unknown: break
         }
         return fields
@@ -1426,7 +1426,7 @@ enum CatCareSummary {
 
     /// For 「預けるとき」: everyday care, all from 「この子のこと」.
     static func careHandoffLines(_ record: CatCareRecord?, legacy cat: CareCat) -> [(String, String)] {
-        let empty = "未記入・飼い主に確認"
+        let empty = "未記入（飼い主に聞いてください）"
         var lines: [(String, String)] = []
         if let about = ageAndWeight(record) { lines.append(("年齢・体重", about)) }
         let neverHadMeals = record?.meals.isEmpty ?? true
@@ -1445,9 +1445,9 @@ enum CatCareSummary {
         var fields = careHandoffHealthFields(record)
         if let conditions = nonEmpty(record?.conditions?.value) { fields.append(("持病", conditions)) }
         if fields.isEmpty, cat.healthStatus != .unknown {
-            fields.append(("薬・アレルギー（前にこのツールに書いた内容）", cat.healthText))
+            fields.append(("薬・アレルギー（前にここに書いた内容）", cat.healthText))
         }
-        if fields.isEmpty { fields.append(("薬・アレルギー", "未記入・飼い主に確認")) }
+        if fields.isEmpty { fields.append(("薬・アレルギー", "未記入（飼い主に聞いてください）")) }
         return fields
     }
 

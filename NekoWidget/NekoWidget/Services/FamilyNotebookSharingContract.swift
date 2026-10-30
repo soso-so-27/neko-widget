@@ -48,7 +48,7 @@ struct FamilyFarewellPreview: Equatable, Sendable {
     let currentSharedAuthor: FamilyNotebookAuthor?
     let expiresAt: Date
     var explanation: String {
-        "この子の旅立った日を、家族の手帳に共有します。家族にあとから加わる人にも、この記録が見えることがあります。"
+        "この子の旅立った日を、家族の手帳で共有します。あとから家族に加わる人にも、見えることがあります。"
     }
 }
 
@@ -60,7 +60,7 @@ struct FamilyFarewellSharingState: Equatable, Sendable {
     let mayAlreadyHaveBeenShared: Bool
     var hasConsentForLocalDay: Bool { localDay != nil && localDay == consentedDay }
     var revocationExplanation: String {
-        "まだ送っていない日付の送信を止めます。あなたが共有した日付が家族の現在の表示なら、その表示を消す更新を送ります。このiPhoneの日付は残ります。すでに届いた日付や履歴は回収できません。送信中だった日付は、届いている可能性があります。"
+        "まだ送っていない日付は家族に届かなくなり、家族の手帳に出ているあなたの日付も消えます。このiPhoneの日付は残ります。すでに届いた日付や履歴は取り消せず、送っている途中だった日付は届いていることがあります。"
     }
 }
 
@@ -105,27 +105,27 @@ enum FamilySharingError: Error, Equatable, Sendable {
 
     var message: String {
         switch self {
-        case .invitationExpired: "この招待は期限が切れています。新しい招待をもらってください。"
+        case .invitationExpired: "この招待は期限が切れています。招待した人に、新しい招待リンクを送ってもらってください。"
         case .invitationRevoked: "この招待は取り消されています。"
         case .invitationUsed: "この招待はもう使われています。"
         case .alreadyInFamily: "家族は 1 つまでです。いまの家族から抜けると参加できます。"
-        case .memberLimit: "この家族はいっぱいです。"
+        case .memberLimit: "この家族は、もう人数がいっぱいです。"
         case .signInExpired: "もう一度サインインしてください。"
         case .notAllowed: "この操作はできません。"
         case .plusRequired: "家族を作るには Plus が必要です。"
         case .handoverPlusRequired: "引き継ぐには Plus が必要です。"
-        case .membershipChecking: "Plus の確認ができるまでお待ちください。"
-        case .staleRoster: "家族の情報が新しくなりました。もう一度お試しください。"
+        case .membershipChecking: "Plusを確認しています。少し待ってから、もう一度お試しください。"
+        case .staleRoster: "家族のメンバーが変わりました。もう一度お試しください。"
         case .removedOrDissolved: "この家族の共有は終わっています。"
         case .payerAlreadyChosen: "ほかの家族の Plus で、先に共有が戻りました。あなたの Plus はそのまま使えます。"
-        case .offline: "つながっていません。つながってからもう一度お試しください。"
+        case .offline: "インターネットにつながっていません。つながってから、もう一度お試しください。"
         case .rateLimited: "少し待ってから、もう一度お試しください。"
         case .serviceUnavailable: "いまは使えません。少し待ってから、もう一度お試しください。"
         case .unknownOutcome: "結果を確かめています。少し待ってから開き直してください。"
-        case .unsupported: "このアプリを最新にしてください。記録は消していません。"
+        case .unsupported: "App Storeでアプリを最新にしてください。記録は消えていません。"
         case .notAvailableYet: "試作のため、まだできません。"
         case .farewellDayMissing: "この子の旅立った日は、まだ記録されていません。"
-        case .farewellPreviewChanged: "日付か家族の状態が変わりました。共有する内容をもう一度確認してください。"
+        case .farewellPreviewChanged: "日付か家族の手帳の内容が変わりました。共有する内容をもう一度確かめてください。"
         }
     }
 }

@@ -816,7 +816,7 @@ actor URLSessionDailySharingAPIClient: DailySharingAPIClientProtocol {
                 status: http.statusCode,
                 code: value?.error.code,
                 message: value.map { String($0.error.message.prefix(240)) }
-                    ?? "共有サーバーで処理を完了できませんでした（\(http.statusCode)）。"
+                    ?? "うまくいきませんでした。少し時間をおいて、もう一度お試しください（\(http.statusCode)）。"
             )
         }
         return (data, http)

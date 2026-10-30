@@ -318,8 +318,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("localWindowID: localWindowID", pending)
         self.assertEqual(heart_control.count("Button("), 2)
         self.assertNotIn("Button(", heart_control.split("case .serverAccepted:", 1)[1])
-        self.assertIn('"ハートは送信待ちです"', heart_control)
-        self.assertIn('"相手が確認したことを示す表示ではありません"', heart_control)
+        self.assertIn('"ハートはまだ送れていません"', heart_control)
+        self.assertIn('"相手が見たかどうかは分かりません"', heart_control)
         self.assertIn("case .hidden:\n            unavailableHeartSlot", heart_control)
         unavailable = section(view, "private var unavailableHeartSlot: some View", "private func heartMark(")
         self.assertIn(".frame(width: 44, height: 44)", unavailable)
@@ -427,7 +427,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("let memoryActionURL = entry.memoryActionURL", memory_shortcut)
         self.assertIn("memoryMark(isSelected: false)", memory_shortcut)
         self.assertIn('"お気に入りに追加"', memory_shortcut)
-        self.assertIn('"アプリを開いて、写真アプリへの保存を確認します"', memory_shortcut)
+        self.assertIn('"アプリを開いて、お気に入りに追加します"', memory_shortcut)
         self.assertIn("unavailableHeartSlot", memory_shortcut)
         # The Widget never saves a received photo or sends anything itself.
         self.assertNotIn("Button(", memory_shortcut)
@@ -518,7 +518,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("CatPawMark", empty_state)
         self.assertNotIn(".orange", empty_state)
         self.assertNotIn("スキャン", empty_state)
-        self.assertNotIn("アクセス", empty_state)
+        self.assertNotIn("写真へのアクセス", empty_state)
         self.assertNotIn("更新してください", empty_state)
 
         empty_title = section(
@@ -526,7 +526,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private var emptyStateTitle: String",
             "private var emptyStateMarkSize: CGFloat",
         )
-        self.assertIn('return "このまどは利用できません"', empty_title)
+        self.assertIn('return "このまどは表示できません"', empty_title)
         self.assertIn('return "写真を待っています"', empty_title)
         self.assertNotIn('return "まだ届いていません"', empty_title)
         self.assertIn('return "写真を準備しています"', empty_title)
@@ -641,7 +641,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "static func resolvedSource(id: String)",
             "static var availableSources",
         )
-        self.assertIn('name: "利用できないまど"', resolved)
+        self.assertIn('name: "使えなくなったまど"', resolved)
         self.assertIn("static func familyWindowExists", resolved)
 
         self.assertIn(
@@ -859,8 +859,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("pendingDetailMemoryConfirmationID == item.id", family_view)
         self.assertIn("selectedMomentForDetail?.id == item.id", family_view)
         self.assertIn("if !model.isSavedMemory(current) { widgetMemoryTarget = current }", family_view)
-        self.assertIn('alert("この写真は更新されました"', family_view)
-        self.assertIn("ホーム画面の新しい写真で、もう一度お試しください。", family_view)
+        self.assertIn('alert("ホーム画面の写真が変わりました"', family_view)
+        self.assertIn("ホーム画面の新しい写真から、もう一度開いてください。", family_view)
         self.assertIn("memorySaveDialogTitle", family_view)
         self.assertIn('"自分のお気に入りに追加しますか？"', family_view)
         self.assertIn('"自分のお気に入りに追加"', family_view)
@@ -1037,7 +1037,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("写真を届けた相手にハートを送る", family_view)
         self.assertIn('Image(systemName: "bookmark")', family_view)
         self.assertIn('systemImage: "bookmark.fill"', family_view)
-        self.assertIn('case .retry: "ハートを再送"', family_view)
+        self.assertIn('case .retry: "ハートをもう一度送る"', family_view)
         self.assertIn('case .unavailable: "ハートを送れません"', family_view)
         self.assertIn("heart.phase == .sent ? .sent : (canSendHeart ? .retry : .unavailable)", family_view)
         self.assertIn(".disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)", family_view)
@@ -1150,8 +1150,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertNotIn('"写真アプリへコピーしますか？"', family)
         self.assertNotIn("photoCopyTarget", family)
-        self.assertIn("個人のお気に入りと写真まとめに入り", family)
-        self.assertIn("アプリ削除のあとも写真アプリに残ります", family)
+        self.assertIn("自分のお気に入りと写真まとめに入ります", family)
+        self.assertIn("アプリを削除したりしても残ります", family)
 
         heart_action = section(
             model,
@@ -1248,7 +1248,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("!libraryContext || photoLibraryIncludes(localIdentifier)", memory_detail)
         self.assertIn("showsWidgetTiming: false", memory_detail)
         self.assertIn("if showsWidgetTiming", browser)
-        self.assertIn("更新時刻は目安で、iOSにより前後します", browser)
+        self.assertIn("切り替わる時刻は目安で、iPhoneの都合で前後します", browser)
 
         ordering = section(
             browser,
@@ -1260,7 +1260,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         self.assertIn('Text("ホーム画面にまどを置く").font(.headline)', home)
         self.assertIn("showWidgetPlacementGuide", home)
-        self.assertIn("このiPhoneの中の猫を、全部見つけます。", onboarding)
+        self.assertIn("iPhoneの中の猫の写真を、ぜんぶ見つけます。", onboarding)
         self.assertIn("外には送りません。", onboarding)
         self.assertIn("TodayPhotoSelectionPolicy.resolve(", model)
         self.assertIn("UIApplication.significantTimeChangeNotification", model)
@@ -1595,7 +1595,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("LocalSeasonalLivePhotoView", view)
         self.assertIn("LocalSeasonalVideoView", view)
         self.assertIn("SeasonalMovieSoundtrackPlayer", view)
-        self.assertIn('Text("この作品から外しました")', view)
+        self.assertIn('Text("このムービーから外しました")', view)
         self.assertIn("SeasonalMovieArchiveCard", view)
         self.assertIn('Text("新着")', view)
         self.assertIn('+ (isNew ? "、新着" : "")', view)
@@ -1743,7 +1743,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("opensActiveWindow = true", main_tab)
         self.assertIn("model.activatePrivateWindow", main_tab)
         self.assertIn("FamilyWindowView(", main_tab)
-        self.assertIn('.navigationTitle("相手とつなぐ")', main_tab)
+        self.assertIn('.navigationTitle("まどを作る・参加する")', main_tab)
 
         window_list = section(
             main_tab,
@@ -1791,7 +1791,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertIn("NavigationLink { discovery }", empty_window)
         self.assertNotIn("opensActiveWindow = true", empty_window)
-        self.assertIn('Label("公式の写真を受け取る"', empty_window)
+        self.assertIn('Label("公式のまどを見る"', empty_window)
         self.assertIn("NavigationLink { connectionOptions }", empty_window)
         self.assertIn("if supportsPrivateWindows", empty_window)
         pairing_view = source("NekoWidget/Views/PairingView.swift")
@@ -1811,7 +1811,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("nextCounts[localWindowID, default: 0] += 1", preparation_counts)
         count_failure = preparation_counts.split("} catch {", 1)[1]
         self.assertNotIn("pendingPreparationCounts = [:]", count_failure)
-        self.assertIn('"送信準備中 \\(pendingCount.formatted())枚"', window_list)
+        self.assertIn('"届ける準備中 \\(pendingCount.formatted())枚"', window_list)
 
         setup_card = section(window_list, "private func windowCard(", "private func windowCover(")
         self.assertIn("WindowPhotoCard(title: window.displayName, kind: .setup)", setup_card)
@@ -1871,8 +1871,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('"settings-sharing-review"', settings)
         self.assertIn('FamilyWindowView(initialPresentation: .settings)', settings)
         self.assertIn('Label("まどの設定", systemImage: "window.vertical.closed")', settings)
-        self.assertIn('Text("接続と端末")', family)
-        self.assertIn('"接続相手と、使っているiPhoneを確認します"', family)
+        self.assertIn('Text("相手とiPhone")', family)
+        self.assertIn('"相手と、使っているiPhoneを見ます"', family)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
         self.assertIn(
             "await saveDetectionSettings(requestedConfidence, requestedMinimumArea)",
@@ -1894,7 +1894,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # The rescan is a repair: it sits under 困ったとき in the photo settings, not in diagnostics.
         self.assertIn('"写真を最初から探し直す"', photo_settings)
         self.assertNotIn('"最初から探し直す"', diagnostics)
-        self.assertIn('Picker("まどに出す写真", selection: $draft.range)', photo_settings)
+        self.assertIn('Picker("ウィジェットに出す写真", selection: $draft.range)', photo_settings)
         self.assertIn('Label("診断情報", systemImage: "wrench.and.screwdriver")', settings)
         self.assertIn('.navigationTitle("診断情報")', settings)
         self.assertIn('Label("未保存の変更があります",', diagnostics)
@@ -2609,10 +2609,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("selectedAdmission?.id == admission.id ? .on : .off", destination_menu)
         self.assertIn("attributes: isAmbiguous ? .disabled : []", destination_menu)
         self.assertIn("duplicateDestinationNames(for: admissions)", destination_menu)
-        self.assertIn("名前を変更してください", share_view)
-        self.assertIn("選んだまど以外へ保存・送信することはありません", share_view)
-        self.assertIn('アプリの「まど」から「\\(admission.displayName)」を開くと', share_view)
-        self.assertIn("別のまどへ自動で切り替えることはありません", share_view)
+        self.assertIn("名前を変えてください", share_view)
+        self.assertIn("選んだまどにだけ届きます", share_view)
+        self.assertIn('アプリの「まど」で「\\(admission.displayName)」を開くと、写真が届きます。', share_view)
+        self.assertIn("選んだまどには、もう届けられません。ほかのまどに勝手に届くことはありません。", share_view)
         self.assertIn("admissionID: selectedAdmission.id", share_view)
         self.assertIn("selectedAdmission = nil", share_view)
         self.assertIn("continueButton.isEnabled = false", share_view)
@@ -2662,7 +2662,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             share_view,
         )
         self.assertIn(
-            'detailLabel.text = "この1枚を\\(admission.displayName)',
+            'detailLabel.text = "この写真を\\(admission.displayName)',
             share_view,
         )
 
@@ -2708,8 +2708,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "if !model.canPersistWindowDisplayName",
             pairing_view,
         )
-        self.assertIn("追加したiPhoneでは名前を変更できません", pairing_view)
-        self.assertIn("最初のiPhoneで変更", pairing_view)
+        self.assertIn("名前は、最初に使っていたiPhoneで変更できます。", pairing_view)
+        self.assertIn("名前は、最初に使っていたiPhoneで変更できます。", pairing_view)
         window_name_service = (
             ROOT / "SharingService" / "src" / "window-name.ts"
         ).read_text(encoding="utf-8")
@@ -2730,8 +2730,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("windowNameCoordinator.synchronizeWindowNameForUser", update_name)
         self.assertIn(".momentSharingPresentationNeedsRefresh", update_name)
         self.assertNotIn(".sharingMediaSyncRequested", update_name)
-        self.assertIn("相手へ共有中…", pairing_view)
-        self.assertIn("相手のiPhoneへ反映できる状態です。", pairing_view_model)
+        self.assertIn("相手に送っています…", pairing_view)
+        self.assertIn("相手にも表示されます。", pairing_view_model)
 
         name_only_admission = section(
             processor,
@@ -2893,7 +2893,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("ForEach(connectedWindows)", main_tab)
         self.assertIn("ForEach(setupWindows)", main_tab)
         self.assertIn("model.activatePrivateWindow", main_tab)
-        self.assertIn('.navigationTitle("相手とつなぐ")', main_tab)
+        self.assertIn('.navigationTitle("まどを作る・参加する")', main_tab)
         self.assertIn("selectedTab = .photos", main_tab)
         self.assertIn("photosPath.append(PhotosRoute.photo(identifier))", main_tab)
         self.assertIn("selectedTab = .windows", main_tab)
@@ -2921,7 +2921,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         scan = source("NekoWidget/Views/ScanStatusView.swift")
         self.assertIn('"猫のプロフィール"', settings)
         self.assertIn('.navigationTitle(opensProfileSettings ? "猫のプロフィール" : "猫ごとの写真")', profiles)
-        self.assertIn('"このiPhoneの猫の写真や動画を"', onboarding)
+        self.assertIn('"このiPhoneの中から、"', onboarding)
         self.assertIn('"猫の写真や動画を見つけよう"', permission)
         self.assertIn('"このiPhoneの猫写真を探しています"', scan)
 
@@ -2965,13 +2965,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
     def test_growth_album_opens_as_a_photo_story_before_editing(self) -> None:
         growth = source("NekoWidget/Views/GrowthAlbumView.swift")
 
-        self.assertIn('.accessibilityLabel("この比べ方について")', growth)
+        self.assertIn('.accessibilityLabel("写真の選び方について")', growth)
         self.assertIn('Text(aboutSelectionMessage)', growth)
         self.assertIn('scrapbookTimeline(items: resolvedItems)', growth)
         self.assertIn('Label("写真を変える"', growth)
         # The screen title names the album; no second big range heading above the story.
         self.assertNotIn('.font(.title.bold())', growth)
-        self.assertIn('.alert("この比べ方について"', growth)
+        self.assertIn('.alert("写真の選び方について"', growth)
         self.assertIn('"\\(firstPeriod.label) → \\(lastPeriod.label)"', growth)
         self.assertNotIn('roleLabel:', growth)
         self.assertNotIn('Text("その間")', growth)
@@ -3014,7 +3014,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertIn("新しいまどを作る", pairing)
         self.assertIn("招待されたまどに参加", pairing)
-        self.assertIn("このiPhoneを以前のまどに追加", pairing)
+        self.assertIn("このiPhoneでも同じまどを使う", pairing)
         self.assertIn("この名前でまどを作る", pairing)
         self.assertNotIn("Keychain:", pairing)
         self.assertNotIn("App Group", pairing)
@@ -3097,7 +3097,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("family-window-manual-refresh-result", family_view)
         self.assertIn("manualRefreshSucceeded", family_model)
         self.assertIn("exclamationmark.triangle", family_view)
-        self.assertIn("まどの写真を確認しました。", family_model)
+        self.assertIn("最新の写真を読み込みました。", family_model)
         # A successful synchronization is not evidence that the photo set
         # stayed unchanged, or that every pending transfer has arrived.
         synchronize = section(family_model, "func synchronize(isManual: Bool = true) async", "func report(")
@@ -3128,15 +3128,15 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("MomentSentRecordDeliveryState", presentation)
         self.assertIn("serverAccepted", presentation)
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
-        self.assertIn("閲覧・既読の確認ではありません", presentation)
-        self.assertIn('DisclosureGroup("写真のない送信履歴"', family)
-        self.assertIn('.navigationTitle("送信状況")', family)
+        self.assertIn("相手が写真を見たかどうかは分かりません", presentation)
+        self.assertIn('DisclosureGroup("写真が残っていない記録"', family)
+        self.assertIn('.navigationTitle("届けている写真")', family)
         self.assertNotIn('Text("履歴")', family)
-        self.assertIn("届いた写真は最長90日です", family)
-        self.assertIn("保存するには「自分のお気に入りに追加」を選びます", family)
-        self.assertIn("到着は、相手が写真を開いたことを示しません", family)
-        self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
-        self.assertIn("別のiPhoneや再インストール後には表示されません", family)
+        self.assertIn("届いた写真が見られるのは最長90日です。残したい写真は「自分のお気に入りに追加」を押してください。", family)
+        self.assertIn("届いた写真が見られるのは最長90日です。残したい写真は「自分のお気に入りに追加」を押してください。", family)
+        self.assertIn("「相手に届きました」は、相手が写真を見たという意味ではありません。", family)
+        self.assertIn("届けた写真の控えは、このiPhoneに最長30日・200件まで残ります。ほかのiPhoneや、入れ直したアプリでは見られません。", family)
+        self.assertIn("届けた写真の控えは、このiPhoneに最長30日・200件まで残ります。ほかのiPhoneや、入れ直したアプリでは見られません。", family)
         self.assertIn("MomentSentRecordCard(record: record, caption: caption)", family)
         target_record = section(
             family,
@@ -3146,7 +3146,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("MomentSentHistory", target_record)
         self.assertIn("model.outgoingPresentation.activitySummary", target_record)
         self.assertIn("showsOutgoingDetails = true", target_record)
-        self.assertIn('.accessibilityLabel(model.outgoingPhotoProgress.isEmpty ? summary : "送信状況を見る")', target_record)
+        self.assertIn('.accessibilityLabel(model.outgoingPhotoProgress.isEmpty ? summary : "届けている写真を見る")', target_record)
         self.assertIn("MomentPhotoDeliveryProgressView", target_record)
         self.assertNotIn("outgoingStatusCard(status)", target_record)
         self.assertNotIn("outgoingOutcomeCard(outcome)", target_record)
@@ -3166,7 +3166,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("!model.isShowingLastKnownState", dismiss)
         self.assertIn("!model.isReportOnly", dismiss)
         self.assertIn("cancellableEncryptedDeliveryCount > 0", dismiss)
-        self.assertIn('Label("共有状況を更新", systemImage: "arrow.clockwise")', family)
+        self.assertIn('Label("もう一度読み込む", systemImage: "arrow.clockwise")', family)
         self.assertNotIn("プレビュー画像は送信したiPhoneだけに最長30日残り", target_record)
         self.assertIn("focusedSentMomentID = momentID", family)
         self.assertIn("selectedSentRecord = matches[0]", family)
@@ -3325,7 +3325,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             ".disabled(model.isWorking || model.isShowingLastKnownState)",
             hidden_card,
         )
-        self.assertIn('Label("この受信を削除", systemImage: "trash")', hidden_card)
+        self.assertIn('Label("この写真を削除", systemImage: "trash")', hidden_card)
         self.assertIn("deleteReceivedTarget = item", hidden_card)
 
         store = source("Shared/Sharing/MomentSharingStore.swift")
@@ -3585,7 +3585,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('Text("表示と通知")', settings)
         self.assertIn('Text("まどの管理")', settings)
         self.assertIn('Text(model.windowDisplayName)', settings)
-        self.assertIn("共有が終了したため、写真は表示されません", settings)
+        self.assertIn("このまどは終了したため、写真は表示されません", settings)
         self.assertNotIn("statusCard", paired)
         self.assertNotIn("howToSendCard", paired)
         self.assertNotIn("family-window-send-guide", family)
@@ -3703,14 +3703,14 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("model.isShowingLastKnownState", memory)
         self.assertIn("model.isReportOnly", memory)
 
-        self.assertIn("写真アプリへコピーして、お気に入りに追加します", family)
-        self.assertIn("iCloud写真の設定により、iCloudにも同期される場合があります", family)
+        self.assertIn("写真アプリに保存して、お気に入りに追加します", family)
+        self.assertIn("iCloud写真を使っていれば、iCloudにも保存されます", family)
         self.assertIn("if model.hasImportedMemory(item)", family)
         self.assertIn("写真アプリへコピーした写真は削除されません", family)
         self.assertNotIn("ReceivedPhotoFilter", family)
         self.assertNotIn("family-window-photo-filter", family)
         self.assertIn("private var orderedReceivedMoments", family)
-        self.assertIn('"接続状態を確認できません"', family)
+        self.assertIn('"読み込めませんでした"', family)
 
         pending_widget = section(
             family,
@@ -3730,7 +3730,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         # Geometry is exercised by MomentDeliveryComposerUITests on iOS,
         # rather than pinning the old overlay implementation here.
         self.assertIn("MomentSentRecordCard(record: record, caption: caption)", sent)
-        self.assertNotIn("閲覧・既読の確認ではありません", sent)
+        self.assertNotIn("相手が写真を見たかどうかは分かりません", sent)
         self.assertIn("sentRecordAccessibilityLabel(record, caption: caption)", sent)
         self.assertIn("accessibilityElement(children: .ignore)", sent)
 
@@ -3893,7 +3893,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("bootstrapRetryRequested", pairing_model)
         self.assertIn("error is SharingSecureFile.Error", pairing_model)
         self.assertIn("case .stateUnavailable, .stateChanged:", pairing_model)
-        self.assertIn("もう一度確認する", pairing_view)
+        self.assertIn("もう一度読み込む", pairing_view)
 
         terminal_classifier = section(
             pairing_model,
@@ -4044,9 +4044,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('Button("お気に入りから外す", role: .destructive)', family)
         self.assertIn('"自分のお気に入りに追加"', family)
         self.assertIn('"自分のお気に入りに追加"', family)
-        self.assertIn("個人のお気に入りと写真まとめに入り", family)
-        self.assertIn("相手へは通知しません", family)
-        self.assertIn("アプリ削除のあとも写真アプリに残ります", family)
+        self.assertIn("自分のお気に入りと写真まとめに入ります", family)
+        self.assertIn("相手には知らされません", family)
+        self.assertIn("アプリを削除したりしても残ります", family)
         self.assertNotIn('Label("写真アプリへコピー"', family)
         self.assertNotIn("ReceivedPhotoFilter", family)
 
@@ -4075,10 +4075,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         pairing = source("NekoWidget/Views/PairingView.swift")
         pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
         main_tab = source("NekoWidget/Views/MainTabView.swift")
-        self.assertIn("相手と接続済み", pairing)
+        self.assertIn("相手とつながっています", pairing)
         self.assertNotIn("2人のまどを設定済み", pairing)
-        self.assertIn("一時的な届いた写真", pairing)
-        self.assertIn("写真アプリへ保存した写真は残ります", pairing_model)
+        self.assertIn("届いた写真も消えます", pairing)
+        self.assertIn("このまどを終了しました。届いた写真はこのiPhoneから消えましたが、写真アプリに保存した写真は残ります。", pairing_model)
         self.assertIn("FamilyWindowView(", main_tab)
         self.assertIn('Label("まど", systemImage: "window.vertical.closed")', main_tab)
         self.assertNotIn("届いた写真の履歴", main_tab)
@@ -4118,7 +4118,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertEqual(unavailable.count("Button("), 1)
         self.assertEqual(unavailable.count("NavigationLink"), 1)
         self.assertIn("await model.retryBootstrap()", unavailable)
-        self.assertIn("保存済みの写真と接続情報は削除していません", unavailable)
+        self.assertIn("写真や設定はそのまま残っています", unavailable)
         self.assertIn("LogView()", unavailable)
         self.assertIn("ScrollView", unavailable)
         self.assertIn("DisclosureGroup", unavailable)
@@ -4150,8 +4150,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertEqual(retry_section.count("NavigationLink"), 1)
         self.assertIn("await model.bootstrap()", retry_section)
         self.assertIn("if model.isBootstrapping", retry_section)
-        self.assertIn("接続情報を確認しています…", retry_section)
-        self.assertIn("保存済みの写真と接続情報は削除していません", retry_section)
+        self.assertIn("読み込んでいます…", retry_section)
+        self.assertIn("写真や設定はそのまま残っています", retry_section)
         self.assertIn("LogView()", retry_section)
         self.assertNotIn("setupChoiceSection", retry_section)
 
@@ -4170,7 +4170,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("widgetLegacyPlacementSteps", guide)
         self.assertIn("if #available(iOS 18.0, *)", guide)
         self.assertIn('"widget-placement-steps"', guide)
-        self.assertIn('"手順を確認した"', presentation)
+        self.assertIn('"完了"', presentation)
         self.assertIn('"追加してアプリへ戻ると、自動で確認します。"', presentation)
         self.assertIn(
             ".onChange(of: widgetInstallationChecker.isInstalled, initial: true)",
@@ -4208,7 +4208,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private var buildIdentityText",
         )
         self.assertIn("PairingAvailabilityPresentation.consentRequired", consent)
-        self.assertIn('Label("共有の同意を更新"', consent)
+        self.assertIn('Label("内容を確認して同意する"', consent)
         self.assertIn("PairingView()", consent)
 
         presentation = source("NekoWidget/Views/PairingPresentation.swift")
@@ -4278,7 +4278,7 @@ class GroupWindowUITests(unittest.TestCase):
             "1人が使えるiPhoneは\\(deviceLimitPerPerson)台までです。",
             "まどは全部で\\(totalWindowLimit)個までです。",
             "まどを作った人がアプリを開くと、続けられます。",
-            "招待の期限が切れました。新しい招待を受け取ってください。",
+            "招待リンクの期限が切れました。新しいリンクを送ってもらってください。",
             "接続できません。電波のあるところで",
             "まどを作った人は抜けられません。",
         ):
@@ -4533,7 +4533,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
         intent = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
         # A missing group window never becomes the personal-library default.
         resolve = section(intent, "if let groupWindowID = GroupWidgetCache.windowID(fromSourceID: id) {", "guard let localWindowID")
-        self.assertIn('"利用できないまど"', resolve)
+        self.assertIn('"使えなくなったまど"', resolve)
 
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         widget_sources = section(project, "A00000000000000000000025 /* Sources */ = {", "A00000000000000000000028 /* Sources */")
@@ -4587,7 +4587,7 @@ class CatCareTests(unittest.TestCase):
         self.assertNotIn("suffix(4)", view)
         self.assertIn('TextField("マイクロチップ番号（15桁）"', view)
         # Vaccination proof can come from Photos.
-        self.assertIn("証明の写真を写真から選ぶ", view)
+        self.assertIn("証明の写真を選ぶ", view)
         # Deleting marks, never removes.
         self.assertIn("markDeleted", view)
         self.assertNotIn(".remove(at:", view)
@@ -4624,7 +4624,7 @@ class VeterinaryCatCareTests(unittest.TestCase):
         self.assertIn("CareHandoffExporter.remove(retainedDirectory)", view)
         # Empty items say so instead of inventing anything.
         fields = section(summary, "static func veterinaryFields(", "static func weightTrend(")
-        self.assertIn('"未記入・飼い主に確認"', fields)
+        self.assertIn('"未記入（飼い主に聞いてください）"', fields)
         self.assertIn('("マイクロチップ", text(record?.microchip?.value))', fields)
         trend = summary[summary.index("static func weightTrend("):]
         self.assertIn("前回から", trend)
@@ -4654,7 +4654,7 @@ class LostCatCatCareTests(unittest.TestCase):
         # The published contact is added by a tap, never filled on its own.
         fill = section(view, "private func fillFromCatCare(", "@ViewBuilder private func fieldIssue(")
         self.assertNotIn("contact", fill)
-        self.assertIn("「この子のこと」の連絡先を入れる", view)
+        self.assertIn("「この子のこと」の連絡先を使う", view)
         # A new draft starts from 「この子のこと」; owner text is never replaced.
         self.assertIn("if !alreadyPrepared { saved = fillFromCatCare(saved, key: identity) }", view)
         self.assertIn("next.features.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty", fill)
@@ -4708,7 +4708,7 @@ class CareHandoffCatCareTests(unittest.TestCase):
         summary = source("NekoWidget/Views/CatCareView.swift")
         # Older saved memos still decode: the new field is optional.
         self.assertIn("var callWhen: String?", plan)
-        self.assertIn('("こんな時は連絡を", callWhen)', plan)
+        self.assertIn('("こんなときは連絡を", callWhen)', plan)
         self.assertIn('identifier: "care-call-when"', view)
         self.assertIn("おしっこが出ていない", view)
         self.assertIn("!current.contains(choice)".lstrip("!"), view)
@@ -4774,7 +4774,7 @@ class CatCareProofCameraTests(unittest.TestCase):
 class ToolTemplateTests(unittest.TestCase):
     def test_tools_share_the_cat_care_section_and_a_bottom_preview(self) -> None:
         shared = section(source("NekoWidget/Views/CatCareView.swift"), "struct ToolCatCareSection<Extra: View>", "/// The system camera.")
-        self.assertIn('NavigationLink("この子のことを直す") { CatCareSubjectView(subject: subject) }', shared)
+        self.assertIn('NavigationLink("「この子のこと」を開く") { CatCareSubjectView(subject: subject) }', shared)
         self.assertNotIn("CatCareStore.shared.update", shared)
         for path in ("NekoWidget/Views/VeterinaryVisitView.swift", "NekoWidget/Views/CareHandoffView.swift",
                      "NekoWidget/Views/CatPreparednessView.swift", "NekoWidget/Views/EvacuationPreparationView.swift"):
@@ -4825,7 +4825,7 @@ class ToolFlowTests(unittest.TestCase):
         # Closing the vet memo saves; it asks only when it could not.
         close = section(vet, "private func close() {", "private func save(completing:")
         self.assertLess(close.index("await save()"), close.index("discarding = true"))
-        self.assertNotIn("変更を破棄", vet)
+        self.assertNotIn("保存せずに閉じる", vet)
         self.assertNotIn("迷子への備え", source("NekoWidget/Views/CatProfilePhotoCurationViews.swift"))
 
 
@@ -4875,7 +4875,7 @@ class GroupWindowUsabilityTests(unittest.TestCase):
 class WindowCreationEntryTests(unittest.TestCase):
     def test_both_kinds_of_window_start_from_the_same_place(self) -> None:
         tab = source("NekoWidget/Views/MainTabView.swift")
-        add = section(tab, "// One place to start a window", 'setupAction("招待されたまどに参加"')
+        add = section(tab, "// One place to start a window", 'setupAction("招待されたまどに参加する"')
         self.assertNotIn('setupAction("1人の相手とまどを作る"', add)
         self.assertIn('Text("まどを作る（', add)
         self.assertIn("GroupWindowCreateScreen(client: groupClient)", add)
@@ -5008,7 +5008,7 @@ class SettingsLayoutTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         body = section(settings, "    var body: some View {\n        Form {", '.navigationTitle("設定")')
         order = ['Text("写真")', 'Text("猫")', 'Text("ホーム画面")', 'Text("まど")', "PlusSettingsSection()",
-                 'Text("保存")', 'Text("困ったとき")', '"settings-app-version"', 'Text("テスト用")']
+                 'Text("保存")', 'Text("サポート")', '"settings-app-version"', 'Text("テスト用")']
         positions = [body.index(item) for item in order]
         self.assertEqual(positions, sorted(positions))
         # Previews and diagnostics sit together in the test-only section.
@@ -5080,7 +5080,7 @@ class TwoPersonWindowHiddenTests(unittest.TestCase):
         self.assertIn("countsPrivateWindows ? catalog?.windows ?? [] : []", tab)
         self.assertIn(".onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true)", tab)
         onboarding = source("NekoWidget/Views/OnboardingView.swift")
-        help_view = section(onboarding, "struct OnboardingInvitationHelpView: View", '.navigationTitle("招待を受け取った")')
+        help_view = section(onboarding, "struct OnboardingInvitationHelpView: View", '.navigationTitle("招待リンクから参加する")')
         self.assertNotIn("PairingView(initialSetupPath: .join)", help_view)
         self.assertIn("&& GroupWindowClientProvider.ui == nil {", source("NekoWidget/Views/SettingsView.swift"))
         browser = source("NekoWidget/Views/LikedPhotosView.swift")
@@ -5231,7 +5231,7 @@ class CatCareOnePlaceTests(unittest.TestCase):
     def test_vet_sheet_has_its_own_heading_and_asks_first(self) -> None:
         vet = source("NekoWidget/Views/VeterinaryVisitView.swift")
         self.assertIn('heading: "病院で見せるメモ", isCareMemo: false', vet)
-        self.assertIn('confirmationDialog("病院に渡す控えを作ります"', vet)
+        self.assertIn('confirmationDialog("病院に渡すメモを作りますか？"', vet)
         self.assertIn('.navigationTitle("病院で見せるメモ")', vet)
         exporter = source("NekoWidget/Services/CareHandoffExporter.swift")
         self.assertIn("record.heading", exporter)

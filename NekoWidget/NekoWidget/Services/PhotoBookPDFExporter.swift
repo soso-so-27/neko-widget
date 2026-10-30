@@ -20,11 +20,11 @@ enum MemoryPhotoJPEGExportError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .photoNotInMemories:
-            "この写真は現在「お気に入り」にありません。"
+            "この写真はお気に入りから外れています。"
         case .photoUnavailable:
-            "この写真を写真ライブラリで確認できませんでした。"
+            "この写真が写真アプリに見つかりませんでした。"
         case .imageUnavailable:
-            "写真データを取得できませんでした。"
+            "写真を読み込めませんでした。"
         case .couldNotCreateJPEG:
             "写真を書き出せませんでした。"
         }
@@ -168,15 +168,15 @@ enum PhotoBookPDFExportError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case let .invalidSelection(minimum, maximum, actual):
-            "PDFには\(minimum)〜\(maximum)枚を選んでください。現在は\(actual)枚です。"
+            "PDFには\(minimum)〜\(maximum)枚を選んでください（今は\(actual)枚です）。"
         case let .selectedPhotosUnavailable(expected, actual):
-            "選んだ\(expected)枚のうち、\(actual)枚だけを確認できました。選び直してください。"
+            "選んだ\(expected)枚のうち、\(actual)枚しか見つかりませんでした。選び直してください。"
         case let .photoUnavailable(page):
-            "\(page)ページ目の写真を写真ライブラリから取得できませんでした。"
+            "\(page)ページ目の写真が見つかりませんでした。"
         case let .imageUnavailable(page):
             "\(page)ページ目の画像を読み込めませんでした。"
         case .couldNotCreatePDF:
-            "PDFを作成できませんでした。"
+            "PDFを作れませんでした。"
         }
     }
 }

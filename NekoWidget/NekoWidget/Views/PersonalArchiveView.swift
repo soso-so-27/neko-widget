@@ -5,7 +5,7 @@ import Photos
 
 private func personalArchiveMessage(for error: Error) -> String {
     (error as? PersonalArchiveError)?.errorDescription
-        ?? "記録を処理できませんでした。もう一度お試しください。"
+        ?? "うまくいきませんでした。もう一度お試しください。"
 }
 
 /// An internal, opt-in CloudKit pilot. Existing photos and notes are never
@@ -43,9 +43,9 @@ struct PersonalArchiveView: View {
         List {
             if !isLoading && errorMessage == nil {
                 Section {
-                    LabeledContent("iCloudに保管済み", value: "\(storedCount)件")
+                    LabeledContent("iCloudに保存済み", value: "\(storedCount)件")
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("iCloudに保管済み")
+                        .accessibilityLabel("iCloudに保存済み")
                         .accessibilityValue("\(storedCount)件")
                         .accessibilityIdentifier("personal-archive-stored-count")
                     if attentionCount > 0 {
@@ -67,18 +67,18 @@ struct PersonalArchiveView: View {
                 .accessibilityIdentifier("personal-archive-refresh")
                 .disabled(isLoading || isWorking)
                 if hasPendingOperations && !store.isReadOnly {
-                    Button("未完了の操作を再試行") { Task { await retryPending() } }
+                    Button("途中の操作をもう一度試す") { Task { await retryPending() } }
                         .accessibilityIdentifier("personal-archive-retry")
                         .disabled(isLoading || isWorking)
                 }
                 NavigationLink {
                     PersonalArchiveGuideView()
                 } label: {
-                    Label("保管と引き継ぎについて", systemImage: "info.circle")
+                    Label("iCloudの記録について", systemImage: "info.circle")
                 }
                 .accessibilityIdentifier("personal-archive-guide")
             } footer: {
-                Text("以前iCloudに保管した写真とメモを読み込めます。新しい記録の保存方法は、設定の「保存・復元」で確認できます。")
+                Text("以前iCloudに保存した写真とメモを読み込めます。これからの記録は、設定の「自動保存」で保存できます。")
             }
 
             if isLoading || isWorking {
@@ -89,7 +89,7 @@ struct PersonalArchiveView: View {
             }
 
             if !records.isEmpty {
-                Section("保管した写真とメモ") {
+                Section("保存した写真とメモ") {
                     ForEach(records) { record in
                         Button { selectedRecord = record } label: {
                             HStack {
@@ -104,11 +104,11 @@ struct PersonalArchiveView: View {
                     }
                 }
             } else if !isLoading && errorMessage == nil {
-                ContentUnavailableView("保管した写真はありません", systemImage: "photo.on.rectangle",
-                    description: Text("以前保管した写真とメモを、iCloudから読み込めます。"))
+                ContentUnavailableView("保存した写真はありません", systemImage: "photo.on.rectangle",
+                    description: Text("以前保存した写真とメモを、iCloudから読み込めます。"))
             }
         }
-        .navigationTitle("iCloudの保管と復元")
+        .navigationTitle("以前のiCloud記録")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: Binding(
             get: { selectedRecord != nil },
@@ -160,7 +160,7 @@ struct PersonalArchiveView: View {
                 if record.isDeletionPending || record.state != .stored || pendingMemoRecordIDs.contains(record.id) {
                     Text(record.isDeletionPending ? "削除待ち" :
                         pendingMemoRecordIDs.contains(record.id) && record.state == .stored
-                            ? "メモの反映待ち" : record.state.archiveLabel)
+                            ? "メモの保存待ち" : record.state.archiveLabel)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -263,17 +263,17 @@ private struct PersonalArchiveGuideView: View {
     var body: some View {
         List {
             Section {
-                guideRow("以前の保管", "この画面では、以前iCloudに保管した写真とメモを開けます。新しい記録は、設定の「保存・復元」で初回設定をすると自動で保存されます。")
-                guideRow("容量と画質", "自分のiCloud容量を使います。容量不足や通信エラーの間は未完了です。写真の原本・動画・Live Photosの動きは保管しません。")
+                guideRow("以前の記録", "「以前のiCloud記録」では、以前iCloudに保存した写真とメモを開けます。これからの記録を残すには、設定の「自動保存」を使ってください。")
+                guideRow("容量と画質", "自分のiCloudの容量を使います。容量が足りないときや通信できないときは、保存が終わりません。元の写真・動画・Live Photosの動きは保存しません。")
                 DisclosureGroup("写真のサイズ") {
                     Text("写真は長辺最大4,096px・1枚20MB以下のJPEGに変換します。原本は写真アプリなどに残してください。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
-                guideRow("機種変更", "同じApple Accountで、保管画面の「iCloudから読み込む」を使います。対象は保管済みの写真とメモです。このiPhoneだけのメモや保管待ちの内容は、iCloudからは取り戻せません。")
-                guideRow("以前の記録を残す", "この画面は読み出しと書き出し用です。未送信の内容はこのiPhoneに残し、iCloudへの送信や自動の移行はしません。")
+                guideRow("機種変更", "新しいiPhoneでも同じApple Accountで、「以前のiCloud記録」の「iCloudから読み込む」を押してください。戻せるのはiCloudに保存済みの写真とメモだけで、このiPhoneだけのメモや保存待ちの内容は戻せません。")
+                guideRow("以前の記録を残す", "「以前のiCloud記録」では、以前の記録を見たり書き出したりできます。まだ保存していない内容はこのiPhoneに残り、iCloudに送られることはありません。")
             }
         }
-        .navigationTitle("保管と引き継ぎ")
+        .navigationTitle("iCloudの記録について")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -289,10 +289,10 @@ private struct PersonalArchiveGuideView: View {
 private extension PersonalArchiveRecordState {
     var archiveLabel: String {
         switch self {
-        case .pending: "保管待ち・このiPhoneに保存されています"
-        case .stored: "iCloudに保管済み"
-        case .partial: "写真を取り戻せていません"
-        case .conflict: "保管先の内容を確認できませんでした"
+        case .pending: "保存待ち・このiPhoneには残っています"
+        case .stored: "iCloudに保存済み"
+        case .partial: "写真をまだ読み込めていません"
+        case .conflict: "iCloudの内容を確認できませんでした"
         }
     }
 }
@@ -348,11 +348,11 @@ struct PersonalArchiveRecordView: View {
                     MemoArchivePhoto(data: data, allowsExpansion: true)
                 }
             } status: {
-                Text("iCloudの保管コピー")
+                Text("iCloudに保存したコピー")
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityIdentifier("personal-archive-copy-location")
                 if record.isDeletionPending || record.state != .stored {
-                Text(record.isDeletionPending ? "削除待ち・完了するまで、このiPhoneに内容を残しています" : record.state.archiveLabel)
+                Text(record.isDeletionPending ? "削除待ち・終わるまでこのiPhoneに残っています" : record.state.archiveLabel)
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 if let issue = record.issue {
@@ -360,15 +360,15 @@ struct PersonalArchiveRecordView: View {
                 }
                 if let remoteText = record.conflictingText {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("別の変更があります").font(.headline)
+                        Text("ほかのiPhoneで変更されています").font(.headline)
                         Text(remoteText.isEmpty ? "メモなし" : remoteText).textSelection(.enabled)
                         if let weight = record.conflictingContext?.weight { PhotoMemoWeightLabel(weight: weight) }
-                        Text("どちらの内容も残しています。必要な内容を確認してください。")
+                        Text("どちらの内容も残っています。内容を見比べてください。")
                             .font(.caption).foregroundStyle(.secondary)
                         if !store.isReadOnly, record.state == .conflict, record.conflictingRevision != nil {
                             Button("このiPhoneのメモを使う") { resolutionID = UUID(); resolutionChoice = false }
                                 .disabled(resolving)
-                            Button("別の端末のメモを使う") { resolutionID = UUID(); resolutionChoice = true }
+                            Button("ほかのiPhoneのメモを使う") { resolutionID = UUID(); resolutionChoice = true }
                                 .disabled(resolving)
                         }
                     }
@@ -421,7 +421,7 @@ struct PersonalArchiveRecordView: View {
                                   (record.jpegData == nil && record.text.isEmpty && record.context?.weight == nil))
                         .accessibilityIdentifier("personal-archive-export")
                     if !store.isReadOnly {
-                        Button("保管したコピーを削除", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                        Button("iCloudのコピーを削除", systemImage: "trash", role: .destructive) { confirmsDelete = true }
                             .disabled(record.isDeletionPending || record.state == .conflict)
                             .accessibilityIdentifier("personal-archive-delete")
                     }
@@ -475,7 +475,7 @@ struct PersonalArchiveRecordView: View {
                                       account: account, noteStore: noteStore) { record = $0 }
             }
         }
-        .confirmationDialog("この内容でメモを揃えますか？", isPresented: Binding(
+        .confirmationDialog("このメモを使いますか？", isPresented: Binding(
             get: { resolutionChoice != nil }, set: { if !$0 { resolutionChoice = nil } }
         ), titleVisibility: .visible) {
             let choice = resolutionChoice ?? false
@@ -490,10 +490,10 @@ struct PersonalArchiveRecordView: View {
             let weight = remote ? record.conflictingContext?.weight : (localNoteText != nil ? localNoteWeight : record.context?.weight)
             Text((text.isEmpty ? "文章なし" : text) + "\n" + (weight.map { "体重 \($0.kilogramsText) kg · 測定日 \($0.measuredOn ?? "不明")" } ?? "体重の記録なし"))
         }
-        .confirmationDialog("保管したコピーを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
+        .confirmationDialog("iCloudのコピーを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("コピーを削除", role: .destructive) { Task { await delete() } }
         } message: {
-            Text("iCloudとこのアプリの保管一覧から削除します。別のiPhoneには次の読み込み時に反映されます。写真アプリの原本、元のメモ、相手と共有したコピーは残ります。")
+            Text("iCloudとこのアプリの一覧から削除します。ほかのiPhoneでは、次に読み込んだときに消えます。写真アプリの写真、元のメモ、まどで相手に届けた写真は残ります。")
         }
     }
 
@@ -562,7 +562,7 @@ struct PersonalArchiveRecordView: View {
                     expectedAccount: account, expectedLocalNoteRevision: localNoteRevision)
             if let updated = result.archiveRecord { record = updated }
             if result.reflection == .stored { errorMessage = nil }
-            else { errorMessage = "このiPhoneに保存しました。iCloudへの反映はまだ完了していません。" }
+            else { errorMessage = "このiPhoneに保存しました。iCloudへの保存はまだ終わっていません。" }
             await loadLocalRevision(account: account)
         } catch { errorMessage = personalArchiveMessage(for: error) }
     }
@@ -605,9 +605,9 @@ private struct PersonalArchiveCopyStatusView: View {
         if record.isDeletionPending {
             return record.state == .stored ? "iCloudから削除済み" : "iCloudからの削除待ち"
         }
-        if pendingMemo || record.state == .pending { return "iCloudへの反映待ち" }
-        if record.state == .partial { return "写真の読み込みが未完了です" }
-        if record.issue != nil { return "保存状態を確認できません" }
+        if pendingMemo || record.state == .pending { return "iCloudへの保存待ち" }
+        if record.state == .partial { return "写真をまだ読み込めていません" }
+        if record.issue != nil { return "保存できたか確認できません" }
         return "iCloudに保存済み"
     }
 
@@ -615,9 +615,9 @@ private struct PersonalArchiveCopyStatusView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("このコピーの保存先はiCloudです。ここでは、この写真メモの反映状況を表示します。")
+                    Text("このコピーの保存先はiCloudです。ここでは、iCloudに保存できたかを確かめられます。")
                     if loading {
-                        ProgressView("状態を確認しています…")
+                        ProgressView("確認しています…")
                     } else if let error {
                         Text(error).foregroundStyle(.secondary)
                     } else {
@@ -627,7 +627,7 @@ private struct PersonalArchiveCopyStatusView: View {
                         }
                     }
                 } footer: {
-                    Text("このiPhoneで確認できた、このコピーの状態です。")
+                    Text("このiPhoneで確認した内容です。")
                 }
             }
             .accessibilityIdentifier("personal-archive-copy-status")

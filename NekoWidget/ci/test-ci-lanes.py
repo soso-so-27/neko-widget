@@ -157,7 +157,7 @@ class LaneTests(unittest.TestCase):
             ('guard hasPhotoAccess else', 'guard true else'),
             ('if savedStateReadFailed', 'if false'),
             ('if unavailableSavedPhotoCount > 0', 'if unavailableSavedPhotoCount > 999'),
-            ('写真許可を確認してください', '写真はありません'),
+            ('写真へのアクセスを許可してください', '写真はありません'),
             ('保存状態は確認できません', '保存済みです'),
             (r'表示できない写真\(unavailableSavedPhotoCount.formatted())枚', 'すべて表示できます'),
             (r'return "お気に入り、\(photos.count.formatted())枚"', 'return "お気に入り"'),

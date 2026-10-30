@@ -125,7 +125,7 @@ final class PairingViewModel: ObservableObject {
         // Build 34 and earlier could persist arbitrary relay text or a raw
         // Keychain status in lastError. Never render that legacy string.
         if state?.lastError != nil {
-            return "前回の共有操作を完了できませんでした。画面の案内を確認して、もう一度お試しください。"
+            return "前回の操作が途中で止まりました。画面の案内に沿って、もう一度お試しください。"
         }
         return nil
     }
@@ -261,7 +261,7 @@ final class PairingViewModel: ObservableObject {
             if Self.isRetryableBootstrapCompletionError(error) {
                 didBootstrap = false
                 bootstrapRetryMessage =
-                    "共有の状態を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+                    "まどを読み込めませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
             } else {
                 didBootstrap = true
                 bootstrapRetryMessage = nil
@@ -293,7 +293,7 @@ final class PairingViewModel: ObservableObject {
     func updateWindowDisplayName(_ rawValue: String, expectedSpaceID: String? = nil) async -> Bool {
         guard canEditWindowDisplayName else {
             configurationMessage = state?.localDeviceIsAdditional == true
-                ? "追加したiPhoneでは名前を変更できません。最初のiPhoneで変更してください。"
+                ? "名前は、最初に使っていたiPhoneで変更できます。"
                 : "まどの名前は、まどを作った人が変更できます。"
             return false
         }
@@ -322,7 +322,7 @@ final class PairingViewModel: ObservableObject {
                 reloadPrivateWindowCatalog()
                 configurationMessage = nil
                 windowNameStatusIsError = false
-                windowNameStatusMessage = "このiPhoneに名前を保存しました。"
+                windowNameStatusMessage = "名前を保存しました。"
                 NotificationCenter.default.post(
                     name: .momentSharingPresentationNeedsRefresh,
                     object: nil
@@ -349,8 +349,8 @@ final class PairingViewModel: ObservableObject {
             configurationMessage = nil
             windowNameStatusIsError = false
             windowNameStatusMessage = operation.expectedState.phase == .paired
-                ? "このiPhoneに保存しました。相手へ共有しています…"
-                : "このiPhoneに保存しました。ペアリング完了後に相手へ共有します。"
+                ? "保存しました。相手にも送っています…"
+                : "保存しました。相手とつながったら、相手にも表示されます。"
             NotificationCenter.default.post(
                 name: .momentSharingPresentationNeedsRefresh,
                 object: nil
@@ -364,7 +364,7 @@ final class PairingViewModel: ObservableObject {
                     trigger: "explicit-window-name-save"
                 )
                 windowNameStatusIsError = false
-                windowNameStatusMessage = "相手のiPhoneへ反映できる状態です。"
+                windowNameStatusMessage = "相手にも表示されます。"
             } catch {
                 // Refresh from disk because a terminal authenticated response
                 // may have revoked and purged the pairing while this call was
@@ -375,10 +375,10 @@ final class PairingViewModel: ObservableObject {
                     // The local edit is durable when only the relay is
                     // unavailable. Keep this copy free of internal details.
                     windowNameStatusMessage =
-                        "このiPhoneには保存しましたが、相手への共有を完了できませんでした。もう一度お試しください。"
+                        "保存しましたが、相手にはまだ届いていません。もう一度お試しください。"
                 } else {
                     windowNameStatusMessage =
-                        "共有が解除されたため保存内容を消去しました。もう一度ペアリングしてください。"
+                        "このまどは終了したため、名前は保存されませんでした。新しい招待からやり直してください。"
                 }
                 SharedLog.app.warning(
                     "window-name-sync",
@@ -387,7 +387,7 @@ final class PairingViewModel: ObservableObject {
             }
             return true
         } catch PrivateWindowCatalogStore.Error.duplicateWindowName {
-            configurationMessage = "同じ名前のまどがあります。区別できる名前を付けてください。"
+            configurationMessage = "同じ名前のまどがあります。別の名前を付けてください。"
             windowNameStatusIsError = true
             windowNameStatusMessage = "別のまどと同じ名前にはできません。"
             return false
@@ -426,8 +426,8 @@ final class PairingViewModel: ObservableObject {
         reloadPrivateWindowCatalog()
         guard canCreateAnotherPrivateWindow else {
             operationErrorMessage = hasPrivateWindowSetupInProgress
-                ? "先に、設定中のまどを完了してください。"
-                : "まどは合計\(PrivateWindowCatalogState.maximumProductWindowCount)個までです。"
+                ? "途中まで作ったまどがあります。先にそちらを完了してください。"
+                : "まどは全部で\(PrivateWindowCatalogState.maximumProductWindowCount)個までです。"
             return
         }
         isWorking = true
@@ -436,7 +436,7 @@ final class PairingViewModel: ObservableObject {
             let result = try await PairingInstallationGuard
                 .createAndActivatePrivateWindowAsync()
             applyActivatedWindow(result)
-            operationCompletionMessage = "新しいまどを追加しました。名前を付けて相手を招待できます。"
+            operationCompletionMessage = "新しいまどを作りました。名前を付けて、相手を招待しましょう。"
             NotificationCenter.default.post(
                 name: .momentSharingPresentationNeedsRefresh,
                 object: nil
@@ -642,7 +642,7 @@ final class PairingViewModel: ObservableObject {
                     // unreachable, unused space under its inactivity TTL.
                     try await resetLocalPairing(
                         operation: operation,
-                        message: "招待作成の応答を復元できませんでした。もう一度招待を作成してください。"
+                        message: "招待を作れませんでした。もう一度招待を作ってください。"
                     )
                 } catch {
                     record(error, operation: operation)
@@ -931,7 +931,7 @@ final class PairingViewModel: ObservableObject {
             if isManual {
                 manualCheckCompletedAt = .now
                 manualCheckSucceeded = false
-                manualCheckMessage = "確認を完了できませんでした。画面の案内を確認して、もう一度お試しください。"
+                manualCheckMessage = "確認できませんでした。少し待ってから、もう一度お試しください。"
             }
         }
     }
@@ -939,15 +939,15 @@ final class PairingViewModel: ObservableObject {
     private static func manualCheckMessage(for phase: PairingPhase) -> String {
         switch phase {
         case .awaitingInvitee:
-            return "確認処理が終わりました。まだ相手の参加を待っています。"
+            return "相手はまだ参加していません。"
         case .pendingApproval:
-            return "確認処理が終わりました。まだ、まどを作った人の承認を待っています。"
+            return "まどを作った人の承認をまだ待っています。"
         case .awaitingCompletion:
-            return "確認処理が終わりました。まだ相手のiPhoneでの確認を待っています。"
+            return "相手のiPhoneで完了するのをまだ待っています。"
         case .paired:
-            return "確認処理が終わりました。このまどは接続されています。"
+            return "このまどはつながっています。"
         default:
-            return "確認処理が終わりました。画面に表示されている次の操作へ進んでください。"
+            return "画面の案内に沿って進んでください。"
         }
     }
 
@@ -1061,7 +1061,7 @@ final class PairingViewModel: ObservableObject {
         clearTransientOperationFeedback()
         guard canCreateDeviceRecoveryInvitation else {
             operationErrorMessage =
-                "このiPhoneでは追加コードを作れません。まどを最初に作ったiPhoneで操作してください。"
+                "追加コードは、まどを最初に作ったiPhoneで作れます。"
             return
         }
         guard let api else {
@@ -1283,7 +1283,7 @@ final class PairingViewModel: ObservableObject {
             enteredRecoveryCode = ""
             hasConfirmedRecoveryPhrase = false
             operationCompletionMessage =
-                "iPhone追加の確認を始めました。両方のiPhoneで12語を比べてください。"
+                "2台のiPhoneで、12語が同じか見比べてください。"
         } catch {
             record(error, operation: operation)
         }
@@ -1333,7 +1333,7 @@ final class PairingViewModel: ObservableObject {
                         )
                         current = try persist(current, operation: operation)
                         operationCompletionMessage =
-                            "追加コードの期限が切れました。相手側のまどや既存のiPhoneは解除されていません。必要なら新しいコードを作れます。"
+                            "追加コードの期限が切れました。まどや今使っているiPhoneはそのままです。必要なら、新しいコードを作ってください。"
                     } else if isManual {
                         manualCheckSucceeded = true
                         manualCheckCompletedAt = .now
@@ -1389,7 +1389,7 @@ final class PairingViewModel: ObservableObject {
                     )
                     current = try persist(current, operation: operation)
                     operationCompletionMessage =
-                        "追加コードの期限が切れました。相手側のまどや既存のiPhoneは解除されていません。必要なら新しいコードを作れます。"
+                        "追加コードの期限が切れました。まどや今使っているiPhoneはそのままです。必要なら、新しいコードを作ってください。"
                 } else if isManual {
                     if result.state == "approvedAwaitingCompletion" {
                         current.recoveryApprovalSubmittedAt =
@@ -1401,7 +1401,7 @@ final class PairingViewModel: ObservableObject {
                     manualCheckCompletedAt = .now
                     manualCheckMessage = result.state == "approvedAwaitingCompletion"
                         ? "承認済みです。追加するiPhoneで完了するのを待っています。"
-                        : "まだ12語の確認と承認を待っています。"
+                        : "相手が12語を見比べて承認するのを待っています。"
                 }
                 return
             }
@@ -1422,7 +1422,7 @@ final class PairingViewModel: ObservableObject {
                 if latest.state == "expired" {
                     try await resetLocalPairing(operation: operation)
                     operationCompletionMessage =
-                        "追加を完了できなかったため、このiPhoneの追加だけを取り消しました。接続済みのまどや既存のiPhoneは解除されていません。"
+                        "iPhoneを追加できなかったため、追加を取り消しました。まどや今使っているiPhoneはそのままです。"
                     return
                 }
                 let completed: PairingDeviceRecoveryStatusResult
@@ -1528,11 +1528,11 @@ final class PairingViewModel: ObservableObject {
             } else if result.state == "expired" {
                 try await resetLocalPairing(operation: operation)
                 operationCompletionMessage =
-                    "追加コードの期限が切れたため、このiPhoneの追加だけを取り消しました。接続済みのまどや既存のiPhoneは解除されていません。"
+                    "追加コードの期限が切れたため、追加を取り消しました。まどや今使っているiPhoneはそのままです。"
             } else if isManual {
                 manualCheckSucceeded = true
                 manualCheckCompletedAt = .now
-                manualCheckMessage = "接続済みのiPhoneで12語を確認し、承認してください。"
+                manualCheckMessage = "相手のiPhoneで12語を見比べて、承認してもらってください。"
             }
         } catch {
             record(error, operation: operation)
@@ -1540,7 +1540,7 @@ final class PairingViewModel: ObservableObject {
                 manualCheckSucceeded = false
                 manualCheckCompletedAt = .now
                 manualCheckMessage =
-                    "追加状態を確認できませんでした。接続情報は消さず、もう一度確認できます。"
+                    "iPhoneを追加できたか確かめられませんでした。設定は残っているので、もう一度お試しください。"
             }
         }
     }
@@ -1675,7 +1675,7 @@ final class PairingViewModel: ObservableObject {
         do {
             try await resetLocalPairing(operation: operation)
             operationCompletionMessage =
-                "このiPhoneの追加を取り消しました。接続済みのまどや既存のiPhoneは解除されていません。"
+                "iPhoneの追加を取り消しました。まどや今使っているiPhoneはそのままです。"
         } catch {
             record(error, operation: operation)
         }
@@ -1743,7 +1743,7 @@ final class PairingViewModel: ObservableObject {
                 // a status read must never erase or replace that request.
                 break
             case .unavailable:
-                operationErrorMessage = "設定の復元情報を確認できませんでした。写真画面の設定から診断情報を確認できます。"
+                operationErrorMessage = "まどの設定を読み込めませんでした。困ったときは、設定の「診断情報を見る・送る」からサポートに送ってください。"
             }
         } catch {
             record(error)
@@ -1979,8 +1979,8 @@ final class PairingViewModel: ObservableObject {
             try await resetLocalPairing(operation: operation)
             failedConnectionIssue = nil
             operationCompletionMessage = wasFailedSetup
-                ? "設定を取り消しました。つなぎ方を選び直せます。"
-                : "共有を解除しました。このiPhoneの共有鍵と一時的な届いた写真を削除しました。写真アプリへ保存した写真は残ります。"
+                ? "途中のまどを取り消しました。最初から選び直せます。"
+                : "このまどを終了しました。届いた写真はこのiPhoneから消えましたが、写真アプリに保存した写真は残ります。"
             SharedLog.app.info("pairing", "Pairing cancelled and local keys removed")
         } catch {
             // A transport failure deliberately keeps the exact cancellation
@@ -2732,7 +2732,7 @@ final class PairingViewModel: ObservableObject {
     private static func userFacingMessage(for error: Error) -> String {
         if let retryable = error as? PairingInstallationGuard.RetryableBootstrapError {
             return retryable.errorDescription
-                ?? "共有の状態を一時的に確認できませんでした。もう一度お試しください。"
+                ?? "まどを読み込めませんでした。もう一度お試しください。"
         }
         if let pairingError = error as? PairingError {
             return message(for: pairingError)
@@ -2740,17 +2740,17 @@ final class PairingViewModel: ObservableObject {
         if let catalogError = error as? PrivateWindowCatalogStore.Error {
             switch catalogError {
             case .windowLimitReached:
-                return "初期版では、まどは合計3個までです。"
+                return "まどは全部で\(PrivateWindowCatalogState.maximumProductWindowCount)個までです。"
             case .setupWindowAlreadyExists:
-                return "先に、設定中のまどを完了してください。"
+                return "途中まで作ったまどがあります。先にそちらを完了してください。"
             default:
                 break
             }
         }
         if error is URLError {
-            return "通信を完了できませんでした。接続を確認して、もう一度お試しください。"
+            return "インターネットにつながりませんでした。つながってから、もう一度お試しください。"
         }
-        return "共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
+        return "まどを読み込めませんでした。少し待ってから、もう一度お試しください。"
     }
 
     private nonisolated static func isRetryableBootstrapCompletionError(
@@ -2795,6 +2795,6 @@ final class PairingViewModel: ObservableObject {
 
     private static func message(for error: PairingError) -> String {
         error.errorDescription
-            ?? "共有の処理を完了できませんでした。状態を確認して、もう一度お試しください。"
+            ?? "うまくいきませんでした。少し待ってから、もう一度お試しください。"
     }
 }

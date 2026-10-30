@@ -64,9 +64,9 @@ enum FamilyRecordError: Error, LocalizedError {
     case unavailable, changed, invalid, textTooLong
     var errorDescription: String? {
         switch self {
-        case .unavailable: return "今は共有メモを開けません。まどの接続を確認してください。"
-        case .changed: return "記録または共有先が変わりました。入力を確認してからやり直してください。"
-        case .invalid: return "この記録を読み込めませんでした。別の写真で補うことはありません。"
+        case .unavailable: return "いまはメモを開けません。少し待ってから、もう一度お試しください。"
+        case .changed: return "写真かまどに変更がありました。内容を確かめて、もう一度お試しください。"
+        case .invalid: return "写真とメモを読み込めませんでした。"
         case .textTooLong: return "メモは500文字以内にしてください。"
         }
     }
@@ -160,7 +160,7 @@ enum FamilyRecordPortableFiles {
         date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         func stamp(_ seconds: Double) -> String { date.string(from: Date(timeIntervalSince1970: seconds)) }
         var lines = ["写真 \(index + 1)"]
-        lines.append("写真の追加者: \(photo.authorID == participantID ? "自分" : "相手")")
+        lines.append("写真を追加した人: \(photo.authorID == participantID ? "自分" : "相手")")
         lines.append("写真の追加日: \(stamp(photo.createdAt))")
         if photo.updatedAt > photo.createdAt { lines.append("写真の更新日: \(stamp(photo.updatedAt))") }
         var files: [(name: String, data: Data)] = []
@@ -174,7 +174,7 @@ enum FamilyRecordPortableFiles {
             guard let text = words[note.id] else { throw FamilyRecordError.invalid }
             lines.append("\nメモ \(number + 1)")
             lines.append("書いた人: \(note.authorID == participantID ? "自分" : "相手")")
-            lines.append("記入日: \(stamp(note.createdAt))")
+            lines.append("書いた日: \(stamp(note.createdAt))")
             if note.updatedAt > note.createdAt { lines.append("更新日: \(stamp(note.updatedAt))") }
             lines.append(text)
         }

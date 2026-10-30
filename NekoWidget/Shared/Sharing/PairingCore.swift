@@ -695,47 +695,47 @@ enum PairingError: LocalizedError, Equatable {
         case .apiNotConfigured:
             return "このビルドには共有サーバーが設定されていません。"
         case .invalidInvitationCode:
-            return "招待コードを確認できませんでした。コード全体を貼り付けてください。"
+            return "招待コードが正しくありません。コードを最後まで貼り付けてください。"
         case .invalidDeviceRecoveryCode:
-            return "端末追加コードを確認できませんでした。NWR1.で始まるコード全体を貼り付けてください。"
+            return "追加コードが正しくありません。NWR1.で始まるコードを最後まで貼り付けてください。"
         case .keychainUnavailable:
-            return "共有鍵を安全に保存できませんでした。iPhoneを再起動して、もう一度お試しください。"
+            return "まどの設定を保存できませんでした。iPhoneを再起動して、もう一度お試しください。"
         case .keychainAccessGroupUnavailable:
-            return "このアプリでは共有鍵を利用できません。アプリを更新して、もう一度お試しください。"
+            return "このバージョンでは使えません。アプリを最新にして、もう一度お試しください。"
         case .malformedCredential:
-            return "保存されている共有鍵を確認できません。再招待が必要です。"
+            return "このまどの情報を読み込めませんでした。もう一度招待してください。"
         case .installationChanged:
-            return "アプリの再インストールまたは機種変更を検出しました。安全のため再招待が必要です。"
+            return "アプリの入れ直しかiPhoneの機種変更があったため、もう一度招待からやり直してください。"
         case .invalidServerResponse:
-            return "共有サーバーからの応答を確認できませんでした。"
+            return "うまくつながりませんでした。少し待ってから、もう一度お試しください。"
         case .transcriptMismatch:
-            return "相手の確認情報が一致しません。承認せず、招待をやり直してください。"
+            return "相手の確認の言葉と一致しません。承認せずに、招待をやり直してください。"
         case .unsupportedProtocol:
-            return "この招待は現在のアプリでは利用できません。アプリを更新してください。"
+            return "この招待を使うには、アプリを最新にしてください。"
         case let .requestRejected(status, code, _):
             switch code {
             case "enrollment_expired":
-                return "招待の期限が切れました。新しい招待コードが必要です。"
+                return "招待の期限が切れました。新しい招待コードで、もう一度お試しください。"
             case "invitation_unavailable", "enrollment_unavailable":
-                return "この招待は利用できません。新しい招待コードが必要です。"
+                return "この招待は使えません。新しい招待コードで、もう一度お試しください。"
             case "pairing_cancelled", "sharing_revoked":
-                return "このまどの共有は終了しました。もう一度招待してください。"
+                return "このまどは終了しました。また届け合うには、新しく招待してください。"
             case "invalid_authentication":
-                return "共有の認証を一時的に確認できませんでした。まどは解除せず、時間をおいてもう一度お試しください。"
+                return "いまはまどにつながりません（まどはそのままです）。少し待ってから、もう一度お試しください。"
             case "invalid_enrollment_proof", "invitation_not_found":
-                return "招待コードを確認できませんでした。新しいコードを相手に送ってもらってください。"
+                return "この招待コードは使えません。新しいコードを相手に送ってもらってください。"
             case "invalid_recovery_proof", "invalid_recovery_signature",
                  "device_recovery_not_found", "recovery_already_claimed":
-                return "端末追加コードを確認できませんでした。接続済みの相手から新しいコードを受け取ってください。"
+                return "この追加コードは使えません。相手に新しいコードを作ってもらってください。"
             case "device_recovery_expired", "device_recovery_unavailable", "recovery_unavailable":
-                return "端末追加コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
+                return "追加コードの期限が切れました。相手に新しいコードを作ってもらってください。"
             case "recovery_already_pending":
-                return "以前の端末追加コードがまだ有効です。期限が切れてから、新しいコードを作ってください。"
+                return "前に作った追加コードがまだ使えます。そのコードを使うか、期限が切れてから作り直してください。"
             case "device_recovery_conflict", "recovery_conflict", "invalid_recovery_state",
                  "recovery_target_unavailable", "membership_changed", "key_epoch_changed":
-                return "まどの状態が変わったため端末追加を停止しました。現在の共有は解除せず、状態を確認してください。"
+                return "まどに変更があったため、iPhoneの追加を止めました。まどはそのままです。"
             case "invalid_pairing_state":
-                return "まどの状態が変わりました。状態を確認して、もう一度お試しください。"
+                return "まどに変更がありました。読み込み直して、もう一度お試しください。"
             case "rate_limited":
                 return "操作が続いたため、少し待ってからもう一度お試しください。"
             default:
@@ -743,18 +743,18 @@ enum PairingError: LocalizedError, Equatable {
                     return "操作が続いたため、少し待ってからもう一度お試しください。"
                 }
                 if status >= 500 {
-                    return "共有サーバーが一時的に利用できません。時間をおいて、もう一度お試しください。"
+                    return "いまはつながりにくくなっています。少し待ってから、もう一度お試しください。"
                 }
-                return "共有の処理を完了できませんでした。状態を確認して、もう一度お試しください。"
+                return "うまくいきませんでした。少し待ってから、もう一度お試しください。"
             }
         case .noPendingEnrollment:
-            return "承認待ちの相手はまだいません。"
+            return "まだ相手は参加していません。"
         case .approvalNotConfirmed:
-            return "両方の端末で確認フレーズが同じことを確かめてください。"
+            return "両方の画面で、確認の言葉が同じか確かめてください。"
         case .invalidWindowDisplayName:
-            return "まどの名前は64バイト以内で、改行なしにしてください。"
+            return "まどの名前が長すぎます。短くして、改行は入れないでください。"
         case .stateUnavailable:
-            return "共有の状態を読み込めませんでした。"
+            return "まどを読み込めませんでした。"
         }
     }
 }

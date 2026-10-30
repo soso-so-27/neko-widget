@@ -17,9 +17,9 @@ enum SeasonalMovieExportError: LocalizedError, Equatable, Sendable {
         case .emptyPresentation:
             return "書き出す場面がありません。"
         case .assetMissing:
-            return "使われている写真が見つかりませんでした。"
+            return "ムービーに使った写真が見つかりませんでした。"
         case .mediaNotAvailableOffline:
-            return "このiPhoneにない写真または動画があります。ダウンロード後にもう一度お試しください。"
+            return "iCloudからまだ読み込まれていない写真や動画があります。写真アプリで開いて読み込んでから、もう一度お試しください。"
         case .cannotCreateOutput:
             return "動画の書き出しを始められませんでした。"
         case .encodingFailed:

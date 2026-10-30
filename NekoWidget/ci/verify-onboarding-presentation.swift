@@ -106,7 +106,7 @@ enum OnboardingPresentationVerifier {
 
     private static func verifiesApprovedJapaneseCopy() throws {
         try require(
-            OnboardingPresentationCopy.purposeTitle == "このiPhoneの中の猫を、全部見つけます。"
+            OnboardingPresentationCopy.purposeTitle == "iPhoneの中の猫の写真を、ぜんぶ見つけます。"
                 && OnboardingPresentationCopy.purposeBody == "写真はiPhoneの中だけで探します。外には送りません。",
             "page-one promise changed"
         )
@@ -120,37 +120,37 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.permissionTitleLines == [
-                "このiPhoneの猫の写真や動画を",
-                "端末内で見つけます。"
+                "このiPhoneの中から、",
+                "猫の写真と動画を見つけます。"
             ],
             "Photos permission request changed"
         )
         try require(
             OnboardingPresentationCopy.permissionPrivacyLines(isMediaAvailable: false) == [
-                "・解析はすべてこの端末の中で行います",
-                "・写真や動画を開発者のサーバーへ自動送信しません",
-                "・写真や動画を消したり変更したりしません"
+                "・猫を探すのは、このiPhoneの中だけです",
+                "・写真や動画を、勝手にiPhoneの外へ送りません",
+                "・写真や動画を消したり変えたりしません"
             ],
             "Photos permission privacy promise changed"
         )
         try require(
             OnboardingPresentationCopy.permissionPrivacyLines(isMediaAvailable: true) == [
-                "・解析はすべてこの端末の中で行います",
-                "・共有は別に同意した後、選んだ縮小写真1枚だけを送ります",
-                "・写真や動画の自動送信・削除・変更はしません"
+                "・猫を探すのは、このiPhoneの中だけです",
+                "・まどに届けるのは、自分で選んだ写真だけです（小さくしてから届けます）",
+                "・写真や動画を、勝手に送ったり消したり変えたりしません"
             ],
             "media-enabled Photos permission privacy promise changed"
         )
         try require(
             OnboardingPresentationCopy.homePermissionBody(isMediaAvailable: false)
-                == "解析はこの端末内で行い、写真や動画を開発者のサーバーへ自動送信しません。変更や削除もしません。あとから許可できます。"
+                == "猫を探すのはこのiPhoneの中だけです。写真や動画を勝手に外へ送ったり、消したり変えたりしません。"
                 && OnboardingPresentationCopy.homePermissionBody(isMediaAvailable: true)
-                == "解析はこの端末内で行います。共有は別に同意した後、選んだ縮小写真1枚だけを送ります。写真や動画の自動送信・削除・変更はしません。あとから許可できます。",
+                == "猫を探すのはこのiPhoneの中だけで、写真を勝手に送ったり消したりしません。まどに届けるのは、自分で選んだ写真だけです。",
             "Home Photos permission privacy promise changed"
         )
         try require(
             OnboardingPresentationCopy.permissionLimitedAccessNote
-                == "「すべての写真」がおすすめです。「選択した写真のみ」でも動きます。",
+                == "すべての写真へのアクセスがおすすめです。一部の写真だけでも使えます。",
             "limited Photos access support disappeared"
         )
         try require(
@@ -158,7 +158,7 @@ enum OnboardingPresentationVerifier {
             "Photos permission action changed"
         )
         try require(
-            OnboardingPresentationCopy.permissionSkipAction == "あとで（スキップ）",
+            OnboardingPresentationCopy.permissionSkipAction == "あとで",
             "Photos permission stopped offering the approved skip action"
         )
         try require(
@@ -173,7 +173,7 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.scanBodyLines == [
-                "アプリを開いている間、新しい写真から順に調べます。"
+                "アプリを開いている間、新しい写真から順に探します。"
             ],
             "scan manuscript copy changed"
         )
@@ -190,7 +190,7 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.widgetBody
-                == "見つけた猫写真を、自分のホーム画面でも楽しめます。\n追加はホーム画面で行います。",
+                == "見つけた猫写真を、ホーム画面でも楽しめます。\n置き方は下のとおりです。",
             "Widget guide stopped explaining the Home Screen handoff"
         )
         try require(
@@ -215,7 +215,7 @@ enum OnboardingPresentationVerifier {
             "Widget guide stopped explaining automatic confirmation"
         )
         try require(
-            OnboardingPresentationCopy.widgetAction == "手順を確認した",
+            OnboardingPresentationCopy.widgetAction == "完了",
             "Widget guide primary action changed"
         )
         try require(

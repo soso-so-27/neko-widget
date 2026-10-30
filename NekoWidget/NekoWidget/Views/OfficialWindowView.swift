@@ -118,28 +118,28 @@ struct OfficialWindowStatusPresentation {
         switch kind {
         case .preparing: "公式のまどを準備しています"
         case .stopped: "受け取りをやめました"
-        case .checking: "写真を確認しています…"
-        case .paused: "いまは配信をお休みしています"
-        case .verificationExpired: "新しい配信の確認が必要です"
-        case .photosExpired: "写真の掲載期間が終わりました"
-        case .failed: "写真を確認できませんでした"
-        case .noPublication: "いまは掲載されている写真がありません"
+        case .checking: "写真を読み込んでいます…"
+        case .paused: "いまは写真が届きません"
+        case .verificationExpired: "写真を読み込み直してください"
+        case .photosExpired: "写真の公開が終わりました"
+        case .failed: "写真を読み込めませんでした"
+        case .noPublication: "いまは見られる写真がありません"
         case .imageUnavailable: "写真を表示できません"
-        case .notChecked: "公開中の写真を確認できます"
+        case .notChecked: "どんな写真が届くか見られます"
         }
     }
 
     var detail: String {
         switch kind {
-        case .preparing: "公開する写真の準備ができたら、このまどからお届けします。"
+        case .preparing: "写真の準備ができたら、このまどに届きます。"
         case .stopped: "また楽しみたくなったら、このまどの受け取りを再開できます。"
-        case .checking: "公開中の写真を確認しています。"
-        case .paused: "配信が再開されると、このまどで写真を楽しめます。ほかのまども探せます。"
-        case .verificationExpired: "もう一度確認すると、現在の配信を確認できます。ほかのまども探せます。"
-        case .photosExpired: "この写真の掲載期間は終了しました。新しい写真を確認するか、ほかのまどを探せます。"
-        case .failed, .imageUnavailable: "少し時間をおいて、もう一度確認できます。"
-        case .noPublication: "新しい写真が掲載されると、このまどで受け取れます。"
-        case .notChecked: "受け取りを始める前に、公開中の写真を確認できます。写真の投稿は必要ありません。"
+        case .checking: "少しお待ちください。"
+        case .paused: "また届くようになったら、このまどで見られます。ほかのまども探せます。"
+        case .verificationExpired: "「もう一度確認」を押すと、新しい写真を読み込みます。ほかのまども探せます。"
+        case .photosExpired: "新しい写真を確かめるか、ほかのまどを探してみてください。"
+        case .failed, .imageUnavailable: "少し待ってから、もう一度お試しください。"
+        case .noPublication: "新しい写真が出たら、このまどに届きます。"
+        case .notChecked: "受け取るかどうかは、見てから決められます。自分の写真を投稿する必要はありません。"
         }
     }
 
@@ -311,7 +311,7 @@ struct OfficialWindowEntryCard: View {
         .accessibilityValue([state.isSubscribed ? "受け取り中" : "まだ受け取っていません",
                              photo?.displayCredit(in: store.windowID) ?? status.title]
             .compactMap { $0 }.joined(separator: "。"))
-        .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "まどの内容を確認します")
+        .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "どんな写真か見られます")
         .task {
             guard presentation != .list, !state.isSubscribed, store.endpoint != nil else { return }
             await preview.load(using: previewFeed)
@@ -327,7 +327,7 @@ struct OfficialWindowEntryCard: View {
                 .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "preview")")
                 .accessibilityHidden(true)
         } else if preview.isLoading {
-            ProgressView().accessibilityLabel("写真を確認しています")
+            ProgressView().accessibilityLabel("写真を読み込んでいます")
         } else {
             VStack(spacing: 12) {
                 if refreshFailed || preview.failed {
@@ -405,7 +405,7 @@ struct OfficialWindowView: View {
     private var isChecking: Bool { isRefreshing || (isPreviewing && preview.isLoading) }
     private var hasRefreshFailure: Bool { refreshFailed || (isPreviewing && preview.failed) }
     private var feedbackText: String? {
-        message ?? (isPreviewing && preview.failed ? "公開中の写真を確認できませんでした。もう一度試せます。" : nil)
+        message ?? (isPreviewing && preview.failed ? "写真を読み込めませんでした。もう一度お試しください。" : nil)
     }
     private var currentCatalog: OfficialWindowCatalog? { state.isSubscribed ? state.catalog : preview.content?.catalog }
     private var nextPhotoDeadline: Date? {
@@ -477,7 +477,7 @@ struct OfficialWindowView: View {
             Button("受け取りを続ける", role: .cancel) {}
                 .accessibilityIdentifier("official-window-stop-cancel")
         } message: {
-            Text("このまどからの受け取りと、Widgetへの表示を止めます。あとで受け取りを再開できます。")
+            Text("このまどの写真が届かなくなり、ウィジェットにも出なくなります。あとでまた受け取れます。")
         }
         .task(id: feedbackRevision) {
             guard feedbackIsTransient else { return }
@@ -501,10 +501,10 @@ struct OfficialWindowView: View {
     private var unavailableLinkedPhoto: some View {
         VStack(spacing: 20) {
             if state.isSubscribed && !hasCheckedFeed {
-                ProgressView("写真を確認しています…")
+                ProgressView("写真を読み込んでいます…")
             } else {
                 ContentUnavailableView("この写真は表示できません", systemImage: "photo",
-                                       description: Text(message ?? "「\(store.displayName)」で、いま届いている写真を確認できます。"))
+                                       description: Text(message ?? "「\(store.displayName)」で、いま届いている写真を見られます。"))
                 Button("\(store.displayName)を見る") {
                     showsOverview = true
                     Task { await refresh() }
@@ -561,7 +561,7 @@ struct OfficialWindowView: View {
                     Button {
                         changeSubscription(true)
                     } label: {
-                        Text("このまどを受け取る").frame(maxWidth: .infinity, minHeight: 44)
+                        Text("このまどの写真を受け取る").frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("official-window-subscribe")
@@ -599,7 +599,7 @@ struct OfficialWindowView: View {
                             .accessibilityIdentifier("official-window-stop")
                     }
                 } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }
-                .accessibilityLabel("管理")
+                .accessibilityLabel("その他")
                 .accessibilityIdentifier("official-window-manage")
             }
         }
@@ -612,12 +612,12 @@ struct OfficialWindowView: View {
                     Text(store.displayName).font(.title2.weight(.semibold))
                     Text(store.definition.subtitle)
                     Text(store.definition.catID == nil
-                         ? "運営が選んだ猫の写真が届きます。投稿や友だちの招待は不要です。"
-                         : "この猫の写真を受け取るまどです。新しい写真がないときは、次の掲載を待ちます。")
+                         ? "運営が選んだ猫の写真が届きます。投稿も、友だちの招待もいりません。"
+                         : "この猫の写真が届くまどです。新しい写真がないときは、次の写真が出るまでお待ちください。")
                     Text(store.windowID == "black-cats"
-                         ? "提供元・掲載日は画像で確認できます。毎日、日本時間の0時に新しい1枚へ切り替わります。"
-                         : "提供元・掲載日は写真で確認できます。")
-                    Text("新しい写真が届くと更新します。Widgetへの反映には時間がかかる場合があります。")
+                         ? "写真を開くと、提供元と掲載日が見られます。毎日0時（日本時間）に新しい1枚に変わります。"
+                         : "写真を開くと、提供元と掲載日が見られます。")
+                    Text("新しい写真が届くと、ここに出ます。ウィジェットに出るまで、少し時間がかかることがあります。")
                 }
                 .padding(24)
             }
@@ -640,7 +640,7 @@ struct OfficialWindowView: View {
                     offersWidgetSetup = false
                     showsWidgetGuide = true
                 } label: {
-                    Label("Widgetの置き方", systemImage: "plus.rectangle.on.rectangle")
+                    Label("ウィジェットの置き方", systemImage: "plus.rectangle.on.rectangle")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.bordered)
@@ -650,7 +650,7 @@ struct OfficialWindowView: View {
                     .accessibilityIdentifier("official-window-widget-later")
             } else {
                 Button { showsWidgetGuide = true } label: {
-                    Label("Widgetの置き方", systemImage: "plus.rectangle.on.rectangle")
+                    Label("ウィジェットの置き方", systemImage: "plus.rectangle.on.rectangle")
                         .font(.subheadline)
                         .frame(minHeight: 44)
                 }
@@ -670,10 +670,10 @@ struct OfficialWindowView: View {
                             Text("1. ホーム画面の何もないところを長押しします。")
                             Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
                             Text("3. 置いたウィジェットを長押しして、「ウィジェットを編集」を開きます。")
-                            Text("4. 「表示する写真」で、次の表示元を選びます。")
+                            Text("4. 「表示する写真」で、下のまどを選びます。")
                         } else {
                             Text("1. ホーム画面にある「ねこのまど」のウィジェットを長押しして、「ウィジェットを編集」を開きます。")
-                            Text("2. 「表示する写真」で、次の表示元を選びます。")
+                            Text("2. 「表示する写真」で、下のまどを選びます。")
                         }
                         Label("\(store.displayName) · 公式のまど", systemImage: "pawprint.fill")
                             .font(.headline)
@@ -707,7 +707,7 @@ struct OfficialWindowView: View {
             }
             .accessibilityIdentifier("official-window-widget-placement")
         } else {
-            Picker("ウィジェットの設置状況", selection: $widgetPlacement) {
+            Picker("ウィジェットを置いているか", selection: $widgetPlacement) {
                 ForEach(WidgetPlacement.allCases, id: \.self) { placement in
                     Text(placement.rawValue).tag(placement)
                 }
@@ -813,9 +813,9 @@ struct OfficialWindowView: View {
                 offersWidgetSetup = false
                 stoppedHere = true
                 preview.clear()
-                setFeedback("受け取りをやめました。一部の写真データは削除できませんでした。")
+                setFeedback("受け取りをやめました。一部の写真が残っていることがあります。")
             } else {
-                setFeedback("受け取りの設定を保存できませんでした。もう一度お試しください。")
+                setFeedback("うまく切り替えられませんでした。もう一度お試しください。")
             }
         }
     }
@@ -851,9 +851,9 @@ struct OfficialWindowView: View {
             guard isPreviewing else { return }
             dismissUnavailablePhoto()
             if preview.failed {
-                setFeedback("公開中の写真を確認できませんでした。もう一度試せます。", failed: true)
+                setFeedback("写真を読み込めませんでした。もう一度お試しください。", failed: true)
             } else if interactive {
-                setFeedback(hasSamePublishedPhotos(as: previousPhotos) ? "新しい写真はありませんでした" : "写真を確認しました", transient: true)
+                setFeedback(hasSamePublishedPhotos(as: previousPhotos) ? "新しい写真はありませんでした" : "写真を更新しました", transient: true)
             }
             return
         }
@@ -869,7 +869,7 @@ struct OfficialWindowView: View {
             return
         } catch {
             if store.snapshot().subscriptionID == requestedSubscription {
-                setFeedback("新しい写真を確認できませんでした。少し時間をおいて、もう一度確認できます。", failed: true)
+                setFeedback("新しい写真を読み込めませんでした。少し待ってから、もう一度お試しください。", failed: true)
             }
         }
         state = store.snapshot()
@@ -1033,7 +1033,7 @@ private struct OfficialPhotoDetailView: View {
                 .buttonStyle(.plain)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("\(source.store.displayName)を見る")
-                .accessibilityHint("この猫の写真を確認して、受け取りを選べます")
+                .accessibilityHint("この猫の写真を見て、受け取るか選べます")
                 .accessibilityIdentifier("official-photo-cat-window")
             }
         }

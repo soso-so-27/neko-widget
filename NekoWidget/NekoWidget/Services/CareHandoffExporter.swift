@@ -57,17 +57,17 @@ enum CareHandoffExporter {
                 ]))
             }
             append(cat.name, size: font + 5, bold: true)
-            if cat.photo == nil { append("写真は未設定", size: font - 2) }
+            if cat.photo == nil { append("写真はありません", size: font - 2) }
             for (title, text) in record.commonFields + cat.fields {
                 append(title, size: font - 2, bold: true); append(text, size: font)
             }
             if record.isCareMemo {
-                if !record.includesHealth { append("薬・アレルギーの情報はこの控えに含めていません。飼い主に確認してください。", size: font - 2) }
-                if !record.includesContacts { append("連絡先はこの控えに含めていません。別途確認してください。", size: font - 2) }
-                append("お世話の更新：" + cat.updatedAt.formatted(date: .numeric, time: .omitted), size: font - 2)
+                if !record.includesHealth { append("薬・アレルギーは載せていません。飼い主に聞いてください。", size: font - 2) }
+                if !record.includesContacts { append("連絡先は、このメモには載せていません。", size: font - 2) }
+                append("最後に書いた日：" + cat.updatedAt.formatted(date: .numeric, time: .omitted), size: font - 2)
             }
-            append("作成：" + record.createdAt.formatted(date: .numeric, time: .shortened), size: font - 2)
-            append("控えは自動更新されません。変更があれば新しい控えを受け取ってください。", size: font - 2)
+            append("作った日：" + record.createdAt.formatted(date: .numeric, time: .shortened), size: font - 2)
+            append("このメモは作った時点の内容です。変わったところは飼い主に確かめてください。", size: font - 2)
             let framesetter = CTFramesetterCreateWithAttributedString(body)
             var offset = 0
             while offset < body.length {

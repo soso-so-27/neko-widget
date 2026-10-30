@@ -237,7 +237,7 @@ struct ShowcasePhotoView: View {
                             .padding(.horizontal, 16)
                             .accessibilityIdentifier("showcase-share-best-nine")
                         }
-                        Text("写真を押すと大きく見られます。鉛筆から差し替えられます。")
+                        Text("写真をタップすると大きく見られます。鉛筆のボタンで入れ替えられます。")
                             .font(.footnote)
                             .foregroundStyle(.white.opacity(0.7))
                             .padding(.top, 10)
@@ -558,7 +558,7 @@ struct ShowcasePreparationView: View {
                             .foregroundStyle(.secondary)
                     }
                     if store.hasCorruptManifest {
-                        ContentUnavailableView("写真の設定を読み込めません", systemImage: "exclamationmark.triangle")
+                        ContentUnavailableView("見せる写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
                     } else if entries.isEmpty {
                         emptyState
                     } else {
@@ -587,11 +587,11 @@ struct ShowcasePreparationView: View {
                             }
                         }
                         if allEntries.count > ShowcasePhotoStore.maximumCount {
-                            Text("追加・おすすめの更新は9枚以内で使えます")
+                            Text("追加やおすすめで選び直すには、9枚以下にしてください。")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         if entries.count < allEntries.count {
-                            Text("利用できない写真は表示していません")
+                            Text("表示できない写真は省いています")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
@@ -672,7 +672,7 @@ struct ShowcasePreparationView: View {
                             }
                             return true
                         } catch {
-                            errorMessage = "写真を準備できませんでした。アクセスを確認してください"
+                            errorMessage = "写真を用意できませんでした。写真へのアクセスを確かめてください"
                             return false
                         }
                     }

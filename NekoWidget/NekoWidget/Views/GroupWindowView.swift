@@ -67,9 +67,9 @@ private enum GroupPhotoModeration {
     static func sendMessage(_ verdict: Verdict) -> String? {
         switch verdict {
         case .safe: return nil
-        case .hidden: return "この写真は届けられません。iPhoneがセンシティブな内容と判断しました。"
+        case .hidden: return "センシティブな内容が含まれている可能性があるため、この写真は届けられません。"
         case .checkOff:
-            return "写真を確かめられませんでした。このiPhoneの「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてください。"
+            return "写真を届けるには、「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてください。"
         case .retryLater: return "写真を確かめられませんでした。少し待ってから、もう一度お試しください。"
         }
     }
@@ -77,8 +77,8 @@ private enum GroupPhotoModeration {
     /// Why arrived photos are not shown yet. They wait on the relay until then.
     static func receiveMessage(_ verdict: Verdict) -> String {
         verdict == .checkOff
-            ? "届いた写真の安全確認を待っています。このiPhoneの「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてから、画面を下に引いて更新してください。"
-            : "届いた写真の安全確認を完了できませんでした。少し待ってから、画面を下に引いて更新してください。"
+            ? "届いた写真を見るには、「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにしてから、画面を下に引いて更新してください。"
+            : "届いた写真を、まだ表示できません。少し待ってから、画面を下に引いて更新してください。"
     }
 
     static func check(_ jpeg: Data, with moderation: any MomentModerating) async -> Verdict {
@@ -353,9 +353,9 @@ final class GroupWindowScreenModel: ObservableObject {
     static func deliveryMessage(for error: Error) -> String {
         switch error as? GroupClientError {
         case .some(.offline):
-            return "接続できないため、届けられませんでした。電波のあるところで「もう一度届ける」を押してください。"
+            return "インターネットにつながらず、届けられませんでした。つながったら「もう一度届ける」を押してください。"
         case .some(.unavailable):
-            return "いま届けられませんでした。少し待ってから「もう一度届ける」を押してください。"
+            return "うまく届けられませんでした。少し待ってから「もう一度届ける」を押してください。"
         default:
             return GroupWindowPresentation.message(for: error)
         }
@@ -423,7 +423,7 @@ final class GroupWindowScreenModel: ObservableObject {
         } catch {
             entries = await store.entries(windowID: windowID)
             actionMessage = (error as? LocalizedError)?.errorDescription
-                ?? "お気に入りに追加できませんでした。時間をおいて、もう一度お試しください。"
+                ?? "お気に入りに追加できませんでした。少し待ってから、もう一度お試しください。"
         }
     }
 
@@ -969,7 +969,7 @@ private struct GroupPhotoTile: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(tileLabel)
-        .accessibilityHint("押すと大きく見て、ハートを送れます")
+        .accessibilityHint("大きく表示します。ハートも送れます")
         .accessibilityAction(named: Text("大きく見る"), open)
         .task(id: entry.id) {
             guard !entry.isHidden, let url = await model.imageURL(for: entry) else { return }
@@ -1019,7 +1019,7 @@ struct GroupLibraryDeliverySheet: View {
                 } else if !list.hasLoaded {
                     ProgressView("まどを読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if openWindows.isEmpty {
-                    ContentUnavailableView("届け先のまどがありません", systemImage: "window.vertical.closed",
+                    ContentUnavailableView("届けられるまどがありません", systemImage: "window.vertical.closed",
                         description: Text("まどタブで、まどを作るか、届いた招待リンクから参加してください。"))
                 } else {
                     List(openWindows) { window in
@@ -1181,7 +1181,7 @@ private struct GroupCaptionField: View {
                 Text(message).font(.footnote).foregroundStyle(.orange)
             }
         } header: { Text("ひとこと") }
-          footer: { Text("まどのみんなに届きます（\(GroupPhotoCaption.maximumCharacters)文字・改行\(GroupPhotoCaption.maximumLineBreaks)つまで）。書かなくても届けられます。同じ文が、このiPhoneの写真のメモにも残ります。") }
+          footer: { Text("まどのみんなに届き、このiPhoneの写真のメモにも残ります（\(GroupPhotoCaption.maximumCharacters)文字・改行\(GroupPhotoCaption.maximumLineBreaks)つまで）。書かなくても届けられます。") }
     }
 }
 
@@ -1268,7 +1268,7 @@ private struct GroupPhotoDetail: View {
                             showsRemoveConfirmation = true
                         }
                         if let url = SharingAPIConfiguration.current.supportURL {
-                            Link(destination: url) { Label("問題を問い合わせる", systemImage: "exclamationmark.bubble") }
+                            Link(destination: url) { Label("問い合わせる", systemImage: "exclamationmark.bubble") }
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -1291,7 +1291,7 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("写真アプリにコピーして、お気に入りに入れます。位置情報は付けません。届けた人には知らせません。")
+                Text("写真アプリに保存して、お気に入りに入れます（位置情報は付きません）。届けた人には知らせません。")
             }
             .confirmationDialog(current.map { "\(GroupDisplayName.withSan($0.senderDisplayName))の写真を表示しないようにしますか？" } ?? "",
                                 isPresented: $showsHideConfirmation, titleVisibility: .visible) {
@@ -1304,7 +1304,7 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("このまどで、この人から届いた写真がこのiPhoneで見えなくなります。相手には知らせません。設定の「表示しないようにした人」から戻せます。")
+                Text("この人から届いた写真が、このまどで見えなくなります。相手には知らせず、設定の「表示しないようにした人」から戻せます。")
             }
             .modifier(GroupPhotoSafetyDialogs(windowID: model.windowID, current: current,
                                               reportTarget: $reportTarget,
@@ -1324,7 +1324,7 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("このiPhoneの一覧から消します。写真アプリへ保存した写真と、ほかのメンバーのiPhoneの写真はそのままです。取り消せません。")
+                Text("写真アプリに保存した写真と、ほかのメンバーのiPhoneにあるこの写真は、そのまま残ります。消したあとは元に戻せません。")
             }
         }
         .preferredColorScheme(.dark)
@@ -1431,7 +1431,7 @@ private struct GroupPhotoPage: View {
                     description: Text("このiPhoneでは表示しません。結果は、まどの「メンバー」の「通報への返答」でお知らせします。"))
             } else if entry.isHidden {
                 ContentUnavailableView("この写真は表示しません", systemImage: "eye.slash",
-                    description: Text("iPhoneがセンシティブな内容と判断しました。右上の「…」から、このiPhoneから消せます。"))
+                    description: Text("センシティブな内容が含まれている可能性があります。右上の「…」から消せます。"))
             } else if let url, let image = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: image).resizable().scaledToFit()
                     .accessibilityLabel(entry.isOwn ? "自分が届けた写真" : "\(GroupDisplayName.withSan(entry.senderDisplayName))から届いた写真")
@@ -1545,7 +1545,7 @@ final class GroupWindowListModel: ObservableObject {
             GroupDisplayName.remember(owner)
             // Keep the created window on an invitation-network failure; retrying must not create another window.
             do { _ = try await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision)) }
-            catch { message = "まどは作れました。招待リンクは、まどの画面でもう一度用意できます。" }
+            catch { message = "まどを作りました。招待リンクは、まどの「メンバー」から作れます。" }
             Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
             await load()
             return window
@@ -1716,7 +1716,7 @@ struct GroupWindowListSection: View {
                     NavigationLink {
                         GroupWindowScreen(client: model.client, windowID: entry.windowID)
                     } label: {
-                        KnownWindowCard(entry: entry, subtitle: model.hasLoaded ? "最後に確認したまど" : "")
+                        KnownWindowCard(entry: entry, subtitle: model.hasLoaded ? "前回の内容です" : "")
                     }
                     .buttonStyle(.plain)
                 }
@@ -1733,7 +1733,7 @@ struct GroupWindowListSection: View {
                 } else {
                     // A refresh that failed is not an emergency: say so quietly, with a retry.
                     HStack(spacing: 8) {
-                        Text("いまは最新を確認できません。").font(.footnote).foregroundStyle(.secondary)
+                        Text("いまは新しい内容を読み込めません。").font(.footnote).foregroundStyle(.secondary)
                         Button("もう一度") { Task { await model.load() } }
                             .font(.footnote.weight(.semibold))
                             .disabled(model.isWorking)
@@ -1812,7 +1812,7 @@ struct GroupWindowListSection: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.body.weight(.semibold))
-                Text("抜けたまど・届いた写真を見られます").font(.caption).foregroundStyle(.secondary)
+                Text("抜けたまどです。届いた写真は見られます").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
@@ -2144,10 +2144,10 @@ struct GroupReportSheet: View {
             Form {
                 if let record, record.progress == .received {
                     Section {
-                        Label("受け付けました", systemImage: "checkmark.circle.fill")
+                        Label("通報しました", systemImage: "checkmark.circle.fill")
                             .font(.headline)
                     } footer: {
-                        Text("この写真は、このiPhoneでは表示しません。運営が確かめて、結果をまどの「メンバー」の「通報への返答」でお知らせします。")
+                        Text("この写真は、このiPhoneではもう表示されません。運営が確かめて、結果をまどの「メンバー」→「通報への返答」でお知らせします。")
                     }
                     if let number = record.receiptNumber {
                         Section {
@@ -2173,7 +2173,7 @@ struct GroupReportSheet: View {
                     } header: {
                         Text("理由")
                     } footer: {
-                        Text("この写真の暗号化したコピーだけを運営へ送ります。ひとことは送りません。確認のため 7 日間扱い、そのあと削除します。まどの鍵やほかの写真は送りません。送ると、この写真はこのiPhoneで見えなくなります。")
+                        Text("運営に送るのはこの写真1枚だけで、ひとことやほかの写真は送りません。運営が確かめるために7日間預かり、そのあと削除します。送ると、この写真はこのiPhoneでは見えなくなります。")
                     }
                     if let record, record.progress == .retryable {
                         Section {
@@ -2248,7 +2248,7 @@ struct GroupReportsView: View {
                     }
                     Text(Self.text(record)).font(.footnote).foregroundStyle(.secondary)
                     if let number = record.receiptNumber, record.progress == .received {
-                        Text("受付番号 \(number)")
+                        Text("通報番号 \(number)")
                             .font(.footnote.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -2290,10 +2290,10 @@ struct GroupReportsView: View {
         }
         switch record.progress {
         case .preparing, .sending: return "送っています。"
-        case .retryable: return "送り終わっていません。"
-        case .expired: return "受付の期限が切れました。"
+        case .retryable: return "まだ送れていません。"
+        case .expired: return "時間がたったため、送れませんでした。"
         case .alreadyReported: return "この写真はもう通報しています。"
-        case .authenticationRequired, .unavailable: return "いまは状態を確かめられません。"
+        case .authenticationRequired, .unavailable: return "送れませんでした。"
         case .received: break
         }
         return replyText(record.reply)
@@ -2302,10 +2302,10 @@ struct GroupReportsView: View {
     /// The same words whether a person or the 7-day rule stopped the photo.
     private static func replyText(_ reply: GroupReportReply) -> String {
         switch reply {
-        case .none: return "受け付けました。運営からの返答はまだありません。"
-        case .noAction: return "確認しました。今回は配信を止める対応はしていません。"
-        case .restricted: return "このまどでの配信を止めました。"
-        case .released: return "この通報で止めていた配信を、もとに戻しました。"
+        case .none: return "通報しました。運営からの返答はまだありません。"
+        case .noAction: return "運営が確かめました。今回は、この写真はほかのメンバーには見えたままです。"
+        case .restricted: return "この写真を、このまどで見られないようにしました。"
+        case .released: return "止めていた写真を、また見られるようにしました。"
         case .unknown: return "運営から返答があります。アプリを最新にすると読めます。"
         }
     }
@@ -2316,7 +2316,7 @@ private struct GroupReportReceiptRow: View {
     let number: String
 
     var body: some View {
-        LabeledContent("受付番号") {
+        LabeledContent("通報番号") {
             Text(number).font(.body.monospaced()).textSelection(.enabled)
         }
         .accessibilityElement(children: .combine)

@@ -103,25 +103,25 @@ final class WindowSupportResumeModel: ObservableObject {
             switch error as? WindowSupportResumeError {
             case .needsMembership:
                 needsMembership = true
-                message = "自分の会員プランを確認してください。"
+                message = "このまどを続けるにはPlusが必要です。"
             case .needsRestore:
                 isVerified = false
                 needsRestore = true
-                message = "購入済みの会員プランを確認します。購入し直す必要はありません。"
+                message = "以前に購入したPlusは「購入を復元」で使えます。買い直す必要はありません。"
             case .expired:
                 isVerified = false
-                message = "確認の期限が切れました。更新して、もう一度お試しください。"
+                message = "時間切れになりました。「更新」を押して、もう一度お試しください。"
             case .changed:
                 isVerified = false
-                message = "まどの状態が変わりました。更新して確認してください。"
+                message = "このまどに変更がありました。「更新」を押して、最新の内容を見てください。"
             case .limitReached:
-                message = "利用できるまどの上限に達しています。写真はそのままです。"
+                message = "まどの数が上限に達しています。写真はそのままです。"
             case .unavailable:
                 isVerified = false
-                message = "現在、このまどの再開手続きを利用できません。"
+                message = "いまはこのまどを続けられません。少し待ってから、もう一度お試しください。"
             case .unverified, .none:
                 isVerified = false
-                message = "送信条件を確認できませんでした。再購入せず、時間をおいて更新してください。"
+                message = "このまどを続けられるか確かめられませんでした。買い直さずに、少し待ってから「更新」を押してください。"
             }
         }
     }

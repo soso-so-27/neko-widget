@@ -135,7 +135,7 @@ private struct SeasonalMovieAboutSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("ひとつ前の季節を、このiPhoneで利用できる猫の写真と動画から短くまとめます。")
+                    Text("ひとつ前の季節の猫の写真と動画を、短いムービーにまとめます。")
                         .font(.headline)
 
                     VStack(alignment: .leading, spacing: 14) {
@@ -145,7 +145,7 @@ private struct SeasonalMovieAboutSheet: View {
                         explanationRow("写真が少ない季節は作りません", systemImage: "leaf")
                     }
 
-                    Text("原本はコピーせず、写真や動画を端末の外へ送りません。")
+                    Text("元の写真や動画をコピーしたり、iPhoneの外へ送ったりはしません。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -453,7 +453,7 @@ struct SeasonalMovieView: View {
             stopPreheatingScenes()
         }
         .confirmationDialog(
-            "この作品から外しますか？",
+            "このムービーから外しますか？",
             isPresented: $showsExcludeConfirmation,
             titleVisibility: .visible
         ) {
@@ -472,7 +472,7 @@ struct SeasonalMovieView: View {
             Text("季節のムービーには8場面以上必要です。")
         }
         .alert(
-            "作品を更新できませんでした",
+            "ムービーを更新できませんでした",
             isPresented: Binding(
                 get: { sceneEditErrorMessage != nil },
                 set: { if !$0 { sceneEditErrorMessage = nil } }
@@ -600,7 +600,7 @@ struct SeasonalMovieView: View {
                 VStack(spacing: 10) {
                     if let removedScene {
                         HStack(spacing: 10) {
-                            Text("この作品から外しました")
+                            Text("このムービーから外しました")
                                 .font(.caption)
                             Button("元に戻す") {
                                 restore(removedScene)
@@ -684,7 +684,7 @@ struct SeasonalMovieView: View {
                     .tint(.white)
                 Text("動画を準備しています")
                     .font(.headline)
-                Text("写真や動画は、このiPhoneの中で処理します。")
+                Text("動画はこのiPhoneの中だけで作っています。")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.74))
                 if activePresentation.scenes.contains(where: { $0.mediaKind == .livePhoto }) {
@@ -999,7 +999,7 @@ struct SeasonalMovieView: View {
 
     private func sceneEditMessage(for error: Error) -> String {
         (error as? SeasonalMovieArchiveError)?.errorDescription
-            ?? "作品を更新できませんでした。もう一度お試しください。"
+            ?? "ムービーを更新できませんでした。もう一度お試しください。"
     }
 
     private func exportMessage(for error: Error) -> String {

@@ -128,7 +128,7 @@ enum WidgetManifestReader {
            !PrivateWindowCatalogStore.widgetEntries().contains(where: {
                $0.localWindowID == localWindowID
            }) {
-            return "利用できないまど"
+            return "使えなくなったまど"
         }
         return SharedContainer.familyWidgetWindowDisplayName(localWindowID: localWindowID)
     }
