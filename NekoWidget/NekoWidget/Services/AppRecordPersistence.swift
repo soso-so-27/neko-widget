@@ -1050,6 +1050,8 @@ struct AppRecordSettingsView: View {
     @State private var confirmsRemote = false
     @State private var confirmsMembership = false
     @State private var showsSubscriptionManagement = false
+    @AppStorage(ManagedPreservationView.QuotaTrial.key)
+    private var quotaTrial: ManagedPreservationView.QuotaTrial = .real
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
          persistence: AppRecordPersistence = .shared) {
         _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client, purpose: .account))
@@ -1065,6 +1067,13 @@ struct AppRecordSettingsView: View {
                 Text("写真ライブラリ全体、写真原本、動画は対象ではありません。写真ライブラリの写真選びは、その端末に残します。共有相手には送られません。")
                     .font(.footnote).foregroundStyle(.secondary)
             } header: { Text("記録の保存・復元") }
+            if authentication.isSignedIn,
+               let quota = ManagedPreservationView.shownQuota(authentication.usage?.productQuota, trial: quotaTrial) {
+                Section {
+                    ProductQuotaSummary(quota: quota)
+                } header: { Text("保管できる量") }
+                footer: { Text("詳しい内訳は「以前の保管記録・書き出し・アカウント管理」で見られます。") }
+            }
             if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
             if authentication.accountDeletionState != nil {
                 Section { Text("アカウントの削除状況を確認してください。自動保存は始めません。") }
@@ -1134,6 +1143,10 @@ struct AppRecordSettingsView: View {
         }
         .task { authentication.start() }
         .onDisappear { authentication.stop() }
+        // This screen's sign-in reads membership only; the quota is one more read.
+        .onChange(of: authentication.isSignedIn, initial: true) { _, signedIn in
+            if signedIn { authentication.refreshUsage() }
+        }
         .onChange(of: authentication.membership?.canSave) { _, canSave in
             if canSave == true, persistence.enabled { Task { await persistence.retry() } }
         }

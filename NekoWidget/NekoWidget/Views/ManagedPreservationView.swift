@@ -444,11 +444,16 @@ struct ManagedPreservationView: View {
         footer: { Text("保管した写真のコピー・メモ・記録の量です。iPhoneの写真原本は含みません。") }
     }
 
-    /// The service's product quota, or (test builds) the case being tried.
     private var shownProductQuota: ManagedPreservationUsage.ProductQuota? {
-        if InternalBuildPresentationAvailability.isAvailable, let tried = quotaTrial.quota { return tried }
-        guard let quota = coordinator.usage?.productQuota, quota.configurationStatus == "valid" else { return nil }
-        return quota
+        Self.shownQuota(coordinator.usage?.productQuota, trial: quotaTrial)
+    }
+
+    /// The service's product quota, or (test builds) the case being tried.
+    static func shownQuota(_ real: ManagedPreservationUsage.ProductQuota?,
+                           trial: QuotaTrial) -> ManagedPreservationUsage.ProductQuota? {
+        if InternalBuildPresentationAvailability.isAvailable, let tried = trial.quota { return tried }
+        guard let real, real.configurationStatus == "valid" else { return nil }
+        return real
     }
 
     @ViewBuilder
@@ -484,7 +489,7 @@ struct ManagedPreservationView: View {
     }
 
     /// Over the line: what stopped, what still works, and the way back.
-    private static func overMessage(storage: Bool, records: Bool) -> String? {
+    static func overMessage(storage: Bool, records: Bool) -> String? {
         let what: String
         switch (storage, records) {
         case (true, true): what = "容量と記録の件数の上限"
@@ -496,8 +501,10 @@ struct ManagedPreservationView: View {
     }
 
     /// Test builds: each state of the quota on one iPhone, no requests or records.
-    private enum QuotaTrial: String, CaseIterable, Identifiable {
+    enum QuotaTrial: String, CaseIterable, Identifiable {
         case real, counting, plenty, nearlyFull, storageOver, recordsOver, bothOver, trial
+        /// Shared by this screen and 自動の保存, so a case tried here shows there too.
+        static let key = "debug.preservationQuotaTrial.v1"
         var id: Self { self }
         var title: String {
             switch self {
@@ -580,9 +587,9 @@ struct ManagedPreservationView: View {
         }
     }
 
-    @State private var quotaTrial: QuotaTrial = .real
+    @AppStorage(QuotaTrial.key) private var quotaTrial: QuotaTrial = .real
 
-    private static func capacity(_ bytes: Int64) -> String {
+    static func capacity(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .decimal)
     }
 
@@ -801,6 +808,30 @@ struct ManagedPreservationView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             NavigationLink("復元したツールを開く") { RestoredToolsView() }
+        }
+    }
+}
+
+/// The Plus quota in two lines, for 自動の保存. The bars and the test cases
+/// are in 以前の保管記録 (ManagedPreservationView).
+struct ProductQuotaSummary: View {
+    let quota: ManagedPreservationUsage.ProductQuota
+
+    var body: some View {
+        if let usage = quota.usage {
+            LabeledContent("容量", value: "\(ManagedPreservationView.capacity(usage.storage.usedBytes)) / \(ManagedPreservationView.capacity(usage.storage.limitBytes))")
+                .foregroundStyle(usage.storage.overLimit ? Color.red : Color.primary)
+                .accessibilityIdentifier("app-record-quota-storage")
+            LabeledContent("記録", value: "\(usage.records.saved.formatted()) / \(usage.records.maximumRecords.formatted()) 件")
+                .foregroundStyle(usage.records.overLimit ? Color.red : Color.primary)
+                .accessibilityIdentifier("app-record-quota-records")
+            if let over = ManagedPreservationView.overMessage(storage: usage.storage.overLimit,
+                                                              records: usage.records.overLimit) {
+                Label(over, systemImage: "exclamationmark.circle").font(.footnote)
+            }
+        } else if let policy = quota.policy {
+            Text("Plus は \(ManagedPreservationView.capacity(policy.plus.limitBytes))・記録 \(policy.plus.maximumRecords.formatted()) 件まで保管できます。いま使っている量は、数え終わると表示されます。")
+                .font(.footnote)
         }
     }
 }
