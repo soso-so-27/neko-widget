@@ -16,7 +16,7 @@ enum OfficialWindowConfiguration {
     }
 
     static func definitions(baseFeedURL: URL?,
-                            blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> [PublicWindowDefinition] {
+                            blackCatDailyEnabled: Bool = Version1.isOn) -> [PublicWindowDefinition] {
         let endpoint = validatedEndpoint(baseFeedURL)
         // Keep public feeds on the configured origin and below its catalog directory.
         func publicEndpoint(_ id: String) -> URL? {

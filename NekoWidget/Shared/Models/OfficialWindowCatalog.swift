@@ -12,6 +12,16 @@ enum InternalBuildPresentationAvailability {
     }
 }
 
+/// The 1.0 shape, read by the app and the Widget alike: 写真・まど・アルバム・
+/// ツール, the album of works that arrive, 旅立った日, 公式のまど. Internal
+/// builds show it always (no switch). Public builds keep the shape they have
+/// until 1.0 ships: then `isOn` becomes true, in this one place. What is not
+/// part of 1.0 (the photobook check, test tools) stays behind
+/// InternalBuildPresentationAvailability.
+enum Version1 {
+    static var isOn: Bool { InternalBuildPresentationAvailability.isAvailable }
+}
+
 /// The build-owned registry defines which public windows the app offers.
 /// Unknown but well-formed source IDs remain identifiable without falling back
 /// to the legacy feed; discovery does not create definitions from remote data.
@@ -85,7 +95,7 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
     /// The internal black-cat window changes at 00:00 JST.
     /// Never fall back to yesterday when today's image has not arrived yet.
     func widgetPhotos(at date: Date,
-                      blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> [OfficialCatPhoto] {
+                      blackCatDailyEnabled: Bool = Version1.isOn) -> [OfficialCatPhoto] {
         let available = availablePhotos(at: date)
         if channelID == "black-cats", blackCatDailyEnabled {
             let start = Self.nextBlackCatCutover(after: date).addingTimeInterval(-86_400)
@@ -96,7 +106,7 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
     }
 
     func widgetDeadline(for photo: OfficialCatPhoto,
-                        blackCatDailyEnabled: Bool = InternalBuildPresentationAvailability.isAvailable) -> Date {
+                        blackCatDailyEnabled: Bool = Version1.isOn) -> Date {
         let expiry = min(photo.expiresAt, validUntil)
         if channelID == "black-cats", blackCatDailyEnabled {
             return min(expiry, Self.nextBlackCatCutover(after: photo.publishedAt))

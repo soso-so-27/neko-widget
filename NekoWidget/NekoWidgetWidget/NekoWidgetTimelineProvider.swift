@@ -163,7 +163,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                                       windowDisplayName: store.displayName))
             }
             var refresh = date.addingTimeInterval(60 * 60)
-            if windowID == "black-cats", InternalBuildPresentationAvailability.isAvailable {
+            if windowID == "black-cats", Version1.isOn {
                 refresh = min(refresh, OfficialWindowCatalog.nextBlackCatCutover(after: date))
                 if let deadline = state.catalog?.validUntil, deadline > date {
                     refresh = min(refresh, deadline)
