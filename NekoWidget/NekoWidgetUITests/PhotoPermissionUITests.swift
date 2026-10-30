@@ -936,7 +936,7 @@ final class OfficialWindowUITests: XCTestCase {
             XCTAssertEqual(app.textFields.count, 0, "A failed connection must not offer name sharing")
             XCTAssertFalse(app.staticTexts["このBuildでは写真を保存・送信しません"].exists,
                            "The isolated fixture must reproduce the user's photo-sharing presentation")
-            XCTAssertFalse(app.staticTexts["画面の案内を確認してください"].exists)
+            XCTAssertFalse(app.staticTexts["画面のお知らせを見てください"].exists)
             XCTAssertFalse(app.staticTexts["まどの設定を完了できませんでした"].exists)
             let error = app.staticTexts["pairing-recovery-error"]
             XCTAssertTrue(error.waitForExistence(timeout: 5))
@@ -1066,7 +1066,7 @@ final class OfficialWindowUITests: XCTestCase {
         let scenarios: [(String, String, Bool)] = [
             ("empty", "いまは見られる写真がありません", false),
             ("paused", "いまは写真が届きません", true),
-            ("failure", "写真を確認できませんでした", false),
+            ("failure", "写真を読み込めませんでした", false),
             ("catalog-expiry", "写真を読み込み直してください", true)
         ]
         for largest in [false, true] {
@@ -2510,7 +2510,7 @@ final class SoloMemoriesUITests: XCTestCase {
             let index = fieldOrder.firstIndex(of: name) ?? lastFieldIndex
             let guidance = app.staticTexts.matching(NSPredicate(
                 format: "label ENDSWITH %@ OR label == %@",
-                "を入れると作成できます", "直すところがあります。赤い文字の欄を見てください"
+                "を入れると作れます", "直すところがあります。赤い文字の欄を見てください"
             )).firstMatch
             for _ in 0..<10 {
                 let top = app.navigationBars.firstMatch.frame.maxY + 16
@@ -2872,8 +2872,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(hasCandidate)
         XCTAssertEqual(app.buttons.matching(identifier: "showcase-candidate-photo").count, 8)
         let secondCandidate = app.buttons.matching(identifier: "showcase-candidate-photo").element(boundBy: 1)
-        XCTAssertTrue(candidate.label.contains("1枚目"))
-        XCTAssertTrue(secondCandidate.label.contains("2枚目"))
+        for (index, element) in [candidate, secondCandidate].enumerated() {
+            XCTAssertTrue(element.label.contains("\(index + 1)枚目"))
+        }
         XCTAssertNotEqual(candidate.label, secondCandidate.label)
         // Only one is assigned to this cat. Manual selection still offers the
         // unassigned cat photos, but never the fixture's non-cat favorites.
@@ -3700,8 +3701,8 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 5), .completed)
             }
             XCTAssertFalse(purchase.isEnabled, "Unknown and pending states must not invite another purchase")
-            XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("追加の申し込みはせず")
-                          || app.staticTexts["membership-offer-message"].label.contains("追加の申し込みはしない"))
+            XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("もう一度購入せず")
+                          || app.staticTexts["membership-offer-message"].label.contains("もう一度購入しない"))
             let refresh = app.buttons["membership-offer-refresh"]
             for _ in 0..<5 where !refresh.isHittable { app.swipeUp() }
             XCTAssertTrue(refresh.isHittable)
@@ -3753,7 +3754,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "その後は月額¥980"), object: price)
         XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed)
         XCTAssertEqual(app.staticTexts["membership-offer-trial"].label, "1週間無料")
-        XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("表示内容を確認"))
+        XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("表示を確かめてから"))
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
                        "An old quote must update in place without purchasing or dismissing")
         XCTAssertTrue(purchase.isEnabled)
@@ -3863,7 +3864,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["iCloudの記録について"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["以前の記録"].exists)
         capture("personal-archive-preservation-guide")
-        let editingScope = app.staticTexts["編集と削除"]
+        let editingScope = app.staticTexts["以前の記録を残す"]
         for _ in 0..<5 where !editingScope.isHittable { app.swipeUp() }
         XCTAssertTrue(editingScope.isHittable)
         capture("personal-archive-preservation-scope")
@@ -4274,7 +4275,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 assertAlbumsRoot(in: app)
                 XCTAssertFalse(app.buttons["albums-source-recovery"].exists)
                 XCTAssertFalse(app.buttons.matching(identifier: "albums-source-unavailable")
-                    .matching(NSPredicate(format: "label == %@", "写真の対象を確認")).firstMatch.exists)
+                    .matching(NSPredicate(format: "label == %@", "「写真」タブを開く")).firstMatch.exists)
                 capture("albums-root-standard")
                 openFavorites(in: app)
                 XCTAssertEqual(element("saved-memories-gallery", in: app).value as? String, "お気に入り、9枚",
@@ -4304,7 +4305,7 @@ final class SoloMemoriesUITests: XCTestCase {
                 // when the child's identifier is replaced by the parent.
                 let directRecovery = app.buttons["albums-source-recovery"]
                 let inheritedRecovery = app.buttons.matching(identifier: "albums-source-unavailable")
-                    .matching(NSPredicate(format: "label == %@", "写真の対象を確認")).firstMatch
+                    .matching(NSPredicate(format: "label == %@", "「写真」タブを開く")).firstMatch
                 let albumRecovery = directRecovery.exists ? directRecovery : inheritedRecovery
                 XCTAssertTrue(albumRecovery.waitForExistence(timeout: 10))
                 XCTAssertTrue(albumRecovery.isHittable)
@@ -6117,7 +6118,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                     waitForExpectations(timeout: 5)
                     XCTAssertTrue(delivery.exists)
                 } else {
-                    let title = scenario == "empty" ? "いまは写真がありません" : "写真の控えがありません"
+                    let title = scenario == "empty" ? "いまは写真がありません" : "表示できる写真はありません"
                     XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 10))
                     XCTAssertFalse(app.buttons["family-collection-retry"].exists)
                     let picker = app.buttons["family-window-photo-picker"]
@@ -6479,7 +6480,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         unknown.tap()
         let unknownMessage = app.staticTexts["window-support-message"]
         XCTAssertTrue(unknownMessage.waitForExistence(timeout: 5))
-        XCTAssertTrue(unknownMessage.label.contains("再購入せず"))
+        XCTAssertTrue(unknownMessage.label.contains("買い直さずに"))
         XCTAssertTrue(app.staticTexts["window-support-unverified"].exists)
         XCTAssertFalse(app.buttons["window-support-request"].exists)
         XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
@@ -6559,10 +6560,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(status.label, "届けています")
         attach(app, name: "photo-delivery-progress-sending")
         app.buttons["delivery-progress-fixture-support-required"].tap()
-        XCTAssertEqual(status.label, "このまどへの送信はお休み中です")
+        XCTAssertEqual(status.label, "いまはこのまどに届けられません")
         attach(app, name: "window-support-paused")
         app.buttons["delivery-progress-fixture-support-unverified"].tap()
-        XCTAssertEqual(status.label, "送信条件を確認できません")
+        XCTAssertEqual(status.label, "届けられるか確かめられません")
         XCTAssertTrue(app.staticTexts["写真は残してあり、あとでもう一度試します。買い直す必要はありません。"].exists)
         attach(app, name: "window-support-unverified")
         app.buttons["delivery-progress-fixture-sending"].tap()
@@ -6572,7 +6573,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["delivery-progress-fixture-other-action-count"].label, "別の操作：1回")
         app.buttons["delivery-progress-fixture-waiting"].tap()
         XCTAssertEqual(status.label, "時間がかかっています")
-        XCTAssertTrue(app.staticTexts["写真は保持しています。送り直しは不要です。"].exists)
+        XCTAssertTrue(app.staticTexts["自動でもう一度試すので、送り直さなくて大丈夫です。"].exists)
         attach(app, name: "photo-delivery-progress-waiting")
         otherAction.tap()
         XCTAssertEqual(app.staticTexts["delivery-progress-fixture-other-action-count"].label, "別の操作：2回")

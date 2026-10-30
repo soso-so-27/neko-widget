@@ -37,7 +37,7 @@ enum MomentSharingPresentationVerifier {
             let status = try requireStatus(kind, in: presentation)
             try require(status.cancellableCount == 1 && presentation.cancellableEncryptedDeliveryCount == 1,
                         "a paused send could no longer be cancelled")
-            try require(!(presentation.activitySummary ?? "").contains("再試行待ち"), "support was called a transport retry")
+            try require(!(presentation.activitySummary ?? "").contains("もう一度試す予定"), "support was called a transport retry")
             try require(presentation.photoProgress.first?.id == "same-photo"
                         && presentation.photoProgress.first?.phase == phase,
                         "the support notice lost photo identity")
@@ -281,9 +281,9 @@ enum MomentSharingPresentationVerifier {
         try require(retry.nextRetryAt == date(120), "preparation retry time was lost")
         try require(
             retry.detail.contains("センシティブな内容の警告")
-                && retry.detail.contains("空きができるまで")
-                && retry.detail.contains("再試行")
-                && retry.detail.contains("どの写真もまだ送信していません"),
+                && retry.detail.contains("順番を待っている写真があります")
+                && retry.detail.contains("準備をもう一度試す")
+                && retry.detail.contains("どの写真もまだ届けていません"),
             "mixed preparation reasons were applied inaccurately to the whole group"
         )
         try require(waiting.count == 1, "safety-check wait was hidden")
@@ -297,7 +297,7 @@ enum MomentSharingPresentationVerifier {
             "cancellable plaintext preparations were not counted separately"
         )
         try require(
-            preparing.detail.contains("まだ送信していません"),
+            preparing.detail.contains("まだ届けていません"),
             "preparation copy claimed that a handoff was already sent"
         )
 
@@ -317,15 +317,15 @@ enum MomentSharingPresentationVerifier {
             now: date(112)
         )
         let transient = try requireStatus(.preparationRetryWaiting, in: transientPresentation)
-        try require(transientPresentation.activitySummary == "再試行待ち 1枚"
+        try require(transientPresentation.activitySummary == "もう一度試す予定 1枚"
                     && !transientPresentation.activityNeedsAttention,
                     "automatic preparation retry demanded another user check")
-        try require(presentation.activitySummary?.contains("設定の確認あり") == true
+        try require(presentation.activitySummary?.contains("設定の変更が必要") == true
                     && presentation.activityNeedsAttention,
                     "required system setting disappeared behind an automatic retry summary")
         try require(
-            !transient.detail.contains("設定でオン")
-                && transient.detail.contains("再試行"),
+            !transient.detail.contains("センシティブな内容の警告")
+                && transient.detail.contains("準備をもう一度試す"),
             "transient analyzer failure was misrepresented as a disabled setting"
         )
     }
@@ -386,17 +386,17 @@ enum MomentSharingPresentationVerifier {
         let confirming = try requireStatus(.confirming, in: presentation)
         let unknown = try requireStatus(.resultUnknown, in: presentation)
         let failed = try requireStatus(.failed, in: presentation)
-        try require(presentation.activitySummary?.contains("結果不明 1枚") == true
-                    && presentation.activitySummary?.contains("送信できなかった 1枚") == true,
+        try require(presentation.activitySummary?.contains("届いたか分からない 1枚") == true
+                    && presentation.activitySummary?.contains("届けられなかった 1枚") == true,
                     "unknown delivery was conflated with a definite unsent failure")
         try require(waiting.cancellableCount == 2, "prepared sends stopped being cancellable")
         try require(waiting.retryDeferredCount == 2, "mixed send retries were hidden")
         try require(
-            waiting.detail.contains("配信受付をまだ確認できていない"),
+            waiting.detail.contains("届いたかまだ分からない写真があります"),
             "disabled runtime was presented as a completed delivery"
         )
         try require(
-            waiting.detail.contains("時間をおいて再試行"),
+            waiting.detail.contains("時間をおいて自動でもう一度試します"),
             "a general retry was incorrectly collapsed into the runtime-disabled reason"
         )
         try require(sending.count == 2, "reserved and uploaded sends were not grouped")
@@ -408,13 +408,14 @@ enum MomentSharingPresentationVerifier {
             "ambiguous commit did not explain its non-cancellable state"
         )
         try require(
-            unknown.detail.contains("届かなかったとは断定できません")
-                && unknown.detail.contains("削除対象"),
+            unknown.detail.contains("届いている場合もある")
+                && unknown.detail.contains("自動では送り直さず")
+                && unknown.detail.contains("用意したコピーは削除します"),
             "expired commit ambiguity was presented as an unsent failure"
         )
         try require(
-            failed.detail.contains("今後送信せず")
-                && failed.detail.contains("削除対象"),
+            failed.detail.contains("自動では送り直しません")
+                && failed.detail.contains("用意したコピーは削除"),
             "failed metadata did not truthfully describe terminal cleanup"
         )
         try require(
@@ -426,7 +427,7 @@ enum MomentSharingPresentationVerifier {
             "committed outbox did not become the latest server acceptance"
         )
         try require(
-            presentation.latestServerAcceptance?.detail.contains("受取・閲覧確認ではありません")
+            presentation.latestServerAcceptance?.detail.contains("相手のiPhoneに届いたか、見たかどうかは、まだ分かりません")
                 == true,
             "server acceptance was presented as recipient confirmation"
         )
@@ -455,30 +456,30 @@ enum MomentSharingPresentationVerifier {
         let waiting = try requireStatus(.waiting, in: presentation)
         try require(quota.count == 1 && waiting.count == 2,
                     "quota was mixed with transport or an old generic error")
-        try require(waiting.title.contains("送信できていません"),
+        try require(waiting.title.contains("まだ届けられていません"),
                     "an existing failed send was still presented as ordinary initial waiting")
         try require(quota.quotaResetAt == date(86_400) && quota.nextRetryAt == date(86_400),
                     "quota reset time was replaced by a transport retry time")
-        try require(quota.title.contains("送信上限") && quota.detail.contains("まだ送信していません"),
+        try require(quota.title.contains("届けられる上限") && quota.detail.contains("まだ届けていません"),
                     "daily quota was presented as ordinary progress or accepted delivery")
         try require(quota.cancellableCount == 1 && presentation.cancellableEncryptedDeliveryCount == 3,
                     "quota waiting lost cancellation or ordinary waiting")
         try require(presentation.latestServerAcceptance?.stableID == "accepted",
                     "quota waiting changed an accepted delivery")
-        try require(presentation.activitySummary == "再試行待ち 3枚"
+        try require(presentation.activitySummary == "もう一度試す予定 3枚"
                     && !presentation.activityNeedsAttention,
                     "scheduled retries demanded user action or included accepted photos")
         let quotaOnly = MomentSharingPresentationPolicy.make(
             preparations: [], deliveries: [inputs[0]], now: date(210)
         )
-        try require(quotaOnly.activitySummary == "送信上限で待機 1枚"
+        try require(quotaOnly.activitySummary == "上限のため待っています 1枚"
                     && !quotaOnly.activityNeedsAttention,
                     "daily limit disappeared or was presented as user-action failure")
         let mixedWaiting = MomentSharingPresentationPolicy.make(
             preparations: [], deliveries: [inputs[1], delivery("fresh", "space-a", .prepared, updatedAt: 205)],
             now: date(210)
         )
-        try require(mixedWaiting.activitySummary == "再試行待ち 1枚・送信待ち 1枚",
+        try require(mixedWaiting.activitySummary == "もう一度試す予定 1枚・順番待ち 1枚",
                     "a mixed waiting group called an untouched photo a failed retry")
         let afterReset = MomentSharingPresentationPolicy.make(
             preparations: [], deliveries: inputs, now: date(86_401)
@@ -595,8 +596,8 @@ enum MomentSharingPresentationVerifier {
             "recipient device arrival was collapsed into server acceptance"
         )
         try require(
-            arrived.title.contains("端末へ到着")
-                && arrived.detail.contains("閲覧・既読の確認ではありません"),
+            arrived.title.contains("相手に届きました")
+                && arrived.detail.contains("見たかどうかは分かりません"),
             "recipient arrival copy implied that the photo was viewed or read"
         )
         try require(
@@ -609,7 +610,7 @@ enum MomentSharingPresentationVerifier {
         try require(
             acceptedOnly.deliveryState == .serverAccepted
                 && !acceptedOnly.hasReceivedHeart
-                && acceptedOnly.detail.contains("到着、閲覧、既読はまだ確認していません"),
+                && acceptedOnly.detail.contains("相手のiPhoneに届いたかは、まだ分かりません"),
             "server acceptance or its per-photo heart state was misrepresented"
         )
         try require(
@@ -721,7 +722,7 @@ enum MomentSharingPresentationVerifier {
             now: date(610)
         )
         try require(presentation.outcomeCount == 4, "terminal outcomes were collapsed")
-        try require(presentation.activitySummary == "送信しなかった 4枚"
+        try require(presentation.activitySummary == "届けなかった 4枚"
                     && presentation.activityNeedsAttention,
                     "preparation outcomes were hidden or called delivery failures")
         try require(
@@ -734,8 +735,8 @@ enum MomentSharingPresentationVerifier {
         }
         try require(sensitive.count == 2, "same-reason outcomes lost their count")
         try require(
-            sensitive.detail.contains("送信せず")
-                && sensitive.detail.contains("一時データを削除"),
+            sensitive.detail.contains("届けませんでした")
+                && sensitive.detail.contains("用意したコピーは削除します"),
             "terminal outcome did not state that no send occurred and bytes were removed"
         )
         try require(presentation.hasActivity, "terminal outcomes were hidden")

@@ -351,15 +351,15 @@ struct MomentOutgoingOutcomeGroupPresentation: Equatable, Identifiable, Sendable
     var detail: String {
         switch reason {
         case .sensitiveContent:
-            "センシティブな内容の可能性があるため、届けませんでした。"
+            "センシティブな内容の可能性があるため、届けませんでした。届けるために用意したコピーは削除します。"
         case .invalidPhoto:
-            "写真をうまく準備できなかったため、届けませんでした。"
+            "写真をうまく準備できなかったため、届けませんでした。届けるために用意したコピーは削除します。"
         case .photoTooLarge:
-            "写真が大きすぎて、届けられませんでした。"
+            "写真が大きすぎて、届けられませんでした。届けるために用意したコピーは削除します。"
         case .preparationExpired:
-            "準備に時間がかかりすぎたため、届けませんでした。"
+            "準備に時間がかかりすぎたため、届けませんでした。届けるために用意したコピーは削除します。"
         case .preparationFailed:
-            "途中で止まったため、届けませんでした。もう一度お試しください。"
+            "途中で止まったため届けず、届けるために用意したコピーは削除します。もう一度お試しください。"
         }
     }
 }
@@ -474,12 +474,12 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
         case .confirming:
             return "届いたか確かめています。終わるまでは取り消せません。"
         case .resultUnknown:
-            return "届いたかどうか分かりませんでした。届いている場合もあるため、自動では送り直しません。"
+            return "届いたかどうか分かりませんでした。届いている場合もあるため自動では送り直さず、届けるために用意したコピーは削除します。"
         case .failed:
             if isSharedPhotoCapacityBlocked {
                 return "このまどに残せる写真・メモがいっぱいです。今回の写真は届けていません（これまでの写真は残っています）。"
             }
-            return "届けられませんでした。必要なら、もう一度写真を選んでください。"
+            return "届けられませんでした（自動では送り直しません）。届けるために用意したコピーは削除するので、必要ならもう一度写真を選んでください。"
         }
     }
 }
@@ -495,9 +495,9 @@ struct MomentLatestServerAcceptancePresentation: Equatable, Sendable {
 
     var detail: String {
         if let recipientCount {
-            return "\(recipientCount)人に届けました。相手が見たかどうかは分かりません。"
+            return "\(recipientCount)人に届けました。相手のiPhoneに届いたか、見たかどうかは、まだ分かりません。"
         }
-        return "届けました。相手が見たかどうかは分かりません。"
+        return "届けました。相手のiPhoneに届いたか、見たかどうかは、まだ分かりません。"
     }
 }
 

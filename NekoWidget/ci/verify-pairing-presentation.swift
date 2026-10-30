@@ -100,7 +100,7 @@ enum PairingPresentationVerifier {
         )
         guard unavailable.title == "まどを読み込めません",
               unavailable.detail == "一時的な確認エラー",
-              unavailable.retryButtonTitle == "もう一度確認する"
+              unavailable.retryButtonTitle == "もう一度読み込む"
         else {
             throw PairingPresentationVerificationError.failed(
                 "Unexpected temporarily unavailable guidance"
@@ -109,7 +109,7 @@ enum PairingPresentationVerifier {
 
         let consent = PairingAvailabilityPresentation.consentRequired
         guard consent.title == "相手とつながっています",
-              consent.detail.contains("同意を更新"),
+              consent.detail.contains("新しい内容を読んで同意"),
               consent.retryButtonTitle == nil
         else {
             throw PairingPresentationVerificationError.failed(
