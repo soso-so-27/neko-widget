@@ -1,10 +1,8 @@
 import Foundation
 import SwiftUI
 
-/// Keeps 「この子のこと」 on this iPhone. A new, separate file: it never
-/// rewrites the cat-recognition state or any tool record. Until the backup
-/// owner adds `CatCare` to the app record dataset, it lives in Application
-/// Support and is not part of 「保存」.
+/// Keeps 「この子のこと」 on this iPhone. The live dataset pointer also
+/// selects restored records, without rewriting cat-recognition or tool data.
 @MainActor
 final class CatCareStore: ObservableObject {
     static let shared = CatCareStore()
@@ -15,14 +13,29 @@ final class CatCareStore: ObservableObject {
     /// store does not save, so their data is never overwritten.
     @Published private(set) var unreadableCatCount = 0
 
-    private let fileURL: URL?
+    private let directoryOverride: URL?
+    private var loadedURL: URL?
+    private var datasetObserver: NSObjectProtocol?
+    private var fileURL: URL? {
+        if let directoryOverride { return directoryOverride.appendingPathComponent("state.json") }
+        #if os(iOS)
+        return AppRecordDataset.directory("CatCare").appendingPathComponent("state.json")
+        #else
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("CatCare/state.json")
+        #endif
+    }
 
     init(directory: URL? = nil) {
-        let base = directory ?? FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("CatCare", isDirectory: true)
-        fileURL = base?.appendingPathComponent("state.json")
+        directoryOverride = directory
         reload()
+        #if os(iOS)
+        if directory == nil {
+            datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.reload() }
+            }
+        }
+        #endif
     }
 
     var canSave: Bool { state != nil && loadError == nil && unreadableCatCount == 0 }
@@ -32,6 +45,11 @@ final class CatCareStore: ObservableObject {
             loadError = "この子のことを保存する場所を用意できませんでした。"
             return
         }
+        loadedURL = fileURL
+        #if os(iOS)
+        do { try AppRecordDataset.requirePreviouslyPresentManifest("CatCare/state.json", at: fileURL) }
+        catch { state = nil; loadError = "この子のことを読み込めませんでした。記録は消していません。"; return }
+        #endif
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             state = CatCareState()
             loadError = nil
@@ -39,7 +57,7 @@ final class CatCareStore: ObservableObject {
             return
         }
         do {
-            let result = try CatCareDecoding.decode(Data(contentsOf: fileURL))
+            let result = try CatCareDecoding.decode(AppRecordJSON.read(fileURL))
             state = result.state
             unreadableCatCount = result.unreadableCatCount
             loadError = nil
@@ -60,14 +78,19 @@ final class CatCareStore: ObservableObject {
 
     @discardableResult
     func update(_ change: (inout CatCareState) -> Void) -> Bool {
+        guard loadedURL == fileURL else { reload(); return false }
         guard canSave, var next = state, let fileURL else { return false }
         let previous = next
         let expected = next.mutationRevision
         change(&next)
         guard next != state else { return true }
         do {
+            #if os(iOS)
+            AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+            try AppRecordDataset.requireWritable(fileURL)
+            #endif
             if FileManager.default.fileExists(atPath: fileURL.path) {
-                let onDisk = try CatCareDecoding.decode(Data(contentsOf: fileURL))
+                let onDisk = try CatCareDecoding.decode(AppRecordJSON.read(fileURL))
                 guard onDisk.state.mutationRevision == expected else {
                     reload()
                     return false
@@ -79,12 +102,15 @@ final class CatCareStore: ObservableObject {
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 #if os(iOS)
-            try CatCareDecoding.encode(next).write(
-                to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try AppRecordJSON.write(CatCareDecoding.encode(next), to: fileURL,
+                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
 #else
             try CatCareDecoding.encode(next).write(to: fileURL, options: .atomic)
 #endif
             state = next
+            #if os(iOS)
+            AppRecordDataset.committed(fileURL)
+            #endif
             didSave?(previous, next)
             return true
         } catch {
@@ -177,10 +203,14 @@ final class CatCareStore: ObservableObject {
 
     /// Keeps an app-owned copy so the photo survives Photos deletions.
     func savePhoto(_ jpeg: Data, sourceAssetID: String?, origin: CatCarePhotoRef.Origin) -> CatCarePhotoRef? {
-        guard let directory = fileURL?.deletingLastPathComponent().appendingPathComponent("photos", isDirectory: true)
+        guard loadedURL == fileURL, let directory = fileURL?.deletingLastPathComponent()
         else { return nil }
         let name = UUID().uuidString.lowercased() + ".jpg"
         do {
+            #if os(iOS)
+            AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+            try AppRecordDataset.requireWritable(directory.appendingPathComponent(name))
+            #endif
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 #if os(iOS)
             try jpeg.write(to: directory.appendingPathComponent(name),
@@ -196,6 +226,8 @@ final class CatCareStore: ObservableObject {
 
     func photoURL(_ ref: CatCarePhotoRef) -> URL? {
         guard !ref.fileName.contains("/"), ref.fileName.hasSuffix(".jpg") else { return nil }
+        if let flat = fileURL?.deletingLastPathComponent().appendingPathComponent(ref.fileName),
+           FileManager.default.fileExists(atPath: flat.path) { return flat }
         return fileURL?.deletingLastPathComponent()
             .appendingPathComponent("photos", isDirectory: true)
             .appendingPathComponent(ref.fileName)

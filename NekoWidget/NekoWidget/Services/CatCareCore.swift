@@ -542,6 +542,33 @@ enum CatCareLostCat {
 // MARK: - Reading a file where one broken cat must not hide the others
 
 enum CatCareDecoding {
+    static func backupState(_ data: Data) throws -> CatCareState {
+        let result = try decode(data)
+        guard result.unreadableCatCount == 0, result.state.mutationRevision >= 0,
+              Set(result.state.cats.map(\.catID)).count == result.state.cats.count else { throw CocoaError(.fileReadCorruptFile) }
+        return result.state
+    }
+    static func portable(_ data: Data, deviceID: String? = nil) throws -> Data {
+        var state = try backupState(data)
+        if let deviceID { state.deviceID = deviceID }
+        for i in state.cats.indices {
+            state.cats[i].facePhoto?.value?.sourceAssetID = nil
+            state.cats[i].bodyPhoto?.value?.sourceAssetID = nil
+            for j in state.cats[i].vaccinations.indices { state.cats[i].vaccinations[j].proof?.sourceAssetID = nil }
+        }
+        return try encode(state)
+    }
+    static func backupPhotoNames(_ data: Data) throws -> Set<String> {
+        let state = try backupState(data)
+        let names = state.cats.flatMap { cat in
+            [cat.facePhoto?.value?.fileName,cat.bodyPhoto?.value?.fileName].compactMap { $0 }
+                + cat.vaccinations.compactMap { $0.proof?.fileName }
+        }
+        guard names.allSatisfy({ $0.hasSuffix(".jpg") && UUID(uuidString: String($0.dropLast(4))) != nil }) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return Set(names)
+    }
     private struct Lenient: Decodable {
         var schemaVersion: Int
         var mutationRevision: Int

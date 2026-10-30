@@ -71,6 +71,7 @@ notebook_common=(
   NekoWidget/Services/FamilyNotebookCore.swift NekoWidget/Services/FamilyNotebookStore.swift
 )
 xcrun --sdk macosx swiftc -parse-as-library "${notebook_common[@]}" \
+  NekoWidget/Services/FamilyNotebookBackup.swift \
   ci/verify-family-notebook.swift -o "$RUNNER_TEMP/verify-family-notebook"
 "$RUNNER_TEMP/verify-family-notebook"
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" "${notebook_common[@]}" \

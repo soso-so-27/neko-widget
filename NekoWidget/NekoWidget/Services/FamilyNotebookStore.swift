@@ -21,7 +21,7 @@ final class FamilyNotebookStore: @unchecked Sendable {
     var localDirectory: URL { directory }
     var localDeviceID: String { deviceID }
 
-    private struct State: Codable, Equatable {
+    struct State: Codable, Equatable {
         var schemaVersion = 1
         var familyID: UUID
         var revision: UInt64 = 0
@@ -291,12 +291,15 @@ final class FamilyNotebookStore: @unchecked Sendable {
         if next != original {
             guard original.revision < UInt64.max else { throw FamilyNotebookError.clockOverflow }
             next.revision = original.revision + 1
-            try validate(next)
+            try Self.validate(next, familyID: familyID)
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
             let bytes = try encoder.encode(next)
             // A writer must either throw before commit (preserve the old file),
             // or commit atomically and return. Production uses that contract.
             try write(bytes, stateURL)
+            #if os(iOS)
+            AppRecordDataset.committed(stateURL)
+            #endif
         }
         return result
     }
@@ -319,11 +322,11 @@ final class FamilyNotebookStore: @unchecked Sendable {
         let state: State
         do { state = try decoder.decode(State.self, from: bytes) }
         catch { throw FamilyNotebookError.corruptStorage }
-        try validate(state)
+        try Self.validate(state, familyID: familyID)
         return state
     }
 
-    private func validate(_ state: State) throws {
+    static func validate(_ state: State, familyID: UUID) throws {
         guard [1, 2].contains(state.schemaVersion) else { throw FamilyNotebookError.unsupportedSchema }
         guard (state.schemaVersion == 1 && state.sharingEnded == nil)
                 || (state.schemaVersion == 2 && state.sharingEnded == true)

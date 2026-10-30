@@ -100,7 +100,8 @@ struct ToolBackupIndex: Codable, Equatable, Sendable {
     static let manifests = ["CareHandoff": "plan.json", "EvacuationPreparation": "plan.json",
         "VeterinaryVisits": "state.json", "ShowcasePhotos": "selected.json",
         "LostCatDrafts": "drafts.json", "CatPreparedness": "records.json",
-        "PhotoMemoryNotes": "state.json", "CatIdentity": "state.json"]
+        "PhotoMemoryNotes": "state.json", "CatIdentity": "state.json",
+        "CatCare": "state.json", "FamilyNotebook": "state.json"]
     // Permanent wire bits; alphabetical insertion must never renumber old v4.
     static let toolBits = ["CareHandoff": 1, "CatIdentity": 2, "CatPreparedness": 4,
         "EvacuationPreparation": 8, "LostCatDrafts": 16, "PhotoMemoryNotes": 32,
@@ -434,6 +435,8 @@ enum ToolBackupFiles {
         try? write(bytes, to: folder.appendingPathComponent(child.snapshotID.uuidString + ".json"))
     }
     static func manifestPhotoNames(tool: String, data: Data) throws -> Set<String> {
+        if tool == "CatCare" { return try CatCareDecoding.backupPhotoNames(data) }
+        if tool == "FamilyNotebook" { _ = try FamilyNotebookBackup.decode(data); return [] }
         if tool == "PhotoMemoryNotes" {
             return Set(try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: data).notes.values.compactMap(\.photoFile))
         }
@@ -442,6 +445,13 @@ enum ToolBackupFiles {
             return Set(try JSONDecoder().decode(Visits.self, from: data).visits.flatMap { $0.entries.compactMap(\.photoFile) })
         }
         return photoNames(try JSONSerialization.jsonObject(with: data))
+    }
+    static func sourcePhotoURL(tool: String, directory: URL, name: String) -> URL {
+        let flat = directory.appendingPathComponent(name)
+        if tool == "CatCare", !FileManager.default.fileExists(atPath: flat.path) {
+            return directory.appendingPathComponent("photos").appendingPathComponent(name)
+        }
+        return flat
     }
     struct Saved: Codable, Identifiable, Sendable {
         var id: UUID { index.snapshotID }
@@ -609,7 +619,8 @@ enum ToolBackupFiles {
                 if indexVersion == 4, name.hasSuffix(".jpg"), let reusable = reusableByPath[path], reusable.sourceSnapshotID != nil {
                     files.append(reusable); continue
                 }
-                let data = name == manifest ? metadata : try read(toolDirectory.appendingPathComponent(name), maximum: 20 * 1024 * 1024)
+                let sourceFile = name.hasSuffix(".jpg") ? sourcePhotoURL(tool: tool, directory: toolDirectory, name: name) : toolDirectory.appendingPathComponent(name)
+                let data = name == manifest ? metadata : try read(sourceFile, maximum: 20 * 1024 * 1024)
                 let count = name.hasSuffix(".jpg") ? 1 : (data.count + ToolBackupIndex.chunkSize - 1) / ToolBackupIndex.chunkSize
                 let hash = ToolBackupIndex.hash(data)
                 if indexVersion >= 3 || name.hasSuffix(".jpg"), let reusable = reusableByPath[path],
@@ -618,7 +629,7 @@ enum ToolBackupFiles {
                 let target = destination.appendingPathComponent(path)
                 if consumePreparedPhotos && name.hasSuffix(".jpg") {
                     try protect(target.deletingLastPathComponent())
-                    try FileManager.default.moveItem(at: toolDirectory.appendingPathComponent(name), to: target)
+                    try FileManager.default.moveItem(at: sourceFile, to: target)
                 } else { try write(data, to: target) }
             }
         }
@@ -1178,6 +1189,11 @@ enum ToolBackupTransfer {
                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
         let checkpoint = try await client.captureSessionCheckpoint()
         guard try await client.sessionOwnerID() == saved.owner else { throw ManagedPreservationError.staleSession }
+        let usage = try await client.usage()
+        let additions = Set(saved.index.files.map { String($0.path.split(separator: "/")[0]) }).intersection(["CatCare", "FamilyNotebook"])
+        guard additions.isEmpty || additions.isSubset(of: Set(usage.toolSnapshots?.supportedTools ?? [])) else {
+            throw ManagedPreservationError.servicePaused
+        }
         let pieces = try ToolBackupFiles.preparedParts(saved)
         let attemptURL = ToolBackupFiles.directory(saved.id).appendingPathComponent("attempt.json")
         var sent = try ToolBackupFiles.sent(saved)
@@ -1189,7 +1205,6 @@ enum ToolBackupTransfer {
                 from: ToolBackupFiles.read(metadataBatchURL, maximum: 12 * 1024 * 1024))
             try await finishMetadataBatch(batch, saved: saved, pieces: pieces, client: client, checkpoint: checkpoint, sent: &sent, buckets: &buckets)
         }
-        let usage = try await client.usage()
         if saved.index.version >= 2 {
             guard let support = usage.toolSnapshots, support.maximumIndexVersion >= saved.index.version, support.strictPartDeletion else {
                 throw ManagedPreservationError.servicePaused
@@ -1432,6 +1447,8 @@ enum ToolBackupValidation {
                 let path = tool + "/" + name; try ToolBackupIndex.validatePath(path); referenced.insert(path)
             }
             switch tool {
+            case "CatCare": _ = try CatCareDecoding.backupState(data)
+            case "FamilyNotebook": _ = try FamilyNotebookBackup.decode(data)
             case "CareHandoff": try decoder.decode(CareHandoffPlan.self, from: data).validate()
             case "EvacuationPreparation": try decoder.decode(EvacuationPlan.self, from: data).validate()
             case "VeterinaryVisits": _ = try await VeterinaryVisitStore(directory: root.appendingPathComponent(tool)).visits()

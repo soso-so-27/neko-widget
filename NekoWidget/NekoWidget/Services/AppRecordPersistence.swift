@@ -142,7 +142,16 @@ enum AppRecordDataset {
     }
     /// A corrupt pointer must not silently fall back to a fresh empty dataset.
     static func directory(_ name: String) -> URL {
-        do { return try root().appendingPathComponent(name, isDirectory: true) }
+        do {
+            let selected = try root().appendingPathComponent(name, isDirectory: true)
+            // Existing datasets predate CatCare. Until the first new capture,
+            // keep using that original store without copying or deleting it.
+            if name == "CatCare", !FileManager.default.fileExists(atPath: selected.appendingPathComponent("state.json").path) {
+                let original = support.appendingPathComponent(name, isDirectory: true)
+                if FileManager.default.fileExists(atPath: original.appendingPathComponent("state.json").path) { return original }
+            }
+            return selected
+        }
         catch { return control.appendingPathComponent("unavailable/" + name, isDirectory: true) }
     }
     static func identityURL() -> URL? {
@@ -161,7 +170,8 @@ enum AppRecordDataset {
         let managed = ToolBackupIndex.manifests.keys.contains { path.hasPrefix(legacy + $0 + "/") }
             || path.hasPrefix(datasets.path + "/")
             || path.hasPrefix(control.appendingPathComponent("unavailable").path + "/")
-        if managed && !path.hasPrefix(root) { throw ToolBackupError.changed }
+        let retainedCare = directory("CatCare").standardizedFileURL.path + "/"
+        if managed && !path.hasPrefix(root) && !path.hasPrefix(retainedCare) { throw ToolBackupError.changed }
         if url.lastPathComponent == CatHouseholdIdentityStore.filename,
            let active = try pointer(), active.version == 1 { throw ToolBackupError.changed }
     }
@@ -201,6 +211,7 @@ enum AppRecordDataset {
     static func fingerprint() throws -> String {
         writeLock.lock(); defer { writeLock.unlock() }
         _ = try root()
+        try FamilyNotebookBackup.refresh()
         var digest = SHA256()
         for (tool, manifest) in ToolBackupIndex.manifests.sorted(by: { $0.key < $1.key }) {
             let url = tool == "CatIdentity" ? identityURL() : directory(tool).appendingPathComponent(manifest)
@@ -218,6 +229,7 @@ enum AppRecordDataset {
     /// unreadable manifests never authorize replacing local records.
     static func isEmpty() throws -> Bool {
         _ = try root()
+        try FamilyNotebookBackup.refresh()
         for (tool, manifest) in ToolBackupIndex.manifests {
             let url = tool == "CatIdentity" ? identityURL() : directory(tool).appendingPathComponent(manifest)
             guard let url else { throw ToolBackupError.invalid }
@@ -231,6 +243,11 @@ enum AppRecordDataset {
                 throw ToolBackupError.invalid
             }
             switch tool {
+            case "CatCare":
+                let state = try CatCareDecoding.backupState(data)
+                if !state.cats.isEmpty || state.household != CatCareHousehold() { return false }
+            case "FamilyNotebook":
+                if !(try FamilyNotebookBackup.decode(data)).copies.isEmpty { return false }
             case "CatIdentity":
                 let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
                 let state = try decoder.decode(CatHouseholdIdentityState.self, from: data)
@@ -275,7 +292,7 @@ enum AppRecordDataset {
         } else { localIdentity = nil }
         let source = try ToolBackupFiles.restoredSource(saved.id, owner: saved.owner)
         try await ToolBackupValidation.validate(saved.index, at: source)
-        let receipt = Pointer(version: 1, datasetID: UUID(), owner: saved.owner, origin: origin,
+        var receipt = Pointer(version: 1, datasetID: UUID(), owner: saved.owner, origin: origin,
                               manifests: saved.index.files.map(\.path).filter { knownManifestPaths.contains($0) }.sorted())
         let destination = datasets.appendingPathComponent(receipt.datasetID.uuidString, isDirectory: true)
         try ToolBackupFiles.protect(destination)
@@ -285,6 +302,32 @@ enum AppRecordDataset {
             guard ToolBackupIndex.hash(data) == file.sha256 else { throw ToolBackupError.invalid }
             try ToolBackupFiles.write(data, to: destination.appendingPathComponent(file.path))
         }
+        // An old backup predates these tools. Preserve this phone's copies
+        // instead of turning their absence in the old format into deletion.
+        for tool in ["CatCare","FamilyNotebook"] {
+            let target = destination.appendingPathComponent(tool + "/state.json")
+            if !FileManager.default.fileExists(atPath: target.path) {
+                let current = directory(tool).appendingPathComponent("state.json")
+                if FileManager.default.fileExists(atPath: current.path) {
+                    let data = try AppRecordJSON.read(current)
+                    try ToolBackupFiles.write(data, to: target)
+                    for name in try ToolBackupFiles.manifestPhotoNames(tool: tool, data: data) {
+                        let source = ToolBackupFiles.sourcePhotoURL(tool: tool, directory: current.deletingLastPathComponent(), name: name)
+                        try ToolBackupFiles.write(ToolBackupFiles.read(source, maximum: 20 * 1024 * 1024),
+                            to: destination.appendingPathComponent(tool + "/" + name))
+                    }
+                    receipt.manifests?.append(tool + "/state.json")
+                }
+            } else if tool == "CatCare" {
+                let local = directory(tool).appendingPathComponent("state.json")
+                let ownDevice = FileManager.default.fileExists(atPath: local.path)
+                    ? try CatCareDecoding.backupState(AppRecordJSON.read(local)).deviceID : UUID().uuidString.lowercased()
+                try AppRecordJSON.write(CatCareDecoding.portable(AppRecordJSON.read(target), deviceID: ownDevice), to: target)
+            } else {
+                try AppRecordJSON.write(FamilyNotebookBackup.restored(AppRecordJSON.read(target)), to: target)
+            }
+        }
+        receipt.manifests?.sort()
         let identity = destination.appendingPathComponent("CatIdentity/state.json")
         if FileManager.default.fileExists(atPath: identity.path) {
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
@@ -295,7 +338,7 @@ enum AppRecordDataset {
         }
         // Restore creates these folders privately; publish them as live data
         // only after validation, preserving OS backup for future offline edits.
-        for tool in Set(saved.index.files.map { String($0.path.split(separator: "/")[0]) }) {
+        for tool in Set((receipt.manifests ?? []).map { String($0.split(separator: "/")[0]) }) {
             var directory = destination.appendingPathComponent(tool); var values = URLResourceValues()
             values.isExcludedFromBackup = false; try directory.setResourceValues(values)
         }
@@ -1129,6 +1172,7 @@ enum AppRecordCapture {
     static func prepare(owner: String, origin: String, previous: ToolBackupIndex?, indexVersion: Int = 3) async throws -> ToolBackupFiles.Saved {
         guard indexVersion >= (previous?.version ?? 3) else { throw ManagedPreservationError.servicePaused }
         try AppRecordDataset.requireScope(owner: owner, origin: origin)
+        try FamilyNotebookBackup.refresh()
         let source = AppRecordDataset.control.appendingPathComponent("preparing/" + UUID().uuidString, isDirectory: true)
         try ToolBackupFiles.protect(source)
         defer { try? FileManager.default.removeItem(at: source) }
@@ -1180,6 +1224,8 @@ enum AppRecordCapture {
                 state.notes = portable
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
                 bytes = try encoder.encode(state)
+            } else if tool == "CatCare" {
+                bytes = try CatCareDecoding.portable(bytes)
             } else if tool == "ShowcasePhotos" {
                 let object = try JSONSerialization.jsonObject(with: bytes)
                 var state = object as? [String: Any] ?? ["entries": object, "scopes": [:]]
@@ -1191,12 +1237,12 @@ enum AppRecordCapture {
             for name in try ToolBackupFiles.manifestPhotoNames(tool: tool, data: bytes) {
                 try ToolBackupIndex.validatePath(tool + "/" + name)
                 if indexVersion == 4, previouslyStoredPhotos.contains(tool + "/" + name) { continue }
-                let photo = try ToolBackupFiles.read(live.deletingLastPathComponent().appendingPathComponent(name), maximum: 20 * 1024 * 1024)
+                let photo = try ToolBackupFiles.read(ToolBackupFiles.sourcePhotoURL(tool: tool, directory: live.deletingLastPathComponent(), name: name), maximum: 20 * 1024 * 1024)
                 try ToolBackupFiles.write(photo, to: source.appendingPathComponent(tool + "/" + name))
             }
             let destination = source.appendingPathComponent(tool + "/" + manifest)
             try ToolBackupFiles.protect(destination.deletingLastPathComponent())
-            if indexVersion == 4 && ["PhotoMemoryNotes", "VeterinaryVisits"].contains(tool) {
+            if indexVersion == 4 && ["PhotoMemoryNotes", "VeterinaryVisits", "CatCare", "FamilyNotebook"].contains(tool) {
                 try AppRecordJSON.write(bytes, to: destination, options: [.atomic, .completeFileProtection])
             } else { try ToolBackupFiles.write(bytes, to: destination) }
         }

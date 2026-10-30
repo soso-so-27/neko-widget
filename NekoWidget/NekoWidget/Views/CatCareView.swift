@@ -268,6 +268,7 @@ struct CatCareDetailView: View {
             if phase != .active { autosave?.cancel(); save() }
         }
         .onDisappear { autosave?.cancel(); save() }
+        .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed)
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .toolbar {
             // Test builds only: the family, at the top right like sharing in
@@ -1047,6 +1048,7 @@ struct CatCareListEntrySheet: View {
                 }
             }
             .navigationTitle(CatCareFormat.title(editor.kind) + (editor.entryID == nil ? "を追加" : "を直す"))
+            .appRecordEditing(retainWhileHidden: true)
             .announcesWhenShown(message)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

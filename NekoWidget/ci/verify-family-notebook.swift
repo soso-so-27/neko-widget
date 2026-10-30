@@ -40,7 +40,53 @@ struct VerifyFamilyNotebook {
         try payerStateContract()
         try boundaries(root.appendingPathComponent("boundaries"))
         try farewellConsent(root.appendingPathComponent("farewell"))
+        try backup(root.appendingPathComponent("backup"))
         print("Family notebook: convergence, offline restart, conflicts, tombstones, ACK, persistence and retained exit checks passed")
+    }
+
+    private static func backup(_ path: URL) throws {
+        let live = try store(path, "device-a")
+        _ = try live.edit(target: name, value: .text("あめ"), author: a)
+        _ = try live.edit(target: water, value: .text("まだ送っていない内容"), author: a)
+        let original = try Data(contentsOf: path.appendingPathComponent("family-notebook.json"))
+        let state = try JSONDecoder().decode(FamilyNotebookStore.State.self, from: original)
+        let id = UUID()
+        let bytes = try FamilyNotebookBackup.encode(.init(copies: [.init(id: id, state: state)]))
+        let restored = try FamilyNotebookBackup.decode(FamilyNotebookBackup.restored(bytes))
+        try check(restored.copies.count == 1 && restored.copies[0].id != id, "restored copy has independent identity")
+        let copy = restored.copies[0]
+        let again = try FamilyNotebookBackup.decode(FamilyNotebookBackup.restored(FamilyNotebookBackup.encode(restored)))
+        try check(again.copies[0].id == copy.id, "repeated restoration does not multiply retained copies")
+        try check(copy.state.operations == state.operations && copy.state.outboxIDs == state.outboxIDs, "unsent text and history retained")
+        try check(copy.state.sharingEnded == true && copy.state.schemaVersion == 2, "restoration cannot resume sharing")
+        let dest = path.appendingPathComponent("private-copy")
+        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+        try JSONEncoder().encode(copy.state).write(to: dest.appendingPathComponent("family-notebook.json"))
+        let opened = try store(dest, "device-b")
+        try check(try opened.pendingOperations().isEmpty, "restored outbox cannot be sent")
+        try check(try Data(contentsOf: path.appendingPathComponent("family-notebook.json")) == original, "source untouched")
+        let support = path.appendingPathComponent("new-container/Library/Application Support")
+        let relative = String(repeating: "a", count: 43) + "/notebooks/" + family.uuidString + "/1"
+        let binding = try FamilyNotebookLocalBinding(directory: support.appendingPathComponent("FamilyNotebook-v1/" + relative),
+            support: support, familyID: family, deviceID: "device-a", author: a)
+        let encoded = try JSONEncoder().encode(binding)
+        try check(!String(decoding: encoded, as: UTF8.self).contains(support.path), "binding has no absolute container path")
+        let relocated = path.appendingPathComponent("other-container/Library/Application Support")
+        try check(try binding.directory(support: relocated).path.hasPrefix(relocated.path + "/"), "binding follows the current container")
+        let defaults = UserDefaults(suiteName: "notebook-backup-" + UUID().uuidString)!
+        defer { defaults.removeObject(forKey: FamilyNotebookLocalBinding.key); defaults.removeObject(forKey: FamilyNotebookLocalBinding.legacyKey) }
+        let legacy: [String:Any] = ["directory":support.appendingPathComponent("FamilyNotebook-v1/" + relative).absoluteString,
+            "familyID":family.uuidString,"deviceID":"device-a","author":["personID":a.personID,"displayName":a.displayName]]
+        defaults.set(try JSONSerialization.data(withJSONObject: legacy), forKey: FamilyNotebookLocalBinding.legacyKey)
+        let migrated = try FamilyNotebookLocalBinding.load(support: relocated, defaults: defaults)
+        try check(migrated?.relativeDirectory == relative, "old relocated absolute reference migrates")
+        try rejects("binding rejects paths outside owned scope") {
+            _ = try FamilyNotebookLocalBinding(directory: path, support: support, familyID: family, deviceID: "device-a", author: a)
+        }
+        var object = try JSONSerialization.jsonObject(with: encoded) as! [String:Any]
+        object["relativeDirectory"] = "../outside/notebooks/" + family.uuidString + "/1"
+        let invalid = try JSONDecoder().decode(FamilyNotebookLocalBinding.self, from: JSONSerialization.data(withJSONObject: object))
+        try rejects("decoded traversal is rejected") { _ = try invalid.directory(support: support) }
     }
 
     private static func farewellConsent(_ path: URL) throws {
