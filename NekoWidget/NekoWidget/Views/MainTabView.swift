@@ -789,6 +789,14 @@ struct MainTabView: View {
             selectedTab = .windows
         }
         .onChange(of: albumArrivalInbox.pending, initial: true) { _, _ in openAlbumArrivalIfReady() }
+        .onChange(of: albumArrivalInbox.showsAlbum, initial: true) { _, shows in
+            guard shows else { return }
+            albumArrivalInbox.showsAlbum = false
+            guard AlbumPrototype.isOn(albumPrototypeStored) else { return }
+            showsSettings = false
+            didApplyInitialTab = true
+            selectedTab = .memories
+        }
         .onChange(of: albumPrototypeStored, initial: true) { _, enabled in
             // Test builds: the family notebook listens to 「この子のこと」 from the start.
             if AlbumPrototype.isOn(enabled) { _ = FamilyNotebookPrototype.shared }
@@ -2560,6 +2568,25 @@ struct MainTabView: View {
                 break
             }
         }
+        // The same arrival on the lock screen (AlbumArrivalNotice).
+        var monthNotice: (start: Date, at: Date)?
+        var yearNotice: (year: Int, at: Date)?
+        if enabled, monthlyWindowCollectionKey.canBuild,
+           completedMonthlyWindowCollectionKey == monthlyWindowCollectionKey {
+            if let next = AlbumArrivalNotice.nextMonthDelivery(after: now),
+               case let .ready(letter) = MonthlyWindowBuilder().build(
+                   from: albumEligibleCatPhotos, monthContaining: next.month),
+               !Set(albumPrototypeOpened.split(separator: ",").map(String.init)).contains(letter.periodIdentifier) {
+                monthNotice = (next.month, next.at)
+            }
+            let year = calendar.component(.year, from: now)
+            if let at = AlbumArrivalNotice.yearDelivery(year), now < at,
+               AlbumPrototype.photos(inYear: year, from: catPhotos).count >= 9 {
+                yearNotice = (year, at)
+            }
+        }
+        let notices = (month: monthNotice, year: yearNotice)
+        Task { await AlbumArrivalNotice.schedule(month: notices.month, year: notices.year) }
         if (try? CloudyWindowStore.shared.synchronizeAlbumArrival(enabled: enabled,
             enabledAt: albumPrototypeEnabledAt > 0 ? Date(timeIntervalSince1970: albumPrototypeEnabledAt) : nil,
             openedPeriods: Set(albumPrototypeOpened.split(separator: ",").map(String.init)), arrival: arrival)) == true {
