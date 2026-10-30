@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRecipient, reader, failureMessage } from './check-owner-testflight-recipient.mjs';
+import { checkRecipient, reader, failureMessage, groupDiagnostics } from './check-owner-testflight-recipient.mjs';
 import { check as checkReportOff } from '../SharingService/scripts/check-owner-internal-report-off.mjs';
 
 const groupID = 'owner-group-id', testerID = 'owner-tester-id';
@@ -55,4 +55,26 @@ test('failure diagnostics identify the boundary without printing IDs, responses 
     assert.ok(!failureMessage(error).includes('private-id'));
   }
   await assert.rejects(run([]), error => failureMessage(error) === 'Pinned owner group is not in the expected app.');
+});
+
+test('explicit ASC fields are requested and incomplete booleans still block upload', async () => {
+  await checkRecipient({ groupID, testerID, get: async url => {
+    const query = new URL(url, 'https://api.appstoreconnect.apple.com').searchParams;
+    if (url.includes('/betaTesters')) {
+      assert.equal(query.get('fields[betaTesters]'), 'email');
+      return [tester];
+    }
+    assert.equal(query.get('fields[betaGroups]'), 'name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled');
+    return [group];
+  } });
+  for (const field of ['isInternalGroup', 'hasAccessToAllBuilds']) {
+    for (const value of [null, undefined, 'true', 1]) {
+      await assert.rejects(run([{ ...group, attributes: { ...group.attributes, [field]: value } }]),
+        error => failureMessage(error) === `Owner group: ${field} is missing or not boolean.`);
+    }
+  }
+  const privateValue = 'private-identifier-or-address';
+  assert.deepEqual(groupDiagnostics([{ id: privateValue, attributes: {
+    name: privateValue, isInternalGroup: true, hasAccessToAllBuilds: privateValue, publicLinkEnabled: null
+  } }], groupID), ['Other group: internal=true, allBuilds=invalid, publicLink=null']);
 });

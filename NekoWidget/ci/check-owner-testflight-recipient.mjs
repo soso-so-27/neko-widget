@@ -19,12 +19,14 @@ const resourceID = value => typeof value === 'string' && /^[A-Za-z0-9-]{8,80}$/.
 
 export async function checkRecipient({ groupID, testerID, get }) {
   requireValue(resourceID(groupID) && resourceID(testerID), 'Pinned owner group/tester IDs are required; no name-based fallback.');
-  const groups = await get(`/v1/apps/${appID}/betaGroups?limit=200`);
+  const groups = await get(`/v1/apps/${appID}/betaGroups?limit=200&fields%5BbetaGroups%5D=name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled`);
   requireValue(groups.filter(g => g.id === groupID).length === 1, 'Pinned owner group is not in the expected app.');
   for (const group of groups) {
     const a = group.attributes;
-    requireValue(group.type === 'betaGroups' && a && typeof a.isInternalGroup === 'boolean'
-      && typeof a.hasAccessToAllBuilds === 'boolean', 'Incomplete ASC group settings.');
+    const label = group.id === groupID ? 'Owner group' : 'Another group';
+    requireValue(group.type === 'betaGroups' && a, `${label}: invalid resource or missing attributes.`);
+    requireValue(typeof a.isInternalGroup === 'boolean', `${label}: isInternalGroup is missing or not boolean.`);
+    requireValue(typeof a.hasAccessToAllBuilds === 'boolean', `${label}: hasAccessToAllBuilds is missing or not boolean.`);
     if (group.id === groupID) {
       requireValue(a.name === '自分用' && a.isInternalGroup === true && a.hasAccessToAllBuilds === true
         && a.publicLinkEnabled !== true, 'Owner group identity/automatic distribution changed.');
@@ -32,10 +34,18 @@ export async function checkRecipient({ groupID, testerID, get }) {
       requireValue(a.hasAccessToAllBuilds === false, 'Another group can automatically receive this build.');
     }
   }
-  const testers = await get(`/v1/betaGroups/${groupID}/betaTesters?limit=200`);
+  const testers = await get(`/v1/betaGroups/${groupID}/betaTesters?limit=200&fields%5BbetaTesters%5D=email`);
   requireValue(testers.length === 1 && testers[0].type === 'betaTesters' && testers[0].id === testerID
     && testers[0].attributes?.email?.toLowerCase() === ownerEmail, 'Owner group must contain only the pinned owner tester.');
   return true;
+}
+
+// Deliberately excludes names, email, IDs, URLs, and untrusted field values.
+export function groupDiagnostics(groups, groupID) {
+  const flag = value => value === true ? 'true' : value === false ? 'false'
+    : value === null ? 'null' : value === undefined ? 'missing' : 'invalid';
+  return groups.map(group => `${group.id === groupID ? 'Owner group' : 'Other group'}: ` +
+    `internal=${flag(group.attributes?.isInternalGroup)}, allBuilds=${flag(group.attributes?.hasAccessToAllBuilds)}, publicLink=${flag(group.attributes?.publicLinkEnabled)}`);
 }
 
 export function reader(token, fetcher = fetch) {
@@ -79,7 +89,14 @@ async function main() {
   const data = encode({ alg: 'ES256', kid: keyID, typ: 'JWT' }) + '.' +
     encode({ iss: issuer, iat: now, exp: now + 300, aud: 'appstoreconnect-v1' });
   const token = data + '.' + sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
-  await checkRecipient({ groupID, testerID, get: reader(token) });
+  const get = reader(token);
+  await checkRecipient({ groupID, testerID, get: async url => {
+    const resources = await get(url);
+    if (new URL(url, origin).pathname.endsWith('/betaGroups')) {
+      for (const line of groupDiagnostics(resources, groupID)) console.log(line);
+    }
+    return resources;
+  } });
   console.log('PASS owner recipient: pinned group, one owner tester, exclusive automatic distribution (GET only)');
 }
 
