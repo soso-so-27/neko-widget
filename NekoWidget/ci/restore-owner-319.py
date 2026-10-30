@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 SOURCE = 'b1c2c9a2c6f1ecfb4f3074edd85a307e9b5f2f9f'
 RUN = '41113053231'
@@ -79,7 +80,17 @@ def main():
             if result.returncode:
                 raise RuntimeError('Apple ' + stage + ' failed; upload is not confirmed')
             run(sys.executable, str(ci / 'altool-result.py'), stage, str(log))
-        print('PASS retained build 319 upload; Apple processing and group delivery still need confirmation')
+        print('PASS retained build 319 upload; checking Apple processing and owner group delivery', flush=True)
+        for attempt in range(20):
+            result = subprocess.run(['node', str(ci / 'check-owner-testflight-recipient.mjs'),
+                '--authenticated-artifact', str(retained), '--ipa', str(ipa), '--confirm-build', '319'])
+            if result.returncode == 0:
+                return
+            if result.returncode != 3:
+                raise RuntimeError('319 upload succeeded, but read-only delivery confirmation failed; do not repeat upload')
+            if attempt < 19:
+                time.sleep(30)
+        raise RuntimeError('319 upload succeeded; Apple delivery was not confirmed within 10 minutes; do not repeat upload')
 
 
 if __name__ == '__main__':

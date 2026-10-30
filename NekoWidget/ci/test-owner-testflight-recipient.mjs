@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRecipient, reader, failureMessage, groupDiagnostics, verifyInternalOnlyArtifact } from './check-owner-testflight-recipient.mjs';
+import { checkRecipient, reader, failureMessage, groupDiagnostics, verifyInternalOnlyArtifact, confirmBuild319 } from './check-owner-testflight-recipient.mjs';
 import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -124,4 +124,26 @@ test('internal-only evidence is authenticated first and bound to the exact uploa
   await assert.rejects(verifyInternalOnlyArtifact(root, ipa, async () => { throw Error('authentication failed'); }), /authentication failed/);
   await writeFile(ipa, 'different bytes');
   await assert.rejects(verifyInternalOnlyArtifact(root, ipa, authenticate));
+});
+
+test('delivery requires valid Internal Only build, IN_BETA_TESTING and pinned group assignment', async () => {
+  const build = { type: 'builds', id: 'synthetic-build', attributes: {
+    version: '319', processingState: 'VALID', buildAudienceType: 'INTERNAL_ONLY', expired: false } };
+  const get = (patch = {}, state = 'IN_BETA_TESTING', assigned = true) => async (url, options) => {
+    if (url.includes('/buildBetaDetail?')) {
+      assert.equal(options.single, true);
+      return { type: 'buildBetaDetails', attributes: { internalBuildState: state } };
+    }
+    if (url.includes('/betaGroups/')) return assigned ? [build] : [];
+    return [{ ...build, attributes: { ...build.attributes, ...patch } }];
+  };
+  assert.equal(await confirmBuild319(get(), groupID), true);
+  assert.equal(await confirmBuild319(async () => [], groupID), false);
+  assert.equal(await confirmBuild319(get({}, 'READY_FOR_BETA_TESTING'), groupID), false);
+  assert.equal(await confirmBuild319(get({}, 'IN_BETA_TESTING', false), groupID), false);
+  for (const patch of [{ processingState: 'INVALID' }, { buildAudienceType: 'APP_STORE_ELIGIBLE' }, { expired: true }])
+    await assert.rejects(confirmBuild319(get(patch), groupID));
+  const one = { type: 'buildBetaDetails', id: 'synthetic-detail', attributes: {} };
+  assert.deepEqual(await reader('synthetic', async () => ({ status: 200, json: async () => ({ data: one, links: {} }) }))('/v1/example', { single: true }), one);
+  await assert.rejects(reader('synthetic', async () => ({ status: 200, json: async () => ({ data: [], links: {} }) }))('/v1/example', { single: true }));
 });

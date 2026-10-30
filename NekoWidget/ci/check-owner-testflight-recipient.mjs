@@ -83,7 +83,7 @@ export function groupDiagnostics(groups, groupID) {
 }
 
 export function reader(token, fetcher = fetch) {
-  return async first => {
+  return async (first, { single = false } = {}) => {
     let url = new URL(first, origin); const result = []; const seen = new Set();
     while (url) {
       requireValue(url.origin === origin && !url.username && !url.password
@@ -96,6 +96,11 @@ export function reader(token, fetcher = fetch) {
         : url.pathname.endsWith('/betaTesters') ? 'group testers' : 'pagination';
       requireValue(response.status === 200, `ASC ${route} read unavailable (HTTP ${response.status}); do not distribute.`);
       const body = await response.json();
+      if (single) {
+        requireValue(body.data && !Array.isArray(body.data) && resourceID(body.data.id)
+          && body.links && !body.links.next, 'Incomplete ASC single resource.');
+        return body.data;
+      }
       requireValue(Array.isArray(body.data) && body.links, 'Incomplete ASC pagination.');
       result.push(...body.data);
       requireValue(result.length <= 10000, 'ASC response exceeds recipient audit limit.');
@@ -110,11 +115,29 @@ export function reader(token, fetcher = fetch) {
   };
 }
 
+export async function confirmBuild319(get, groupID) {
+  const builds = await get(`/v1/builds?filter%5Bapp%5D=${appID}&filter%5Bversion%5D=319&filter%5BpreReleaseVersion.platform%5D=IOS&fields%5Bbuilds%5D=version,processingState,expired,buildAudienceType&limit=200`);
+  if (builds.length === 0) return false;
+  requireValue(builds.length === 1 && builds[0].type === 'builds' && resourceID(builds[0].id)
+    && builds[0].attributes?.version === '319', 'Build 319 identity is ambiguous.');
+  const build = builds[0];
+  requireValue(!['FAILED', 'INVALID'].includes(build.attributes.processingState), 'Apple processing rejected build 319.');
+  if (build.attributes.processingState !== 'VALID') return false;
+  requireValue(build.attributes.buildAudienceType === 'INTERNAL_ONLY' && build.attributes.expired === false,
+    'Build 319 must remain Internal Only and unexpired.');
+  const detail = await get(`/v1/builds/${build.id}/buildBetaDetail?fields%5BbuildBetaDetails%5D=internalBuildState`, { single: true });
+  requireValue(detail.type === 'buildBetaDetails', 'Build beta detail has an unexpected type.');
+  if (detail.attributes?.internalBuildState !== 'IN_BETA_TESTING') return false;
+  const assigned = await get(`/v1/betaGroups/${groupID}/builds?limit=200&fields%5Bbuilds%5D=version`);
+  return assigned.filter(item => item.type === 'builds' && item.id === build.id && item.attributes?.version === '319').length === 1;
+}
+
 async function main() {
   const args = process.argv.slice(2);
-  requireValue(args.length === 0 || (args.length === 4 && args[0] === '--authenticated-artifact' && args[2] === '--ipa'),
+  requireValue(args.length === 0 || ([4, 6].includes(args.length) && args[0] === '--authenticated-artifact' && args[2] === '--ipa'
+    && (args.length === 4 || (args[4] === '--confirm-build' && args[5] === '319'))),
     'Expected authenticated artifact and exact IPA arguments, or read-only diagnosis without arguments.');
-  const authenticatedInternalOnly = args.length === 4 ? await verifyInternalOnlyArtifact(args[1], args[3]) : false;
+  const authenticatedInternalOnly = args.length >= 4 ? await verifyInternalOnlyArtifact(args[1], args[3]) : false;
   const { OWNER_INTERNAL_GROUP_ID: groupID, OWNER_INTERNAL_TESTER_ID: testerID,
     APP_STORE_CONNECT_KEY_ID: keyID, APP_STORE_CONNECT_ISSUER_ID: issuer } = process.env;
   requireValue(resourceID(groupID) && resourceID(testerID), 'Owner recipient pins are missing; do not distribute.');
@@ -138,6 +161,10 @@ async function main() {
     return resources;
   } });
   console.log('PASS owner recipient: pinned group, one owner tester, exclusive automatic distribution (GET only)');
+  if (args.length === 6) {
+    if (await confirmBuild319(get, groupID)) console.log(`PASS build 319: Internal Only, IN_BETA_TESTING, assigned to pinned owner group; confirmed ${new Date().toISOString()}`);
+    else { console.log('PENDING build 319: Apple processing or owner group assignment is not complete'); process.exitCode = 3; }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
