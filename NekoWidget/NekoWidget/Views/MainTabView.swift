@@ -2589,7 +2589,7 @@ struct MainTabView: View {
         if (try? CloudyWindowStore.shared.synchronizeAlbumArrival(enabled: enabled,
             enabledAt: albumPrototypeEnabledAt > 0 ? Date(timeIntervalSince1970: albumPrototypeEnabledAt) : nil,
             openedPeriods: Set(albumPrototypeOpened.split(separator: ",").map(String.init)), arrival: arrival)) == true {
-            if CloudyWindowStore.shared.configuration().enabled {
+            if CloudyWindowAvailability.isAvailable {
                 NotificationCenter.default.post(name: .cloudyWindowConfigurationChanged, object: nil)
             }
         }

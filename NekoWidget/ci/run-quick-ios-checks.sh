@@ -8,12 +8,17 @@ cd "$(dirname "$0")/.."
 # simulator commands so an environment stall cannot consume the entire job.
 bounded() {
   python3 - "$@" <<'PY'
-import subprocess, sys
+import subprocess, sys, time
+started = time.monotonic()
+command = sys.argv[2:]
+label = " ".join(command[:3])
+print(f"START {label} (limit {sys.argv[1]}s)", file=sys.stderr, flush=True)
 try:
-    result = subprocess.run(sys.argv[2:], timeout=int(sys.argv[1]))
+    result = subprocess.run(command, timeout=int(sys.argv[1]))
+    print(f"END {label}: exit {result.returncode}, {time.monotonic()-started:.1f}s", file=sys.stderr, flush=True)
     sys.exit(result.returncode)
 except subprocess.TimeoutExpired:
-    print("Simulator command exceeded its time limit", file=sys.stderr)
+    print(f"TIMEOUT {label}: {time.monotonic()-started:.1f}s", file=sys.stderr, flush=True)
     sys.exit(124)
 PY
 }
@@ -174,6 +179,11 @@ test "$(/usr/libexec/PlistBuddy -c 'Print GroupReportingProductionEnabled' "$app
 python3 ci/group-window-release.py --requested false --mode disabled \
   --app-info-plist "$app/Info.plist"
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+reboot_simulator() {
+  bounded 30 xcrun simctl shutdown "$device"
+  bounded 60 xcrun simctl boot "$device"
+  bounded 120 xcrun simctl bootstatus "$device" -b
+}
 if bounded 90 xcrun simctl install "$device" "$app"; then
   :
 else
@@ -182,12 +192,21 @@ else
   # the successful build on this runner; do not repeat compilation or tests.
   if [ "$install_status" -ne 124 ]; then exit "$install_status"; fi
   echo "Simulator install stalled; rebooting once and reusing the built app"
-  bounded 30 xcrun simctl shutdown "$device"
-  bounded 60 xcrun simctl boot "$device"
-  bounded 120 xcrun simctl bootstatus "$device" -b
+  reboot_simulator
   bounded 90 xcrun simctl install "$device" "$app"
 fi
-launch=$(bounded 90 xcrun simctl launch "$device" "$bundle")
+if launch=$(bounded 90 xcrun simctl launch "$device" "$bundle"); then
+  :
+else
+  launch_status=$?
+  # 40982324015 and 40996306345 stalled here after install succeeded.
+  # A non-timeout application/launch error still fails immediately. Reset the
+  # simulator once for a timeout; the same artifact must launch and stay alive.
+  if [ "$launch_status" -ne 124 ]; then exit "$launch_status"; fi
+  echo "Simulator launch stalled; rebooting once and reusing the installed app" >&2
+  reboot_simulator
+  launch=$(bounded 90 xcrun simctl launch "$device" "$bundle")
+fi
 pid=${launch##*: }
 sleep 5
 xcrun simctl spawn "$device" launchctl list | awk -v pid="$pid" -v bundle="$bundle" '

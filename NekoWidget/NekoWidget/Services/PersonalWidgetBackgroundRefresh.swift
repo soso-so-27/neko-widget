@@ -30,7 +30,8 @@ enum PersonalWidgetBackgroundRefresh {
                   configurations.contains(where: {
                       guard let intent = $0.widgetConfigurationIntent(of: NekoWidgetConfigurationIntent.self)
                       else { return false }
-                      return (intent.photoSource ?? .personalLibrary).id == WidgetPhotoSource.personalLibraryID
+                      let id = (intent.photoSource ?? .personalLibrary).id
+                      return id == WidgetPhotoSource.personalLibraryID || id.hasPrefix(CloudyWindowStore.profilePrefix)
                   }) else { return }
             let request = BGAppRefreshTaskRequest(identifier: taskIdentifier)
             request.earliestBeginDate = Date().addingTimeInterval(60 * 60)
@@ -92,7 +93,8 @@ enum PersonalWidgetBackgroundRefresh {
                 input.assets.removeAll { !accessible.contains($0.localIdentifier) }
                 try Task.checkCancellation()
                 let result = try await builder.replenishPersonal(from: input, eligibilityRevision: revision)
-                if result.addedCount > 0 { WidgetCenter.shared.reloadAllTimelines() }
+                let cloudyChanged = try await CloudyWindowImagePreparer.shared.prepare()
+                if result.addedCount > 0 || cloudyChanged { WidgetCenter.shared.reloadAllTimelines() }
                 task.setTaskCompleted(success: !Task.isCancelled)
             } catch {
                 task.setTaskCompleted(success: false)

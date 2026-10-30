@@ -159,7 +159,10 @@ struct AppRootView: View {
             case .active:
                 AppIdleTimer.setPreventSleep(viewModel.isScanning, for: "photo-scan")
                 widgetInstallationChecker.refresh()
-                Task { await viewModel.syncOnActive() }
+                Task {
+                    await viewModel.syncOnActive()
+                    await viewModel.refreshInstalledCloudyWindows()
+                }
             case .inactive, .background:
                 AppIdleTimer.setPreventSleep(false, for: "photo-scan")
                 // Vision batches are intentionally cancellable. Do not keep decoding photos

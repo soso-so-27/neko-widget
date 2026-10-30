@@ -2,6 +2,7 @@ import CoreImage
 import CryptoKit
 import Foundation
 import UIKit
+import WidgetKit
 
 /// Only the host app decodes, hashes and blurs. The Widget receives immutable
 /// JPEG pairs, with a 32-photo / 192-file bound (at most about 33 MiB).
@@ -9,14 +10,36 @@ actor CloudyWindowImagePreparer {
     static let shared = CloudyWindowImagePreparer()
     private let context = CIContext(options: [.cacheIntermediates: false])
 
-    func prepare() async throws {
+    @discardableResult
+    func prepare() async throws -> Bool {
+        guard CloudyWindowAvailability.isAvailable else { return false }
+        // A failed/incomplete lookup neither enables rendering nor deletes a
+        // previous cache. Never infer installation from the old app switch.
+        let sources: Set<String>? = await withCheckedContinuation { continuation in
+            WidgetCenter.shared.getCurrentConfigurations { result in
+                guard case .success(let configurations) = result else {
+                    continuation.resume(returning: nil); return
+                }
+                var ids = Set<String>()
+                for widget in configurations where widget.kind == "NekoWidget" {
+                    guard let intent = widget.widgetConfigurationIntent(of: NekoWidgetConfigurationIntent.self) else {
+                        continuation.resume(returning: nil); return
+                    }
+                    ids.insert((intent.photoSource ?? .personalLibrary).id)
+                }
+                continuation.resume(returning: ids)
+            }
+        }
+        guard let sources else { return false }
+        try CloudyWindowStore.shared.synchronizeInstalledSources(sources)
         guard let plan = try CloudyWindowStore.shared.preparation(),
-              let cache = SharedContainer.widgetCacheDirectoryURL else { return }
+              let cache = SharedContainer.widgetCacheDirectoryURL else { return false }
+        var changed = false
         for candidate in plan.candidates {
             try Task.checkCancellation()
             if let old = plan.existing.first(where: { $0.photoID == candidate.item.localIdentifier }),
                old.source == candidate.item, old.strength == plan.configuration.strength { continue }
-            try autoreleasepool {
+            let published = try autoreleasepool { () throws -> Bool in
                 let source = candidate.item
                 let identity = source.allCacheFilenames.joined(separator: "|") + "|" + plan.configuration.strength.rawValue
                 let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -32,26 +55,29 @@ actor CloudyWindowImagePreparer {
                     // These names were validated when the personal pool committed.
                     let url = cache.appendingPathComponent(source.cacheFilename(for: variant))
                     guard let data = try? Data(contentsOf: url), data.count <= variant.maximumJPEGByteCount,
-                          let image = UIImage(data: data), let cg = image.cgImage else { return }
+                          let image = UIImage(data: data), let cg = image.cgImage else { return false }
                     if variant == .small { hash = Self.differenceHash(cg) }
                     let input = CIImage(cgImage: cg)
                     let radius = plan.configuration.strength.radius * Double(cg.width) / 500
                     let blurred = input.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
                         .cropped(to: input.extent)
                     guard let output = context.createCGImage(blurred, from: input.extent),
-                          let jpeg = Self.jpeg(UIImage(cgImage: output), maximumBytes: variant.maximumJPEGByteCount) else { return }
+                          let jpeg = Self.jpeg(UIImage(cgImage: output), maximumBytes: variant.maximumJPEGByteCount) else { return false }
                     files[clear.filename(for: variant)] = data
                     files[cloudy.filename(for: variant)] = jpeg
                 }
-                guard files.count == 6 else { return }
+                guard files.count == 6 else { return false }
                 try CloudyWindowStore.shared.publish(
                     .init(source: source, clear: clear, cloudy: cloudy, strength: plan.configuration.strength,
                           visualHash: hash, preparedAt: .now), files: files,
                     authorityRevision: plan.authorityRevision, configurationRevision: plan.configuration.revision,
                     protectedPhotoIDs: plan.protectedPhotoIDs)
+                return true
             }
+            changed = changed || published
             await Task.yield()
         }
+        return changed
     }
 
     private static func jpeg(_ image: UIImage, maximumBytes: Int) -> Data? {
