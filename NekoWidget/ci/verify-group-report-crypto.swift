@@ -95,6 +95,28 @@ enum VerifyGroupReportCrypto {
                 momentID: momentID ?? fixture.momentID, reporterParticipantID: reporterID ?? fixture.reporterParticipantID,
                 reasonCode: reason, keyID: keyID, publicKey: publicKey)
         }
+        let productionInfo: [String: Any] = [
+            "SharingReleaseMode": "production", "SharingFeatureEnabled": "YES", "SharingMediaEnabled": "YES",
+            "GroupReportingProductionEnabled": "YES", "SharingAPIBaseURL": "https://api.nekonomado.com",
+            "SharingModerationKeyID": "moderation-v2",
+            "SharingModerationPublicKey": testPublic.base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: ""),
+            "SharingPrivacyURL": "https://nekonomado.com/privacy", "SharingSupportURL": "https://nekonomado.com/support",
+            "SharingCommunityStandardsURL": "https://nekonomado.com/community"
+        ]
+        let production = SharingAPIConfiguration.from(info: productionInfo)
+        try check(GroupReportCrypto.acceptsRecipient(keyID: "moderation-v2", publicKey: testPublic,
+            configuration: production), "configured production recipient accepted")
+        try check(!GroupReportCrypto.acceptsRecipient(keyID: "moderation-v2",
+            publicKey: GroupReportCrypto.moderationPublicKey, configuration: production), "staging recipient rejected in production")
+        try check(!GroupReportCrypto.acceptsRecipient(keyID: "moderation-v2",
+            publicKey: Data(repeating: 1, count: 32), configuration: production), "unconfigured recipient rejected")
+        try check(!GroupReportCrypto.acceptsRecipient(keyID: "other", publicKey: testPublic,
+            configuration: production), "wrong recipient key ID rejected")
+        var disabledInfo = productionInfo; disabledInfo["GroupReportingProductionEnabled"] = "NO"
+        try check(!GroupReportCrypto.acceptsRecipient(keyID: "moderation-v2", publicKey: testPublic,
+            configuration: SharingAPIConfiguration.from(info: disabledInfo)), "disabled production reporting rejected")
         let first = try encrypt(), second = try encrypt()
         let firstEnvelope = try PropertyListDecoder().decode(Envelope.self, from: first)
         let secondEnvelope = try PropertyListDecoder().decode(Envelope.self, from: second)

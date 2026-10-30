@@ -214,19 +214,9 @@ xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" \
   ci/verify-personal-archive.swift -o "$RUNNER_TEMP/verify-personal-archive"
 "$RUNNER_TEMP/verify-personal-archive"
 
-# Cheap direct Xcode resource-resolution probe; no build, launch, or upload.
+# Resolve the public template without deploying it. The single quick iOS build
+# checks the actual bundled privacy resource; modern Xcode has no dry-run build.
 xcodebuild -project NekoWidget.xcodeproj -target NekoWidget -configuration Release \
   -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json \
   > "$RUNNER_TEMP/production-settings.json"
 python3 ci/validate-production-settings.py "$RUNNER_TEMP/production-settings.json" --allow-unconfigured
-xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Release \
-  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-  -xcconfig Config.Production.xcconfig -derivedDataPath "$RUNNER_TEMP/ProductionProbe" \
-  CODE_SIGNING_ALLOWED=NO -dry-run build 2>&1 | tee "$RUNNER_TEMP/production-resource-plan.txt"
-python3 - "$RUNNER_TEMP/production-resource-plan.txt" <<'PY'
-from pathlib import Path
-import sys
-plan=Path(sys.argv[1]).read_text()
-assert 'Production/PrivacyInfo.xcprivacy' in plan, 'production manifest did not resolve in Xcode resource plan'
-print('PASS production privacy resource resolves (archive contents require release-time validation)')
-PY

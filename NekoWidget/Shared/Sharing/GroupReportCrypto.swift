@@ -48,15 +48,33 @@ enum GroupReportCrypto {
         keyID: String,
         publicKey: Data
     ) throws -> Data {
-        guard keyID == moderationKeyID, publicKey == moderationPublicKey else {
-            throw GroupReportCryptoError.untrustedModerationKey
-        }
+#if os(iOS)
+        let trusted = acceptsRecipient(keyID: keyID, publicKey: publicKey,
+                                       configuration: .current)
+#else
+        let trusted = keyID == moderationKeyID && publicKey == moderationPublicKey
+#endif
+        guard trusted else { throw GroupReportCryptoError.untrustedModerationKey }
         return try encryptEnvelope(
             canonicalJPEG: canonicalJPEG, windowID: windowID, momentID: momentID,
             reporterParticipantID: reporterParticipantID, reasonCode: reasonCode,
             keyID: keyID, publicKey: publicKey, reportedAt: Date()
         )
     }
+
+#if os(iOS) || GROUP_REPORT_CRYPTO_CHECKS
+    /// Only the recipient pinned in the signed app configuration is accepted.
+    /// A caller or response cannot substitute another recipient, including staging.
+    static func acceptsRecipient(keyID: String, publicKey: Data,
+                                 configuration: SharingAPIConfiguration) -> Bool {
+        if configuration.releaseMode == "production" {
+            return configuration.isEncryptedReportAvailable
+                && keyID == configuration.moderationKeyID
+                && publicKey == configuration.moderationPublicKey
+        }
+        return keyID == moderationKeyID && publicKey == moderationPublicKey
+    }
+#endif
 
     private static func encryptEnvelope(
         canonicalJPEG: Data,
