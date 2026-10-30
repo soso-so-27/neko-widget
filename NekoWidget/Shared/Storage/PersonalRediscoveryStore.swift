@@ -1227,6 +1227,11 @@ struct PersonalRediscoveryStore: Sendable {
     private func locked<Value>(_ operation: () throws -> Value) throws -> Value {
         Self.processLock.lock()
         defer { Self.processLock.unlock() }
+        // Begun before flock and ended after it is released (defers run in
+        // reverse): iOS ends a process suspended while holding a file lock
+        // in the App Group container (0xdead10cc, 317/318 crash reports).
+        let endActivity = Self.beginLockHoldActivity()
+        defer { endActivity() }
         let directory = try stateURL().deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var excluded = URLResourceValues()
@@ -1242,6 +1247,23 @@ struct PersonalRediscoveryStore: Sendable {
         guard flock(descriptor, LOCK_EX) == 0 else { throw Error.lockFailed(errno) }
         defer { _ = flock(descriptor, LOCK_UN) }
         return try operation()
+    }
+
+    /// Asks the system not to suspend this process (app or widget) until the
+    /// returned closure runs. The activity's block waits on its own thread;
+    /// if time is already up, the lock is taken anyway, as before.
+    private static func beginLockHoldActivity() -> () -> Void {
+        let started = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        ProcessInfo.processInfo.performExpiringActivity(
+            withReason: "Commit the personal widget cache"
+        ) { expired in
+            started.signal()
+            guard !expired else { return }
+            finished.wait()
+        }
+        _ = started.wait(timeout: .now() + 1)
+        return { finished.signal() }
     }
 
     private static func slot(at date: Date, in plan: PersonalRediscoveryPlan) -> Int64 {
