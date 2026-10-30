@@ -1253,6 +1253,7 @@ struct PersonalRediscoveryStore: Sendable {
     /// returned closure runs. The activity's block waits on its own thread;
     /// if time is already up, the lock is taken anyway, as before.
     private static func beginLockHoldActivity() -> () -> Void {
+#if os(iOS)
         let started = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
         ProcessInfo.processInfo.performExpiringActivity(
@@ -1264,6 +1265,10 @@ struct PersonalRediscoveryStore: Sendable {
         }
         _ = started.wait(timeout: .now() + 1)
         return { finished.signal() }
+#else
+        // macOS check harnesses: no suspension to hold off.
+        return {}
+#endif
     }
 
     private static func slot(at date: Date, in plan: PersonalRediscoveryPlan) -> Int64 {
