@@ -395,7 +395,19 @@ struct ManagedPreservationView: View {
 
     private var usageSection: some View {
         Section {
-            if let usage = coordinator.usage {
+            if let quota = shownProductQuota, let product = quota.usage, let policy = quota.policy {
+                if coordinator.usage?.records.pending ?? 0 > 0 {
+                    Text("保存の準備中です").font(.subheadline)
+                }
+                productUsage(product, policy: policy)
+            } else if let quota = shownProductQuota, let policy = quota.policy {
+                // Not counted yet: the limits, never a bar made up from them.
+                Text("Plus は \(Self.capacity(policy.plus.limitBytes))・記録 \(policy.plus.maximumRecords.formatted()) 件まで保管できます。")
+                    .accessibilityIdentifier("preservation-quota-limits")
+                Text("いま使っている量は、数え終わると表示されます。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("preservation-quota-counting")
+            } else if let usage = coordinator.usage {
                 if usage.records.pending > 0 {
                     Text("保存の準備中です")
                         .font(.subheadline)
@@ -422,8 +434,113 @@ struct ManagedPreservationView: View {
                 Button("容量を再確認") { coordinator.refreshUsage() }
                     .accessibilityIdentifier("preservation-usage-retry")
             }
-        } header: { Text("この保管先の容量") }
-        footer: { Text("選んで保管したコピーとメモの容量です。iPhoneの写真原本は含みません。") }
+            if InternalBuildPresentationAvailability.isAvailable {
+                Picker("表示を試す（テスト用）", selection: $quotaTrial) {
+                    ForEach(QuotaTrial.allCases) { Text($0.title).tag($0) }
+                }
+                .accessibilityIdentifier("preservation-quota-trial")
+            }
+        } header: { Text("保管できる量") }
+        footer: { Text("保管した写真のコピー・メモ・記録の量です。iPhoneの写真原本は含みません。") }
+    }
+
+    /// The service's product quota, or (test builds) the case being tried.
+    private var shownProductQuota: ManagedPreservationUsage.ProductQuota? {
+        if InternalBuildPresentationAvailability.isAvailable, let tried = quotaTrial.quota { return tried }
+        guard let quota = coordinator.usage?.productQuota, quota.configurationStatus == "valid" else { return nil }
+        return quota
+    }
+
+    @ViewBuilder
+    private func productUsage(_ usage: ManagedPreservationUsage.ProductQuota.Usage,
+                              policy: ManagedPreservationUsage.ProductQuota.Policy) -> some View {
+        let storage = usage.storage, records = usage.records
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("容量", value: "\(Self.capacity(storage.usedBytes)) / \(Self.capacity(storage.limitBytes))")
+            ProgressView(value: Double(min(storage.usedBytes, storage.limitBytes)), total: Double(storage.limitBytes))
+                .tint(storage.overLimit ? .red : nil)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("preservation-quota-storage")
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("記録", value: "\(records.saved.formatted()) / \(records.maximumRecords.formatted()) 件")
+            ProgressView(value: Double(min(records.saved, records.maximumRecords)), total: Double(records.maximumRecords))
+                .tint(records.overLimit ? .red : nil)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("preservation-quota-records")
+        if let over = Self.overMessage(storage: storage.overLimit, records: records.overLimit) {
+            Label(over, systemImage: "exclamationmark.circle")
+                .font(.subheadline)
+                .accessibilityIdentifier("preservation-quota-over")
+        } else if storage.usedBytes * 10 >= storage.limitBytes * 9 || records.saved * 10 >= records.maximumRecords * 9 {
+            Text("残りがわずかです。いっぱいになると、新しく保管できなくなります。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        if usage.tier == "trial" {
+            Text("お試し中は \(Self.capacity(storage.limitBytes)) までです。Plus を続けると \(Self.capacity(policy.plus.limitBytes)) になります。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Over the line: what stopped, what still works, and the way back.
+    private static func overMessage(storage: Bool, records: Bool) -> String? {
+        let what: String
+        switch (storage, records) {
+        case (true, true): what = "容量と記録の件数の上限"
+        case (true, false): what = "容量の上限"
+        case (false, true): what = "記録の件数の上限"
+        case (false, false): return nil
+        }
+        return "\(what)を超えたため、新しく保管できません。保管したコピーを削除すると、また保管できます。保管済みの写真とメモは、そのまま見られて書き出せます。"
+    }
+
+    /// Test builds: each state of the quota on one iPhone, no requests or records.
+    private enum QuotaTrial: String, CaseIterable, Identifiable {
+        case real, counting, plenty, nearlyFull, storageOver, recordsOver, bothOver, trial
+        var id: Self { self }
+        var title: String {
+            switch self {
+            case .real: "実際の値"
+            case .counting: "まだ数えていない"
+            case .plenty: "余裕がある"
+            case .nearlyFull: "残りわずか"
+            case .storageOver: "容量を超えた"
+            case .recordsOver: "件数を超えた"
+            case .bothOver: "両方を超えた"
+            case .trial: "お試し中"
+            }
+        }
+        var quota: ManagedPreservationUsage.ProductQuota? {
+            typealias Quota = ManagedPreservationUsage.ProductQuota
+            let plusBytes: Int64 = 3_000_000_000, trialBytes: Int64 = 250_000_000, maxRecords: Int64 = 3_000
+            let policy = Quota.Policy(version: 1, byteUnit: "decimal", recordUnit: "visible-records-v1",
+                plus: .init(limitBytes: plusBytes, maximumRecords: maxRecords, includesAppleFamily: true),
+                trial: .init(limitBytes: trialBytes, maximumRecords: maxRecords, durationDays: 14),
+                familyParticipationRequiresPersonalStoragePurchase: false)
+            let values: (bytes: Int64, saved: Int64, tier: String)
+            switch self {
+            case .real: return nil
+            case .counting:
+                return Quota(policy: policy, configurationStatus: "valid", accountingStatus: "not_available",
+                             enforcementStatus: "not_enabled", usage: nil)
+            case .plenty: values = (420_000_000, 312, "plus")
+            case .nearlyFull: values = (2_820_000_000, 1_204, "plus")
+            case .storageOver: values = (3_050_000_000, 1_480, "plus")
+            case .recordsOver: values = (1_900_000_000, 3_012, "plus")
+            case .bothOver: values = (3_050_000_000, 3_012, "plus")
+            case .trial: values = (96_000_000, 41, "trial")
+            }
+            let (bytes, saved, tier) = values
+            let limit = tier == "trial" ? trialBytes : plusBytes
+            return Quota(policy: policy, configurationStatus: "valid", accountingStatus: "ready",
+                enforcementStatus: "not_enabled",
+                usage: .init(version: 1, accounting: "committed-visible-records-v1", tier: tier,
+                    storage: .init(usedBytes: bytes, limitBytes: limit, availableBytes: max(0, limit - bytes),
+                                   overLimit: bytes > limit),
+                    records: .init(saved: saved, maximumRecords: maxRecords, available: max(0, maxRecords - saved),
+                                   overLimit: saved > maxRecords)))
+        }
     }
 
     private var retentionSection: some View {
@@ -462,6 +579,8 @@ struct ManagedPreservationView: View {
             Text("会員期限切れから12か月間は持ち出せます。削除予告の送達後、少なくとも30日の猶予も確保します。同じ会員情報の再契約を確認すると、持ち出し期限は解除されます。")
         }
     }
+
+    @State private var quotaTrial: QuotaTrial = .real
 
     private static func capacity(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .decimal)
