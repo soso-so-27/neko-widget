@@ -19,7 +19,12 @@ const resourceID = value => typeof value === 'string' && /^[A-Za-z0-9-]{8,80}$/.
 
 export async function checkRecipient({ groupID, testerID, get }) {
   requireValue(resourceID(groupID) && resourceID(testerID), 'Pinned owner group/tester IDs are required; no name-based fallback.');
-  const groups = await get(`/v1/apps/${appID}/betaGroups?limit=200&fields%5BbetaGroups%5D=name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled`);
+  // Read both independent collections before validating, so a group-shape
+  // failure does not hide whether the pinned owner membership is still intact.
+  const [groups, testers] = await Promise.all([
+    get(`/v1/apps/${appID}/betaGroups?limit=200&fields%5BbetaGroups%5D=name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled`),
+    get(`/v1/betaGroups/${groupID}/betaTesters?limit=200&fields%5BbetaTesters%5D=email`)
+  ]);
   requireValue(groups.filter(g => g.id === groupID).length === 1, 'Pinned owner group is not in the expected app.');
   for (const group of groups) {
     const a = group.attributes;
@@ -34,7 +39,6 @@ export async function checkRecipient({ groupID, testerID, get }) {
       requireValue(a.hasAccessToAllBuilds === false, 'Another group can automatically receive this build.');
     }
   }
-  const testers = await get(`/v1/betaGroups/${groupID}/betaTesters?limit=200&fields%5BbetaTesters%5D=email`);
   requireValue(testers.length === 1 && testers[0].type === 'betaTesters' && testers[0].id === testerID
     && testers[0].attributes?.email?.toLowerCase() === ownerEmail, 'Owner group must contain only the pinned owner tester.');
   return true;
@@ -94,6 +98,8 @@ async function main() {
     const resources = await get(url);
     if (new URL(url, origin).pathname.endsWith('/betaGroups')) {
       for (const line of groupDiagnostics(resources, groupID)) console.log(line);
+    } else {
+      console.log(`Owner membership: exactlyOne=${resources.length === 1}, pinnedTester=${resources.length === 1 && resources[0].id === testerID}, ownerEmail=${resources.length === 1 && resources[0].attributes?.email?.toLowerCase() === ownerEmail}`);
     }
     return resources;
   } });
