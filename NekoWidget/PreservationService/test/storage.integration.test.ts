@@ -775,7 +775,7 @@ it('exposes product policy without relabelling physical usage or changing existi
   await f.archive.put(f.session.token, id, f.request());
   const before = await f.archive.usage(f.session.token);
   const archive = new ArchiveStore({ ...f.options, productQuotaSettings: {} });
-  const response = await route(new Request('https://preserve.example/v1/usage', {
+  const response = await route(new Request('https://preserve.example/v1/usage?productQuotaVersion=2', {
     headers: { authorization: `Bearer ${f.session.token}` },
   }), { auth: f.auth, archive } as Services);
   expect(response.status).toBe(200);
@@ -783,9 +783,15 @@ it('exposes product policy without relabelling physical usage or changing existi
   expect(result.storage).toEqual(before.storage);
   expect(result.records).toEqual(before.records);
   expect(result.productQuota).toMatchObject({ usage: null, accountingStatus: 'not_available',
-    enforcementStatus: 'not_enabled', policy: { plus: { limitBytes: 3_000_000_000, maximumRecords: 3000 } } });
+    enforcementStatus: 'not_enabled', policy: { version: 2, plus: { limitBytes: 3_000_000_000, maximumRecords: 3000, includesAppleFamily: false } } });
+  for(const query of ['', '?productQuotaVersion=1']) {
+    const old = await route(new Request('https://preserve.example/v1/usage'+query, {headers: {authorization:`Bearer ${f.session.token}`}}), {auth:f.auth,archive} as Services);
+    const legacy = await old.json() as typeof before;
+    expect(old.status).toBe(200);expect(legacy.productQuota).toBeUndefined();
+    expect(legacy.storage).toEqual(before.storage);expect(legacy.records).toEqual(before.records);
+  }
   const malformed = new ArchiveStore({ ...f.options, productQuotaSettings: { PRODUCT_PLUS_BYTES: 'bad' } });
-  expect((await malformed.usage(f.session.token)).productQuota).toMatchObject({ configurationStatus: 'invalid', policy: null });
+  expect((await malformed.usage(f.session.token,2)).productQuota).toMatchObject({ configurationStatus: 'invalid', policy: null });
   expect((await malformed.read(f.session.token, id)).revision).toBe(1);
   const expanded = new ArchiveStore({ ...f.options, productQuotaSettings: { PRODUCT_PLUS_BYTES: '5000000000' } });
   expect((await expanded.usage(f.session.token)).storage).toEqual(before.storage);

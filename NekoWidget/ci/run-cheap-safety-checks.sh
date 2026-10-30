@@ -220,3 +220,9 @@ xcodebuild -project NekoWidget.xcodeproj -target NekoWidget -configuration Relea
   -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json \
   > "$RUNNER_TEMP/production-settings.json"
 python3 ci/validate-production-settings.py "$RUNNER_TEMP/production-settings.json" --allow-unconfigured
+
+# Actual product quota model and client negotiation, with in-memory transport.
+python3 ci/prepare-product-quota-check.py "$RUNNER_TEMP/product-quota-source.swift"
+xcrun swiftc -D DEBUG -parse-as-library "$RUNNER_TEMP/product-quota-source.swift" \
+  ci/verify-product-quota.swift -o "$RUNNER_TEMP/verify-product-quota"
+"$RUNNER_TEMP/verify-product-quota"

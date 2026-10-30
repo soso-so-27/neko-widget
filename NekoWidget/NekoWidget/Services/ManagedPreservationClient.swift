@@ -383,12 +383,12 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
             }
             if configurationStatus == "invalid", policy == nil, usage == nil { return }
             guard configurationStatus == "valid", let policy,
-                  policy.version == 1, policy.byteUnit == "decimal", policy.recordUnit == "visible-records-v1",
+                  policy.version == 2, policy.byteUnit == "decimal", policy.recordUnit == "visible-records-v1",
                   policy.plus.limitBytes > 0, policy.plus.limitBytes <= 9_007_199_254_740_991,
                   policy.trial.limitBytes > 0, policy.trial.limitBytes <= policy.plus.limitBytes,
                   policy.plus.maximumRecords > 0, policy.plus.maximumRecords <= 9_007_199_254_740_991,
                   policy.trial.maximumRecords == policy.plus.maximumRecords,
-                  policy.trial.durationDays == 14, policy.plus.includesAppleFamily,
+                  policy.trial.durationDays == 14, !policy.plus.includesAppleFamily,
                   !policy.familyParticipationRequiresPersonalStoragePurchase else {
                 throw ManagedPreservationError.invalidResponse
             }
@@ -416,8 +416,8 @@ struct ManagedPreservationUsage: Decodable, Equatable, Sendable {
         }
         /// UI fixtures only: no requests, billing, settings or real records.
         static func prototype(_ scenario: PrototypeScenario) -> Self {
-            let policy = Policy(version: 1, byteUnit: "decimal", recordUnit: "visible-records-v1",
-                plus: .init(limitBytes: 3_000_000_000, maximumRecords: 3_000, includesAppleFamily: true),
+            let policy = Policy(version: 2, byteUnit: "decimal", recordUnit: "visible-records-v1",
+                plus: .init(limitBytes: 3_000_000_000, maximumRecords: 3_000, includesAppleFamily: false),
                 trial: .init(limitBytes: 250_000_000, maximumRecords: 3_000, durationDays: 14),
                 familyParticipationRequiresPersonalStoragePurchase: false)
             guard scenario != .unknown else {
@@ -972,10 +972,20 @@ actor ManagedPreservationClient {
 
     /// The server's authenticated snapshot is independent of membership.
     func usage() async throws -> ManagedPreservationUsage {
-        let data = try await authenticated("GET", path: "/v1/usage",
-            query: [.init(name: "productQuotaVersion", value: "1")], maximumBytes: 4096)
+        let data: Data
+        var legacyResponse = false
         do {
-            let result: ManagedPreservationUsage = try decode(data)
+            data = try await authenticated("GET", path: "/v1/usage",
+                query: [.init(name: "productQuotaVersion", value: "2")], maximumBytes: 4096)
+        } catch ManagedPreservationError.requestRejected {
+            // The old service rejects v2. Read its existing usage once; its
+            // obsolete family-sharing policy is not a membership grant.
+            legacyResponse = true
+            data = try await authenticated("GET", path: "/v1/usage", query: [], maximumBytes: 4096)
+        }
+        do {
+            var result: ManagedPreservationUsage = try decode(data)
+            if legacyResponse { result.productQuota = nil }
             return try result.validated()
         } catch ManagedPreservationError.invalidResponse {
             throw ManagedPreservationError.accountingUnavailable

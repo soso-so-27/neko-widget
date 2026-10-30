@@ -28,26 +28,27 @@ it('returns real logical bytes/count only to opt-in readers; retries, updates an
   const f=await fixture(),id=crypto.randomUUID(),token=f.session.token;
   await f.archive.put(token,id,input());
   await f.archive.put(token,id,input());
-  expect((await f.archive.usage(token)).productQuota?.usage).toBeNull();
-  const first=(await f.archive.usage(token,1)).productQuota!;
+  expect((await f.archive.usage(token)).productQuota).toBeUndefined();
+  expect((await f.archive.usage(token,1)).productQuota).toBeUndefined();
+  const first=(await f.archive.usage(token,2)).productQuota!;
   expect(first.accountingStatus).toBe('ready');
   expect(first.usage?.records.saved).toBe(1);
   expect(first.usage?.storage.usedBytes).toBe(new TextEncoder().encode(JSON.stringify(base)).length);
   await f.archive.put(token,id,input({...base,text:'longer saved memo'},1));
-  const second=(await f.archive.usage(token,1)).productQuota!;
+  const second=(await f.archive.usage(token,2)).productQuota!;
   expect(second.usage?.records.saved).toBe(1);
   expect(second.usage!.storage.usedBytes).toBeGreaterThan(first.usage!.storage.usedBytes);
   await f.archive.remove(token,id,2);
-  expect((await f.archive.usage(token,1)).productQuota?.usage).toMatchObject({storage:{usedBytes:0},records:{saved:0}});
+  expect((await f.archive.usage(token,2)).productQuota?.usage).toMatchObject({storage:{usedBytes:0},records:{saved:0}});
 });
 
 it('invalidates derived facts on restored/replaced data and recounts without changing archive revision',async()=>{
   const f=await fixture(),id=crypto.randomUUID(),token=f.session.token;
   await f.archive.put(token,id,input());
   await binding.DB.prepare('UPDATE pa_records SET metadata=metadata WHERE owner_id=? AND record_id=?').bind(f.session.ownerId,id).run();
-  expect((await f.archive.usage(token,1)).productQuota?.usage).toBeNull();
+  expect((await f.archive.usage(token,2)).productQuota?.usage).toBeNull();
   expect(await f.archive.recountProductUsage(token)).toMatchObject({processed:1,nextCursor:null});
-  expect((await f.archive.usage(token,1)).productQuota?.usage?.records.saved).toBe(1);
+  expect((await f.archive.usage(token,2)).productQuota?.usage?.records.saved).toBe(1);
   expect((await f.archive.read(token,id)).revision).toBe(1);
 });
 
@@ -65,7 +66,7 @@ it('fences competing admission against the same total',async()=>{
   const f=await fixture({PRODUCT_VISIBLE_RECORDS:'1',PRODUCT_QUOTA_ENFORCEMENT:'true'}),token=f.session.token;
   const results=await Promise.allSettled([f.archive.put(token,crypto.randomUUID(),input()),f.archive.put(token,crypto.randomUUID(),input())]);
   expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
-  expect((await f.archive.usage(token,1)).productQuota?.usage?.records.saved).toBe(1);
+  expect((await f.archive.usage(token,2)).productQuota?.usage?.records.saved).toBe(1);
 });
 
 it('also enforces a legacy standalone tool snapshot at publication, not by its transport row count',async()=>{
@@ -73,7 +74,7 @@ it('also enforces a legacy standalone tool snapshot at publication, not by its t
   const root=crypto.randomUUID(),piece=crypto.randomUUID(),raw='{"schemaVersion":1,"cats":[{},{}]}',hash=await sha256(raw);
   await f.archive.put(token,piece,input({...base,formatVersion:3,toolBackup:{
     snapshotId:root,kind:'json',path:'CareHandoff/plan.json',part:0,count:1,sha256:hash,payload:btoa(raw)}}));
-  expect((await f.archive.usage(token,1)).productQuota?.usage?.records.saved).toBe(0);
+  expect((await f.archive.usage(token,2)).productQuota?.usage?.records.saved).toBe(0);
   const index=JSON.stringify({version:3,snapshotID:root,createdAt:1,
     files:[{path:'CareHandoff/plan.json',bytes:raw.length,sha256:hash,records:[piece]}]});
   await expect(f.archive.put(token,root,input({...base,formatVersion:3,toolBackup:{
