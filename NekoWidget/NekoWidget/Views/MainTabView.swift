@@ -3531,7 +3531,6 @@ private struct WindowListView: View {
             ForEach(publicWindows) { source in
                 publicCard(source, presentation: .row)
             }
-            PublicWindowComingSoonRows()
         }
         .accessibilityIdentifier("window-list-start")
     }

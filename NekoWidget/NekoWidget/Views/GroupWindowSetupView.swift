@@ -1158,7 +1158,10 @@ struct GroupJoinView: View {
         } header: {
             Text("招待されたまど")
         } footer: {
-            Text("申し込むと、まどを作った人にこの名前が届きます。承認されるまで、写真は見られません。参加する前の写真は届きません。")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("申し込むと、まどを作った人にこの名前が届きます。承認されるまで、写真は見られません。参加する前の写真は届きません。")
+                GroupWindowStandardsAgreement(action: "参加を頼む")
+            }
         }
     }
 

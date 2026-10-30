@@ -1063,7 +1063,7 @@ struct AppRecordSettingsView: View {
                 Label(persistence.title, systemImage: "checkmark.icloud")
                     .accessibilityIdentifier("app-record-save-status")
                 if let detail = persistence.detail { Text(detail).font(.footnote) }
-                Text("月額980円の機能です。初回の設定後は、写真メモ・ツールの入力と添付写真、猫の名前・誕生日などの変更を自動で保存します。")
+                Text("Plus の機能です。初回の設定後は、写真メモ・ツールの入力と添付写真、猫の名前・誕生日などの変更を自動で保存します。")
                 Text("写真ライブラリ全体、写真原本、動画は対象ではありません。写真ライブラリの写真選びは、その端末に残します。共有相手には送られません。")
                     .font(.footnote).foregroundStyle(.secondary)
             } header: { Text("記録の保存・復元") }
@@ -1072,7 +1072,7 @@ struct AppRecordSettingsView: View {
                 Section {
                     ProductQuotaSummary(quota: quota)
                 } header: { Text("保管できる量") }
-                footer: { Text("詳しい内訳は「以前の保管記録・書き出し・アカウント管理」で見られます。") }
+                footer: { Text("詳しい内訳は「保管した記録・書き出し・アカウントの削除」で見られます。") }
             }
             if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
             if authentication.accountDeletionState != nil {
@@ -1131,7 +1131,7 @@ struct AppRecordSettingsView: View {
                 } header: { Text("会員情報") }
             }
             Section {
-                NavigationLink("以前の保管記録・書き出し・アカウント管理") { ManagedPreservationView() }
+                NavigationLink("保管した記録・書き出し・アカウントの削除") { ManagedPreservationView() }
             } footer: {
                 Text("以前に保存したコピーは残っています。会員終了後も既存記録の取り出しはできます。")
             }

@@ -1586,6 +1586,8 @@ struct GroupWindowCreateScreen: View {
                     .disabled(trimmed.isEmpty || trimmedOwner.isEmpty || tooLong || model.isWorking)
                     .accessibilityIdentifier("group-window-create-confirm")
                 }
+            } footer: {
+                GroupWindowStandardsAgreement(action: "作る")
             }
             .listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets())
@@ -1607,6 +1609,24 @@ struct GroupWindowCreateScreen: View {
                 GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
             }
         }
+    }
+}
+
+/// Under 「作る」 and 「参加を頼む」: pressing it is agreeing to the community
+/// standards, said before the press, with the standards one tap away (1.2).
+struct GroupWindowStandardsAgreement: View {
+    let action: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("「\(action)」を押すと、コミュニティ基準に同意したことになります。人を傷つける写真や、写っている人の同意がない写真は届けられません。")
+            if let url = SharingAPIConfiguration.current.communityStandardsURL {
+                Link("コミュニティ基準を読む", destination: url)
+            }
+        }
+        .font(.footnote)
+        .padding(.top, 8)
+        .accessibilityIdentifier("group-window-standards-agreement")
     }
 }
 

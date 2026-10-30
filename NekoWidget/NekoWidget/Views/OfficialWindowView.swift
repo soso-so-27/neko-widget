@@ -168,7 +168,6 @@ struct PublicWindowDiscoveryView: View {
                         presentation: Version1.isOn ? .row : .discovery,
                         previewFeed: source.preview, relatedWindows: sources)
                 }
-                if Version1.isOn { PublicWindowComingSoonRows() }
             }
             .padding(20)
             .frame(maxWidth: 520)
@@ -188,30 +187,6 @@ struct PublicWindowDiscoveryView: View {
 
     private func reloadStates() {
         states = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.store.snapshot()) })
-    }
-}
-
-struct PublicWindowComingSoonRows: View {
-    var body: some View {
-        VStack(spacing: 0) {
-            row("猫カフェ", icon: "cup.and.saucer", id: "cat-cafe")
-            Divider()
-            row("保護猫", icon: "house", id: "rescue-cats")
-        }
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func row(_ title: String, icon: String, id: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).frame(width: 28)
-            Text(title)
-            Spacer()
-            Text("近日").font(.caption)
-        }
-        .foregroundStyle(.secondary)
-        .padding(16)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("official-window-coming-soon-\(id)")
     }
 }
 
