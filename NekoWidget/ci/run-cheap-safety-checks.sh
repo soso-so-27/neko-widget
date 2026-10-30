@@ -19,6 +19,7 @@ python3 ci/test-pairing-only-release-config.py
 python3 ci/test-media-staging-release-config.py
 python3 ci/test-validate-sharing-release.py
 python3 ci/test-signed-artifact-authentication.py
+python3 ci/test-altool-result.py
 python3 ci/test-validate-sharing-runtime-self-test.py
 python3 ci/test-public-policy-site.py
 python3 ci/test-limited-external-beta-reporting.py
