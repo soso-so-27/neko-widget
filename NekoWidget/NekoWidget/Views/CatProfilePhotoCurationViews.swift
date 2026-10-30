@@ -42,7 +42,6 @@ struct CatProfileDetailView: View {
     @State private var nameSaveFailed = false
     @State private var deleteFailed = false
     @State private var page: CatPage = .photos
-    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
     @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var showsFarewellEditor = false
 
@@ -85,7 +84,7 @@ struct CatProfileDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // この子のこと brings its own; 写真 shows the same at the same place.
-            if page == .photos, AlbumPrototype.isOn(albumPrototypeStored) || FamilyNotebookPrototype.shared.hasFamily {
+            if page == .photos, Version1.familyNotebook || FamilyNotebookPrototype.shared.hasFamily {
                 ToolbarItem(placement: .topBarTrailing) {
                     FamilyNotebookButton(accessibilityIdentifier: "cat-profile-family-notebook")
                 }
@@ -132,7 +131,7 @@ struct CatProfileDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .listRowBackground(Color.clear)
-                if AlbumPrototype.isOn(albumPrototypeStored),
+                if Version1.isOn,
                    let day = CatFarewell.days(farewellJSON)[profile.identifier] {
                     Text(CatFarewell.text(day) + "に旅立ちました")
                         .font(.footnote)
@@ -244,7 +243,7 @@ struct CatProfileDetailView: View {
             }
             // When a cat has died, deleting is usually where people go. Offer
             // to keep the cat instead, in words that suit any reason for deleting.
-            if AlbumPrototype.isOn(albumPrototypeStored), CatFarewell.days(farewellJSON)[profile.identifier] == nil {
+            if Version1.isOn, CatFarewell.days(farewellJSON)[profile.identifier] == nil {
                 Button("思い出として残す") { showsFarewellEditor = true }
             }
             Button("キャンセル", role: .cancel) {}

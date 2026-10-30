@@ -246,7 +246,7 @@ struct AppRootView: View {
             return
         }
         if let route = CloudyWindowAlbumRoute(url: url) {
-            guard AlbumPrototype.isOn(UserDefaults.standard.bool(forKey: AlbumPrototype.key)) else { return }
+            guard Version1.isOn else { return }
             AlbumArrivalOpenInbox.shared.pending = route
             return
         }
