@@ -178,9 +178,9 @@ struct CatCareDetailView: View {
     @State private var farewellSharing: FamilyFarewellSharingState?
     @State private var showsFarewellSharing = false
 
-    /// Test builds only, as the rest of the prototype.
+    /// 1.0 (Version1), as the rest of the album.
     private var farewell: CatCareDay? {
-        AlbumPrototype.isOn(albumPrototypeStored) ? CatFarewell.days(farewellJSON)[subject.key] : nil
+        Version1.isOn ? CatFarewell.days(farewellJSON)[subject.key] : nil
     }
 
     init(profile: CatProfilePresentation, otherProfiles: [CatProfilePresentation],
@@ -199,7 +199,6 @@ struct CatCareDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = CatCareDraft()
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
-    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
     @State private var savedDraft = CatCareDraft()
     @State private var catID: UUID?
     @State private var autosave: Task<Void, Never>?
@@ -271,9 +270,9 @@ struct CatCareDetailView: View {
         .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed)
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .toolbar {
-            // Test builds only: the family, at the top right like sharing in
-            // Notes, so it is out of the way for anyone who keeps to themselves.
-            if AlbumPrototype.isOn(albumPrototypeStored) || familyNotebook.hasFamily {
+            // The family, at the top right like sharing in Notes, so it is
+            // out of the way for anyone who keeps to themselves.
+            if Version1.familyNotebook || familyNotebook.hasFamily {
                 ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
             }
         }
@@ -596,7 +595,7 @@ struct CatCareDetailView: View {
     // MARK: Summaries
 
     private func loadFarewellSharing() async {
-        guard familyNotebook.hasFamily, AlbumPrototype.isOn(albumPrototypeStored), let catID else {
+        guard familyNotebook.hasFamily, Version1.isOn, let catID else {
             farewellSharing = nil
             return
         }

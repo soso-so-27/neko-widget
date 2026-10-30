@@ -4,10 +4,23 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-/// Test builds only: the album as "works that arrive" and the monthly story.
-/// Turned on in 設定 → テスト用. Public builds never read the switch (always off).
+/// The 1.0 shape: 写真・まど・アルバム・ツール, the album of works that
+/// arrive, 旅立った日. Internal builds show it always (no switch). Public
+/// builds keep the shape they have until 1.0 ships: then `isOn` becomes true,
+/// in this one place. くもりのまど, 公式のまど and the photobook check stay
+/// behind InternalBuildPresentationAvailability: they are not part of 1.0.
+enum Version1 {
+    static var isOn: Bool { InternalBuildPresentationAvailability.isAvailable }
+
+    /// 家族の手帳: internal builds try it on the prototype; a public build shows
+    /// it only once the real sharing is on (FamilyNotebookProductionEnabled).
+    @MainActor static var familyNotebook: Bool {
+        InternalBuildPresentationAvailability.isAvailable || FamilyNotebookServiceFactory.productionRequested
+    }
+}
+
+/// The album as "works that arrive" and the monthly story (Version1).
 enum AlbumPrototype {
-    static let key = "debug.albumPrototype.v1"
     static let enabledAtKey = "debug.albumPrototype.enabledAt.v1"
     static let openedKey = "debug.albumPrototype.opened.v1"
     /// Test only: deliver this year's work today instead of on 12/6.
@@ -76,10 +89,6 @@ enum AlbumPrototype {
             chosen += ranked.filter { !ids.contains($0.localIdentifier) }.prefix(9 - chosen.count)
         }
         return chosen
-    }
-
-    static func isOn(_ stored: Bool) -> Bool {
-        stored && InternalBuildPresentationAvailability.isAvailable
     }
 
     static func cover(of letter: MonthlyWindowPresentation, from catPhotos: [PhotoPresentation]) -> PhotoPresentation? {

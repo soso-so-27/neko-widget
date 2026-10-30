@@ -90,7 +90,6 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
-    @AppStorage(AlbumPrototype.key) private var albumPrototypeOn = false
     @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
     @AppStorage(AlbumPrototype.slideshowKey) private var albumSlideshow = false
     @State private var showsWindowSupportPreview = false
@@ -355,15 +354,8 @@ struct SettingsView: View {
                         if let cloudyWindowError {
                             Text(cloudyWindowError).foregroundStyle(.red)
                         }
-                        // The album as works that arrive, with the monthly story.
-                        Toggle("新しいアルバムとタブの並び（試作）", isOn: $albumPrototypeOn)
-                            .accessibilityIdentifier("settings-album-prototype")
-                            .onChange(of: albumPrototypeOn) { _, enabled in
-                                if enabled, UserDefaults.standard.double(forKey: AlbumPrototype.enabledAtKey) == 0 {
-                                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: AlbumPrototype.enabledAtKey)
-                                }
-                            }
-                        if albumPrototypeOn {
+                        // The album's test tools (the album itself is always on here: Version1).
+                        if Version1.isOn {
                             Toggle("1 年の作品をいま届ける（12/6 を待たない）", isOn: $albumYearNow)
                                 .accessibilityIdentifier("settings-album-year-now")
                             Toggle("月と年の作品をスライドショーで見る（前の形）", isOn: $albumSlideshow)
