@@ -242,7 +242,7 @@ private actor EchoTransport: GroupHTTPTransport {
                 "state": "pending", "expiresAt": invited["expiresAt"]!, "encryptedDisplayName": object["encryptedDisplayName"]!,
                 "personAuthorization": object["personAuthorization"]!, "signingPublicKey": registration["signingPublicKey"]!,
                 "hpkePublicKey": registration["hpkePublicKey"]!, "identityPublicKey": registration["personPublicKey"]!, "admissionProof": proof]
-            let receipt: [String: Any] = ["requestId": id, "windowId": windowID, "invitationId": invited["invitationId"]!,
+            let receipt: [String: Any] = ["operationId": try text("operationId"), "requestId": id, "windowId": windowID, "invitationId": invited["invitationId"]!,
                 "personId": object["personId"]!, "candidateDeviceId": device, "state": "pending", "expiresAt": invited["expiresAt"]!]
             joinReceipts[try text("operationId")] = receipt
             if dropJoin { dropJoin = false; throw GroupClientError.offline }
@@ -410,26 +410,34 @@ private struct RosterVector: Decodable { let packet: SignedGroupRoster; let anch
 @main
 private struct GroupAdapterChecks {
     static func admissionLifecycle() async throws {
+        var stage = "create window"
+        do {
         let endpoint = URL(string: "https://group.invalid")!, relay = EchoTransport(), ownerSecrets = MemorySecrets(), guestSecrets = MemorySecrets()
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("admission-" + UUID().uuidString)
         let owner = try ProductionGroupWindowClient(endpoint: endpoint, secrets: ownerSecrets, transport: relay, outboxDirectory: base.appendingPathComponent("owner"), billingSigner: SyntheticBillingSigner())
         let op = UUID()
         do { _ = try await owner.createWindow(name: "実家", operationID: op) } catch GroupClientError.offline { }
         let room = try await owner.createWindow(name: "実家", operationID: op)
+        stage = "create invitation"
         let invite = try await owner.createInvitation(windowID: room.id, operation: GroupOperation(expectedRevision: room.revision))
+        stage = "reuse invitation"
         let again = try await owner.reusableInvitation(windowID: room.id)
         try check(again?.shareText == invite.shareText && again?.expiresAt == invite.expiresAt, "same link, unchanged expiry after reopening")
         let parsed = GroupInvitationLink(url: URL(string: invite.shareText)!)!
         try check(parsed.context?.windowName == "実家", "name available before joining")
+        stage = "stage guest invitation"
         var guest = try ProductionGroupWindowClient(endpoint: endpoint, secrets: guestSecrets, transport: relay, outboxDirectory: base.appendingPathComponent("guest"))
         _ = try await guest.stageInvitation(url: parsed.url!)
+        stage = "first join request"
         do { _ = try await guest.apply(invitationID: invite.id, displayName: "家族", operationID: UUID()); throw Failure.check("lost join response expected") }
         catch GroupClientError.offline { }
+        stage = "restart join request"
         guest = try ProductionGroupWindowClient(endpoint: endpoint, secrets: guestSecrets, transport: relay, outboxDirectory: base.appendingPathComponent("guest"))
         let joined = try await guest.apply(invitationID: invite.id, displayName: "家族", operationID: UUID())
         let resumed = try await guest.resumableJoin(invitationID: invite.id)
         let stats = await relay.admissionStats()
         try check(joined.id == resumed?.id && stats.1.count == 2 && stats.1[0] == stats.1[1], "relaunch and a new UI operation reuse the exact original application")
+        stage = "verify owner admission proof"
         _ = try await owner.pendingRequests(windowID: room.id)
         let rowData = try ownerSecrets.read("candidate:\(room.id):\(joined.id)")!
         var row = try GroupWire.decode(GroupAPIModel.PendingJoin.self, rowData)
@@ -447,19 +455,24 @@ private struct GroupAdapterChecks {
         altered["encryptedDisplayName"] = GroupWire.base64(Data(repeating: 1, count: 32))
         let forged = try GroupWire.decode(GroupAPIModel.PendingJoin.self, JSONSerialization.data(withJSONObject: altered))
         try rejects("invitation signature binds applicant encrypted name") { try GroupAdmissionProofVerifier.verify(forged, capability: capability, windowID: room.id) }
+        stage = "pause owner admission"
         await relay.setDelivery("paused")
         _ = try await owner.reconcileAdmissions()
         try check(await relay.admissionStats().0 == 0, "paused owner never auto-admits")
+        stage = "automatic admission and lost approval response"
         await relay.setDelivery("active")
         _ = try await owner.reconcileAdmissions() // response loss after server accepted the roster
         let results = try await owner.reconcileAdmissions()
         try check(results.contains { $0.id == joined.id && !$0.joinedLocally }, "lost approval response recovers who joined")
         try check(await relay.admissionStats().0 == 1, "no duplicate approval after lost response")
+        stage = "guest roster and key prefetch"
         let ready = try await guest.joinStatus(requestID: joined.id)
         let loaded = try await guest.window(id: room.id)
         try check(ready.state == .approved && loaded.memberCount == 2, "approved status is published after verified roster and key prefetch")
+        stage = "revoked invitation"
         await relay.invalidateInvitation()
         try check(try await owner.reusableInvitation(windowID: room.id) == nil, "revoked link cannot be re-shared")
+        } catch { throw Failure.check("Admission lifecycle \(stage): \(error)") }
     }
     static func main() async throws {
         try await admissionLifecycle()
