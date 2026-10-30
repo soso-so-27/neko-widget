@@ -550,8 +550,6 @@ struct MainTabView: View {
     private var readMonthlyWindowPeriodIdentifier = ""
     @AppStorage(GrowthAlbumPhotoOverrides.storageKey)
     private var growthPhotoOverridesJSON = ""
-    /// Test builds only: 設定 → テスト用「新しいアルバム（試作）」.
-    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
     @AppStorage(AlbumPrototype.enabledAtKey) private var albumPrototypeEnabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var albumPrototypeOpened = ""
     @ObservedObject private var albumArrivalInbox = AlbumArrivalOpenInbox.shared
@@ -571,8 +569,8 @@ struct MainTabView: View {
             lastViewedTab = tab.rawValue
             selectedTab = tab
         })) {
-            // 新しいアルバム（試作）: 写真・まど・アルバム・ツール. Otherwise the shipping order.
-            if AlbumPrototype.isOn(albumPrototypeStored) {
+            // 1.0: 写真・まど・アルバム・ツール. Otherwise the order public builds have now.
+            if Version1.isOn {
                 photosTab
                 windowsTab
                 albumTab
@@ -792,16 +790,17 @@ struct MainTabView: View {
         .onChange(of: albumArrivalInbox.showsAlbum, initial: true) { _, shows in
             guard shows else { return }
             albumArrivalInbox.showsAlbum = false
-            guard AlbumPrototype.isOn(albumPrototypeStored) else { return }
+            guard Version1.isOn else { return }
             showsSettings = false
             didApplyInitialTab = true
             selectedTab = .memories
         }
-        .onChange(of: albumPrototypeStored, initial: true) { _, enabled in
-            // Test builds: the family notebook listens to 「この子のこと」 from the start.
-            if AlbumPrototype.isOn(enabled) { _ = FamilyNotebookPrototype.shared }
-            if AlbumPrototype.isOn(enabled), albumPrototypeEnabledAt == 0 {
-                albumPrototypeEnabledAt = Date().timeIntervalSince1970
+        .onAppear {
+            if Version1.isOn {
+                // The family notebook listens to 「この子のこと」 from the start.
+                _ = FamilyNotebookPrototype.shared
+                // Months that end after this are the ones that arrive wrapped.
+                if albumPrototypeEnabledAt == 0 { albumPrototypeEnabledAt = Date().timeIntervalSince1970 }
             }
             synchronizeAlbumArrival()
             openAlbumArrivalIfReady()
@@ -809,7 +808,7 @@ struct MainTabView: View {
         .onChange(of: albumPrototypeOpened) { _, _ in synchronizeAlbumArrival() }
         .onChange(of: photoLibraryLoadSucceeded) { _, _ in openAlbumArrivalIfReady() }
         .fullScreenCover(item: $arrivalStory) { letter in
-            if AlbumPrototype.isOn(albumPrototypeStored), hasPhotoAccess,
+            if Version1.isOn, hasPhotoAccess,
                let current = currentMonthlyWindowCollection?.letters.first(where: { $0.periodIdentifier == letter.periodIdentifier }) {
                 AlbumWorkGate(month: current.monthNumber) {
                     MonthlyStoryView(letter: current, catPhotos: catPhotos,
@@ -955,7 +954,7 @@ struct MainTabView: View {
     }
 
     @ViewBuilder private var albumRoot: some View {
-        if AlbumPrototype.isOn(albumPrototypeStored) {
+        if Version1.isOn {
             AlbumPrototypeView(
                 letters: hasPhotoAccess ? currentMonthlyWindowCollection?.letters ?? [] : [],
                 movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
@@ -1460,7 +1459,7 @@ struct MainTabView: View {
             readingPositionKey: photoLibraryPositionKey(.all),
             showsCatProfileNavigation: false,
             headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker),
-            themeRow: AlbumPrototype.isOn(albumPrototypeStored) && hasPhotoAccess && !photoThemeAlbums.isEmpty
+            themeRow: Version1.isOn && hasPhotoAccess && !photoThemeAlbums.isEmpty
                 ? AnyView(photoThemeRow) : nil
         )
     }
@@ -2535,7 +2534,7 @@ struct MainTabView: View {
     }
 
     private func synchronizeAlbumArrival() {
-        let enabled = AlbumPrototype.isOn(albumPrototypeStored)
+        let enabled = Version1.isOn
         if enabled, photoLibraryLoadSucceeded != false,
            photoLibraryLoadSucceeded == nil || isScanning
             || (monthlyWindowCollectionKey.canBuild
@@ -2598,7 +2597,7 @@ struct MainTabView: View {
 
     private func openAlbumArrivalIfReady() {
         guard let route = albumArrivalInbox.pending else { return }
-        guard AlbumPrototype.isOn(albumPrototypeStored) else {
+        guard Version1.isOn else {
             albumArrivalInbox.pending = nil
             arrivalUnavailable = true
             return
@@ -3183,7 +3182,6 @@ private struct WindowListView: View {
     @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
     @State private var coverClock: Date = .now
     @State private var windowErrors: Set<String> = []
-    @AppStorage(AlbumPrototype.key) private var albumPrototypeStored = false
     @State private var addingPublicWindowID: String?
     @State private var addedPublicWindows = 0
     @State private var addPublicWindowError: String?
@@ -3226,10 +3224,10 @@ private struct WindowListView: View {
         publicWindows.filter { publicStates[$0.id]?.isSubscribed == true }
     }
 
-    // MARK: Test builds: the まど tab as what arrives to me
+    // MARK: 1.0: the まど tab as what arrives to me
 
     private var usesArrivalLayout: Bool {
-        AlbumPrototype.isOn(albumPrototypeStored) && GroupWindowClientProvider.ui != nil
+        Version1.isOn && GroupWindowClientProvider.ui != nil
     }
 
     /// 「わたしのまど」: the windows I share and the official ones I added, each
