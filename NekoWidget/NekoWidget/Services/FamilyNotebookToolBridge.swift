@@ -162,7 +162,9 @@ enum FamilyNotebookToolBridge {
             let old = visits.first { $0.id == id }
             guard old == nil || old?.catID == cat || snapshot.mappings.contains(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.profileID == old?.catID }) else { throw FamilyNotebookError.mappingConflict }
             if values.deleted {
-                if let i = visits.firstIndex(where: { $0.id == id }) { visits[i].familyDetached = true }
+                if let i = visits.firstIndex(where: { $0.id == id }), visits[i].familyDetached != true {
+                    visits[i].familyDetached = true; visits[i].revision = UUID()
+                }
                 continue
             }
             guard old?.familyDetached != true, values.latest != nil else { continue }

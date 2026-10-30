@@ -1466,7 +1466,7 @@ private struct FamilyNotebookToolSyncModifier: ViewModifier {
         content.task(id: phase == .active && model.hasFamily) {
             guard phase == .active, model.hasFamily, model.isReal else { return }
             while !Task.isCancelled {
-                await FamilyNotebookSharing.shared.refresh()
+                if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
             }
         }

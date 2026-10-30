@@ -58,6 +58,8 @@ enum FamilyNotebookToolBridgeVerifier {
         _ = try source.edit(target: .init(familyCatID: fixture.familyA, collection: .visit, recordID: visitID, field: nil), value: nil, author: author)
         let retained = try FamilyNotebookToolBridge.apply(source.snapshot(), to: ownVisits)
         try check(retained[0].familyDetached == true && retained[0].entries == ownVisits[0].entries, "shared deletion retains private text/photos")
+        try check(retained[0].revision != ownVisits[0].revision, "open editor cannot overwrite the retained-copy marker with its old revision")
+        try check(try FamilyNotebookToolBridge.apply(source.snapshot(), to: retained) == retained, "repeated deletion does not keep changing the revision")
         try check(FamilyNotebookToolBridge.selected(retained, snapshot: try source.snapshot()).isEmpty, "retained copy cannot resurrect shared deletion")
         let privateOnly = try FamilyNotebookToolBridge.selected(privatePlan, snapshot: receiver.snapshot())
         try check(privateOnly.cats.isEmpty, "unlinked same-name cat is never automatically shared")
