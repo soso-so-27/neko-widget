@@ -222,7 +222,7 @@ python3 ci/validate-production-settings.py "$RUNNER_TEMP/production-settings.jso
 xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Release \
   -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
   -xcconfig Config.Production.xcconfig -derivedDataPath "$RUNNER_TEMP/ProductionProbe" \
-  CODE_SIGNING_ALLOWED=NO -dry-run build > "$RUNNER_TEMP/production-resource-plan.txt"
+  CODE_SIGNING_ALLOWED=NO -dry-run build 2>&1 | tee "$RUNNER_TEMP/production-resource-plan.txt"
 python3 - "$RUNNER_TEMP/production-resource-plan.txt" <<'PY'
 from pathlib import Path
 import sys
