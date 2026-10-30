@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRecipient, reader, failureMessage, groupDiagnostics } from './check-owner-testflight-recipient.mjs';
+import { checkRecipient, reader, failureMessage, groupDiagnostics, verifyInternalOnlyArtifact } from './check-owner-testflight-recipient.mjs';
+import { createHash } from 'node:crypto';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { check as checkReportOff } from '../SharingService/scripts/check-owner-internal-report-off.mjs';
 
 const groupID = 'owner-group-id', testerID = 'owner-tester-id';
@@ -70,11 +74,54 @@ test('explicit ASC fields are requested and incomplete booleans still block uplo
   for (const field of ['isInternalGroup', 'hasAccessToAllBuilds']) {
     for (const value of [null, undefined, 'true', 1]) {
       await assert.rejects(run([{ ...group, attributes: { ...group.attributes, [field]: value } }]),
-        error => failureMessage(error) === `Owner group: ${field} is missing or not boolean.`);
+        error => failureMessage(error).startsWith(`Owner group: ${field} is missing or not boolean`));
     }
   }
   const privateValue = 'private-identifier-or-address';
   assert.deepEqual(groupDiagnostics([{ id: privateValue, attributes: {
     name: privateValue, isInternalGroup: true, hasAccessToAllBuilds: privateValue, publicLinkEnabled: null
   } }], groupID), ['Other group: internal=true, allBuilds=invalid, publicLink=null']);
+});
+
+test('observed external null is excluded only for an authenticated internal-only IPA', async () => {
+  const external = { type: 'betaGroups', id: 'external-group', attributes: { isInternalGroup: false, hasAccessToAllBuilds: null } };
+  const check = (other = external, proof = true) => checkRecipient({ groupID, testerID,
+    authenticatedInternalOnly: proof, get: async url => url.includes('/betaTesters') ? [tester] : [group, other] });
+  assert.equal(await check(), true);
+  await assert.rejects(check(external, false));
+  for (const patch of [{ isInternalGroup: true }, { isInternalGroup: null },
+    { hasAccessToAllBuilds: undefined }, { hasAccessToAllBuilds: true }, { hasAccessToAllBuilds: 'false' }]) {
+    await assert.rejects(check({ ...external, attributes: { ...external.attributes, ...patch } }));
+  }
+  await assert.rejects(checkRecipient({ groupID, testerID, authenticatedInternalOnly: true,
+    get: async url => url.includes('/betaTesters') ? [tester] : [{ ...group, attributes: { ...group.attributes, hasAccessToAllBuilds: null } }] }));
+});
+
+test('internal-only evidence is authenticated first and bound to the exact uploaded bytes', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'neko-recipient-test-'));
+  assert.equal(path.dirname(root), path.resolve(tmpdir()));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ipa = path.join(root, 'synthetic.ipa');
+  const payload = Buffer.from('synthetic-ipa');
+  const metadata = { schema: 'jp.nekowidget.moderation-release-metadata.v4', distributionProfile: 'owner-internal',
+    releaseEnvironment: 'testflight', releaseMode: 'media-staging',
+    testFlightInternalTestingOnly: true, internalEncryptedReportEnabled: false, internalEncryptedReportScope: '',
+    ipaSha256: createHash('sha256').update(payload).digest('hex') };
+  let authenticated = false;
+  const authenticate = async directory => { assert.equal(directory, root); authenticated = true; };
+  await writeFile(ipa, payload);
+  const save = value => writeFile(path.join(root, 'moderation-release-metadata.json'), JSON.stringify(value));
+  await save(metadata);
+  assert.equal(await verifyInternalOnlyArtifact(root, ipa, authenticate), true);
+  assert.equal(authenticated, true);
+  for (const patch of [{ testFlightInternalTestingOnly: false }, { distributionProfile: 'existing-reviewed' },
+    { releaseMode: 'disabled' }, { releaseEnvironment: 'production' },
+    { internalEncryptedReportEnabled: true }, { internalEncryptedReportScope: 'unexpected' }, { ipaSha256: '0'.repeat(64) }]) {
+    await save({ ...metadata, ...patch });
+    await assert.rejects(verifyInternalOnlyArtifact(root, ipa, authenticate));
+  }
+  await save(metadata);
+  await assert.rejects(verifyInternalOnlyArtifact(root, ipa, async () => { throw Error('authentication failed'); }), /authentication failed/);
+  await writeFile(ipa, 'different bytes');
+  await assert.rejects(verifyInternalOnlyArtifact(root, ipa, authenticate));
 });

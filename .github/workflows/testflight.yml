@@ -1749,7 +1749,8 @@ jobs:
           }
 
           if [[ "$DISTRIBUTION_PROFILE" == "owner-internal" ]]; then
-            node "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/check-owner-testflight-recipient.mjs"
+            node "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/check-owner-testflight-recipient.mjs" \
+              --authenticated-artifact "$RUNNER_TEMP" --ipa "$IPA_PATH"
           fi
           run_altool_stage validate \
             --validate-app \

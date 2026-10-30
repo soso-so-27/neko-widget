@@ -1,9 +1,11 @@
 // Read-only ASC preflight. Never creates groups, testers, builds, or assignments.
-import { createPrivateKey, sign } from 'node:crypto';
+import { createHash, createPrivateKey, sign } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const origin = 'https://api.appstoreconnect.apple.com';
 const appID = '6801962436';
@@ -17,7 +19,7 @@ export function failureMessage(error) {
 }
 const resourceID = value => typeof value === 'string' && /^[A-Za-z0-9-]{8,80}$/.test(value);
 
-export async function checkRecipient({ groupID, testerID, get }) {
+export async function checkRecipient({ groupID, testerID, get, authenticatedInternalOnly = false }) {
   requireValue(resourceID(groupID) && resourceID(testerID), 'Pinned owner group/tester IDs are required; no name-based fallback.');
   // Read both independent collections before validating, so a group-shape
   // failure does not hide whether the pinned owner membership is still intact.
@@ -31,16 +33,44 @@ export async function checkRecipient({ groupID, testerID, get }) {
     const label = group.id === groupID ? 'Owner group' : 'Another group';
     requireValue(group.type === 'betaGroups' && a, `${label}: invalid resource or missing attributes.`);
     requireValue(typeof a.isInternalGroup === 'boolean', `${label}: isInternalGroup is missing or not boolean.`);
-    requireValue(typeof a.hasAccessToAllBuilds === 'boolean', `${label}: hasAccessToAllBuilds is missing or not boolean.`);
+    // ASC returns null for external groups where this internal automatic-build
+    // setting is inapplicable. They cannot receive an Internal Only upload.
+    // Accept only this observed null shape, and only after authenticating the
+    // exact IPA's internal-only export metadata. Unknown/missing flags still stop.
+    const excludedExternal = a.isInternalGroup === false && a.hasAccessToAllBuilds === null
+      && authenticatedInternalOnly === true;
+    requireValue(typeof a.hasAccessToAllBuilds === 'boolean' || excludedExternal,
+      `${label}: hasAccessToAllBuilds is missing or not boolean; external null requires authenticated Internal Only IPA.`);
     if (group.id === groupID) {
       requireValue(a.name === '自分用' && a.isInternalGroup === true && a.hasAccessToAllBuilds === true
         && a.publicLinkEnabled !== true, 'Owner group identity/automatic distribution changed.');
     } else {
-      requireValue(a.hasAccessToAllBuilds === false, 'Another group can automatically receive this build.');
+      requireValue(a.hasAccessToAllBuilds === false || excludedExternal, 'Another group can automatically receive this build.');
     }
   }
   requireValue(testers.length === 1 && testers[0].type === 'betaTesters' && testers[0].id === testerID
     && testers[0].attributes?.email?.toLowerCase() === ownerEmail, 'Owner group must contain only the pinned owner tester.');
+  return true;
+}
+
+export async function verifyInternalOnlyArtifact(artifactRoot, ipaPath, authenticate = async root => {
+  const ci = path.dirname(fileURLToPath(import.meta.url));
+  await promisify(execFile)('python3', [path.join(ci, 'signed-artifact-authentication.py'), 'verify',
+    '--ciphertext', path.join(root, 'NekoWidget-signed-artifacts.tar.gz.enc'),
+    '--metadata', path.join(root, 'moderation-release-metadata.json'),
+    '--authentication', path.join(root, 'signed-artifact-authentication.json')]);
+}) {
+  requireValue(typeof artifactRoot === 'string' && typeof ipaPath === 'string', 'Authenticated artifact and IPA paths are required.');
+  await authenticate(artifactRoot);
+  const metadata = JSON.parse(await readFile(path.join(artifactRoot, 'moderation-release-metadata.json'), 'utf8'));
+  requireValue(metadata.schema === 'jp.nekowidget.moderation-release-metadata.v4'
+    && metadata.releaseEnvironment === 'testflight' && metadata.releaseMode === 'media-staging'
+    && metadata.distributionProfile === 'owner-internal' && metadata.testFlightInternalTestingOnly === true
+    && metadata.internalEncryptedReportEnabled === false && metadata.internalEncryptedReportScope === '',
+    'Authenticated artifact must be owner-internal, Internal Only, with reports OFF.');
+  requireValue(/^[a-f0-9]{64}$/.test(metadata.ipaSha256 ?? '')
+    && createHash('sha256').update(await readFile(ipaPath)).digest('hex') === metadata.ipaSha256,
+    'Exact IPA does not match authenticated internal-only artifact.');
   return true;
 }
 
@@ -81,6 +111,10 @@ export function reader(token, fetcher = fetch) {
 }
 
 async function main() {
+  const args = process.argv.slice(2);
+  requireValue(args.length === 0 || (args.length === 4 && args[0] === '--authenticated-artifact' && args[2] === '--ipa'),
+    'Expected authenticated artifact and exact IPA arguments, or read-only diagnosis without arguments.');
+  const authenticatedInternalOnly = args.length === 4 ? await verifyInternalOnlyArtifact(args[1], args[3]) : false;
   const { OWNER_INTERNAL_GROUP_ID: groupID, OWNER_INTERNAL_TESTER_ID: testerID,
     APP_STORE_CONNECT_KEY_ID: keyID, APP_STORE_CONNECT_ISSUER_ID: issuer } = process.env;
   requireValue(resourceID(groupID) && resourceID(testerID), 'Owner recipient pins are missing; do not distribute.');
@@ -94,7 +128,7 @@ async function main() {
     encode({ iss: issuer, iat: now, exp: now + 300, aud: 'appstoreconnect-v1' });
   const token = data + '.' + sign('sha256', Buffer.from(data), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
   const get = reader(token);
-  await checkRecipient({ groupID, testerID, get: async url => {
+  await checkRecipient({ groupID, testerID, authenticatedInternalOnly, get: async url => {
     const resources = await get(url);
     if (new URL(url, origin).pathname.endsWith('/betaGroups')) {
       for (const line of groupDiagnostics(resources, groupID)) console.log(line);
