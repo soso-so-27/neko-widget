@@ -3821,6 +3821,17 @@ final class AppViewModel: ObservableObject {
         await rebuildWidgetCache(reportErrors: true)
     }
 
+    func refreshInstalledCloudyWindows() async {
+        guard catIdentityLoadState == .ready, canReadPhotos else { return }
+        do {
+            try synchronizeCloudyWindowMetadata()
+            try await CloudyWindowImagePreparer.shared.prepare()
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        } catch {
+            Self.logError(error, category: "widget-cache", operation: "cloudy_installation")
+        }
+    }
+
     private func performRebuildWidgetCache(reportErrors: Bool) async {
         SharedLog.app.info(
             "widget-cache",
@@ -4004,8 +4015,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func synchronizeCloudyWindowMetadata(input: LibrarySnapshot? = nil) throws {
-        guard InternalBuildPresentationAvailability.isAvailable,
-              CloudyWindowStore.shared.configuration().enabled else { return }
+        guard CloudyWindowAvailability.isAvailable else { return }
         let records = (input ?? candidateSnapshot(snapshot)).assets
         let received = receivedPhotoIdentifiers
         var metadata: [String: CloudyWindowPhotoMetadata] = [:]

@@ -560,6 +560,7 @@ struct NekoWidgetView: View {
             return "このまどは利用できません"
         }
         if effectiveEmptyStateReason == .needsApp {
+            if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "この子のまどを準備します" }
             return "写真を表示できません"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
@@ -582,6 +583,7 @@ struct NekoWidgetView: View {
             return "ウィジェットを編集してください"
         }
         if effectiveEmptyStateReason == .needsApp {
+            if entry.photoSourceIdentifier.hasPrefix(CloudyWindowStore.profilePrefix) { return "タップしてアプリを一度開いてください" }
             return "アプリを開いて更新"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)

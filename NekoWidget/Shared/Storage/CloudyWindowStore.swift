@@ -1,13 +1,7 @@
 import Foundation
 
 enum CloudyWindowAvailability {
-    static var isAvailable: Bool {
-#if DEBUG
-        !CommandLine.arguments.contains("--review-public-presentation")
-#else
-        (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
-#endif
-    }
+    static var isAvailable: Bool { Version1.isOn }
 }
 
 extension Notification.Name {
@@ -117,6 +111,9 @@ private struct CloudyWindowState: Codable {
     var seenPhotoIDs: Set<String> = []
     var albumPrototypeEnabled: Bool? = nil
     var albumArrival: CloudyWindowAlbumArrival? = nil
+    /// Only a successful host WidgetCenter query can grant image preparation.
+    /// Nil is an older install, not permission to render in the background.
+    var installedSources: Set<String>? = nil
 }
 
 /// All experiment metadata and derived files are local. Every operation is
@@ -174,6 +171,35 @@ struct CloudyWindowStore: Sendable {
         }
     }
 
+    func isCloudySource(_ sourceID: String) -> Bool {
+        guard internalPresentation else { return false }
+        return (try? authorityStore.withAuthoritySnapshot { _ in
+            let state = try read()
+            return supports(sourceID, in: state)
+        }) ?? false
+    }
+
+    /// Never changes the persisted Widget intent or the legacy personal-photo
+    /// switch. Unknown WidgetKit results must not be supplied as an empty set.
+    func synchronizeInstalledSources(_ sourceIDs: Set<String>) throws {
+        guard internalPresentation else { return }
+        try authorityStore.withAuthoritySnapshot { _ in
+            var state = try read()
+            let installed = Set(sourceIDs.filter { supports($0, in: state) })
+            guard state.installedSources != installed || state.configuration.strength != .strong else { return }
+            state.installedSources = installed
+            state.configuration.strength = .strong
+            state.configuration.revision = UUID().uuidString
+            if installed.isEmpty { state.photos = [] }
+            try write(state)
+            collectFiles(keeping: Set(state.photos.flatMap(\.filenames)))
+        }
+    }
+
+    private func supports(_ sourceID: String, in state: CloudyWindowState) -> Bool {
+        sourceID == Self.personalScope ? state.configuration.enabled : profileID(sourceID, in: state) != nil
+    }
+
     /// Metadata contains only known personal candidates. Imported received
     /// photos are excluded by the host, so a hidden sender cannot reappear.
     func synchronize(metadata: [String: CloudyWindowPhotoMetadata], profiles: [String: String],
@@ -181,7 +207,6 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return }
         try authorityStore.withAuthoritySnapshot(now: now) { authority in
             var state = try read()
-            guard state.configuration.enabled else { return }
             let relevant = Set(authority?.candidates.map { $0.item.localIdentifier } ?? [])
                 .union(state.photos.map(\.photoID))
                 .union(state.albumArrival.map { [$0.photoID] } ?? [])
@@ -232,7 +257,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return [] }
         return (try? authorityStore.withAuthoritySnapshot(now: now) { authority in
             let state = try read()
-            guard state.configuration.enabled, state.albumPrototypeEnabled == true, let arrival = state.albumArrival,
+            guard state.installedSources?.isEmpty == false, state.albumPrototypeEnabled == true, let arrival = state.albumArrival,
                   arrival.day >= Self.calendar.startOfDay(for: now),
                   arrival.availableAt <= (Calendar.current.dateInterval(of: .month, for: now)?.end ?? now),
                   authority?.isAuthorized == true,
@@ -245,9 +270,9 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return nil }
         return try? authorityStore.withAuthoritySnapshot(now: now) { authority in
             let state = try read()
-            guard state.configuration.enabled, state.albumPrototypeEnabled == true,
+            guard state.albumPrototypeEnabled == true,
                   let selection = state.selections.first(where: { $0.id == route.selectionID }),
-                  selection.scopeID == Self.personalScope, selection.day == Self.calendar.startOfDay(for: now),
+                  supports(selection.scopeID, in: state), selection.day == Self.calendar.startOfDay(for: now),
                   selection.revealedAt != nil, let period = selection.albumPeriod,
                   let photo = state.photos.first(where: { $0.photoID == selection.photoID }),
                   valid(photo, in: state, authority: authority), filesExist(photo) else { return nil }
@@ -262,7 +287,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return tomorrow }
         return (try? authorityStore.withAuthoritySnapshot(now: now) { authority in
             let state = try read()
-            guard state.configuration.enabled, state.albumPrototypeEnabled == true,
+            guard state.albumPrototypeEnabled == true,
                   let arrival = state.albumArrival, arrival.availableAt > now,
                   arrival.availableAt < tomorrow, authority?.isAuthorized == true,
                   let photo = state.photos.first(where: { $0.photoID == arrival.photoID }),
@@ -284,7 +309,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return [] }
         return (try? authorityStore.withAuthoritySnapshot { authority in
             let state = try read()
-            guard state.configuration.enabled, authority?.isAuthorized == true else { return [] }
+            guard authority?.isAuthorized == true else { return [] }
             return state.profiles.sorted { $0.key < $1.key }.map { (id: $0.key, name: $0.value) }
         }) ?? []
     }
@@ -294,7 +319,7 @@ struct CloudyWindowStore: Sendable {
         return try authorityStore.withAuthoritySnapshot(now: now) { authority in
             guard let authority, authority.isAuthorized else { return nil }
             var state = try read()
-            guard state.configuration.enabled else { return nil }
+            guard state.installedSources?.isEmpty == false else { return nil }
             reconcile(&state, authority: authority, now: now)
             let available = authority.candidates.filter { state.metadata[$0.item.localIdentifier] != nil }
                 .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
@@ -358,7 +383,7 @@ struct CloudyWindowStore: Sendable {
                  protectedPhotoIDs: Set<String> = [], now: Date = .now) throws {
         try authorityStore.withAuthoritySnapshot(now: now) { authority in
             var state = try read()
-            guard internalPresentation, state.configuration.enabled,
+            guard internalPresentation, state.installedSources?.isEmpty == false,
                   state.configuration.revision == configurationRevision,
                   authority?.eligibilityRevision == authorityRevision,
                   valid(photo, in: state, authority: authority),
@@ -395,8 +420,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return [] }
         let entries: [CloudyWindowEntry] = try authorityStore.withAuthoritySnapshot(now: now) { authority in
             var state = try read()
-            guard state.configuration.enabled, authority?.isAuthorized == true,
-                  scopeID == Self.personalScope || profileID(scopeID, in: state) != nil else { return [] }
+            guard supports(scopeID, in: state), authority?.isAuthorized == true else { return [] }
             reconcile(&state, authority: authority, now: now)
             let today = Self.calendar.startOfDay(for: now)
             let tomorrow = Self.nextDay(after: now)
@@ -419,14 +443,16 @@ struct CloudyWindowStore: Sendable {
                 } else if date == today {
                     state.frozenSelectionIDs?[scopeID] = nil
                 }
-                if maySelect, scopeID == Self.personalScope, selection?.revealedAt == nil,
+                if maySelect, selection?.revealedAt == nil,
                    state.albumPrototypeEnabled == true, let arrival = state.albumArrival,
                    arrival.day == date, arrival.availableAt <= max(now, date),
                    let cover = state.photos.first(where: { $0.photoID == arrival.photoID }), filesExist(cover),
+                   scopeID == Self.personalScope || state.metadata[cover.photoID]?.profileIDs.contains(
+                    String(scopeID.dropFirst(Self.profilePrefix.count))) == true,
                    selection?.albumPeriod != arrival.period {
                     if let old = selection { state.selections.removeAll { $0.id == old.id } }
                     let chosen = CloudyWindowSelection(scopeID: scopeID, day: date,
-                        photoID: cover.photoID, profileID: nil, albumPeriod: arrival.period)
+                        photoID: cover.photoID, profileID: profileID(scopeID, in: state), albumPeriod: arrival.period)
                     selection = chosen
                     state.selections.append(chosen)
                 }
@@ -464,7 +490,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return false }
         return try authorityStore.withAuthoritySnapshot(now: now) { authority in
             var state = try read()
-            guard state.configuration.enabled, authority?.isAuthorized == true else { return false }
+            guard supports(scopeID, in: state), authority?.isAuthorized == true else { return false }
             reconcile(&state, authority: authority, now: now)
             guard let index = state.selections.firstIndex(where: {
                 $0.id == selectionID && $0.scopeID == scopeID && $0.photoID == photoID
@@ -518,7 +544,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation else { return }
         try? authorityStore.withAuthoritySnapshot { authority in
             var state = try read()
-            guard state.configuration.enabled, authority?.eligiblePhotoIDs.contains(photoID) == true,
+            guard state.installedSources?.isEmpty == false, authority?.eligiblePhotoIDs.contains(photoID) == true,
                   state.seenPhotoIDs.count < 100_000, !state.seenPhotoIDs.contains(photoID) else { return }
             state.seenPhotoIDs.insert(photoID)
             try write(state)
@@ -529,7 +555,7 @@ struct CloudyWindowStore: Sendable {
         guard internalPresentation, Self.validFilename(filename) else { return nil }
         return try? authorityStore.withAuthoritySnapshot { authority in
             let state = try read()
-            guard state.configuration.enabled, let photo = state.photos.first(where: { $0.filenames.contains(filename) }),
+            guard supports(scopeID, in: state), let photo = state.photos.first(where: { $0.filenames.contains(filename) }),
                   valid(photo, in: state, authority: authority) else { return nil }
             if scopeID != Self.personalScope {
                 guard let profile = profileID(scopeID, in: state),

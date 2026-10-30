@@ -120,6 +120,7 @@ xcrun --sdk macosx swiftc \
 "$RUNNER_TEMP/verify-personal-rediscovery"
 
 xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
+  Shared/Models/OfficialWindowCatalog.swift \
   Shared/Models/WidgetManifest.swift Shared/Models/WidgetRenderPlan.swift \
   Shared/Storage/PersonalRediscoveryStore.swift Shared/Storage/CloudyWindowStore.swift \
   ci/verify-cloudy-window.swift -o "$RUNNER_TEMP/verify-cloudy-window"
