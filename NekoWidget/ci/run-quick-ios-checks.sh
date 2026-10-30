@@ -4,6 +4,36 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+owner_build_settings=(
+  OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO
+  SHARING_RELEASE_MODE=media-staging SHARING_FEATURE_ENABLED=YES SHARING_MEDIA_ENABLED=YES
+  SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=YES SHARING_SHARE_EXTENSION_SEND_ENABLED=NO
+  SHARING_REVIEW_PREVIEW_ENABLED=NO
+  SHARING_API_BASE_URL=https://neko-window-sharing-staging.nakanishisoya.workers.dev
+  SHARING_MODERATION_KEY_ID=moderation-v2
+  SHARING_MODERATION_PUBLIC_KEY=T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg
+  SHARING_PRIVACY_URL=https://soso-so-27.github.io/neko-widget/privacy/
+  SHARING_SUPPORT_URL=https://soso-so-27.github.io/neko-widget/support/
+  SHARING_COMMUNITY_STANDARDS_URL=https://soso-so-27.github.io/neko-widget/community/
+)
+# -xcconfig overrides command-line settings, including OFF=YES. Match the
+# release workflow's command-line route and resolve it before compilation.
+xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Release \
+  -sdk iphonesimulator "${owner_build_settings[@]}" -showBuildSettings -json \
+  > "$RUNNER_TEMP/owner-internal-build-settings.json"
+python3 - "$RUNNER_TEMP/owner-internal-build-settings.json" <<'PY'
+import json, sys
+rows = json.load(open(sys.argv[1]))
+assert rows and any(row['target'] == 'NekoWidget' for row in rows)
+for row in rows:
+    settings = row['buildSettings']
+    assert settings['OWNER_INTERNAL_REPORTS_DISABLED'] == 'YES', 'owner OFF overlay was overridden'
+    assert settings['SHARING_RELEASE_MODE'] == 'media-staging'
+    assert settings['GROUP_REPORTING_PRODUCTION_ENABLED'] == 'NO'
+    assert settings['SHARING_API_BASE_URL'] == 'https://neko-window-sharing-staging.nakanishisoya.workers.dev'
+print('PASS resolved owner build settings before compilation')
+PY
+
 # CoreSimulator installation can hang after a successful build. Bound the
 # simulator commands so an environment stall cannot consume the entire job.
 bounded() {
@@ -234,18 +264,11 @@ xcrun simctl io "$device" screenshot "$RUNNER_TEMP/ci-screenshots/first-launch.p
 # execute the configuration policy against those exact plists. Do not install
 # this staging-connected product or contact services from CI.
 xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
-  -configuration Release -sdk iphonesimulator -xcconfig Config.MediaStaging.xcconfig \
+  -configuration Release -sdk iphonesimulator "${owner_build_settings[@]}" \
   -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
   -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
   SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
-  OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO \
-  SHARING_API_BASE_URL=https://neko-window-sharing-staging.nakanishisoya.workers.dev \
-  SHARING_MODERATION_KEY_ID=moderation-v2 \
-  SHARING_MODERATION_PUBLIC_KEY=T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg \
-  SHARING_PRIVACY_URL=https://soso-so-27.github.io/neko-widget/privacy/ \
-  SHARING_SUPPORT_URL=https://soso-so-27.github.io/neko-widget/support/ \
-  SHARING_COMMUNITY_STANDARDS_URL=https://soso-so-27.github.io/neko-widget/community/ \
   build
 python3 ci/distribution_profile.py --profile owner-internal --mode media-staging \
   --internal-reports false --app "$app"
