@@ -23,6 +23,7 @@ actor GroupWindowLocalPhotoStore {
         /// Removed from this iPhone by the person. Kept in the index so the
         /// next sync does not download it again.
         var isRemoved: Bool? = nil
+        var caption: String? = nil
     }
 
     private struct Index: Codable {

@@ -28,7 +28,7 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
     for(const job of jobs.results) {
       if(!GROUP_RELAY_KEY.test(job.object_key))continue;
       try {
-        await env.MEDIA.delete(job.object_key);
+        await env.MEDIA.delete([job.object_key,job.object_key+'.caption']);
         await env.DB.prepare("UPDATE group_object_deletions SET state='completed' WHERE moment_id=? AND object_key=? AND attempts=?")
           .bind(job.moment_id,job.object_key,job.attempts).run();
       } catch {

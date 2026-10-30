@@ -93,6 +93,8 @@ struct GroupPhoto: Identifiable, Codable, Equatable, Sendable {
     // UI fixture asset name, never a real photo path or signed download URL.
     let fixtureAssetName: String?
     var hearts: [GroupHeart]
+    /// Filled only after encrypted caption verification; absent on legacy photos.
+    var caption: String? = nil
 }
 
 struct GroupOperation: Equatable, Sendable {

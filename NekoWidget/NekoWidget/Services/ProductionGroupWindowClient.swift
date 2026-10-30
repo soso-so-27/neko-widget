@@ -905,6 +905,7 @@ private struct GroupPreparedPhoto: Codable {
     let sourceHash: Data; let keyEpoch: Int; let rosterRevision: Int; let rosterHash: Data
     let packet: SignedGroupRoster
     let photo: GroupEncryptedPhoto
+    var caption: GroupEncryptedCaption? = nil
 }
 
 enum GroupPhotoAcknowledgement: Sendable { case acknowledged, awaitingConnection, authenticationRequired, accessEnded }
@@ -1042,7 +1043,16 @@ extension ProductionGroupWindowClient {
         guard cipher.count == row.ciphertextSize, GroupCanonical.hash(cipher) == row.ciphertextSHA256 else { throw GroupProtocolError.invalidPhoto }
         let jpeg = try GroupPhotoCrypto.open(.init(clientMomentID: row.clientMomentID, senderDeviceID: row.senderDeviceID, ciphertext: cipher, signature: row.senderSignature), roomKey: key, roster: roster)
         try GroupJPEG.validate(jpeg)
-        let photo = try await displayPhoto(row, current: current)
+        var photo = try await displayPhoto(row, current: current)
+        if let descriptor = row.caption {
+            guard (29...4_124).contains(descriptor.ciphertextSize), descriptor.ciphertextSHA256.count == 32,
+                  descriptor.senderSignature.count == 64 else { throw GroupClientError.invalidResponse }
+            let bytes = try await raw("/v3/group-windows/\(windowID)/moments/\(photoID)/caption-ciphertext", body: nil, identity: identity)
+            guard bytes.count == descriptor.ciphertextSize, GroupCanonical.hash(bytes) == descriptor.ciphertextSHA256 else { throw GroupProtocolError.invalidPhoto }
+            photo.caption = try GroupCaptionCrypto.open(.init(ciphertext: bytes, signature: descriptor.senderSignature),
+                photo: .init(clientMomentID: row.clientMomentID, senderDeviceID: row.senderDeviceID, ciphertext: cipher, signature: row.senderSignature),
+                roomKey: key, roster: roster)
+        }
         return try .init(photo: photo, jpeg: jpeg, ciphertextSHA256: row.ciphertextSHA256, recipientDeviceID: identity.deviceID)
     }
     /// ACK follows the caller's successful DURABLE app-store write. Decrypting
@@ -1090,9 +1100,26 @@ extension ProductionGroupWindowClient {
         try GroupJPEG.validate(jpeg); return jpeg
     }
 
+    /// Companion to recoverPendingPhoto for a sender's own durable outbox only.
+    func recoverPendingCaption(operationID: UUID) throws -> String? {
+        _ = try recoverPendingPhoto(operationID: operationID)
+        let file = outboxDirectory.appendingPathComponent(operationID.uuidString.lowercased() + ".json")
+        let prepared = try GroupWire.decode(GroupPreparedPhoto.self, Data(contentsOf: file))
+        guard let caption = prepared.caption else { return nil }
+        guard let record = try load(GroupLocalWindow.self, "window:" + prepared.windowID),
+              let raw = record.keys[String(prepared.keyEpoch)] else { throw GroupClientError.authenticationRequired }
+        let roster = try GroupRosterVerifier.restoreLocalCheckpoint(prepared.packet, anchor: record.anchor,
+            pinnedRevision: prepared.rosterRevision, pinnedHash: prepared.rosterHash)
+        return try GroupCaptionCrypto.open(caption, photo: prepared.photo, roomKey: SymmetricKey(data: raw), roster: roster)
+    }
+
     /// Caller supplies a copy from the existing JPEG normalization pipeline.
     /// Encrypted outbox bytes are durable before any reservation/upload.
     func sendPhoto(normalizedJPEG: Data, windowID: String, operationID: UUID) async throws -> GroupPhoto {
+        try await sendPhoto(normalizedJPEG: normalizedJPEG, caption: nil, windowID: windowID, operationID: operationID)
+    }
+    func sendPhoto(normalizedJPEG: Data, caption: String?, windowID: String, operationID: UUID) async throws -> GroupPhoto {
+        let caption = try GroupPhotoCaption.normalized(caption)
         try GroupJPEG.validate(normalizedJPEG)
         let current = try await window(id: windowID), identity = try identity(), record = try local(windowID)
         guard current.state == .active, let roster = try record.verified(), let rawKey = record.keys[String(current.keyEpoch)] else { throw GroupClientError.rotationPending }
@@ -1102,12 +1129,21 @@ extension ProductionGroupWindowClient {
             prepared = try GroupWire.decode(GroupPreparedPhoto.self, Data(contentsOf: file))
             guard prepared.operationID == operationID, prepared.windowID == windowID,
                   prepared.sourceHash == GroupCanonical.hash(normalizedJPEG) else { throw GroupClientError.idempotencyConflict }
+            let previousCaption: String?
+            if let encrypted = prepared.caption {
+                guard let raw = record.keys[String(prepared.keyEpoch)] else { throw GroupClientError.authenticationRequired }
+                let savedRoster = try GroupRosterVerifier.restoreLocalCheckpoint(prepared.packet, anchor: record.anchor,
+                    pinnedRevision: prepared.rosterRevision, pinnedHash: prepared.rosterHash)
+                previousCaption = try GroupCaptionCrypto.open(encrypted, photo: prepared.photo, roomKey: SymmetricKey(data: raw), roster: savedRoster)
+            } else { previousCaption = nil }
+            guard previousCaption == caption else { throw GroupClientError.idempotencyConflict }
         } else {
             let photo = try GroupPhotoCrypto.seal(normalizedJPEG, clientMomentID: GroupWire.randomID(), senderDeviceID: identity.deviceID,
                 roomKey: SymmetricKey(data: rawKey), signingKey: identity.signingKey, roster: roster)
             prepared = .init(operationID: operationID, commitOperationID: UUID(), windowID: windowID, sourceHash: GroupCanonical.hash(normalizedJPEG),
                 keyEpoch: current.keyEpoch, rosterRevision: current.revision, rosterHash: roster.hash,
-                packet: record.packet!, photo: photo)
+                packet: record.packet!, photo: photo,
+                caption: try GroupCaptionCrypto.seal(caption, photo: photo, roomKey: SymmetricKey(data: rawKey), signingKey: identity.signingKey, roster: roster))
             try FileManager.default.createDirectory(at: outboxDirectory, withIntermediateDirectories: true)
 #if os(iOS)
             try GroupWire.encode(prepared).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -1118,19 +1154,28 @@ extension ProductionGroupWindowClient {
         let root = "/v3/group-windows/\(windowID)/moments", hash = GroupCanonical.hash(prepared.photo.ciphertext)
         let reserve = GroupAPIModel.ReservePhoto(operationID: operationID.uuidString.lowercased(), clientMomentID: prepared.photo.clientMomentID,
             keyEpoch: prepared.keyEpoch, rosterRevision: prepared.rosterRevision, ciphertextSize: prepared.photo.ciphertext.count,
-            ciphertextSHA256: hash, senderSignature: prepared.photo.signature, kind: "photo")
+            ciphertextSHA256: hash, senderSignature: prepared.photo.signature, kind: "photo",
+            caption: prepared.caption.map { .init(ciphertextSize: $0.ciphertext.count, ciphertextSHA256: GroupCanonical.hash($0.ciphertext), senderSignature: $0.signature) })
         let reservation = try GroupWire.decode(GroupAPIModel.PhotoReservation.self, await mutation(operationID: operationID,
             intent: "reserve:\(windowID):\(prepared.photo.clientMomentID)", path: root + "/reserve", body: GroupWire.encode(reserve)))
         guard GroupCanonical.validID(reservation.momentID) else { throw GroupClientError.invalidResponse }
         var upload = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/ciphertext", body: prepared.photo.ciphertext, identity: identity, method: "PUT")
         upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         _ = try GroupHTTPRequest.check(await transport.send(upload, maximumBytes: 4096))
+        if let encrypted = prepared.caption {
+            var request = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/caption-ciphertext",
+                body: encrypted.ciphertext, identity: identity, method: "PUT")
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            _ = try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 4096))
+        }
         let commit = GroupAPIModel.CommitPhoto(operationID: prepared.commitOperationID.uuidString.lowercased(), expectedRevision: prepared.rosterRevision,
             keyEpoch: prepared.keyEpoch, ciphertextSHA256: hash)
         _ = try await mutation(operationID: prepared.commitOperationID, intent: "commit:\(windowID):\(reservation.momentID)",
             path: root + "/\(reservation.momentID)/commit", body: GroupWire.encode(commit))
         photoMetadata.removeValue(forKey: windowID + ":" + reservation.momentID)
         let row = try await photoRow(windowID: windowID, photoID: reservation.momentID)
-        return try await displayPhoto(row, current: current)
+        var result = try await displayPhoto(row, current: current)
+        result.caption = caption
+        return result
     }
 }
