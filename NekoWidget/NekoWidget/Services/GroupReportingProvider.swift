@@ -36,6 +36,8 @@ enum GroupReportingProvider {
                     let data = try Data(contentsOf: file)
                     guard let image = UIImage(data: data), image.imageOrientation == .up else { throw GroupSafetyError.evidenceUnavailable }
                     let canonical = try MomentCanonicalPreviewBuilder.build(image: image)
+                    // Current consent and operator review cover the photo only.
+                    // Do not disclose the optional private caption under photo-only consent.
                     return GroupReportEvidence(windowID: windowID, photoID: photoID, canonicalJPEG: canonical.jpeg)
                 }
         } catch { return UnavailableGroupReporting() }

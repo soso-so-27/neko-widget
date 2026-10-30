@@ -65,7 +65,7 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(request.method==='POST' && path==='/v3/group-identities/challenges') return createGroupIdentityChallenge(request,env);
   if(request.method==='POST' && path==='/v3/group-identities') return registerGroupIdentity(request,env);
   if(!path.startsWith('/v3/group-windows')) throw new ApiError(404,'not_found','The endpoint was not found.');
-  const upload=request.method==='PUT' && /^\/v3\/group-windows\/[A-Za-z0-9_-]{22}\/moments\/[A-Za-z0-9_-]{22}\/ciphertext$/u.test(path);
+  const upload=request.method==='PUT' && /^\/v3\/group-windows\/[A-Za-z0-9_-]{22}\/moments\/[A-Za-z0-9_-]{22}\/(?:ciphertext|caption-ciphertext)$/u.test(path);
   const {actor,body:bytes}=await authenticateGroupRequest(request,env,upload?GROUP_MAX_CIPHERTEXT:128*1024);
   if(request.method==='GET') requireEmptyBody(bytes);
   else if(request.method!=='POST' && !upload) throw new ApiError(405,'method_not_allowed','The method is not supported.');
@@ -77,12 +77,12 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(!match) throw new ApiError(404,'not_found','The endpoint was not found.');
   const windowId=groupId(match[1]!),suffix=match[2]??'';
   if(suffix==='' && request.method==='GET') return getGroupWindow(env,actor,windowId);
-  const photo=suffix.match(/^moments\/([A-Za-z0-9_-]{22})(?:\/(ciphertext|commit|ack|hearts|hearts\/list))?$/u);
+  const photo=suffix.match(/^moments\/([A-Za-z0-9_-]{22})(?:\/(ciphertext|caption-ciphertext|commit|ack|hearts|hearts\/list))?$/u);
   if(photo && upload) {
     if(request.headers.get('content-type')!=='application/octet-stream')throw new ApiError(415,'invalid_content_type','The photo must be encrypted bytes.');
-    return uploadGroupPhoto(env,actor,windowId,photo[1]!,bytes);
+    return uploadGroupPhoto(env,actor,windowId,photo[1]!,bytes,photo[2]==='caption-ciphertext');
   }
-  if(photo && request.method==='GET' && (!photo[2] || photo[2]==='ciphertext'))return getGroupPhoto(env,actor,windowId,photo[1]!,photo[2]==='ciphertext');
+  if(photo && request.method==='GET' && (!photo[2] || photo[2]==='ciphertext' || photo[2]==='caption-ciphertext'))return getGroupPhoto(env,actor,windowId,photo[1]!,!!photo[2],photo[2]==='caption-ciphertext');
   const key=suffix.match(/^keys\/([1-9][0-9]{0,14})$/u);
   if(key && request.method==='GET') return getGroupKey(env,actor,windowId,Number(key[1]));
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');

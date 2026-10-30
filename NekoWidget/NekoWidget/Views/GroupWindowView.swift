@@ -28,6 +28,7 @@ protocol GroupWindowMediaClient: GroupWindowClient {
     func keep(_ fetched: GroupFetchedPhoto, outgoingOperationID: UUID?,
               persist: @escaping @Sendable (GroupPhoto, Data) async throws -> Void) async throws
     func sendPhoto(normalizedJPEG: Data, windowID: String, operationID: UUID) async throws -> GroupPhoto
+    func sendPhoto(normalizedJPEG: Data, caption: String?, windowID: String, operationID: UUID) async throws -> GroupPhoto
 }
 
 extension ProductionGroupWindowClient: GroupWindowMediaClient {
@@ -282,7 +283,7 @@ final class GroupWindowScreenModel: ObservableObject {
                         senderDisplayName: kept.senderDisplayName,
                         createdAt: kept.createdAt,
                         isHidden: hidden,
-                        isOwn: isOwn
+                        isOwn: isOwn, caption: hidden ? nil : kept.caption
                     ),
                     jpeg: hidden ? nil : jpeg,
                     windowID: windowID
@@ -1980,6 +1981,8 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
     private let members = GroupWindowFixture(scenario: GroupWindowUIFixture.scenario, now: GroupWindowUIFixture.fixtureNow)
     private var hearts: [String: [GroupHeart]] = [:]
     private var sent: [GroupPhoto] = []
+    static let captionExamples: [String?] = [nil, "きょうものんびり", String(repeating: "猫", count: 100), "朝のまど\nお昼寝\nまたあした"]
+
 
     private func photoList(_ window: GroupWindow) -> [GroupPhoto] {
         let others = window.members.filter { $0.id != window.myParticipantID }
@@ -1993,7 +1996,9 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
                               createdAt: now.addingTimeInterval(Double(-index) * 86_400),
                               fixtureAssetName: "app-store-screenshot-fixture-\(index)",
                               hearts: hearts[id] ?? (index == 1 ? [GroupHeart(participantID: others.first?.id ?? "",
-                                  displayName: others.first?.displayName ?? "", active: true, updatedAt: now)] : []))
+                                  displayName: others.first?.displayName ?? "", active: true, updatedAt: now)] : []),
+                              caption: CommandLine.arguments.contains("--group-window-caption-fixture")
+                                ? Self.captionExamples[(index - 1) % Self.captionExamples.count] : nil)
         }
         return sent + fixed
     }
@@ -2074,10 +2079,14 @@ actor GroupWindowScreenFixture: GroupWindowMediaClient {
     }
 
     func sendPhoto(normalizedJPEG: Data, windowID: String, operationID: UUID) async throws -> GroupPhoto {
+        try await sendPhoto(normalizedJPEG: normalizedJPEG, caption: nil, windowID: windowID, operationID: operationID)
+    }
+    func sendPhoto(normalizedJPEG: Data, caption: String?, windowID: String, operationID: UUID) async throws -> GroupPhoto {
+        let caption = try GroupPhotoCaption.normalized(caption)
         let window = try await members.window(id: windowID)
         let photo = GroupPhoto(id: "fixture-sent-" + operationID.uuidString.lowercased(), windowID: windowID,
                                senderParticipantID: window.myParticipantID, senderDisplayName: "自分",
-                               createdAt: Date(), fixtureAssetName: "app-store-screenshot-fixture-7", hearts: [])
+                               createdAt: Date(), fixtureAssetName: "app-store-screenshot-fixture-7", hearts: [], caption: caption)
         sent.insert(photo, at: 0)
         return photo
     }

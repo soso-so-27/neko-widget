@@ -1,3 +1,4 @@
+import {groupCaptionTranscript} from '../src/group-captions';
 import {plusOwner,pauseOwner} from './group-billing-fixture';
 import {describe,expect,it} from 'vitest';
 import {base64urlDecode,randomBase64url,sha256Base64url,verifyEd25519} from '../src/encoding';
@@ -15,14 +16,17 @@ async function family() {
   const approved=await transition(owner,w,'admit',b.id,[...w.roster.members,b.member]);ok(approved.response);w=approved.next;
   return {owner,bob,w};
 }
-async function reserve(sender:Person,w:Window,size=48) {
+async function reserve(sender:Person,w:Window,size=48,withCaption=false) {
   const bytes=crypto.getRandomValues(new Uint8Array(size)),hash=await sha256Base64url(bytes),clientMomentId=randomBase64url(16);
   const participantId=w.roster.members.find(m=>m.personId===sender.id)!.participantId;
   const aad=groupFields(['NW3.PHOTO',w.windowId,clientMomentId,String(w.roster.keyEpoch),base64urlDecode(w.hash,32),participantId,sender.deviceId,String(size)]);
-  const body={operationId:crypto.randomUUID(),clientMomentId,keyEpoch:w.roster.keyEpoch,rosterRevision:w.roster.revision,
+  const captionBytes=withCaption?crypto.getRandomValues(new Uint8Array(60)):null;
+  const captionHash=captionBytes?await sha256Base64url(captionBytes):null;
+  const caption=captionBytes?{ciphertextSize:captionBytes.length,ciphertextSHA256:captionHash!,senderSignature:await sign(sender.signing.privateKey,groupCaptionTranscript({windowId:w.windowId,clientMomentId,keyEpoch:w.roster.keyEpoch,rosterHash:w.hash,participantId,deviceId:sender.deviceId,photoHash:hash,size:captionBytes.length,hash:captionHash!}))}:undefined;
+  const body={operationId:crypto.randomUUID(),clientMomentId,keyEpoch:w.roster.keyEpoch,rosterRevision:w.roster.revision,...(caption?{caption}:{}),
     ciphertextSize:size,ciphertextSHA256:hash,senderSignature:await sign(sender.signing.privateKey,groupFields(['NW3.PHOTO.SIGN',aad,base64urlDecode(hash,32)])),kind:'photo'};
   const result=await call(sender,`/v3/group-windows/${w.windowId}/moments/reserve`,body);
-  return {result,bytes,body,id:result.data.momentId as string};
+  return {result,bytes,body,captionBytes,id:result.data.momentId as string};
 }
 async function upload(sender:Person,w:Window,p:Awaited<ReturnType<typeof reserve>>,bytes=p.bytes) {
   return send(await signed(sender,`/v3/group-windows/${w.windowId}/moments/${p.id}/ciphertext`,bytes,randomBase64url(16),'PUT'));
@@ -44,6 +48,33 @@ async function heart(p:Person,w:Window,momentId:string,active=true) {
       active,operationId,keyEpoch:w.roster.keyEpoch,rosterHash:w.hash}))};
 }
 describe('group encrypted relay and creator Plus commit boundary (runtime stays OFF outside test)',()=>{
+  it('keeps legacy photo bytes intact and binds a caption sidecar through upload, delivery and expiry',async()=>{
+    const {owner,bob,w}=await family(),p=await reserve(owner,w,48,true);ok(p.result,201);
+    ok(await upload(owner,w,p));
+    expect((await commit(owner,w,p)).data.error.code).toBe('caption_upload_required');
+    const path=`/v3/group-windows/${w.windowId}/moments/${p.id}/caption-ciphertext`;
+    expect((await send(await signed(bob,path,p.captionBytes!,randomBase64url(16),'PUT'))).status).toBe(404);
+    ok(await send(await signed(owner,path,p.captionBytes!,randomBase64url(16),'PUT')));
+    ok(await commit(owner,w,p));
+    const oldPhoto=await binary(bob,path.replace('caption-ciphertext','ciphertext'));
+    expect(new Uint8Array(await oldPhoto.arrayBuffer())).toEqual(p.bytes);
+    const caption=await binary(bob,path);expect(new Uint8Array(await caption.arrayBuffer())).toEqual(p.captionBytes);
+    const metadata=ok(await call(bob,path.replace('/caption-ciphertext',''))).moment;
+    expect(metadata.caption).toEqual(p.body.caption);expect(JSON.stringify(metadata)).not.toContain(Buffer.from(p.captionBytes!).toString('base64'));
+    const stranger=await person();expect((await binary(stranger,path)).status).not.toBe(200);
+    await db.prepare('UPDATE group_moment_deliveries SET access_expires_at=0 WHERE moment_id=?').bind(p.id).run();
+    expect((await binary(bob,path)).status).toBe(410);
+    await runGroupRelayCleanup(testEnv,Math.floor(Date.now()/1000)+31*86400);
+    const objects=await testEnv.MEDIA!.list();expect(objects.objects.filter(o=>o.key.includes(p.id))).toHaveLength(0);
+  });
+  it('rejects a caption signature for another photo and counts one photo per reservation',async()=>{
+    const {owner,w}=await family(),p=await reserve(owner,w,48,true);ok(p.result,201);
+    const changed={...p.body,operationId:crypto.randomUUID(),clientMomentId:randomBase64url(16)};
+    expect((await call(owner,`/v3/group-windows/${w.windowId}/moments/reserve`,changed)).status).toBe(400);
+    for(let i=0;i<4;i++)ok((await reserve(owner,w)).result,201);
+    expect((await reserve(owner,w)).result.status).toBe(409);
+  });
+
   it('returns signed hearts in the POST and checks current delivery even on receipt replay',async()=>{
     const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}/hearts`;
     const body=await heart(bob,w,p.id),reply=ok(await call(bob,path,body));
