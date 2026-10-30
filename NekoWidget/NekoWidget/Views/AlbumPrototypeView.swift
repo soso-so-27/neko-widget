@@ -14,7 +14,7 @@ enum Version1 {
 
     /// 家族の手帳: internal builds try it on the prototype; a public build shows
     /// it only once the real sharing is on (FamilyNotebookProductionEnabled).
-    static var familyNotebook: Bool {
+    @MainActor static var familyNotebook: Bool {
         InternalBuildPresentationAvailability.isAvailable || FamilyNotebookServiceFactory.productionRequested
     }
 }
