@@ -36,14 +36,16 @@ export async function listGroupMembers(env:Env,actor:GroupActor,windowId:string,
 export async function listGroupJoinRequests(env:Env,actor:GroupActor,windowId:string,body:JsonRecord):Promise<Response> {
   const access=await requireGroupMember(env,actor,windowId,true),scope=`requests:${windowId}:${actor.deviceId}:${access.revision}`;
   const page=groupPage(body,scope);
-  const result=await env.DB.prepare(`SELECT j.*,d.signing_public_key,d.hpke_public_key,p.identity_public_key FROM group_join_requests j
+  const result=await env.DB.prepare(`SELECT j.*,proof.proof_json,d.signing_public_key,d.hpke_public_key,p.identity_public_key FROM group_join_requests j
+    LEFT JOIN group_join_admission_proofs proof ON proof.request_id=j.id
     JOIN group_person_devices d ON d.id=j.candidate_device_id JOIN group_people p ON p.id=j.person_id
     JOIN group_invitations i ON i.id=j.invitation_id WHERE j.space_id=? AND j.state='pending'
     AND j.expires_at>? AND i.revoked_at IS NULL AND d.state='active' AND p.state='active' AND j.id>? ORDER BY j.id LIMIT ?`)
-    .bind(windowId,actor.now,page.after,page.limit+1).all<GroupJoinRow & {signing_public_key:string;hpke_public_key:string;identity_public_key:string}>();
+    .bind(windowId,actor.now,page.after,page.limit+1).all<GroupJoinRow & {proof_json:string|null;signing_public_key:string;hpke_public_key:string;identity_public_key:string}>();
   const active=await groupAdmissionPause(env,windowId);
   const items=result.results.slice(0,page.limit).map(row=>({admissionPaused:active!==null&&!active.has(row.person_id),id:row.id,invitationId:row.invitation_id,personId:row.person_id,
     candidateDeviceId:row.candidate_device_id,state:row.state,expiresAt:row.expires_at,
+    admissionProof:row.proof_json?JSON.parse(row.proof_json):null,
     encryptedDisplayName:groupStoredJoinBody(row).encryptedDisplayName,personAuthorization:groupStoredJoinBody(row).personAuthorization,
     signingPublicKey:row.signing_public_key,hpkePublicKey:row.hpke_public_key,identityPublicKey:row.identity_public_key}));
   await env.DB.batch(groupNonceStatements(env,actor,{windowId,owner:true,expectedRevision:access.revision}));

@@ -126,6 +126,11 @@ struct AppRootView: View {
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
+            // SwiftUI uses scenes: app-delegate foreground callbacks alone are insufficient.
+            await GroupAdmissionService.shared.refresh()
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
             guard SharingAPIConfiguration.current.isMediaAvailable else { return }
             while !Task.isCancelled {
                 do {

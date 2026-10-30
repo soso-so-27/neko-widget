@@ -89,6 +89,8 @@ export async function createGroupJoinRequest(env:Env,actor:GroupActor,windowId:s
     env.DB.prepare("UPDATE group_challenges SET consumed_at=? WHERE id=?").bind(actor.now,challengeId),
     env.DB.prepare("INSERT INTO group_join_requests VALUES (?,?,?,?,?,?,'pending',?,NULL)")
       .bind(requestId,windowId,invitation.id,actor.personId,actor.deviceId,JSON.stringify(body),invitation.expires_at),
+    env.DB.prepare("INSERT INTO group_join_admission_proofs VALUES (?,?)").bind(requestId,JSON.stringify({operationId,challengeId,challenge:challenge.random_challenge,
+      challengeExpiresAt:challenge.expires_at,inviteProof:body.inviteProof,deviceSignature:body.deviceSignature})),
     groupMutationStatement(env,actor,operationId,response)]);
   return joinRequestResponse(env,actor,windowId,response,201);
 }

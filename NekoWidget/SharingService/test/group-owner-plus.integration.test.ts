@@ -69,10 +69,11 @@ describe('group ownership requires one verified App Store subscription from the 
     expect(await policy(w.windowId)).toMatchObject({deliveryStatus:'paused'});
     expect((await db.prepare('SELECT person_id FROM group_billing_connections WHERE person_id=?').bind(guest.id).first())?.person_id).toBe(guest.id);
   });
-  it('accepts verified FAMILY_SHARED facts for group policy while retaining existing verifier ingress policy',async()=>{
+  it('does not grant group Plus from FAMILY_SHARED authority in 1.0',async()=>{
     // Normalized verified authority seam, not proof of a real Family receipt.
-    const owner=await plusOwner('FAMILY_SHARED'),w=await create(owner);
-    expect(await policy(w.windowId)).toMatchObject({deliveryStatus:'active',deliveryReason:'owner_plus'});
+    const owner=await plusOwner(),w=await create(owner);
+    await owner.verified.refresh({ownershipType:'FAMILY_SHARED'});
+    expect(await policy(w.windowId)).toMatchObject({deliveryStatus:'paused',deliveryReason:'owner_plus_required'});
     expect((await effectiveBillingEntitlement(settings,owner.account.id)).grantsPlus).toBe(false);
   });
   it('does not substitute grace when the upper/lower gate, environment or authority freshness fails',async()=>{

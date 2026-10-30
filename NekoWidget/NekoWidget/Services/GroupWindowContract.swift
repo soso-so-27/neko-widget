@@ -97,7 +97,7 @@ struct GroupPhoto: Identifiable, Codable, Equatable, Sendable {
     var caption: String? = nil
 }
 
-struct GroupOperation: Equatable, Sendable {
+struct GroupOperation: Codable, Equatable, Sendable {
     let id: UUID
     let expectedRevision: Int
     init(id: UUID = UUID(), expectedRevision: Int) {
@@ -129,7 +129,13 @@ struct GroupWindowClosure: Equatable, Sendable {
 
 // Methods receive intent, never a room key. The production adapter is responsible for
 // signing, verifying the complete roster, creating envelopes, CAS, and durable retries.
+struct GroupAdmissionResult: Codable, Equatable, Sendable, Identifiable {
+    let id: String; let windowID: String; let displayName: String; let joinedLocally: Bool
+}
 protocol GroupWindowClient: Sendable {
+    func resumableJoin(invitationID: String) async throws -> GroupJoinRequest?
+    func reusableInvitation(windowID: String) async throws -> GroupInvitation?
+    func reconcileAdmissions() async throws -> [GroupAdmissionResult]
     func windows() async throws -> [GroupWindow]
     func window(id: String) async throws -> GroupWindow
     func createWindow(name: String, operationID: UUID) async throws -> GroupWindow
@@ -161,6 +167,9 @@ protocol GroupWindowClient: Sendable {
 }
 
 extension GroupWindowClient {
+    func resumableJoin(invitationID: String) async throws -> GroupJoinRequest? { nil }
+    func reusableInvitation(windowID: String) async throws -> GroupInvitation? { nil }
+    func reconcileAdmissions() async throws -> [GroupAdmissionResult] { [] }
     func renameWindow(windowID: String, name: String, expectedNameRevision: Int,
                       operation: GroupOperation) async throws -> GroupWindow {
         throw GroupWindowManagementError.unavailable
@@ -261,5 +270,22 @@ final class GroupListTrace: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return .init(requests: requests, cache: cache, storageSeconds: storageSeconds,
                      cacheSeconds: cacheSeconds, detailLocalSeconds: detailLocalSeconds, entryWaitSeconds: entryWaitSeconds)
+    }
+}
+
+struct GroupNotificationRoute: Sendable {
+    let windowID: String
+    let requestID: String?
+    let kind: String
+    static func parse(_ info: [AnyHashable: Any]) -> Self? {
+        guard let neko = info["neko"] as? [String: Any], let version = neko["v"] as? Int, version == 3,
+              let kind = neko["kind"] as? String, ["moment", "heart", "join_requested", "join_approved"].contains(kind),
+              let window = neko["windowId"] as? String, validID(window) else { return nil }
+        let request = neko["requestId"] as? String
+        if kind.hasPrefix("join_") { guard let request, validID(request) else { return nil } }
+        return .init(windowID: window, requestID: request, kind: kind)
+    }
+    private static func validID(_ value: String) -> Bool {
+        value.utf8.count == 22 && value.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }
     }
 }

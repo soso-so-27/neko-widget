@@ -66,6 +66,9 @@ enum GroupAPIModel {
     struct BillingConnection: Codable { let operationID: String; let billingAccountID: String; let personID: String; let deviceID: String }
     struct BillingConnectionReply: Decodable { let operationID: String; let personID: String; let state: String }
     struct InviteInput: Codable { let operationID: String; let expectedRevision: Int; let proofPublicKey: Data }
+    struct InvitationStatus: Decodable { let invitationID: String; let proofPublicKey: Data; let expiresAt: Int; let revokedAt: Int?; let serverNow: Int }
+    struct PushRemoval: Encodable { let operationID: String }
+    struct PushInput: Encodable { let operationID: String; let token: Data; let environment: String }
     struct InviteReply: Decodable { let operationID: String; let invitationID: String; let expiresAt: Int; let revision: Int }
     struct InvitationInput: Encodable { let invitationID: String }
     struct JoinChallenge: Decodable {
@@ -82,11 +85,16 @@ enum GroupAPIModel {
         let state: GroupRequestState; let expiresAt: Int; let resultRevision: Int?
         let admissionPaused: Bool?
     }
+    struct AdmissionProof: Codable {
+        let operationID: String; let challengeID: String; let challenge: String
+        let challengeExpiresAt: Int; let inviteProof: Data; let deviceSignature: Data
+    }
     struct PendingJoin: Codable {
         let id: String; let invitationID: String; let personID: String; let candidateDeviceID: String
         let state: GroupRequestState; let expiresAt: Int; let encryptedDisplayName: Data; let personAuthorization: Data
         let signingPublicKey: Data; let hpkePublicKey: Data; let identityPublicKey: Data
         var admissionPaused: Bool? = nil
+        var admissionProof: AdmissionProof? = nil
     }
     struct Transition: Codable {
         let operationID: String; let expectedRevision: Int; let kind: String; let targetID: String
@@ -127,6 +135,10 @@ enum GroupAPIModel {
     struct OnePhoto: Decodable { let moment: PhotoRow }
 }
 
+struct GroupJoinAttempt: Codable, Sendable {
+    let invitationID: String; let windowID: String; let personID: String; let deviceID: String
+    let operationID: UUID; let displayName: String
+}
 struct GroupLocalJoin: Codable, Sendable { let windowID: String; var request: GroupJoinRequest }
 struct GroupLocalBillingConnection: Codable, Sendable {
     let operationID: UUID; let accountID: String; let personID: String; let deviceID: String; var connected: Bool

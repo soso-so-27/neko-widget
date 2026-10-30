@@ -1,5 +1,6 @@
 import type { Env } from './env';
 import { runGroupReportCleanup } from './group-report-cleanup';
+import { cleanupExpiredGroupAdmissionPush } from './group-admission-push';
 import { cleanupExpiredGroupPush } from './group-push';
 
 // Only this feature's temporary relay objects. This never follows local file
@@ -51,6 +52,8 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
   ]);
   await runGroupReportCleanup(env,now);
   await cleanupExpiredGroupPush(env,now);
+  await cleanupExpiredGroupAdmissionPush(env,now);
+  await env.DB.prepare("DELETE FROM group_admission_deliveries WHERE available_at<? AND state<>'leased'").bind(now-7*86400).run();
 }
 
 // An upload whose final authorization fails may finish after cleanup has

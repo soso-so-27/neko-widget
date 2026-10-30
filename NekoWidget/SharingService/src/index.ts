@@ -116,6 +116,7 @@ import { runGroupRelayCleanup } from './group-cleanup';
 import { isGroupReportPath } from './group-reports';
 import { groupReplyPath } from './group-moderation-replies';
 import { groupReportingAvailabilityPath } from './group-reporting-availability';
+import { drainGroupAdmissionNotifications } from './group-admission-push';
 import { drainGroupNotifications } from './group-push';
 
 export async function route(
@@ -645,7 +646,7 @@ export default {
     } else if (controller.cron === APNS_DRAIN_CRON) {
       ctx.waitUntil(drainGroupReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
-      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(drainGroupNotifications(env));
+      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)]));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
       if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {

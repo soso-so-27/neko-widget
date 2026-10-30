@@ -1543,6 +1543,10 @@ final class GroupWindowListModel: ObservableObject {
         do {
             let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: UUID())
             GroupDisplayName.remember(owner)
+            // Keep the created window on an invitation-network failure; retrying must not create another window.
+            do { _ = try await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision)) }
+            catch { message = "まどは作れました。招待リンクは、まどの画面でもう一度用意できます。" }
+            Task { await GroupAdmissionService.shared.refresh(requestPermission: true) }
             await load()
             return window
         } catch {

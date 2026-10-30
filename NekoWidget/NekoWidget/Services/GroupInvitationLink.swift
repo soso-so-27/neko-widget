@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// An invitation link opened on this iPhone:
 /// `https://nekonomado.com/join#v=3&w=<window>&i=<invitation>&s=<invite key>&o=<owner key>`.
@@ -16,6 +17,8 @@ struct GroupInvitationLink: Equatable, Sendable, Identifiable {
     let invitationID: String
     let inviteSecret: Data
     let ownerIdentityPublicKey: Data
+    let contextCiphertext: Data?
+    let context: GroupInvitationContext?
 
     var id: String { invitationID }
 
@@ -39,7 +42,7 @@ struct GroupInvitationLink: Equatable, Sendable, Identifiable {
               components.password == nil,
               components.port == nil,
               let fragment = components.fragment,
-              !fragment.isEmpty
+              !fragment.isEmpty, fragment.utf8.count <= 4096
         else { return nil }
 
         var values: [String: String] = [:]
@@ -49,7 +52,7 @@ struct GroupInvitationLink: Equatable, Sendable, Identifiable {
                   values.updateValue(String(parts[1]), forKey: String(parts[0])) == nil
             else { return nil }
         }
-        guard Set(values.keys) == ["v", "w", "i", "s", "o"],
+        guard (Set(values.keys) == ["v", "w", "i", "s", "o"] || Set(values.keys) == ["v", "w", "i", "s", "o", "c"]),
               values["v"] == Self.version,
               let windowID = values["w"], Self.isValidID(windowID),
               let invitationID = values["i"], Self.isValidID(invitationID),
@@ -57,6 +60,14 @@ struct GroupInvitationLink: Equatable, Sendable, Identifiable {
               let ownerIdentityPublicKey = Self.decodeKey(values["o"])
         else { return nil }
 
+        var ciphertext: Data?, context: GroupInvitationContext?
+        if let encoded = values["c"] {
+            guard let bytes = GroupInvitationContext.decode(encoded),
+                  let opened = try? GroupInvitationContext.open(bytes, secret: inviteSecret,
+                    windowID: windowID, invitationID: invitationID, owner: ownerIdentityPublicKey) else { return nil }
+            ciphertext = bytes; context = opened
+        }
+        self.contextCiphertext = ciphertext; self.context = context
         self.windowID = windowID
         self.invitationID = invitationID
         self.inviteSecret = inviteSecret
@@ -72,6 +83,7 @@ struct GroupInvitationLink: Equatable, Sendable, Identifiable {
         components.path = Self.path
         components.fragment = "v=\(Self.version)&w=\(windowID)&i=\(invitationID)"
             + "&s=\(Self.encodeKey(inviteSecret))&o=\(Self.encodeKey(ownerIdentityPublicKey))"
+        if let contextCiphertext { components.fragment! += "&c=" + Self.encodeKey(contextCiphertext) }
         return components.url
     }
 
@@ -112,4 +124,35 @@ extension GroupInvitationLink: CustomStringConvertible, CustomDebugStringConvert
     }
 
     var debugDescription: String { description }
+}
+
+/// Display context is authenticated to this capability, not an independent identity claim.
+/// No plaintext names, query parameters or server-side metadata are added to links.
+struct GroupInvitationContext: Codable, Equatable, Sendable {
+    let windowName: String
+    let inviterName: String
+    private static func binding(_ windowID: String, _ invitationID: String, _ owner: Data) -> Data {
+        Data(("NW3.INVITATION.CONTEXT\n" + windowID + "\n" + invitationID + "\n" + owner.base64EncodedString()).utf8)
+    }
+    private static func key(_ secret: Data, _ binding: Data) -> SymmetricKey {
+        HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: secret), salt: binding,
+            info: Data("display-context-v1".utf8), outputByteCount: 32)
+    }
+    func seal(secret: Data, windowID: String, invitationID: String, owner: Data) throws -> Data {
+        let aad = Self.binding(windowID, invitationID, owner)
+        return try AES.GCM.seal(JSONEncoder().encode(self), using: Self.key(secret, aad), authenticating: aad).combined!
+    }
+    static func open(_ bytes: Data, secret: Data, windowID: String, invitationID: String, owner: Data) throws -> Self {
+        let aad = binding(windowID, invitationID, owner)
+        let plain = try AES.GCM.open(AES.GCM.SealedBox(combined: bytes), using: key(secret, aad), authenticating: aad)
+        let result = try JSONDecoder().decode(Self.self, from: plain)
+        guard [result.windowName, result.inviterName].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 512 }) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        return result
+    }
+    static func decode(_ text: String) -> Data? {
+        guard text.utf8.count <= 3072, text.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else { return nil }
+        return Data(base64Encoded: text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/") + String(repeating: "=", count: (4-text.count%4)%4))
+    }
 }

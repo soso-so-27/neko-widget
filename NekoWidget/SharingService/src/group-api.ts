@@ -5,12 +5,13 @@ import { createGroupIdentityChallenge,registerGroupIdentity } from './group-iden
 import { createGroupJoinChallenge,createGroupJoinRequest,getGroupJoinStatus,resolveGroupJoinRequest } from './group-joins';
 import { leaveGroupWindow,transitionGroupMembership } from './group-members';
 import { getGroupKey,listGroupJoinRequests,listGroupMembers,listGroupRosters } from './group-reads';
-import { createGroupInvitation,createGroupWindow,getGroupWindow,listGroupWindows,revokeGroupInvitation } from './group-windows';
+import { groupInvitationStatus,createGroupInvitation,createGroupWindow,getGroupWindow,listGroupWindows,revokeGroupInvitation } from './group-windows';
 import { parseJsonBody,requireEmptyBody } from './http';
 import { connectGroupBilling } from './group-owner-plus';
 import { acknowledgeGroupPhoto,commitGroupPhoto,getGroupPhoto,GROUP_MAX_CIPHERTEXT,listGroupPhotos,reserveGroupPhoto,uploadGroupPhoto } from './group-media';
 import { listGroupHearts,recordGroupHeart,setGroupBlock } from './group-hearts';
 import { groupReportAPI,isGroupReportPath } from './group-reports';
+import { registerGroupJoinPush } from './group-admission-push';
 import { registerGroupPush } from './group-push';
 import { groupReportStatus,groupReplyPath } from './group-moderation-replies';
 import { groupReportingAvailability,groupReportingAvailabilityPath } from './group-reporting-availability';
@@ -88,6 +89,8 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(!body) throw new ApiError(404,'not_found','The endpoint was not found.');
   if(suffix==='name')return manageGroupWindow(env,actor,windowId,body);
   if(suffix==='close')return manageGroupWindow(env,actor,windowId,body,true);
+  if(suffix==='join-push-subscription')return registerGroupJoinPush(env,actor,windowId,body);
+  if(suffix==='join-push-subscription/remove')return registerGroupJoinPush(env,actor,windowId,body,true);
   if(suffix==='push-subscription')return registerGroupPush(env,actor,windowId,body);
   if(suffix==='push-subscription/remove')return registerGroupPush(env,actor,windowId,body,true);
   if(suffix==='moments/reserve')return reserveGroupPhoto(env,actor,windowId,body);
@@ -101,6 +104,7 @@ async function dispatchGroup(request:Request,env:Env):Promise<Response> {
   if(photo && photo[2]==='hearts/list')return listGroupHearts(env,actor,windowId,photo[1]!,body);
   const block=suffix.match(/^blocks\/([A-Za-z0-9_-]{22})$/u);
   if(block)return setGroupBlock(env,actor,windowId,block[1]!,body);
+  if(suffix==='invitations/status')return groupInvitationStatus(env,actor,windowId,body);
   if(suffix==='invitations') return createGroupInvitation(env,actor,windowId,body);
   const revoke=suffix.match(/^invitations\/([A-Za-z0-9_-]{1,128})\/revoke$/u);
   if(revoke) return revokeGroupInvitation(env,actor,windowId,revoke[1]!,body);

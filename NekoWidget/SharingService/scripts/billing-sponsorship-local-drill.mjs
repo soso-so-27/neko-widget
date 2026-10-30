@@ -78,6 +78,8 @@ const expectedMigrationNames = [
   "0057_family_notebook_governance.sql",
   "0058_group_photo_captions.sql",
   "0059_group_photo_jst_day.sql",
+  "0060_group_purchased_plus.sql",
+  "0061_group_admission_push.sql",
 ];
 
 const databaseGateColumns = [

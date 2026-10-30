@@ -51,6 +51,8 @@ async function changeGroupPush(env:Env,actor:GroupActor,windowId:string,body:Jso
       throw new ApiError(400,'invalid_push_registration','The notification registration is invalid.');
     const sealed=await encryptDeviceToken(token,actor.deviceId,credential,keyring);
     statements.push(...gateCheck(env,gate!.generation),
+      env.DB.prepare(`UPDATE group_join_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce=''
+        WHERE token_digest=? AND device_id<>? AND expires_at>0`).bind(sealed.digest,actor.deviceId),
       // A physical token cannot keep sending another identity's group alerts.
       // Only this group registry is touched; the legacy registry is unchanged.
       env.DB.prepare(`UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce=''

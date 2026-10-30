@@ -52,6 +52,17 @@ struct VerifyGroupInvitationLink {
                   "key order does not matter")
         try check(GroupInvitationLink(url: link(goodFragment, host: "NekoNoMado.com")) != nil, "host is case-insensitive")
 
+        let context = GroupInvitationContext(windowName: "実家のまど", inviterName: "お母さん")
+        let cipher = try context.seal(secret: parsed.inviteSecret, windowID: parsed.windowID,
+            invitationID: parsed.invitationID, owner: parsed.ownerIdentityPublicKey)
+        let encoded = cipher.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let named = link(goodFragment + "&c=" + encoded)
+        try check(GroupInvitationLink(url: named)?.context == context, "encrypted names round-trip")
+        try check(!named.absoluteString.contains("実家") && named.query == nil, "names never become query/plaintext")
+        try check(GroupInvitationLink(url: link(goodFragment.replacingOccurrences(of: "room-one", with: "room-two") + "&c=" + encoded)) == nil, "context cannot be moved to another window")
+        try check(GroupInvitationLink(url: link(goodFragment + "&c=" + String(encoded.dropLast(4)) + "AAAA")) == nil, "tampered context fails closed")
+        try check(GroupInvitationLink(url: named)?.url.flatMap(GroupInvitationLink.init(url:))?.context == context, "staging preserves context")
+
         let rejected: [(String, URL)] = [
             ("http scheme", link(goodFragment, scheme: "http")),
             ("other host", link(goodFragment, host: "example.com")),
