@@ -51,9 +51,10 @@
       "custodyProbe": "f089fd3b833e714d9327011b0079f4cf72cba60b2065e8eb8ca27a052625b347"
     },
     "codeSHA256": {
-      ".github/workflows/testflight.yml": "5027a95070d66f2217651a21d1d1d0642536e93485e0def2fa8cd10150b07d08",
+      ".github/workflows/testflight.yml": "7bfc14caa8ddf20300b3653e8f2e56b22000ea6ff09c181ccc22d31f566c8aa5",
+      "NekoWidget/ci/altool-result.py": "534a55459aa31d6181357f994001e7a45ceea6dd375df430415771888b7330bc",
       "NekoWidget/ci/moderation_readiness.py": "c8c252cbd0375858ae2510dfa56c6804149d1ae15f58167042faba89c4eba27f",
-      "NekoWidget/ci/verify-moderation-readiness.mjs": "9925e3f55d4098059ce74ebc67cef6ba9675fd4df09edaab74d7b4292158276d",
+      "NekoWidget/ci/verify-moderation-readiness.mjs": "749d62868c7037dbeab530f584bd9c5544225af3ebff795c5cf41a40c3889630",
       "NekoWidget/ci/write-moderation-release-metadata.py": "f4aeb8c714354bfb8ebd2a44fe0f5cc0373ca6e61a5e3b2bea878c70880d22d9",
       "NekoWidget/ci/internal_report_release.py": "f3c906e095a1a839b98d0d208f3de806d4c36241fa82842613d0bc0632394001",
       "NekoWidget/ci/release-testflight.py": "b7216b610f2e7e68504af31d883eba37a982f3be2cc706e823f08b5af4390d78",
@@ -88,12 +89,12 @@
     {
       "keyID": "neko-local-bootstrap-authority-01",
       "revision": 1,
-      "signatureBase64url": "rpnz5M333WUkzIHFS-kqxvOCZeuRzcVqPXiKFZF6rza_sFqhUMtNYv2hYXMgsTLE5edHx1sCEu7cXl9j170mDQ"
+      "signatureBase64url": "ieDxgQkad6fB4yYRbdIyHKzua3hTkzczoQYr24bunqx0DHEUoJNjvqdllgK9qtyG5J3y7mDHRwa7BXtVL75BAw"
     },
     {
       "keyID": "neko-local-bootstrap-authority-02",
       "revision": 1,
-      "signatureBase64url": "zj-VzruldxLCRQYlNoVDpITKK_PeU7omkTm120-526hnOe34MoRP6i072AF0NC15Wu5c9R72k4-Q2fyD_wbpBw"
+      "signatureBase64url": "fwiUFGtA2t3sZ0QsEL167t37MfpWp06I0z6hJsK3iHP1RswSDcSO-uLdFRqYXsj0cQw4cs_fOL9nYhQB0LFFBA"
     }
   ]
 }
