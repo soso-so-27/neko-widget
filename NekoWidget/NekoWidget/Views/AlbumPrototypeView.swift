@@ -4,14 +4,8 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-/// The 1.0 shape: 写真・まど・アルバム・ツール, the album of works that
-/// arrive, 旅立った日. Internal builds show it always (no switch). Public
-/// builds keep the shape they have until 1.0 ships: then `isOn` becomes true,
-/// in this one place. くもりのまど, 公式のまど and the photobook check stay
-/// behind InternalBuildPresentationAvailability: they are not part of 1.0.
-enum Version1 {
-    static var isOn: Bool { InternalBuildPresentationAvailability.isAvailable }
-
+/// The app's half of Version1 (OfficialWindowCatalog.swift).
+extension Version1 {
     /// 家族の手帳: internal builds try it on the prototype; a public build shows
     /// it only once the real sharing is on (FamilyNotebookProductionEnabled).
     @MainActor static var familyNotebook: Bool {

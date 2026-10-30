@@ -3346,7 +3346,7 @@ private struct WindowListView: View {
                     if let groupClient = GroupWindowClientProvider.ui {
                         // Windows people share come first (1-4); public windows follow.
                         GroupWindowListSection(client: groupClient)
-                        if !InternalBuildPresentationAvailability.isAvailable, !receivingPublicWindows.isEmpty {
+                        if !Version1.isOn, !receivingPublicWindows.isEmpty {
                             Text("公式のまど")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -3355,12 +3355,12 @@ private struct WindowListView: View {
                         }
                     }
                     if !connectedWindows.isEmpty || !setupWindows.isEmpty
-                        || (!InternalBuildPresentationAvailability.isAvailable && !receivingPublicWindows.isEmpty) {
+                        || (!Version1.isOn && !receivingPublicWindows.isEmpty) {
                         LazyVGrid(columns: cardColumns, spacing: 22) {
                             ForEach(connectedWindows) { window in
                                 windowCard(window)
                             }
-                            if !InternalBuildPresentationAvailability.isAvailable {
+                            if !Version1.isOn {
                                 ForEach(receivingPublicWindows) { source in publicCard(source) }
                             }
                             ForEach(setupWindows) { window in windowCard(window) }
@@ -3380,9 +3380,9 @@ private struct WindowListView: View {
                             cachedWindowWarning(message: message)
                         }
 
-                        if !InternalBuildPresentationAvailability.isAvailable, GroupWindowClientProvider.ui != nil {
+                        if !Version1.isOn, GroupWindowClientProvider.ui != nil {
                             legacyPublicWindowEntry
-                        } else if !InternalBuildPresentationAvailability.isAvailable, windows.isEmpty, receivingPublicWindows.isEmpty {
+                        } else if !Version1.isOn, windows.isEmpty, receivingPublicWindows.isEmpty {
                             emptyWindowCard
                         }
 
@@ -3391,7 +3391,7 @@ private struct WindowListView: View {
                         }
 
                     }
-                    if InternalBuildPresentationAvailability.isAvailable { publicWindowEntry }
+                    if Version1.isOn { publicWindowEntry }
                 }
             }
             .sensoryFeedback(.success, trigger: addedPublicWindows)

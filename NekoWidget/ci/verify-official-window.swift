@@ -212,7 +212,7 @@ struct OfficialWindowChecks {
         check(productionDefinitions.map(\.id) == ["black-cats"], "Unavailable public windows appeared in discovery")
         check(OfficialWindowConfiguration.definitions(baseFeedURL: endpoint, blackCatDailyEnabled: false).map(\.id)
             == ["official-cats", "nap-cats", "cat-tabby-nap"], "Internal black-cat discovery leaked into the public build")
-        check(OfficialWindowConfiguration.definitions == OfficialWindowConfiguration.definitions(baseFeedURL: OfficialWindowConfiguration.feedURL, blackCatDailyEnabled: InternalBuildPresentationAvailability.isAvailable),
+        check(OfficialWindowConfiguration.definitions == OfficialWindowConfiguration.definitions(baseFeedURL: OfficialWindowConfiguration.feedURL, blackCatDailyEnabled: Version1.isOn),
               "Production bypassed the validated base feed configuration")
         check(OfficialWindowConfiguration.definition(for: "official-cats")?.displayName == OfficialWindowCatalog.displayName,
               "Legacy subscription definition was lost")

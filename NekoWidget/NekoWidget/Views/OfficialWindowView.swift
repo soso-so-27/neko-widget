@@ -165,10 +165,10 @@ struct PublicWindowDiscoveryView: View {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(sources) { source in
                     OfficialWindowEntryCard(state: states[source.id], store: source.store, refreshFeed: source.refresh,
-                        presentation: InternalBuildPresentationAvailability.isAvailable ? .row : .discovery,
+                        presentation: Version1.isOn ? .row : .discovery,
                         previewFeed: source.preview, relatedWindows: sources)
                 }
-                if InternalBuildPresentationAvailability.isAvailable { PublicWindowComingSoonRows() }
+                if Version1.isOn { PublicWindowComingSoonRows() }
             }
             .padding(20)
             .frame(maxWidth: 520)
@@ -438,7 +438,7 @@ struct OfficialWindowView: View {
         return ([catalog.validUntil] + catalog.photos.map(\.expiresAt)).filter { $0 > displayDate }.min()
     }
     private var photos: [OfficialCatPhoto] {
-        if store.windowID == "black-cats", InternalBuildPresentationAvailability.isAvailable {
+        if store.windowID == "black-cats", Version1.isOn {
             return currentCatalog?.widgetPhotos(at: displayDate) ?? []
         }
         if state.isSubscribed { return state.catalog?.availablePhotos(at: displayDate) ?? [] }
@@ -911,7 +911,7 @@ struct OfficialWindowView: View {
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             // snapshot() deliberately discards expired catalogs. Capture the
             // cutover before replacing state so a subscribed window refreshes too.
-            let dailyEditionEnded = store.windowID == "black-cats" && InternalBuildPresentationAvailability.isAvailable
+            let dailyEditionEnded = store.windowID == "black-cats" && Version1.isOn
                 && currentCatalog.map { $0.validUntil <= Date() } == true
             state = store.snapshot()
             displayDate = Date()
