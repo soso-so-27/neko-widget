@@ -12,6 +12,13 @@ export const toolManifests: Record<string, string> = {
   ShowcasePhotos: 'selected.json', LostCatDrafts: 'drafts.json', CatPreparedness: 'records.json',
   PhotoMemoryNotes: 'state.json', CatIdentity: 'state.json',
 };
+/** Wire IDs are permanent. New names must never shift an existing saved bit. */
+export const toolBits: Readonly<Record<string, number>> = Object.freeze({
+  CareHandoff:1,CatIdentity:2,CatPreparedness:4,EvacuationPreparation:8,
+  LostCatDrafts:16,PhotoMemoryNotes:32,ShowcasePhotos:64,VeterinaryVisits:128,
+  CatCare:256,FamilyNotebook:512,
+});
+export const supportedToolMask = Object.keys(toolManifests).reduce((mask,name)=>mask | toolBits[name]!,0);
 const toolPhotoName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/iu;
 export function validToolPath(path: string): boolean {
   const pieces = path.split('/');

@@ -194,7 +194,14 @@ export async function route(request: Request, services: Services, context?: Pick
       finalNoticeDeliveredAt: state.finalNoticeDeliveredAt });
   }
   if (request.method === 'GET' && path === '/v1/usage') {
-    return response(await services.archive.usage(token));
+    const version = url.searchParams.get('productQuotaVersion');
+    if (version !== null && version !== '1' || url.searchParams.getAll('productQuotaVersion').length > 1) throw new ServiceError('INVALID_REQUEST');
+    return response(await services.archive.usage(token, version === '1' ? 1 : 0));
+  }
+  if (request.method === 'POST' && path === '/v1/product-quota/recount') {
+    const input = await body(request,1024);
+    if (Object.keys(input).some(key => key !== 'after') || (input.after !== undefined && typeof input.after !== 'string')) throw new ServiceError('INVALID_REQUEST');
+    return payloadWork.run(async () => response(await services.archive.recountProductUsage(token,input.after as string | undefined)),request.signal);
   }
   if (request.method === 'GET' && path === '/v1/tool-cleanup') {
     if ([...url.searchParams.keys()].some(key => key !== 'after') || url.searchParams.getAll('after').length > 1) throw new ServiceError('INVALID_REQUEST');
@@ -339,6 +346,7 @@ export function configuredServices(env: Env): Services {
       ...(env.PRODUCT_PLUS_BYTES !== undefined ? { PRODUCT_PLUS_BYTES: env.PRODUCT_PLUS_BYTES } : {}),
       ...(env.PRODUCT_TRIAL_BYTES !== undefined ? { PRODUCT_TRIAL_BYTES: env.PRODUCT_TRIAL_BYTES } : {}),
       ...(env.PRODUCT_VISIBLE_RECORDS !== undefined ? { PRODUCT_VISIBLE_RECORDS: env.PRODUCT_VISIBLE_RECORDS } : {}),
+      ...(env.PRODUCT_QUOTA_ENFORCEMENT !== undefined ? { PRODUCT_QUOTA_ENFORCEMENT: env.PRODUCT_QUOTA_ENFORCEMENT } : {}),
     },
     ...(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES === undefined ? {}
       : { globalActiveBytesLimit: Number(env.GLOBAL_ACTIVE_STORAGE_LIMIT_BYTES) }),

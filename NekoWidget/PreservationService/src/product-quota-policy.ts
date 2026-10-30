@@ -6,6 +6,7 @@ export interface ProductQuotaSettings {
   PRODUCT_PLUS_BYTES?: string;
   PRODUCT_TRIAL_BYTES?: string;
   PRODUCT_VISIBLE_RECORDS?: string;
+  PRODUCT_QUOTA_ENFORCEMENT?: string;
 }
 
 function setting(value: string | undefined, initial: number): number {
@@ -17,6 +18,9 @@ function setting(value: string | undefined, initial: number): number {
 }
 
 export function productQuotaPolicy(settings: ProductQuotaSettings = {}) {
+  if (settings.PRODUCT_QUOTA_ENFORCEMENT !== undefined && !['true','false'].includes(settings.PRODUCT_QUOTA_ENFORCEMENT)) {
+    throw new ServiceError('PRODUCT_QUOTA_NOT_CONFIGURED',503);
+  }
   const plusBytes = setting(settings.PRODUCT_PLUS_BYTES, 3_000_000_000);
   const trialBytes = setting(settings.PRODUCT_TRIAL_BYTES, 250_000_000);
   const visibleRecords = setting(settings.PRODUCT_VISIBLE_RECORDS, 3_000);

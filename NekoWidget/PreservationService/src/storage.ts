@@ -1,6 +1,6 @@
 import { ServiceError, sha256, type ArchiveDocument, type KeyCustody, type MembershipAuthority,
   type PhotoValidator, type Session } from './contracts';
-import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument, toolIndexRecordIDs, parseAppRecordHead, isToolFragmentPath } from './documents';
+import { decodePhoto, encodePhoto, MAX_PHOTO_BYTES, recordId, validateDocument, toolIndexRecordIDs, parseAppRecordHead, isToolFragmentPath, toolManifests } from './documents';
 import { parseToolNode, summarizeToolNode, validateToolNodePaths, toolNodeReferences, isCompleteToolRoot } from './tool-index-v4';
 import { RecordRecoveryCopy, type CommittedRecordImage,
   type CopiedRecordImage, type StoredRecordImage } from './record-recovery-copy';
@@ -9,6 +9,7 @@ import type { ToolOwnerTrial } from './tool-owner-trial';
 import { exportPage } from './export-page';
 import { ToolMetadataBatches } from './tool-metadata-batches';
 import { pendingProductQuota, type ProductQuotaSettings } from './product-quota-policy';
+import { measureProductRecord, productUsage, requireProductCapacity, type LogicalUsage, type ProductCounters } from './product-usage';
 
 interface Row {
   owner_id: string; record_id: string; revision: number; initial_fingerprint: string; initial_operation: string;
@@ -330,7 +331,42 @@ export class ArchiveStore {
     if (!latest || latest.deleted) throw new ServiceError('RECORD_NOT_FOUND', 404);
     if (latest.revision !== row.revision) throw new ServiceError('REVISION_CONFLICT', 409);
   }
-  async usage(token: string) {
+  private productFact(owner: string, id: string, revision: number, metadata: Uint8Array, value: LogicalUsage | null) {
+    return this.d.db.prepare(`UPDATE pa_product_record_usage SET logical_bytes=?,visible_records=?
+      WHERE owner_id=? AND record_id=? AND revision=? AND EXISTS(
+        SELECT 1 FROM pa_records r WHERE r.owner_id=? AND r.record_id=? AND r.revision=? AND r.metadata=? AND r.deleted=0)`)
+      .bind(value?.bytes ?? null,value?.records ?? null,owner,id,revision,owner,id,revision,bytes(metadata));
+  }
+  private async measureProduct(owner: string, document: ArchiveDocument, photoBytes: number) {
+    return measureProductRecord(document, photoBytes, async id => {
+      const row = await this.row(owner,id);
+      if (!row || row.deleted || row.revision !== 1) throw new ServiceError('ARCHIVE_INTEGRITY_FAILED',503);
+      const opened = await this.metadata(row);
+      return { document: opened.document, photoBytes: opened.photoBytes };
+    });
+  }
+  /** Explicit bounded backfill for old archives; GET usage never decrypts them.
+   * This only replaces derived facts, not archive bytes, revisions or history. */
+  async recountProductUsage(token: string, after = '') {
+    if (!this.d.productQuotaSettings) throw new ServiceError('PRODUCT_QUOTA_ACCOUNTING_UNAVAILABLE',503);
+    if (after) recordId(after);
+    const session = await this.d.auth.requireSession(token), generation = await this.generation(session.ownerId);
+    const page = await this.d.db.prepare(`SELECT * FROM pa_records WHERE owner_id=? AND deleted=0 AND record_id>?
+      ORDER BY record_id LIMIT 21`).bind(session.ownerId,after).all<Row>();
+    const statements: D1PreparedStatement[] = [];
+    for (const row of page.results.slice(0,20)) {
+      const opened = await this.metadata(row), value = await this.measureProduct(session.ownerId,opened.document,opened.photoBytes);
+      statements.push(this.d.db.prepare(`UPDATE pa_product_record_usage SET logical_bytes=?,visible_records=?
+        WHERE owner_id=? AND record_id=? AND revision=? AND (?=(SELECT generation FROM pa_inventory WHERE owner_id=?))
+        AND ${activeSession} RETURNING record_id`).bind(value?.bytes ?? null,value?.records ?? null,
+          session.ownerId,row.record_id,row.revision,generation,session.ownerId,...this.sessionBindings(session)));
+    }
+    const results = statements.length ? await this.d.db.batch(statements) : [];
+    await this.d.auth.requireSession(token);
+    if (results.some(result => result.results.length !== 1) || await this.generation(session.ownerId) !== generation) throw new ServiceError('ARCHIVE_CHANGED',409);
+    return { version: 1, processed: statements.length, nextCursor: page.results.length > 20 ? page.results[19]!.record_id : null };
+  }
+  async usage(token: string, productQuotaVersion = 0) {
     const session = await this.d.auth.requireSession(token);
     // One SQL snapshot: do not mix a committed record count with an earlier
     // reservation total. No photo download, decryption or membership lookup.
@@ -370,14 +406,20 @@ export class ArchiveStore {
     const limitBytes = trial ? Math.max(1, Math.min(this.d.quotaBytes, allocated + trial.remainingBytes)) : this.d.quotaBytes;
     const maximumRecords = trial ? Math.max(1, Math.min(this.d.maximumRecords,
       row.saved_records + row.pending_records + trial.remainingRecords)) : this.d.maximumRecords;
-    return { version: 1, accounting: 'encrypted-records-v1', toolSnapshots: { maximumIndexVersion: trial ? 3 : 4, strictPartDeletion: true, metadataBatchVersion: this.d.requireOwnerRecovery && !!this.d.auth.requireToolMetadataBatchSession && this.d.ownerRecovery?.supportsMetadataBatch() ? 1 : 0 },
+    const product = productQuotaVersion === 1 && this.d.productQuotaSettings
+      ? productUsage(this.d.productQuotaSettings, await this.d.db.prepare(
+        'SELECT product_bytes,product_records,product_unknown FROM pa_owner_record_counters WHERE owner_id=?')
+        .bind(session.ownerId).first<ProductCounters>(), !!trial)
+      : this.d.productQuotaSettings ? pendingProductQuota(this.d.productQuotaSettings) : null;
+    await this.d.auth.requireSession(token);
+    return { version: 1, accounting: 'encrypted-records-v1', toolSnapshots: { maximumIndexVersion: trial ? 3 : 4, strictPartDeletion: true, supportedTools: Object.keys(toolManifests).sort(), metadataBatchVersion: this.d.requireOwnerRecovery && !!this.d.auth.requireToolMetadataBatchSession && this.d.ownerRecovery?.supportsMetadataBatch() ? 1 : 0 },
       storage: { usedBytes: row.used_bytes, reservedBytes: row.reserved_bytes, limitBytes,
         availableBytes: Math.max(0, limitBytes - allocated), overLimit: allocated > limitBytes },
       records: { saved: row.saved_records, pending: row.pending_records, maximumRecords,
         // Keep tombstones for replay protection, but do not let lifetime deletions
         // exhaust the number of records a customer may currently keep.
         creationLimitReached: row.saved_records + row.pending_records >= maximumRecords },
-      ...(this.d.productQuotaSettings ? { productQuota: pendingProductQuota(this.d.productQuotaSettings) } : {}) };
+      ...(product ? { productQuota: product } : {}) };
   }
   async list(token: string, after = '', limit = 20, visibleOnly = false) {
     if (after) recordId(after);
@@ -651,6 +693,24 @@ export class ArchiveStore {
       }
     }
     const initialFingerprint = trial?.fingerprint ?? await sha256(JSON.stringify({ document, photoSHA256 }));
+    let logical: LogicalUsage | null = null;
+    const prepareLogical = async () => {
+      if (!this.d.productQuotaSettings) return;
+      // The same inventory CAS protects both decrypted snapshot dependencies
+      // and the total used to admit concurrent writes.
+      toolIndexGeneration ??= await this.generation(session.ownerId);
+      logical = await this.measureProduct(session.ownerId, document, photo?.length ?? 0);
+      // Fragments/v4 nodes are admitted physically; the head publishes their
+      // logical content. Legacy standalone indexes themselves are visible saves.
+      if (document.toolBackup && (document.toolBackup.kind !== 'index' || parseToolNode(document.toolBackup).version === 4)) return;
+      const current = await this.d.db.prepare('SELECT product_bytes,product_records,product_unknown FROM pa_owner_record_counters WHERE owner_id=?')
+        .bind(session.ownerId).first<ProductCounters>();
+      const previous = existing ? await this.d.db.prepare(
+        'SELECT logical_bytes AS bytes,visible_records AS records FROM pa_product_record_usage WHERE owner_id=? AND record_id=? AND revision=?')
+        .bind(session.ownerId,id,existing.revision).first<LogicalUsage>() : { bytes: 0, records: 0 };
+      requireProductCapacity(this.d.productQuotaSettings,current,
+        previous?.bytes == null || previous.records == null ? null : previous,logical,!!trial);
+    };
     if (request.expectedRevision === null && existing) {
       if (existing.initial_fingerprint !== initialFingerprint) throw new ServiceError('REVISION_CONFLICT', 409);
       await this.metadata(existing); // Corrupted data is never returned as a successful retry.
@@ -689,6 +749,7 @@ export class ArchiveStore {
       if (old.photoSHA256 !== photoSHA256) throw new ServiceError('PHOTO_REPLACEMENT_REQUIRES_NEW_RECORD', 409);
       // Server update time; captured/written dates are not invented or silently replaced.
       document.updatedAt = new Date(this.d.now()).toISOString();
+      await prepareLogical();
       const metadata = await this.d.keys.seal(new TextEncoder().encode(JSON.stringify({ ...old,
         revision: expected + 1, document } satisfies Metadata)),
       { ownerId: session.ownerId, purpose: 'record', recordId: `${id}/document` });
@@ -718,7 +779,7 @@ export class ArchiveStore {
       } : undefined;
       const copied = this.d.recovery ? await this.d.recovery.copy(replacement, reusedPhoto) : null;
       // Existing edits remain possible without membership; quota overage stops only new records.
-      if (copied || appHead) {
+      if (copied || appHead || this.d.productQuotaSettings) {
         const results = await this.d.db.batch([
           this.d.db.prepare(`UPDATE pa_records SET revision=revision+1,metadata=?,
             quota_bytes=quota_bytes-length(metadata)+? WHERE owner_id=? AND record_id=? AND revision=? AND deleted=0
@@ -737,6 +798,7 @@ export class ArchiveStore {
               .bind(session.ownerId, id, appHead.snapshotID.toLowerCase(), expected + 1,
                 session.ownerId, id, expected + 1, bytes(metadata)),
           ] : []),
+          ...(this.d.productQuotaSettings ? [this.productFact(session.ownerId,id,expected + 1,metadata,logical)] : []),
         ]);
         if (results[0]?.results.length !== 1 || (copied && results[1]?.results.length !== 1)) {
           await authorize();
@@ -761,6 +823,7 @@ export class ArchiveStore {
       throw new ServiceError('PRESERVATION_NOT_CONFIGURED', 503);
     }
     if (!pilotAccess) await this.paid(session.ownerId);
+    await prepareLogical();
     if (photo !== null && !await this.d.photos.validateJPEG(photo)) throw new ServiceError('INVALID_JPEG');
     const operation = crypto.randomUUID();
     const key = `personal/${session.ownerId}/${id}/${operation}`;
@@ -847,6 +910,7 @@ export class ArchiveStore {
         ...(document.toolBackup ? [this.d.db.prepare(`INSERT INTO pa_tool_record_sources(owner_id,record_id,snapshot_id,kind,upload_snapshot_id)
           SELECT owner_id,record_id,?,?,? FROM pa_records WHERE owner_id=? AND record_id=? AND initial_operation=? AND deleted=0`)
           .bind(document.toolBackup.snapshotId, document.toolBackup.kind, uploadSnapshotID, session.ownerId, id, operation)] : []),
+        ...(this.d.productQuotaSettings ? [this.productFact(session.ownerId,id,1,metadata,logical)] : []),
       ]);
       if (result[0]?.results.length !== 1 || (copied && result[2]?.results.length !== 1)) {
         await authorize();

@@ -1,5 +1,5 @@
 import { ServiceError, sha256, type ToolBackupPart } from './contracts';
-import { isToolFragmentPath, parseToolIndex, toolManifests, validToolPath, type ToolIndex, type ToolIndexFile } from './documents';
+import { isToolFragmentPath, parseToolIndex, toolManifests, toolBits, supportedToolMask, validToolPath, type ToolIndex, type ToolIndexFile } from './documents';
 
 export interface ToolNodeSummary { fileCount: number; nodeCount: number; toolMask: number; manifestMask: number }
 export interface ToolNodeChild extends ToolNodeSummary { prefix: string; snapshotID: string; sha256: string }
@@ -11,7 +11,6 @@ const fail = (): never => { throw new ServiceError('INVALID_RECORD'); };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, allowed: string[]) => Object.keys(v).every(k => allowed.includes(k));
 const integer = (v: unknown, low: number, high: number): v is number => Number.isSafeInteger(v) && (v as number) >= low && (v as number) <= high;
-const tools = Object.keys(toolManifests).sort();
 
 /** No recursive fetch is needed to accept one node: immutable children have
  * already authenticated their own descendants. The inventory CAS and reference
@@ -61,7 +60,8 @@ export function parseToolNode(part: ToolBackupPart): ToolIndex | ToolNode {
         || typeof child.snapshotID !== 'string' || !uuid.test(child.snapshotID) || ids.has(child.snapshotID.toLowerCase())
         || typeof child.sha256 !== 'string' || !hash.test(child.sha256)
         || !integer(child.fileCount, 1, 100_000) || !integer(child.nodeCount, 1, 8192)
-        || !integer(child.toolMask, 1, 255) || !integer(child.manifestMask, 0, 255)
+        || !integer(child.toolMask, 1, supportedToolMask) || !integer(child.manifestMask, 0, supportedToolMask)
+        || (child.toolMask & supportedToolMask) !== child.toolMask
         || (child.manifestMask & child.toolMask) !== child.manifestMask) return fail();
       prefixes.add(child.prefix); ids.add(child.snapshotID.toLowerCase());
     }
@@ -79,7 +79,7 @@ export function summarizeToolNode(node: ToolNode): ToolNodeSummary {
   }), { fileCount: 0, nodeCount: 1, toolMask: 0, manifestMask: 0 });
   let toolMask = 0, manifestMask = 0;
   for (const file of node.files) {
-    const [tool, name] = file.path.split('/'), bit = 1 << tools.indexOf(tool!);
+    const [tool, name] = file.path.split('/'), bit = toolBits[tool!]!;
     toolMask |= bit;
     if (name === toolManifests[tool!]) manifestMask |= bit;
   }

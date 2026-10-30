@@ -77,4 +77,6 @@ it('serves 277400 lifetime IDs without record scans and rejects accounting diver
  const empty=await fixture();
  await db.prepare('DELETE FROM pa_owner_record_counters WHERE owner_id=?').bind(empty.owner).run();
  await expect(empty.archive.usage('synthetic')).rejects.toMatchObject({code:'ARCHIVE_ACCOUNTING_UNAVAILABLE'});
-},60_000);
+// The 277400-row synthetic setup also seeds the derived product ledger. The
+// measured usage operation remains one query; allow Windows setup time here.
+},120_000);

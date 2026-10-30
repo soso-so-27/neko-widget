@@ -3,10 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.17.0" },
-  "scripts": { "typecheck": "tsc --noEmit", "test": "node --test test/operating-readiness.node-tests.mjs && vitest run",
-    "test:migration": "node scripts/verify-notice-evidence-migration.mjs && node scripts/verify-purge-fence-migration.mjs && node scripts/verify-record-recovery-migration.mjs && node scripts/verify-owner-recovery-migration.mjs && node scripts/verify-purge-intent-migration.mjs" },
-  "dependencies": { "aws4fetch": "1.0.20", "fast-xml-parser": "5.11.1", "jose": "6.2.12" },
+  "engines": {
+    "node": ">=22.17.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/operating-readiness.node-tests.mjs && vitest run",
+    "test:migration": "node scripts/verify-notice-evidence-migration.mjs && node scripts/verify-purge-fence-migration.mjs && node scripts/verify-record-recovery-migration.mjs && node scripts/verify-owner-recovery-migration.mjs && node scripts/verify-purge-intent-migration.mjs"
+  },
+  "dependencies": {
+    "@streamparser/json": "0.0.26",
+    "aws4fetch": "1.0.20",
+    "fast-xml-parser": "5.11.1",
+    "jose": "6.2.12"
+  },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.21.3",
     "@cloudflare/workers-types": "5.20260822.1",
@@ -15,5 +25,7 @@
     "vitest": "4.1.11",
     "wrangler": "4.125.0"
   },
-  "overrides": { "sharp": "0.35.4" }
+  "overrides": {
+    "sharp": "0.35.4"
+  }
 }
