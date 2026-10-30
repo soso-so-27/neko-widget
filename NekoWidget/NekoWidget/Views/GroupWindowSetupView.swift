@@ -407,6 +407,14 @@ struct GroupWindowMembersView: View {
     @State private var showsPlusOffer = false
     @State private var showsRename = false
     @State private var showsCloseConfirmation = false
+    /// Admissions already shown once, so 「〇〇さんが参加しました」 is said once
+    /// and not every time the screen opens. Written only when leaving.
+    @AppStorage("group.admissionsSeen.v1") private var seenAdmissions = ""
+
+    private var newAdmissions: [GroupAdmissionResult] {
+        let seen = Set(seenAdmissions.split(separator: ",").map(String.init))
+        return model.admissionResults.filter { !seen.contains($0.id) }
+    }
 
     var body: some View {
         Form {
@@ -458,6 +466,12 @@ struct GroupWindowMembersView: View {
             }
         }
         .refreshable { await model.load() }
+        .onDisappear {
+            let shown = newAdmissions.map(\.id)
+            guard !shown.isEmpty else { return }
+            let kept = seenAdmissions.split(separator: ",").map(String.init) + shown
+            seenAdmissions = kept.suffix(200).joined(separator: ",")
+        }
         .sheet(isPresented: $showsPlusOffer, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
             Task { await model.load() }
@@ -607,8 +621,18 @@ struct GroupWindowMembersView: View {
         if window.state != .active
             || model.loadFailureMessage != nil
             || model.actionErrorMessage != nil
-            || model.actionCompletionMessage != nil {
+            || model.actionCompletionMessage != nil
+            || !newAdmissions.isEmpty {
             Section {
+                // Who this iPhone let in by itself since the creator last looked.
+                ForEach(newAdmissions) { admission in
+                    Label(
+                        "\(GroupDisplayName.withSan(admission.displayName))が参加しました。違っていたら、メンバーから外せます。",
+                        systemImage: "person.crop.circle.badge.checkmark"
+                    )
+                    .foregroundStyle(.green)
+                    .accessibilityIdentifier("group-window-admitted")
+                }
                 if window.state == .rotationRequired {
                     Label(
                         GroupWindowPresentation.message(for: GroupClientError.rotationPending),
@@ -743,7 +767,7 @@ struct GroupWindowMembersView: View {
             }
             if window.canManage {
                 HStack(spacing: 12) {
-                    Text("この iPhone で参加を受け付けています。")
+                    Text("まもなく参加します。")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
                         Task { await model.reject(request) }
@@ -822,7 +846,7 @@ struct GroupWindowMembersView: View {
         } header: {
             Text("招待")
         } footer: {
-            Text("リンクは24時間有効で、何人でも使えます。参加したい人が来たら、上に名前が出ます。「参加してもらう」を押すと入れます。")
+            Text("リンクは24時間有効で、何人でも使えます。リンクから「参加する」を押した人は、そのままメンバーになります。違っていたら、あとで外せます。")
         }
     }
 
@@ -1149,7 +1173,7 @@ struct GroupJoinView: View {
             Text("招待されたまど")
         } footer: {
             VStack(alignment: .leading, spacing: 8) {
-                Text("まどを作った人に、この名前が届きます。作った人のiPhoneで受け付けられると入れます。参加する前の写真は届きません。")
+                Text("まどを作った人に、この名前が届きます。参加する前の写真は届きません。")
                 GroupWindowStandardsAgreement(action: "参加する")
             }
         }
@@ -1157,15 +1181,15 @@ struct GroupJoinView: View {
 
     private func pendingSection(_ request: GroupJoinRequest) -> some View {
         Section {
-            Label("受け付けを待っています", systemImage: "hourglass")
+            Label("参加の手続き中です", systemImage: "hourglass")
                 .font(.headline)
                 .accessibilityIdentifier("group-join-pending")
-            Text("まどを作った人のiPhoneで受け付けられると、ここに表示されます。それまで、この画面を開いておいてください。")
+            Text("まどを作った人のiPhoneに届くと、参加が終わります。この画面は閉じても大丈夫です。参加できたら、お知らせします。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if request.admissionPaused == true {
-                Label("いまは参加の受付をお休みしています。再開すると、そのまま受け付けを待つ形にもどります。", systemImage: "pause.circle")
+                Label("いまは参加の受付をお休みしています。再開すると、そのまま手続きが進みます。", systemImage: "pause.circle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
