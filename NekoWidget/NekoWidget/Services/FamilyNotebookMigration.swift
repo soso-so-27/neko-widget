@@ -32,7 +32,7 @@ struct FamilyNotebookMigrationSource {
             }
         }
         if let handoff {
-            guard handoff.schemaVersion == 1 else { throw FamilyNotebookMigrationError.unsupportedSchema }
+            guard [1,2].contains(handoff.schemaVersion) else { throw FamilyNotebookMigrationError.unsupportedSchema }
             try handoff.validate()
         }
         guard Set(visits.map(\.id)).count == visits.count else { throw FamilyNotebookMigrationError.invalidSource }
@@ -253,7 +253,8 @@ enum FamilyNotebookMigration {
                 let id = try cat(toolID: input.toolCatID ?? input.id, profileID: profileID)
                 let source = "migration:v1:handoff:" + input.id.uuidString.lowercased()
                 let recordID = try record(source, catID: id, makeRecordID: makeRecordID)
-                for (field, value) in [(FamilyNotebookField.recipient, plan.recipient), (.period, plan.period), (.request, plan.request),
+                for (field, value) in [(FamilyNotebookField.recipient, input.familyContext?.recipient ?? plan.recipient),
+                                       (.period, input.familyContext?.period ?? plan.period), (.request, input.familyContext?.request ?? plan.request),
                                        (.catName, input.name), (.usualFood, input.usualFood ?? ""), (.water, input.water),
                                        (.toilet, input.toilet), (.handling, input.handling), (.important, input.important),
                                        (.callWhen, input.callWhen ?? ""), (.healthStatus, input.healthStatus.rawValue), (.healthDetails, input.healthDetails)] {

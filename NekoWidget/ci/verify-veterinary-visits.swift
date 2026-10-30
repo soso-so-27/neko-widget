@@ -69,6 +69,13 @@ import CoreGraphics
         let suiteRoot = FileManager.default.temporaryDirectory.appendingPathComponent("vet-verify-\(UUID())")
         defer { try? FileManager.default.removeItem(at: suiteRoot) }
         try await verifyLedgerRecovery(root: suiteRoot.appendingPathComponent("ledger-recovery"))
+        let concurrentStore = VeterinaryVisitStore(directory: suiteRoot.appendingPathComponent("concurrent-edit"))
+        let base = try await concurrentStore.current(catID: UUID(), catName: "同じ猫") { try $0() }
+        var remote = base; remote.questions = "家族が書いた質問"
+        _ = try await concurrentStore.save(remote, expectedRevision: base.revision)
+        var typed = base; typed.observations = "入力中だった様子"
+        let combined = try await concurrentStore.save(typed, expectedRevision: base.revision, base: base)
+        try require(combined.questions == remote.questions && combined.observations == typed.observations, "an open editor erased a newly received field")
         let root = suiteRoot.appendingPathComponent("primary-store")
         let store = VeterinaryVisitStore(directory: root), owner = UUID(), otherOwner = UUID()
         let initial = try await store.visits()

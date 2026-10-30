@@ -15,6 +15,7 @@ struct VeterinaryVisitEntry: Codable, Identifiable, Equatable, Sendable {
     let weight: PhotoMemoWeightValue?
     let photoFile: String?
     var sourcePhotoIdentifier: String? = nil
+    var familyRetained: Bool? = nil
 }
 
 struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
@@ -27,6 +28,8 @@ struct VeterinaryVisit: Codable, Identifiable, Equatable, Sendable {
     var questions: String
     var entries: [VeterinaryVisitEntry]
     var completedAt: Date?
+    var familyRecordID: UUID? = nil
+    var familyDetached: Bool? = nil
 
     var orderedEntries: [VeterinaryVisitEntry] {
         entries.sorted {
@@ -87,6 +90,18 @@ actor VeterinaryVisitStore {
         Self.lock.lock(); defer { Self.lock.unlock() }
         return try load().visits
     }
+    #if os(iOS)
+    func receiveFamilyChanges() throws {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        guard directory.standardizedFileURL == AppRecordDataset.directory("VeterinaryVisits").standardizedFileURL else { return }
+        var state = try load()
+        let next = try FamilyNotebookToolSharing.visitsReceived(state.visits)
+        guard next != state.visits else { return }
+        for visit in next { try validate(visit) }
+        state.visits = next; try commit(state, familyProjection: true)
+    }
+    #endif
 
     /// The UI supplies a live membership boundary around a new commit. This
     /// Foundation-only store does not depend on SwiftUI or grant membership.
@@ -106,15 +121,27 @@ actor VeterinaryVisitStore {
         return visit
     }
 
-    func save(_ draft: VeterinaryVisit, expectedRevision: UUID) throws -> VeterinaryVisit {
+    func save(_ draft: VeterinaryVisit, expectedRevision: UUID, base: VeterinaryVisit? = nil) throws -> VeterinaryVisit {
         Self.lock.lock(); defer { Self.lock.unlock() }
         var state = try load()
         guard let index = state.visits.firstIndex(where: { $0.id == draft.id }),
-              state.visits[index].revision == expectedRevision,
-              state.visits[index].catID == draft.catID, state.visits[index].catName == draft.catName,
-              state.visits[index].entries == draft.entries,
-              state.visits[index].completedAt == nil else { throw VeterinaryVisitError.changed }
-        var next = draft; next.revision = UUID()
+              state.visits[index].catID == draft.catID, state.visits[index].completedAt == nil else { throw VeterinaryVisitError.changed }
+        let current = state.visits[index]
+        var next = draft
+        if current.revision != expectedRevision {
+            guard let base, base.id == draft.id, base.catID == draft.catID, base.revision == expectedRevision,
+                  base.entries == draft.entries, base.catName == draft.catName else { throw VeterinaryVisitError.changed }
+            // An open editor owns only the fields it actually changed. Keep
+            // newly received entries and edits to the other fields.
+            next = current
+            if draft.observations != base.observations { next.observations = draft.observations }
+            if draft.questions != base.questions { next.questions = draft.questions }
+            if draft.startedOn != base.startedOn { next.startedOn = draft.startedOn }
+            if draft.completedAt != base.completedAt { next.completedAt = draft.completedAt }
+        } else {
+            guard current.entries == draft.entries, current.catName == draft.catName else { throw VeterinaryVisitError.changed }
+        }
+        next.revision = UUID()
         try validate(next); state.visits[index] = next; try commit(state)
         return next
     }
@@ -241,9 +268,9 @@ actor VeterinaryVisitStore {
         }
         do {
             let state = try JSONDecoder().decode(State.self, from: data)
-            guard state.schema == 1, state.visits.count <= 36_500,
+            guard [1,2].contains(state.schema), state.visits.count <= 36_500,
                   Set(state.visits.map(\.id)).count == state.visits.count,
-                  Set(state.visits.filter { $0.completedAt == nil }.map(\.catID)).count == state.visits.filter({ $0.completedAt == nil }).count else { throw VeterinaryVisitError.corrupted }
+                  Set(state.visits.filter { $0.completedAt == nil && $0.familyRecordID == nil }.map(\.catID)).count == state.visits.filter({ $0.completedAt == nil && $0.familyRecordID == nil }).count else { throw VeterinaryVisitError.corrupted }
             var photoFiles = Set<String>()
             for visit in state.visits {
                 try validate(visit)
@@ -299,13 +326,22 @@ actor VeterinaryVisitStore {
                 kCGImageSourceThumbnailMaxPixelSize: 64] as CFDictionary) != nil else { throw VeterinaryVisitError.corrupted }
 #endif
     }
-    private func commit(_ state: State) throws {
+    private func commit(_ state: State, familyProjection: Bool = false) throws {
+        var state = state
+        if state.visits.contains(where: { $0.familyRecordID != nil || $0.familyDetached != nil || $0.entries.contains(where: { $0.familyRetained != nil }) }) { state.schema = 2 }
+        #if os(iOS)
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        try AppRecordDataset.requireWritable(directory.appendingPathComponent("state.json"))
+        #endif
         let retired = state.retiredPhotoFiles ?? []
         let live = Set(state.visits.flatMap { $0.entries.compactMap(\.photoFile) })
         guard retired.count <= 2000, Set(retired).count == retired.count,
               retired.allSatisfy({ Self.validPhotoFile($0) && !live.contains($0) }) else { throw VeterinaryVisitError.storage }
         let bytes = try JSONEncoder().encode(state)
         guard bytes.count <= AppRecordJSON.maximumBytes else { throw VeterinaryVisitError.storage }
+        #if os(iOS)
+        if !familyProjection { try FamilyNotebookToolSharing.visitsChanged(before: load().visits, after: state.visits, directory: directory) }
+        #endif
         try write(bytes, to: directory.appendingPathComponent("state.json"))
         NotificationCenter.default.post(name: Notification.Name("neko.app-records.committed.v1"), object: directory)
     }

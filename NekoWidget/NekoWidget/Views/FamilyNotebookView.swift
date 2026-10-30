@@ -29,6 +29,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     private var realAuthor: FamilyNotebookAuthor?
     private var realMemberIDs: [String] = []
     private var applyingRemote = false
+    private var notebookObserver: NSObjectProtocol?
     private static let bindingKey = FamilyNotebookLocalBinding.key
     var isReal: Bool { FamilyNotebookServiceFactory.productionRequested }
     var currentAuthor: FamilyNotebookAuthor? { isReal ? realAuthor : Self.me }
@@ -136,6 +137,10 @@ final class FamilyNotebookPrototype: ObservableObject {
             try self.saveRealChanges(before, after)
         }
         CatCareStore.shared.didSave = { [weak self] before, after in self?.catCareDidSave(before, after) }
+        notebookObserver = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: nil) { [weak self] note in
+            guard (note.object as? URL)?.lastPathComponent == "family-notebook.json" else { return }
+            Task { @MainActor in self?.reload(); self?.applyFamilyWrites() }
+        }
     }
 
     private static var root: URL? {
@@ -351,10 +356,16 @@ final class FamilyNotebookPrototype: ObservableObject {
             guard hasFamily, let snapshot, let care = CatCareStore.shared.state, CatCareStore.shared.canSave else { return }
             do {
                 let next = try FamilyNotebookCatCareBridge.apply(snapshot, to: care)
-                guard next != care else { return }
                 applyingRemote = true; defer { applyingRemote = false }
-                guard CatCareStore.shared.update({ $0 = next }) else { throw FamilyNotebookError.storageUnavailable }
-                familyWritesToCatCare += 1
+                if next != care {
+                    guard CatCareStore.shared.update({ $0 = next }) else { throw FamilyNotebookError.storageUnavailable }
+                    familyWritesToCatCare += 1
+                }
+                try CareHandoffStore.shared.receiveFamilyChanges()
+                Task {
+                    do { try await VeterinaryVisitStore.shared.receiveFamilyChanges() }
+                    catch { message = "家族の診察メモを反映できませんでした。記録は消していません。" }
+                }
             } catch { message = "家族の記録を「この子のこと」に反映できませんでした。記録は消していません。" }
             return
         }
@@ -1445,6 +1456,26 @@ struct FamilyNotebookButton: View {
         .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
     }
+}
+
+/// Keep the existing authenticated service moving while a shared tool is open.
+private struct FamilyNotebookToolSyncModifier: ViewModifier {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @Environment(\.scenePhase) private var phase
+    func body(content: Content) -> some View {
+        content.task(id: phase == .active && model.hasFamily) {
+            guard phase == .active, model.hasFamily, model.isReal else { return }
+            while !Task.isCancelled {
+                if !FamilyNotebookSharing.shared.isWorking { await FamilyNotebookSharing.shared.refresh() }
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            }
+        }
+    }
+}
+extension View {
+    /// Poll only while an actual shared tool is visible in the foreground.
+    /// The sharing service still enforces participation, pause and entitlement.
+    func familyNotebookToolSync() -> some View { modifier(FamilyNotebookToolSyncModifier()) }
 }
 
 /// A retained backup is readable without joining or resuming its old outbox.

@@ -7,6 +7,13 @@ struct CareMeal: Codable, Equatable, Identifiable {
     var amount = ""
 }
 
+/// A shared cat's request never replaces another cat's household defaults.
+struct CareHandoffContext: Codable, Equatable {
+    var recipient = ""
+    var period = ""
+    var request = ""
+}
+
 struct CareCat: Codable, Equatable, Identifiable {
     enum HealthStatus: String, Codable, CaseIterable {
         case unknown, none, recorded
@@ -18,6 +25,8 @@ struct CareCat: Codable, Equatable, Identifiable {
     var profileID: String?
     // Stable across tools, including cats without a household profile. Never match by name.
     var toolCatID: UUID?
+    var familyContext: CareHandoffContext? = nil
+    var familyDetached: Bool? = nil
     var prefilledFields: Set<String>?
     var name = ""
     var photoName: String?
@@ -75,9 +84,9 @@ struct CareHandoffPlan: Codable, Equatable {
     var photoNames: Set<String> { Set(cats.compactMap(\.photoName)) }
 
     func validate() throws {
-        guard schemaVersion == 1, cats.count <= 20,
+        guard [1,2].contains(schemaVersion), cats.count <= 20,
               Set(cats.map(\.id)).count == cats.count,
-              cats.allSatisfy({ !$0.meals.isEmpty && $0.meals.count <= 8
+              cats.allSatisfy({ (!$0.meals.isEmpty || $0.familyContext != nil) && $0.meals.count <= 8
                   && Set($0.meals.map(\.id)).count == $0.meals.count }),
               photoNames.count == cats.compactMap(\.photoName).count,
               photoNames.allSatisfy(Self.isPhotoName) else { throw CareHandoffError.unreadable }
@@ -133,7 +142,7 @@ final class CareHandoffRepository {
         reconcileOwnedPhotos()
     }
 
-    func commit(_ plan: CareHandoffPlan, newPhotos: [String: Data] = [:]) throws {
+    func commit(_ plan: CareHandoffPlan, newPhotos: [String: Data] = [:], familyProjection: Bool = false) throws {
 #if os(iOS)
         AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
         try AppRecordDataset.requireWritable(manifest)
@@ -145,6 +154,9 @@ final class CareHandoffRepository {
               newPhotos.allSatisfy({ CareHandoffPlan.isPhotoName($0.key) && !$0.value.isEmpty
                   && !FileManager.default.fileExists(atPath: directory.appendingPathComponent($0.key).path) })
         else { throw CareHandoffError.unreadable }
+#if os(iOS)
+        if !familyProjection { try FamilyNotebookToolSharing.handoffChanged(before: committed, after: plan, directory: directory) }
+#endif
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var created: [URL] = []
         do {
@@ -201,9 +213,13 @@ struct CareHandoffDisclosure {
         func add(_ label: String, _ text: String) {
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields.append((label, text)) }
         }
-        add("お願いする相手", plan.recipient)
-        add("お願いする期間", plan.period)
-        add("今回のお願い", plan.request)
+        // Mixed requests belong beside their own cat, never in one common
+        // heading that could disclose an unselected cat's recipient.
+        if !plan.cats.contains(where: { catIDs.contains($0.id) && $0.familyContext != nil }) {
+            add("お願いする相手", plan.recipient)
+            add("お願いする期間", plan.period)
+            add("今回のお願い", plan.request)
+        }
         if contacts {
             fields.append(("飼い主の連絡先", Self.value(plan.contact)))
             fields.append(("つながらないときの連絡先", Self.value(plan.backupContact)))

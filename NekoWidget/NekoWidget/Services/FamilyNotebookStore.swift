@@ -283,6 +283,9 @@ final class FamilyNotebookStore: @unchecked Sendable {
     }
 
     private func transaction<T>(expectedRevision: UInt64? = nil, _ body: (inout State) throws -> T) throws -> T {
+        #if os(iOS)
+        AppRecordDataset.writeLock.lock(); defer { AppRecordDataset.writeLock.unlock() }
+        #endif
         Self.transactionLock.lock(); defer { Self.transactionLock.unlock() }
         let original = try load()
         if let expectedRevision, original.revision != expectedRevision { throw FamilyNotebookError.staleRevision }
