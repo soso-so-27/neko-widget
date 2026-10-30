@@ -95,11 +95,15 @@ enum GroupAPIModel {
     }
     struct CancelInput: Codable { let operationID: String }
     struct LeaveInput: Codable { let operationID: String; let expectedRevision: Int; let selfSignature: Data }
+    struct CaptionDescriptor: Codable, Sendable {
+        let ciphertextSize: Int; let ciphertextSHA256: Data; let senderSignature: Data
+    }
     struct PhotoRow: Codable, Sendable {
         let id: String; let clientMomentID: String; let senderParticipantID: String; let senderDeviceID: String
         let keyEpoch: Int; let rosterRevision: Int; let rosterHash: Data; let ciphertextSize: Int
         let ciphertextSHA256: Data; let senderSignature: Data; let createdAt: Int; let accessExpiresAt: Int; let kind: String
         let hearts: [HeartRow]
+        var caption: CaptionDescriptor? = nil
     }
     struct HeartRow: Codable, Sendable {
         let reactorParticipantID: String; let reactorDeviceID: String; let active: Bool; let updatedAt: Int
@@ -115,6 +119,7 @@ enum GroupAPIModel {
     struct ReservePhoto: Codable {
         let operationID: String; let clientMomentID: String; let keyEpoch: Int; let rosterRevision: Int
         let ciphertextSize: Int; let ciphertextSHA256: Data; let senderSignature: Data; let kind: String
+        var caption: CaptionDescriptor? = nil
     }
     struct PhotoReservation: Decodable { let operationID: String; let momentID: String; let uploadExpiresAt: Int }
     struct CommitPhoto: Codable { let operationID: String; let expectedRevision: Int; let keyEpoch: Int; let ciphertextSHA256: Data }

@@ -85,6 +85,24 @@ private enum GroupWindowChecks {
         let payload = Data("synthetic-group-photo".utf8)
         let photo = try GroupPhotoCrypto.seal(payload, clientMomentID: "photo-one", senderDeviceID: b1.id,
             roomKey: key1, signingKey: b1.signing, roster: one)
+        let caption = try GroupCaptionCrypto.seal("  きょうも一緒\r\nのんびり  ", photo: photo, roomKey: key1, signingKey: b1.signing, roster: one)!
+        let openedCaption = try GroupCaptionCrypto.open(caption, photo: photo, roomKey: key1, roster: one)
+        try check(openedCaption == "きょうも一緒\nのんびり", "caption normalization and encryption round trip")
+        let legacyPhoto = try GroupPhotoCrypto.open(photo, roomKey: key1, roster: one)
+        try check(legacyPhoto == payload, "legacy photo bytes unchanged")
+        let emptyCaption = try GroupCaptionCrypto.seal(" \n ", photo: photo, roomKey: key1, signingKey: b1.signing, roster: one)
+        try check(emptyCaption == nil, "empty caption remains photo-only")
+        let maximumCaption = try GroupPhotoCaption.normalized(String(repeating: "猫", count: 100))
+        try check(maximumCaption != nil, "100 characters accepted")
+        try check(GroupPhotoCaption.validationMessage(for: String(repeating: "猫", count: 101)) != nil, "101 characters rejected")
+        try check(GroupPhotoCaption.validationMessage(for: "a\nb\nc") == nil, "two line breaks accepted")
+        try check(GroupPhotoCaption.validationMessage(for: "a\nb\nc\nd") != nil, "three line breaks rejected")
+        let another = try GroupPhotoCrypto.seal(payload, clientMomentID: "photo-two", senderDeviceID: b1.id,
+            roomKey: key1, signingKey: b1.signing, roster: one)
+        var rejectedCaption = false
+        do { _ = try GroupCaptionCrypto.open(caption, photo: another, roomKey: key1, roster: one) }
+        catch GroupProtocolError.invalidSignature { rejectedCaption = true }
+        try check(rejectedCaption, "caption transplant rejected")
         for device in [a1, b1, c1] {
             let envelope = try GroupHPKE.wrap(roomKey: key1, for: device.id, roster: one, signerID: a1.id, signingKey: a1.signing)
             let recovered = try GroupHPKE.unwrap(envelope, deviceID: device.id, agreementKey: device.agreement, roster: one)

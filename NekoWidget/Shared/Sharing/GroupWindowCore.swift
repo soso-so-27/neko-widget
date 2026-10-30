@@ -303,3 +303,68 @@ enum GroupPhotoCrypto {
         return try AES.GCM.open(AES.GCM.SealedBox(combined: photo.ciphertext), using: roomKey, authenticating: bytes)
     }
 }
+
+
+/// Same user-facing rules as the legacy two-person MomentCaption.
+enum GroupPhotoCaptionError: Error, Equatable, Sendable { case tooLong, tooManyLineBreaks, tooManyBytes }
+enum GroupPhotoCaption {
+    static let maximumCharacters = 100
+    static let maximumLineBreaks = 2
+    static let maximumUTF8Bytes = 4_096
+    static func normalized(_ text: String?) throws -> String? {
+        guard let text else { return nil }
+        let value = text.replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: .newlines).joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value.utf8.count > maximumUTF8Bytes { throw GroupPhotoCaptionError.tooManyBytes }
+        if value.count > maximumCharacters { throw GroupPhotoCaptionError.tooLong }
+        if value.filter({ $0 == "\n" }).count > maximumLineBreaks { throw GroupPhotoCaptionError.tooManyLineBreaks }
+        return value
+    }
+    static func validationMessage(for text: String) -> String? {
+        do { _ = try normalized(text); return nil }
+        catch GroupPhotoCaptionError.tooLong { return "ひとことは100文字までです。" }
+        catch GroupPhotoCaptionError.tooManyLineBreaks { return "改行は2個までです。" }
+        catch { return "ひとことを短くしてください。" }
+    }
+}
+struct GroupEncryptedCaption: Codable, Equatable, Sendable {
+    let ciphertext: Data
+    let signature: Data
+}
+enum GroupCaptionCrypto {
+    private static func aad(photo: GroupEncryptedPhoto, size: Int, roster: VerifiedGroupRoster) throws -> Data {
+        guard (29...4_124).contains(size), let sender = roster.device(id: photo.senderDeviceID),
+              GroupCanonical.validID(photo.clientMomentID) else { throw GroupProtocolError.invalidPhoto }
+        return try GroupCanonical.fields(["NW3.CAPTION", roster.roster.windowID, photo.clientMomentID,
+            String(roster.roster.keyEpoch)].map(GroupCanonical.text) + [roster.hash]
+            + [sender.member.participantID, photo.senderDeviceID].map(GroupCanonical.text)
+            + [GroupCanonical.hash(photo.ciphertext), GroupCanonical.text(String(size))])
+    }
+    private static func signed(_ aad: Data, _ cipher: Data) throws -> Data {
+        try GroupCanonical.fields([GroupCanonical.text("NW3.CAPTION.SIGN"), aad, GroupCanonical.hash(cipher)])
+    }
+    static func seal(_ caption: String?, photo: GroupEncryptedPhoto, roomKey: SymmetricKey,
+                     signingKey: Curve25519.Signing.PrivateKey, roster: VerifiedGroupRoster) throws -> GroupEncryptedCaption? {
+        guard let caption = try GroupPhotoCaption.normalized(caption) else { return nil }
+        guard roomKey.bitCount == 256,
+              roster.device(id: photo.senderDeviceID)?.device.signingPublicKey == signingKey.publicKey.rawRepresentation
+        else { throw GroupProtocolError.invalidPhoto }
+        let data = Data(caption.utf8), aad = try aad(photo: photo, size: data.count + 28, roster: roster)
+        guard let cipher = try AES.GCM.seal(data, using: roomKey, authenticating: aad).combined else { throw GroupProtocolError.invalidPhoto }
+        return .init(ciphertext: cipher, signature: try signingKey.signature(for: signed(aad, cipher)))
+    }
+    static func open(_ caption: GroupEncryptedCaption, photo: GroupEncryptedPhoto,
+                     roomKey: SymmetricKey, roster: VerifiedGroupRoster) throws -> String {
+        guard roomKey.bitCount == 256, caption.signature.count == 64,
+              let sender = roster.device(id: photo.senderDeviceID) else { throw GroupProtocolError.invalidPhoto }
+        let aad = try aad(photo: photo, size: caption.ciphertext.count, roster: roster)
+        let key = try Curve25519.Signing.PublicKey(rawRepresentation: sender.device.signingPublicKey)
+        guard key.isValidSignature(caption.signature, for: try signed(aad, caption.ciphertext)) else { throw GroupProtocolError.invalidSignature }
+        let data = try AES.GCM.open(AES.GCM.SealedBox(combined: caption.ciphertext), using: roomKey, authenticating: aad)
+        guard let value = String(data: data, encoding: .utf8), try GroupPhotoCaption.normalized(value) == value,
+              !value.isEmpty else { throw GroupProtocolError.invalidPhoto }
+        return value
+    }
+}

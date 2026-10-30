@@ -1,3 +1,4 @@
+import { groupCaption,parseGroupCaption,type GroupCaptionDescriptor } from './group-captions';
 import { base64urlDecode,randomBase64url,sha256Base64url,verifyEd25519 } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
@@ -49,7 +50,7 @@ export async function groupPhotoProof(actor:GroupActor,windowId:string,participa
   if(!await verifyEd25519(actor.signingPublicKey,signature,groupFields(['NW3.PHOTO.SIGN',aad,base64urlDecode(hash,32)]))) unavailable('invalid_signature',400);
 }
 export async function reserveGroupPhoto(env:Env,actor:GroupActor,windowId:string,body:JsonRecord):Promise<Response> {
-  exactKeys(body,['operationId','clientMomentId','keyEpoch','rosterRevision','ciphertextSize','ciphertextSHA256','senderSignature','kind']);
+  exactKeys(body,['operationId','clientMomentId','keyEpoch','rosterRevision','ciphertextSize','ciphertextSHA256','senderSignature','kind',...(body.caption===undefined?[]:['caption'])]);
   const access=await requireGroupMember(env,actor,windowId),operationId=uuidField(body,'operationId');
   await requireGroupMediaAllowed(env,{spaceId:windowId,senderPersonId:actor.personId});
   const prior=await storedGroupMutation(env,actor,operationId,{windowId});if(prior!==null) {
@@ -63,6 +64,7 @@ export async function reserveGroupPhoto(env:Env,actor:GroupActor,windowId:string
   const roster=await loadStoredGroupRoster(env.DB,windowId);
   if(roster.packet.roster.revision!==revision || !roster.packet.roster.members.some(m=>m.participantId===access.participantId && m.devices.some(d=>d.id===actor.deviceId))) unavailable('stale_revision');
   await groupPhotoProof(actor,windowId,access.participantId,body,roster.hash);
+  const caption=await parseGroupCaption(actor,windowId,access.participantId,body,roster.hash);
   const id=randomBase64url(16),hash=binaryField(body,'ciphertextSHA256',32),expires=actor.now+GROUP_UPLOAD_SECONDS;
   const response={operationId,momentId:id,uploadExpiresAt:expires,serverNow:actor.now};
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:revision}),
@@ -70,16 +72,21 @@ export async function reserveGroupPhoto(env:Env,actor:GroupActor,windowId:string
     env.DB.prepare(`INSERT INTO group_moments VALUES (?,?,?,?,?,?,?,?,?,?,?,'photo','reserved',?,?,?,NULL,?,?,NULL)`)
       .bind(id,windowId,body.clientMomentId,access.participantId,actor.deviceId,epoch,revision,roster.hash,body.ciphertextSize,hash,body.senderSignature,
         `groups/v3/${windowId}/${id}/${hash}`,actor.now,expires,actor.now+GROUP_UNRECEIVED_SECONDS,expires+600),
+    ...(caption?[env.DB.prepare('INSERT INTO group_photo_captions VALUES (?,?,?,?)').bind(id,caption.ciphertextSize,caption.ciphertextSHA256,caption.senderSignature)]:[]),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response,201);
 }
 
-export async function uploadGroupPhoto(env:Env,actor:GroupActor,windowId:string,momentId:string,bytes:Uint8Array):Promise<Response> {
+export async function uploadGroupPhoto(env:Env,actor:GroupActor,windowId:string,momentId:string,bytes:Uint8Array,isCaption=false):Promise<Response> {
   await requireGroupMember(env,actor,windowId);
   const row=await groupMoment(env,windowId,momentId);
   if(row.sender_device_id!==actor.deviceId) unavailable('not_found',404);
   await requireGroupMediaAllowed(env,{spaceId:windowId,momentId});
-  if(bytes.length!==row.ciphertext_size || await sha256Base64url(bytes)!==row.ciphertext_sha256) unavailable('hash_mismatch',400);
+  const caption=isCaption?await groupCaption(env,momentId):null;
+  if(isCaption && !caption)unavailable('not_found',404);
+  const size=caption?.ciphertextSize??row.ciphertext_size,hash=caption?.ciphertextSHA256??row.ciphertext_sha256;
+  const objectKey=row.object_key+(isCaption?'.caption':'');
+  if(bytes.length!==size || await sha256Base64url(bytes)!==hash) unavailable('hash_mismatch',400);
   // Recovering a lost commit response must not rewrite a committed object or
   // republish its deliveries, including after a later roster/key transition.
   if(row.state==='committed') {
@@ -88,15 +95,15 @@ export async function uploadGroupPhoto(env:Env,actor:GroupActor,windowId:string,
   }
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'upload')]);
   const storage=bucket(env);
-  const written=await storage.put(row.object_key,bytes,{onlyIf:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/octet-stream'},
-    customMetadata:{digest:row.ciphertext_sha256,scope:'group-v3'}});
+  const written=await storage.put(objectKey,bytes,{onlyIf:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/octet-stream'},
+    customMetadata:{digest:hash,scope:'group-v3'}});
   if(written===null) {
-    const existing=await storage.get(row.object_key);
-    if(!existing || existing.size!==row.ciphertext_size || await sha256Base64url(new Uint8Array(await existing.arrayBuffer()))!==row.ciphertext_sha256) unavailable('hash_mismatch',400);
+    const existing=await storage.get(objectKey);
+    if(!existing || existing.size!==size || await sha256Base64url(new Uint8Array(await existing.arrayBuffer()))!==hash) unavailable('hash_mismatch',400);
   }
   try {
     await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'upload'),
-      env.DB.prepare("UPDATE group_moments SET state='uploaded' WHERE id=? AND state='reserved'").bind(momentId)]);
+      ...(isCaption?[]:[env.DB.prepare("UPDATE group_moments SET state='uploaded' WHERE id=? AND state='reserved'").bind(momentId)])]);
   } catch(error) {await cleanLateGroupUpload(env,momentId,row.object_key);throw error;}
   return jsonResponse({momentId,state:'uploaded',serverNow:Math.floor(Date.now()/1000)});
 }
@@ -123,6 +130,11 @@ export async function commitGroupPhoto(env:Env,actor:GroupActor,windowId:string,
   }
   const object=await bucket(env).head(row.object_key);
   if(!object || object.size!==row.ciphertext_size || object.customMetadata?.digest!==row.ciphertext_sha256) unavailable('upload_required');
+  const caption=await groupCaption(env,momentId);
+  if(caption) {
+    const sidecar=await bucket(env).head(row.object_key+'.caption');
+    if(!sidecar || sidecar.size!==caption.ciphertextSize || sidecar.customMetadata?.digest!==caption.ciphertextSHA256)unavailable('caption_upload_required');
+  }
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'commit'),
     ...groupDeliveryPolicyStatements(env,windowId),
     env.DB.prepare("UPDATE group_moments SET state='committed',committed_at=?,unreceived_expires_at=?,cleanup_at=? WHERE id=? AND state='uploaded'").bind(actor.now,actor.now+GROUP_UNRECEIVED_SECONDS,actor.now+GROUP_UNRECEIVED_SECONDS,momentId),
@@ -150,7 +162,9 @@ export async function groupPhotoMetadata(env:Env,rows:readonly GroupMomentRow[],
     .bind(...rows.map(r=>r.id)).all<{moment_id:string;active:number}>();
   const deliveries=await env.DB.prepare(`SELECT moment_id,access_expires_at FROM group_moment_deliveries WHERE device_id=? AND moment_id IN (${rows.map(()=>'?').join(',')})`)
     .bind(deviceId,...rows.map(r=>r.id)).all<{moment_id:string;access_expires_at:number}>();
-  return rows.map(r=>({id:r.id,clientMomentId:r.client_moment_id,senderParticipantId:r.sender_participant_id,senderDeviceId:r.sender_device_id,
+  const captions=await env.DB.prepare(`SELECT moment_id,ciphertext_size AS ciphertextSize,ciphertext_sha256 AS ciphertextSHA256,sender_signature AS senderSignature FROM group_photo_captions WHERE moment_id IN (${rows.map(()=>'?').join(',')})`)
+    .bind(...rows.map(r=>r.id)).all<GroupCaptionDescriptor & {moment_id:string}>();
+  return rows.map(r=>({...(captions.results.some(c=>c.moment_id===r.id)?{caption:(()=>{const {moment_id,...descriptor}=captions.results.find(c=>c.moment_id===r.id)!;return descriptor;})()}:{}),id:r.id,clientMomentId:r.client_moment_id,senderParticipantId:r.sender_participant_id,senderDeviceId:r.sender_device_id,
     keyEpoch:r.key_epoch,rosterRevision:r.roster_revision,rosterHash:r.roster_hash,ciphertextSize:r.ciphertext_size,ciphertextSHA256:r.ciphertext_sha256,
     senderSignature:r.sender_signature,createdAt:r.committed_at,accessExpiresAt:deliveries.results.find(d=>d.moment_id===r.id)?.access_expires_at,
     kind:r.kind,hearts:hearts.results.filter(h=>h.moment_id===r.id).map(({moment_id,...h})=>({...h,active:h.active===1}))}));
@@ -174,14 +188,16 @@ export async function listGroupPhotos(env:Env,actor:GroupActor,windowId:string,b
     ...rows.flatMap(row=>groupModerationChecks(env,{spaceId:windowId,momentId:row.id}))]);
   return jsonResponse({items,next:result.results.length>page.limit?groupCursor(scope,rows.at(-1)!.id):null,revision:access.revision,serverNow:actor.now});
 }
-export async function getGroupPhoto(env:Env,actor:GroupActor,windowId:string,momentId:string,download:boolean):Promise<Response> {
+export async function getGroupPhoto(env:Env,actor:GroupActor,windowId:string,momentId:string,download:boolean,isCaption=false):Promise<Response> {
   const access=await requireGroupMember(env,actor,windowId),row=await groupMoment(env,windowId,momentId);await requireGroupDelivery(env,actor,row);
   await requireGroupMediaAllowed(env,{spaceId:windowId,momentId});
   let bytes:Uint8Array|undefined;
   if(download) {
-    const object=await bucket(env).get(row.object_key);
-    if(!object || object.size!==row.ciphertext_size) unavailable('unavailable',503);
-    bytes=new Uint8Array(await object.arrayBuffer());if(await sha256Base64url(bytes)!==row.ciphertext_sha256) unavailable('unavailable',503);
+    const caption=isCaption?await groupCaption(env,momentId):null;
+    if(isCaption && !caption)unavailable('not_found',404);
+    const object=await bucket(env).get(row.object_key+(isCaption?'.caption':''));
+    if(!object || object.size!==(caption?.ciphertextSize??row.ciphertext_size)) unavailable('unavailable',503);
+    bytes=new Uint8Array(await object.arrayBuffer());if(await sha256Base64url(bytes)!==(caption?.ciphertextSHA256??row.ciphertext_sha256)) unavailable('unavailable',503);
   }
   const items=download?[]:await groupPhotoMetadata(env,[row],actor.deviceId);
   await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}),...groupMediaChecks(env,actor,momentId,'read')]);
