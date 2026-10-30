@@ -4,14 +4,17 @@ import Security
 /// Host-app-only persistence for the independent billing signing key. This
 /// service is intentionally absent from the Widget and Share Extension.
 enum BillingKeychainStore {
-    private static let service = "jp.nekowidget.billing.credentials.v1.host"
+    private static var environmentSuffix: String {
+        (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "production" ? ".production" : ""
+    }
+    private static let service = "jp.nekowidget.billing.credentials.v1.host" + environmentSuffix
     private static let account = "primary"
     private static let recoveryService =
-        "jp.nekowidget.billing.recovery-attempt.v1.host"
+        "jp.nekowidget.billing.recovery-attempt.v1.host" + environmentSuffix
     private static let sponsorshipService =
-        "jp.nekowidget.billing.window-sponsorship-attempt.v1.host"
+        "jp.nekowidget.billing.window-sponsorship-attempt.v1.host" + environmentSuffix
     private static let ownerDetachService =
-        "jp.nekowidget.billing.window-owner-detach-attempt.v1.host"
+        "jp.nekowidget.billing.window-owner-detach-attempt.v1.host" + environmentSuffix
     private static let lock = NSLock()
 
     static func load() throws -> BillingCredential? {

@@ -26,8 +26,16 @@ final class ProductionGroupReporting: GroupReportingService {
     init(endpoint: URL, secrets: any GroupSecretStore, transport: any GroupHTTPTransport,
          directory: URL, publicKey: Data,
          evidence: @escaping (String, String) async throws -> GroupReportEvidence) throws {
-        guard endpoint.absoluteString == Self.stagingEndpoint,
-              publicKey == (try? GroupWire.bytes("T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg", count: 32)) else {
+        var approved = endpoint.absoluteString == Self.stagingEndpoint
+            && publicKey == (try? GroupWire.bytes("T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg", count: 32))
+#if os(iOS)
+        let configuration = SharingAPIConfiguration.current
+        if configuration.releaseMode == "production" {
+            approved = configuration.isEncryptedReportAvailable
+                && endpoint == configuration.baseURL && publicKey == configuration.moderationPublicKey
+        }
+#endif
+        guard approved else {
             throw GroupSafetyError.disabled
         }
         self.endpoint = endpoint; self.secrets = secrets; self.transport = transport

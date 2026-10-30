@@ -38,7 +38,7 @@ struct PersonalArchiveSettingsLink: View {
 
     var body: some View {
         NavigationLink { PersonalArchiveView(store: store, noteStore: noteStore) } label: {
-            Label("iCloudの保管と復元", systemImage: "icloud")
+            Label("以前のiCloud記録", systemImage: "icloud")
         }
         .accessibilityIdentifier("settings-personal-archive")
     }
@@ -515,8 +515,8 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings-memory-note-export")
                 if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                    if InternalBuildPresentationAvailability.isAvailable {
-                        // An internal CloudKit pilot; the public build keeps 自動の保存 only.
+                    if InternalBuildPresentationAvailability.isAvailable || Version1.isOn {
+                        // Compatibility reading/export only; no new iCloud enrollment.
                         PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
                     }
                 }

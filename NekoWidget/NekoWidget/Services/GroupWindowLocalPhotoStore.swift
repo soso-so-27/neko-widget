@@ -59,7 +59,8 @@ actor GroupWindowLocalPhotoStore {
     init(root: URL? = nil) {
         self.root = root ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("GroupWindows", isDirectory: true)
+            .appendingPathComponent((Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "production"
+                ? "GroupWindows-production" : "GroupWindows", isDirectory: true)
     }
 
     /// Photos to show: not removed here, and not from a person hidden here.

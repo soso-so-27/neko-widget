@@ -61,7 +61,9 @@ enum PersonalWidgetMembershipStore {
     }
 
     private static var url: URL? {
-        SharedContainer.containerURL?.appendingPathComponent("personal-widget-membership.v1.json")
+        SharedContainer.containerURL?.appendingPathComponent(
+            (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "production"
+                ? "personal-widget-membership.production.v1.json" : "personal-widget-membership.v1.json")
     }
 
     static func read() -> PersonalWidgetMembershipSnapshot? {

@@ -12,7 +12,7 @@ enum FamilyNotebookServiceFactory {
         // by falling back to the locally simulated prototype.
         return ProductionFamilyNotebookSharingService(provider: {
             let configuration = SharingAPIConfiguration.current
-            guard configuration.releaseMode == "media-staging", configuration.isMediaEnabled,
+            guard configuration.isGroupRuntimeAvailable,
                   let endpoint = configuration.baseURL, let client = GroupWindowClientProvider.production,
                   let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 throw FamilySharingError.serviceUnavailable

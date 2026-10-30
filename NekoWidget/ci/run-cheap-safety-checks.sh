@@ -203,3 +203,20 @@ xcrun swiftc \
   -o "$RUNNER_TEMP/verify-moment-sharing-core"
 "$RUNNER_TEMP/verify-moment-sharing-core" \
   ci/fixtures/window-name-protocol-v1.json
+
+# Production runtime policy and legacy CloudKit reading; synthetic data only.
+xcrun swiftc -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
+  ci/verify-production-configuration.swift -o "$RUNNER_TEMP/verify-production-configuration"
+"$RUNNER_TEMP/verify-production-configuration"
+xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" \
+  NekoWidget/Services/PersonalArchiveStore.swift NekoWidget/Services/PersonalArchiveCloudClient.swift \
+  NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoCoordinator.swift \
+  ci/verify-personal-archive.swift -o "$RUNNER_TEMP/verify-personal-archive"
+"$RUNNER_TEMP/verify-personal-archive"
+
+# Resolve the public template without deploying it. The single quick iOS build
+# checks the actual bundled privacy resource; modern Xcode has no dry-run build.
+xcodebuild -project NekoWidget.xcodeproj -target NekoWidget -configuration Release \
+  -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json \
+  > "$RUNNER_TEMP/production-settings.json"
+python3 ci/validate-production-settings.py "$RUNNER_TEMP/production-settings.json" --allow-unconfigured

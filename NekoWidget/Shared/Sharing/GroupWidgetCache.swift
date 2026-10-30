@@ -161,7 +161,9 @@ enum GroupWidgetCache {
     // MARK: Files
 
     private static func directory() -> URL? {
-        SharedContainer.containerURL?.appendingPathComponent("GroupWidget", isDirectory: true)
+        SharedContainer.containerURL?.appendingPathComponent(
+            (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "production"
+                ? "GroupWidget-production" : "GroupWidget", isDirectory: true)
     }
 
     private static func catalogURL() -> URL? {

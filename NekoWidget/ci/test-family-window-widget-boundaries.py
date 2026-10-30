@@ -4353,7 +4353,7 @@ class GroupInvitationLinkTests(unittest.TestCase):
         self.assertIn("return nil", provider)
         # The production client exists only in builds that turn groups on.
         self.assertIn('(Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String) == "YES"', provider)
-        self.assertIn('configuration.releaseMode == "media-staging"', provider)
+        self.assertIn("configuration.isGroupRuntimeAvailable", provider)
         self.assertIn("let endpoint = configuration.baseURL", provider)
         self.assertIn("production.stageInvitation(url: url)", provider)
         self.assertIn("GroupWindowClientProvider.joinClient(for: invitation)", view)
@@ -4477,7 +4477,7 @@ class GroupWindowScreenTests(unittest.TestCase):
         self.assertIn('"group-window-screen-paused"', screen)
 
         store = source("NekoWidget/Services/GroupWindowLocalPhotoStore.swift")
-        self.assertIn('appendingPathComponent("GroupWindows", isDirectory: true)', store)
+        self.assertIn('? "GroupWindows-production" : "GroupWindows"', store)
         self.assertIn(".completeFileProtectionUntilFirstUserAuthentication", store)
         save = section(store, "func save(", "// MARK: - Files")
         # The image is written before the index lists it.
@@ -4499,7 +4499,7 @@ class GroupWidgetCacheTests(unittest.TestCase):
         cache = source("Shared/Sharing/GroupWidgetCache.swift")
         for forbidden in ("Keychain", "URLSession", "roomKey", "SymmetricKey", "ProductionGroupWindowClient", "print("):
             self.assertNotIn(forbidden, cache)
-        self.assertIn('appendingPathComponent("GroupWidget", isDirectory: true)', cache)
+        self.assertIn('? "GroupWidget-production" : "GroupWidget"', cache)
         update = section(cache, "static func update(", "// MARK: Files")
         # The image is written before the catalog that points to it.
         self.assertLess(update.index("try write(small"), update.index('appendingPathComponent("catalog.json")'))

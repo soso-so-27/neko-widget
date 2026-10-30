@@ -116,7 +116,7 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   -o "$RUNNER_TEMP/group-adapter-tests"
 "$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json | node ci/verify-native-group-http.mjs
 xcrun --sdk macosx swiftc -D GROUP_REPORT_CRYPTO_CHECKS -parse-as-library -target "$(uname -m)-apple-macos14.0" \
-  Shared/Sharing/GroupReportCrypto.swift ci/verify-group-report-crypto.swift \
+  Shared/Sharing/SharingAPIConfiguration.swift Shared/Sharing/GroupReportCrypto.swift ci/verify-group-report-crypto.swift \
   -o "$RUNNER_TEMP/group-report-crypto-tests"
 "$RUNNER_TEMP/group-report-crypto-tests" ci/fixtures/group-report-v3.json | node ci/verify-group-report-crypto.mjs --swift-stdin
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
@@ -166,8 +166,10 @@ bounded 60 xcrun simctl boot "$device"
 bounded 300 xcrun simctl bootstatus "$device" -b &
 boot_pid=$!
 
+# Compile and launch the explicit public template once; empty endpoints cannot
+# reach production. Ordinary disabled Release settings were checked above.
 xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
-  -configuration Release -sdk iphonesimulator \
+  -configuration Release -sdk iphonesimulator -xcconfig Config.Production.xcconfig \
   -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
   -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
   SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
@@ -175,9 +177,21 @@ xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
   build
 wait "$boot_pid"
 app="$RUNNER_TEMP/QuickBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
-test "$(/usr/libexec/PlistBuddy -c 'Print GroupReportingProductionEnabled' "$app/Info.plist")" = "NO"
-python3 ci/group-window-release.py --requested false --mode disabled \
-  --app-info-plist "$app/Info.plist"
+python3 - "$app" <<'PY'
+from pathlib import Path
+import plistlib, sys
+app = Path(sys.argv[1])
+info = plistlib.loads((app / 'Info.plist').read_bytes())
+assert info['SharingReleaseMode'] == 'production'
+assert info['GroupReportingProductionEnabled'] == 'YES'
+assert info['PersonalArchiveReadOnly'] == 'YES'
+assert not info.get('SharingAPIBaseURL'), 'CI template must not contact a real service'
+assert not info.get('SharingModerationPublicKey'), 'CI template must not contain a real recipient'
+actual = plistlib.loads((app / 'PrivacyInfo.xcprivacy').read_bytes())
+expected = plistlib.loads(Path('Production/PrivacyInfo.xcprivacy').read_bytes())
+assert actual == expected, 'public app bundled the wrong privacy manifest'
+print('PASS public template Info.plist and bundled privacy manifest (not a distributable archive)')
+PY
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
 reboot_simulator() {
   bounded 30 xcrun simctl shutdown "$device"

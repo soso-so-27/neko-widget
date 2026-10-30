@@ -11,6 +11,8 @@ APP_GROUP_IDENTIFIER = group.jp.nekowidget.app
 // Host Debug and the explicit media-staging pilot may enable this independent gate.
 // A configured container alone must not activate CloudKit in local-only releases.
 PERSONAL_ARCHIVE_ENABLED = NO
+PERSONAL_ARCHIVE_READ_ONLY = YES
+APP_PRIVACY_MANIFEST_PATH = NekoWidget/PrivacyInfo.xcprivacy
 PERSONAL_ARCHIVE_CONTAINER_IDENTIFIER = iCloud.jp.nekowidget.app.personal
 
 // Internal managed-preservation pilot. All three values must be explicitly

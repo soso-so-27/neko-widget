@@ -66,7 +66,7 @@ struct PersonalArchiveView: View {
                 }
                 .accessibilityIdentifier("personal-archive-refresh")
                 .disabled(isLoading || isWorking)
-                if hasPendingOperations {
+                if hasPendingOperations && !store.isReadOnly {
                     Button("未完了の操作を再試行") { Task { await retryPending() } }
                         .accessibilityIdentifier("personal-archive-retry")
                         .disabled(isLoading || isWorking)
@@ -270,7 +270,7 @@ private struct PersonalArchiveGuideView: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 guideRow("機種変更", "同じApple Accountで、保管画面の「iCloudから読み込む」を使います。対象は保管済みの写真とメモです。このiPhoneだけのメモや保管待ちの内容は、iCloudからは取り戻せません。")
-                guideRow("編集と削除", "反映を有効にしたメモは、変更も保管先へ反映します。「保管したコピーを削除」しても、写真アプリの原本と元のメモは残ります。")
+                guideRow("以前の記録を残す", "この画面は読み出しと書き出し用です。未送信の内容はこのiPhoneに残し、iCloudへの送信や自動の移行はしません。")
             }
         }
         .navigationTitle("保管と引き継ぎ")
@@ -365,7 +365,7 @@ struct PersonalArchiveRecordView: View {
                         if let weight = record.conflictingContext?.weight { PhotoMemoWeightLabel(weight: weight) }
                         Text("どちらの内容も残しています。必要な内容を確認してください。")
                             .font(.caption).foregroundStyle(.secondary)
-                        if record.state == .conflict, record.conflictingRevision != nil {
+                        if !store.isReadOnly, record.state == .conflict, record.conflictingRevision != nil {
                             Button("このiPhoneのメモを使う") { resolutionID = UUID(); resolutionChoice = false }
                                 .disabled(resolving)
                             Button("別の端末のメモを使う") { resolutionID = UUID(); resolutionChoice = true }
@@ -388,10 +388,12 @@ struct PersonalArchiveRecordView: View {
         .navigationTitle("メモ").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { editing = true } label: { Image(systemName: "square.and.pencil") }
-                    .accessibilityLabel(record.text.isEmpty ? "メモを書く" : "メモを編集")
-                    .accessibilityIdentifier("memory-note-edit")
-                    .disabled(account == nil || deleting || resolving || exporter.preparing || record.isDeletionPending || record.state == .conflict)
+                if !store.isReadOnly {
+                    Button { editing = true } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel(record.text.isEmpty ? "メモを書く" : "メモを編集")
+                        .accessibilityIdentifier("memory-note-edit")
+                        .disabled(account == nil || deleting || resolving || exporter.preparing || record.isDeletionPending || record.state == .conflict)
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -418,9 +420,11 @@ struct PersonalArchiveRecordView: View {
                         .disabled(record.isDeletionPending || record.state == .conflict ||
                                   (record.jpegData == nil && record.text.isEmpty && record.context?.weight == nil))
                         .accessibilityIdentifier("personal-archive-export")
-                    Button("保管したコピーを削除", systemImage: "trash", role: .destructive) { confirmsDelete = true }
-                        .disabled(record.isDeletionPending || record.state == .conflict)
-                        .accessibilityIdentifier("personal-archive-delete")
+                    if !store.isReadOnly {
+                        Button("保管したコピーを削除", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                            .disabled(record.isDeletionPending || record.state == .conflict)
+                            .accessibilityIdentifier("personal-archive-delete")
+                    }
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("メモの操作")
                 .accessibilityIdentifier("personal-archive-record-menu")

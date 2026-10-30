@@ -12,7 +12,8 @@ enum GroupReportingProvider {
         let selected = Bundle.main.object(forInfoDictionaryKey: "GroupReportingProductionEnabled") as? String == "YES"
         guard selected else { return GroupReportingPrototype() }
         let config = SharingAPIConfiguration.current
-        guard InternalBuildPresentationAvailability.isAvailable, config.isEncryptedReportAvailable,
+        guard (InternalBuildPresentationAvailability.isAvailable || config.releaseMode == "production"),
+              config.isEncryptedReportAvailable,
               GroupWindowClientProvider.production != nil, let endpoint = config.baseURL,
               let publicKey = config.moderationPublicKey,
               let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
@@ -21,7 +22,8 @@ enum GroupReportingProvider {
         do {
             return try ProductionGroupReporting(endpoint: endpoint,
                 secrets: GroupKeychainStore(namespace: GroupWindowClientProvider.namespace), transport: GroupURLSessionTransport(),
-                directory: support.appendingPathComponent("GroupReports-v3-staging", isDirectory: true), publicKey: publicKey) { windowID, photoID in
+                directory: support.appendingPathComponent(config.releaseMode == "production"
+                    ? "GroupReports-v3-production" : "GroupReports-v3-staging", isDirectory: true), publicKey: publicKey) { windowID, photoID in
                     let photos = GroupWindowLocalPhotoStore.shared
                     guard let entry = await photos.entry(photoID: photoID, windowID: windowID),
                           entry.id == photoID, !entry.isHidden, entry.isRemoved != true,

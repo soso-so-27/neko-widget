@@ -788,7 +788,8 @@ struct MembershipOfferPreviewView: View {
 enum BillingSandboxOwnerEnrollmentAvailability {
     static var isAvailable: Bool {
         let preservation = ManagedPreservationConfiguration.current
-        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        return InternalBuildPresentationAvailability.isAvailable
+            && Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
             && (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
             && preservation.isEnabled
             && preservation.origin?.absoluteString

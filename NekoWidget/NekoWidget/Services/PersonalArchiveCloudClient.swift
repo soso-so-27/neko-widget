@@ -79,6 +79,7 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
     }
 
     func prepareZone(for account: PersonalArchiveAccount, allowCreation: Bool, expectedGeneration: UUID?) async throws -> UUID {
+        guard !PersonalArchiveStore.legacyReadOnly || !allowCreation else { throw PersonalArchiveError.readOnly }
         do {
             let zoneID = try boundZoneID(account)
             do { _ = try await database.recordZone(for: zoneID) }
@@ -124,6 +125,7 @@ actor PersonalArchiveCloudClient: PersonalArchiveTransport {
 
     func commit(_ payload: PersonalArchivePayload, jpegData: Data?, precondition: PersonalArchivePrecondition,
                 account: PersonalArchiveAccount, generation: UUID) async throws {
+        guard !PersonalArchiveStore.legacyReadOnly else { throw PersonalArchiveError.readOnly }
         try payload.validate()
         guard jpegData.map(payload.accepts) ?? true,
               payload.jpegSHA256 != nil || jpegData == nil,
