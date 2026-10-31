@@ -1149,7 +1149,7 @@ struct AppRecordSettingsView: View {
         } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
     }
 
-    /// One status, one action. Everything worth reading once lives in 自動保存について.
+    /// One status, one action. How it works is in the privacy policy, not on this screen.
     @ViewBuilder private var settingsSections: some View {
         Section {
             // Plus ending outranks any retry message: nothing new is saved until it comes back.
@@ -1197,8 +1197,6 @@ struct AppRecordSettingsView: View {
                         .accessibilityIdentifier("app-record-pause")
                 }
             }
-            NavigationLink("自動保存について") { AppRecordAboutView() }
-                .accessibilityIdentifier("app-record-about")
         }
     }
 
@@ -1282,34 +1280,6 @@ struct AppRecordSettingsView: View {
               let membership = authentication.membership else { return }
         starting = false
         if !membership.linked, hasPlusHere { authentication.connectMembership(consent: true) }
-    }
-}
-
-/// The one place that explains automatic saving; the screen itself stays short.
-struct AppRecordAboutView: View {
-    var body: some View {
-        List {
-            Section("保存するもの") {
-                Text("猫のこと、メモとその写真、家族の手帳、ツールに書いたことを保存します。写真アプリの写真や動画そのものは保存しません。")
-                Text("保存したものが、まどの相手に送られることはありません。")
-            }
-            Section("中身の守り方") {
-                Text("連絡先や病院の記録など、アプリに書いた内容も保存します。暗号化しますが、エンドツーエンド暗号化ではないため、運営者は技術的には中身を読めます。")
-            }
-            Section("Plus") {
-                Text("自動保存はPlusの機能です。このiPhoneのPlusは、サインインしたアカウントで使い、あとから別のアカウントには移せません。")
-            }
-            Section("戻す・書き出す") {
-                Text("新しいiPhoneでサインインすると、保存したものを戻せます。戻すだけなら、Plusはいりません。")
-                Text(PreservationExportWording.footer)
-            }
-            Section("やめるとき") {
-                Text("自動保存をやめても、保存したものは消えません。Plusが終わってからも、12か月は書き出せます。")
-                Text("サインアウトやアカウントの削除は「アカウント」からできます。")
-            }
-        }
-        .navigationTitle("自動保存について")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
