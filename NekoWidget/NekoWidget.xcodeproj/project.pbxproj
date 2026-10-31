@@ -74,6 +74,7 @@
 		A19300000000000000000001 /* PhotoMemoCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19300000000000000000011 /* PhotoMemoCoordinator.swift */; };
 		A18200000000000000000001 /* PhotoMemoryNoteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18200000000000000000011 /* PhotoMemoryNoteStore.swift */; };
 		A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */; };
+				A731D0000000000000000001 /* ReadablePreservationExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A731D0000000000000000011 /* ReadablePreservationExport.swift */; };
 		A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18500000000000000000201 /* PersonalArchiveStore.swift */; };
 		A20300000000000000000103 /* ManagedPreservationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20300000000000000000203 /* ManagedPreservationCoordinator.swift */; };
 		A20300000000000000000102 /* ManagedPreservationSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20300000000000000000202 /* ManagedPreservationSessionStore.swift */; };
@@ -417,6 +418,7 @@
 		A19300000000000000000011 /* PhotoMemoCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoCoordinator.swift; sourceTree = "<group>"; };
 		A18200000000000000000011 /* PhotoMemoryNoteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteStore.swift; sourceTree = "<group>"; };
 		A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteExporter.swift; sourceTree = "<group>"; };
+				A731D0000000000000000011 /* ReadablePreservationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadablePreservationExport.swift; sourceTree = "<group>"; };
 		A18500000000000000000201 /* PersonalArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalArchiveStore.swift; sourceTree = "<group>"; };
 		A20300000000000000000203 /* ManagedPreservationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedPreservationCoordinator.swift; sourceTree = "<group>"; };
 		A20300000000000000000202 /* ManagedPreservationSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedPreservationSessionStore.swift; sourceTree = "<group>"; };
@@ -829,6 +831,7 @@
 				A18200000000000000000011 /* PhotoMemoryNoteStore.swift */,
                 D02609300000000000000002 /* VeterinaryVisitStore.swift */,
 				A18300000000000000000011 /* PhotoMemoryNoteExporter.swift */,
+				A731D0000000000000000011 /* ReadablePreservationExport.swift */,
 				A18500000000000000000201 /* PersonalArchiveStore.swift */,
 				A20300000000000000000203 /* ManagedPreservationCoordinator.swift */,
 				A20300000000000000000202 /* ManagedPreservationSessionStore.swift */,
@@ -1278,6 +1281,7 @@
                 D02609300000000000000001 /* VeterinaryVisitStore.swift in Sources */,
                 D02609300000000000000003 /* VeterinaryVisitView.swift in Sources */,
 				A18300000000000000000001 /* PhotoMemoryNoteExporter.swift in Sources */,
+				A731D0000000000000000001 /* ReadablePreservationExport.swift in Sources */,
 				A18500000000000000000101 /* PersonalArchiveStore.swift in Sources */,
 				A20300000000000000000103 /* ManagedPreservationCoordinator.swift in Sources */,
 				A20300000000000000000102 /* ManagedPreservationSessionStore.swift in Sources */,

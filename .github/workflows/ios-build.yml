@@ -65,6 +65,14 @@ jobs:
           persist-credentials: false
       - name: Check privacy, saved data, and sharing contracts
         run: bash NekoWidget/ci/run-cheap-safety-checks.sh
+      - name: Attach synthetic readable ZIP
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: readable-export-synthetic
+          path: ${{ runner.temp }}/readable-export-synthetic.zip
+          if-no-files-found: error
+          retention-days: 7
+
 
   plan:
     name: Select iOS checks and verify reusable evidence

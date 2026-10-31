@@ -10479,8 +10479,14 @@ actor SharingRuntimeSelfTestRunner {
         let exporter = RecordExportController()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports")
         func files() throws -> Set<String> {
-            guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-            return Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+            var result = Set<String>()
+            for name in ["PhotoMemoryNoteExports", "ReadablePreservationExports"] {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: root.path) {
+                    result.formUnion(try FileManager.default.contentsOfDirectory(atPath: root.path).map { name + "/" + $0 })
+                }
+            }
+            return result
         }
         let before = try files()
         func finish() async throws {
@@ -10531,7 +10537,7 @@ actor SharingRuntimeSelfTestRunner {
         // Bulk verification checks identity once before export, then on both
         // sides of the final inventory-generation request.
         guard checks == 3, let bulk = exporter.payload,
-              try Data(contentsOf: bulk.fileURL).range(of: Data("manifest.json".utf8)) != nil else {
+              try Data(contentsOf: bulk.fileURL).range(of: Data("はじめにお読みください.txt".utf8)) != nil else {
             throw ManagedPreservationError.invalidRecord
         }
         exporter.finishSharing(bulk)
@@ -10568,8 +10574,14 @@ actor SharingRuntimeSelfTestRunner {
         try await ManagedPreservationClient.testExportTransportFileBoundary()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports")
         func files() throws -> Set<String> {
-            guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-            return Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+            var result = Set<String>()
+            for name in ["PhotoMemoryNoteExports", "ReadablePreservationExports"] {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: root.path) {
+                    result.formUnion(try FileManager.default.contentsOfDirectory(atPath: root.path).map { name + "/" + $0 })
+                }
+            }
+            return result
         }
         let before = try files()
         let exporter = RecordExportController()
@@ -10590,7 +10602,7 @@ actor SharingRuntimeSelfTestRunner {
         let bytes = try Data(contentsOf: archive.fileURL)
         guard bytes.range(of: Data("00000000-0000-4000-8000-000000000001".utf8)) != nil,
               bytes.range(of: Data("00000000-0000-4000-8000-0000000003e9".utf8)) != nil,
-              bytes.range(of: Data("manifest.json".utf8)) != nil else { throw ManagedPreservationError.invalidResponse }
+              bytes.range(of: Data("はじめにお読みください.txt".utf8)) != nil else { throw ManagedPreservationError.invalidResponse }
         exporter.finishSharing(archive)
         guard try files() == before else { throw ManagedPreservationError.secureStorage }
 
@@ -10608,10 +10620,11 @@ actor SharingRuntimeSelfTestRunner {
         await legacy.server.setExportMode(.unsupported)
         ManagedPreservationExport.prepareAll(client: legacy.client, using: exporter, validate: {}, progress: { _, _ in })
         try await finish()
-        guard let fallback = exporter.payload, await legacy.server.exportCounts().details == 1 else {
+        // The legacy list omits automatic fragments: do not claim a complete ZIP.
+        guard exporter.payload == nil, exporter.failureKind == .unsupported,
+              await legacy.server.exportCounts().details == 0 else {
             throw ManagedPreservationError.invalidResponse
         }
-        exporter.finishSharing(fallback)
 
         let changed = try PreservationNativeFixture.make()
         defer { try? changed.cleanup() }
@@ -10689,8 +10702,14 @@ actor SharingRuntimeSelfTestRunner {
     private static func testManagedPreservationExportReauthentication() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PhotoMemoryNoteExports")
         func files() throws -> Set<String> {
-            guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-            return Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+            var result = Set<String>()
+            for name in ["PhotoMemoryNoteExports", "ReadablePreservationExports"] {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: root.path) {
+                    result.formUnion(try FileManager.default.contentsOfDirectory(atPath: root.path).map { name + "/" + $0 })
+                }
+            }
+            return result
         }
         let before = try files()
         let exporter = RecordExportController()
@@ -10716,7 +10735,11 @@ actor SharingRuntimeSelfTestRunner {
                                                          authorizationCode: Data("synthetic".utf8), appleUserID: "synthetic-apple-user")
                     clock.advance(0)
                     return try await fixture.client.captureSessionCheckpoint()
-                }, progress: { count, _ in if count == 50 { clock.advance(500) } })
+                }, progress: { count, _ in
+                    // Counts restart when packaging begins. Expire only at the
+                    // first download-page boundary, not a later writing phase.
+                    if count == 50, await fixture.server.exportCounts().pages == 1 { clock.advance(500) }
+                })
             try await finish()
             guard renewals == 1, await fixture.server.authCounts().exchanges == 1 else {
                 throw ManagedPreservationError.invalidResponse

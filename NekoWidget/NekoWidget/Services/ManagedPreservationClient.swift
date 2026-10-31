@@ -1213,6 +1213,12 @@ actor ManagedPreservationClient {
         return snapshot
     }
 
+    func automaticRecordHeadID() throws -> UUID {
+        let checkpoint = try captureSessionCheckpoint()
+        guard let origin = configuration.origin?.absoluteString else { throw ManagedPreservationError.disabled }
+        return AppRecordHead.id(origin: origin, owner: checkpoint.ownerID)
+    }
+
     func exportPage(after: String? = nil, generation: Int? = nil,
                     recordIDs: [UUID]? = nil) async throws -> ManagedPreservationExportPageFile {
         if let after, UUID(uuidString: after) == nil || generation == nil { throw ManagedPreservationError.invalidRecord }

@@ -713,7 +713,7 @@ struct ManagedPreservationView: View {
                     .foregroundStyle(.secondary)
             }
             if coordinator.hasMore { Button("続きを読み込む") { coordinator.loadMore() } }
-            if coordinator.canExport && !coordinator.records.isEmpty {
+            if coordinator.canExportAllCopies {
                 Button("保存した記録をすべて書き出す") { coordinator.exportAllCopies(using: exporter) }
                     .accessibilityIdentifier("preservation-export-all")
             }
