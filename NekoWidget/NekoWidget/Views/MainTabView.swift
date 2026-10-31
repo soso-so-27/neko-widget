@@ -3507,10 +3507,6 @@ private struct WindowListView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Text("読み込みが終わるまで、まどの切り替えや追加はできません。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             Button("もう一度試す") {
                 Task { await reload() }
             }
@@ -3542,12 +3538,8 @@ private struct WindowListView: View {
                     .font(.title3)
                     .foregroundStyle(.tint)
                     .frame(width: 32)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
-                        .font(.body.weight(.semibold))
-                    Text("猫カフェや保護猫の写真を、見るだけで楽しめます")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
+                    .font(.body.weight(.semibold))
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
             }
@@ -3582,7 +3574,7 @@ private struct WindowListView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("window-list-start")
-                Text("選ぶだけで写真が届きます。投稿や招待はいりません。")
+                Text("選ぶだけで写真が届きます。")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }
@@ -3604,7 +3596,7 @@ private struct WindowListView: View {
         } else if windows.count >= PrivateWindowCatalogState.maximumProductWindowCount {
             Label(
                 windows.count > PrivateWindowCatalogState.maximumProductWindowCount
-                    ? "いまは新しいまどを追加できません。今あるまどはそのまま使えます"
+                    ? "いまは新しいまどを追加できません"
                     : "まどは\(PrivateWindowCatalogState.maximumProductWindowCount)つまで使えます",
                 systemImage: "rectangle.stack"
             )

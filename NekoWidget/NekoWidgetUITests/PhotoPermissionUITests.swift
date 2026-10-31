@@ -6532,7 +6532,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.buttons["window-support-approve"].tap()
         let approve = app.buttons["window-support-confirm-approval"].firstMatch
         XCTAssertTrue(approve.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["あなたへの請求はありません。相手が最後に「このまどで続ける」を押すと、また写真を届けられます。"].exists)
+        XCTAssertTrue(app.staticTexts["あなたへの請求はありません。"].exists)
         attach(app, name: "window-support-owner-approval-confirmation")
         approve.tap()
         XCTAssertTrue(app.staticTexts["window-support-approved-other"].waitForExistence(timeout: 5))

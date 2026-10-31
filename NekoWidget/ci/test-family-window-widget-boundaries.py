@@ -3051,8 +3051,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
         presentation = source("NekoWidget/Views/PairingPresentation.swift")
 
         for device_name in ["追加するiPhone", "すでに使っているiPhone", "相手のiPhone"]:
-            self.assertIn(device_name, pairing)
             self.assertIn(device_name, presentation)
+        for device_name in ["追加するiPhone", "相手のiPhone"]:
+            self.assertIn(device_name, pairing)
 
         self.assertIn("DeviceChangeGuidancePresentation", pairing)
         self.assertIn("追加に関係するiPhone", pairing)

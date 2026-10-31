@@ -132,14 +132,14 @@ struct OfficialWindowStatusPresentation {
     var detail: String {
         switch kind {
         case .preparing: "写真の準備ができたら、このまどに届きます。"
-        case .stopped: "また楽しみたくなったら、このまどの受け取りを再開できます。"
+        case .stopped: "あとでまた受け取れます。"
         case .checking: "少しお待ちください。"
-        case .paused: "また届くようになったら、このまどで見られます。ほかのまども探せます。"
-        case .verificationExpired: "「もう一度確認」を押すと、新しい写真を読み込みます。ほかのまども探せます。"
+        case .paused: "また届くようになったら、ここで見られます。"
+        case .verificationExpired: "「もう一度確認」を押してください。"
         case .photosExpired: "新しい写真を確かめるか、ほかのまどを探してみてください。"
         case .failed, .imageUnavailable: "少し待ってから、もう一度お試しください。"
         case .noPublication: "新しい写真が出たら、このまどに届きます。"
-        case .notChecked: "受け取るかどうかは、見てから決められます。自分の写真を投稿する必要はありません。"
+        case .notChecked: "受け取るかどうかは、見てから決められます。"
         }
     }
 
@@ -477,7 +477,7 @@ struct OfficialWindowView: View {
             Button("受け取りを続ける", role: .cancel) {}
                 .accessibilityIdentifier("official-window-stop-cancel")
         } message: {
-            Text("このまどの写真が届かなくなり、ウィジェットにも出なくなります。あとでまた受け取れます。")
+            Text("このまどの写真が届かなくなり、ウィジェットにも出なくなります。")
         }
         .task(id: feedbackRevision) {
             guard feedbackIsTransient else { return }
@@ -612,12 +612,11 @@ struct OfficialWindowView: View {
                     Text(store.displayName).font(.title2.weight(.semibold))
                     Text(store.definition.subtitle)
                     Text(store.definition.catID == nil
-                         ? "運営が選んだ猫の写真が届きます。投稿も、友だちの招待もいりません。"
-                         : "この猫の写真が届くまどです。新しい写真がないときは、次の写真が出るまでお待ちください。")
-                    Text(store.windowID == "black-cats"
-                         ? "写真を開くと、提供元と掲載日が見られます。毎日0時（日本時間）に新しい1枚に変わります。"
-                         : "写真を開くと、提供元と掲載日が見られます。")
-                    Text("新しい写真が届くと、ここに出ます。ウィジェットに出るまで、少し時間がかかることがあります。")
+                         ? "運営が選んだ猫の写真が届きます。"
+                         : "この猫の写真が届くまどです。")
+                    if store.windowID == "black-cats" {
+                        Text("毎日0時（日本時間）に新しい1枚に変わります。")
+                    }
                 }
                 .padding(24)
             }
@@ -679,8 +678,6 @@ struct OfficialWindowView: View {
                             .font(.headline)
                             .accessibilityIdentifier("official-window-widget-source")
                     }
-                    Text("写真ライブラリの許可や、猫の登録は必要ありません。")
-                        .font(.footnote).foregroundStyle(.secondary)
                 }.padding(24)
             }
             .navigationTitle("ホーム画面に置く")
@@ -813,7 +810,7 @@ struct OfficialWindowView: View {
                 offersWidgetSetup = false
                 stoppedHere = true
                 preview.clear()
-                setFeedback("受け取りをやめました。一部の写真が残っていることがあります。")
+                setFeedback("受け取りをやめました。")
             } else {
                 setFeedback("うまく切り替えられませんでした。もう一度お試しください。")
             }
