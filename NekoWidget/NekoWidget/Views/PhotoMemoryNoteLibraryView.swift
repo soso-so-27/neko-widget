@@ -139,7 +139,8 @@ struct PhotoMemoryNotesListView: View {
     }
 
     private var items: [MemoryReadingItem] {
-        return library.records.map(MemoryReadingItem.init(local:)).filter {
+        let local: [MemoryReadingItem] = library.records.map { MemoryReadingItem(local: $0) }
+        return local.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.weight != nil
         }.filter {
             PhotoMemoryNoteLibraryPolicy.includes(selected: selectedProfileIdentifier, identifiers: identifiers(for: $0))
