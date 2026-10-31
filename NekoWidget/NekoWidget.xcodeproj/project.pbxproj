@@ -298,6 +298,24 @@
 		FA2610290000000000000020 /* ProductionFamilyNotebookSharingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */; };
 		FA2610290000000000000022 /* FamilyNotebookServiceFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */; };
 		FA2610290000000000000024 /* FamilyNotebookCatCareBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA2610290000000000000023 /* FamilyNotebookCatCareBridge.swift */; };
+		EA7DD542CA806C07D8A4B418 /* GroupShareAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47456092FA3FEBB653B7F58F /* GroupShareAccess.swift */; };
+		9DB3A8EC5044144EFC58A05C /* GroupShareAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47456092FA3FEBB653B7F58F /* GroupShareAccess.swift */; };
+		93483D27026CF4E63D650048 /* GroupShareCreateRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 883A79798C1B57281136345B /* GroupShareCreateRequest.swift */; };
+		820B4E9890F1E3946B5DD818 /* GroupShareCreateRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 883A79798C1B57281136345B /* GroupShareCreateRequest.swift */; };
+		BA9C9EBDDB0BDE19B2680538 /* GroupShareComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D2F64B9372951AAC3F9853 /* GroupShareComposer.swift */; };
+		3F1877C47647FDCAD99A0191 /* GroupShareService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F645D70492B4FC08806DCE3C /* GroupShareService.swift */; };
+		26D5C1CCD443263E9D51A919 /* GroupWindowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000001 /* GroupWindowCore.swift */; };
+		35AD245E9AF73767DFBE1403 /* GroupWidgetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000009 /* GroupWidgetCache.swift */; };
+		3D2D408065F52237A62BD2BF /* GroupWindowContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2610200000000000000003 /* GroupWindowContract.swift */; };
+		187A2084313556D3921EDECC /* GroupWindowWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000065 /* GroupWindowWire.swift */; };
+		8AF4DA3A1CFDFB2E5E5A43AF /* GroupInvitationLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2610200000000000000003 /* GroupInvitationLink.swift */; };
+		BCD6C70CED95CE3D9B211B31 /* GroupWindowStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000067 /* GroupWindowStorage.swift */; };
+		7B8E97005DE157EFE24A2C50 /* GroupWindowOperationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000071 /* GroupWindowOperationStore.swift */; };
+		9E92CAECFDCEAD39FFD29E6C /* GroupWindowTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2610200000000000000069 /* GroupWindowTransport.swift */; };
+		B4F5ABD0794967C9550A3285 /* GroupWindowAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006B /* GroupWindowAPIModels.swift */; };
+		F0572E0C5EDFCF2F47158A94 /* GroupWindowPhotoValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006F /* GroupWindowPhotoValidation.swift */; };
+		B92DA9FBA54722ACD00E9483 /* ProductionGroupWindowClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB261020000000000000006D /* ProductionGroupWindowClient.swift */; };
+		12A88AF25B1A22DBBE66A8A6 /* MomentSharePreparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000251 /* MomentSharePreparationService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -598,6 +616,10 @@
 		FA2610290000000000000019 /* ProductionFamilyNotebookSharingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionFamilyNotebookSharingService.swift; sourceTree = "<group>"; };
 		FA2610290000000000000021 /* FamilyNotebookServiceFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookServiceFactory.swift; sourceTree = "<group>"; };
 		FA2610290000000000000023 /* FamilyNotebookCatCareBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyNotebookCatCareBridge.swift; sourceTree = "<group>"; };
+		47456092FA3FEBB653B7F58F /* GroupShareAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NekoWidget/Services/GroupShareAccess.swift"; sourceTree = SOURCE_ROOT; };
+		883A79798C1B57281136345B /* GroupShareCreateRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shared/Sharing/GroupShareCreateRequest.swift"; sourceTree = SOURCE_ROOT; };
+		F8D2F64B9372951AAC3F9853 /* GroupShareComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NekoWidgetShareExtension/GroupShareComposer.swift"; sourceTree = SOURCE_ROOT; };
+		F645D70492B4FC08806DCE3C /* GroupShareService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NekoWidgetShareExtension/GroupShareService.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1234,6 +1256,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				93483D27026CF4E63D650048 /* GroupShareCreateRequest.swift in Sources */,
+				EA7DD542CA806C07D8A4B418 /* GroupShareAccess.swift in Sources */,
 				C02610140000000000000001 /* ToolPreservation.swift in Sources */,
                 C02610150000000000000001 /* AppRecordPersistence.swift in Sources */,
 				C02610140000000000000003 /* RestoredToolsView.swift in Sources */,
@@ -1513,6 +1537,22 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				12A88AF25B1A22DBBE66A8A6 /* MomentSharePreparationService.swift in Sources */,
+				B92DA9FBA54722ACD00E9483 /* ProductionGroupWindowClient.swift in Sources */,
+				F0572E0C5EDFCF2F47158A94 /* GroupWindowPhotoValidation.swift in Sources */,
+				B4F5ABD0794967C9550A3285 /* GroupWindowAPIModels.swift in Sources */,
+				9E92CAECFDCEAD39FFD29E6C /* GroupWindowTransport.swift in Sources */,
+				7B8E97005DE157EFE24A2C50 /* GroupWindowOperationStore.swift in Sources */,
+				BCD6C70CED95CE3D9B211B31 /* GroupWindowStorage.swift in Sources */,
+				8AF4DA3A1CFDFB2E5E5A43AF /* GroupInvitationLink.swift in Sources */,
+				187A2084313556D3921EDECC /* GroupWindowWire.swift in Sources */,
+				3D2D408065F52237A62BD2BF /* GroupWindowContract.swift in Sources */,
+				35AD245E9AF73767DFBE1403 /* GroupWidgetCache.swift in Sources */,
+				26D5C1CCD443263E9D51A919 /* GroupWindowCore.swift in Sources */,
+				3F1877C47647FDCAD99A0191 /* GroupShareService.swift in Sources */,
+				BA9C9EBDDB0BDE19B2680538 /* GroupShareComposer.swift in Sources */,
+				820B4E9890F1E3946B5DD818 /* GroupShareCreateRequest.swift in Sources */,
+				9DB3A8EC5044144EFC58A05C /* GroupShareAccess.swift in Sources */,
 				700000000000000000000001 /* SharedContainer.swift in Sources */,
 				700000000000000000000002 /* AtomicJSON.swift in Sources */,
 				700000000000000000000005 /* MomentSharingCore.swift in Sources */,
@@ -1819,6 +1859,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
 			buildSettings = {
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) NEKO_SHARE_EXTENSION";
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -1846,6 +1887,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) NEKO_SHARE_EXTENSION";
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;

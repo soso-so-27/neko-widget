@@ -37,11 +37,27 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private var reconcilingAdmissions = false
 
     init(endpoint: URL, namespace: String, ownerDisplayName: String = "自分", outboxDirectory: URL? = nil) throws {
-        self.endpoint = endpoint; self.secrets = try GroupKeychainStore(namespace: namespace)
+        self.endpoint = endpoint
+        let privateStore = try GroupKeychainStore(namespace: namespace)
+#if os(iOS) && !NEKO_SHARE_EXTENSION
+        if Bundle.main.object(forInfoDictionaryKey: "GroupShareExtensionEnabled") as? String == "YES",
+           let accessGroup = GroupShareAccess.accessGroup,
+           let installation = try? GroupShareInstallation.prepareInHost() {
+            self.secrets = GroupSharePublishingStore(original: privateStore,
+                snapshot: GroupShareKeychain(namespace: namespace + "." + installation, accessGroup: accessGroup))
+        } else {
+            self.secrets = privateStore
+        }
+#else
+        self.secrets = privateStore
+#endif
         self.transport = GroupURLSessionTransport(); self.ownerDisplayName = try GroupWire.name(ownerDisplayName)
         self.billingSigner = GroupHostBillingSigner()
         self.outboxDirectory = try Self.outboxURL(outboxDirectory, context: namespace + "|" + endpoint.absoluteString)
         self.operations = try GroupOperationStore(directory: self.outboxDirectory.appendingPathComponent("http-operations", isDirectory: true))
+#if os(iOS) && !NEKO_SHARE_EXTENSION
+        _ = try self.secrets.read("identity")
+#endif
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }
     // Test injection uses the same production signing/verification state machine.
@@ -1109,6 +1125,40 @@ enum GroupPhotoAcknowledgement: Sendable { case acknowledged, awaitingConnection
 
 @available(iOS 17.0, macOS 14.0, *)
 extension ProductionGroupWindowClient {
+    /// The extension may be closed after an uncertain response. Selecting the
+    /// same window/photo/caption again reuses its durable, encrypted operation.
+    func sharePhotoOperation(jpeg: Data, caption: String?, windowID: String, proposed: UUID) throws -> UUID {
+        let normalized = try GroupPhotoCaption.normalized(caption)
+        guard FileManager.default.fileExists(atPath: outboxDirectory.path) else { return proposed }
+        let candidates = try FileManager.default.contentsOfDirectory(at: outboxDirectory, includingPropertiesForKeys: nil)
+        let hash = GroupCanonical.hash(jpeg)
+        for file in candidates where file.pathExtension == "json" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  let data = try? Data(contentsOf: file),
+                  let prepared = try? GroupWire.decode(GroupPreparedPhoto.self, data),
+                  prepared.operationID == id, prepared.windowID == windowID, prepared.sourceHash == hash else { continue }
+            if try recoverPendingCaption(operationID: id) == normalized { return id }
+        }
+        return proposed
+    }
+
+    /// Only the extension's private encrypted temporary copy is removed. No
+    /// acknowledgement/delete is sent; the host can still receive the photo.
+    func finishSharePhoto(operationID: UUID, photoID: String) throws {
+        guard let reservation = try load(GroupPendingHTTP.self, "op:" + operationID.uuidString.lowercased()),
+              let response = reservation.response,
+              try GroupWire.decode(GroupAPIModel.PhotoReservation.self, response).momentID == photoID else {
+            throw GroupClientError.invalidResponse
+        }
+        let file = outboxDirectory.appendingPathComponent(operationID.uuidString.lowercased() + ".json")
+        guard let data = try? Data(contentsOf: file), let prepared = try? GroupWire.decode(GroupPreparedPhoto.self, data),
+              prepared.operationID == operationID,
+              let committed = try load(GroupPendingHTTP.self, "op:" + prepared.commitOperationID.uuidString.lowercased()),
+              committed.response != nil else { throw GroupClientError.invalidResponse }
+        try? FileManager.default.removeItem(at: file)
+        // Compact receipts are retained for exact idempotent replies.
+    }
+
     private func photoRow(windowID: String, photoID: String) async throws -> GroupAPIModel.PhotoRow {
         guard GroupCanonical.validID(windowID), GroupCanonical.validID(photoID) else { throw GroupClientError.invalidResponse }
         if let cached = photoMetadata[windowID + ":" + photoID] { return cached }
@@ -1371,6 +1421,14 @@ extension ProductionGroupWindowClient {
             path: root + "/\(reservation.momentID)/commit", body: GroupWire.encode(commit))
         photoMetadata.removeValue(forKey: windowID + ":" + reservation.momentID)
         let row = try await photoRow(windowID: windowID, photoID: reservation.momentID)
+        guard row.clientMomentID == prepared.photo.clientMomentID,
+              row.senderDeviceID == prepared.photo.senderDeviceID,
+              row.keyEpoch == prepared.keyEpoch, row.rosterRevision == prepared.rosterRevision,
+              row.rosterHash == prepared.rosterHash,
+              row.ciphertextSize == prepared.photo.ciphertext.count,
+              row.ciphertextSHA256 == hash, row.senderSignature == prepared.photo.signature,
+              row.caption?.ciphertextSHA256 == prepared.caption.map({ GroupCanonical.hash($0.ciphertext) }),
+              row.caption?.senderSignature == prepared.caption?.signature else { throw GroupClientError.invalidResponse }
         var result = try await displayPhoto(row, current: current)
         result.caption = caption
         return result

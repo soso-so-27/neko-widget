@@ -2,6 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>GroupShareExtensionEnabled</key>
+	<string>$(GROUP_WINDOWS_ENABLED)</string>
+	<key>GroupShareKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)$(APP_BUNDLE_IDENTIFIER).group-share</string>
+	<key>GroupWindowsEnabled</key>
+	<string>$(GROUP_WINDOWS_ENABLED)</string>
+	<key>SharingAPIBaseURL</key>
+	<string>$(SHARING_API_BASE_URL)</string>
+	<key>SharingModerationKeyID</key>
+	<string>$(SHARING_MODERATION_KEY_ID)</string>
+	<key>SharingModerationPublicKey</key>
+	<string>$(SHARING_MODERATION_PUBLIC_KEY)</string>
+	<key>SharingPrivacyURL</key>
+	<string>$(SHARING_PRIVACY_URL)</string>
+	<key>SharingSupportURL</key>
+	<string>$(SHARING_SUPPORT_URL)</string>
+	<key>SharingCommunityStandardsURL</key>
+	<string>$(SHARING_COMMUNITY_STANDARDS_URL)</string>
 	<key>AppGroupIdentifier</key>
 	<string>$(APP_GROUP_IDENTIFIER)</string>
 	<key>CFBundleDisplayName</key>
