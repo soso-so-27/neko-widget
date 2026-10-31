@@ -36,6 +36,28 @@ actor ShareStub: GroupShareServing {
 
 @main struct GroupShareChecks {
     @MainActor static func main() async throws {
+        let origin = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+        var configuration: [String: Any] = ["GroupShareExtensionEnabled": "YES", "GroupWindowsEnabled": "YES",
+            "SharingFeatureEnabled": "YES", "SharingMediaEnabled": "YES", "SharingShareExtensionSendEnabled": "NO",
+            "SharingReviewPreviewEnabled": false, "SharingInternalEncryptedReportEnabled": false,
+            "SharingInternalEncryptedReportScope": "", "SharingReleaseMode": "media-staging", "GroupShareAPIBaseURL": origin]
+        precondition(GroupShareConfiguration(info: configuration)?.endpoint.absoluteString == origin)
+        for (key, value) in [("GroupWindowsEnabled", "NO"), ("SharingShareExtensionSendEnabled", "YES"),
+            ("SharingModerationKeyID", "moderation-v2"), ("SharingAPIBaseURL", origin),
+            ("SharingInternalEncryptedReportScope", "internal-owner-first-connection"),
+            ("GroupShareAPIBaseURL", "https://foreign.example")] {
+            var changed = configuration; changed[key] = value
+            precondition(GroupShareConfiguration(info: changed) == nil)
+        }
+        configuration["SharingReleaseMode"] = "production"
+        configuration["GroupShareAPIBaseURL"] = "https://photos.example.com"
+        precondition(GroupShareConfiguration(info: configuration) != nil)
+        for endpoint in [origin, "", "http://photos.example.com", "https://person@photos.example.com",
+                         "https://photos.example.com/path", "https://photos.example.com?x=1"] {
+            var changed = configuration; changed["GroupShareAPIBaseURL"] = endpoint
+            precondition(GroupShareConfiguration(info: changed) == nil)
+        }
+        print("PASS configuration: photo-only production/internal routes; reports and wrong endpoints denied")
         let me = GroupMember(id: "person", personID: "person", displayName: "自分", role: .member, state: .active, devices: [])
         let active = GroupWindow(id: "aaaaaaaaaaaaaaaaaaaaaa", name: "みんな", revision: 1, keyEpoch: 1,
             myParticipantID: me.id, myRole: .member, state: .active, members: [me], deliveryStatus: .active)

@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 owner_build_settings=(
-  OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO
+  OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO GROUP_WINDOWS_ENABLED=YES
   SHARING_RELEASE_MODE=media-staging SHARING_FEATURE_ENABLED=YES SHARING_MEDIA_ENABLED=YES
   SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=YES SHARING_SHARE_EXTENSION_SEND_ENABLED=NO
   SHARING_REVIEW_PREVIEW_ENABLED=NO
@@ -33,6 +33,11 @@ for row in rows:
     assert settings['SHARING_API_BASE_URL'] == 'https://neko-window-sharing-staging.nakanishisoya.workers.dev'
 print('PASS resolved owner build settings before compilation')
 PY
+python3 ci/preflight-group-share-settings.py "$RUNNER_TEMP/owner-internal-build-settings.json" --owner-internal
+xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Release \
+  -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json \
+  > "$RUNNER_TEMP/production-group-share-settings.json"
+python3 ci/preflight-group-share-settings.py "$RUNNER_TEMP/production-group-share-settings.json"
 
 # CoreSimulator installation can hang after a successful build. Bound the
 # simulator commands so an environment stall cannot consume the entire job.

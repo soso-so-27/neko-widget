@@ -189,7 +189,7 @@ class PairingOnlyReleaseConfigTests(unittest.TestCase):
         share_extension = (
             ROOT / "NekoWidgetShareExtension/ShareViewController.swift"
         ).read_text(encoding="utf-8")
-        photo_gate = "guard SharingAPIConfiguration.current.isGroupRuntimeAvailable"
+        photo_gate = "guard GroupShareConfiguration.current != nil"
         self.assertIn(photo_gate, share_extension)
         self.assertLess(
             share_extension.index(photo_gate),

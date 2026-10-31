@@ -1,5 +1,41 @@
 import Foundation
 
+/// Photo-only configuration. Reporting recipients and the host's report
+/// availability predicate are intentionally not part of the extension.
+struct GroupShareConfiguration {
+    let endpoint: URL
+    let releaseMode: String
+    static var current: Self? { Self(info: Bundle.main.infoDictionary ?? [:]) }
+
+    init?(info: [String: Any]) {
+        guard ["GroupShareExtensionEnabled", "GroupWindowsEnabled", "SharingFeatureEnabled", "SharingMediaEnabled"]
+                .allSatisfy({ info[$0] as? String == "YES" }),
+              info["SharingShareExtensionSendEnabled"] as? String == "NO",
+              (info["SharingReviewPreviewEnabled"] as? String == "NO" || info["SharingReviewPreviewEnabled"] as? Bool == false),
+              info["SharingInternalEncryptedReportEnabled"] as? Bool == false,
+              info["SharingInternalEncryptedReportScope"] as? String == "",
+              (info["GroupReportingProductionEnabled"] as? String ?? "NO") == "NO",
+              ["SharingAPIBaseURL", "SharingModerationKeyID", "SharingModerationPublicKey"]
+                .allSatisfy({ (info[$0] as? String ?? "").isEmpty }),
+              let mode = info["SharingReleaseMode"] as? String,
+              ["production", "media-staging"].contains(mode),
+              let raw = info["GroupShareAPIBaseURL"] as? String,
+              raw == raw.trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: raw), let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == "https", let host = parts.host, host.contains("."),
+              !host.contains("$"), parts.user == nil, parts.password == nil, parts.port == nil,
+              parts.query == nil, parts.fragment == nil, ["", "/"].contains(parts.path)
+        else { return nil }
+        if mode == "media-staging" {
+            guard raw == "https://neko-window-sharing-staging.nakanishisoya.workers.dev" else { return nil }
+        } else {
+            guard !host.lowercased().contains("staging") else { return nil }
+        }
+        endpoint = url
+        releaseMode = mode
+    }
+}
+
 /// No billing/bootstrap/invitation/member-management/report endpoint is
 /// reachable through the Share Extension's transport.
 struct GroupShareTransport: GroupHTTPTransport {
@@ -46,13 +82,11 @@ actor GroupShareService: GroupShareServing {
     }
 
     static func live() throws -> GroupShareService {
-        let configuration = SharingAPIConfiguration.current
-        guard configuration.isGroupRuntimeAvailable,
-              Bundle.main.object(forInfoDictionaryKey: "GroupShareExtensionEnabled") as? String == "YES",
-              Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String == "YES",
-              let endpoint = configuration.baseURL, let accessGroup = GroupShareAccess.accessGroup else {
+        guard let configuration = GroupShareConfiguration.current,
+              let accessGroup = GroupShareAccess.accessGroup else {
             throw GroupClientError.unavailable
         }
+        let endpoint = configuration.endpoint
         let namespace = configuration.releaseMode == "production"
             ? "jp.nekowidget.app.group-v3.production" : "jp.nekowidget.app.group-v3.staging"
         guard let installation = try GroupShareInstallation.existingForShare() else {

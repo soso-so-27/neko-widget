@@ -21,9 +21,7 @@ final class ShareViewController: UIViewController {
     private func prepare() async {
         do {
             // Never read Photos/provider contents in an off or pairing-only build.
-            guard SharingAPIConfiguration.current.isGroupRuntimeAvailable,
-                  Bundle.main.object(forInfoDictionaryKey: "GroupShareExtensionEnabled") as? String == "YES",
-                  Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String == "YES" else {
+            guard GroupShareConfiguration.current != nil else {
                 throw GroupClientError.unavailable
             }
             let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])
