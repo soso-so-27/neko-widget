@@ -210,21 +210,6 @@ jobs:
             ci/fixtures/pairing-protocol-v1.json \
             ci/fixtures/device-recovery-protocol-v2.json
 
-      - name: Verify Swift pairing API response contract
-        working-directory: NekoWidget
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcrun swiftc \
-            -parse-as-library \
-            Shared/Sharing/PairingCore.swift \
-            Shared/Sharing/SharingAPIConfiguration.swift \
-            NekoWidget/Services/PairingAPIClient.swift \
-            ci/verify-pairing-api-responses.swift \
-            -o "$RUNNER_TEMP/verify-pairing-api-responses"
-          "$RUNNER_TEMP/verify-pairing-api-responses" \
-            ci/fixtures/pairing-api-v1-responses.json
-
       - name: Verify Swift sharing protocol vectors
         working-directory: NekoWidget
         shell: bash
@@ -275,26 +260,19 @@ jobs:
           project=NekoWidget.xcodeproj/project.pbxproj
           grep -Fq 'NekoWidgetShareExtension.appex in Embed App Extensions' "$project"
           grep -Fq 'MomentSharingCore.swift in Sources' "$project"
-          grep -Fq 'MomentSharingAPIClient.swift in Sources' "$project"
           grep -Fq '70000000000000000000000D /* WidgetManifest.swift in Sources */' "$project"
           grep -Fq '70000000000000000000000E /* WidgetRenderPlan.swift in Sources */' "$project"
           grep -Fq 'NSExtensionActivationSupportsImageWithMaxCount' \
             NekoWidgetShareExtension/Info.plist
           grep -Fq '<integer>1</integer>' NekoWidgetShareExtension/Info.plist
           grep -Fq '<string>analysis</string>' NekoWidget/NekoWidget.entitlements
-          if grep -Fq 'sensitivecontentanalysis' \
-            NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements; then
-            echo 'Capture-only Share Extension must not have Sensitive Content Analysis entitlement' >&2
-            exit 1
-          fi
-          if grep -Eq 'DailySharing|maximumDaily|generationID' \
-            NekoWidgetShareExtension/*.swift; then
-            echo 'Share Extension must not use the retired daily-sharing protocol' >&2
-            exit 1
-          fi
+          # The extension now sends to group windows with its isolated
+          # credential scope and canonical moderation. Keep the current
+          # signed-config/recipient boundary checks, including negative cases.
+          python3 ci/test-group-share-boundary.py
+          python3 ci/test-background-moment-refresh.py
 
           grep -Fq 'case committing' Shared/Sharing/MomentSharingStore.swift
-          grep -Fq 'expected: .committing' NekoWidget/Services/MomentSharingCoordinator.swift
           grep -Fq 'MOMENT_RUNTIME_ENABLED": "NO"' SharingService/wrangler.example.jsonc
           grep -Fq 'IDEMPOTENCY_TTL_SECONDS": "172800"' \
             SharingService/wrangler.example.jsonc
@@ -315,14 +293,6 @@ jobs:
             NekoWidget/Info.plist
           grep -Fq '<key>SharingShareExtensionSendEnabled</key>' \
             NekoWidgetShareExtension/Info.plist
-          grep -Fq 'configuration.isShareExtensionHandoffAvailable' \
-            NekoWidgetShareExtension/ShareViewController.swift
-          grep -Fq 'MomentShareHandoffStore.stageCapture' \
-            NekoWidgetShareExtension/MomentShareIngressService.swift
-          grep -Fq 'PairingInstallationGuard.bootstrap()' \
-            NekoWidget/Services/MomentSharingCoordinator.swift
-          grep -Fq 'refreshAdmissionsAndDrain' \
-            NekoWidget/Services/MomentSharingCoordinator.swift
           grep -Fq 'Direct Share Extension delivery is permanently blocked' \
             ci/validate-sharing-release.py
           grep -Fq 'NSPrivacyAccessedAPICategoryFileTimestamp' NekoWidget/PrivacyInfo.xcprivacy
@@ -349,82 +319,13 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          source = Path("NekoWidget/ViewModels/AppViewModel.swift").read_text()
-          start = source.index("func start() async")
-          launch_sync = source.index('synchronizeMomentSharing(trigger: "launch")', start)
-          curation_guard = source.index("guard await loadCatCandidateCuration()", start)
-          foreground = source.index("func syncOnActive() async")
-          foreground_sync = source.index('synchronizeMomentSharing(trigger: "foreground")', foreground)
-          identity_guard = source.index("guard catIdentityLoadState == .ready", foreground)
-          if not launch_sync < curation_guard or not foreground_sync < identity_guard:
-              raise SystemExit("Moment sync must not depend on scanner or cat-identity storage")
-
-          coordinator = Path("NekoWidget/Services/MomentSharingCoordinator.swift").read_text()
-          authorization = coordinator.index("private func loadAuthorization()")
-          bootstrap = coordinator.index("PairingInstallationGuard.bootstrap()", authorization)
-          credential = coordinator.index("PairingKeychainStore.load(", authorization)
-          if not bootstrap < credential:
-              raise SystemExit("Host moment network authorization must validate installation first")
-
+          # The retired relay must not be linked. Storage/crypto remain for
+          # retained-data cleanup and current group contracts.
           project = Path("NekoWidget.xcodeproj/project.pbxproj").read_text()
-          share_start = project.index("A0000000000000000000002B /* Sources */ = {")
-          share_end = project.index("/* End PBXSourcesBuildPhase section */", share_start)
-          share_sources = project[share_start:share_end]
-          required = {
-              "MomentShareHandoffStore.swift in Sources",
-              "SharingAPIConfiguration.swift in Sources",
-              "MomentShareIngressService.swift in Sources",
-              "MomentCanonicalPreviewBuilder.swift in Sources",
-              "MomentSharingCore.swift in Sources",
-              "ShareViewController.swift in Sources",
-          }
-          forbidden = {
-              "PairingCore.swift in Sources",
-              "PairingKeychainStore.swift in Sources",
-              "MomentSharingStore.swift in Sources",
-              "PairingAPIClient.swift in Sources",
-              "MomentSharePreparationService.swift in Sources",
-              "MomentSharingAPIClient.swift in Sources",
-              "MomentShareExtensionSender.swift in Sources",
-          }
-          missing = sorted(value for value in required if value not in share_sources)
-          leaked = sorted(value for value in forbidden if value in share_sources)
-          if missing or leaked:
-              raise SystemExit(
-                  f"Capture-only Share target boundary failed; missing={missing}, leaked={leaked}"
-              )
-          share_framework_start = project.index(
-              "A0000000000000000000002C /* Frameworks */ = {"
-          )
-          share_framework_end = project.index(
-              "/* End PBXFrameworksBuildPhase section */",
-              share_framework_start,
-          )
-          share_frameworks = project[share_framework_start:share_framework_end]
-          if "SensitiveContentAnalysis.framework" in share_frameworks:
-              raise SystemExit(
-                  "Capture-only Share target must not link SensitiveContentAnalysis"
-              )
-
-          share_code = "\n".join(
-              path.read_text()
-              for path in Path("NekoWidgetShareExtension").glob("*.swift")
-          )
-          forbidden_symbols = (
-              "PairingStateStore",
-              "PairingKeychainStore",
-              "MomentSharingStateStore",
-              "URLSession",
-              "SensitiveContentAnalysis",
-              "reserve(",
-              "upload(",
-              "commit(",
-          )
-          leaked_symbols = [value for value in forbidden_symbols if value in share_code]
-          if leaked_symbols:
-              raise SystemExit(
-                  f"Capture-only Share code crosses host authorization boundary: {leaked_symbols}"
-              )
+          for retired in ("PairingAPIClient", "MomentSharingAPIClient",
+                          "MomentSharingCoordinator", "MomentShareHandoffProcessor"):
+              if f"{retired}.swift in Sources" in project:
+                  raise SystemExit(f"Retired relay is still linked: {retired}")
 
           keychain = Path("Shared/Sharing/PairingKeychainStore.swift").read_text()
           if "jp.nekowidget.sharing.credentials.v2.host" not in keychain:
@@ -468,7 +369,6 @@ jobs:
           "$RUNNER_TEMP/verify-private-window-display-name"
           python3 ci/test-inactive-window-name-sync.py
           python3 ci/test-family-window-widget-boundaries.py
-          python3 ci/test-private-window-cover.py
           grep -Fq 'MomentSharingPresentation.swift in Sources' \
             NekoWidget.xcodeproj/project.pbxproj
 

@@ -271,7 +271,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("CommandLine.arguments.contains(launchArgument)", image_helper)
         self.assertIn("CommandLine.arguments.contains(widgetPortraitReviewArgument)", image_helper)
         self.assertIn("PairingCrypto.sha256(data)", image_helper)
-        flow = app_runtime.split("private static func testMomentInboundModerationFlow()", 1)[1]
+        flow = app_runtime.split("private static func testRetainedWidgetPublication()", 1)[1]
         self.assertIn("image: widgetPortraitReviewImageIfRequested() ?? generatedImage()", flow)
         self.assertLess(flow.index("widgetBuilder.buildFamilyWindow("),
                         flow.index("exportWidgetPortraitReviewIfRequested("))

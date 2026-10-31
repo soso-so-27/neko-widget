@@ -30,14 +30,6 @@ class InactiveWindowNameSyncContractTests(unittest.TestCase):
             )
 
     def test_inactive_reconciliation_never_changes_selection(self) -> None:
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        method = coordinator.split(
-            "func synchronizeInactiveWindowNamesForWindowList", 1
-        )[1].split("#if DEBUG", 1)[0]
-        self.assertNotIn("activatePrivateWindow", method)
-        self.assertNotIn("activateWhileLifecycleLocked", method)
-        self.assertIn("loadInactiveWindowNameAuthorizations", method)
-        self.assertIn("authorization: authorization", method)
         shared = source("Shared/AppGroup/SharedContainer.swift")
         targeted_update = shared.split(
             "static func updateDisplayNameWhileLifecycleLocked", 1
@@ -54,33 +46,7 @@ class InactiveWindowNameSyncContractTests(unittest.TestCase):
         self.assertIn(
             "writeWhileLifecycleLocked(state, localWindowID: localWindowID)", store
         )
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        self.assertGreaterEqual(
-            coordinator.count("localWindowID: authorization.localWindowID"), 8
-        )
 
-    def test_legacy_peer_normalization_cannot_delay_visible_name_repair(self) -> None:
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        sync = coordinator.split(
-            "private func synchronizeWindowName(", 1
-        )[1].split("guard role == .inviter", 1)[0]
-        apply_name = sync.index(
-            "PrivateWindowPresentationStore.applySynchronizedOwnerName"
-        )
-        schedule_normalization = sync.index(
-            "scheduleLegacyReplacementPeerNormalization"
-        )
-        self.assertLess(apply_name, schedule_normalization)
-        confirmation = coordinator.split(
-            "private static func confirmedLegacyReplacementPeer", 1
-        )[1].split("private func normalizeLegacyReplacementPeerBestEffort", 1)[0]
-        for field in (
-            "status.deviceID == pairing.recoveryDeviceID",
-            "status.transcriptData == recoveryTranscript",
-            "status.credential.agreementPublicKey == candidateAgreement",
-            "status.credential.signingPublicKey == candidateSigning",
-        ):
-            self.assertIn(field, confirmation)
 
     def test_authenticated_remote_name_disambiguates_only_local_conflicts(self) -> None:
         shared = source("Shared/AppGroup/SharedContainer.swift")
@@ -105,20 +71,6 @@ class InactiveWindowNameSyncContractTests(unittest.TestCase):
         )[0]
         self.assertIn("duplicateWindowName", manual_save)
 
-    def test_report_only_and_catalog_binding_fail_closed_before_get(self) -> None:
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        sync = coordinator.index("private func synchronizeWindowName(")
-        guard = coordinator.index("try await requireWindowNameSynchronizationAllowed", sync)
-        get = coordinator.index("let remote = try await api.currentWindowName", sync)
-        self.assertLess(guard, get)
-        scoped_guard = coordinator.split(
-            "if let localWindowID = authorization.localWindowID", 1
-        )[1].split("let markerUntil", 1)[0]
-        self.assertIn("catalog.activeWindowID != localWindowID", scoped_guard)
-        self.assertIn("entry.spaceID == authorization.state.spaceID", scoped_guard)
-        self.assertIn("entry.credentialAccount == authorization.state.credentialAccount", scoped_guard)
-        self.assertIn("momentShareHandoffReportOnlyMarkerURL", scoped_guard)
-        self.assertIn("scopedState.reportOnlyUntil == nil", scoped_guard)
 
 
 if __name__ == "__main__":

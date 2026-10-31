@@ -553,289 +553,11 @@ struct PreservationNativeFixture: Sendable {
 }
 
 
-private actor RuntimeWidgetHeartAPI: MomentReactionAPIClientProtocol {
-    private var failNextSend = true
-    private var requests: [(String, UUID)] = []
-
-    func sendPaw(momentID: String, clientRequestID: UUID, pairingState: PairingState,
-                 credential: PairingCredential) async throws -> MomentPawSendResult {
-        requests.append((momentID, clientRequestID))
-        if failNextSend {
-            failNextSend = false
-            throw URLError(.notConnectedToInternet)
-        }
-        return MomentPawSendResult(reactionID: "reaction_widget_heart_fixture",
-            momentID: momentID, alreadyReacted: false)
-    }
-
-    func pawChanges(after cursor: String?, pairingState: PairingState,
-                    credential: PairingCredential) async throws -> MomentPawChangesResult {
-        throw MomentSharingError.stateUnavailable
-    }
-
-    func recordedRequests() -> [(String, UUID)] { requests }
-}
 
 
-private enum RuntimeMomentModerationStep: Sendable {
-    case safe
-    case failure(MomentSharingError)
-}
 
-private actor RuntimeMomentModerator: MomentModerating {
-    private var steps: [RuntimeMomentModerationStep]
-    private var analysisCount = 0
 
-    init(steps: [RuntimeMomentModerationStep]) {
-        self.steps = steps
-    }
 
-    func requireSafeImage(at url: URL) async throws {
-        guard FileManager.default.fileExists(atPath: url.path),
-              (try Data(contentsOf: url)).isEmpty == false,
-              !steps.isEmpty
-        else { throw MomentSharingError.stateUnavailable }
-        analysisCount += 1
-        switch steps.removeFirst() {
-        case .safe:
-            return
-        case .failure(let error):
-            throw error
-        }
-    }
-
-    func runtimeAnalysisCount() -> Int { analysisCount }
-}
-
-private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
-    private let change: MomentChange
-    private let ciphertext: Data
-    private let afterCursor: String?
-    private let downloadError: MomentSharingError?
-    private let acknowledgementError: MomentSharingError?
-    private var downloadCount = 0
-    private var acknowledgementAttemptCount = 0
-    private var acknowledgementCount = 0
-
-    init(change: MomentChange, ciphertext: Data, afterCursor: String? = nil,
-         downloadError: MomentSharingError? = nil, acknowledgementError: MomentSharingError? = nil) {
-        self.change = change
-        self.ciphertext = ciphertext
-        self.afterCursor = afterCursor
-        self.downloadError = downloadError
-        self.acknowledgementError = acknowledgementError
-    }
-
-    private func unsupported<T>() throws -> T {
-        throw MomentSharingError.invalidPayload
-    }
-
-    func reserve(
-        item: MomentOutboxItem,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> MomentReservationResult { try unsupported() }
-
-    func upload(
-        momentID: String,
-        ciphertext: Data,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws { throw MomentSharingError.invalidPayload }
-
-    func commit(
-        momentID: String,
-        clientRequestID: UUID,
-        pairingState: PairingState,
-        credential: PairingCredential,
-        sharedRecord: FamilyRecordCommitPayload?
-    ) async throws -> MomentCommitResult { try unsupported() }
-
-    func changes(
-        after cursor: String?,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> MomentChangesResult {
-        if cursor == change.cursor {
-            return MomentChangesResult(changes: [], nextCursor: change.cursor)
-        }
-        guard cursor == afterCursor else { throw MomentSharingError.invalidPayload }
-        return MomentChangesResult(changes: [change], nextCursor: change.cursor)
-    }
-
-    func download(
-        momentID: String,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> Data {
-        guard momentID == change.momentID else {
-            throw MomentSharingError.invalidPayload
-        }
-        downloadCount += 1
-        if let downloadError { throw downloadError }
-        return ciphertext
-    }
-
-    func acknowledge(
-        momentID: String,
-        ciphertextSHA256: Data,
-        clientRequestID: UUID,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> MomentAcknowledgementResult {
-        guard momentID == change.momentID,
-              ciphertextSHA256 == change.ciphertextSHA256
-        else { throw MomentSharingError.invalidPayload }
-        acknowledgementAttemptCount += 1
-        if let acknowledgementError { throw acknowledgementError }
-        acknowledgementCount += 1
-        return MomentAcknowledgementResult(
-            momentID: momentID,
-            acknowledgedAt: change.committedAt.addingTimeInterval(1),
-            accessExpiresAt: change.accessExpiresAt
-        )
-    }
-
-    func block(
-        participantID: String,
-        clientRequestID: UUID,
-        withdrawal: MomentBlockWithdrawalAuthorization?,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> MomentBlockResult { try unsupported() }
-
-    func withdrawBlock(id: String, token: Data, clientRequestID: UUID) async throws {
-        throw MomentSharingError.invalidPayload
-    }
-
-    func reserveReport(
-        momentID: String,
-        reason: MomentReportReason,
-        prepared: MomentPreparedReport,
-        clientRequestID: UUID,
-        reporterConsentAcceptedAt: Date,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> MomentReportReservationResult { try unsupported() }
-
-    func uploadReport(
-        reportID: String,
-        ciphertext: Data,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws { throw MomentSharingError.invalidPayload }
-
-    func commitReport(
-        reportID: String,
-        clientRequestID: UUID,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> MomentReportCommitResult { try unsupported() }
-
-    func runtimeCounts() -> (downloads: Int, acknowledgements: Int, acknowledgementAttempts: Int) {
-        (downloadCount, acknowledgementCount, acknowledgementAttemptCount)
-    }
-}
-
-private actor RuntimeWindowNameAPI: PrivateWindowNameAPIClientProtocol {
-    private var getCount = 0
-    private var putCount = 0
-
-    func currentWindowName(
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> PrivateWindowNameRelayValue? {
-        getCount += 1
-        return nil
-    }
-
-    func putWindowName(
-        _ payload: PrivateWindowNamePreparedPayload,
-        clientRequestID: UUID,
-        pairingState: PairingState,
-        credential: PairingCredential
-    ) async throws -> PrivateWindowNameRelayValue {
-        putCount += 1
-        throw MomentSharingError.invalidPayload
-    }
-
-    func runtimeCounts() -> (gets: Int, puts: Int) {
-        (getCount, putCount)
-    }
-}
-
-private actor RuntimeMomentProcessQueueProbe {
-    enum Event: Equatable, Sendable {
-        case ownerPhotoCompleted
-        case ownerWindowName
-        case ownerWindowNameResult(Bool)
-        case trailingPhotoCompleted
-        case trailingWindowName
-        case trailingWindowNameResult(Bool)
-        case unqueuedWindowName
-    }
-
-    private struct RunWaiter {
-        let expectedCount: Int
-        let continuation: CheckedContinuation<Void, Never>
-    }
-
-    private var runCount = 0
-    private var didReleaseFirst = false
-    private var releasedFirstNotice: MomentSynchronizationNotice?
-    private var firstRunContinuations: [
-        CheckedContinuation<MomentSynchronizationNotice?, Never>
-    ] = []
-    private var runWaiters: [RunWaiter] = []
-    private var recordedEvents: [Event] = []
-
-    func record(_ event: Event) {
-        recordedEvents.append(event)
-    }
-
-    func events() -> [Event] { recordedEvents }
-
-    func run(
-        firstNotice: MomentSynchronizationNotice?,
-        trailingNotice: MomentSynchronizationNotice?
-    ) async -> MomentSynchronizationNotice? {
-        runCount += 1
-        let reached = runWaiters.filter { $0.expectedCount <= runCount }
-        runWaiters.removeAll { $0.expectedCount <= runCount }
-        for waiter in reached {
-            waiter.continuation.resume()
-        }
-        guard runCount == 1 else { return trailingNotice }
-        if didReleaseFirst { return releasedFirstNotice ?? firstNotice }
-        return await withCheckedContinuation { continuation in
-            firstRunContinuations.append(continuation)
-        }
-    }
-
-    func count() -> Int { runCount }
-
-    func waitUntilRunCount(_ expectedCount: Int) async {
-        guard runCount < expectedCount else { return }
-        await withCheckedContinuation { continuation in
-            runWaiters.append(
-                RunWaiter(
-                    expectedCount: expectedCount,
-                    continuation: continuation
-                )
-            )
-        }
-    }
-
-    func releaseFirst(with notice: MomentSynchronizationNotice?) {
-        didReleaseFirst = true
-        releasedFirstNotice = notice
-        let pending = firstRunContinuations
-        firstRunContinuations.removeAll(keepingCapacity: true)
-        for continuation in pending {
-            continuation.resume(returning: notice)
-        }
-    }
-}
 
 /// DEBUG-only, generated-data runtime gate used by simulator smoke CI. The
 /// report deliberately contains only fixed case identifiers and pass/fail
@@ -966,17 +688,8 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("private-window-legacy-conflict-quarantine-policy") {
             try Self.testPrivateWindowLegacyConflictQuarantinePolicy()
         })
-        results.append(await runAsync("moment-process-serialized-refresh") {
-            try await Self.testMomentProcessSerializedRefresh()
-        })
-        results.append(run("moment-terminal-authorization-classification") {
-            try Self.testMomentTerminalAuthorizationClassification()
-        })
         results.append(await runAsync("moment-block-withdrawal-lifecycle") {
             try await Self.testMomentBlockWithdrawalLifecycle()
-        })
-        results.append(await runAsync("moment-install-bound-handoff") {
-            try await Self.testMomentInstallBoundHandoff()
         })
         results.append(run("moderation-dual-key-configuration") {
             try Self.testModerationDualKeyConfiguration()
@@ -998,19 +711,12 @@ actor SharingRuntimeSelfTestRunner {
         })
         results.append(await runAsync("moment-paw-reaction-boundary") {
             try Self.testMomentPawReactionBoundary()
-            try await Self.testWidgetHeartBackgroundSend()
         })
-        results.append(run("moment-empty-cursor-normalization") {
-            try Self.testMomentEmptyCursorNormalization()
-        })
-        results.append(run("moment-expired-delivery-advances") {
-            try Self.testMomentExpiredDeliveryPolicy()
+        results.append(await runAsync("retained-widget-publication") {
+            try await Self.testRetainedWidgetPublication()
         })
         results.append(run("moment-inbound-moderation-retry-policy") {
             try Self.testMomentInboundModerationRetryPolicy()
-        })
-        results.append(await runAsync("moment-inbound-moderation-flow") {
-            try await Self.testMomentInboundModerationFlow()
         })
         results.append(run("moment-outbox-bounds-and-expiry") {
             try Self.testMomentOutboxBoundsAndExpiry()
@@ -2038,1401 +1744,20 @@ actor SharingRuntimeSelfTestRunner {
         }
     }
 
-    private static func testMomentProcessSerializedRefresh() async throws {
-        let firstCoordinator = MomentSharingCoordinator()
-        let joinedCoordinator = MomentSharingCoordinator()
-        let probe = RuntimeMomentProcessQueueProbe()
-        let ownerNotice = MomentSynchronizationNotice.inboundModerationUnavailable
-        let trailingNotice = MomentSynchronizationNotice.inboundModerationDisabled
-        let first = Task {
-            await firstCoordinator.runtimeTestJoinProcessSynchronization {
-                let notice = await probe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-                await probe.record(.ownerPhotoCompleted)
-                let nameChanged = await firstCoordinator
-                    .runtimeTestBackgroundWindowNameSynchronization {
-                        await probe.record(.ownerWindowName)
-                        return true
-                    }
-                await probe.record(.ownerWindowNameResult(nameChanged))
-                return notice
-            }
-        }
-        await probe.waitUntilRunCount(1)
-
-        let joined = Task {
-            await joinedCoordinator.runtimeTestJoinProcessSynchronization {
-                let notice = await probe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-                await probe.record(.trailingPhotoCompleted)
-                let nameChanged = await joinedCoordinator
-                    .runtimeTestBackgroundWindowNameSynchronization {
-                        await probe.record(.trailingWindowName)
-                        return true
-                    }
-                await probe.record(.trailingWindowNameResult(nameChanged))
-                return notice
-            }
-        }
-        // Hold the owner's photo phase until the next photo pass has a real
-        // queue position. Its optional name request must then yield without
-        // starting, while the final queued pass still synchronizes names.
-        await firstCoordinator.runtimeTestWaitUntilProcessSynchronizationIsPending()
-        await probe.releaseFirst(with: ownerNotice)
-        await probe.waitUntilRunCount(2)
-        let firstResult = await first.value
-        let joinedResult = await joined.value
-        let actualRunCount = await probe.count()
-        let firstRecordedNotice = await firstCoordinator.synchronizationNotice()
-        let joinedRecordedNotice = await joinedCoordinator.synchronizationNotice()
-        let events = await probe.events()
-        guard actualRunCount == 2,
-              firstResult == ownerNotice,
-              joinedResult == trailingNotice,
-              firstRecordedNotice == ownerNotice,
-              joinedRecordedNotice == trailingNotice,
-              events == [
-                  .ownerPhotoCompleted,
-                  .ownerWindowNameResult(false),
-                  .trailingPhotoCompleted,
-                  .trailingWindowName,
-                  .trailingWindowNameResult(true)
-              ]
-        else { throw MomentSharingError.stateUnavailable }
-
-        // An ordinary pass with no queued caller must retain its name exchange.
-        let unqueuedResult = await firstCoordinator.runtimeTestJoinProcessSynchronization {
-            let nameChanged = await firstCoordinator
-                .runtimeTestBackgroundWindowNameSynchronization {
-                    await probe.record(.unqueuedWindowName)
-                    return true
-                }
-            return nameChanged ? ownerNotice : nil
-        }
-        let eventsAfterUnqueuedPass = await probe.events()
-        guard unqueuedResult == ownerNotice,
-              eventsAfterUnqueuedPass == events + [.unqueuedWindowName]
-        else { throw MomentSharingError.stateUnavailable }
-
-        // A cancelled queued caller must release its reserved turn without
-        // running, and the next caller must execute in its own active Task.
-        let cancellationOwner = MomentSharingCoordinator()
-        let cancelledCoordinator = MomentSharingCoordinator()
-        let activeCoordinator = MomentSharingCoordinator()
-        let cancellationProbe = RuntimeMomentProcessQueueProbe()
-        let cancellationOwnerTask = Task {
-            await cancellationOwner.runtimeTestJoinProcessSynchronization {
-                await cancellationProbe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-            }
-        }
-        await cancellationProbe.waitUntilRunCount(1)
-        let cancelledTask = Task {
-            await cancelledCoordinator.runtimeTestJoinProcessSynchronization {
-                await cancellationProbe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-            }
-        }
-        await cancellationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending()
-        cancelledTask.cancel()
-        let activeTask = Task {
-            await activeCoordinator.runtimeTestJoinProcessSynchronization {
-                await cancellationProbe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-            }
-        }
-        await cancellationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending(
-            count: 2
-        )
-        await cancellationProbe.releaseFirst(with: ownerNotice)
-        await cancellationProbe.waitUntilRunCount(2)
-        let cancellationOwnerResult = await cancellationOwnerTask.value
-        let cancelledResult = await cancelledTask.value
-        let activeResult = await activeTask.value
-        let cancellationRunCount = await cancellationProbe.count()
-        guard cancellationRunCount == 2,
-              cancellationOwnerResult == ownerNotice,
-              cancelledResult == nil,
-              activeResult == trailingNotice
-        else { throw MomentSharingError.stateUnavailable }
-
-        // Name-only operations share the same admission guarantee: cancelling
-        // one while queued must skip its callback and release the next turn.
-        let operationOwner = MomentSharingCoordinator()
-        let cancelledOperationCoordinator = MomentSharingCoordinator()
-        let activeOperationCoordinator = MomentSharingCoordinator()
-        let operationProbe = RuntimeMomentProcessQueueProbe()
-        let operationOwnerTask = Task {
-            await operationOwner.runtimeTestJoinProcessSynchronization {
-                await operationProbe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-            }
-        }
-        await operationProbe.waitUntilRunCount(1)
-        let cancelledOperationTask = Task {
-            try await cancelledOperationCoordinator.runtimeTestJoinProcessOperation {
-                _ = await operationProbe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-                return true
-            }
-        }
-        await operationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending()
-        cancelledOperationTask.cancel()
-        let activeOperationTask = Task {
-            try await activeOperationCoordinator.runtimeTestJoinProcessOperation {
-                let notice = await operationProbe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-                return notice == trailingNotice && !Task.isCancelled
-            }
-        }
-        await operationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending(count: 2)
-        await operationProbe.releaseFirst(with: ownerNotice)
-        let operationOwnerResult = await operationOwnerTask.value
-        let cancelledOperationResult = await cancelledOperationTask.result
-        let activeOperationResult = try await activeOperationTask.value
-        let operationRunCount = await operationProbe.count()
-        guard operationOwnerResult == ownerNotice,
-              case let .failure(cancellationError) = cancelledOperationResult,
-              cancellationError is CancellationError,
-              activeOperationResult,
-              operationRunCount == 2
-        else { throw MomentSharingError.stateUnavailable }
-
-        // The next caller must not inherit cancellation from the Task that
-        // previously owned the process permit.
-        let cancelledOwnerCoordinator = MomentSharingCoordinator()
-        let unaffectedCoordinator = MomentSharingCoordinator()
-        let ownerCancellationProbe = RuntimeMomentProcessQueueProbe()
-        let cancelledOwnerTask = Task {
-            await cancelledOwnerCoordinator.runtimeTestJoinProcessSynchronization {
-                await ownerCancellationProbe.run(
-                    firstNotice: ownerNotice,
-                    trailingNotice: trailingNotice
-                )
-            }
-        }
-        await ownerCancellationProbe.waitUntilRunCount(1)
-        let unaffectedTask = Task {
-            await unaffectedCoordinator.runtimeTestJoinProcessSynchronization {
-                Task.isCancelled ? ownerNotice : trailingNotice
-            }
-        }
-        await cancelledOwnerCoordinator
-            .runtimeTestWaitUntilProcessSynchronizationIsPending()
-        cancelledOwnerTask.cancel()
-        await ownerCancellationProbe.releaseFirst(with: ownerNotice)
-        let cancelledOwnerValue = await cancelledOwnerTask.value
-        let unaffectedValue = await unaffectedTask.value
-        guard cancelledOwnerValue == ownerNotice,
-              unaffectedValue == trailingNotice
-        else { throw MomentSharingError.stateUnavailable }
-    }
 
     /// Only an exact, authenticated authorization-wide terminal response may
     /// destroy the room credential. Resource 410s and undecodable future 410s
     /// remain paired so a later synchronization can reconcile them.
-    private static func testMomentTerminalAuthorizationClassification() throws {
-        let cases: [(MomentSharingError, Bool, String)] = [
-            (
-                .requestRejected(
-                    status: 410,
-                    code: "sharing_revoked",
-                    message: "ignored"
-                ),
-                true,
-                "remote-authorization-terminal"
-            ),
-            (
-                .requestRejected(
-                    status: 401,
-                    code: "invalid_authentication",
-                    message: "ignored"
-                ),
-                false,
-                "request-rejected-nonterminal"
-            ),
-            (
-                .requestRejected(
-                    status: 410,
-                    code: "reservation_expired",
-                    message: "ignored"
-                ),
-                false,
-                "resource-gone-nonterminal"
-            ),
-            (
-                .requestRejected(
-                    status: 410,
-                    code: "report_window_closed",
-                    message: "ignored"
-                ),
-                false,
-                "resource-gone-nonterminal"
-            ),
-            (
-                .requestRejected(
-                    status: 410,
-                    code: "report_unavailable",
-                    message: "ignored"
-                ),
-                false,
-                "resource-gone-nonterminal"
-            ),
-            (
-                .requestRejected(
-                    status: 410,
-                    code: "window_name_unavailable",
-                    message: "ignored"
-                ),
-                false,
-                "resource-gone-nonterminal"
-            ),
-            (
-                .requestRejected(status: 410, code: nil, message: "ignored"),
-                false,
-                "resource-gone-nonterminal"
-            ),
-            (
-                .requestRejected(
-                    status: 409,
-                    code: "sharing_revoked",
-                    message: "ignored"
-                ),
-                false,
-                "request-rejected-nonterminal"
-            ),
-            (.stateUnavailable, false, "local-state-unavailable")
-        ]
 
-        for (error, shouldReset, expectedReason) in cases {
-            guard MomentSharingCoordinator.runtimeRequiresLocalRevocationReset(error)
-                    == shouldReset,
-                  MomentSharingCoordinator.runtimeLocalFailureReason(error)
-                    == expectedReason
-            else { throw MomentSharingError.stateUnavailable }
-        }
-
-        guard MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(
-            cases[1].0
-        ),
-        !MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(cases[0].0),
-        !MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(
-            MomentSharingError.requestRejected(
-                status: 401,
-                code: nil,
-                message: "ignored"
-            )
-        ) else { throw MomentSharingError.stateUnavailable }
-
-
-    }
-
-    private static func testMomentDeviceIdentityResolution() throws {
-        let memberID = "member_device_identity_fixture"
-        let spaceID = "space_device_identity_fixture"
-        let recoveredDeviceID = "device_recovered_fixture"
-        let peerReplacementDeviceID = "device_peer_replacement_fixture"
-
-        var ordinary = PairingState.unpaired(installationMarker: UUID().uuidString)
-        ordinary.spaceID = spaceID
-        ordinary.memberID = memberID
-        guard ordinary.resolvedLocalMomentDeviceID == memberID else {
-            throw MomentSharingError.stateUnavailable
-        }
-
-        // Build and decode a fully valid paired recovery state with the field
-        // removed, matching bytes written by Build 41.
-        let installationMarker = UUID().uuidString
-        let localCredential = PairingCrypto.makeCredential(
-            installationMarker: installationMarker,
-            includesInvitationSecret: false,
-            includesRoomKey: true
-        )
-        let peerCredential = PairingCrypto.makeCredential(
-            installationMarker: installationMarker,
-            includesInvitationSecret: false,
-            includesRoomKey: true
-        )
-        let previousCredential = PairingCrypto.makeCredential(
-            installationMarker: installationMarker,
-            includesInvitationSecret: false,
-            includesRoomKey: true
-        )
-        let recoveryTranscript = Data("device-identity-recovery".utf8)
-        let recoveryHash = PairingCrypto.sha256(recoveryTranscript)
-        var build41Recovery = PairingState.unpaired(
-            installationMarker: installationMarker
-        )
-        build41Recovery.phase = .paired
-        build41Recovery.role = .inviter
-        build41Recovery.credentialAccount = localCredential.account
-        build41Recovery.participantID = localCredential.participantIDString
-        build41Recovery.spaceID = spaceID
-        build41Recovery.memberID = memberID
-        build41Recovery.peerMemberID = "member_peer_device_identity_fixture"
-        build41Recovery.peerParticipantID = peerCredential.participantIDString
-        build41Recovery.peerAgreementPublicKey = try PairingCrypto
-            .agreementPublicKey(for: peerCredential).base64URLEncodedString()
-        build41Recovery.peerSigningPublicKey = try PairingCrypto
-            .signingPublicKey(for: peerCredential).base64URLEncodedString()
-        build41Recovery.recoveryID = "recovery_device_identity_fixture"
-        build41Recovery.recoveryExpiresAt = Date().addingTimeInterval(3_600)
-        build41Recovery.recoveryMembershipRevision = 1
-        build41Recovery.recoveryKeyEpoch = 1
-        build41Recovery.recoveryDeviceID = recoveredDeviceID
-        build41Recovery.recoveryPreviousTargetAgreementPublicKey = try PairingCrypto
-            .agreementPublicKey(for: previousCredential).base64URLEncodedString()
-        build41Recovery.recoveryPreviousTargetSigningPublicKey = try PairingCrypto
-            .signingPublicKey(for: previousCredential).base64URLEncodedString()
-        build41Recovery.recoveryCandidateAgreementPublicKey = try PairingCrypto
-            .agreementPublicKey(for: localCredential).base64URLEncodedString()
-        build41Recovery.recoveryCandidateSigningPublicKey = try PairingCrypto
-            .signingPublicKey(for: localCredential).base64URLEncodedString()
-        build41Recovery.recoveryTranscript = recoveryTranscript.base64URLEncodedString()
-        build41Recovery.recoveryTranscriptHash = recoveryHash.base64URLEncodedString()
-        build41Recovery.recoveryVerificationPhrase = PairingCrypto
-            .verificationPhrase(for: recoveryHash)
-        build41Recovery.recoveryCompletedAt = Date()
-        build41Recovery.recoveryWasLocalDeviceReplacement = true
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        var legacyObject = try JSONSerialization.jsonObject(
-            with: encoder.encode(build41Recovery)
-        ) as? [String: Any]
-        legacyObject?.removeValue(forKey: "localMomentDeviceID")
-        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject ?? [:])
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let migratedRecovery = try decoder.decode(PairingState.self, from: legacyData)
-            .validated()
-        guard migratedRecovery.localMomentDeviceID == recoveredDeviceID,
-              migratedRecovery.resolvedLocalMomentDeviceID == recoveredDeviceID
-        else {
-            throw MomentSharingError.stateUnavailable
-        }
-
-        // Build 41/61 could persist a recovered/additional device identity in
-        // PairingState before deviceID was backfilled into its Keychain
-        // credential. That valid legacy authority must remain recoverable.
-        guard localCredential.deviceID == nil,
-              PairingInstallationGuard
-                .runtimeTestCredentialMatchesRecoveryState(
-                    localCredential,
-                    state: migratedRecovery
-                )
-        else { throw MomentSharingError.stateUnavailable }
-
-        // recoveryCandidate* is mutable sponsor state. Once this installation
-        // starts helping a different iPhone, those keys belong to that new
-        // candidate and must neither grant nor revoke this local authority.
-        let sponsoredCredential = PairingCrypto.makeCredential(
-            installationMarker: installationMarker,
-            includesInvitationSecret: false,
-            includesRoomKey: true
-        )
-        var sponsoringRecovery = migratedRecovery
-        sponsoringRecovery.recoveryCandidateAgreementPublicKey = try PairingCrypto
-            .agreementPublicKey(for: sponsoredCredential).base64URLEncodedString()
-        sponsoringRecovery.recoveryCandidateSigningPublicKey = try PairingCrypto
-            .signingPublicKey(for: sponsoredCredential).base64URLEncodedString()
-        guard PairingInstallationGuard
-            .runtimeTestCredentialMatchesRecoveryState(
-                localCredential,
-                state: sponsoringRecovery
-            )
-        else { throw MomentSharingError.stateUnavailable }
-
-        var wrongDeviceCredential = localCredential
-        wrongDeviceCredential.deviceID = "device_wrong_identity_fixture"
-        guard !PairingInstallationGuard
-            .runtimeTestCredentialMatchesRecoveryState(
-                wrongDeviceCredential,
-                state: migratedRecovery
-            )
-        else { throw MomentSharingError.stateUnavailable }
-
-        var missingRoomKeyCredential = localCredential
-        missingRoomKeyCredential.roomKey = nil
-        guard !PairingInstallationGuard
-            .runtimeTestCredentialMatchesRecoveryState(
-                missingRoomKeyCredential,
-                state: migratedRecovery
-            )
-        else { throw MomentSharingError.stateUnavailable }
-
-        // Sponsoring a peer recovery must not change this installation's
-        // relay device identity, even though recoveryDeviceID is reused by the
-        // current recovery ceremony.
-        var stableRecovery = migratedRecovery
-        stableRecovery.localMomentDeviceID = recoveredDeviceID
-        stableRecovery.recoveryDeviceID = peerReplacementDeviceID
-        guard stableRecovery.resolvedLocalMomentDeviceID == recoveredDeviceID else {
-            throw MomentSharingError.stateUnavailable
-        }
-
-        var sponsor = ordinary
-        sponsor.recoveryDeviceID = peerReplacementDeviceID
-        sponsor.recoveryWasLocalDeviceReplacement = false
-        guard sponsor.resolvedLocalMomentDeviceID == memberID else {
-            throw MomentSharingError.stateUnavailable
-        }
-
-        let recoveredContext = MomentRequestContext(
-            spaceID: spaceID,
-            senderParticipantID: memberID,
-            senderDeviceID: recoveredDeviceID,
-            clientRequestID: UUID(),
-            clientMomentID: UUID(),
-            kind: .live,
-            keyEpoch: 1
-        )
-        guard MomentReservationIdentityPolicy.accepts(
-            context: recoveredContext,
-            pairingState: migratedRecovery,
-            responseSpaceID: spaceID,
-            responseParticipantID: memberID,
-            responseDeviceID: recoveredDeviceID
-        ), !MomentReservationIdentityPolicy.accepts(
-            context: recoveredContext,
-            pairingState: migratedRecovery,
-            responseSpaceID: spaceID,
-            responseParticipantID: memberID,
-            responseDeviceID: memberID
-        ), !MomentReservationIdentityPolicy.accepts(
-            context: recoveredContext,
-            pairingState: migratedRecovery,
-            responseSpaceID: spaceID,
-            responseParticipantID: memberID,
-            responseDeviceID: peerReplacementDeviceID
-        ) else { throw MomentSharingError.stateUnavailable }
-
-        let build41Context = MomentRequestContext(
-            spaceID: spaceID,
-            senderParticipantID: memberID,
-            senderDeviceID: memberID,
-            clientRequestID: UUID(),
-            clientMomentID: UUID(),
-            kind: .live,
-            keyEpoch: 1
-        )
-        guard MomentReservationIdentityPolicy.acceptsContext(
-            build41Context,
-            pairingState: migratedRecovery
-        ), MomentReservationIdentityPolicy.accepts(
-            context: build41Context,
-            pairingState: migratedRecovery,
-            responseSpaceID: spaceID,
-            responseParticipantID: memberID,
-            responseDeviceID: recoveredDeviceID
-        ) else { throw MomentSharingError.stateUnavailable }
-
-        let ordinaryContext = MomentRequestContext(
-            spaceID: spaceID,
-            senderParticipantID: memberID,
-            senderDeviceID: memberID,
-            clientRequestID: UUID(),
-            clientMomentID: UUID(),
-            kind: .live,
-            keyEpoch: 1
-        )
-        guard MomentReservationIdentityPolicy.accepts(
-            context: ordinaryContext,
-            pairingState: sponsor,
-            responseSpaceID: spaceID,
-            responseParticipantID: memberID,
-            responseDeviceID: memberID
-        ) else { throw MomentSharingError.stateUnavailable }
-    }
 
     /// Multiple Share Extension destinations must remain scoped to existing
     /// local windows. The active UI window does not silently collapse the
     /// picker, while a legacy unscoped admission is accepted only for a truly
     /// unambiguous single-window catalog.
-    private static func testMomentShareExtensionDestinationAdmissionPolicy(
-        base: Date
-    ) throws {
-        let firstWindowID = UUID().uuidString.lowercased()
-        let secondWindowID = UUID().uuidString.lowercased()
-        let removedWindowID = UUID().uuidString.lowercased()
-        let firstAdmissionID = UUID()
-        let secondAdmissionID = UUID()
-        let legacyAdmissionID = UUID()
-        let secondLegacyAdmissionID = UUID()
-        let removedAdmissionID = UUID()
-        let expiresAt = base.addingTimeInterval(
-            MomentShareHandoffStore.admissionLifetime
-        )
-        let firstAdmission = MomentShareDestinationAdmission(
-            id: firstAdmissionID,
-            localWindowID: firstWindowID,
-            bindingSHA256: Data(repeating: 0x31, count: 32),
-            displayName: "ふたりのまど",
-            issuedAt: base,
-            expiresAt: expiresAt
-        )
-        let secondAdmission = MomentShareDestinationAdmission(
-            id: secondAdmissionID,
-            localWindowID: secondWindowID,
-            bindingSHA256: Data(repeating: 0x32, count: 32),
-            displayName: "ふたりのまど",
-            issuedAt: base,
-            expiresAt: expiresAt
-        )
-        let legacyAdmission = MomentShareDestinationAdmission(
-            id: legacyAdmissionID,
-            bindingSHA256: Data(repeating: 0x33, count: 32),
-            displayName: "以前のまど",
-            issuedAt: base,
-            expiresAt: expiresAt
-        )
-        let removedAdmission = MomentShareDestinationAdmission(
-            id: removedAdmissionID,
-            localWindowID: removedWindowID,
-            bindingSHA256: Data(repeating: 0x34, count: 32),
-            displayName: "削除済みのまど",
-            issuedAt: base,
-            expiresAt: expiresAt
-        )
-        let secondLegacyAdmission = MomentShareDestinationAdmission(
-            id: secondLegacyAdmissionID,
-            bindingSHA256: Data(repeating: 0x35, count: 32),
-            displayName: "別の以前のまど",
-            issuedAt: base,
-            expiresAt: expiresAt
-        )
-        let admissionCatalog = try MomentShareAdmissionCatalog(
-            destinations: [
-                firstAdmission,
-                secondAdmission,
-                legacyAdmission,
-                removedAdmission,
-            ],
-            updatedAt: base
-        ).validated()
-        let firstWindow = PrivateWindowCatalogEntry(
-            localWindowID: firstWindowID,
-            displayName: "ふたりのまど",
-            spaceID: nil,
-            credentialAccount: nil,
-            createdAt: base,
-            updatedAt: base
-        )
-        let secondWindow = PrivateWindowCatalogEntry(
-            localWindowID: secondWindowID,
-            displayName: "ふたりのまど",
-            spaceID: nil,
-            credentialAccount: nil,
-            createdAt: base,
-            updatedAt: base
-        )
-        let multiWindowCatalog = try PrivateWindowCatalogState(
-            activeWindowID: secondWindowID,
-            windows: [firstWindow, secondWindow],
-            pendingLegacyMigrationWindowID: nil
-        ).validated()
-        let eligible = try MomentShareHandoffStore.extensionEligibleAdmissions(
-            catalog: admissionCatalog,
-            windowCatalog: multiWindowCatalog,
-            now: base.addingTimeInterval(1)
-        )
-        let expectedIDs = [firstAdmissionID, secondAdmissionID].sorted {
-            $0.uuidString < $1.uuidString
-        }
-        guard eligible.map(\.id) == expectedIDs,
-              eligible.contains(where: { $0.localWindowID == firstWindowID }),
-              eligible.contains(where: { $0.localWindowID == secondWindowID }),
-              !eligible.contains(where: { $0.id == legacyAdmissionID }),
-              !eligible.contains(where: { $0.id == removedAdmissionID })
-        else { throw MomentSharingError.stateUnavailable }
-
-        let singleWindowCatalog = try PrivateWindowCatalogState(
-            activeWindowID: firstWindowID,
-            windows: [firstWindow],
-            pendingLegacyMigrationWindowID: nil
-        ).validated()
-        let legacyOnlyCatalog = try MomentShareAdmissionCatalog(
-            destinations: [legacyAdmission],
-            updatedAt: base
-        ).validated()
-        guard try MomentShareHandoffStore.extensionEligibleAdmissions(
-            catalog: legacyOnlyCatalog,
-            windowCatalog: singleWindowCatalog,
-            now: base.addingTimeInterval(1)
-        ).map(\.id) == [legacyAdmissionID],
-        try MomentShareHandoffStore.extensionEligibleAdmissions(
-            catalog: legacyOnlyCatalog,
-            windowCatalog: multiWindowCatalog,
-            now: base.addingTimeInterval(1)
-        ).isEmpty,
-        try MomentShareHandoffStore.extensionEligibleAdmissions(
-            catalog: admissionCatalog,
-            windowCatalog: multiWindowCatalog,
-            now: expiresAt
-        ).isEmpty
-        else { throw MomentSharingError.stateUnavailable }
-
-        let ambiguousLegacyCatalog = try MomentShareAdmissionCatalog(
-            destinations: [legacyAdmission, secondLegacyAdmission],
-            updatedAt: base
-        ).validated()
-        let rejectedAmbiguousLegacy: Bool
-        do {
-            _ = try MomentShareHandoffStore.extensionEligibleAdmissions(
-                catalog: ambiguousLegacyCatalog,
-                windowCatalog: nil,
-                now: base.addingTimeInterval(1)
-            )
-            rejectedAmbiguousLegacy = false
-        } catch MomentSharingError.stateUnavailable {
-            // Without a catalog, two legacy admissions cannot be attributed to
-            // an exact window and must never be presented as picker choices.
-            rejectedAmbiguousLegacy = true
-        }
-        guard rejectedAmbiguousLegacy else {
-            throw MomentSharingError.stateUnavailable
-        }
-    }
 
     /// The Share Extension may only leave a bounded, short-lived canonical
     /// input. A host-issued binding change and an installation reset must
     /// remove it before any room credential or network client is involved.
-    private static func testMomentInstallBoundHandoff() async throws {
-        try testMomentDeviceIdentityResolution()
-        let initial = try PairingInstallationGuard.bootstrap()
-        _ = try PairingInstallationGuard.resetLocalSharing(
-            expectedState: initial.state,
-            lifecycleToken: initial.lifecycleToken,
-            message: nil
-        )
-        let bootstrap = try PairingInstallationGuard.bootstrap()
-        let token = bootstrap.lifecycleToken
-        let base = Date(timeIntervalSince1970: 1_800_000_000)
-        try testMomentShareExtensionDestinationAdmissionPolicy(base: base)
-        let acceptedAt = base.addingTimeInterval(-1)
-        let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
-        let privateMetadataJPEG = try momentJPEGWithSyntheticPrivateMetadata(preview.jpeg)
-        guard MomentCanonicalPreviewBuilder.runtimeSelfTestStrippingPrivateMetadata(
-            from: privateMetadataJPEG
-        ) == preview.jpeg else { throw MomentSharingError.invalidPayload }
-        do {
-            try MomentCanonicalPreviewBuilder.validateReceived(
-                privateMetadataJPEG,
-                pixelWidth: preview.pixelWidth,
-                pixelHeight: preview.pixelHeight,
-                expectedPlaintextSHA256: PairingCrypto.sha256(privateMetadataJPEG)
-            )
-            throw MomentSharingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard error == .invalidPayload else { throw error }
-        }
-
-        let firstCatalog = try MomentShareHandoffStore.publishAdmissions(
-            [MomentShareAdmissionInput(
-                bindingSHA256: Data(repeating: 0x51, count: 32),
-                displayName: "家族のまど"
-            )],
-            validating: token,
-            now: base
-        )
-        guard let firstAdmission = firstCatalog.destinations.first else {
-            throw MomentSharingError.stateUnavailable
-        }
-        let renewedAdmission = MomentShareDestinationAdmission(
-            id: firstAdmission.id,
-            bindingSHA256: firstAdmission.bindingSHA256,
-            displayName: firstAdmission.displayName,
-            issuedAt: base,
-            expiresAt: base.addingTimeInterval(
-                60 + MomentShareHandoffStore.admissionLifetime
-            )
-        )
-        let renewedCatalog = try MomentShareAdmissionCatalog(
-            destinations: [renewedAdmission],
-            updatedAt: base.addingTimeInterval(60)
-        ).validated()
-        guard renewedCatalog.isCurrent(at: base.addingTimeInterval(60)),
-              !renewedCatalog.isCurrent(
-                  at: base.addingTimeInterval(
-                    -MomentShareHandoffStore.maximumLocalClockSkew - 1
-                  )
-              )
-        else { throw MomentSharingError.stateUnavailable }
-        do {
-            _ = try MomentShareAdmissionCatalog(
-                destinations: [MomentShareDestinationAdmission(
-                    id: firstAdmission.id,
-                    bindingSHA256: firstAdmission.bindingSHA256,
-                    displayName: firstAdmission.displayName,
-                    issuedAt: base,
-                    expiresAt: base.addingTimeInterval(
-                        MomentShareHandoffStore.admissionLifetime + 61
-                    )
-                )],
-                updatedAt: base.addingTimeInterval(60)
-            ).validated()
-            throw MomentSharingError.stateUnavailable
-        } catch MomentSharingError.stateUnavailable {
-            // A catalog deadline is bounded by its latest host renewal.
-        }
-
-        var staged: [MomentPendingCaptureRecord] = []
-        for offset in 0..<MomentShareHandoffStore.maximumPendingCaptureCount {
-            let record = try MomentShareHandoffStore.stageCapture(
-                admissionID: firstAdmission.id,
-                canonicalJPEG: preview.jpeg,
-                capturedAt: nil,
-                pixelWidth: preview.pixelWidth,
-                pixelHeight: preview.pixelHeight,
-                senderPolicyVersion: 1,
-                senderPolicyAcceptedAt: acceptedAt,
-                now: base.addingTimeInterval(TimeInterval(offset))
-            )
-            guard MomentShareHandoffStore.captureHasRequiredProtection(record) else {
-                throw MomentSharingError.stateUnavailable
-            }
-            staged.append(record)
-        }
-        guard staged.count == MomentShareHandoffStore.maximumPendingCaptureCount else {
-            throw MomentSharingError.stateUnavailable
-        }
-
-        // A presentation-only rename must retain the admission identity and
-        // every staged capture. Only a pairing binding change may revoke them.
-        let renamedCatalog = try MomentShareHandoffStore.publishAdmissions(
-            [MomentShareAdmissionInput(
-                bindingSHA256: firstAdmission.bindingSHA256,
-                displayName: "しずくのまど"
-            )],
-            validating: token,
-            now: base.addingTimeInterval(5)
-        )
-        guard let renamedAdmission = renamedCatalog.destinations.first,
-              renamedAdmission.id == firstAdmission.id,
-              renamedAdmission.displayName == "しずくのまど",
-              try MomentShareHandoffStore.nextPendingCapture(
-                  admissionID: renamedAdmission.id,
-                  validating: token,
-                  now: base.addingTimeInterval(5)
-              ) != nil
-        else { throw MomentSharingError.stateUnavailable }
-        do {
-            _ = try MomentShareHandoffStore.stageCapture(
-                admissionID: firstAdmission.id,
-                canonicalJPEG: preview.jpeg,
-                capturedAt: nil,
-                pixelWidth: preview.pixelWidth,
-                pixelHeight: preview.pixelHeight,
-                senderPolicyVersion: 1,
-                senderPolicyAcceptedAt: acceptedAt,
-                now: base.addingTimeInterval(4)
-            )
-            throw MomentSharingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard error == .outboxFull else { throw error }
-        }
-
-        // A different current installation/pairing binding keeps no capture
-        // admitted by the previous one.
-        let secondCatalog = try MomentShareHandoffStore.publishAdmissions(
-            [MomentShareAdmissionInput(
-                bindingSHA256: Data(repeating: 0x52, count: 32),
-                displayName: "家族のまど"
-            )],
-            validating: token,
-            now: base.addingTimeInterval(10)
-        )
-        guard let secondAdmission = secondCatalog.destinations.first,
-              secondAdmission.id != firstAdmission.id,
-              try MomentShareHandoffStore.nextPendingCapture(
-                  admissionID: firstAdmission.id,
-                  validating: token,
-                  now: base.addingTimeInterval(10)
-              ) == nil
-        else { throw MomentSharingError.stateUnavailable }
-
-        let pending = try MomentShareHandoffStore.stageCapture(
-            admissionID: secondAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(11)
-        )
-        let overlongCapture = MomentPendingCaptureRecord(
-            id: pending.id,
-            clientRequestID: pending.clientRequestID,
-            admissionID: pending.admissionID,
-            kind: pending.kind,
-            canonicalJPEG: pending.canonicalJPEG,
-            canonicalJPEGSize: pending.canonicalJPEGSize,
-            canonicalJPEGSHA256: pending.canonicalJPEGSHA256,
-            pixelWidth: pending.pixelWidth,
-            pixelHeight: pending.pixelHeight,
-            capturedAt: pending.capturedAt,
-            captureDateIsMissing: pending.captureDateIsMissing,
-            requiredHostModerationVersion: pending.requiredHostModerationVersion,
-            requiresHostModeration: pending.requiresHostModeration,
-            senderPolicyVersion: pending.senderPolicyVersion,
-            senderPolicyAcceptedAt: pending.senderPolicyAcceptedAt,
-            createdAt: pending.createdAt,
-            expiresAt: pending.createdAt.addingTimeInterval(
-                MomentShareHandoffStore.captureLifetime + 1
-            ),
-            updatedAt: pending.updatedAt,
-            phase: pending.phase,
-            claimID: pending.claimID,
-            claimedAt: pending.claimedAt,
-            nextRetryAt: pending.nextRetryAt,
-            lastErrorCode: pending.lastErrorCode
-        )
-        do {
-            _ = try overlongCapture.validated()
-            throw MomentSharingError.stateUnavailable
-        } catch MomentSharingError.stateUnavailable {
-            // App Group bytes cannot grant plaintext retention beyond one hour.
-        }
-        guard let claim = try MomentShareHandoffStore.claimCapture(
-            pending,
-            validating: token,
-            now: base.addingTimeInterval(12)
-        ), try MomentShareHandoffStore.claimCapture(
-            pending,
-            validating: token,
-            now: base.addingTimeInterval(12)
-        ) == nil,
-        try MomentShareHandoffStore.nextPendingCapture(
-            admissionID: secondAdmission.id,
-            validating: token,
-            now: base.addingTimeInterval(13)
-        ) == nil
-        else { throw MomentSharingError.stateUnavailable }
-
-        let recoveredAt = base.addingTimeInterval(
-            12 + MomentShareHandoffStore.claimRecoveryInterval
-        )
-        guard let recovered = try MomentShareHandoffStore.nextPendingCapture(
-            admissionID: secondAdmission.id,
-            validating: token,
-            now: recoveredAt
-        ), recovered.id == claim.record.id, recovered.phase == .pending else {
-            throw MomentSharingError.stateUnavailable
-        }
-
-        let expiredReadAt = base.addingTimeInterval(
-            MomentShareHandoffStore.captureLifetime + 12
-        )
-        _ = try MomentShareHandoffStore.activeAdmissions(now: expiredReadAt)
-        guard !MomentShareHandoffStore.captureExists(recovered) else {
-            throw MomentSharingError.stateUnavailable
-        }
-        let expiredPresentation = try MomentShareHandoffStore.presentationSnapshot(
-            now: expiredReadAt
-        )
-        guard expiredPresentation.statuses.isEmpty,
-              expiredPresentation.terminalOutcomes.count == 1,
-              expiredPresentation.terminalOutcomes[0].reason == .preparationExpired,
-              expiredPresentation.terminalOutcomes[0].createdAt == recovered.expiresAt
-        else { throw MomentSharingError.stateUnavailable }
-        guard try MomentShareHandoffStore.nextPendingCapture(
-            admissionID: secondAdmission.id,
-            validating: token,
-            now: expiredReadAt
-        ) == nil else { throw MomentSharingError.stateUnavailable }
-
-        try MomentShareHandoffStore.clearTerminalOutcomes(validating: token)
-        guard try MomentShareHandoffStore.presentationSnapshot(
-            now: expiredReadAt
-        ).terminalOutcomes.isEmpty else {
-            throw MomentSharingError.stateUnavailable
-        }
-
-        let releaseExpired = try MomentShareHandoffStore.stageCapture(
-            admissionID: secondAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(3_650)
-        )
-        guard let releaseExpiredClaim = try MomentShareHandoffStore.claimCapture(
-            releaseExpired,
-            validating: token,
-            now: base.addingTimeInterval(3_651)
-        ) else { throw MomentSharingError.stateUnavailable }
-        try MomentShareHandoffStore.releaseCapture(
-            releaseExpiredClaim,
-            retryAt: releaseExpired.expiresAt,
-            errorCode: "moderation-unavailable",
-            validating: token,
-            now: base.addingTimeInterval(3_652)
-        )
-        let releaseExpiredPresentation = try MomentShareHandoffStore.presentationSnapshot(
-            now: base.addingTimeInterval(3_652)
-        )
-        guard !MomentShareHandoffStore.captureExists(releaseExpired),
-              releaseExpiredPresentation.statuses.isEmpty,
-              releaseExpiredPresentation.terminalOutcomes.count == 1,
-              releaseExpiredPresentation.terminalOutcomes[0].reason == .preparationExpired,
-              releaseExpiredPresentation.terminalOutcomes[0].createdAt
-                == base.addingTimeInterval(3_652)
-        else { throw MomentSharingError.stateUnavailable }
-        try MomentShareHandoffStore.clearTerminalOutcomes(validating: token)
-
-        let failedPreparation = try MomentShareHandoffStore.stageCapture(
-            admissionID: secondAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(3_660)
-        )
-        guard let failedPreparationClaim = try MomentShareHandoffStore.claimCapture(
-            failedPreparation,
-            validating: token,
-            now: base.addingTimeInterval(3_661)
-        ) else { throw MomentSharingError.stateUnavailable }
-        try MomentShareHandoffStore.discardCapture(
-            failedPreparationClaim,
-            recording: .preparationFailed,
-            validating: token,
-            now: base.addingTimeInterval(3_662)
-        )
-        let failedPreparationPresentation = try MomentShareHandoffStore
-            .presentationSnapshot(now: base.addingTimeInterval(3_662))
-        guard !MomentShareHandoffStore.captureExists(failedPreparation),
-              failedPreparationPresentation.statuses.isEmpty,
-              failedPreparationPresentation.terminalOutcomes.count == 1,
-              failedPreparationPresentation.terminalOutcomes[0].reason
-                == .preparationFailed
-        else { throw MomentSharingError.stateUnavailable }
-        try MomentShareHandoffStore.clearTerminalOutcomes(validating: token)
-
-        let cancelPending = try MomentShareHandoffStore.stageCapture(
-            admissionID: secondAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(3_700)
-        )
-        let cancelProcessing = try MomentShareHandoffStore.stageCapture(
-            admissionID: secondAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(3_701)
-        )
-        guard let cancelledClaim = try MomentShareHandoffStore.claimCapture(
-            cancelProcessing,
-            validating: token,
-            now: base.addingTimeInterval(3_702)
-        ) else { throw MomentSharingError.stateUnavailable }
-        let cancellationPresentation = try MomentShareHandoffStore.presentationSnapshot(
-            now: base.addingTimeInterval(3_703)
-        )
-        let discardedPreparationCount = try MomentShareHandoffStore
-            .discardCancellableCaptures(validating: token)
-        let cancelledClaimRemains = try MomentShareHandoffStore.isCurrentClaim(
-            cancelledClaim,
-            validating: token,
-            now: base.addingTimeInterval(3_704)
-        )
-        guard cancellationPresentation.statuses.count == 2,
-              cancellationPresentation.statuses.allSatisfy(\.isCancellable),
-              discardedPreparationCount == 2,
-              !MomentShareHandoffStore.captureExists(cancelPending),
-              !MomentShareHandoffStore.captureExists(cancelProcessing),
-              !cancelledClaimRemains
-        else { throw MomentSharingError.stateUnavailable }
-
-        let reconcileRecord = try MomentShareHandoffStore.stageCapture(
-            admissionID: secondAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(2 * 60 * 60),
-            caption: "  写真に結び付いたひとこと\r\n再試行でも同じ  "
-        )
-        let spaceID = opaque(0x61)
-        let memberID = opaque(0x62)
-        let replacementDeviceID = opaque(0x64)
-        let context = MomentRequestContext(
-            spaceID: spaceID,
-            senderParticipantID: memberID,
-            senderDeviceID: memberID,
-            clientRequestID: reconcileRecord.clientRequestID,
-            clientMomentID: reconcileRecord.id,
-            kind: .live,
-            keyEpoch: 1
-        )
-        let payload = try MomentCrypto.prepare(
-            canonicalJPEG: reconcileRecord.canonicalJPEG,
-            capturedAt: reconcileRecord.capturedAt,
-            pixelWidth: reconcileRecord.pixelWidth,
-            pixelHeight: reconcileRecord.pixelHeight,
-            context: context,
-            spaceGenerationKey: Data(repeating: 0x63, count: 32),
-            caption: reconcileRecord.caption
-        )
-        let durable = try MomentSharingStateStore.enqueue(
-            payload: payload,
-            senderPolicyVersion: reconcileRecord.senderPolicyVersion,
-            senderPolicyAcceptedAt: reconcileRecord.senderPolicyAcceptedAt,
-            localCaption: reconcileRecord.caption,
-            validating: token,
-            now: base.addingTimeInterval(2 * 60 * 60)
-        )
-        guard let reconcileClaim = try MomentShareHandoffStore.claimCapture(
-            reconcileRecord,
-            validating: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 1)
-        ) else { throw MomentSharingError.stateUnavailable }
-        guard reconcileClaim.record.caption == "写真に結び付いたひとこと\n再試行でも同じ",
-              durable.localCaption == reconcileClaim.record.caption
-        else { throw MomentSharingError.stateUnavailable }
-        var changedCaptionRecord = reconcileClaim.record
-        changedCaptionRecord.caption = "別のひとこと"
-        let changedCaptionClaim = MomentPendingCaptureClaim(
-            record: changedCaptionRecord, claimID: reconcileClaim.claimID
-        )
-        var promotedChangedCaption = false
-        do {
-            try MomentShareHandoffStore.promoteCapture(
-                changedCaptionClaim, validating: token,
-                now: base.addingTimeInterval(2 * 60 * 60 + 2)
-            ) { _ in promotedChangedCaption = true }
-            throw MomentSharingError.invalidPayload
-        } catch MomentSharingError.stateUnavailable {}
-        guard !promotedChangedCaption else { throw MomentSharingError.invalidPayload }
-        let durableBytes = try JSONEncoder().encode(durable)
-        let durableRoundTrip = try JSONDecoder().decode(MomentOutboxItem.self, from: durableBytes)
-        guard durableRoundTrip.localCaption == durable.localCaption else {
-            throw MomentSharingError.stateUnavailable
-        }
-        guard var legacyOutboxJSON = try JSONSerialization.jsonObject(with: durableBytes) as? [String: Any]
-        else { throw MomentSharingError.stateUnavailable }
-        legacyOutboxJSON.removeValue(forKey: "localCaption")
-        let legacyOutbox = try JSONDecoder().decode(MomentOutboxItem.self,
-            from: JSONSerialization.data(withJSONObject: legacyOutboxJSON))
-        guard legacyOutbox.localCaption == nil,
-              legacyOutbox.ciphertextSHA256 == durable.ciphertextSHA256
-        else { throw MomentSharingError.stateUnavailable }
-        let reconciled = try MomentShareHandoffStore.promoteCapture(
-            reconcileClaim,
-            validating: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 2)
-        ) { record in
-            guard let existing = try MomentSharingStateStore
-                .existingOutboxWhileLifecycleLocked(
-                    clientMomentID: record.id,
-                    clientRequestID: record.clientRequestID,
-                    spaceID: spaceID,
-                    senderParticipantID: memberID,
-                    senderDeviceID: replacementDeviceID,
-                    legacySenderDeviceID: memberID,
-                    kind: record.kind,
-                    keyEpoch: 1,
-                    senderPolicyVersion: record.senderPolicyVersion,
-                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt,
-                    localCaption: record.caption
-                ) else { throw MomentSharingError.stateUnavailable }
-            return existing
-        }
-        guard reconciled.id == durable.id,
-              reconciled.localCaption == durable.localCaption,
-              reconciled.ciphertextSHA256 == durable.ciphertextSHA256,
-              try MomentShareHandoffStore.nextPendingCapture(
-                  admissionID: secondAdmission.id,
-                  validating: token,
-                  now: base.addingTimeInterval(2 * 60 * 60 + 2)
-              ) == nil
-        else { throw MomentSharingError.stateUnavailable }
-
-        let blockedRecord = try MomentShareHandoffStore.stageCapture(
-            admissionID: secondAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(2 * 60 * 60 + 3)
-        )
-        guard let blockedClaim = try MomentShareHandoffStore.claimCapture(
-            blockedRecord,
-            validating: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 4)
-        ) else { throw MomentSharingError.stateUnavailable }
-        let reportOnlyUntil = base.addingTimeInterval(3 * 60 * 60)
-        try MomentSharingStateStore.enterReportOnlyMode(
-            until: reportOnlyUntil,
-            validating: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 5)
-        )
-        do {
-            _ = try MomentShareHandoffStore.promoteCapture(
-                blockedClaim,
-                validating: token,
-                now: base.addingTimeInterval(2 * 60 * 60 + 6)
-            ) { record in
-                try MomentSharingStateStore.enqueueWhileLifecycleLocked(
-                    payload: try MomentCrypto.prepare(
-                        canonicalJPEG: record.canonicalJPEG,
-                        capturedAt: record.capturedAt,
-                        pixelWidth: record.pixelWidth,
-                        pixelHeight: record.pixelHeight,
-                        context: MomentRequestContext(
-                            spaceID: spaceID,
-                            senderParticipantID: memberID,
-                            senderDeviceID: memberID,
-                            clientRequestID: record.clientRequestID,
-                            clientMomentID: record.id,
-                            kind: record.kind,
-                            keyEpoch: 1
-                        ),
-                        spaceGenerationKey: Data(repeating: 0x63, count: 32)
-                    ),
-                    senderPolicyVersion: record.senderPolicyVersion,
-                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt
-                )
-            }
-            throw MomentSharingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard case let .reportOnly(until) = error,
-                  until == reportOnlyUntil
-            else { throw error }
-        }
-
-        let longInactiveAt = blockedRecord.expiresAt.addingTimeInterval(
-            MomentShareHandoffStore.terminalOutcomeLifetime + 1
-        )
-        _ = try MomentShareHandoffStore.activeAdmissions(now: longInactiveAt)
-        let longInactivePresentation = try MomentShareHandoffStore.presentationSnapshot(
-            now: longInactiveAt
-        )
-        guard !MomentShareHandoffStore.captureExists(blockedRecord),
-              longInactivePresentation.statuses.isEmpty,
-              longInactivePresentation.terminalOutcomes.isEmpty
-        else { throw MomentSharingError.stateUnavailable }
-
-        // Pairing-only keeps its room authorization while physically removing
-        // any admission and staged canonical plaintext from a media build.
-        // The fully-disabled upgrade boundary is exercised separately with a
-        // real paired credential and complete sharing cache below.
-        let pairingOnlyConfiguration = SharingAPIConfiguration(
-            isEnabled: true,
-            isMediaEnabled: false,
-            isShareExtensionHandoffEnabled: false,
-            isShareExtensionSendEnabled: false,
-            isReviewPreviewEnabled: false,
-            baseURL: URL(string: "https://example.com")!,
-            moderationKeyID: nil,
-            moderationPublicKey: nil,
-            supportURL: nil,
-            communityStandardsURL: nil,
-            releaseMode: "pairing-only"
-        )
-        let pairingOnlyCoordinator = MomentSharingCoordinator(
-            configuration: pairingOnlyConfiguration
-        )
-        let moderationDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "NekoWidgetMomentHandoffModeration",
-                isDirectory: true
-            )
-        try FileManager.default.createDirectory(
-            at: moderationDirectory,
-            withIntermediateDirectories: true
-        )
-        let rollbackResidue = moderationDirectory.appendingPathComponent(
-            ".handoff-runtime-disabled.jpg",
-            isDirectory: false
-        )
-        try Data([0x52]).write(to: rollbackResidue)
-        let inboundModerationDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "NekoWidgetMomentInboundModeration",
-                isDirectory: true
-            )
-        try FileManager.default.createDirectory(
-            at: inboundModerationDirectory,
-            withIntermediateDirectories: true
-        )
-        let inboundRollbackResidue = inboundModerationDirectory
-            .appendingPathComponent(
-                ".inbound-runtime-disabled.jpg",
-                isDirectory: false
-            )
-        try Data([0x54]).write(to: inboundRollbackResidue)
-        await pairingOnlyCoordinator.synchronize(trigger: "runtime-pairing-only")
-        guard try MomentShareHandoffStore.activeAdmissions(
-            now: base.addingTimeInterval(2 * 60 * 60)
-        ).isEmpty,
-        SharedContainer.momentShareHandoffDirectoryURL.map({
-            !FileManager.default.fileExists(atPath: $0.path)
-        }) == true,
-        !FileManager.default.fileExists(atPath: rollbackResidue.path),
-        !FileManager.default.fileExists(atPath: inboundRollbackResidue.path)
-        else { throw MomentSharingError.stateUnavailable }
-
-        // Recreate a local-only handoff to independently verify that the
-        // installation reset also removes the whole subtree.
-        let resetCatalog = try MomentShareHandoffStore.publishAdmissions(
-            [MomentShareAdmissionInput(
-                bindingSHA256: Data(repeating: 0x53, count: 32),
-                displayName: "家族のまど"
-            )],
-            validating: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 7)
-        )
-        guard let resetAdmission = resetCatalog.destinations.first else {
-            throw MomentSharingError.stateUnavailable
-        }
-        _ = try MomentShareHandoffStore.stageCapture(
-            admissionID: resetAdmission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(2 * 60 * 60 + 8)
-        )
-        try FileManager.default.createDirectory(
-            at: moderationDirectory,
-            withIntermediateDirectories: true
-        )
-        let resetResidue = moderationDirectory.appendingPathComponent(
-            ".handoff-installation-reset.jpg",
-            isDirectory: false
-        )
-        try Data([0x53]).write(to: resetResidue)
-        try FileManager.default.createDirectory(
-            at: inboundModerationDirectory,
-            withIntermediateDirectories: true
-        )
-        let inboundResetResidue = inboundModerationDirectory
-            .appendingPathComponent(
-                ".inbound-installation-reset.jpg",
-                isDirectory: false
-            )
-        try Data([0x55]).write(to: inboundResetResidue)
-        let reportOnlyMarkerUntil = base.addingTimeInterval(3 * 60 * 60 + 30)
-        try MomentShareHandoffProcessor().enterReportOnlyMode(
-            until: reportOnlyMarkerUntil,
-            lifecycleToken: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 10)
-        )
-        guard try MomentShareHandoffStore.reportOnlyHandoffDeadline(
-            validating: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 11)
-        ) == reportOnlyMarkerUntil,
-        try MomentShareHandoffStore.activeAdmissions(
-            now: base.addingTimeInterval(2 * 60 * 60 + 11)
-        ).isEmpty,
-        !FileManager.default.fileExists(atPath: resetResidue.path)
-        else { throw MomentSharingError.stateUnavailable }
-
-        // Corrupt marker bytes must keep the Extension fail-closed while the
-        // host recovers a fixed deadline from the protected inode. The anchor
-        // can never grant more than one local report-only window.
-        guard let reportOnlyMarkerURL = SharedContainer
-            .momentShareHandoffReportOnlyMarkerURL
-        else { throw MomentSharingError.stateUnavailable }
-        let markerWriteStartedAt = Date()
-        try SharingSecureFile.write(Data([0x00]), to: reportOnlyMarkerURL)
-        let markerWriteFinishedAt = Date()
-        do {
-            _ = try MomentShareHandoffStore.reportOnlyHandoffDeadline(
-                validating: token,
-                now: markerWriteFinishedAt
-            )
-            throw MomentSharingError.stateUnavailable
-        } catch MomentSharingError.stateUnavailable {
-            // The payload is intentionally malformed; existence remains the
-            // Extension authority while the host uses the bounded anchor.
-        }
-        let markerRecoveryNow = markerWriteFinishedAt.addingTimeInterval(1)
-        let recoveredMarkerUntil = try MomentShareHandoffStore
-            .reportOnlyHandoffRecoveryDeadline(
-                validating: token,
-                now: markerRecoveryNow
-            )
-        guard let recoveredMarkerUntil,
-              recoveredMarkerUntil >= markerWriteStartedAt.addingTimeInterval(
-                  MomentSharingProtocol.maximumReportOnlyWindowSeconds - 2
-              ),
-              recoveredMarkerUntil <= markerWriteFinishedAt.addingTimeInterval(
-                  MomentSharingProtocol.maximumReportOnlyWindowSeconds + 2
-              )
-        else { throw MomentSharingError.stateUnavailable }
-        try MomentShareHandoffProcessor().establishReportOnlyHandoffGate(
-            until: recoveredMarkerUntil,
-            lifecycleToken: token,
-            now: markerRecoveryNow
-        )
-        do {
-            _ = try MomentShareHandoffStore.publishAdmissions(
-                [MomentShareAdmissionInput(
-                    bindingSHA256: Data(repeating: 0x54, count: 32),
-                    displayName: "家族のまど"
-                )],
-                validating: token,
-                now: base.addingTimeInterval(2 * 60 * 60 + 12)
-            )
-            throw MomentSharingError.stateUnavailable
-        } catch MomentSharingError.invalidPayload {
-            // The report-only marker is cleared only by a full pairing reset.
-        }
-        _ = try PairingInstallationGuard.resetLocalSharing(
-            expectedState: bootstrap.state,
-            lifecycleToken: token,
-            message: nil
-        )
-        guard try MomentShareHandoffStore.activeAdmissions(
-            now: base.addingTimeInterval(2 * 60 * 60)
-        ).isEmpty,
-        SharedContainer.momentShareHandoffDirectoryURL.map({
-            !FileManager.default.fileExists(atPath: $0.path)
-        }) == true,
-        !FileManager.default.fileExists(atPath: moderationDirectory.path),
-        !FileManager.default.fileExists(atPath: inboundModerationDirectory.path),
-        SharedContainer.momentShareHandoffReportOnlyMarkerURL.map({
-            !FileManager.default.fileExists(atPath: $0.path)
-        }) == true
-        else { throw MomentSharingError.stateUnavailable }
-    }
 
     /// Real Keychain and window cleanup, including a committed block whose
     /// response never reached the app. No relay or personal-photo access.
@@ -3789,7 +2114,7 @@ actor SharingRuntimeSelfTestRunner {
             expected: creating,
             lifecycleToken: lifecycleToken
         )
-        try await testMomentSentPreviewThroughHandoff(
+        try await testRetainedSentPhotoStorage(
             pairing: paired,
             credential: credential,
             lifecycleToken: lifecycleToken
@@ -3855,17 +2180,9 @@ actor SharingRuntimeSelfTestRunner {
             communityStandardsURL: nil,
             releaseMode: "pairing-only"
         )
-        let unavailablePairingOnlyCoordinator = MomentSharingCoordinator(
-            configuration: unavailablePairingOnlyConfiguration
-        )
         guard !unavailablePairingOnlyConfiguration.isAvailable,
               !unavailablePairingOnlyConfiguration.requiresLocalSharingPurge
         else { throw MomentSharingError.stateUnavailable }
-        await unavailablePairingOnlyCoordinator.synchronize(
-            trigger: "runtime-pairing-only-unavailable"
-        )
-        let pairingOnlyNetworkConstructionCount = await unavailablePairingOnlyCoordinator
-            .runtimeNetworkClientConstructions()
         guard (try PairingStateStore.load())?.phase == .paired,
               try PairingKeychainStore.load(
                   account: credential.account,
@@ -3875,7 +2192,6 @@ actor SharingRuntimeSelfTestRunner {
                   account: orphanCredential.account,
                   installationMarker: paired.installationMarker
               ) == orphanCredential,
-              pairingOnlyNetworkConstructionCount == 0,
               FileManager.default.fileExists(atPath: familyWidgetManifestURL.path),
               FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path)
         else { throw MomentSharingError.stateUnavailable }
@@ -3893,23 +2209,14 @@ actor SharingRuntimeSelfTestRunner {
             communityStandardsURL: nil,
             releaseMode: "review-preview"
         )
-        let reviewPreviewCoordinator = MomentSharingCoordinator(
-            configuration: reviewPreviewConfiguration
-        )
         guard !reviewPreviewConfiguration.isAvailable,
               !reviewPreviewConfiguration.requiresLocalSharingPurge
         else { throw MomentSharingError.stateUnavailable }
-        await reviewPreviewCoordinator.synchronize(
-            trigger: "runtime-review-preview-preserve"
-        )
-        let reviewPreviewNetworkConstructionCount = await reviewPreviewCoordinator
-            .runtimeNetworkClientConstructions()
         guard (try PairingStateStore.load())?.phase == .paired,
               try PairingKeychainStore.load(
                   account: credential.account,
                   installationMarker: paired.installationMarker
               ) == credential,
-              reviewPreviewNetworkConstructionCount == 0,
               FileManager.default.fileExists(atPath: familyWidgetManifestURL.path),
               FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path)
         else { throw MomentSharingError.stateUnavailable }
@@ -4087,16 +2394,12 @@ actor SharingRuntimeSelfTestRunner {
         guard disabledConfiguration.isAvailable,
               disabledConfiguration.requiresLocalSharingPurge
         else { throw MomentSharingError.stateUnavailable }
-        let coordinator = MomentSharingCoordinator(configuration: disabledConfiguration)
-        await coordinator.synchronize(trigger: "runtime-disabled-upgrade")
-        let firstNetworkConstructionCount = await coordinator
-            .runtimeNetworkClientConstructions()
+        _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
 
         guard let reset = try PairingStateStore.load(),
               reset.phase == .unpaired,
               reset.credentialAccount == nil,
               !SharingLifecycleGate.isCleanupRequired,
-              firstNetworkConstructionCount == 0,
               SharedContainer.momentSharingStateURL.map({
                   !FileManager.default.fileExists(atPath: $0.path)
               }) == true,
@@ -4133,12 +2436,9 @@ actor SharingRuntimeSelfTestRunner {
             }
         }
 
-        await coordinator.synchronize(trigger: "runtime-disabled-idempotent")
-        let secondNetworkConstructionCount = await coordinator
-            .runtimeNetworkClientConstructions()
+        _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
         guard (try PairingStateStore.load())?.phase == .unpaired,
               !SharingLifecycleGate.isCleanupRequired,
-              secondNetworkConstructionCount == 0,
               personalSentinels.allSatisfy({
                   (try? Data(contentsOf: $0)) == personalSentinelData
               })
@@ -4666,7 +2966,7 @@ actor SharingRuntimeSelfTestRunner {
         privateJPEG.append(privateMarker)
         privateJPEG.append(fixtureJPEG.dropFirst(2))
         guard privateJPEG.range(of: privateMarker) != nil,
-              let historyThumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+              let historyThumbnail = Self.retainedPhotoThumbnail(
                 from: privateJPEG
               ),
               historyThumbnail.count <= MomentOutboxItem.maximumLocalThumbnailBytes,
@@ -5039,147 +3339,8 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
     }
 
-    private static func testWidgetHeartBackgroundSend() async throws {
-        try clearMomentSharingFixture()
-        defer { try? clearMomentSharingFixture() }
-        let token = try SharingLifecycleGate.issueToken()
-        let now = Date()
-        func incoming(_ id: String, until: Date) throws -> MomentInboxItem {
-            try MomentInboxItem(id: id, senderParticipantID: "member_widget_heart_sender",
-                kind: .live, keyEpoch: 1, localJPEGFileName: "\(id).jpg",
-                capturedAt: nil, captureDateIsMissing: true, committedAt: now.addingTimeInterval(-60),
-                receivedAt: now.addingTimeInterval(-60), state: .available, accessExpiresAt: until).validated()
-        }
-        let target = try incoming("moment_widget_heart_target", until: now.addingTimeInterval(3_600))
-        let other = try incoming("moment_widget_heart_other", until: now.addingTimeInterval(3_600))
-        for item in [target, other] {
-            _ = try MomentSharingStateStore.publishReceivedJPEG(item,
-                jpeg: Data([0xff, 0xd8, 0xff, 0xd9]), validating: token)
-        }
-        let queued = try MomentSharingStateStore.queuePaw(momentID: target.id, validating: token)
-        let unrelated = try MomentSharingStateStore.queuePaw(momentID: other.id, validating: token)
-        var pairing = PairingState.unpaired(installationMarker: UUID().uuidString.lowercased())
-        pairing.phase = .paired
-        pairing.spaceID = "space_widget_heart_fixture"
-        pairing.memberID = "member_widget_heart_receiver"
-        let credential = PairingCredential(installationMarker: pairing.installationMarker,
-            account: UUID().uuidString.lowercased(), participantID: Data(repeating: 0x72, count: 16),
-            agreementPrivateKey: Data(repeating: 0x73, count: 32),
-            signingPrivateKey: Data(repeating: 0x74, count: 32),
-            roomKey: Data(repeating: 0x75, count: 32), enrollmentSecret: nil)
-        let api = RuntimeWidgetHeartAPI()
-        let coordinator = MomentSharingCoordinator()
-        for (host, unlocked) in [(false, true), (true, false)] {
-            let sent = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
-                pairing: pairing, credential: credential, momentID: target.id,
-                clientRequestID: queued.clientRequestID, lifecycleToken: token,
-                isHostProcess: host, protectedDataAvailable: unlocked)
-            guard !sent, await api.recordedRequests().isEmpty,
-                  try MomentSharingStateStore.load().pawOutbox.first?.phase == .pending
-            else { throw MomentSharingError.stateUnavailable }
-        }
-        do {
-            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
-                pairing: pairing, credential: credential, momentID: target.id,
-                clientRequestID: queued.clientRequestID, lifecycleToken: token)
-            throw MomentSharingError.stateUnavailable
-        } catch let error as URLError where error.code == .notConnectedToInternet {}
-        let afterFailure = try MomentSharingStateStore.load()
-        guard afterFailure.pawOutbox.first(where: { $0.id == queued.id })?.phase == .committing,
-              afterFailure.pawOutbox.first(where: { $0.id == unrelated.id })?.phase == .pending
-        else { throw MomentSharingError.stateUnavailable }
-        guard try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
-            pairing: pairing, credential: credential, momentID: target.id,
-            clientRequestID: queued.clientRequestID, lifecycleToken: token)
-        else { throw MomentSharingError.stateUnavailable }
-        let calls = await api.recordedRequests()
-        let accepted = try MomentSharingStateStore.load().pawOutbox
-        guard calls.count == 2,
-              calls.allSatisfy({ $0.0 == target.id && $0.1 == queued.clientRequestID }),
-              accepted.first(where: { $0.id == queued.id })?.phase == .sent,
-              accepted.first(where: { $0.id == unrelated.id })?.phase == .pending,
-              try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
-                pairing: pairing, credential: credential, momentID: target.id,
-                clientRequestID: queued.clientRequestID, lifecycleToken: token),
-              await api.recordedRequests().count == 2
-        else { throw MomentSharingError.stateUnavailable }
-        // The correct request paired with a different photo must not send.
-        do {
-            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
-                pairing: pairing, credential: credential, momentID: other.id,
-                clientRequestID: queued.clientRequestID, lifecycleToken: token)
-            throw DailySharingError.stateUnavailable
-        } catch MomentSharingError.stateUnavailable {}
-        // Losing an outbox request must never create a replacement on retry.
-        do {
-            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
-                pairing: pairing, credential: credential, momentID: other.id,
-                clientRequestID: UUID(), lifecycleToken: token)
-            throw DailySharingError.stateUnavailable
-        } catch MomentSharingError.stateUnavailable {}
-        guard try MomentSharingStateStore.load().pawOutbox.count == 2 else {
-            throw MomentSharingError.stateUnavailable
-        }
-        var expired = other
-        expired.accessExpiresAt = now.addingTimeInterval(-1)
-        _ = try MomentSharingStateStore.mutate(validating: token) { state in
-            let index = state.inbox.firstIndex(where: { $0.id == other.id })!
-            state.inbox[index] = expired
-        }
-        do {
-            _ = try await coordinator.runtimeTestSendQueuedWidgetHeart(api: api,
-                pairing: pairing, credential: credential, momentID: other.id,
-                clientRequestID: unrelated.clientRequestID, lifecycleToken: token)
-            throw DailySharingError.stateUnavailable
-        } catch MomentSharingError.stateUnavailable {}
-        guard await api.recordedRequests().count == 2 else { throw MomentSharingError.stateUnavailable }
-    }
 
-    private static func testMomentEmptyCursorNormalization() throws {
-        guard try MomentChangeCursorPolicy.normalize("") == nil,
-              try MomentChangeCursorPolicy.normalize("0123456789abcdef0123456789abcdef")
-                == "0123456789abcdef0123456789abcdef"
-        else { throw MomentSharingError.stateUnavailable }
-        do {
-            _ = try MomentChangeCursorPolicy.normalize("not/a/cursor")
-            throw MomentSharingError.stateUnavailable
-        } catch MomentSharingError.invalidPayload {
-            // Expected: an invalid relay cursor must never be persisted.
-        }
-    }
 
-    private static func testMomentExpiredDeliveryPolicy() throws {
-        guard try MomentDeliveryActionPolicy.action(
-            changeType: .momentCommitted,
-            deliveryState: "pending"
-        ) == .download,
-        try MomentDeliveryActionPolicy.action(
-            changeType: .momentCommitted,
-            deliveryState: "expired"
-        ) == .revokeWithoutDownload,
-        try MomentDeliveryActionPolicy.action(
-            changeType: .deliveryRevoked,
-            deliveryState: "revoked"
-        ) == .revokeWithoutDownload
-        else { throw MomentSharingError.stateUnavailable }
-
-        let relayCommit = Date(timeIntervalSince1970: 1_700_000_060)
-        var skewedClockItem = try MomentInboxItem(
-            id: "moment_clock_skew_fixture",
-            senderParticipantID: "member_clock_skew_fixture",
-            kind: .live,
-            keyEpoch: 1,
-            localJPEGFileName: "moment_clock_skew_fixture.jpg",
-            capturedAt: nil,
-            captureDateIsMissing: true,
-            committedAt: relayCommit,
-            receivedAt: relayCommit.addingTimeInterval(-60),
-            state: .available,
-            accessExpiresAt: relayCommit.addingTimeInterval(3_600)
-        ).validated()
-        skewedClockItem.state = .revoked
-        _ = try skewedClockItem.validated()
-    }
 
     private static func testMomentInboundModerationRetryPolicy() throws {
         guard try MomentInboundModerationPolicy.inboxState(after: nil) == .available,
@@ -5212,6 +3373,133 @@ actor SharingRuntimeSelfTestRunner {
                 throw MomentSharingError.stateUnavailable
             }
         }
+    }
+
+    /// Keep production cache/decoder checks independent of the retired relay.
+    private static func testRetainedWidgetPublication() async throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let preview = try MomentCanonicalPreviewBuilder.build(
+            image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
+        )
+        let anchor = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let momentID = "retained_widget_fixture"
+        let widgetPhoto = try MomentInboxItem(
+            id: momentID, senderParticipantID: "retained_widget_sender",
+            kind: .live, keyEpoch: 1, localJPEGFileName: "\(momentID).jpg",
+            capturedAt: anchor, captureDateIsMissing: false,
+            committedAt: anchor, receivedAt: anchor, state: .acknowledged,
+            accessExpiresAt: anchor.addingTimeInterval(86_400),
+            caption: "受信した写真のひとこと"
+        ).validated()
+        _ = try MomentSharingStateStore.publishReceivedJPEG(
+            widgetPhoto, jpeg: preview.jpeg, validating: lifecycleToken)
+        // Follow the retained synthetic receipt into the production cache.
+        // A reused JPEG must still refresh optional text, including its removal.
+        let widgetBuilder = WidgetCacheBuilder()
+        let widgetFreshUntil = widgetPhoto.receivedAt.addingTimeInterval(3_600)
+        let captionedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard let widgetManifestURL = SharedContainer.familyWidgetManifestURL,
+              let widgetCacheURL = SharedContainer.familyWidgetCacheDirectoryURL,
+              let publishedPhoto = captionedWidget.item,
+              publishedPhoto.momentID == widgetPhoto.id,
+              publishedPhoto.caption == widgetPhoto.caption
+        else { throw MomentSharingError.stateUnavailable }
+        try exportWidgetPortraitReviewIfRequested(
+            filenames: publishedPhoto.cacheFilenames,
+            cacheDirectory: widgetCacheURL
+        )
+        let widgetJPEGURL = widgetCacheURL.appendingPathComponent(publishedPhoto.cacheFilenames.small)
+        let firstWidgetBytes = try Data(contentsOf: widgetJPEGURL)
+        // Model an old app/extension handoff with no caption in the cache.
+        var oldWidget = captionedWidget
+        oldWidget.item?.caption = nil
+        try AtomicJSON.write(oldWidget, to: widgetManifestURL)
+        let repairedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard repairedWidget.item == captionedWidget.item,
+              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+        else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.inbox[0].caption = nil
+        }
+        // Pass the older snapshot deliberately: publication must use current
+        // lifecycle-locked state, never the stale caller's caption.
+        let photoOnlyWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard photoOnlyWidget.item?.caption == nil,
+              photoOnlyWidget.item?.sourceDigest == publishedPhoto.sourceDigest,
+              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+        else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.inbox[0].caption = widgetPhoto.caption
+        }
+
+
+        guard let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let receivedURL = receivedDirectory.appendingPathComponent("\(momentID).jpg")
+        try MomentSharingStateStore.setSavedMemory(momentID: momentID, isSaved: true,
+            validating: lifecycleToken)
+        let beforeHide = try MomentSharingStateStore.load()
+        let widgetWindowID = PrivateWindowCatalogStore.activeEntry()?.localWindowID
+        let widgetSourceID = widgetWindowID.map { WidgetPhotoSource.familyWindowIDPrefix + $0 }
+            ?? WidgetPhotoSource.familyWindowID
+        for (revision, hidden, remainsHidden) in [(1, true, true), (0, false, true), (2, false, false)] {
+            _ = try MomentSharingStateStore.applyModeration(momentID: momentID,
+                status: .init(revision: revision, hidden: hidden), committedAt: anchor,
+                validating: lifecycleToken)
+            let state = try MomentSharingStateStore.load()
+            guard state.isModerationHidden(momentID) == remainsHidden,
+                  state.inbox == beforeHide.inbox, state.savedMemories == beforeHide.savedMemories,
+                  try Data(contentsOf: receivedURL) == preview.jpeg,
+                  MomentSharingStateStore.isLocalSharedImageVisible(at: receivedURL) == !remainsHidden,
+                  MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: publishedPhoto.cacheFilenames.small,
+                    localWindowID: nil) == !remainsHidden
+            else { throw MomentSharingError.stateUnavailable }
+            if remainsHidden {
+                guard WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil,
+                      WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
+                        photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil
+                else { throw MomentSharingError.stateUnavailable }
+            }
+            let publication = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
+                freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
+            guard (publication.item == nil) == remainsHidden,
+                  (WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil) == remainsHidden,
+                  (WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
+                    photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil) == remainsHidden
+            else { throw MomentSharingError.stateUnavailable }
+            if remainsHidden {
+                do {
+                    _ = try MomentSharingStateStore.photoLibraryCopyPayload(momentID: momentID,
+                        validating: lifecycleToken)
+                    throw DailySharingError.stateUnavailable
+                } catch MomentSharingError.stateUnavailable {}
+            }
+        }
+        _ = try MomentSharingStateStore.queuePaw(momentID: momentID, now: .now, validating: lifecycleToken)
+        try MomentSharingStateStore.deleteInbox(momentID: momentID, validating: lifecycleToken)
+        _ = try MomentSharingStateStore.applyModeration(momentID: momentID,
+            status: .init(revision: 3, hidden: false), committedAt: anchor, validating: lifecycleToken)
+        let deleted = try MomentSharingStateStore.load()
+        guard deleted.inbox.count == 1, deleted.inbox[0].state == .revoked,
+              deleted.inbox[0].localJPEGFileName == nil, deleted.inbox[0].caption == nil,
+              deleted.savedMemories.isEmpty, deleted.pawOutbox.isEmpty,
+              !FileManager.default.fileExists(atPath: receivedURL.path)
+        else { throw MomentSharingError.stateUnavailable }
+        let removed = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
+            freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
+        guard removed.item == nil else { throw MomentSharingError.stateUnavailable }
     }
 
     /// The disposable Simulator may opt into one repository-owned portrait for
@@ -5266,610 +3554,6 @@ actor SharingRuntimeSelfTestRunner {
         }
     }
 
-    private static func testMomentInboundModerationFlow() async throws {
-        try clearMomentSharingFixture()
-        let moderationDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "NekoWidgetMomentInboundModeration",
-                isDirectory: true
-            )
-        try? FileManager.default.removeItem(at: moderationDirectory)
-        defer {
-            try? clearMomentSharingFixture()
-            try? FileManager.default.removeItem(at: moderationDirectory)
-        }
-
-        // The relay and durable store use whole-second ISO-8601 timestamps.
-        // Keep a single wire-precision anchor: repeated overlay events must
-        // retain the same committedAt after a disk round trip, and ACK must
-        // preserve exactly the existing access deadline.
-        let fixtureNow = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
-        let lifecycleToken = try SharingLifecycleGate.issueToken()
-        let preview = try MomentCanonicalPreviewBuilder.build(
-            image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
-        )
-        let roomKey = Data(repeating: 0x71, count: 32)
-        let installationMarker = UUID().uuidString.lowercased()
-        let spaceID = "space_inbound_moderation_flow"
-        let receiverID = "member_inbound_receiver"
-        let senderID = "member_inbound_sender"
-        var pairing = PairingState.unpaired(installationMarker: installationMarker)
-        pairing.phase = .paired
-        pairing.spaceID = spaceID
-        pairing.memberID = receiverID
-        let credential = PairingCredential(
-            installationMarker: installationMarker,
-            account: UUID().uuidString.lowercased(),
-            participantID: Data(repeating: 0x72, count: 16),
-            agreementPrivateKey: Data(repeating: 0x73, count: 32),
-            signingPrivateKey: Data(repeating: 0x74, count: 32),
-            roomKey: roomKey,
-            enrollmentSecret: nil
-        )
-
-        func fixture(_ suffix: String) throws -> (MomentChange, Data, URL) {
-            let clientMomentID = UUID()
-            let payload = try MomentCrypto.prepare(
-                canonicalJPEG: preview.jpeg,
-                capturedAt: nil,
-                pixelWidth: preview.pixelWidth,
-                pixelHeight: preview.pixelHeight,
-                context: MomentRequestContext(
-                    spaceID: spaceID,
-                    senderParticipantID: senderID,
-                    senderDeviceID: senderID,
-                    clientRequestID: UUID(),
-                    clientMomentID: clientMomentID,
-                    kind: .live,
-                    keyEpoch: 1
-                ),
-                spaceGenerationKey: roomKey,
-                caption: "受信した写真のひとこと"
-            )
-            let momentID = "moment_inbound_\(suffix)"
-            let committedAt = fixtureNow.addingTimeInterval(-60)
-            let change = MomentChange(
-                cursor: "cursor_inbound_\(suffix)",
-                sequence: nil,
-                type: .momentCommitted,
-                createdAt: committedAt,
-                momentID: momentID,
-                clientMomentID: clientMomentID,
-                senderParticipantID: senderID,
-                kind: .live,
-                keyEpoch: 1,
-                ciphertextSize: payload.ciphertext.count,
-                ciphertextSHA256: payload.ciphertextSHA256,
-                committedAt: committedAt,
-                accessExpiresAt: committedAt.addingTimeInterval(3_600),
-                deliveryState: "pending"
-            )
-            guard let receivedDirectory = SharedContainer
-                .momentSharingReceivedDirectoryURL
-            else { throw MomentSharingError.stateUnavailable }
-            return (
-                change,
-                payload.ciphertext,
-                receivedDirectory.appendingPathComponent(
-                    "\(momentID).jpg",
-                    isDirectory: false
-                )
-            )
-        }
-
-        func requireNoModerationResidue() throws {
-            guard FileManager.default.fileExists(atPath: moderationDirectory.path)
-            else { return }
-            let files = try FileManager.default.contentsOfDirectory(
-                at: moderationDirectory,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsSubdirectoryDescendants]
-            )
-            guard !files.contains(where: {
-                $0.lastPathComponent.hasPrefix(".inbound-")
-            }) else { throw MomentSharingError.stateUnavailable }
-        }
-
-        let disabledFixture = try fixture("disabled")
-        let disabledAPI = RuntimeMomentAPI(
-            change: disabledFixture.0,
-            ciphertext: disabledFixture.1
-        )
-        let disabledModerator = RuntimeMomentModerator(
-            steps: [.failure(.moderationDisabled), .safe]
-        )
-        let disabledCoordinator = MomentSharingCoordinator(
-            moderation: disabledModerator
-        )
-        do {
-            _ = try await disabledCoordinator.runtimeTestReceiveChanges(
-                api: disabledAPI,
-                pairing: pairing,
-                credential: credential,
-                lifecycleToken: lifecycleToken
-            )
-            throw MomentSharingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard error == .moderationDisabled else { throw error }
-        }
-        let disabledRetryState = try MomentSharingStateStore.load()
-        let disabledRetryCounts = await disabledAPI.runtimeCounts()
-        let disabledRetryAnalysisCount = await disabledModerator
-            .runtimeAnalysisCount()
-        guard disabledRetryState.changeCursor == nil,
-              disabledRetryState.inbox.isEmpty,
-              disabledRetryCounts.downloads == 1,
-              disabledRetryCounts.acknowledgements == 0,
-              disabledRetryAnalysisCount == 1,
-              !FileManager.default.fileExists(atPath: disabledFixture.2.path)
-        else { throw MomentSharingError.stateUnavailable }
-        try requireNoModerationResidue()
-
-        guard try await disabledCoordinator.runtimeTestReceiveChanges(
-            api: disabledAPI,
-            pairing: pairing,
-            credential: credential,
-            lifecycleToken: lifecycleToken
-        ) == 1 else { throw MomentSharingError.stateUnavailable }
-        let recoveredState = try MomentSharingStateStore.load()
-        let recoveredCounts = await disabledAPI.runtimeCounts()
-        let recoveredAnalysisCount = await disabledModerator
-            .runtimeAnalysisCount()
-        guard recoveredState.changeCursor == disabledFixture.0.cursor,
-              recoveredState.inbox.count == 1,
-              recoveredState.inbox[0].state == .acknowledged,
-              recoveredState.inbox[0].caption == "受信した写真のひとこと",
-              recoveredCounts.downloads == 2,
-              recoveredCounts.acknowledgements == 1,
-              recoveredAnalysisCount == 2,
-              try Data(contentsOf: disabledFixture.2) == preview.jpeg,
-              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
-                  disabledFixture.2
-              )
-        else { throw MomentSharingError.stateUnavailable }
-        try requireNoModerationResidue()
-
-        // Follow the real decrypted receipt into the App Group publication.
-        // A reused JPEG must still refresh optional text, including its removal.
-        let widgetBuilder = WidgetCacheBuilder()
-        let widgetPhoto = recoveredState.inbox[0]
-        let widgetFreshUntil = widgetPhoto.receivedAt.addingTimeInterval(3_600)
-        let captionedWidget = try await widgetBuilder.buildFamilyWindow(
-            from: widgetPhoto, freshUntil: widgetFreshUntil,
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken
-        )
-        guard let widgetManifestURL = SharedContainer.familyWidgetManifestURL,
-              let widgetCacheURL = SharedContainer.familyWidgetCacheDirectoryURL,
-              let publishedPhoto = captionedWidget.item,
-              publishedPhoto.momentID == widgetPhoto.id,
-              publishedPhoto.caption == widgetPhoto.caption
-        else { throw MomentSharingError.stateUnavailable }
-        try exportWidgetPortraitReviewIfRequested(
-            filenames: publishedPhoto.cacheFilenames,
-            cacheDirectory: widgetCacheURL
-        )
-        let widgetJPEGURL = widgetCacheURL.appendingPathComponent(publishedPhoto.cacheFilenames.small)
-        let firstWidgetBytes = try Data(contentsOf: widgetJPEGURL)
-        // Model an old app/extension handoff with no caption in the cache.
-        var oldWidget = captionedWidget
-        oldWidget.item?.caption = nil
-        try AtomicJSON.write(oldWidget, to: widgetManifestURL)
-        let repairedWidget = try await widgetBuilder.buildFamilyWindow(
-            from: widgetPhoto, freshUntil: widgetFreshUntil,
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken
-        )
-        guard repairedWidget.item == captionedWidget.item,
-              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
-        else { throw MomentSharingError.stateUnavailable }
-        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
-            state.inbox[0].caption = nil
-        }
-        // Pass the older snapshot deliberately: publication must use current
-        // lifecycle-locked state, never the stale caller's caption.
-        let photoOnlyWidget = try await widgetBuilder.buildFamilyWindow(
-            from: widgetPhoto, freshUntil: widgetFreshUntil,
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken
-        )
-        guard photoOnlyWidget.item?.caption == nil,
-              photoOnlyWidget.item?.sourceDigest == publishedPhoto.sourceDigest,
-              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
-        else { throw MomentSharingError.stateUnavailable }
-        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
-            state.inbox[0].caption = widgetPhoto.caption
-        }
-
-        // The same real decrypted JPEG survives hide -> stale release -> release.
-        // No new ACK, retention deadline, private import or bookmark is created.
-        func overlayEvent(_ base: MomentChange, cursor: String, revision: Int, hidden: Bool,
-                          type: MomentChange.ChangeType = .momentCommitted,
-                          deliveryState: String = "acknowledged") -> MomentChange {
-            MomentChange(cursor: cursor, sequence: nil, type: type, createdAt: base.createdAt,
-                momentID: base.momentID, clientMomentID: base.clientMomentID,
-                senderParticipantID: base.senderParticipantID, kind: base.kind, keyEpoch: base.keyEpoch,
-                ciphertextSize: base.ciphertextSize, ciphertextSHA256: base.ciphertextSHA256,
-                committedAt: base.committedAt, accessExpiresAt: base.accessExpiresAt,
-                deliveryState: deliveryState, moderation: .init(revision: revision, hidden: hidden))
-        }
-        try MomentSharingStateStore.setSavedMemory(momentID: widgetPhoto.id, isSaved: true,
-            validating: lifecycleToken)
-        let beforeHide = try MomentSharingStateStore.load()
-        let widgetWindowID = PrivateWindowCatalogStore.activeEntry()?.localWindowID
-        let widgetSourceID = widgetWindowID.map { WidgetPhotoSource.familyWindowIDPrefix + $0 }
-            ?? WidgetPhotoSource.familyWindowID
-        for (cursor, revision, hidden, remainsHidden) in [
-            ("cursor_overlay_hide", 1, true, true),
-            ("cursor_overlay_old_release", 0, false, true),
-            ("cursor_overlay_release", 2, false, false)
-        ] {
-            let before = try MomentSharingStateStore.load()
-            let event = overlayEvent(disabledFixture.0, cursor: cursor, revision: revision, hidden: hidden)
-            let api = RuntimeMomentAPI(change: event, ciphertext: disabledFixture.1, afterCursor: before.changeCursor)
-            _ = try await disabledCoordinator.runtimeTestReceiveChanges(api: api, pairing: pairing,
-                credential: credential, lifecycleToken: lifecycleToken)
-            let state = try MomentSharingStateStore.load()
-            let counts = await api.runtimeCounts()
-            guard state.changeCursor == cursor, state.isModerationHidden(widgetPhoto.id) == remainsHidden,
-                  state.inbox == beforeHide.inbox, state.savedMemories == beforeHide.savedMemories,
-                  counts.downloads == 0, counts.acknowledgements == 0,
-                  try Data(contentsOf: disabledFixture.2) == preview.jpeg,
-                  MomentSharingStateStore.isLocalSharedImageVisible(at: disabledFixture.2) == !remainsHidden,
-                  MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: publishedPhoto.cacheFilenames.small,
-                    localWindowID: nil) == !remainsHidden
-            else { throw MomentSharingError.stateUnavailable }
-            if remainsHidden {
-                // Read the real extension implementation before the builder
-                // has a chance to remove the old manifest/cache files.
-                guard WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil,
-                      WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
-                        photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil
-                else { throw MomentSharingError.stateUnavailable }
-            }
-            let publication = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
-                freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
-            guard (publication.item == nil) == remainsHidden else { throw MomentSharingError.stateUnavailable }
-            guard (WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil) == remainsHidden,
-                  (WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
-                    photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil) == remainsHidden
-            else { throw MomentSharingError.stateUnavailable }
-            if remainsHidden {
-                do {
-                    _ = try MomentSharingStateStore.photoLibraryCopyPayload(momentID: widgetPhoto.id,
-                        validating: lifecycleToken)
-                    throw DailySharingError.stateUnavailable
-                } catch MomentSharingError.stateUnavailable {}
-            }
-        }
-
-        // A normal visible receipt can be removed without blocking the peer.
-        // Its fileless tombstone prevents an older relay page from restoring
-        // the photo, and local memory/reaction state is removed atomically.
-        try MomentSharingStateStore.setSavedMemory(
-            momentID: disabledFixture.0.momentID,
-            isSaved: true,
-            validating: lifecycleToken
-        )
-        _ = try MomentSharingStateStore.queuePaw(
-            momentID: disabledFixture.0.momentID,
-            now: Date(),
-            validating: lifecycleToken
-        )
-        try MomentSharingStateStore.deleteInbox(
-            momentID: disabledFixture.0.momentID,
-            validating: lifecycleToken
-        )
-        let deletedVisibleState = try MomentSharingStateStore.load()
-        guard deletedVisibleState.inbox.count == 1,
-              deletedVisibleState.inbox[0].state == .revoked,
-              deletedVisibleState.inbox[0].localJPEGFileName == nil,
-              deletedVisibleState.inbox[0].caption == nil,
-              deletedVisibleState.savedMemories.isEmpty,
-              deletedVisibleState.pawOutbox.isEmpty,
-              !FileManager.default.fileExists(atPath: disabledFixture.2.path)
-        else { throw MomentSharingError.stateUnavailable }
-        let lateRelease = RuntimeMomentAPI(change: overlayEvent(disabledFixture.0,
-            cursor: "cursor_deleted_release", revision: 3, hidden: false),
-            ciphertext: disabledFixture.1, afterCursor: deletedVisibleState.changeCursor)
-        _ = try await disabledCoordinator.runtimeTestReceiveChanges(api: lateRelease, pairing: pairing,
-            credential: credential, lifecycleToken: lifecycleToken)
-        let lateCounts = await lateRelease.runtimeCounts()
-        guard lateCounts.downloads == 0, lateCounts.acknowledgements == 0,
-              try MomentSharingStateStore.load().inbox[0].state == .revoked,
-              !FileManager.default.fileExists(atPath: disabledFixture.2.path)
-        else { throw MomentSharingError.stateUnavailable }
-
-        let deletedWidget = try await widgetBuilder.buildFamilyWindow(
-            from: widgetPhoto, freshUntil: widgetFreshUntil,
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken
-        )
-        let deletedWidgetOnDisk = try AtomicJSON.read(FamilyWidgetManifest.self, from: widgetManifestURL)
-        guard deletedWidget.item == nil, deletedWidgetOnDisk.item == nil,
-              !FileManager.default.fileExists(atPath: widgetJPEGURL.path)
-        else { throw MomentSharingError.stateUnavailable }
-
-        // A moderation-specific 404 must not wedge the cursor before release.
-        try clearMomentSharingFixture()
-        let racedFixture = try fixture("overlay_race")
-        let raced = RuntimeMomentAPI(change: racedFixture.0, ciphertext: racedFixture.1,
-            downloadError: .requestRejected(status: 404, code: "moment_moderation_hidden", message: "fixture"))
-        let racedCoordinator = MomentSharingCoordinator(moderation: RuntimeMomentModerator(steps: [.safe]))
-        _ = try await racedCoordinator.runtimeTestReceiveChanges(api: raced, pairing: pairing,
-            credential: credential, lifecycleToken: lifecycleToken)
-        let racedState = try MomentSharingStateStore.load()
-        let racedCounts = await raced.runtimeCounts()
-        guard racedState.changeCursor == racedFixture.0.cursor, racedState.inbox.isEmpty,
-              racedState.isModerationHidden(racedFixture.0.momentID),
-              racedCounts.downloads == 1, racedCounts.acknowledgements == 0
-        else { throw MomentSharingError.stateUnavailable }
-        let replay = RuntimeMomentAPI(change: overlayEvent(racedFixture.0,
-            cursor: "cursor_race_old_snapshot", revision: 0, hidden: false, deliveryState: "pending"),
-            ciphertext: racedFixture.1, afterCursor: racedState.changeCursor)
-        _ = try await racedCoordinator.runtimeTestReceiveChanges(api: replay, pairing: pairing,
-            credential: credential, lifecycleToken: lifecycleToken)
-        guard await replay.runtimeCounts().downloads == 0,
-              try MomentSharingStateStore.load().isModerationHidden(racedFixture.0.momentID)
-        else { throw MomentSharingError.stateUnavailable }
-        let release = RuntimeMomentAPI(change: overlayEvent(racedFixture.0,
-            cursor: "cursor_race_release", revision: 2, hidden: false, deliveryState: "pending"),
-            ciphertext: racedFixture.1, afterCursor: "cursor_race_old_snapshot")
-        _ = try await racedCoordinator.runtimeTestReceiveChanges(api: release, pairing: pairing,
-            credential: credential, lifecycleToken: lifecycleToken)
-        let released = try MomentSharingStateStore.load()
-        let releaseCounts = await release.runtimeCounts()
-        guard released.changeCursor == "cursor_race_release", released.inbox[0].state == .acknowledged,
-              !released.isModerationHidden(racedFixture.0.momentID),
-              releaseCounts.downloads == 1, releaseCounts.acknowledgements == 1,
-              try Data(contentsOf: racedFixture.2) == preview.jpeg
-        else { throw MomentSharingError.stateUnavailable }
-
-        for (cursor, revision, hidden, delivery) in [
-            ("cursor_overlay_expired", 3, true, "expired"),
-            ("cursor_overlay_after_expiry", 4, false, "expired")
-        ] {
-            let before = try MomentSharingStateStore.load()
-            let api = RuntimeMomentAPI(change: overlayEvent(racedFixture.0, cursor: cursor,
-                revision: revision, hidden: hidden, deliveryState: delivery),
-                ciphertext: racedFixture.1, afterCursor: before.changeCursor)
-            _ = try await racedCoordinator.runtimeTestReceiveChanges(api: api, pairing: pairing,
-                credential: credential, lifecycleToken: lifecycleToken)
-            let state = try MomentSharingStateStore.load()
-            let counts = await api.runtimeCounts()
-            guard state.changeCursor == cursor, state.inbox[0].state == .revoked,
-                  state.isModerationHidden(racedFixture.0.momentID) == hidden,
-                  !MomentSharingStateStore.isLocalSharedImageVisible(at: racedFixture.2),
-                  counts.downloads == 0, counts.acknowledgements == 0 else {
-                throw MomentSharingError.stateUnavailable
-            }
-        }
-
-        try clearMomentSharingFixture()
-        let unrelated404 = RuntimeMomentAPI(change: racedFixture.0, ciphertext: racedFixture.1,
-            downloadError: .requestRejected(status: 404, code: "moment_not_found", message: "fixture"))
-        do {
-            _ = try await racedCoordinator.runtimeTestReceiveChanges(api: unrelated404, pairing: pairing,
-                credential: credential, lifecycleToken: lifecycleToken)
-            throw DailySharingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard case .requestRejected(404, "moment_not_found", _) = error else { throw error }
-        }
-        let failed404State = try MomentSharingStateStore.load()
-        guard failed404State.changeCursor == nil, failed404State.inbox.isEmpty,
-              failed404State.moderationOverlays.isEmpty else { throw MomentSharingError.stateUnavailable }
-
-        // Hide can also race the ACK after the real JPEG has been saved.
-        // A rejected ACK is neither receipt success nor a reason to erase the
-        // copy; its uncertain overlay must hide it before this call returns.
-        try clearMomentSharingFixture()
-        let ackRaceFixture = try fixture("ack_overlay_race")
-        let ackRace = RuntimeMomentAPI(change: ackRaceFixture.0, ciphertext: ackRaceFixture.1,
-            acknowledgementError: .requestRejected(status: 404,
-                code: "moment_moderation_hidden", message: "fixture"))
-        let ackRaceCoordinator = MomentSharingCoordinator(
-            moderation: RuntimeMomentModerator(steps: [.safe, .safe, .safe]))
-        let ackRaceReceived = try await ackRaceCoordinator.runtimeTestReceiveChanges(api: ackRace,
-            pairing: pairing, credential: credential, lifecycleToken: lifecycleToken)
-        let ackRaceState = try MomentSharingStateStore.load()
-        let ackRaceCounts = await ackRace.runtimeCounts()
-        guard let ackRacePhoto = ackRaceState.inbox.first,
-              ackRaceReceived == 0, ackRaceState.changeCursor == ackRaceFixture.0.cursor,
-              ackRacePhoto.state == .available, ackRacePhoto.acknowledgedAt == nil,
-              ackRacePhoto.accessExpiresAt == ackRaceFixture.0.accessExpiresAt,
-              ackRaceState.isModerationHidden(ackRacePhoto.id),
-              ackRaceCounts.downloads == 1, ackRaceCounts.acknowledgementAttempts == 1,
-              ackRaceCounts.acknowledgements == 0,
-              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg,
-              !MomentSharingStateStore.isLocalSharedImageVisible(at: ackRaceFixture.2),
-              !MomentSharingStateStore.isFamilyWidgetCacheVisible(
-                filename: "family-small-\(ackRacePhoto.familyWidgetSourceDigest).jpg", localWindowID: nil)
-        else { throw MomentSharingError.stateUnavailable }
-        let ackRacePublication = try await widgetBuilder.buildFamilyWindow(from: ackRacePhoto,
-            freshUntil: ackRacePhoto.receivedAt.addingTimeInterval(3_600),
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken)
-        guard ackRacePublication.item == nil else { throw MomentSharingError.stateUnavailable }
-
-        let followingSafeFixture = try fixture("after_ack_overlay_race")
-        let followingSafe = RuntimeMomentAPI(change: followingSafeFixture.0,
-            ciphertext: followingSafeFixture.1, afterCursor: ackRaceState.changeCursor)
-        guard try await ackRaceCoordinator.runtimeTestReceiveChanges(api: followingSafe,
-            pairing: pairing, credential: credential, lifecycleToken: lifecycleToken) == 1
-        else { throw MomentSharingError.stateUnavailable }
-        let followingState = try MomentSharingStateStore.load()
-        guard followingState.changeCursor == followingSafeFixture.0.cursor,
-              followingState.isModerationHidden(ackRacePhoto.id),
-              followingState.inbox.first(where: { $0.id == followingSafeFixture.0.momentID })?.state == .acknowledged,
-              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg
-        else { throw MomentSharingError.stateUnavailable }
-        let ackRelease = RuntimeMomentAPI(change: overlayEvent(ackRaceFixture.0,
-            cursor: "cursor_ack_race_release", revision: 2, hidden: false, deliveryState: "pending"),
-            ciphertext: ackRaceFixture.1, afterCursor: followingState.changeCursor)
-        guard try await ackRaceCoordinator.runtimeTestReceiveChanges(api: ackRelease,
-            pairing: pairing, credential: credential, lifecycleToken: lifecycleToken) == 1
-        else { throw MomentSharingError.stateUnavailable }
-        let ackReleasedState = try MomentSharingStateStore.load()
-        let ackReleasedCounts = await ackRelease.runtimeCounts()
-        guard ackReleasedState.changeCursor == "cursor_ack_race_release",
-              !ackReleasedState.isModerationHidden(ackRacePhoto.id),
-              ackReleasedState.inbox.first(where: { $0.id == ackRacePhoto.id })?.state == .acknowledged,
-              ackReleasedCounts.acknowledgements == 1,
-              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg
-        else { throw MomentSharingError.stateUnavailable }
-
-        try clearMomentSharingFixture()
-        let unrelatedAck404 = RuntimeMomentAPI(change: ackRaceFixture.0, ciphertext: ackRaceFixture.1,
-            acknowledgementError: .requestRejected(status: 404, code: "moment_not_found", message: "fixture"))
-        let unrelatedAckCoordinator = MomentSharingCoordinator(moderation: RuntimeMomentModerator(steps: [.safe]))
-        do {
-            _ = try await unrelatedAckCoordinator.runtimeTestReceiveChanges(api: unrelatedAck404,
-                pairing: pairing, credential: credential, lifecycleToken: lifecycleToken)
-            throw DailySharingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard case .requestRejected(404, "moment_not_found", _) = error else { throw error }
-        }
-        let failedAckState = try MomentSharingStateStore.load()
-        let failedAckCounts = await unrelatedAck404.runtimeCounts()
-        guard failedAckState.changeCursor == nil, failedAckState.moderationOverlays.isEmpty,
-              failedAckState.inbox.first?.state == .available,
-              failedAckState.inbox.first?.acknowledgedAt == nil,
-              failedAckCounts.acknowledgements == 0, failedAckCounts.acknowledgementAttempts == 1,
-              try Data(contentsOf: ackRaceFixture.2) == preview.jpeg
-        else { throw MomentSharingError.stateUnavailable }
-
-        try clearMomentSharingFixture()
-        let unavailableFixture = try fixture("unavailable")
-        let unavailableAPI = RuntimeMomentAPI(
-            change: unavailableFixture.0,
-            ciphertext: unavailableFixture.1
-        )
-        let unavailableModerator = RuntimeMomentModerator(
-            steps: [.failure(.moderationUnavailable)]
-        )
-        let unavailableCoordinator = MomentSharingCoordinator(
-            moderation: unavailableModerator
-        )
-        do {
-            _ = try await unavailableCoordinator.runtimeTestReceiveChanges(
-                api: unavailableAPI,
-                pairing: pairing,
-                credential: credential,
-                lifecycleToken: lifecycleToken
-            )
-            throw MomentSharingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard error == .moderationUnavailable else { throw error }
-        }
-        let unavailableState = try MomentSharingStateStore.load()
-        let unavailableCounts = await unavailableAPI.runtimeCounts()
-        let unavailableAnalysisCount = await unavailableModerator
-            .runtimeAnalysisCount()
-        guard unavailableState.changeCursor == nil,
-              unavailableState.inbox.isEmpty,
-              unavailableCounts.downloads == 1,
-              unavailableCounts.acknowledgements == 0,
-              unavailableAnalysisCount == 1,
-              !FileManager.default.fileExists(atPath: unavailableFixture.2.path)
-        else { throw MomentSharingError.stateUnavailable }
-        try requireNoModerationResidue()
-
-        try clearMomentSharingFixture()
-        let sensitiveFixture = try fixture("sensitive")
-        let sensitiveAPI = RuntimeMomentAPI(
-            change: sensitiveFixture.0,
-            ciphertext: sensitiveFixture.1
-        )
-        let sensitiveModerator = RuntimeMomentModerator(
-            steps: [.failure(.sensitiveContent)]
-        )
-        let sensitiveCoordinator = MomentSharingCoordinator(
-            moderation: sensitiveModerator
-        )
-        guard try await sensitiveCoordinator.runtimeTestReceiveChanges(
-            api: sensitiveAPI,
-            pairing: pairing,
-            credential: credential,
-            lifecycleToken: lifecycleToken
-        ) == 1 else { throw MomentSharingError.stateUnavailable }
-        let sensitiveState = try MomentSharingStateStore.load()
-        let sensitiveCounts = await sensitiveAPI.runtimeCounts()
-        let sensitiveAnalysisCount = await sensitiveModerator
-            .runtimeAnalysisCount()
-        guard sensitiveState.changeCursor == sensitiveFixture.0.cursor,
-              sensitiveState.inbox.count == 1,
-              sensitiveState.inbox[0].state == .blocked,
-              sensitiveState.inbox[0].acknowledgedAt != nil,
-              sensitiveCounts.downloads == 1,
-              sensitiveCounts.acknowledgements == 1,
-              sensitiveAnalysisCount == 1,
-              try Data(contentsOf: sensitiveFixture.2) == preview.jpeg,
-              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
-                  sensitiveFixture.2
-              )
-        else { throw MomentSharingError.stateUnavailable }
-        try requireNoModerationResidue()
-
-        guard try await sensitiveCoordinator.runtimeTestReceiveChanges(
-            api: sensitiveAPI,
-            pairing: pairing,
-            credential: credential,
-            lifecycleToken: lifecycleToken
-        ) == 0 else { throw MomentSharingError.stateUnavailable }
-        let terminalSensitiveCounts = await sensitiveAPI.runtimeCounts()
-        let terminalSensitiveAnalysisCount = await sensitiveModerator
-            .runtimeAnalysisCount()
-        guard terminalSensitiveCounts.downloads == 1,
-              terminalSensitiveCounts.acknowledgements == 1,
-              terminalSensitiveAnalysisCount == 1
-        else { throw MomentSharingError.stateUnavailable }
-
-        let retainedReportID = UUID()
-        // The state store persists ISO-8601 dates at whole-second precision.
-        // Keep this fixture on that same boundary so its round-trip equality
-        // checks the retained report itself rather than Date precision loss.
-        let retainedReportDate = Date(timeIntervalSince1970: 1_700_000_000)
-        let retainedReport = try MomentReportOutboxItem(
-            id: retainedReportID,
-            momentID: sensitiveFixture.0.momentID,
-            reason: .privacy,
-            ciphertextFileName:
-                "report-\(retainedReportID.uuidString.lowercased()).ciphertext",
-            ciphertextSize: 128,
-            ciphertextSHA256: Data(repeating: 0x44, count: 32),
-            moderationKeyID: "moderation-v1",
-            reporterConsentAcceptedAt: retainedReportDate,
-            commitRequestID: UUID(),
-            phase: .prepared,
-            createdAt: retainedReportDate,
-            updatedAt: retainedReportDate
-        ).validated()
-        _ = try MomentSharingStateStore.mutate(
-            validating: lifecycleToken
-        ) { state in
-            state.reportOutbox.append(retainedReport)
-        }
-
-        // A person may remove one hidden receipt without blocking the peer.
-        // Keep a fileless terminal row so cursor recovery cannot recreate it,
-        // and preserve any separately encrypted report outbox evidence.
-        try MomentSharingStateStore.deleteInbox(
-            momentID: sensitiveFixture.0.momentID,
-            validating: lifecycleToken
-        )
-        let deletedSensitiveState = try MomentSharingStateStore.load()
-        guard deletedSensitiveState.inbox.count == 1,
-              deletedSensitiveState.inbox[0].state == .revoked,
-              deletedSensitiveState.inbox[0].localJPEGFileName == nil,
-              deletedSensitiveState.reportOutbox == [retainedReport],
-              !FileManager.default.fileExists(atPath: sensitiveFixture.2.path),
-              try await sensitiveCoordinator.runtimeTestReceiveChanges(
-                  api: sensitiveAPI,
-                  pairing: pairing,
-                  credential: credential,
-                  lifecycleToken: lifecycleToken
-              ) == 0
-        else { throw MomentSharingError.stateUnavailable }
-        let postDeleteCounts = await sensitiveAPI.runtimeCounts()
-        guard postDeleteCounts.downloads == 1,
-              postDeleteCounts.acknowledgements == 1
-        else { throw MomentSharingError.stateUnavailable }
-    }
 
     private static func verifyLegacyRejectionRecheck(
         item: MomentOutboxItem,
@@ -6040,17 +3724,6 @@ actor SharingRuntimeSelfTestRunner {
 
     private static func testMomentOutboxBoundsAndExpiry() throws {
         try testSharedPhotoCommitPersistence()
-        // A paid-admission pause must not erase the encrypted photo. Other
-        // authorization failures retain the existing terminal classification.
-        for (status, code, retained) in [(403, "window_support_required", true),
-                                        (503, "window_support_unavailable", true),
-                                        (403, "forbidden", false),
-                                        (410, "sharing_revoked", false)] {
-            let error = MomentSharingError.requestRejected(status: status, code: code, message: "fixture")
-            guard MomentSendFailurePolicy.canRemainQueued(error) == retained,
-                  MomentSendFailurePolicy.isPermanentOutboxFailure(error) == !retained
-            else { throw MomentSharingError.stateUnavailable }
-        }
         try clearMomentSharingFixture()
         defer { try? clearMomentSharingFixture() }
         writeThumbnailProgress(
@@ -6063,7 +3736,7 @@ actor SharingRuntimeSelfTestRunner {
         guard let thumbnailSource = generatedImage(
             size: CGSize(width: 320, height: 240)
         ).jpegData(compressionQuality: 0.9),
-        let localThumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+        let localThumbnail = Self.retainedPhotoThumbnail(
             from: thumbnailSource
         ),
         MomentOutboxItem.isValidLocalThumbnail(localThumbnail)
@@ -7085,27 +4758,21 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
     }
 
-    /// Uses the real paired App Group/Keychain fixture and complete host
-    /// promotion path. The moderator sees only a generated image; no relay
-    /// request, Photo Library access, or personal image is involved.
-    private static func testMomentSentPreviewThroughHandoff(
+    /// Exercises retained-photo storage with a generated canonical image and
+    /// the real isolated App Group/Keychain fixture. No relay request, Photo
+    /// Library access, or personal image is involved.
+    private static func testRetainedSentPhotoStorage(
         pairing: PairingState,
         credential: PairingCredential,
         lifecycleToken: SharingLifecycleGate.Token
     ) async throws {
-        let processor = MomentShareHandoffProcessor(
-            moderation: RuntimeMomentModerator(steps: [.safe])
-        )
         try clearMomentSharingFixture()
-        defer {
-            try? processor.revokeAdmissions(lifecycleToken: lifecycleToken)
-            try? clearMomentSharingFixture()
-        }
+        defer { try? clearMomentSharingFixture() }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .started)
         let preview = try MomentCanonicalPreviewBuilder.build(
             image: generatedImage(size: CGSize(width: 1_536, height: 2_048))
         )
-        guard let expectedThumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+        guard let expectedThumbnail = Self.retainedPhotoThumbnail(
             from: preview.jpeg
         ), MomentOutboxItem.isValidLocalThumbnail(expectedThumbnail),
            let thumbnailSource = CGImageSourceCreateWithData(expectedThumbnail as CFData, nil),
@@ -7114,38 +4781,24 @@ actor SharingRuntimeSelfTestRunner {
            expectedThumbnail.count <= MomentOutboxItem.maximumLocalThumbnailBytes
         else { throw MomentSharingError.stateUnavailable }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailValidated)
-        let admissions = try processor.refreshAdmissionCatalog(lifecycleToken: lifecycleToken)
-        guard let admission = admissions.destinations.first else {
-            throw MomentSharingError.stateUnavailable
-        }
-        let staged = try MomentShareHandoffStore.stageCapture(
-            admissionID: admission.id,
-            canonicalJPEG: preview.jpeg,
-            capturedAt: nil,
-            pixelWidth: preview.pixelWidth,
-            pixelHeight: preview.pixelHeight,
-            senderPolicyVersion: 1,
-            senderPolicyAcceptedAt: .now,
-            caption: "生成した写真の控え"
-        )
-        let promotedCount = try await processor.refreshAdmissionsAndDrain(
-            pairing: pairing,
-            credential: credential,
-            lifecycleToken: lifecycleToken
-        )
-        guard promotedCount == 1,
-              !MomentShareHandoffStore.captureExists(staged),
-              let prepared = try MomentSharingStateStore.load().outbox.first(where: {
-                  $0.id == staged.id
-              }),
-              prepared.phase == .prepared,
-              prepared.localCaption == staged.caption
+        let payload = try MomentCrypto.prepare(
+            canonicalJPEG: preview.jpeg, capturedAt: nil,
+            pixelWidth: preview.pixelWidth, pixelHeight: preview.pixelHeight,
+            context: MomentRequestContext(spaceID: pairing.spaceID!,
+                senderParticipantID: pairing.participantID!, senderDeviceID: "retained_device",
+                clientRequestID: UUID(), clientMomentID: UUID(), kind: .live, keyEpoch: 1),
+            spaceGenerationKey: credential.roomKey!)
+        let prepared = try MomentSharingStateStore.enqueue(
+            payload: payload, senderPolicyVersion: 1, senderPolicyAcceptedAt: .now,
+            localThumbnailJPEG: expectedThumbnail, localCaption: "生成した写真の控え",
+            localDetailJPEG: preview.jpeg, validating: lifecycleToken)
+        guard prepared.phase == .prepared, prepared.localCaption == "生成した写真の控え"
         else { throw MomentSharingError.stateUnavailable }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .outboxLoaded)
         guard prepared.localThumbnailFileName
-                == MomentOutboxItem.localThumbnailFileName(for: staged.id),
+                == MomentOutboxItem.localThumbnailFileName(for: prepared.id),
               let detail = prepared.localDetail,
-              detail.fileName == MomentOutboxItem.localDetailFileName(for: staged.id),
+              detail.fileName == MomentOutboxItem.localDetailFileName(for: prepared.id),
               detail.sha256 == PairingCrypto.sha256(preview.jpeg),
               let detailDirectory = SharedContainer.momentSharingSentThumbnailDirectoryURL
         else { throw MomentSharingError.stateUnavailable }
@@ -7193,7 +4846,7 @@ actor SharingRuntimeSelfTestRunner {
         // the coordinator, then reload/prune as a foreground refresh does.
         let committedAt = Date().addingTimeInterval(1)
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
-            guard let index = state.outbox.firstIndex(where: { $0.id == staged.id })
+            guard let index = state.outbox.firstIndex(where: { $0.id == prepared.id })
             else { throw MomentSharingError.stateUnavailable }
             state.outbox[index].phase = .committed
             state.outbox[index].serverMomentID = "moment_sent_preview_fixture"
@@ -7206,7 +4859,7 @@ actor SharingRuntimeSelfTestRunner {
         try MomentSharingStateStore.removeCiphertext(for: prepared)
         try MomentSharingStateStore.pruneLocalHistory(now: committedAt)
         guard let committed = try MomentSharingStateStore.load().outbox.first(where: {
-            $0.id == staged.id
+            $0.id == prepared.id
         }), committed.phase == .committed,
         MomentSharingStateStore.readLocalThumbnail(for: committed) == expectedThumbnail
         else { throw MomentSharingError.stateUnavailable }
@@ -7330,6 +4983,44 @@ actor SharingRuntimeSelfTestRunner {
                 try FileManager.default.removeItem(at: url)
             }
         }
+    }
+
+    private static func retainedPhotoThumbnail(from canonicalJPEG: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(
+            canonicalJPEG as CFData,
+            nil
+        ) else { return nil }
+        for candidate in [(512, 0.72), (384, 0.72), (240, 0.72), (160, 0.60)] {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: candidate.0
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                options as CFDictionary
+            ) else { continue }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                output,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else { continue }
+            CGImageDestinationAddImage(
+                destination,
+                image,
+                [kCGImageDestinationLossyCompressionQuality: candidate.1]
+                    as CFDictionary
+            )
+            guard CGImageDestinationFinalize(destination) else { continue }
+            let result = output as Data
+            if result.count <= MomentOutboxItem.maximumLocalThumbnailBytes {
+                return result
+            }
+        }
+        return nil
     }
 
     private static func generatedImage(
@@ -8309,255 +6000,6 @@ actor SharingRuntimeSelfTestRunner {
               let windowNameSyncURL = SharedContainer.privateWindowNameSyncStateURL
         else { throw PairingError.stateUnavailable }
 
-        // A Build 40-41 recovery replaced the owner's device and signing key.
-        // Reproduce an approving invitee that retained the former peer key but
-        // also retained the phrase-verified replacement candidate. The current
-        // relay record is signed by the replacement/primary owner, so the
-        // candidate must repair verification without granting that fallback
-        // to the newly added device side of a modern ceremony.
-        let replacementOwnerCredential = PairingCrypto.makeCredential(
-            installationMarker: unpaired.installationMarker,
-            includesInvitationSecret: false,
-            includesRoomKey: false
-        )
-        let replacementOwnerSigningKey = try PairingCrypto.signingPublicKey(
-            for: replacementOwnerCredential
-        ).base64URLEncodedString()
-        let replacementOwnerAgreementKey = try PairingCrypto.agreementPublicKey(
-            for: replacementOwnerCredential
-        ).base64URLEncodedString()
-        var legacyReplacementApprover = paired
-        legacyReplacementApprover.role = .invitee
-        let recoveryID = opaque(47)
-        let recoveryDeviceID = opaque(48)
-        let recoveryExpiresAt = Date(timeIntervalSince1970: 2_000_000_000)
-        let recoveryMembershipRevision = 2
-        let recoveryKeyEpoch = 2
-        let recoveryTarget = PairingDeviceRecoveryIdentity(
-            memberID: peerMember.memberID,
-            participantID: peerMember.participantID,
-            role: "owner",
-            agreementPublicKey: peerMember.agreementPublicKey,
-            signingPublicKey: peerMember.signingPublicKey,
-            state: "active"
-        )
-        let recoverySponsor = PairingDeviceRecoveryIdentity(
-            memberID: localMember.memberID,
-            participantID: localMember.participantID,
-            role: "invitee",
-            agreementPublicKey: localMember.agreementPublicKey,
-            signingPublicKey: localMember.signingPublicKey,
-            state: "active"
-        )
-        let recoveryTranscript = PairingDeviceRecoveryTranscript(
-            recoveryID: recoveryID,
-            spaceID: spaceID,
-            dailyBoundaryMinuteUTC: 240,
-            expiresAtUnix: Int(recoveryExpiresAt.timeIntervalSince1970),
-            membershipRevision: recoveryMembershipRevision,
-            keyEpoch: recoveryKeyEpoch,
-            target: recoveryTarget,
-            peer: recoverySponsor,
-            clientRequestID: UUID().uuidString.lowercased(),
-            deviceID: recoveryDeviceID,
-            agreementPublicKey: replacementOwnerAgreementKey,
-            signingPublicKey: replacementOwnerSigningKey
-        )
-        let recoveryTranscriptData = try recoveryTranscript.canonicalData()
-        let recoveryTranscriptHash = PairingCrypto.sha256(recoveryTranscriptData)
-        legacyReplacementApprover.recoveryID = recoveryID
-        legacyReplacementApprover.recoveryExpiresAt = recoveryExpiresAt
-        legacyReplacementApprover.recoveryMembershipRevision = recoveryMembershipRevision
-        legacyReplacementApprover.recoveryKeyEpoch = recoveryKeyEpoch
-        legacyReplacementApprover.recoveryDeviceID = recoveryDeviceID
-        legacyReplacementApprover.recoveryPreviousTargetAgreementPublicKey =
-            legacyReplacementApprover.peerAgreementPublicKey
-        legacyReplacementApprover.recoveryPreviousTargetSigningPublicKey =
-            legacyReplacementApprover.peerSigningPublicKey
-        legacyReplacementApprover.recoveryCandidateSigningPublicKey =
-            replacementOwnerSigningKey
-        legacyReplacementApprover.recoveryCandidateAgreementPublicKey =
-            replacementOwnerAgreementKey
-        legacyReplacementApprover.recoveryTranscript =
-            recoveryTranscriptData.base64URLEncodedString()
-        legacyReplacementApprover.recoveryTranscriptHash =
-            recoveryTranscriptHash.base64URLEncodedString()
-        legacyReplacementApprover.recoveryVerificationPhrase =
-            PairingCrypto.verificationPhrase(for: recoveryTranscriptHash)
-        legacyReplacementApprover.recoveryApprovalSubmittedAt = .now
-        legacyReplacementApprover.recoveryCompletedAt = .now
-        legacyReplacementApprover.recoveryWasLocalDeviceReplacement = false
-        let replacementSignedName = try PrivateWindowNameCrypto.prepare(
-            displayName: "マイファミリー",
-            context: PrivateWindowNameCiphertextContext(
-                spaceID: spaceID,
-                ownerMemberID: peerMember.memberID,
-                ownerRevision: 32,
-                keyEpoch: 1
-            ),
-            roomKey: roomKey,
-            ownerSigningPrivateKey: replacementOwnerCredential.signingPrivateKey
-        )
-        let repairedName = try MomentSharingCoordinator.runtimeOpenWindowName(
-            replacementSignedName,
-            roomKey: roomKey,
-            pairing: legacyReplacementApprover,
-            credential: keychainProbe
-        )
-        guard repairedName.displayName == "マイファミリー",
-              !repairedName.requiresOwnerResign
-        else { throw PairingError.stateUnavailable }
-        legacyReplacementApprover.recoveryWasLocalDeviceReplacement = true
-        do {
-            _ = try MomentSharingCoordinator.runtimeOpenWindowName(
-                replacementSignedName,
-                roomKey: roomKey,
-                pairing: legacyReplacementApprover,
-                credential: keychainProbe
-            )
-            throw PairingError.stateUnavailable
-        } catch MomentSharingError.invalidPayload {
-            // The locally added/recovered device's own key is never an owner
-            // verification fallback when this participant is the invitee.
-        }
-        legacyReplacementApprover.recoveryWasLocalDeviceReplacement = false
-
-        let activeRecoveryStatus = PairingDeviceRecoveryStatusResult(
-            recoveryID: recoveryID,
-            deviceID: recoveryDeviceID,
-            state: "active",
-            expiresAt: recoveryExpiresAt,
-            membershipRevision: recoveryMembershipRevision,
-            keyEpoch: recoveryKeyEpoch,
-            spaceID: spaceID,
-            dailyBoundaryMinuteUTC: 240,
-            transcriptData: recoveryTranscriptData,
-            transcriptHash: recoveryTranscriptHash.base64URLEncodedString(),
-            credential: PairingDeviceRecoveryIdentity(
-                memberID: peerMember.memberID,
-                participantID: peerMember.participantID,
-                role: "owner",
-                agreementPublicKey: replacementOwnerAgreementKey,
-                signingPublicKey: replacementOwnerSigningKey,
-                state: "active"
-            ),
-            peer: recoverySponsor,
-            envelopeAlgorithm: nil,
-            keyEnvelope: nil,
-            approvalSignature: nil,
-            recoveredAt: legacyReplacementApprover.recoveryCompletedAt,
-            previousTargetSigningPublicKey: peerMember.signingPublicKey
-        )
-        let confirmedReplacement = try MomentSharingCoordinator
-            .runtimeConfirmedLegacyReplacementPeer(
-                from: activeRecoveryStatus,
-                pairing: legacyReplacementApprover,
-                credential: keychainProbe
-            )
-        guard confirmedReplacement.agreementPublicKey == replacementOwnerAgreementKey,
-              confirmedReplacement.signingPublicKey == replacementOwnerSigningKey
-        else { throw PairingError.stateUnavailable }
-
-        let mismatchedRecoveryStatus = PairingDeviceRecoveryStatusResult(
-            recoveryID: recoveryID,
-            deviceID: recoveryDeviceID,
-            state: "active",
-            expiresAt: recoveryExpiresAt,
-            membershipRevision: recoveryMembershipRevision + 1,
-            keyEpoch: recoveryKeyEpoch,
-            spaceID: spaceID,
-            dailyBoundaryMinuteUTC: 240,
-            transcriptData: recoveryTranscriptData,
-            transcriptHash: recoveryTranscriptHash.base64URLEncodedString(),
-            credential: activeRecoveryStatus.credential,
-            peer: recoverySponsor,
-            envelopeAlgorithm: nil,
-            keyEnvelope: nil,
-            approvalSignature: nil,
-            recoveredAt: legacyReplacementApprover.recoveryCompletedAt,
-            previousTargetSigningPublicKey: peerMember.signingPublicKey
-        )
-        do {
-            _ = try MomentSharingCoordinator.runtimeConfirmedLegacyReplacementPeer(
-                from: mismatchedRecoveryStatus,
-                pairing: legacyReplacementApprover,
-                credential: keychainProbe
-            )
-            throw PairingError.stateUnavailable
-        } catch PairingError.invalidServerResponse {
-            // A status from another recovery revision can never rotate keys.
-        }
-
-        try SharingLifecycleGate.withValidatedToken(snapshot.lifecycleToken) {
-            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
-                spaceID: spaceID,
-                credentialAccount: keychainProbe.account
-            )
-        }
-        legacyReplacementApprover = try PairingStateStore.save(
-            legacyReplacementApprover,
-            expected: paired,
-            lifecycleToken: snapshot.lifecycleToken
-        )
-        var staleLegacyReplacementApprover = legacyReplacementApprover
-        staleLegacyReplacementApprover.storageRevision = max(
-            0,
-            (legacyReplacementApprover.storageRevision ?? 0) - 1
-        )
-        do {
-            _ = try PairingStateStore.normalizeLegacyReplacementPeer(
-                confirmedAgreementPublicKey: replacementOwnerAgreementKey,
-                confirmedSigningPublicKey: replacementOwnerSigningKey,
-                expected: staleLegacyReplacementApprover,
-                localWindowID: nil,
-                lifecycleToken: snapshot.lifecycleToken
-            )
-            throw PairingError.stateUnavailable
-        } catch PairingError.stateUnavailable {
-            // A stale read can never rotate the durable peer key pair.
-        }
-        let activeWindowBeforeNormalization = try PrivateWindowCatalogStore
-            .load()?.activeWindowID
-        let normalizedReplacementApprover = try PairingStateStore
-            .normalizeLegacyReplacementPeer(
-                confirmedAgreementPublicKey: replacementOwnerAgreementKey,
-                confirmedSigningPublicKey: replacementOwnerSigningKey,
-                expected: legacyReplacementApprover,
-                localWindowID: nil,
-                lifecycleToken: snapshot.lifecycleToken
-            )
-        guard normalizedReplacementApprover.peerAgreementPublicKey
-                == replacementOwnerAgreementKey,
-              normalizedReplacementApprover.peerSigningPublicKey
-                == replacementOwnerSigningKey,
-              normalizedReplacementApprover.storageRevision
-                == (legacyReplacementApprover.storageRevision ?? 0) + 1
-        else { throw PairingError.stateUnavailable }
-        guard try PrivateWindowCatalogStore.load()?.activeWindowID
-                == activeWindowBeforeNormalization
-        else { throw PairingError.stateUnavailable }
-        let duplicateNormalization = try PairingStateStore
-            .normalizeLegacyReplacementPeer(
-                confirmedAgreementPublicKey: replacementOwnerAgreementKey,
-                confirmedSigningPublicKey: replacementOwnerSigningKey,
-                expected: normalizedReplacementApprover,
-                localWindowID: nil,
-                lifecycleToken: snapshot.lifecycleToken
-            )
-        guard duplicateNormalization.storageRevision
-                == normalizedReplacementApprover.storageRevision
-        else { throw PairingError.stateUnavailable }
-
-        // Restore the inviter fixture for the remaining independent checks.
-        // The CAS revision moves forward; no test-only direct file replacement
-        // masks behavior of the production state store.
-        paired.storageRevision = normalizedReplacementApprover.storageRevision
-        paired.lastUpdatedAt = .now
-        paired = try PairingStateStore.save(
-            paired,
-            expected: normalizedReplacementApprover,
-            lifecycleToken: snapshot.lifecycleToken
-        )
         let pairingRevisionAfterLegacyNormalization = paired.storageRevision
 
         let synchronizedName = try PrivateWindowNameCrypto.prepare(
@@ -8771,23 +6213,6 @@ actor SharingRuntimeSelfTestRunner {
             validating: snapshot.lifecycleToken,
             now: .now
         )
-        let reportOnlyAPI = RuntimeWindowNameAPI()
-        let nameCoordinator = MomentSharingCoordinator()
-        do {
-            try await nameCoordinator.runtimeSynchronizeWindowName(
-                api: reportOnlyAPI
-            )
-            throw PairingError.stateUnavailable
-        } catch let error as MomentSharingError {
-            guard case let .reportOnly(until) = error,
-                  until == reportOnlyUntil
-            else { throw error }
-        }
-        let reportOnlyCounts = await reportOnlyAPI.runtimeCounts()
-        guard reportOnlyCounts.gets == 0,
-              reportOnlyCounts.puts == 0
-        else { throw PairingError.stateUnavailable }
-
         var wrongWindowIdentity = paired
         wrongWindowIdentity.spaceID = opaque(46)
         guard PrivateWindowPresentationStore.resolvedDisplayName(

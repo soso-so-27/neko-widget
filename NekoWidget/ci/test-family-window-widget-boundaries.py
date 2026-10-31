@@ -194,19 +194,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("Data(SHA256.hash(data: current.data))", publication)
 
         app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
-        refresh = section(
-            app_model,
-            "func refreshFamilyWindowOutputs(trigger: String) async",
-            "private nonisolated static func familyWindowInputs",
-        )
-        self.assertLess(
-            refresh.index("familyWindowPresentation = .empty"),
-            refresh.index("PairingInstallationGuard.bootstrapAsync()"),
-        )
-        self.assertLess(
-            refresh.index("buildFamilyWindow("),
-            refresh.index("familyWindowPresentation = presentation"),
-        )
 
     def test_family_clear_and_history_are_fail_closed(self) -> None:
         builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
@@ -419,24 +406,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "struct SendFamilyWidgetHeartIntent",
             "private enum FamilyWidgetActionTargetResolver",
         )
-        self.assertLess(
-            send_heart.index("MomentSharingStateStore.queuePaw("),
-            send_heart.index(".sendQueuedWidgetHeart("),
-        )
-        self.assertIn("clientRequestID: item.clientRequestID", send_heart)
-        self.assertIn("lifecycleToken: lifecycleToken", send_heart)
-        self.assertIn("UIApplication.shared.isProtectedDataAvailable", send_heart)
-        self.assertNotIn("MomentNotificationTapMailbox", send_heart)
-        self.assertNotIn("presentQueuedHeart", send_heart)
+        self.assertNotIn("MomentSharingStateStore.queuePaw", send_heart)
+        self.assertNotIn(".sendQueuedWidgetHeart(", send_heart)
+        self.assertNotIn("PairingKeychainStore", send_heart)
+        self.assertIn('return .result(dialog:', send_heart)
         self.assertIn("static var openAppWhenRun = false", send_heart)
-        self.assertIn("[.background, .foreground(.dynamic)]", send_heart)
-        self.assertIn("extension SendFamilyWidgetHeartIntent: ForegroundContinuableIntent", send_heart)
-        self.assertIn("@available(iOSApplicationExtension, unavailable)", send_heart)
-        self.assertNotIn("LiveActivityIntent", send_heart)
-        self.assertNotIn("requestToContinueInForeground", send_heart)
-        self.assertNotIn("continueInForeground(", send_heart)
-        self.assertIn("#if NEKO_HOST_APP", send_heart)
-        self.assertNotIn(".result(opensIntent: OpenURLIntent", send_heart)
 
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         app_debug = section(project, "A00000000000000000000052 /* Debug */ = {", "A00000000000000000000053 /* Release */ = {")
@@ -705,23 +679,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("sourceDigest: sourceDigest", parser)
 
         app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
-        family_route = section(
-            app_model,
-            "case let .familyWindow(localWindowID, sourceDigest, action):",
-            "return\n        }",
-        )
-        self.assertLess(
-            family_route.index("activatePrivateWindowAsync"),
-            family_route.index("pendingFamilyMomentSourceDigest = sourceDigest"),
-        )
-        self.assertLess(
-            family_route.index("pendingFamilyMomentSourceDigest = sourceDigest"),
-            family_route.rindex("isFamilyWindowPresented = true"),
-        )
-        self.assertIn("action == .viewPhoto", family_route)
-        self.assertIn("WidgetCacheBuilder.retainedFamilyMomentID(", family_route)
-        self.assertIn("pendingFamilyNotificationRoute = MomentNotificationRoute(", family_route)
-        self.assertIn("kind: .newMoment", family_route)
 
         app_root = source("NekoWidget/App/AppRootView.swift")
         self.assertIn(
@@ -817,10 +774,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private enum FamilyWidgetActionTargetResolver",
         )
         self.assertIn("static var openAppWhenRun = false", heart_intent)
-        self.assertIn("MomentSharingStateStore.queuePaw", heart_intent)
+        self.assertNotIn("MomentSharingStateStore.queuePaw", heart_intent)
         self.assertEqual(
             heart_intent.count('reloadTimelines(ofKind: "NekoWidget")'),
-            4,
+            1,
         )
         self.assertNotIn("URLSession", heart_intent)
 
@@ -836,21 +793,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("PairingKeychainStore.swift in Sources", widget_sources)
 
     def test_widget_heart_background_host_send_preserves_security_and_retry(self) -> None:
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        sending = section(coordinator, "func sendQueuedWidgetHeart(", "func synchronizeWindowNameForUser(")
-        for boundary in (
-            'Bundle.main.bundleURL.pathExtension != "appex"',
-            "configuration.isMediaAvailable", "runMomentProcessOperation(",
-            "SharingLifecycleGate.validate(lifecycleToken)", "loadAuthorization()",
-            "authorization.lifecycleToken == lifecycleToken", "PrivateWindowCatalogStore.activeEntry()",
-            "window.spaceID == authorization.state.spaceID", "reportOnlyHandoffDeadline(",
-            "makeNetworkClient(requestTimeout: 15)", "validatedQueuedPaw(",
-            "onlyClientRequestID: clientRequestID", "requiresLocalRevocationReset(error)",
-        ):
-            self.assertIn(boundary, sending)
-        self.assertNotIn(".synchronize(", sending)
-        self.assertNotIn("queuePaw(", sending)
-        self.assertNotIn("MomentNotificationTapMailbox", sending)
         store = source("Shared/Sharing/MomentSharingStore.swift")
         validation = section(store, "static func validatedQueuedPaw(", "private static func validatePawTarget(")
         self.assertIn("withStateWhileLifecycleLocked", validation)
@@ -858,9 +800,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("$0.clientRequestID == clientRequestID && $0.momentID == momentID", validation)
         self.assertNotIn("mutate(", validation)
         self.assertNotIn("append(", validation)
-        api = source("NekoWidget/Services/MomentSharingAPIClient.swift")
-        self.assertIn("self.requestTimeout = requestTimeout ?? 45", api)
-        self.assertIn("sessionConfiguration.timeoutIntervalForResource = requestTimeout", api)
 
     def test_heart_reaction_is_explicit_and_separate_from_private_memory(self) -> None:
         store = source("Shared/Sharing/MomentSharingStore.swift")
@@ -893,38 +832,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("let hasReceivedHeart: Bool", presentation)
         self.assertIn("hasReceivedHeart: delivery.hasReceivedHeart", presentation)
 
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        self.assertIn("sendPawOutbox", coordinator)
-        self.assertIn("receivePawChanges", coordinator)
-        self.assertIn("advanceReactionCursor", coordinator)
-        self.assertIn("isPermanentPawRejection", coordinator)
-        self.assertIn("discardRejectedPaw", coordinator)
-        permanent = section(
-            coordinator,
-            "private nonisolated static func isPermanentPawRejection",
-            "private func receivePawChanges(",
-        )
-        self.assertIn('"reaction_not_allowed"', permanent)
 
-        self.assertIn('"reaction_daily_quota_reached"', permanent)
-        for retryable_code in (
-            "rate_limited",
-            "stale_request",
-            "replayed_request",
-            "reaction_conflict",
-            "invalid_authentication",
-        ):
-            self.assertNotIn(f'"{retryable_code}"', permanent)
 
-        api = source("NekoWidget/Services/MomentSharingAPIClient.swift")
-        paw_change = section(api, "struct MomentPawChange", "struct MomentPawChangesResult")
-        paw_response = section(
-            api,
-            "private struct PawReactionChangesResponse",
-            "private struct BlockResponse",
-        )
-        self.assertNotIn("createdAt", paw_change)
-        self.assertNotIn("createdAt", paw_response)
 
     def test_received_memory_import_is_explicit_durable_and_lifecycle_validated(self) -> None:
         store = source("Shared/Sharing/MomentSharingStore.swift")
@@ -1679,8 +1588,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("ownerSignature", name_crypto)
         self.assertIn("ChaChaPoly.open", name_crypto)
 
-        api_client = source("NekoWidget/Services/MomentSharingAPIClient.swift")
-        self.assertIn('path: "/v2/window-name"', api_client)
         self.assertNotIn('case window', moment_kind)
 
         pairing_core = source("Shared/Sharing/PairingCore.swift")
@@ -1694,63 +1601,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("return recoveryDeviceID", local_device)
         self.assertIn("return memberID", local_device)
 
-        moment_api_implementation = section(
-            api_client,
-            "actor URLSessionMomentSharingAPIClient",
-            "private final class MomentNoRedirectSessionDelegate",
-        )
-        reservation = section(
-            moment_api_implementation,
-            "func reserve(\n        item: MomentOutboxItem",
-            "func upload(\n        momentID: String",
-        )
-        self.assertIn("MomentReservationIdentityPolicy.accepts(", reservation)
-        self.assertLess(
-            reservation.index("MomentReservationIdentityPolicy.acceptsContext("),
-            reservation.index("let response: ReservationResponse = try await sendJSON("),
-        )
-        self.assertNotIn(
-            "response.moment.senderDeviceId == localMemberID",
-            reservation,
-        )
 
-        reservation_identity = section(
-            api_client,
-            "enum MomentReservationIdentityPolicy",
-            "enum MomentSendFailurePolicy",
-        )
-        self.assertIn(
-            "pairingState.acceptsPersistedMomentDeviceID(context.senderDeviceID)",
-            reservation_identity,
-        )
-        self.assertIn(
-            "responseDeviceID == localMomentDeviceID",
-            reservation_identity,
-        )
 
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        best_effort = section(
-            coordinator,
-            "private func synchronizeWindowNameBestEffort(",
-            "private func synchronizeWindowName(",
-        )
-        self.assertIn("return false", best_effort)
-        normal_sync = section(
-            coordinator,
-            "sent = try await sendOutbox(",
-            'SharedLog.app.info(\n                "moment-sharing"',
-        )
-        self.assertLess(
-            normal_sync.index("received = try await receiveChanges("),
-            normal_sync.index("synchronizeWindowNameBestEffort("),
-        )
-        self.assertIn("photoState.inbox != localSharingState.inbox", normal_sync)
-        self.assertIn(".momentSharingPresentationNeedsRefresh", normal_sync)
-        self.assertIn(".momentSharingContentNeedsReload", normal_sync)
-        self.assertLess(
-            normal_sync.index(".momentSharingPresentationNeedsRefresh"),
-            normal_sync.index("synchronizeWindowNameBestEffort("),
-        )
 
         builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
         publication = section(builder, "func buildFamilyWindow(", "func clear() throws")
@@ -1776,49 +1628,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("familyWindowIDPrefix + entry.localWindowID", configuration)
         self.assertNotIn("WidgetManifestReader", configuration)
 
-    def test_completed_photo_state_refresh_precedes_hearts_and_names(self) -> None:
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        normal_sync = section(
-            coordinator,
-            "sent = try await sendOutbox(",
-            'SharedLog.app.info(\n                "moment-sharing"',
-        )
-        photo = section(normal_sync, "received = try await receiveChanges(", "                do {")
-        # A throwing receive must finish before reading or publishing any photo
-        # state; a partially processed change stream is not a committed refresh.
-        self.assertTrue(photo.startswith("received = try await receiveChanges("))
-        self.assertNotIn("catch", photo)
-        self.assertNotIn("try?", photo)
-        self.assertLess(photo.index("receiveChanges("), photo.index("let photoState"))
-        self.assertIn(
-            "let photoState = try MomentSharingStateStore.load(\n"
-            "                    validating: loadedAuthorization.lifecycleToken\n"
-            "                )",
-            photo,
-        )
-        # Outgoing-only commits/failures and inbound-only changes each trigger
-        # the same refresh, even when no heart or window-name request has ended.
-        self.assertIn(
-            "if photoState.inbox != localSharingState.inbox\n"
-            "                    || photoState.moderationOverlays != localSharingState.moderationOverlays\n"
-            "                    || photoState.outbox != localSharingState.outbox\n"
-            "                    || photoState.outgoingOutcomes != localSharingState.outgoingOutcomes {",
-            photo,
-        )
-        for notice in (".momentSharingPresentationNeedsRefresh", ".momentSharingContentNeedsReload"):
-            self.assertEqual(photo.count(notice), 1)
-            self.assertLess(photo.index("let photoState"), photo.index(notice))
-            self.assertLess(photo.index("try await MainActor.run"), photo.index("try SharingLifecycleGate.validate("))
-            self.assertLess(photo.index("try SharingLifecycleGate.validate("), photo.index(notice))
-        self.assertNotIn(".momentSharingSynchronizationSucceeded", photo)
-        self.assertLess(normal_sync.index(".momentSharingContentNeedsReload"), normal_sync.index("sendPawOutbox("))
-        paw = section(normal_sync, "pawsReceived = try await receivePawChanges(", "let windowNameChanged")
-        self.assertIn("if inboundState.pawOutbox != localSharingState.pawOutbox", paw)
-        self.assertIn("|| inboundState.receivedPaws != localSharingState.receivedPaws", paw)
-        self.assertIn("try SharingLifecycleGate.validate(loadedAuthorization.lifecycleToken)", paw)
-        self.assertIn(".momentSharingContentNeedsReload", paw)
-        self.assertLess(coordinator.index("let windowNameChanged = await synchronizeWindowNameBestEffort("),
-                        coordinator.index("name: .momentSharingSynchronizationSucceeded"))
 
     def test_synchronized_window_name_verifies_stable_committed_fields(self) -> None:
         store = source("Shared/Sharing/PairingKeychainStore.swift")
@@ -1879,25 +1688,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             mirror_catalog,
         )
 
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        name_sync = section(
-            coordinator,
-            "private func synchronizeWindowName(\n",
-            "private func requireWindowNameSynchronizationAllowed(",
-        )
-        self.assertIn("changed = applied.requiresPresentationRefresh", name_sync)
-        self.assertIn(
-            "return changed || applied.requiresPresentationRefresh",
-            name_sync,
-        )
 
-        best_effort = section(
-            coordinator,
-            "private func synchronizeWindowNameBestEffort(",
-            "private func synchronizeWindowName(\n",
-        )
-        self.assertIn("if changed", best_effort)
-        self.assertIn(".momentSharingPresentationNeedsRefresh", best_effort)
 
 
     def test_legacy_family_widget_stays_bound_to_migrated_first_window(self) -> None:
@@ -2182,24 +1973,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertIn("_ = try bootstrapWhileLocked()", pending_cleanup)
 
-        processor = source("NekoWidget/Services/MomentShareHandoffProcessor.swift")
-        self.assertIn("displayName: entry.displayName", processor)
-        self.assertIn(
-            "senderDeviceID: localMomentDeviceID",
-            processor,
-        )
-        self.assertIn("refreshAdmissionCatalog(", processor)
-        self.assertIn("localWindowID: entry.localWindowID", processor)
-        drain = section(
-            processor,
-            "func refreshAdmissionsAndDrain(",
-            "private func reconcileOrPromote(",
-        )
-        self.assertIn("MomentShareHandoffStore", drain)
-        self.assertIn(".activeAdmissions(now: now)", drain)
-        self.assertIn("$0.bindingSHA256 == binding", drain)
-        self.assertIn("throw refreshError", drain)
-        self.assertNotIn("displayName ==", drain)
 
         handoff = source("Shared/Sharing/MomentShareHandoffStore.swift")
         self.assertIn("let localWindowID: String?", handoff)
@@ -2255,11 +2028,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
             pairing_store,
         )
 
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        self.assertIn(
-            "pairing.canonicalParticipantSigningPublicKey",
-            coordinator,
-        )
         pairing_core = source("Shared/Sharing/PairingCore.swift")
         paired_validation = section(
             pairing_core,
@@ -2285,20 +2053,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("displayName", binding)
 
         app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
-        refresh = section(
-            app_model,
-            "func refreshFamilyWindowOutputs(trigger: String) async",
-            "private nonisolated static func familyWindowInputs",
-        )
-        refresh_failure = section(
-            refresh,
-            "        } catch {",
-            "            Self.logError(",
-        )
-        self.assertIn(
-            "windowDisplayName: privateWindowDisplayName",
-            refresh_failure,
-        )
 
         window_name_service = (
             ROOT / "SharingService" / "src" / "window-name.ts"
@@ -2306,88 +2060,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("actor.is_primary_device !== 1", window_name_service)
         self.assertIn("primary_owner_device_required", window_name_service)
 
-        name_only_admission = section(
-            processor,
-            "func refreshAdmissionLabel(",
-            "private func reconcileOrPromote(",
-        )
-        self.assertIn("MomentShareHandoffStore.publishAdmissions", name_only_admission)
-        self.assertNotIn("nextPendingCapture", name_only_admission)
 
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        explicit_name_sync = section(
-            coordinator,
-            "private func performWindowNameSynchronizationForUser(",
-            "private func performSynchronization(",
-        )
-        self.assertIn("synchronizeWindowName(", explicit_name_sync)
-        self.assertIn("refreshAdmissionLabel(", explicit_name_sync)
-        self.assertNotIn("sendOutbox(", explicit_name_sync)
-        self.assertNotIn("receiveChanges(", explicit_name_sync)
-        window_name_sync = section(
-            coordinator,
-            "private func synchronizeWindowName(",
-            "private func requireWindowNameSynchronizationAllowed(",
-        )
-        self.assertLess(
-            window_name_sync.index("requireWindowNameSynchronizationAllowed("),
-            window_name_sync.index("api.currentWindowName("),
-        )
-        report_only_name_guard = section(
-            coordinator,
-            "private func requireWindowNameSynchronizationAllowed(",
-            "private func sendOutbox(",
-        )
-        self.assertIn("MomentSharingError.reportOnly", report_only_name_guard)
-        self.assertIn("resetLocalPairing", report_only_name_guard)
-        self.assertIn(".reportOnlyWindowClosed", report_only_name_guard)
 
         runtime_self_test = source("NekoWidget/Services/SharingRuntimeSelfTest.swift")
         self.assertIn("Models a GET/PUT response resuming after unlink", runtime_self_test)
-        self.assertIn("reportOnlyCounts.gets == 0", runtime_self_test)
-        self.assertIn("reportOnlyCounts.puts == 0", runtime_self_test)
 
-    def test_window_name_sync_survives_missing_media_consent_after_reports(self) -> None:
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        report_start = "let reported = try await sendReportOutbox("
-        report_only_start = coordinator.index(report_start)
-        normal_start = coordinator.index(
-            report_start,
-            report_only_start + len(report_start),
-        )
-        normal_end = coordinator.index("\n        } catch {", normal_start)
-        synchronization = coordinator[normal_start:normal_end]
-        consent_predicate = section(
-            synchronization,
-            "let hasCurrentMediaConsent =",
-            "if !hasCurrentMediaConsent {",
-        )
-        self.assertIn("mediaSharingConsentVersion", consent_predicate)
-        self.assertIn("PairingMediaSharingConsent.currentVersion", consent_predicate)
-        self.assertIn("mediaSharingConsentAcceptedAt != nil", consent_predicate)
-        no_consent = section(
-            synchronization,
-            "if !hasCurrentMediaConsent {",
-            "} else {",
-        )
-        self.assertIn("handoffProcessor.refreshAdmissionCatalog(", no_consent)
-        self.assertIn("sent = 0", no_consent)
-        self.assertIn("received = 0", no_consent)
-        self.assertNotIn("sendOutbox(", no_consent)
-        self.assertNotIn("receiveChanges(", no_consent)
-        self.assertNotIn("refreshAdmissionsAndDrain(", no_consent)
-        self.assertLess(
-            synchronization.index("sendReportOutbox("),
-            synchronization.index("if !hasCurrentMediaConsent {"),
-        )
-        self.assertIn(
-            "\n            }\n            // Keep presentation metadata",
-            synchronization,
-        )
-        self.assertLess(
-            synchronization.index("// Keep presentation metadata"),
-            synchronization.index("synchronizeWindowNameBestEffort("),
-        )
 
     def test_sharing_surfaces_do_not_assume_a_family_relationship(self) -> None:
         surfaces = [
@@ -2581,17 +2258,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
     def test_sent_ledger_separates_server_acceptance_from_device_arrival(self) -> None:
         store = source("Shared/Sharing/MomentSharingStore.swift")
         container = source("Shared/AppGroup/SharedContainer.swift")
-        processor = source("NekoWidget/Services/MomentShareHandoffProcessor.swift")
-        api_client = source("NekoWidget/Services/MomentSharingAPIClient.swift")
         widget = source("NekoWidgetWidget/NekoWidgetView.swift")
         runtime = source("NekoWidget/Services/SharingRuntimeSelfTest.swift")
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
         presentation = source("NekoWidget/Views/MomentSharingPresentation.swift")
 
         self.assertIn("recipientDeliveryConfirmedAt", store)
         self.assertIn("markRecipientDeliveryConfirmed", store)
-        self.assertIn('change.deliveryState == "acknowledged"', coordinator)
-        self.assertIn("markRecipientDeliveryConfirmed", coordinator)
         self.assertIn("MomentSentRecordDeliveryState", presentation)
         self.assertIn("serverAccepted", presentation)
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
@@ -2626,11 +2298,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("try? removeLocalThumbnail(fileName: name)", store)
         self.assertIn("-completedOutboxMetadataSeconds", store)
         self.assertIn("maximumTerminalOutboxMetadataCount = 200", store)
-        self.assertIn("CGImageSourceCreateThumbnailAtIndex", processor)
-        self.assertIn("CGImageDestinationAddImage", processor)
-        self.assertIn("kCGImageDestinationLossyCompressionQuality", processor)
-        self.assertNotIn("localThumbnailJPEG", api_client)
-        self.assertNotIn("localThumbnailFileName", api_client)
         self.assertNotIn("MomentSharingStateStore", widget)
         self.assertNotIn("localThumbnailFileName", widget)
         self.assertIn("rewrittenOutbox.first?[\"localThumbnailJPEG\"] == nil", runtime)
@@ -2848,48 +2515,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("lifecycle-state-recovered", pairing_guard)
 
 
-    def test_report_window_closed_reset_keeps_report_route_provenance(self) -> None:
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        synchronize = section(
-            coordinator,
-            "private func performSynchronization(trigger: String) async",
-            "func synchronizationNotice()",
-        )
-        report_outbox = section(
-            coordinator,
-            "private func sendReportOutbox(",
-            "private func finalizeCommittedReport(",
-        )
-        self.assertIn("BackgroundSynchronizationTermination", synchronize)
-        self.assertNotIn("Self.isReportWindowClosed(error)", synchronize)
-        self.assertIn("Self.isReportWindowClosed(error)", report_outbox)
-        self.assertIn(".reportOnlyWindowClosed", report_outbox)
-        self.assertIn("resetLocalPairing", report_outbox)
 
-    def test_foreground_sync_reloads_an_open_window_without_network_loop(self) -> None:
-        app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
-        synchronize = section(
-            app_model,
-            "private func synchronizeMomentSharing(trigger: String) async",
-            "func refreshFamilyWindowOutputs(trigger: String) async",
-        )
-        self.assertIn("UIApplication.shared.isProtectedDataAvailable", synchronize)
-        self.assertIn('"protected-data-unavailable"', synchronize)
-        self.assertLess(
-            synchronize.index("isProtectedDataAvailable"),
-            synchronize.index("momentSharingCoordinator.synchronize"),
-        )
-        refresh = section(
-            app_model,
-            "func refreshFamilyWindowOutputs(trigger: String) async",
-            "private nonisolated static func familyWindowInputs",
-        )
-        self.assertIn("UIApplication.shared.isProtectedDataAvailable", refresh)
-        self.assertLess(
-            refresh.index("isProtectedDataAvailable"),
-            refresh.index("PairingInstallationGuard.bootstrapAsync"),
-        )
-        self.assertIn(".momentSharingContentNeedsReload", synchronize)
 
     def test_received_memory_import_joins_the_permanent_personal_collection(self) -> None:
         store = source("Shared/Sharing/MomentSharingStore.swift")

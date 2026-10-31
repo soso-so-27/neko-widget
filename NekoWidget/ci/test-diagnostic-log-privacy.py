@@ -705,21 +705,6 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
         self.assertIn("normalizedMomentOutboxErrorCode(code)", mark_failed)
         self.assertNotIn("code.prefix", mark_failed)
 
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        safe_code = section(
-            coordinator,
-            "private nonisolated static func safeErrorCode",
-            "private nonisolated static func synchronizationNotice",
-        )
-        self.assertIn('default: return "request-rejected"', safe_code)
-        self.assertIn(
-            'case "moment_runtime_disabled": return "moment-runtime-disabled"',
-            safe_code,
-        )
-        self.assertIn('case "reservation_expired": return "reservation-expired"', safe_code)
-        self.assertNotIn('"http-\\(', safe_code)
-        self.assertNotIn("code.prefix", safe_code)
-
         presentation = source("NekoWidget/Views/MomentSharingPresentation.swift")
         self.assertIn('value.errorCodes.contains("moment-runtime-disabled")', presentation)
         self.assertNotIn('hasSuffix("moment_runtime_disabled")', presentation)
@@ -952,37 +937,9 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             allowed_values = set(re.findall(r'"([^"\n]+)"', allowed_body)) - {key}
             self.assertEqual(enum_values, allowed_values)
         self.assertIn('case "deliveryPriorFailures":\n                value = validatedUnsignedInteger(rawValue)', privacy)
-        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
-        self.assertIn("private static let deliveryDiagnosticNonce = UUID()", coordinator)
-        self.assertIn("processNonce: Self.deliveryDiagnosticNonce", coordinator)
         self.assertIn("processNonce.uuidString", diagnostic)
         self.assertNotIn("localizedDescription", diagnostic)
         self.assertNotIn("userInfo", diagnostic)
-        for call in shared_log_call_bodies(coordinator):
-            if '"moment-delivery"' not in call:
-                continue
-            for forbidden in ("candidate.id", "item.id", "clientRequestID", "serverMomentID", "caption", "baseURL"):
-                self.assertNotIn(forbidden, call)
-        retry = section(coordinator, "    private func recordRetry(", "    private nonisolated static func logDeliveryWait(")
-        self.assertLess(retry.index("snapshot = try MomentSharingStateStore.mutate"), retry.index("Self.logDeliveryWait"))
-        self.assertIn('if item.phase == .committed', retry)
-        self.assertIn('"Accepted photo local cleanup failed"', retry)
-        send = section(coordinator, "    private func sendOutbox(", "    private func sendPawOutbox(")
-        for phase, stage in (("reserved", "readCiphertext"), ("uploaded", "beginCommit"), ("committing", "commit")):
-            end = "if item.phase == .committing {" if phase == "uploaded" else "guard let momentID"
-            branch = section(send, f"if item.phase == .{phase} {{", end)
-            self.assertIn(f"stage = .{stage}", branch)
-        recovery = section(send, "if Self.isExpiredReservation(error) {", "if Self.isNonterminalAuthenticationFailure(error)")
-        self.assertIn("try? currentOutboxItem(candidate.id)", recovery)
-        self.assertIn("priorFailures: recoveredItem.attemptCount", recovery)
-        self.assertIn("let retryAt = recoveredItem.nextRetryAt", recovery)
-        self.assertNotIn("addingTimeInterval", recovery)
-        self.assertNotIn("candidate.attemptCount + 1", recovery)
-        client = source("NekoWidget/Services/MomentSharingAPIClient.swift")
-        transport = section(client, "    private func performRequest(", "    private func authenticate(")
-        self.assertIn("transportFailure: MomentTransportFailure.classify(error)", transport)
-        self.assertLess(transport.index("catch let error as MomentSharingError"),
-                        transport.index("MomentTransportFailure.classify(error)"))
         classification = section(core, "enum MomentTransportFailure:", "enum MomentSharingError:")
         self.assertIn("value.domain == NSURLErrorDomain", classification)
         self.assertNotIn("userInfo", classification)

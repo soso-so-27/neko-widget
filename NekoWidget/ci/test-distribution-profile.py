@@ -150,13 +150,12 @@ class DistributionProfileTests(unittest.TestCase):
             self.assertNotEqual(subprocess.run(upload, capture_output=True).returncode, 0)
 
     def test_existing_pending_data_guards_remain_before_reads(self):
-        source = (ROOT / 'NekoWidget/Services/MomentSharingCoordinator.swift').read_text(encoding='utf-8')
-        guard = 'guard configuration.isEncryptedReportAvailable else { return 0 }'
-        self.assertLess(source.index(guard), source.index('let snapshot = try MomentSharingStateStore.load().reportOutbox'))
         source = (ROOT / 'NekoWidget/Services/GroupReportingProvider.swift').read_text(encoding='utf-8')
         self.assertIn('guard selected || config.isOwnerInternalReportsDisabled else { return GroupReportingPrototype() }', source)
         source = (ROOT / 'NekoWidget/Services/ProductionGroupReporting.swift').read_text(encoding='utf-8')
         self.assertIn('self.reportsDisabled = reportsDisabled || configuration.isOwnerInternalReportsDisabled', source)
+        submission = source[source.index('func submitReport(draftID:'):source.index('func reconcile(', source.index('func submitReport(draftID:'))]
+        self.assertLess(submission.index('guard !reportsDisabled'), submission.index('try owned(draftID)'))
 
 
 if __name__ == '__main__':

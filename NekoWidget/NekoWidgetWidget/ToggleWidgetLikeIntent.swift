@@ -158,7 +158,7 @@ struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
 struct SendFamilyWidgetHeartIntent: AppIntent {
     static var title: LocalizedStringResource = "ハートを送る"
     static var description = IntentDescription(
-        "表示中の届いた写真にハートを送ります。通信できないときは送信待ちに残します。"
+        "以前のまどのボタンです。みんなのまどはアプリのまどタブから開けます。"
     )
     static var isDiscoverable = false
     static var openAppWhenRun = false
@@ -188,64 +188,10 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        guard let localWindowID,
-              let momentID = FamilyWidgetActionTargetResolver.momentID(
-                  forSourceDigest: sourceDigest,
-                  localWindowID: localWindowID
-              ) else {
-            SharedLog.widget.warning(
-                "reaction",
-                "Stale or invalid Family Widget heart action was ignored",
-                metadata: ["source": SharedLog.shortHash(sourceDigest)]
-            )
-            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-            return .result()
-        }
-
-        do {
-            let lifecycleToken = try SharingLifecycleGate.issueToken()
-            let item = try MomentSharingStateStore.queuePaw(
-                momentID: momentID,
-                now: Date(),
-                validating: lifecycleToken
-            )
-            SharedLog.widget.info(
-                "reaction",
-                "Family Widget heart queued",
-                metadata: [
-                    "phase": item.phase.rawValue,
-                    "source": SharedLog.shortHash(sourceDigest),
-                ]
-            )
-            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-#if NEKO_HOST_APP
-            let protectedDataAvailable = await MainActor.run {
-                UIApplication.shared.isProtectedDataAvailable
-            }
-            _ = await MomentSharingCoordinator().sendQueuedWidgetHeart(
-                momentID: momentID,
-                localWindowID: localWindowID,
-                clientRequestID: item.clientRequestID,
-                lifecycleToken: lifecycleToken,
-                protectedDataAvailable: protectedDataAvailable
-            )
-#endif
-            // A misrouted extension invocation can queue safely but cannot load
-            // host keys or claim acceptance. The provider reads the real phase.
-            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-        } catch {
-            SharedLog.widget.error(
-                "reaction",
-                "Family Widget heart could not be queued",
-                metadata: SharedLog.errorMetadata(
-                    error,
-                    category: .widgetLike,
-                    additional: ["source": SharedLog.shortHash(sourceDigest)]
-                )
-            )
-            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-        }
-        return .result()
+        // Decode buttons already installed by older versions, without queueing
+        // a send, loading a room key, or using a different active window.
+        WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        return .result(dialog: "このまどは利用できなくなりました。まどタブから、みんなのまどを開いてください。")
     }
 
 }

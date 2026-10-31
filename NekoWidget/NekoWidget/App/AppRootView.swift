@@ -118,30 +118,8 @@ struct AppRootView: View {
             // SwiftUI uses scenes: app-delegate foreground callbacks alone are insufficient.
             await GroupAdmissionService.shared.refresh()
         }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            guard SharingAPIConfiguration.current.isMediaAvailable else { return }
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: MomentForegroundRefreshPolicy.interval)
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                await viewModel.pollMomentSharingWhileActive(
-                    isSceneActive: scenePhase == .active
-                )
-            }
-        }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
             AppIdleTimer.setPreventSleep(isScanning && scenePhase == .active, for: "photo-scan")
-        }
-        .onChange(of: momentNotificationTapMailbox.pendingTap, initial: true) { _, tap in
-            guard let tap else { return }
-            Task { @MainActor in
-                await viewModel.handleMomentNotificationRoute(tap.route)
-                momentNotificationTapMailbox.consume(id: tap.id)
-            }
         }
         .onChange(of: momentNotificationTapMailbox.pendingWidgetFeedback, initial: true) { _, feedback in
             guard let feedback else { return }

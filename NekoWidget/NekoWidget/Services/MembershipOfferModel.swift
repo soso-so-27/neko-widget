@@ -9,9 +9,8 @@ import SwiftUI
 /// Photo access, invitations, receiving, hearts, and favorites have no case.
 ///
 /// Connected now: onboarding, Settings, a new memo, a monthly summary or
-/// seasonal movie, and preservation. `widgetResume` (AppRootView's Widget
-/// deep link) and `createWindow` / `continueWindow` (PairingView,
-/// FamilyWindowView) are connected in a separate change (plan PR 6).
+/// seasonal movie, preservation, the personal Widget resume path, and the
+/// current group-window creation/continuation screens.
 enum PlusOfferContext: Equatable, Sendable {
     /// The last, skippable page of the first run.
     case onboarding

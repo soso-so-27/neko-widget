@@ -37,7 +37,6 @@
 		E02609220000000000000008 /* MembershipAccessContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000007 /* MembershipAccessContext.swift */; };
 		E02609210000000000000003 /* MembershipOfferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000004 /* MembershipOfferView.swift */; };
 		E02609210000000000000001 /* MembershipOfferModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000002 /* MembershipOfferModel.swift */; };
-		E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */; };
 		E02609080000000000000001 /* PhotoNoteInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* PhotoNoteInput.swift */; };
 		E02609090000000000000011 /* PhotoMemoryNoteFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000012 /* PhotoMemoryNoteFixture.swift */; };
 		100000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
@@ -93,7 +92,6 @@
 		100000000000000000000119 /* AppLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000219 /* AppLogStore.swift */; };
 		100000000000000000000120 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000220 /* AppViewModel.swift */; };
 		100000000000000000000142 /* PairingInstallationGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021A /* PairingInstallationGuard.swift */; };
-		100000000000000000000143 /* PairingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021B /* PairingAPIClient.swift */; };
 		100000000000000000000148 /* CanonicalPreviewBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021C /* CanonicalPreviewBuilder.swift */; };
 		100000000000000000000149 /* DailySharingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021D /* DailySharingStore.swift */; };
 		10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022A /* SharingRuntimeSelfTest.swift */; };
@@ -131,12 +129,9 @@
 		100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A6 /* SharingAPIConfiguration.swift */; };
 		10000000000000000000016A /* MomentCanonicalPreviewBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000250 /* MomentCanonicalPreviewBuilder.swift */; };
 		10000000000000000000016B /* MomentSharePreparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000251 /* MomentSharePreparationService.swift */; };
-		10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000252 /* MomentSharingAPIClient.swift */; };
-		10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000253 /* MomentSharingCoordinator.swift */; };
 		1000000000000000000001F0 /* MomentBlockWithdrawalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */; };
 		100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025A /* MomentBackgroundRefreshService.swift */; };
 		100000000000000000000178 /* MomentShareIngressService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000354 /* MomentShareIngressService.swift */; };
-		100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000256 /* MomentShareHandoffProcessor.swift */; };
 		10000000000000000000016F /* PhotoDetailComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000255 /* PhotoDetailComponents.swift */; };
 		100000000000000000000173 /* MomentSharingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000257 /* MomentSharingPresentation.swift */; };
 		100000000000000000000174 /* PairingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000258 /* PairingPresentation.swift */; };
@@ -373,7 +368,6 @@
 		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
 		E02609210000000000000004 /* MembershipOfferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferView.swift; sourceTree = "<group>"; };
 		E02609210000000000000002 /* MembershipOfferModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferModel.swift; sourceTree = "<group>"; };
-		E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateWindowCoverPhotoService.swift; sourceTree = "<group>"; };
 		E02609080000000000000002 /* PhotoNoteInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoNoteInput.swift; sourceTree = "<group>"; };
 		E02609090000000000000012 /* PhotoMemoryNoteFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoMemoryNoteFixture.swift; sourceTree = "<group>"; };
 		F00000000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
@@ -443,7 +437,6 @@
 		F00000000000000000000219 /* AppLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000220 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		F0000000000000000000021A /* PairingInstallationGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingInstallationGuard.swift; sourceTree = "<group>"; };
-		F0000000000000000000021B /* PairingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingAPIClient.swift; sourceTree = "<group>"; };
 		F0000000000000000000021C /* CanonicalPreviewBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalPreviewBuilder.swift; sourceTree = "<group>"; };
 		F0000000000000000000021D /* DailySharingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000022A /* SharingRuntimeSelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingRuntimeSelfTest.swift; sourceTree = "<group>"; };
@@ -520,12 +513,9 @@
 		F0000000000000000000024E /* CatIdentityExperimentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityExperimentView.swift; sourceTree = "<group>"; };
 		F00000000000000000000250 /* MomentCanonicalPreviewBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentCanonicalPreviewBuilder.swift; sourceTree = "<group>"; };
 		F00000000000000000000251 /* MomentSharePreparationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharePreparationService.swift; sourceTree = "<group>"; };
-		F00000000000000000000252 /* MomentSharingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingAPIClient.swift; sourceTree = "<group>"; };
-		F00000000000000000000253 /* MomentSharingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingCoordinator.swift; sourceTree = "<group>"; };
 		F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentBlockWithdrawalStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000025A /* MomentBackgroundRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentBackgroundRefreshService.swift; sourceTree = "<group>"; };
 		F00000000000000000000255 /* PhotoDetailComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDetailComponents.swift; sourceTree = "<group>"; };
-		F00000000000000000000256 /* MomentShareHandoffProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareHandoffProcessor.swift; sourceTree = "<group>"; };
 		F00000000000000000000257 /* MomentSharingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingPresentation.swift; sourceTree = "<group>"; };
 		F00000000000000000000258 /* PairingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingPresentation.swift; sourceTree = "<group>"; };
 		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -845,10 +835,8 @@
 				F00000000000000000000217 /* PhotoSelectors.swift */,
 				F00000000000000000000218 /* WidgetCacheBuilder.swift */,
 				A261024B0000000000000004 /* CloudyWindowImagePreparer.swift */,
-				E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */,
 				F00000000000000000000219 /* AppLogStore.swift */,
 				F0000000000000000000021A /* PairingInstallationGuard.swift */,
-				F0000000000000000000021B /* PairingAPIClient.swift */,
 				F0000000000000000000021C /* CanonicalPreviewBuilder.swift */,
 				F0000000000000000000021D /* DailySharingStore.swift */,
 				F0000000000000000000022A /* SharingRuntimeSelfTest.swift */,
@@ -906,12 +894,9 @@
 				F0000000000000000000024D /* CatIdentityExperimentExporter.swift */,
 				F00000000000000000000250 /* MomentCanonicalPreviewBuilder.swift */,
 				F00000000000000000000251 /* MomentSharePreparationService.swift */,
-				F00000000000000000000252 /* MomentSharingAPIClient.swift */,
-				F00000000000000000000253 /* MomentSharingCoordinator.swift */,
 				F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */,
 				F0000000000000000000025A /* MomentBackgroundRefreshService.swift */,
 				A16700000000000000000002 /* PersonalWidgetBackgroundRefresh.swift */,
-				F00000000000000000000256 /* MomentShareHandoffProcessor.swift */,
 				F0000000000000000000025E /* SeasonalMovieCandidateService.swift */,
 				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
 				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
@@ -1290,11 +1275,9 @@
 				100000000000000000000117 /* PhotoSelectors.swift in Sources */,
 				100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */,
 				A261024B0000000000000005 /* CloudyWindowImagePreparer.swift in Sources */,
-				E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */,
 				100000000000000000000119 /* AppLogStore.swift in Sources */,
 				100000000000000000000120 /* AppViewModel.swift in Sources */,
 				100000000000000000000142 /* PairingInstallationGuard.swift in Sources */,
-				100000000000000000000143 /* PairingAPIClient.swift in Sources */,
 				100000000000000000000148 /* CanonicalPreviewBuilder.swift in Sources */,
 				100000000000000000000149 /* DailySharingStore.swift in Sources */,
 				10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */,
@@ -1371,13 +1354,10 @@
 				100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */,
 				10000000000000000000016A /* MomentCanonicalPreviewBuilder.swift in Sources */,
 				10000000000000000000016B /* MomentSharePreparationService.swift in Sources */,
-				10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */,
-				10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */,
 				1000000000000000000001F0 /* MomentBlockWithdrawalStore.swift in Sources */,
 				100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */,
 				A16700000000000000000079 /* PersonalWidgetBackgroundRefresh.swift in Sources */,
 				100000000000000000000178 /* MomentShareIngressService.swift in Sources */,
-				100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */,
 				10000000000000000000016F /* PhotoDetailComponents.swift in Sources */,
 				E02609080000000000000001 /* PhotoNoteInput.swift in Sources */,
 				E02609090000000000000011 /* PhotoMemoryNoteFixture.swift in Sources */,

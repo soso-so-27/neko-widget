@@ -46,28 +46,15 @@ class LimitedExternalBetaReportingTests(unittest.TestCase):
         ):
             self.assertIn(expected, workflow)
 
-    def test_view_model_refuses_report_submission(self) -> None:
-
-        coordinator = self.source(
-            "NekoWidget/Services/MomentSharingCoordinator.swift"
-        )
-        self.assertIn(
-            "guard configuration.isEncryptedReportAvailable,\n"
-            "              configuration.isMediaAvailable,",
-            coordinator,
-        )
-        self.assertIn(
-            "guard configuration.isEncryptedReportAvailable else { return 0 }",
-            coordinator,
-        )
-        self.assertLess(
-            coordinator.index(
-                "guard configuration.isEncryptedReportAvailable else { return 0 }"
-            ),
-            coordinator.index(
-                "let snapshot = try MomentSharingStateStore.load().reportOutbox"
-            ),
-        )
+    def test_current_group_reporting_refuses_disabled_submission(self) -> None:
+        source = self.source("NekoWidget/Services/ProductionGroupReporting.swift")
+        start = source.index("func submitReport(draftID:")
+        end = source.index("func reconcile(", start)
+        submission = source[start:end]
+        self.assertLess(submission.index("guard !reportsDisabled"),
+                        submission.index("try owned(draftID)"))
+        self.assertLess(submission.index("guard isAvailable"),
+                        submission.index('try await request(base + "reserve"'))
 
     def test_ui_hides_report_and_exposes_beta_safety_fallback(self) -> None:
 
