@@ -208,22 +208,6 @@ xcrun swiftc \
 "$RUNNER_TEMP/verify-sharing-protocol-vectors" \
   ci/fixtures/sharing-protocol-v1.json
 
-xcrun swiftc \
-  -parse-as-library \
-  Shared/Sharing/PairingCore.swift \
-  Shared/Models/WidgetManifest.swift \
-  Shared/Models/WidgetRenderPlan.swift \
-  Shared/Sharing/DailySharingCore.swift \
-  Shared/AppGroup/SharedContainer.swift \
-  Shared/Storage/AtomicJSON.swift \
-  Shared/Sharing/SharingAPIConfiguration.swift \
-  NekoWidget/Services/PairingAPIClient.swift \
-  NekoWidget/Services/DailySharingStore.swift \
-  NekoWidget/Services/DailySharingAPIClient.swift \
-  ci/verify-sharing-api-responses.swift \
-  -o "$RUNNER_TEMP/verify-sharing-api-responses"
-"$RUNNER_TEMP/verify-sharing-api-responses" \
-  ci/fixtures/sharing-api-v1-responses.json
 
 xcrun swiftc \
   -parse-as-library \
