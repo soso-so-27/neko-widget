@@ -297,9 +297,9 @@ struct FamilyWindowPhotoCollection<DeliveryCard: View>: View {
                     Text(hasImageLessHistory
                         ? "前に届けた記録は、写真なしで確かめられます。"
                         : canSendPhoto
-                            ? "まどに届いた写真はここに並びます。下の「写真を届ける」から、1枚選んで届けられます。"
+                            ? "下の「写真を届ける」から、写真を1枚届けられます。"
                             : addPhotoAction != nil
-                                ? "相手から届いた写真は、ここに並びます。＋から写真を1枚選んで、このまどに追加することもできます。"
+                                ? "相手から届いた写真は、ここに並びます。"
                                 : "相手から届いた写真は、ここに並びます。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -767,11 +767,7 @@ struct FamilyRecordView: View {
             List {
                 if currentEntryID == nil {
                     Section {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(windowName).font(.headline)
-                            Text("ここに追加した写真を、二人で見返せます。")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }
+                        Text(windowName).font(.headline)
                     }
                 }
                 recordSection
@@ -866,8 +862,8 @@ struct FamilyRecordView: View {
                 }
             } message: {
                 Text(withdrawing?.kind == .words
-                     ? "このメモだけを取り下げます。写真や相手のメモは残ります。相手がすでに保存したものは消せません。"
-                     : "写真を取り下げても、メモは残ります。相手がすでに保存した写真は消せません。")
+                     ? "相手がすでに保存したメモは消せません。"
+                     : "相手がすでに保存した写真は消せません。")
             }
     }
 
@@ -896,8 +892,6 @@ struct FamilyRecordView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("まだ写真がありません", systemImage: "photo.on.rectangle")
                             .font(.headline)
-                        Text("まどに写真を追加すると、ここで二人で見返せます。")
-                            .foregroundStyle(.secondary)
                         Button("写真を追加") { adding = true }
                             .buttonStyle(.borderedProminent)
                             .disabled(saving)
@@ -1053,24 +1047,21 @@ struct FamilyRecordView: View {
         NavigationStack {
             List {
                 Section("二人で持ち寄る") {
-                    Text("このまどに参加している二人が、写真やメモを追加できます。写真だけの追加もできます。")
-                    Text("選んだ写真と、ここに書いたメモだけを共有します。自分だけのメモやお気に入りが自動で共有されることはありません。")
+                    Text("選んだ写真と、ここに書いたメモだけを二人で共有します。")
                 }
                 Section("変更できるのは自分の分だけ") {
-                    Text("自分が書いたメモは編集・取り下げできます。相手のメモは変更できません。")
-                    Text("写真を取り下げられるのは、追加した本人だけです。写真を取り下げても、二人が書いたメモは残ります。")
+                    Text("自分のメモと、自分が追加した写真だけを、編集・取り下げできます。")
                 }
                 Section("このまどをやめると") {
-                    Text("このまどをやめたり、相手をブロックしたりすると、このまどの写真とメモは開けなくなります。それだけで、追加した写真とメモが消えるわけではありません。")
+                    Text("このまどをやめたり、相手をブロックしたりすると、このまどの写真とメモは開けなくなります。")
                         .accessibilityIdentifier("family-record-ending-explanation")
-                    Text("自分の写真やメモを消したいときは、やめる前に取り下げてください。相手がすでに保存したものは消せません。")
+                    Text("自分の写真やメモを消したいときは、やめる前に取り下げてください。")
                 }
                 Section("写真の保存について") {
-                    Text("まどに追加した写真とメモは、ここに残ります。日付は、まどに追加した日です。ここの写真は見るためのコピーなので、元の写真は写真アプリに残しておいてください。")
-                    Text("このまどに参加しているiPhoneで見られます。二人ともiPhoneをなくすと元に戻せず、いつまでも残せるわけでもありません。")
+                    Text("元の写真は、写真アプリに残しておいてください。")
                 }
                 Section("残せる量") {
-                    Text("1つのまどに、写真100枚・メモ1,000件まで残せます。取り下げたものも数に入ります。いっぱいになっても、古いものが消えることはありません。")
+                    Text("1つのまどに、写真100枚・メモ1,000件まで残せます（取り下げたものも含みます）。")
                 }
             }
             .navigationTitle("このまどの写真について")
@@ -1209,9 +1200,6 @@ private struct FamilyRecordEditor: View {
                             Button("このメモを添える") { text = caption }
                                 .disabled(busy || prepared || !text.isEmpty)
                                 .accessibilityIdentifier("family-record-reuse-caption")
-                        } else {
-                            Text("相手のメモは見るだけです。自分のメモとして追加されることはありません。")
-                                .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -1219,16 +1207,10 @@ private struct FamilyRecordEditor: View {
                     PhotoNoteInput(text: $text, focus: $focused, maximumCharacters: 500,
                         audience: "\(windowName)の相手にも見えます", identifier: "family-record-words-input")
                         .disabled(busy || prepared)
-                    Text("この写真と、ここに書いたメモだけを共有します。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if sourcePhoto != nil {
-                        Text("この写真とメモをまどに残します。相手もあとから見返せます。")
-                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 if photoAdded { Text("写真は追加しました。メモの追加はまだ終わっていません。") }
                 if sourceUnavailable {
-                    Text("写真かまどに変更があったため、追加できません。書いたメモはここに残っています。閉じてから、もう一度お試しください。")
+                    Text("写真かまどに変更があったため、追加できません。閉じてから、もう一度お試しください。")
                 }
                 if let message { Text(message).foregroundStyle(.red) }
                 if (prepared && message != nil) || sourceUnavailable {
@@ -1294,7 +1276,7 @@ private struct FamilyRecordEditor: View {
             Button("破棄して閉じる", role: .destructive) { dismiss() }
             Button("編集を続ける", role: .cancel) {}
         } message: {
-            Text(prepared ? "まだ追加が終わっていないものがあります。追加済みの写真やメモは、閉じても残ります。" : "まだ追加していないメモは保存されません。")
+            Text(prepared ? "まだ追加が終わっていないものがあります。" : "まだ追加していないメモは保存されません。")
         }
         .appRecordEditing(retainWhileHidden: text != (target?.text ?? "") || photoAdded || selection != nil || busy || !pending.isEmpty || picking)
     }
@@ -1330,12 +1312,12 @@ private struct FamilyRecordEditor: View {
         } catch {
             switch MomentOutboxRetryPolicy.supportErrorCode(for: error) {
             case MomentOutboxRetryPolicy.supportRequiredErrorCode:
-                message = "このまどのPlusが止まっているため、いまは追加できません。書いたメモは残っています。届いた写真はこれまでどおり見られます。"
+                message = "このまどのPlusが止まっているため、いまは追加できません。"
             case MomentOutboxRetryPolicy.supportUnavailableErrorCode:
-                message = "いまは追加できるか確かめられませんでした。書いたメモは残っています。Plusを買い直さずに、少し待ってから、もう一度お試しください。"
+                message = "いまは追加できるか確かめられませんでした。Plusを買い直さずに、少し待ってから、もう一度お試しください。"
             default:
                 message = (error as? FamilyRecordError)?.errorDescription
-                    ?? "追加できたか確かめられませんでした。書いたメモは残っています。もう一度試しても、二重に追加されることはありません。"
+                    ?? "追加できたか確かめられませんでした。もう一度お試しください。"
             }
         }
     }

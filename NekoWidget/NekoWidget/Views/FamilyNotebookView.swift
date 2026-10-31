@@ -96,7 +96,7 @@ final class FamilyNotebookPrototype: ObservableObject {
                 existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []))
             if mappings != snapshot.mappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
             reload(); applyFamilyWrites()
-        } catch { message = "家族の手帳を開けませんでした。記録は消えていません。" }
+        } catch { message = "家族の手帳を開けませんでした。少し待ってから、もう一度お試しください。" }
     }
 
     /// Explicit personal-to-family boundary. Only the selected tool cats and
@@ -130,7 +130,7 @@ final class FamilyNotebookPrototype: ObservableObject {
                     store = try .init(directory: binding.directory(support: AppRecordDataset.support), familyID: binding.familyID, deviceID: binding.deviceID)
                     realAuthor = binding.author; reload()
                 }
-            } catch { message = "家族の手帳を読み込めませんでした。記録は消えていません。" }
+            } catch { message = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。" }
         }
         CatCareStore.shared.willSave = { [weak self] before, after in
             guard let self, self.isReal, !self.applyingRemote else { return }
@@ -163,13 +163,13 @@ final class FamilyNotebookPrototype: ObservableObject {
             reload()
         } catch {
             store = nil; snapshot = nil
-            message = "家族の手帳を読み込めませんでした。記録は消えていません。"
+            message = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。"
         }
     }
 
     private func reload() {
         do { snapshot = try store?.snapshot() }
-        catch { message = "家族の手帳を読み込めませんでした。記録は消えていません。" }
+        catch { message = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。" }
     }
 
     // MARK: Making the family, and copying the tools in
@@ -364,9 +364,9 @@ final class FamilyNotebookPrototype: ObservableObject {
                 try CareHandoffStore.shared.receiveFamilyChanges()
                 Task {
                     do { try await VeterinaryVisitStore.shared.receiveFamilyChanges() }
-                    catch { message = "家族が書いた診察メモを取り込めませんでした。記録は消えていません。" }
+                    catch { message = "家族が書いた診察メモを取り込めませんでした。少し待ってから、もう一度お試しください。" }
                 }
-            } catch { message = "家族が書いた内容を「この子のこと」に取り込めませんでした。記録は消えていません。" }
+            } catch { message = "家族が書いた内容を「この子のこと」に取り込めませんでした。少し待ってから、もう一度お試しください。" }
             return
         }
         guard hasFamily, let snapshot, let care = CatCareStore.shared.state,
@@ -873,7 +873,7 @@ extension FamilyNotebookView {
             }
         } footer: {
             if case .noPayer(canClaim: true, handoverPending: false) = pause {
-                Text("あなたのPlusで、家族みんなの共有が戻ります。メンバーを外したり、家族をやめたりもできるようになります。")
+                Text("あなたのPlusで、家族みんなの共有が戻ります。")
             } else if case .noPayer(canClaim: false, handoverPending: false) = pause {
                 Text("家族のだれかがPlusを始めると、みんなの共有が戻ります。")
             }
@@ -982,8 +982,6 @@ struct FamilyFarewellShareSheet: View {
                 }
                 .disabled(working)
                 .accessibilityIdentifier("family-farewell-share")
-            } footer: {
-                Text("共有するまで、この日付は家族に見えません。")
             }
         }
         if state.consentedDay != nil, !state.revocationPending {
@@ -1094,11 +1092,11 @@ struct FamilyNotebookMemberView: View {
 
     private func explanation(_ action: Action) -> String {
         switch action {
-        case .dissolve: "家族全員の共有が止まります。それまでに書いたことは、それぞれの iPhone に残ります。"
+        case .dissolve: "家族全員の共有が止まります。"
         case .leave where membership.role == .payer:
-            "家族の共有は、あなたのPlusで続いています。抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。これまでに書いたことは残ります。"
-        case .leave: "これから書くことは家族に届かなくなります。それまでに書いたことは、この iPhone に残ります。"
-        case .remove: "この人がこれから書くことは、家族に届かなくなります。これまでに書いたことは残ります。"
+            "抜けると、ほかの家族がPlusを始めるまで、家族みんなの共有が止まります。"
+        case .leave: "これから書くことは家族に届かなくなります。"
+        case .remove: "この人がこれから書くことは、家族に届かなくなります。"
         }
     }
 
@@ -1420,7 +1418,7 @@ struct FamilyNotebookCatSelectionView: View {
                             set: { if $0 { selected.insert(cat.catID) } else { selected.remove(cat.catID) } }))
                     }
                 } footer: {
-                    Text("選んだ猫の「この子のこと」と、病院・預けるときに書いたことを家族と共有します。写真と旅立った日は共有されません。")
+                    Text("選んだ猫の「この子のこと」と、病院・預けるときに書いたことを家族と共有します。")
                 }
                 Button(saving ? "共有しています…" : "家族と共有する") {
                     saving = true
@@ -1436,7 +1434,7 @@ struct FamilyNotebookCatSelectionView: View {
             .navigationTitle("一緒に書く猫を選ぶ")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) } }
             .alert("共有できませんでした", isPresented: $failed) { Button("OK", role: .cancel) {} }
-                message: { Text("元の記録は消えていません。もう一度お試しください。") }
+                message: { Text("少し待ってから、もう一度お試しください。") }
         }
     }
 }
@@ -1490,7 +1488,7 @@ private struct FamilyNotebookSavedCopiesView: View {
     var body: some View {
         List {
             Section {
-                if failed { Text("保存した手帳を読み込めませんでした。記録は消えていません。") }
+                if failed { Text("保存した手帳を読み込めませんでした。") }
                 else if copies.isEmpty { Text("保存した手帳はまだありません。") }
                 ForEach(copies) { copy in
                     NavigationLink {
@@ -1504,7 +1502,7 @@ private struct FamilyNotebookSavedCopiesView: View {
                         }
                     }
                 }
-            } footer: { Text("このiPhoneだけで見られる控えです。ここから家族に送られることはありません。") }
+            }
         }
         .navigationTitle("保存した手帳")
         .task { do { copies = try FamilyNotebookBackup.copies() } catch { failed = true } }
@@ -1536,27 +1534,22 @@ private struct FamilyNotebookSavedCopyView: View {
                         Text(FamilyNotebookWords.byline(operation)).font(.caption).foregroundStyle(.secondary)
                     }.textSelection(.enabled)
                 }
-            } footer: { Text("保存した時点までの書き込みの履歴です。ここで開いても家族には送られません。") }
+            }
         }.navigationTitle("手帳の控え")
     }
 }
 
 /// How the notebook's items read on screen.
 enum FamilyNotebookWords {
-    /// What stopped, and that nothing written was lost (1029e).
+    /// What stopped (1029e). That nothing written is lost is left to the help page (1031).
     static func pausedDetail(_ pause: FamilySharingPause) -> String {
-        let kept = "これまでに書いたことは、それぞれの iPhone に残っています。"
         switch pause {
-        case .noPayer(canClaim: _, handoverPending: true):
-            return "Plus を使っていた人が家族から抜けたので、新しく書いたことは家族に届きません。" + kept
         case .noPayer:
-            return "Plus を使っていた人が家族から抜けたので、新しく書いたことは家族に届きません。" + kept
-                + "だれか 1 人が Plus を始めると、また共有できます。"
+            return "Plus を使っていた人が家族から抜けたので、新しく書いたことは家族に届きません。だれか 1 人が Plus を始めると、また共有できます。"
         case .payerPlusUnverified(isPayer: true):
-            return "あなたのPlusを確認できないため、共有が止まっています。" + kept
-                + "Plusが続いていれば、確認できたら自動で戻ります。"
+            return "あなたのPlusを確認できないため、共有が止まっています。確認できたら自動で戻ります。"
         case .payerPlusUnverified(isPayer: false):
-            return "家族の共有に使っているPlusを確認できないため、共有が止まっています。" + kept
+            return "家族の共有に使っているPlusを確認できないため、共有が止まっています。"
         }
     }
 

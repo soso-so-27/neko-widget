@@ -134,8 +134,6 @@ struct CareHandoffView: View {
                     }
                 } icon: { Image(systemName: "calendar") }
             }.accessibilityIdentifier("care-request-open")
-        } footer: {
-            Text("相手はアプリがなくても読めます。このメモは次に預けるときも使えます。")
         }
     }
 }
@@ -227,7 +225,6 @@ private struct CareCatEditor: View {
             ?? .toolCat(id: cat.toolCatID ?? cat.id, name: cat.name)
         ToolCatCareSection(title: "この子のこと",
                            lines: CatCareSummary.careHandoffLines(care, legacy: cat) + health, subject: subject,
-                           footer: "ごはん・水・トイレ・接し方・薬は「この子のこと」で書きます。薬とアレルギーは、渡すときに選んだ場合だけ載ります。",
                            identifier: "care-cat-care-fields", editIdentifier: "care-open-cat-care")
     }
 
@@ -255,7 +252,7 @@ private struct CareCatEditor: View {
                     }
                 }
                 if candidateRefreshError {
-                    Text("前に入れた内容を読み込めませんでした。ここに書いた内容はそのままです。")
+                    Text("前に入れた内容を読み込めませんでした。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 catCareSection(cat)
@@ -279,7 +276,7 @@ private struct CareCatEditor: View {
                         }
                     }
                     .accessibilityIdentifier("care-call-when-choices")
-                } footer: { Text("「こんなときは連絡を」は、預かる人が迷わないための目安です。") }
+                }
                 if let context = cat.familyContext {
                     Section("この子への今回のお願い") {
                         CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-family-recipient", text: contextText(\.recipient, fallback: context.recipient))
@@ -288,9 +285,9 @@ private struct CareCatEditor: View {
                     }
                     Section { NavigationLink("連絡先") { CareRequestEditor(store: store, showsRequest: false) } }
                 } else if let householdSection { householdSection }
-                if cat.familyDetached == true { Text("家族の手帳から外れたメモです。このiPhoneにだけ残っています。").font(.footnote).foregroundStyle(.secondary) }
+                if cat.familyDetached == true { Text("家族の手帳から外れたメモです。").font(.footnote).foregroundStyle(.secondary) }
                 Section {
-                    ToolImportantInformation(text: "書いた内容は自動で保存します。薬は「この子のこと」に、獣医師に言われたとおりに書いてください。")
+                    ToolImportantInformation(text: "薬は、獣医師に言われたとおりに書いてください。")
                 }
                 Section {
                     Button("このお世話メモを削除", role: .destructive) { deleteRequested = true }
@@ -317,7 +314,7 @@ private struct CareCatEditor: View {
             Button("お世話メモを削除", role: .destructive) {
                 if store.update({ $0.cats.removeAll { $0.id == id } }) { dismiss() }
             }
-        } message: { Text("この子のお世話メモだけを削除します。元の写真や猫のプロフィール、ほかの記録は消えません。") }
+        } message: { Text("この子のお世話メモだけを削除します。") }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 6) {
                 CareSaveNotice(store: store)
@@ -349,7 +346,7 @@ private struct CareRequestEditor: View {
                 CareField(label: "お願いする相手", example: "例：お母さん", identifier: "care-recipient", text: text(\.recipient))
                 CareField(label: "期間", example: "例：10月5日 夜〜10月7日 朝", identifier: "care-period", text: text(\.period))
                 CareField(label: "今回のお願い", example: "例：お世話が終わったら写真を1枚送ってください", identifier: "care-request", text: text(\.request))
-            } footer: { Text("次に預けるときは、ここだけ書き換えて使えます。住所や鍵の番号は別の方法で伝えてください。") }
+            } footer: { Text("住所や鍵の番号は、別の方法で伝えてください。") }
             }
             Section {
                 CareField(label: "飼い主の連絡先", example: "名前と電話番号など", identifier: "care-contact",
@@ -362,8 +359,7 @@ private struct CareRequestEditor: View {
                                         set: { catCare.setVet(name: $0) }))
                 CareField(label: "病院の電話", example: "例：03-0000-0000", identifier: "care-vet-phone",
                           text: Binding(get: { catCare.vet.phone }, set: { catCare.setVet(phone: $0) }))
-            } header: { Text("連絡が必要なとき")
-            } footer: { Text("ここで直すと、「この子のこと」や「避難に備える」も同じ内容になります。連絡先は、渡すときに選んだ場合だけメモに載ります。") }
+            } header: { Text("連絡が必要なとき") }
         }.navigationTitle("今回のお願い").navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom) { CareSaveNotice(store: store) }
@@ -395,7 +391,7 @@ private struct CarePhotoPicker: View {
             Section {
                 PhotosPicker(selection: $item, matching: .images) { Label("写真アプリから選ぶ", systemImage: "photo.badge.plus") }
                     .disabled(busy)
-            } footer: { Text("預かる人が見分けやすい写真を選んでください。選んだ写真は、通信がなくても開けます。") }
+            } footer: { Text("預かる人が見分けやすい写真を選んでください。") }
             if !ownPhotos.isEmpty { grid("この子の写真", ownPhotos) }
             let own = Set(ownPhotos.map(\.localIdentifier))
             let remaining = otherPhotos.filter { !own.contains($0.localIdentifier) }
@@ -476,7 +472,7 @@ private struct CareDisclosureView: View {
                 Toggle("薬・アレルギーも載せる", isOn: $disclosure.health).accessibilityIdentifier("care-disclose-health")
                 Toggle("連絡先・動物病院も載せる", isOn: $disclosure.contacts).accessibilityIdentifier("care-disclose-contacts")
             } header: { Text("渡す相手に合わせて選ぶ")
-            } footer: { Text("写真・名前・お世話・今回のお願いは載せます。薬や連絡先は、渡す相手に合わせて選んでください。") }
+            } footer: { Text("写真・名前・お世話・今回のお願いは、いつも載ります。") }
             if let error { Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) } }
         }.navigationTitle("渡す内容を選ぶ").navigationBarTitleDisplayMode(.inline)
             .announcesWhenShown(error)
@@ -492,7 +488,7 @@ private struct CareDisclosureView: View {
                     CareSaveNotice(store: store)
                     Button {
                         do { preview = CarePreview(record: try store.shareRecord(disclosure)); error = nil }
-                        catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "表示できませんでした。書いた内容は残っているので、もう一度お試しください。" }
+                        catch { self.error = (error as? CareHandoffError)?.errorDescription ?? "表示できませんでした。もう一度お試しください。" }
                     } label: {
                         Label("できあがりを見る", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
                     }
@@ -527,8 +523,6 @@ private struct CareDisplayView: View {
                     }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
                 }
-                Text("渡したあとに書き直しても、相手のメモは変わりません。変わったときは、もう一度渡してください。")
-                    .font(.footnote).foregroundStyle(.secondary)
                 if let error { Text(error).foregroundStyle(.red) }
             }.padding(16)
         }.background(Color(.systemGroupedBackground))
@@ -543,7 +537,7 @@ private struct CareDisplayView: View {
             .confirmationDialog("この内容で作りますか？", isPresented: $confirmShare, titleVisibility: .visible) {
                 Button(pdf ? "PDFを作って渡す" : "画像を作って渡す") { createExport() }
             } message: {
-                Text("次の画面で、渡す相手をよく確かめて選んでください。長いときは、何ページかに分かれます。")
+                Text("次の画面で、渡す相手をよく確かめて選んでください。")
             }
             .sheet(item: $export, onDismiss: {
                 if let retainedDirectory { CareHandoffExporter.remove(retainedDirectory) }
@@ -573,7 +567,7 @@ private struct CareDisplayView: View {
         do {
             let made = try CareHandoffExporter.create(record, pdf: pdf)
             retainedDirectory = made.directory; export = made; error = nil
-        } catch { self.error = "作れませんでした。空き容量やメモの長さを確かめてください（書いた内容は残っています）。" }
+        } catch { self.error = "作れませんでした。空き容量やメモの長さを確かめてください。" }
     }
 }
 
