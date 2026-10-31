@@ -26,7 +26,7 @@ def expand(value, settings):
         return value
     for _ in range(20):
         expanded = re.sub(r"\$\(([^)]+)\)|\$\{([^}]+)\}",
-                          lambda match: str(settings[match[1] or match[2]]), value)
+                          lambda match: str(settings.get(match[1] or match[2], "")), value)
         if expanded == value:
             return value
         value = expanded

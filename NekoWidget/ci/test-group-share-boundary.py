@@ -38,6 +38,14 @@ class GroupShareBoundaryTests(unittest.TestCase):
         preflight.verify(rows(), owner_internal=True)
         load_config(ROOT / "Config.Production.xcconfig")
         preflight.verify(rows())
+        # Xcode omits empty values from -showBuildSettings JSON. The shipped
+        # template expands them to empty plist strings, not a missing key.
+        base = {key: value for key, value in base.items() if value != ""}
+        preflight.verify(rows())
+        missing_flag_rows = rows()
+        del missing_flag_rows[1]["buildSettings"]["SHARING_FEATURE_ENABLED"]
+        with self.assertRaises(ValueError):
+            preflight.verify(missing_flag_rows)
         load_config(ROOT / "Config.Disabled.xcconfig")
         preflight.verify(rows((paths[0], "NekoWidgetShareExtension/Info.Disabled.plist", paths[2])))
 
