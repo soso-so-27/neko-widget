@@ -1447,15 +1447,17 @@ struct FamilyNotebookButton: View {
     @State private var shows = false
 
     var body: some View {
+        // Words beside the icon: a bare person icon was not found (1031).
         Button { shows = true } label: {
-            Image(systemName: model.hasFamily ? "person.2.fill" : "person.badge.plus")
+            Label(model.hasFamily ? "家族の手帳" : "家族と書く",
+                  systemImage: model.hasFamily ? "person.2.fill" : "person.badge.plus")
+                .labelStyle(.titleAndIcon)
                 .overlay(alignment: .topTrailing) {
                     if model.hasNewFromFamily {
                         Circle().fill(Color.accentColor).frame(width: 7, height: 7).offset(x: 3, y: -3)
                     }
                 }
         }
-        .accessibilityLabel(model.hasFamily ? "家族の手帳" : "家族と一緒に書く")
         .accessibilityIdentifier(accessibilityIdentifier)
         .sheet(isPresented: $shows) { FamilyNotebookView() }
     }
