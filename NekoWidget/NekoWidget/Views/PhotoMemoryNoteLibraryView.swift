@@ -139,22 +139,33 @@ struct PhotoMemoryNotesListView: View {
     }
 
     private var items: [MemoryReadingItem] {
-        let local: [MemoryReadingItem] = library.records.map { MemoryReadingItem(local: $0) }
-        return local.filter {
-            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.weight != nil
-        }.filter {
-            PhotoMemoryNoteLibraryPolicy.includes(selected: selectedProfileIdentifier, identifiers: identifiers(for: $0))
-        }.filter { item in
-            let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-            let names = identifiers(for: item).compactMap { currentProfileNames[$0] }
-            let values = [item.text] + item.cats + names + [item.weight?.kilogramsText ?? "",
-                item.weight?.measuredOn ?? "", item.date.formatted(.dateTime.year().month().day()),
-                item.updatedAt.formatted(.dateTime.year().month().day())]
-            return query.isEmpty || values.joined(separator: " ").localizedStandardContains(query)
-        }.sorted {
-            let first = sortingDate($0), second = sortingDate($1)
-            return first == second ? $0.id < $1.id : first > second
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        var result: [MemoryReadingItem] = []
+        for record in library.records {
+            let item = MemoryReadingItem(local: record)
+            guard !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || item.weight != nil,
+                  PhotoMemoryNoteLibraryPolicy.includes(selected: selectedProfileIdentifier, identifiers: identifiers(for: item)),
+                  query.isEmpty || matches(item, query: query) else { continue }
+            result.append(item)
         }
+        return result.sorted(by: isOrderedBefore)
+    }
+
+    private func matches(_ item: MemoryReadingItem, query: String) -> Bool {
+        let names: [String] = identifiers(for: item).compactMap { currentProfileNames[$0] }
+        var values: [String] = [item.text]
+        values += item.cats
+        values += names
+        values.append(item.weight?.kilogramsText ?? "")
+        values.append(item.weight?.measuredOn ?? "")
+        values.append(item.date.formatted(.dateTime.year().month().day()))
+        values.append(item.updatedAt.formatted(.dateTime.year().month().day()))
+        return values.joined(separator: " ").localizedStandardContains(query)
+    }
+
+    private func isOrderedBefore(_ first: MemoryReadingItem, _ second: MemoryReadingItem) -> Bool {
+        let firstDate = sortingDate(first), secondDate = sortingDate(second)
+        return firstDate == secondDate ? first.id < second.id : firstDate > secondDate
     }
 
     private func identifiers(for item: MemoryReadingItem) -> Set<String> {
