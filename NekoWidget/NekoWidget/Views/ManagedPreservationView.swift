@@ -135,7 +135,7 @@ struct ManagedPreservationView: View {
     private var content: some View {
         List {
             if coordinator.exportAuthenticationNeeded {
-                exportAuthenticationSection
+                PreservationExportSignInSection(coordinator: coordinator, exporter: exporter)
             } else {
             if !isAccountEntry {
                 Section {
@@ -179,6 +179,8 @@ struct ManagedPreservationView: View {
                 if allowsRecordBrowsing {
                     if allowsManualSaving { toolBackupSection }
                     if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
+                    // The whole account comes out as one file, even with no list to show.
+                    if isAccountEntry { exportSection }
                     // One-by-one copies left from testing; nobody else has a list to see.
                     if !isAccountEntry || !coordinator.records.isEmpty || coordinator.hasMore { recordsSection }
                 }
@@ -189,16 +191,8 @@ struct ManagedPreservationView: View {
                                  ? coordinator.copyState.title : "確認しています…")
                 }
             }
-            if exporter.preparing {
-                Section {
-                    ProgressView("書き出しを準備しています…")
-                    if let progress = coordinator.exportProgress, progress.total > 0 {
-                        Text("\(progress.completed) / \(progress.total) 件")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            if let error = exporter.error { Section { Text(error).foregroundStyle(.red) } }
+            if exporter.preparing { PreservationExportProgressSection(coordinator: coordinator) }
+            if PreservationExportFailureText.isShown(exporter) { Section { PreservationExportFailureText(exporter: exporter) } }
             if let warning = coordinator.draftRecoveryWarning {
                 Section {
                     Text(warning).foregroundStyle(.red)
@@ -227,37 +221,6 @@ struct ManagedPreservationView: View {
             }
         }
         .disabled((!coordinator.exportAuthenticationNeeded && (coordinator.isBusy || exporter.preparing)) || exporter.payload != nil)
-    }
-
-    private var exportAuthenticationSection: some View {
-        Section {
-            Text("サインインして書き出しを続けます")
-                .font(.headline).accessibilityIdentifier("preservation-export-reauthentication")
-            Text("準備できた分は、このiPhoneに一時的に残しています。同じApple Accountでサインインすると、続きから書き出せます。")
-            if let progress = coordinator.exportProgress, progress.total > 0 {
-                Text("\(progress.completed) / \(progress.total) 件を準備済み")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            if let challenge = coordinator.preparedExportSignIn {
-                SignInWithAppleButton(.continue) { request in
-                    request.requestedScopes = [.email]
-                    request.nonce = challenge.nonce; request.state = challenge.state
-                } onCompletion: { coordinator.completeExportSignIn($0) }
-                    .frame(height: 48).signInWithAppleButtonStyle(.black)
-                    .accessibilityIdentifier("preservation-export-signin")
-                    .disabled(coordinator.isBusy)
-            } else {
-                Button("Appleでサインイン") { coordinator.prepareExportSignIn() }
-                    .accessibilityIdentifier("preservation-export-prepare-reauthentication")
-                    .disabled(coordinator.isBusy)
-            }
-            if coordinator.isBusy { ProgressView("サインインしています…") }
-            Button("書き出しをやめる", role: .cancel) {
-                exporter.cancelPreparation(); coordinator.cancelExportReauthentication()
-            }.accessibilityIdentifier("preservation-export-cancel-reauthentication")
-        } footer: {
-            Text("この画面を閉じたりアプリを離れたりすると、書き出しは中止されます。保存した写真やメモは残ります。")
-        }
     }
 
     private func accountDeletionSection(_ state: ManagedPreservationSessionStore.DeletionReceipt.State) -> some View {
@@ -688,6 +651,14 @@ struct ManagedPreservationView: View {
         }
     }
 
+    private var exportSection: some View {
+        Section {
+            Button("保存したものを書き出す") { coordinator.exportAllCopies(using: exporter) }
+                .disabled(!coordinator.canExportAllCopies)
+                .accessibilityIdentifier("preservation-export-all")
+        } footer: { Text(PreservationExportWording.footer) }
+    }
+
     private var recordsSection: some View {
         Section {
             Button { coordinator.refresh() } label: { Label("一覧を更新", systemImage: "arrow.clockwise") }
@@ -713,7 +684,7 @@ struct ManagedPreservationView: View {
                     .foregroundStyle(.secondary)
             }
             if coordinator.hasMore { Button("続きを読み込む") { coordinator.loadMore() } }
-            if coordinator.canExportAllCopies {
+            if coordinator.canExportAllCopies && !isAccountEntry {
                 Button("保存した記録をすべて書き出す") { coordinator.exportAllCopies(using: exporter) }
                     .accessibilityIdentifier("preservation-export-all")
             }
@@ -821,6 +792,112 @@ struct ManagedPreservationView: View {
 
 /// The Plus quota in two lines, for 自動の保存. The bars and the test cases
 /// are in 以前の保管記録 (ManagedPreservationView).
+/// Whole-account export, shared by 自動保存 and アカウント. The archive builder
+/// reports kinds only; the wording lives here.
+enum PreservationExportWording {
+    static let footer = "猫のこと、メモ、家族の手帳、ツールの記録を、写真のコピーと一緒に1つのファイル（ZIP）にまとめます。「ファイル」に保存したり、パソコンに送ったりできます。"
+
+    static func phase(_ phase: PreservationExportPhase) -> String {
+        switch phase {
+        case .reading: "保存したものを読み込んでいます…"
+        case .assembling: "中身を整えています…"
+        case .writing: "ファイルにまとめています…"
+        }
+    }
+
+    static func failure(_ kind: PreservationExportFailure) -> String {
+        switch kind {
+        case .communication: "通信できなかったため、書き出せませんでした。少し待ってから、もう一度お試しください。"
+        case .accountChanged: "サインインが切れたため、書き出しを止めました。少し待ってから、もう一度お試しください。"
+        case .missingOrDamaged: "保存したものの一部を読めなかったため、書き出しを止めました。少し待ってから、もう一度お試しください。"
+        case .insufficientSpace: "iPhoneの空き容量が足りないため、書き出せませんでした。空きを作ってから、もう一度お試しください。"
+        case .cancelled: "書き出しをやめました。"
+        case .contentsChanged: "書き出している間に保存が進んだため、止めました。少し待ってから、もう一度お試しください。"
+        case .empty: "書き出せるものは、まだ保存されていません。"
+        case .unsupported: "このバージョンでは書き出せません。アプリを新しくしてから、もう一度お試しください。"
+        case .cleanup: "書き出しに使ったファイルを片づけられませんでした。アプリを開き直すと、もう一度片づけます。"
+        case .unavailable: "書き出せませんでした。少し待ってから、もう一度お試しください。"
+        }
+    }
+}
+
+struct PreservationExportFailureText: View {
+    @ObservedObject var exporter: RecordExportController
+    @MainActor static func isShown(_ exporter: RecordExportController) -> Bool { exporter.failureKind != nil || exporter.error != nil }
+
+    var body: some View {
+        if let kind = exporter.failureKind {
+            Text(PreservationExportWording.failure(kind))
+                .foregroundStyle(kind == .cancelled ? Color.secondary : Color.red)
+                .accessibilityIdentifier("preservation-export-failure")
+        } else if let error = exporter.error {
+            Text(error).foregroundStyle(.red).accessibilityIdentifier("preservation-export-failure")
+        }
+    }
+}
+
+/// Counts restart with each phase, so they are a bar, not a number of saved items.
+/// Success is the payload appearing, never completed == total.
+struct PreservationExportProgressSection: View {
+    @ObservedObject var coordinator: ManagedPreservationCoordinator
+    var onCancel: (() -> Void)?
+
+    var body: some View {
+        Section {
+            if let progress = coordinator.exportProgress {
+                if progress.total > 0 {
+                    ProgressView(value: Double(min(progress.completed, progress.total)), total: Double(progress.total)) {
+                        Text(PreservationExportWording.phase(coordinator.exportPhase))
+                    }
+                } else {
+                    ProgressView(PreservationExportWording.phase(coordinator.exportPhase))
+                }
+            } else {
+                ProgressView("書き出しを準備しています…")
+            }
+            if let onCancel {
+                Button("書き出しをやめる", role: .cancel, action: onCancel)
+                    .accessibilityIdentifier("preservation-export-cancel")
+            }
+        } footer: {
+            Text("画面を閉じたりアプリを離れたりすると、書き出しは止まります。保存したものはそのままです。")
+        }
+    }
+}
+
+/// A long export can outlive the session; the same Apple Account continues it.
+struct PreservationExportSignInSection: View {
+    @ObservedObject var coordinator: ManagedPreservationCoordinator
+    @ObservedObject var exporter: RecordExportController
+
+    var body: some View {
+        Section {
+            Text("サインインして書き出しを続けます")
+                .font(.headline).accessibilityIdentifier("preservation-export-reauthentication")
+            Text("準備できた分は、このiPhoneに一時的に残しています。同じApple Accountでサインインすると、続きから書き出せます。")
+            if let challenge = coordinator.preparedExportSignIn {
+                SignInWithAppleButton(.continue) { request in
+                    request.requestedScopes = [.email]
+                    request.nonce = challenge.nonce; request.state = challenge.state
+                } onCompletion: { coordinator.completeExportSignIn($0) }
+                    .frame(height: 48).signInWithAppleButtonStyle(.black)
+                    .accessibilityIdentifier("preservation-export-signin")
+                    .disabled(coordinator.isBusy)
+            } else {
+                Button("Appleでサインイン") { coordinator.prepareExportSignIn() }
+                    .accessibilityIdentifier("preservation-export-prepare-reauthentication")
+                    .disabled(coordinator.isBusy)
+            }
+            if coordinator.isBusy { ProgressView("サインインしています…") }
+            Button("書き出しをやめる", role: .cancel) {
+                exporter.cancelPreparation(); coordinator.cancelExportReauthentication()
+            }.accessibilityIdentifier("preservation-export-cancel-reauthentication")
+        } footer: {
+            Text("この画面を閉じたりアプリを離れたりすると、書き出しは止まります。保存したものはそのままです。")
+        }
+    }
+}
+
 struct ProductQuotaSummary: View {
     let quota: ManagedPreservationUsage.ProductQuota
 

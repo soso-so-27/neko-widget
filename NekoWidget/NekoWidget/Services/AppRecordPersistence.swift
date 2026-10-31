@@ -1048,6 +1048,8 @@ struct AppRecordSettingsView: View {
     @StateObject private var authentication: ManagedPreservationCoordinator
     @ObservedObject private var persistence: AppRecordPersistence
     @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    @StateObject private var exporter = RecordExportController()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var starting = false
     @State private var confirmsLocal = false
     @State private var confirmsRemote = false
@@ -1070,6 +1072,70 @@ struct AppRecordSettingsView: View {
 
     var body: some View {
         List {
+            // While exporting, the rest of the screen waits; only stopping is offered.
+            if authentication.exportAuthenticationNeeded {
+                PreservationExportSignInSection(coordinator: authentication, exporter: exporter)
+            } else if exporter.preparing {
+                PreservationExportProgressSection(coordinator: authentication) {
+                    exporter.cancelPreparation(); authentication.cancelExportReauthentication()
+                }
+            } else {
+                settingsSections
+            }
+        }
+        .navigationTitle("自動保存")
+        .sheet(item: $exporter.payload) { payload in
+            RecordExportActivity(payload: payload) { exporter.finishSharing(payload, failed: $0) }
+                .onDisappear { exporter.finishSharing(payload) }
+        }
+        .sheet(isPresented: $showsPlusOffer, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            authentication.checkMembership()
+        }) {
+            MembershipOfferSheet(model: .live(), context: .preservation) { _ in showsPlusOffer = false }
+        }
+        .task { authentication.start() }
+        .onDisappear {
+            AppIdleTimer.setPreventSleep(false, for: "preservation-export")
+            exporter.cancelPreparation(); authentication.stop()
+        }
+        // This screen's sign-in reads membership only; the quota is one more read.
+        .onChange(of: authentication.isSignedIn, initial: true) { _, signedIn in
+            guard signedIn else {
+                if !authentication.exportAuthenticationNeeded { exporter.invalidate() }
+                return
+            }
+            // Signing in again to continue an export must not start other reads.
+            guard !exporter.preparing else { return }
+            authentication.refreshUsage()
+            if starting { Task { await persistence.enable() } }
+            linkPlusIfStarting()
+        }
+        .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
+        .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
+        .onChange(of: authentication.membership?.canSave) { _, canSave in
+            if canSave == true, persistence.enabled { Task { await persistence.retry() } }
+        }
+        .onChange(of: exporter.preparing) { _, preparing in
+            AppIdleTimer.setPreventSleep(preparing && scenePhase == .active, for: "preservation-export")
+            if !preparing { authentication.cancelExportReauthentication() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            AppIdleTimer.setPreventSleep(phase == .active && exporter.preparing, for: "preservation-export")
+            if phase == .background { exporter.cancelPreparation(); authentication.cancelExportReauthentication() }
+            if phase == .active { exporter.retryCleanup() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
+            .receive(on: DispatchQueue.main)) { _ in exporter.invalidate() }
+        .confirmationDialog("このiPhoneの記録で保存を続けますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
+            Button("このiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: false) } }
+        } message: { Text("ほかのiPhoneの記録も、このiPhoneに残しておきます。") }
+        .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
+            Button("ほかのiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: true) } }
+        } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
+    }
+
+    @ViewBuilder private var settingsSections: some View {
             Section {
                 Label(persistence.title, systemImage: persistence.enabled ? "checkmark.icloud" : "icloud.slash")
                     .accessibilityIdentifier("app-record-save-status")
@@ -1098,6 +1164,14 @@ struct AppRecordSettingsView: View {
             } else {
                 savingSections
             }
+            if authentication.isSignedIn && authentication.accountDeletionState == nil {
+                Section {
+                    Button("保存したものを書き出す") { authentication.exportAllCopies(using: exporter) }
+                        .disabled(!authentication.canExportAllCopies || exporter.payload != nil)
+                        .accessibilityIdentifier("app-record-export")
+                    if PreservationExportFailureText.isShown(exporter) { PreservationExportFailureText(exporter: exporter) }
+                } footer: { Text(PreservationExportWording.footer) }
+            }
             if authentication.isSignedIn || authentication.accountDeletionState != nil {
                 Section {
                     NavigationLink("アカウント") { ManagedPreservationView() }
@@ -1110,34 +1184,6 @@ struct AppRecordSettingsView: View {
                     Text("やめても、保存したものは消えません。サインアウトやアカウントの削除は「アカウント」からできます。")
                 }
             }
-        }
-        .navigationTitle("自動保存")
-        .sheet(isPresented: $showsPlusOffer, onDismiss: {
-            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
-            authentication.checkMembership()
-        }) {
-            MembershipOfferSheet(model: .live(), context: .preservation) { _ in showsPlusOffer = false }
-        }
-        .task { authentication.start() }
-        .onDisappear { authentication.stop() }
-        // This screen's sign-in reads membership only; the quota is one more read.
-        .onChange(of: authentication.isSignedIn, initial: true) { _, signedIn in
-            guard signedIn else { return }
-            authentication.refreshUsage()
-            if starting { Task { await persistence.enable() } }
-            linkPlusIfStarting()
-        }
-        .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
-        .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
-        .onChange(of: authentication.membership?.canSave) { _, canSave in
-            if canSave == true, persistence.enabled { Task { await persistence.retry() } }
-        }
-        .confirmationDialog("このiPhoneの記録で保存を続けますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
-            Button("このiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: false) } }
-        } message: { Text("ほかのiPhoneの記録も、このiPhoneに残しておきます。") }
-        .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
-            Button("ほかのiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: true) } }
-        } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
     }
 
     @ViewBuilder private var signedOutSections: some View {
@@ -1197,7 +1243,7 @@ struct AppRecordSettingsView: View {
         if plusEnded || (authentication.membership?.linked == false && !hasPlusHere) {
             Section {
                 Text(plusEnded
-                     ? "Plusが終わったので、新しい保存は止まっています。保存したものは消えずに残っています。"
+                     ? "Plusが終わったので、新しい保存は止まっています。保存したものは、終わってから12か月は書き出せます。"
                      : "Plusを始めると、保存が始まります。それまでの記録は、このiPhoneに残っています。")
                 if offersPlus { plusOfferButton }
             }
