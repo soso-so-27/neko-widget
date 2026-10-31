@@ -220,7 +220,7 @@ struct PhotoMemoryNotesListView: View {
         self.isEmbedded = isEmbedded
         self.openCatPreparedness = openCatPreparedness
         _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store,
-            archiveStore: enabled ? (archiveStore ?? .shared) : nil))
+            archiveStore: archiveStore))
     }
 
     private var items: [MemoryReadingItem] {
