@@ -67,7 +67,6 @@ const SHARING_BETA_PAGES = Object.freeze([
     visibleRevision: true,
     requiredPhrases: Object.freeze([
       SHARING_BETA_BOUNDARY_PHRASE,
-      ...PHOTO_ALBUM_DISCLOSURE_PHRASES,
       "エンドツーエンド暗号化",
       "新規の暗号化通報受付は停止",
       "通報用暗号文を送信・保存しません",
@@ -87,6 +86,8 @@ const SHARING_BETA_PAGES = Object.freeze([
       "一般的な通知文だけを送ります",
       "写真ID、取得URL",
       "その一枚を通報専用公開鍵へ別に暗号化します",
+      // The app stopped writing the 「うちの子」 album (#650), so the policy no longer describes it (#652).
+      PHOTO_ALBUM_DISCLOSURE_PHRASES[0],
     ]),
   }),
   Object.freeze({

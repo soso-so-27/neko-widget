@@ -465,22 +465,28 @@ test("requires profile-specific safety content", async () => {
   );
 });
 
-test("requires the PhotoAlbumService disclosure in sharing and local-only policy", async () => {
+test("requires the PhotoAlbumService disclosure only in the local-only policy", async () => {
   const albumPhrase = "写真アプリに「うちの子」アルバムを作成・更新";
-  for (const [profileCase, page] of [
-    [sharingBeta, sharingBeta.definition.pages[1]],
-    [localOnly, localOnly.definition.pages[0]],
-  ]) {
-    await assert.rejects(
-      check(profileCase, new Map([[
-        page.name,
-        pageHtml(profileCase, page, {
-          phrases: page.requiredPhrases.filter((phrase) => phrase !== albumPhrase),
-        }),
-      ]])),
-      new RegExp(`${page.name} is missing required policy content`, "u"),
-    );
-  }
+  const localPage = localOnly.definition.pages[0];
+  await assert.rejects(
+    check(localOnly, new Map([[
+      localPage.name,
+      pageHtml(localOnly, localPage, {
+        phrases: localPage.requiredPhrases.filter((phrase) => phrase !== albumPhrase),
+      }),
+    ]])),
+    new RegExp(`${localPage.name} is missing required policy content`, "u"),
+  );
+
+  const sharingPage = sharingBeta.definition.pages.find(({ name }) => name === "privacy");
+  assert.equal(sharingPage.requiredPhrases.includes(albumPhrase), false);
+  await assert.rejects(
+    check(sharingBeta, new Map([[
+      sharingPage.name,
+      pageHtml(sharingBeta, sharingPage, { extraBody: `<p>${albumPhrase}</p>` }),
+    ]])),
+    new RegExp(`${sharingPage.name} contains forbidden policy content`, "u"),
+  );
 });
 
 test("rejects false local-only persistence, export, and contact claims", async () => {
