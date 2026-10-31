@@ -143,14 +143,8 @@ class PublicPolicySiteTests(unittest.TestCase):
         privacy = "".join(self.parsed(PAGES[1]).text)
         self.assertIn("写真共有が有効な限定外部TestFlight共有ベータでは", privacy)
         self.assertNotIn("写真共有が有効な現行版では", privacy)
-        for phrase in (
-            "写真アプリに「うちの子」アルバムを作成・更新",
-            "元写真のアルバム所属を追加・解除",
-            "このアルバム連携では元写真を複製、書き出し、アップロードせず",
-            "写真アプリとiCloud写真の同期はAppleと利用者の設定によります",
-            "「うちの子」アルバムの構成がほかのApple端末へ同期されることがあります",
-        ):
-            self.assertIn(phrase, privacy)
+        # The app no longer writes a 「うちの子」 album (10/31); the page must not promise one.
+        self.assertNotIn("「うちの子」アルバム", privacy)
 
     def test_received_memory_import_is_explicit_and_permanent(self):
         for page in (PAGES[1], PAGES[3]):
