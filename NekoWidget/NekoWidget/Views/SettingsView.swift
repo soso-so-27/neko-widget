@@ -32,6 +32,20 @@ struct SettingsSheetHost<Content: View>: View {
     }
 }
 
+/// 「自動保存」 with whether this iPhone is saving, so the row answers
+/// the question before it is opened.
+@MainActor
+struct AutoSaveSettingsRow: View {
+    @ObservedObject private var persistence = AppRecordPersistence.shared
+    var body: some View {
+        LabeledContent {
+            Text(persistence.enabled ? "オン" : "オフ")
+        } label: {
+            Label("自動保存", systemImage: "checkmark.icloud")
+        }
+    }
+}
+
 struct PersonalArchiveSettingsLink: View {
     let store: PersonalArchiveStore
     var noteStore: PhotoMemoryNoteStore = .shared
@@ -90,6 +104,7 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
+    @State private var hasRestoredTools = false
     @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
     @AppStorage(AlbumPrototype.slideshowKey) private var albumSlideshow = false
     @State private var showsWindowSupportPreview = false
@@ -256,7 +271,7 @@ struct SettingsView: View {
             Section {
                 // One door for everything about keeping and moving data.
                 NavigationLink { saveAndTransferView } label: {
-                    Label("保存と引き継ぎ", systemImage: "externaldrive")
+                    Label("自動保存とファイル", systemImage: "externaldrive")
                 }
                 .accessibilityIdentifier("settings-save-and-transfer")
             } header: {
@@ -447,27 +462,23 @@ struct SettingsView: View {
         return "\(access)・\(settings.range.rawValue)"
     }
 
-    /// 保存と引き継ぎ: this iPhone's automatic save (Plus), moving to another
-    /// iPhone, and what the person keeps themselves.
+    /// 保存 (10/31): 自動保存 first, then what anyone can keep as a file.
+    /// Leftovers of two iPhones' records show only while there are some.
     private var saveAndTransferView: some View {
         Form {
             if ManagedPreservationConfiguration.current.isEnabled {
                 Section {
-                    NavigationLink { AppRecordSettingsView() } label: {
-                        Label("自動保存", systemImage: "checkmark.icloud")
-                    }
-                    .accessibilityIdentifier("settings-managed-preservation")
-                    NavigationLink { RestoredToolsView() } label: {
-                        Label("復元したツール", systemImage: "arrow.counterclockwise")
-                    }
-                    .accessibilityIdentifier("settings-restored-tools")
-                } header: {
-                    Text("Plusの保存")
+                    NavigationLink { AppRecordSettingsView() } label: { AutoSaveSettingsRow() }
+                        .accessibilityIdentifier("settings-managed-preservation")
                 } footer: {
-                    Text("猫の情報・メモ・ツールに書いたことを、iPhoneの外にも保存します。")
+                    Text("猫のこと、メモ、ツールに書いたことを自動で保存して、新しいiPhoneで戻せます。Plusの機能です。")
                 }
             }
             Section {
+                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
+                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("settings-memory-note-export")
                 NavigationLink {
                     CatProfileTransferView(actions: catProfilesActions,
                         hasProfiles: !catProfilesPresentation.profiles.isEmpty)
@@ -475,28 +486,26 @@ struct SettingsView: View {
                     Label("機種変更のとき", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .accessibilityIdentifier("settings-cat-profile-transfer")
-            } header: {
-                Text("別のiPhoneへ")
-            } footer: {
-                Text("猫の名前・誕生日・どの写真がどの猫かを、ファイルにして新しいiPhoneへ移せます。")
-            }
-            Section {
-                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
-                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityIdentifier("settings-memory-note-export")
-                if personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                    if InternalBuildPresentationAvailability.isAvailable || Version1.isOn {
-                        // Compatibility reading/export only; no new iCloud enrollment.
-                        PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+                if hasRestoredTools {
+                    NavigationLink { RestoredToolsView() } label: {
+                        Label("前の記録", systemImage: "arrow.counterclockwise")
                     }
+                    .accessibilityIdentifier("settings-restored-tools")
+                }
+                // The old iCloud copies: internal builds only; 1.0 starts after them.
+                if InternalBuildPresentationAvailability.isAvailable,
+                   personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
+                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
                 }
             } header: {
-                Text("手元に残す")
+                Text("ファイルで残す")
+            } footer: {
+                Text("Plusがなくても、メモや猫のことをファイルにして、手元に残したり新しいiPhoneへ移したりできます。")
             }
         }
-        .navigationTitle("保存と引き継ぎ")
+        .navigationTitle("保存")
         .navigationBarTitleDisplayMode(.inline)
+        .task { hasRestoredTools = ((try? ToolBackupFiles.saved()) ?? []).isEmpty == false }
     }
 
     private var photoSettingsView: some View {

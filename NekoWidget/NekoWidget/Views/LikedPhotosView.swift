@@ -2673,7 +2673,6 @@ struct PhotoBrowserView: View {
     @State private var showsWidgetInformation = false
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
-    @State private var managedPreservationPhoto: PhotoPresentation?
 
     init(
         photos: [PhotoPresentation],
@@ -3042,12 +3041,7 @@ struct PhotoBrowserView: View {
                     }
                     .disabled((relatedAlbums?(selectedPhotoIdentifier, rediscoveryScope) ?? []).isEmpty)
                     // 「見せる写真に追加」 is done from 写真を見せる's own picker, not here.
-                    if ManagedPreservationConfiguration.current.isEnabled, let photo = selectedPhoto {
-                        Button { managedPreservationPhoto = photo } label: {
-                            Label("サービスに保管", systemImage: "externaldrive.badge.plus")
-                        }
-                        .accessibilityIdentifier("photo-browser-managed-preserve")
-                    }
+                    // Saving is 自動保存 only (10/31): no one-photo copy from here.
                     Divider()
                     if showsWidgetTiming {
                         Button {
@@ -3162,10 +3156,6 @@ struct PhotoBrowserView: View {
                 Task { await personalNote.load(for: selectedPhotoIdentifier) }
             }
             .environment(\.dynamicTypeSize, dynamicTypeSize)
-        }
-        .sheet(item: $managedPreservationPhoto) { photo in
-            ManagedPreservationPhotoView(photo: photo, context: memoryNoteContext(for: photo),
-                                         noteStore: personalNote.store)
         }
         .alert("ウィジェットの表示について", isPresented: $showsWidgetInformation) {
             Button("閉じる", role: .cancel) {}

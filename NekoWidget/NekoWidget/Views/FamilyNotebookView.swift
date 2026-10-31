@@ -659,6 +659,7 @@ struct FamilyNotebookView: View {
     @State private var showsPlusOffer = false
     @State private var showsName = false
     @State private var showsCats = false
+    @State private var hasSavedCopies = false
     @Environment(\.scenePhase) private var scenePhase
 
     private var prototypeInvitationAction: (@MainActor () -> Void)? {
@@ -667,8 +668,11 @@ struct FamilyNotebookView: View {
     }
     @ToolbarContentBuilder private var closeToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
-        ToolbarItem(placement: .primaryAction) {
-            NavigationLink("保存した手帳") { FamilyNotebookSavedCopiesView() }
+        // Copies exist only after two iPhones' notebooks met; otherwise no door.
+        if hasSavedCopies {
+            ToolbarItem(placement: .primaryAction) {
+                NavigationLink("保存した手帳") { FamilyNotebookSavedCopiesView() }
+            }
         }
     }
 
@@ -705,6 +709,7 @@ struct FamilyNotebookView: View {
             .navigationTitle("家族の手帳")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { closeToolbar }
+            .task { hasSavedCopies = ((try? FamilyNotebookBackup.copies()) ?? []).isEmpty == false }
             .sheet(isPresented: $invites) { FamilyNotebookInviteView() }
             .sheet(isPresented: $triesInvitation) { FamilyNotebookJoinView() }
             .sheet(isPresented: $showsName) {

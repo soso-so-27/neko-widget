@@ -1039,17 +1039,19 @@ final class AppRecordPersistence: ObservableObject {
 #endif
 }
 
-/// Authentication and the one-time consent live in settings; ordinary tool
-/// editing never presents a separate upload operation.
+/// 自動保存: the one place for saving (10/31). Starting is one Apple sign-in:
+/// the consent and the Plus link are stated above that button, then enabling,
+/// linking this iPhone's Plus and restoring an earlier save all follow it.
+/// Ordinary tool editing never presents a separate upload operation.
 @MainActor
 struct AppRecordSettingsView: View {
     @StateObject private var authentication: ManagedPreservationCoordinator
     @ObservedObject private var persistence: AppRecordPersistence
-    @State private var consent = false
+    @ObservedObject private var purchases = PlusPurchaseStore.productionShared
+    @State private var starting = false
     @State private var confirmsLocal = false
     @State private var confirmsRemote = false
-    @State private var confirmsMembership = false
-    @State private var showsSubscriptionManagement = false
+    @State private var showsPlusOffer = false
     @AppStorage(ManagedPreservationView.QuotaTrial.key)
     private var quotaTrial: ManagedPreservationView.QuotaTrial = .real
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
@@ -1057,110 +1059,177 @@ struct AppRecordSettingsView: View {
         _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client, purpose: .account))
         self.persistence = persistence
     }
+
+    private var hasPlusHere: Bool { purchases.entitlementState.permitsPersonalPlus }
+    /// Buying is offered only where it can happen; a member is never asked.
+    private var offersPlus: Bool { PlusOfferAvailability.isConfigured && !hasPlusHere }
+    private var plusEnded: Bool {
+        guard let membership = authentication.membership else { return false }
+        return membership.linked && !membership.canSave
+    }
+
     var body: some View {
         List {
             Section {
-                Label(persistence.title, systemImage: "checkmark.icloud")
+                Label(persistence.title, systemImage: persistence.enabled ? "checkmark.icloud" : "icloud.slash")
                     .accessibilityIdentifier("app-record-save-status")
                 if let detail = persistence.detail { Text(detail).font(.footnote) }
-                Text("Plusの機能です。一度設定すると、写真メモ、ツールに書いた内容と写真、猫の名前や誕生日などを自動で保存します。")
-                Text("写真アプリの写真や動画そのものは保存しません。どの写真を選んだかはこのiPhoneだけに残り、保存した記録がまどの相手に送られることもありません。")
+                Text("猫のこと、メモとその写真、ツールに書いたことを自動で保存します。新しいiPhoneでも、サインインすれば戻せます。")
+                Text("写真アプリの写真や動画そのものは保存しません。保存したものが、まどの相手に送られることはありません。")
                     .font(.footnote).foregroundStyle(.secondary)
-            } header: { Text("自動保存") }
-            if authentication.isSignedIn,
-               let quota = ManagedPreservationView.shownQuota(authentication.usage?.productQuota, trial: quotaTrial) {
-                Section {
-                    ProductQuotaSummary(quota: quota)
-                } header: { Text("保存できる量") }
-                footer: { Text("くわしい内訳は「保存した記録とアカウント」で見られます。") }
             }
             if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
             if authentication.accountDeletionState != nil {
-                Section { Text("アカウントを削除している途中のため、自動保存は使えません。削除の状況は「保存した記録とアカウント」で確かめられます。") }
+                Section { Text("アカウントを削除している途中のため、自動保存は使えません。削除の状況は「アカウント」で確かめられます。") }
             } else if !authentication.isSignedIn {
-                Section {
-                    if let challenge = authentication.preparedSignIn {
-                        SignInWithAppleButton(.continue) { request in
-                            request.requestedScopes = [.email]; request.nonce = challenge.nonce; request.state = challenge.state
-                        } onCompletion: { authentication.completeSignIn($0) }
-                            .frame(height: 48).accessibilityIdentifier("app-record-signin")
-                    } else { Button("Appleでサインイン") { authentication.prepareSignIn() } }
-                } footer: { Text("サインインしたアカウントの記録だけを読み込みます。サインインしただけでは、購入や自動保存は始まりません。") }
+                signedOutSections
             } else if !persistence.enabled {
                 Section {
-                    Toggle("内容を確認して、自動保存に同意する", isOn: $consent)
-                        .accessibilityIdentifier("app-record-consent")
-                    Text("連絡先や健康の情報を含む、アプリの記録を保存します。暗号化しますが、運営者は技術的には中身を読むことができます（エンドツーエンド暗号化ではありません）。通信できないときはこのiPhoneに残し、アプリを開いたときにもう一度保存します。")
-                        .font(.footnote)
-                    Button("自動保存を使う") { Task { await persistence.enable() } }
-                        .disabled(!consent || persistence.busy)
+                    if offersPlus && authentication.membership?.canSave != true { plusOfferButton }
+                    Button("保存を始める") { start() }
+                        .disabled(persistence.busy || authentication.isBusy)
                         .accessibilityIdentifier("app-record-enable")
-                } footer: { Text("Plusを使っている間だけ保存します。ここで購入が始まることはありません。") }
-            } else {
-                Section {
-                    Text("いつもどおり記録するだけで、自動で保存されます。")
-                    if persistence.conflict {
-                        Button("このiPhoneの記録を使う") { confirmsLocal = true }
-                        Button("ほかのiPhoneの記録を使う") { confirmsRemote = true }
-                    } else {
-                        Button("保存状況を再確認") { Task { await persistence.retry() } }
+                } footer: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        consentText
+                        if hasPlusHere, authentication.membership?.linked != true { plusLinkText }
                     }
-                    Button("このiPhoneの自動保存をオフにする") { persistence.pause() }
                 }
+            } else {
+                savingSections
             }
-            if authentication.isSignedIn, authentication.accountDeletionState == nil {
+            if authentication.isSignedIn || authentication.accountDeletionState != nil {
                 Section {
-                    if authentication.membershipLoading { ProgressView("Plusを確認しています…") }
-                    if let membership = authentication.membership {
-                        if membership.canSave { Label("Plusで自動保存できます", systemImage: "checkmark.circle") }
-                        else if !membership.linked {
-                            Text("保存を始めるには、このアカウントにPlusを連携してください。")
-                            Button("Plusを連携する") { confirmsMembership = true }
-                                .disabled(authentication.isBusy)
-                                .accessibilityIdentifier("app-record-membership-connect")
-                        } else { Text("Plusを確認できるまで、新しい変更は保存されません。保存した記録は復元できます。") }
+                    NavigationLink("アカウント") { ManagedPreservationView() }
+                        .accessibilityIdentifier("app-record-account")
+                    if persistence.enabled, authentication.accountDeletionState == nil {
+                        Button("このiPhoneで自動保存をやめる") { persistence.pause() }
+                            .accessibilityIdentifier("app-record-pause")
                     }
-                    if let message = authentication.membershipMessage { Text(message).font(.footnote) }
-                    Button("購入状況を再確認") { authentication.checkMembership() }
-                        .disabled(authentication.isBusy || authentication.membershipLoading)
-                    if authentication.membership?.linked == true {
-                        Button("サブスクリプションを管理") { showsSubscriptionManagement = true }
-                            .disabled(authentication.isBusy)
-                            .accessibilityIdentifier("app-record-membership-manage")
-                    }
-                } header: { Text("Plus") }
-            }
-            Section {
-                NavigationLink("保存した記録とアカウント") { ManagedPreservationView() }
-            } footer: {
-                Text("これまでに保存したコピーは残っています。Plusが切れたあとも、書き出すことができます。")
+                } footer: {
+                    Text("やめても、保存したものは消えません。サインアウトやアカウントの削除は「アカウント」からできます。")
+                }
             }
         }
         .navigationTitle("自動保存")
-        .manageSubscriptionsSheet(isPresented: $showsSubscriptionManagement)
-        .onChange(of: showsSubscriptionManagement) { _, presented in
-            if !presented { authentication.checkMembership() }
+        .sheet(isPresented: $showsPlusOffer, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            authentication.checkMembership()
+        }) {
+            MembershipOfferSheet(model: .live(), context: .preservation) { _ in showsPlusOffer = false }
         }
         .task { authentication.start() }
         .onDisappear { authentication.stop() }
         // This screen's sign-in reads membership only; the quota is one more read.
         .onChange(of: authentication.isSignedIn, initial: true) { _, signedIn in
-            if signedIn { authentication.refreshUsage() }
+            guard signedIn else { return }
+            authentication.refreshUsage()
+            if starting { Task { await persistence.enable() } }
+            linkPlusIfStarting()
         }
+        .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
+        .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
         .onChange(of: authentication.membership?.canSave) { _, canSave in
             if canSave == true, persistence.enabled { Task { await persistence.retry() } }
         }
-        .confirmationDialog("このアカウントにPlusを連携しますか？", isPresented: $confirmsMembership, titleVisibility: .visible) {
-            Button("連携する") { authentication.connectMembership(consent: true) }
-        } message: {
-            Text("Appleでサインインしたこのアカウントに、このiPhoneのPlusを連携します。あとから別のアカウントに付け替えることはできません。ここで購入が始まることはありません。")
-        }
         .confirmationDialog("このiPhoneの記録で保存を続けますか？", isPresented: $confirmsLocal, titleVisibility: .visible) {
             Button("このiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: false) } }
-        } message: { Text("ほかのiPhoneの記録も、コピーをこのiPhoneに残しておきます。") }
+        } message: { Text("ほかのiPhoneの記録も、このiPhoneに残しておきます。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
             Button("ほかのiPhoneの記録を使う") { Task { await persistence.resolveConflict(useRemote: true) } }
         } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
+    }
+
+    @ViewBuilder private var signedOutSections: some View {
+        if offersPlus {
+            Section { plusOfferButton } footer: { Text("自動保存はPlusの機能です。") }
+            Section {
+                appleButton
+            } header: { Text("前のiPhoneで保存していた方") }
+            footer: {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("サインインすると、保存したものをこのiPhoneに戻します。戻すだけなら、Plusはいりません。")
+                    consentText
+                }
+            }
+        } else {
+            Section { appleButton } footer: {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Appleで続けると、自動保存が始まります。前に保存したものがあれば、このiPhoneに戻します。")
+                    consentText
+                    if hasPlusHere { plusLinkText }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var appleButton: some View {
+        if let challenge = authentication.preparedSignIn {
+            SignInWithAppleButton(.continue) { request in
+                request.requestedScopes = [.email]; request.nonce = challenge.nonce; request.state = challenge.state
+            } onCompletion: { result in
+                if case .success = result { starting = true }
+                authentication.completeSignIn(result)
+            }
+            .frame(height: 48).accessibilityIdentifier("app-record-signin")
+        } else if authentication.isBusy {
+            ProgressView("準備しています…")
+        } else {
+            Button("もう一度試す") { authentication.prepareSignIn() }
+        }
+    }
+
+    @ViewBuilder private var savingSections: some View {
+        Section {
+            if persistence.conflict {
+                Text("ほかのiPhoneでも保存しています。どちらの記録を使うか選んでください。")
+                Button("このiPhoneの記録を使う") { confirmsLocal = true }
+                Button("ほかのiPhoneの記録を使う") { confirmsRemote = true }
+            }
+            if let quota = ManagedPreservationView.shownQuota(authentication.usage?.productQuota, trial: quotaTrial) {
+                ProductQuotaSummary(quota: quota)
+            }
+            if !persistence.conflict {
+                Button("保存状況を確かめる") { Task { await persistence.retry() } }
+                    .disabled(persistence.busy)
+            }
+        }
+        if plusEnded || (authentication.membership?.linked == false && !hasPlusHere) {
+            Section {
+                Text(plusEnded
+                     ? "Plusが終わったので、新しい保存は止まっています。保存したものは消えずに残っています。"
+                     : "Plusを始めると、保存が始まります。それまでの記録は、このiPhoneに残っています。")
+                if offersPlus { plusOfferButton }
+            }
+        }
+    }
+
+    private var plusOfferButton: some View {
+        Button(plusEnded ? "Plusを再開する" : "Plusを始める") { showsPlusOffer = true }
+            .accessibilityIdentifier("plus-offer-entry-preservation")
+    }
+
+    private var consentText: some View {
+        Text("連絡先や病院の記録など、アプリに書いた内容も保存します。暗号化しますが、エンドツーエンド暗号化ではないため、運営者は技術的には中身を読めます。")
+    }
+
+    private var plusLinkText: some View {
+        Text("このiPhoneのPlusは、サインインしたアカウントで使います。あとから別のアカウントには移せません。")
+    }
+
+    private func start() {
+        starting = true
+        Task { await persistence.enable() }
+        linkPlusIfStarting()
+    }
+
+    /// Links this iPhone's Plus once, right after the person chose to start.
+    /// The button they pressed states that the link cannot be moved later.
+    private func linkPlusIfStarting() {
+        guard starting, authentication.isSignedIn, !authentication.isBusy,
+              let membership = authentication.membership else { return }
+        starting = false
+        if !membership.linked, hasPlusHere { authentication.connectMembership(consent: true) }
     }
 }
 
