@@ -1545,7 +1545,7 @@ enum FamilyNotebookWords {
     static func pausedDetail(_ pause: FamilySharingPause) -> String {
         switch pause {
         case .noPayer:
-            return "Plus を使っていた人が家族から抜けたので、新しく書いたことは家族に届きません。"
+            return "Plus を使っていた人が家族から抜けたので、新しく書いたことは家族に届きません。だれか 1 人が Plus を始めると、また共有できます。"
         case .payerPlusUnverified(isPayer: true):
             return "あなたのPlusを確認できないため、共有が止まっています。確認できたら自動で戻ります。"
         case .payerPlusUnverified(isPayer: false):
