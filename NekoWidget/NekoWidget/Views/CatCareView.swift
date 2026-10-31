@@ -242,16 +242,12 @@ struct CatCareDetailView: View {
             folded("health", "健康", healthCount) { healthSection }
             folded("living", "暮らし", livingCount) { livingSection }
             folded("household", "家の情報", householdCount) { householdSection }
-            Section {
-                Text("書いた内容は自動で保存します。")
-                if familyNotebook.hasFamily {
-                    // Test builds only (a family can be made only there).
-                    Text("家族と書いています（試作・まだ送りません）。")
-                }
+            if familyNotebook.hasFamily {
+                Section { Text("家族と一緒に書いています。") }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("cat-care-autosave-note")
             }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .accessibilityIdentifier("cat-care-autosave-note")
         }
         .onChange(of: draft) { _, _ in
             autosave?.cancel()
