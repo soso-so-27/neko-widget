@@ -28,11 +28,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
         app.buttons["photos-section-favorites"].tap()
-        let create = app.buttons["saved-memories-selection-toggle"]
-        XCTAssertTrue(create.waitForExistence(timeout: 10)); create.tap()
-        XCTAssertTrue(app.buttons["saved-memories-create-pdf"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["saved-memories-create-book-preview"].exists)
-        captureScreenshot(named: "public-creation-pdf-only")
+        // Public favorites offer no PDF or book creation entry (10/31).
+        XCTAssertTrue(app.descendants(matching: .any)["saved-memories-gallery"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["saved-memories-selection-toggle"].exists)
+        captureScreenshot(named: "public-favorites-no-creation")
         app.terminate()
 
         // Internal DEBUG distribution still exposes its preview; sandbox is
@@ -122,11 +121,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchEnvironment.removeValue(forKey: "NEKO_MAINLINE_ACCEPTANCE_CASE")
         app.launch()
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真"))
+        // The cat menu only filters since 10/31; profiles live in 設定.
         app.buttons["photos-cat-picker"].tap()
-        let profiles = app.buttons["photos-cat-profiles"]
-        XCTAssertTrue(profiles.waitForExistence(timeout: 5)); profiles.tap()
-        XCTAssertTrue(app.navigationBars["猫のプロフィール"].waitForExistence(timeout: 10))
-        captureScreenshot(named: "personal-cat-profiles")
+        XCTAssertTrue(app.buttons["すべての猫"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["photos-cat-profiles"].exists)
+        captureScreenshot(named: "personal-cat-filter")
         app.terminate()
     }
 
@@ -370,18 +369,13 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertFalse(app.buttons["photo-book-export"].exists)
         captureScreenshot(named: "04-liked-photos")
         selectSavedPhotos.tap()
-        let createPDF = app.buttons["saved-memories-create-pdf"]
-        guard createPDF.waitForExistence(timeout: 10), waitForHittable(createPDF) else {
-            fail("The output choices did not open from favorites.", application: app)
+        // The PDF chooser is gone (10/31); test builds go straight to 本のイメージ.
+        guard app.buttons["book-demand-preview"].waitForExistence(timeout: 10) else {
+            fail("The book preview selection did not open from favorites.", application: app)
             return
         }
-        captureScreenshot(named: "review-favorites-creation-options")
-        createPDF.tap()
-        guard app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
-            fail("PDF creation was not available after photo selection opened.", application: app)
-            return
-        }
-        XCTAssertFalse(app.buttons["photo-book-export"].isEnabled)
+        XCTAssertFalse(app.buttons["book-demand-preview"].isEnabled)
+        XCTAssertFalse(app.buttons["photo-book-export"].exists)
         XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
         captureScreenshot(named: "review-favorites-selection")
         selectSavedPhotos.tap()

@@ -10,13 +10,11 @@ fileprivate func openSettings(in app: XCUIApplication) {
     gear.tap()
 }
 
-/// Settings keeps saving and moving data behind one row (10/22).
+/// The 保存 rows sit directly in Settings since 10/31; bring them into view.
 @MainActor
-fileprivate func openSaveAndTransfer(_ app: XCUIApplication) {
-    let door = app.buttons["settings-save-and-transfer"]
-    guard door.waitForExistence(timeout: 5) else { return }
-    for _ in 0..<4 where !door.isHittable { app.swipeUp() }
-    door.tap()
+fileprivate func revealSaveSection(_ app: XCUIApplication) {
+    let transfer = app.buttons["settings-cat-profile-transfer"]
+    for _ in 0..<4 where !(transfer.exists && transfer.isHittable) { app.swipeUp() }
 }
 
 final class OfficialWindowUITests: XCTestCase {
@@ -1063,14 +1061,14 @@ final class OfficialWindowUITests: XCTestCase {
     @MainActor
     func testOfficialEmptyStatesMatchCoverAndOfferNearbyActions() {
         continueAfterFailure = false
-        let scenarios: [(String, String, Bool)] = [
-            ("empty", "いまは見られる写真がありません", false),
-            ("paused", "いまは写真が届きません", true),
-            ("failure", "写真を読み込めませんでした", false),
-            ("catalog-expiry", "写真を読み込み直してください", true)
+        let scenarios: [(String, String)] = [
+            ("empty", "いまは見られる写真がありません"),
+            ("paused", "いまは写真が届きません"),
+            ("failure", "写真を読み込めませんでした"),
+            ("catalog-expiry", "写真を読み込み直してください")
         ]
         for largest in [false, true] {
-            for (scenario, title, offersDiscovery) in scenarios {
+            for (scenario, title) in scenarios {
                 let app = XCUIApplication()
                 app.launchArguments = ["--window-list-ui-fixture", "--window-list-subscribed", "--window-list-two-public",
                                        "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -1103,21 +1101,8 @@ final class OfficialWindowUITests: XCTestCase {
                 expectation(for: NSPredicate { _, _ in retry.isEnabled }, evaluatedWith: retry)
                 waitForExpectations(timeout: 5)
                 XCTAssertTrue(state.label.contains(title))
-                let discovery = app.buttons["official-window-state-discovery"]
-                XCTAssertEqual(discovery.exists, offersDiscovery)
-                if offersDiscovery {
-                    for _ in 0..<3 where !discovery.isHittable { app.swipeUp(velocity: .slow) }
-                    XCTAssertTrue(discovery.isHittable)
-                    discovery.tap()
-                    XCTAssertTrue(app.descendants(matching: .any)["window-discovery"].firstMatch
-                        .waitForExistence(timeout: 5))
-                    let other = app.buttons["public-window-entry-nap-cats"]
-                    for _ in 0..<3 where !other.isHittable { app.swipeUp(velocity: .slow) }
-                    XCTAssertTrue(other.isHittable)
-                    app.navigationBars.buttons.element(boundBy: 0).tap()
-                    XCTAssertTrue(state.waitForExistence(timeout: 5))
-                    XCTAssertTrue(state.label.contains(title))
-                }
+                // Other official windows are added from the まど tab, not from here (10/31).
+                XCTAssertFalse(app.buttons["official-window-state-discovery"].exists)
                 app.terminate()
             }
         }
@@ -3139,8 +3124,8 @@ final class SoloMemoriesUITests: XCTestCase {
     func testManagedPreservationDisabledHidesEntries() {
         let app = launchRecordPortabilityFixture()
         openSettings(in: app)
-        openSaveAndTransfer(app)
-        let existing = app.buttons["settings-memory-note-export"]
+        revealSaveSection(app)
+        let existing = app.buttons["settings-cat-profile-transfer"]
         XCTAssertTrue(existing.waitForExistence(timeout: 5))
         for _ in 0..<4 where !existing.isHittable { app.swipeUp() }
         XCTAssertTrue(existing.isHittable)
@@ -3161,10 +3146,11 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testMemoryNoteExportCancellationKeepsText() {
+    func testMemoryNoteExportCancellationKeepsText() throws {
+        throw XCTSkip("設定の「メモを書き出す」は外しました（10/31）。入口がないため止めます。")
         let app = launchRecordPortabilityFixture()
         openSettings(in: app)
-        openSaveAndTransfer(app)
+        revealSaveSection(app)
         let entry = app.buttons["settings-memory-note-export"]
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         for _ in 0..<4 where !entry.isHittable { app.swipeUp() }
@@ -3189,7 +3175,7 @@ final class SoloMemoriesUITests: XCTestCase {
     func testPersonalArchiveExportCancellationKeepsPhotoAndText() {
         let app = launchRecordPortabilityFixture()
         openSettings(in: app)
-        openSaveAndTransfer(app)
+        revealSaveSection(app)
         let archive = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archive.waitForExistence(timeout: 5))
         for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
@@ -3839,7 +3825,7 @@ final class SoloMemoriesUITests: XCTestCase {
         assertReadyRemainsVisible(for: 2)
         capture("personal-archive-albums-ready-under-progress")
         openSettings(in: app)
-        openSaveAndTransfer(app)
+        revealSaveSection(app)
         let archive = app.buttons["settings-personal-archive"]
         let settingsOpened = archive.waitForExistence(timeout: 5)
         if !settingsOpened {
@@ -3959,7 +3945,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "ready"), object: queueMemo)], timeout: 5), .completed)
         openSettings(in: app)
-        openSaveAndTransfer(app)
+        revealSaveSection(app)
         XCTAssertTrue(archive.waitForExistence(timeout: 5))
         for _ in 0..<4 where !archive.isHittable { app.swipeUp() }
         archive.tap()
@@ -4134,10 +4120,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["どの猫か決めていない写真"].waitForExistence(timeout: 5))
         app.navigationBars["どの猫か決めていない写真"].buttons.element(boundBy: 0).tap()
         app.buttons["cat-profiles-more"].tap()
-        app.buttons["cat-profiles-excluded"].tap()
-        XCTAssertTrue(app.navigationBars["前に外した写真"].waitForExistence(timeout: 5))
-        app.navigationBars["前に外した写真"].buttons.element(boundBy: 0).tap()
-        app.buttons["cat-profiles-more"].tap()
+        XCTAssertTrue(app.buttons["cat-profiles-about"].waitForExistence(timeout: 5))
+        // 前に外した写真 has no entry since 10/31.
+        XCTAssertFalse(app.buttons["cat-profiles-excluded"].exists)
         app.buttons["cat-profiles-about"].tap()
         XCTAssertTrue(app.navigationBars["猫ごとの写真について"].waitForExistence(timeout: 5))
         app.buttons["閉じる"].tap()
@@ -4147,7 +4132,8 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal() {
+    func testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal() throws {
+        throw XCTSkip("「この子のアルバム」は 10/31 に外した。")
         let app = XCUIApplication()
         app.launchArguments = ["--app-store-screenshot-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
@@ -4915,21 +4901,9 @@ final class SoloMemoriesUITests: XCTestCase {
                 XCTAssertFalse(app.buttons["photo-book-export"].exists,
                                "Opening favorites must start in browsing mode.")
                 capture("albums-single-favorite")
+                // No PDF chooser since 10/31: test builds open 本のイメージ directly.
                 selection.tap()
-                let createPDF = app.buttons["saved-memories-create-pdf"]
-                XCTAssertTrue(createPDF.waitForExistence(timeout: 5))
-                createPDF.tap()
-                XCTAssertTrue(app.buttons["photo-book-export"].waitForExistence(timeout: 5))
-                XCTAssertFalse(app.buttons["photo-book-export"].isEnabled)
-                XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
-                XCTAssertFalse(app.buttons["book-demand-preview"].exists)
-                selection.tap()
-                XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
-
-                selection.tap()
-                let createBookPreview = app.buttons["saved-memories-create-book-preview"]
-                XCTAssertTrue(createBookPreview.waitForExistence(timeout: 5))
-                createBookPreview.tap()
+                XCTAssertFalse(app.buttons["saved-memories-create-pdf"].exists)
                 XCTAssertTrue(app.buttons["book-demand-preview"].waitForExistence(timeout: 5))
                 XCTAssertFalse(app.buttons["book-demand-preview"].isEnabled)
                 XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
@@ -5964,7 +5938,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             predicate: NSPredicate(format: "value == %@", "iCloudに保管済み"), object: row)], timeout: 10), .completed)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch.exists)
         openSettings(in: app)
-        openSaveAndTransfer(app)
+        revealSaveSection(app)
         let archiveSettings = app.buttons["settings-personal-archive"]
         XCTAssertTrue(archiveSettings.waitForExistence(timeout: 5))
         archiveSettings.tap()
@@ -7453,7 +7427,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
 final class PersonalRediscoveryUITests: XCTestCase {
     @MainActor
     func testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions() throws {
-        throw XCTSkip("「今日の一枚を選び直す」は写真の「…」から設定へ移りました（UIUX改善案 0-3）。設定からの道順で書き直すまで止めます。")
+        throw XCTSkip("設定の「今日の一枚を選び直す」は外しました（10/31）。ウィジェットの↻で選び直せるため止めます。")
         continueAfterFailure = false
         for large in [false, true] {
             let app = application(large: large)
@@ -7525,7 +7499,7 @@ final class PersonalRediscoveryUITests: XCTestCase {
 
     @MainActor
     func testOneCandidateShowsPhotoWithoutSpendingADailyTurn() throws {
-        throw XCTSkip("「今日の一枚を選び直す」は写真の「…」から設定へ移りました（UIUX改善案 0-3）。設定からの道順で書き直すまで止めます。")
+        throw XCTSkip("設定の「今日の一枚を選び直す」は外しました（10/31）。ウィジェットの↻で選び直せるため止めます。")
         continueAfterFailure = false
         let app = application()
         app.launchArguments.append("--personal-rediscovery-one-photo")

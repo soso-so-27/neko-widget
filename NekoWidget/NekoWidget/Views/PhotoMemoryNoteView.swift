@@ -116,47 +116,6 @@ struct RecordExportActivity: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-struct MemoryNoteExportView: View {
-    let store: PhotoMemoryNoteStore
-    @StateObject private var exporter = RecordExportController()
-    @Environment(\.scenePhase) private var scenePhase
-
-    var body: some View {
-        Form {
-            Section {
-                Button {
-                    exporter.prepare(build: {
-                        let records = try await store.records()
-                        return try PhotoMemoryNoteExporter.create(records: records)
-                    })
-                } label: {
-                    Label(exporter.preparing ? "準備しています…" : "メモを書き出す", systemImage: "square.and.arrow.up")
-                }
-                .disabled(exporter.preparing || exporter.payload != nil)
-                .accessibilityIdentifier("memory-note-export-start")
-            } footer: {
-                Text("メモと日付、猫の名前を1つのファイルにまとめます（写真は入りません）。")
-            }
-            if exporter.preparing { ProgressView() }
-            if let error = exporter.error {
-                Text(error).foregroundStyle(.secondary).accessibilityIdentifier("record-export-error")
-            }
-        }
-        .navigationTitle("メモを書き出す")
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("memory-note-export-view")
-        .sheet(item: $exporter.payload) { value in
-            RecordExportActivity(payload: value) { exporter.finishSharing(value, failed: $0) }
-                .onDisappear { exporter.finishSharing(value) }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background { exporter.cancelPreparation() }
-            if phase == .active { exporter.retryCleanup() }
-        }
-        .onDisappear { exporter.cancelPreparation() }
-    }
-}
-
 private struct PhotoMemoStoreKey: EnvironmentKey {
     static let defaultValue = PhotoMemoryNoteStore.shared
 }

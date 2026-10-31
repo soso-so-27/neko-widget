@@ -3737,11 +3737,8 @@ final class AppViewModel: ObservableObject {
 
     private func refreshManagedOutputs(reportErrors: Bool) async {
         await enqueueManagedOutputMutation { model in
-            if model.hasEligibleAlbumCandidates(in: model.snapshot) {
-                await model.performCreateOrUpdateAlbum(reportErrors: reportErrors)
-            } else {
-                await model.performClearManagedAlbum(reportErrors: reportErrors)
-            }
+            // The 「うちの子」 album left the app (10/31): nothing new is written
+            // to Photos, and an album made before stays as the person left it.
             if model.hasEligibleDisplayCandidates(in: model.snapshot) {
                 await model.performRebuildWidgetCache(reportErrors: reportErrors)
             } else {
