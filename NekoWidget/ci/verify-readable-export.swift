@@ -115,8 +115,14 @@ struct Fixture {
             }, temporaryDirectory: root, writtenAt: Date(timeIntervalSince1970: 1_800_000_000))
     }
     static func unzip(_ zip: URL, to folder: URL) throws {
-        let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-q", zip.path, "-d", folder.path]
+        // Use the shipping Apple extractor, with an explicit UTF-8 locale.
+        // The legacy unzip CLI on a C-locale runner converted Japanese names
+        // before creating them and failed with EILSEQ, despite the UTF-8 flag.
+        let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", zip.path, folder.path]
+        var environment = ProcessInfo.processInfo.environment
+        environment["LANG"] = "en_US.UTF-8"; environment["LC_ALL"] = "en_US.UTF-8"
+        process.environment = environment
         try process.run(); process.waitUntilExit()
         try require(process.terminationStatus == 0, "independent unzip rejected archive")
     }
