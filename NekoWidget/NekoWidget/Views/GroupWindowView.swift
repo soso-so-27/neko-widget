@@ -642,7 +642,7 @@ struct GroupWindowScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if model.isFormer {
-                    Label("このまどから抜けました。届いた写真は、このiPhoneに残っています。",
+                    Label("このまどから抜けました。",
                           systemImage: "person.2.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -658,11 +658,6 @@ struct GroupWindowScreen: View {
                         .foregroundStyle(.red)
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-screen-message")
-                    if model.canSend && model.failedDelivery == nil {
-                        Text("下の「写真を届ける」から、別の写真を選べます。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-                    }
                 }
                 if let notice = model.receiveNotice {
                     Label(notice, systemImage: "hourglass")
@@ -685,7 +680,7 @@ struct GroupWindowScreen: View {
                         systemImage: "photo.on.rectangle",
                         description: Text(model.isFormer
                             ? "このiPhoneに残っている写真はありません。"
-                            : "届けた写真と届いた写真が、ここに並びます。参加する前の写真は届きません。")
+                            : "届けた写真と届いた写真が、ここに並びます。")
                     )
                     .frame(minHeight: 240)
                 } else {
@@ -734,7 +729,7 @@ struct GroupWindowScreen: View {
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("写真アプリへ保存した写真は残ります。取り消せません。")
+            Text("消したあとは元に戻せません。")
         }
         .safeAreaInset(edge: .bottom) {
             if !model.isFormer { sendBar }
@@ -1181,7 +1176,7 @@ private struct GroupCaptionField: View {
                 Text(message).font(.footnote).foregroundStyle(.orange)
             }
         } header: { Text("ひとこと") }
-          footer: { Text("まどのみんなに届き、このiPhoneの写真のメモにも残ります（\(GroupPhotoCaption.maximumCharacters)文字・改行\(GroupPhotoCaption.maximumLineBreaks)つまで）。書かなくても届けられます。") }
+          footer: { Text("まどのみんなに届きます（\(GroupPhotoCaption.maximumCharacters)文字・改行\(GroupPhotoCaption.maximumLineBreaks)つまで）。") }
     }
 }
 
@@ -1324,7 +1319,7 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("写真アプリに保存した写真と、ほかのメンバーのiPhoneにあるこの写真は、そのまま残ります。消したあとは元に戻せません。")
+                Text("消したあとは元に戻せません。")
             }
         }
         .preferredColorScheme(.dark)
@@ -1584,7 +1579,6 @@ struct GroupWindowCreateScreen: View {
                 TextField("例：実家のまど", text: $name)
                     .accessibilityIdentifier("group-window-create-name")
             } header: { Text("まどの名前") }
-              footer: { Text("名前はメンバー全員に表示されます。作ったら、招待リンクを送りましょう。") }
             Section {
                 TextField("例：お母さん", text: $ownerName)
                     .textContentType(.nickname)
@@ -2173,7 +2167,7 @@ struct GroupReportSheet: View {
                     } header: {
                         Text("理由")
                     } footer: {
-                        Text("運営に送るのはこの写真1枚だけで、ひとことやほかの写真は送りません。運営が確かめるために7日間預かり、そのあと削除します。送ると、この写真はこのiPhoneでは見えなくなります。")
+                        Text("運営に送るのはこの写真1枚だけで、ひとことは送りません（7日後に削除）。送ると、この写真はこのiPhoneでは見えなくなります。")
                     }
                     if let record, record.progress == .retryable {
                         Section {
@@ -2345,7 +2339,7 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
                 Button("ブロックする", role: .destructive) { block() }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("このまどで、お互いの写真が届かなくなります。届いた写真はこのiPhoneに残ります。相手には知らせません。")
+                Text("このまどで、お互いの写真が届かなくなります。相手には知らせません。")
             }
             .alert("まど", isPresented: failureShown) {
                 Button("OK", role: .cancel) {}

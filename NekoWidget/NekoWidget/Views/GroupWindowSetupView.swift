@@ -86,7 +86,7 @@ enum GroupWindowPresentation {
 
     /// The team paused new invitations and new people joining. Windows in use
     /// carry on; nobody is told why, and nothing is lost.
-    static let invitationPausedMessage = "いまは、新しく招待したり参加したりできません。いまのまどは、このまま使えます。"
+    static let invitationPausedMessage = "いまは、新しく招待したり参加したりできません。"
 
     /// The window keeps everything; only new photos stop. Never says
     /// "deleted", never blames the members.
@@ -274,7 +274,7 @@ final class GroupWindowMembersModel: ObservableObject {
             )
         }
         if actionErrorMessage == nil {
-            actionCompletionMessage = "\(GroupDisplayName.withSan(member.displayName))を外しました。これから届く写真は、この人には見えません。"
+            actionCompletionMessage = "\(GroupDisplayName.withSan(member.displayName))を外しました。"
         }
     }
 
@@ -492,7 +492,7 @@ struct GroupWindowMembersView: View {
             Button("外す", role: .destructive) { Task { await model.remove(member) } }
             Button("戻る", role: .cancel) {}
         } message: { _ in
-            Text("この人には、これから届く写真が見えなくなります。すでに届いた写真は、その人のiPhoneに残ります。")
+            Text("すでに届いた写真は、その人のiPhoneに残ります。")
         }
         .confirmationDialog(
             "招待を取り消しますか？",
@@ -522,7 +522,7 @@ struct GroupWindowMembersView: View {
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("閉じると、メンバー全員がこのまどに写真を届けられなくなります。届いた写真は、それぞれのiPhoneに残ります。")
+            Text("閉じると、メンバー全員が写真を届けられなくなります。")
         }
         .confirmationDialog(
             "このまどから抜けますか？",
@@ -537,7 +537,7 @@ struct GroupWindowMembersView: View {
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("抜けると、これから届く写真は見られません。すでに届いた写真はこのiPhoneに残り、まどタブの「前のまど」から見られます。")
+            Text("抜けると、これから届く写真は見られません。")
         }
     }
 
@@ -559,7 +559,7 @@ struct GroupWindowMembersView: View {
                 Text("安全と決まり")
             } footer: {
                 Text(reports
-                     ? "困る写真が届いたら、写真の「…」から通報やブロックができます。その人の写真を表示しないようにもできます。"
+                     ? "困る写真が届いたら、写真の「…」から通報やブロックができます。"
                      : "困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
             }
         }
@@ -641,7 +641,7 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("group-window-rotation-pending")
                 } else if window.state == .closed {
-                    Label("このまどは閉じられました。届いた写真は残ります。", systemImage: "person.2.slash")
+                    Label("このまどは閉じられました。", systemImage: "person.2.slash")
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("group-window-closed")
                 }
@@ -690,7 +690,7 @@ struct GroupWindowMembersView: View {
             } header: {
                 Text("これから参加する人")
             } footer: {
-                Text("参加したあとでも外せます。参加する前の写真は届きません。")
+                Text("参加したあとでも外せます。")
             }
         }
         Section {
@@ -703,12 +703,6 @@ struct GroupWindowMembersView: View {
             .padding(.vertical, 6)
         } header: {
             Text("メンバー")
-        } footer: {
-            if window.canManage {
-                if model.pendingRequests.isEmpty {
-                    Text("招待リンクから参加した人が、ここに並びます。")
-                }
-            }
         }
     }
 
@@ -813,7 +807,7 @@ struct GroupWindowMembersView: View {
                 .accessibilityIdentifier("group-window-revoke-invitation")
             } else if let earlier = model.earlierInvitation {
                 LabeledContent("前に作った招待", value: earlier.expiresAt.formatted(.dateTime.month().day().hour().minute()) + "まで有効")
-                Text("前に作ったリンクは、ここからは送れません。送り直すときは、取り消してから新しく作ってください。")
+                Text("送り直すときは、取り消してから新しく作ってください。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("招待を取り消す", role: .destructive) {
                     showsRevokeConfirmation = true
@@ -832,7 +826,7 @@ struct GroupWindowMembersView: View {
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-create-invitation")
             } else if GroupWindowPresentation.isPaused(window) {
-                Text("止まっている間は招待できません。Plusを続けると、また招待できます。")
+                Text("止まっている間は招待できません。")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("group-window-invite-paused")
             } else if window.memberCount >= GroupWindowPresentation.memberLimit {
@@ -846,7 +840,7 @@ struct GroupWindowMembersView: View {
         } header: {
             Text("招待")
         } footer: {
-            Text("リンクは24時間使えて、何人にでも送れます。リンクから「参加する」を押した人は、そのままメンバーになります。")
+            Text("リンクから「参加する」を押した人は、そのままメンバーになります。")
         }
     }
 
@@ -859,8 +853,6 @@ struct GroupWindowMembersView: View {
             Button("このまどを閉じる", role: .destructive) { showsCloseConfirmation = true }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-close")
-        } footer: {
-            Text("閉じても、届いた写真はそれぞれのiPhoneに残ります。")
         }
     }
 
@@ -1102,7 +1094,7 @@ struct GroupJoinView: View {
             case .expired:
                 resultSection(
                     GroupWindowPresentation.message(for: GroupClientError.invitationExpired),
-                    detail: "招待リンクは、作られてから24時間だけ使えます。",
+                    detail: nil,
                     systemImage: "clock.badge.xmark"
                 )
             case .cancelled:
@@ -1173,7 +1165,7 @@ struct GroupJoinView: View {
             Text("招待されたまど")
         } footer: {
             VStack(alignment: .leading, spacing: 8) {
-                Text("まどを作った人に、この名前が届きます。参加する前の写真は届きません。")
+                Text("まどを作った人に、この名前が届きます。")
                 GroupWindowStandardsAgreement(action: "参加する")
             }
         }
@@ -1184,12 +1176,12 @@ struct GroupJoinView: View {
             Label("参加の手続き中です", systemImage: "hourglass")
                 .font(.headline)
                 .accessibilityIdentifier("group-join-pending")
-            Text("参加できたら、お知らせします。この画面は閉じても大丈夫です。")
+            Text("参加できたら、お知らせします。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if request.admissionPaused == true {
-                Label("いまは一時的に参加できません。再開したら、このまま参加できます。", systemImage: "pause.circle")
+                Label("いまは一時的に参加できません。", systemImage: "pause.circle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1209,9 +1201,6 @@ struct GroupJoinView: View {
                 .font(.headline)
                 .foregroundStyle(.green)
                 .accessibilityIdentifier("group-join-approved")
-            Text("これから届く写真が、このまどに出ます。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
             if let onOpenWindow {
                 Button {
                     onOpenWindow()
@@ -1226,15 +1215,17 @@ struct GroupJoinView: View {
         }
     }
 
-    private func resultSection(_ title: String, detail: String, systemImage: String) -> some View {
+    private func resultSection(_ title: String, detail: String?, systemImage: String) -> some View {
         Section {
             Label(title, systemImage: systemImage)
                 .font(.headline)
                 .accessibilityIdentifier("group-join-result")
-            Text(detail)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let detail {
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
