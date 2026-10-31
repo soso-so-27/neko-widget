@@ -162,6 +162,26 @@ struct Fixture {
                 if tool != "PhotoMemoryNotes" || version == 3 { try require(data == f.original, "original JSON changed") }
             }
             let loose = try FileManager.default.contentsOfDirectory(at: payload.directory, includingPropertiesForKeys: nil)
+            if loose != [payload.fileURL] {
+                // Read only this synthetic export directory. Keep the failing
+                // assertion intact until the actual cause has been observed.
+                func describe(_ url: URL) throws -> [String: Any] {
+                    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+                    let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+                    return ["name": url.lastPathComponent, "url": url.absoluteString,
+                            "standardizedURL": url.standardizedFileURL.absoluteString,
+                            "resolvedURL": url.resolvingSymlinksInPath().standardizedFileURL.absoluteString,
+                            "regular": values.isRegularFile ?? false, "directory": values.isDirectory ?? false,
+                            "symlink": values.isSymbolicLink ?? false,
+                            "inode": attributes[.systemFileNumber] ?? "unknown", "device": attributes[.systemNumber] ?? "unknown",
+                            "bytes": attributes[.size] ?? "unknown"]
+                }
+                let inspection: [String: Any] = ["syntheticExportInspection": true, "count": loose.count,
+                    "expected": try describe(payload.fileURL), "entries": try loose.map(describe)]
+                var line = try JSONSerialization.data(withJSONObject: inspection, options: [.sortedKeys])
+                line.append(10)
+                try FileHandle.standardError.write(contentsOf: line)
+            }
             try require(loose == [payload.fileURL], "plaintext staging files retained")
             let size = try payload.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize!
             var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
