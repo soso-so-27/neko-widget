@@ -239,7 +239,7 @@ enum ReadablePreservationExport {
                 let jpeg: Data?
                 if document.photoFile == nil { jpeg = nil }
                 else { jpeg = try ToolBackupFiles.read(input.appendingPathComponent(id.uuidString + ".jpg"), maximum: 20 * 1024 * 1024) }
-                let folder = "以前に保存したコピー/メモと写真/" + id.uuidString + "/"
+                let folder = "以前に保存したコピー/メモと写真/" + id.uuidString.lowercased() + "/"
                 let files = try PhotoMemoryNoteExporter.archiveFiles(text: document.text,
                     capturedAt: document.capturedAt, writtenAt: document.writtenAt, updatedAt: document.updatedAt,
                     catNames: document.catNames, jpegData: jpeg, weight: document.weight)

@@ -3,7 +3,7 @@ import ImageIO
 import CoreGraphics
 import Darwin
 
-private struct Fixture {
+struct Fixture {
     let head: UUID
     let rows: [ManagedPreservationExportSnapshot]
     let original: Data
