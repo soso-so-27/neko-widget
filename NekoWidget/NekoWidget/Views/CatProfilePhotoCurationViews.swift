@@ -222,8 +222,6 @@ struct CatProfileDetailView: View {
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
-            } footer: {
-                Text("削除しても、写真やツールで入れた記録は残ります。")
             }
         }
         .disabled(isDeleting || isSavingName)
@@ -248,7 +246,7 @@ struct CatProfileDetailView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("写真やツールで入れた記録は残ります。この子に選んだ写真と、つないだアルバムが外れるだけです。")
+            Text("写真やツールで入れた記録は残ります。")
         }
         .sheet(isPresented: $showsFarewellEditor) {
             CatFarewellEditor(name: profile.displayName, recorded: CatFarewell.days(farewellJSON)[profile.identifier]) { day in
@@ -288,7 +286,7 @@ extension CatProfilePresentation {
     /// What the dates do: the album groups this cat's photos by them.
     var lifeDatesExplanation: String {
         guard let reference = lifeReference else {
-            return "誕生日を入れると、アルバムにこの子だけの「子猫のころ」「1歳のころ」ができます。分からなければ迎えた日でも。"
+            return "誕生日か迎えた日を入れると、アルバムを時期ごとにまとめます。"
         }
         switch reference.kind {
         case .birthday:
@@ -346,8 +344,6 @@ private struct CatProfilePhotoAlbumSelectionView: View {
                 }
             } header: {
                 Text("\(profile.displayName)の写真")
-            } footer: {
-                Text("写真アプリで作ったアルバムをつなぐと、その写真を\(profile.displayName)の写真として表示します。アルバム自体は変わらず、つなぐのをやめても自分で追加した写真は残ります。")
             }
             if saveFailed {
                 Section {
@@ -434,13 +430,11 @@ struct CatProfileLifeReferenceEditor: View {
                                 Text(kind.title).tag(kind)
                             }
                         }
-                    } footer: {
-                        Text("この子の成長アルバムを、どちらの日からまとめるかを選びます。")
                     }
                 }
                 if saveFailed {
                     Section {
-                        Text("日付を保存できませんでした。入力を確認して、もう一度お試しください。")
+                        Text("日付を保存できませんでした。もう一度お試しください。")
                             .font(.footnote)
                             .foregroundStyle(.red)
                     }
@@ -738,7 +732,7 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("\(profile.displayName)の写真から外すだけです。ほかの子や「すべての猫」には残ります。")
+            Text("ほかの子や「すべての猫」には残ります。")
         }
         .confirmationDialog(
             "猫の写真から外しますか？",
@@ -752,7 +746,7 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
+            Text("写真アプリの写真は消えません。")
         }
     }
 
@@ -923,7 +917,7 @@ struct UnassignedCatPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
+            Text("写真アプリの写真は消えません。")
         }
     }
 
@@ -941,7 +935,7 @@ struct UnassignedCatPhotosView: View {
     private var actionBar: some View {
         VStack(spacing: 10) {
             if saveFailed {
-                Text("追加できませんでした。選んだままなので、もう一度お試しください。")
+                Text("追加できませんでした。もう一度お試しください。")
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
@@ -1062,7 +1056,7 @@ struct CatPhotoAssignmentSheet: View {
                 } header: {
                     Text("写っている猫（何匹でも選べます）")
                 } footer: {
-                    Text("「−」は、選んだ写真の一部にだけ付いている猫です。そのままにしておけば変わりません。")
+                    Text("「−」は、選んだ写真の一部にだけ付いている猫です。")
                 }
 
                 if saveFailed {
@@ -1110,7 +1104,7 @@ struct LegacyCatExclusionReviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("前のバージョンで「この子じゃない」にした写真です。戻すと「未分類」の写真になり、つないだアルバムに入っていれば、その子の写真にまた表示されます。")
+            Text("前のバージョンで「この子じゃない」にした写真です。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

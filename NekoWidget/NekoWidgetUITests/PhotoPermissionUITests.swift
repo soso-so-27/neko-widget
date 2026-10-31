@@ -1249,7 +1249,7 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         let add = app.buttons["cat-profile-confirm-add"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.tap()
-        XCTAssertTrue(app.staticTexts["追加できませんでした。選んだままなので、もう一度お試しください。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["追加できませんでした。もう一度お試しください。"].waitForExistence(timeout: 5))
         XCTAssertEqual(add.label, "テスト猫Bに1枚追加", "A failed save lost the explicit selection or destination.")
         add.tap()
         XCTAssertTrue(app.navigationBars["テスト猫Bの写真"].waitForExistence(timeout: 5))

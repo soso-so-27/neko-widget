@@ -447,10 +447,6 @@ struct AlbumView: View {
             Label("新しいアルバムを準備しています", systemImage: "sparkles.rectangle.stack")
                 .font(.headline)
 
-            Text("「人といっしょ」「おでかけ」などのアルバムを作っています。できたものから順に追加します。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
             ProgressView(value: scan.progress)
                 .tint(.accentColor)
 
@@ -464,10 +460,6 @@ struct AlbumView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-
-            Text("写真は、アプリを開いている間に探します。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .padding(16)
         .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
@@ -816,7 +808,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
+            Text("写真アプリの写真は消えません。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -1206,7 +1198,7 @@ struct LikedPhotosView: View {
                         ContentUnavailableView {
                             Label("猫の写真を自動でまとめます", systemImage: "photo.stack")
                         } description: {
-                            Text("写真を見られるようにすると、月のまとめや成長がここにできます。猫かどうかは、このiPhoneの中で見分けます。")
+                            Text("写真を見られるようにすると、月のまとめや成長がここにできます。")
                         } actions: {
                             Button(action: openPhotos) {
                                 Label("「写真」タブで許可する", systemImage: "arrow.right")
@@ -1973,15 +1965,15 @@ struct SavedMemoriesGalleryView: View {
     private var emptyGalleryState: some View {
         if !hasPhotoAccess {
             ContentUnavailableView("写真へのアクセスを許可してください", systemImage: "photo",
-                description: Text("お気に入りの写真を表示するには、写真へのアクセスが必要です。設定で許可してください。"))
+                description: Text("お気に入りの写真を表示するには、設定で許可してください。"))
                 .accessibilityIdentifier("saved-memories-photo-access-unavailable")
         } else if savedStateReadFailed {
             ContentUnavailableView("お気に入りを開けませんでした", systemImage: "exclamationmark.triangle",
-                description: Text("時間をおいて、もう一度開いてください。"))
+                description: Text("少し待ってから、もう一度お試しください。"))
                 .accessibilityIdentifier("saved-memories-state-read-failed")
         } else if unavailableSavedPhotoCount > 0 {
             ContentUnavailableView("お気に入りの写真を表示できません", systemImage: "photo",
-                description: Text("お気に入りに入れた写真が\(unavailableSavedPhotoCount.formatted())枚ありますが、今は読み込めません。写真へのアクセスや、元の写真が残っているかを確かめてください。"))
+                description: Text("写真へのアクセスや、元の写真が残っているかを確かめてください。"))
                 .accessibilityIdentifier("saved-memories-photos-unavailable")
         } else if !photos.isEmpty {
             ContentUnavailableView("この範囲にはまだありません", systemImage: "bookmark",
@@ -1997,10 +1989,10 @@ struct SavedMemoriesGalleryView: View {
         VStack(alignment: .leading, spacing: 4) {
             if savedStateReadFailed {
                 Label("お気に入りの一部を読み込めませんでした", systemImage: "exclamationmark.triangle")
-                Text("表示できる写真だけ並べています。時間をおいて、もう一度開いてください。")
+                Text("少し待ってから、もう一度お試しください。")
             } else {
                 Label("表示できないお気に入りが\(unavailableSavedPhotoCount.formatted())枚あります", systemImage: "photo")
-                Text("写真へのアクセスや、元の写真が残っているかを確かめてください。表示できる写真は下に並んでいます。")
+                Text("写真へのアクセスや、元の写真が残っているかを確かめてください。")
             }
         }
         .font(.caption).foregroundStyle(.secondary)
@@ -2835,7 +2827,7 @@ struct PhotoBrowserView: View {
                 }
                 if personalNote.state(for: selectedPhoto.localIdentifier) == .failed {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("メモを読み込めませんでした。書いたメモは消えていません。")
+                        Text("メモを読み込めませんでした。")
                             .font(.subheadline)
                         Button("もう一度読み込む", systemImage: "arrow.clockwise") {
                             let identifier = selectedPhoto.localIdentifier
@@ -3176,7 +3168,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
+            Text("写真アプリの写真は消えません。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -3206,7 +3198,7 @@ struct PhotoBrowserView: View {
             }
             Button("戻る", role: .cancel) { pendingReceivedRemoval = nil }
         } message: {
-            Text("まどから届いた写真です。写真アプリへコピーした写真は、外してもそのまま残ります。")
+            Text("写真アプリへコピーした写真は残ります。")
         }
         .task(id: selectedPhotoIdentifier) {
             CloudyWindowStore.shared.noteViewed(photoID: selectedPhotoIdentifier)
@@ -3839,7 +3831,7 @@ struct DayPhotosView: View {
                 ContentUnavailableView(
                     "この日の写真を表示できません",
                     systemImage: "photo.stack",
-                    description: Text("写真へのアクセスや、写真の対象が変わったのかもしれません。")
+                    description: Text("写真へのアクセスや、写真の対象を確かめてください。")
                 )
                 .frame(maxWidth: .infinity, minHeight: 420)
             } else {

@@ -34,9 +34,7 @@ struct CatProfileTransferView: View {
     var body: some View {
         Form {
             Section {
-                Text("猫の名前・誕生日・迎えた日と、どの写真がどの子かを、別のiPhoneへ引き継げます。")
-                Text("写真は「どの子が写っているか」だけを引き継ぎます（撮影日時がある写真のみ）。写真そのもの、お気に入り、まど、つないだアルバムは含まれないので、写真はiCloud写真などで新しいiPhoneに移してください。")
-                    .foregroundStyle(.secondary)
+                Text("猫の名前・日付と、どの写真がどの子かを別のiPhoneへ引き継げます（写真そのものは含みません）。")
             }
             Section("このiPhoneから") {
                 Button("引き継ぎファイルを保存") {
@@ -48,13 +46,9 @@ struct CatProfileTransferView: View {
                 .disabled(!hasProfiles)
                 .accessibilityIdentifier("cat-profile-transfer-export")
             }
-            Section {
+            Section("このiPhoneへ") {
                 Button("引き継ぎファイルを読み込む") { showsImporter = true }
                     .accessibilityIdentifier("cat-profile-transfer-import")
-            } header: {
-                Text("このiPhoneへ")
-            } footer: {
-                Text("引き継ぐ前に内容を確かめられます。今あるプロフィールや写真の設定は上書きされません。")
             }
         }
         .navigationTitle("機種変更のときの引き継ぎ")
@@ -89,7 +83,7 @@ struct CatProfileTransferView: View {
             NavigationStack {
                 List {
                     Section {
-                        Text(item.isUnchanged ? "名前と日付はもう入っています。選んだ写真を、それぞれの猫の写真に加えられます。" : "この内容をこのiPhoneに登録します。")
+                        Text(item.isUnchanged ? "名前と日付はもう入っています。" : "この内容をこのiPhoneに登録します。")
                     }
                     ForEach(item.transfer.profiles) { profile in
                         Section(profile.name) {
@@ -103,7 +97,7 @@ struct CatProfileTransferView: View {
                     }
                     if !(item.transfer.photos ?? []).isEmpty {
                         Section("引き継ぐ写真を選ぶ") {
-                            Text("撮った日時と大きさが同じ写真です。同じ写真か見比べて選んでください（選ばなかった写真は引き継ぎません）。")
+                            Text("同じ写真か見比べて選んでください。")
                             Text("\(selectedPhotos.count)枚を選択／\((item.transfer.photos ?? []).count)枚")
                         }
                         ForEach(item.transfer.photos ?? []) { photo in
@@ -112,8 +106,6 @@ struct CatProfileTransferView: View {
                         }
                     }
                     Section {
-                        Text("引き継ぐのは、どの写真がどの子かだけです。写真そのものや、つないだアルバムは引き継ぎません。")
-                            .foregroundStyle(.secondary)
                         if !item.isUnchanged || !selectedPhotos.isEmpty {
                             Button("この内容を引き継ぐ") {
                                 guard !isImporting else { return }
@@ -166,10 +158,10 @@ struct CatProfileTransferView: View {
         Section {
             Text(photo.metadata.creationDate.formatted(date: .abbreviated, time: .shortened))
             if candidates.isEmpty {
-                Text("同じ写真が見つかりません。iCloud写真の読み込みや写真へのアクセスを確かめてから、もう一度ファイルを読み込めます。")
+                Text("同じ写真が見つかりません。写真へのアクセスを確かめて、もう一度ファイルを読み込んでください。")
                     .foregroundStyle(.secondary)
             } else {
-                if candidates.count > 1 { Text("候補が複数あります。写真を見比べて選んでください。") }
+                if candidates.count > 1 { Text("候補が複数あります。") }
                 ForEach(Array(candidates.enumerated()), id: \.element.id) { indexed in
                     let candidate = indexed.element
                     let number = indexed.offset + 1

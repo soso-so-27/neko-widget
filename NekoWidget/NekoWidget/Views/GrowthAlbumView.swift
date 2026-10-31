@@ -83,7 +83,7 @@ struct GrowthAlbumDetailView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("このアプリの写真・アルバム・ウィジェットに出なくなります。写真アプリの写真は消えず、設定からいつでも戻せます。")
+            Text("写真アプリの写真は消えません。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             if let identifier = pendingAssignmentIdentifier {
@@ -326,12 +326,11 @@ struct GrowthAlbumDetailView: View {
     }
 
     private var aboutSelectionMessage: String {
-        let source = "写真の対象から、撮った時期ごとに1枚ずつ自動で選んでいます。"
-        let edit = "選び直しても、写真アプリの元の写真は変わりません。"
+        let source = "撮った時期ごとに1枚ずつ自動で選んでいます。"
         if album.id == .householdGrowth {
-            return "\(source) 同じ猫かどうかまでは見分けていません。\(edit)"
+            return "\(source)同じ猫かどうかは見分けていません。"
         }
-        return "\(source) \(edit)"
+        return source
     }
 }
 

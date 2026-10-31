@@ -55,12 +55,10 @@ struct PersonalRediscoveryHistoryView: View {
                             }
                         }
                     }
-                    Text("48時間で履歴から消えます。残したい一枚は、開いて「お気に入りに追加」へ。")
-                        .font(.footnote).foregroundStyle(.secondary)
                 } else {
                     ContentUnavailableView(loadFailed ? "履歴を読み込めませんでした" : "選び直した写真はまだありません",
                         systemImage: "photo.on.rectangle",
-                        description: Text(loadFailed ? "時間をおいてもう一度お試しください。" : "選び直すと、前の写真と新しい写真がここに48時間残ります。"))
+                        description: Text(loadFailed ? "少し待ってから、もう一度お試しください。" : "選び直すと、前の写真と新しい写真がここに出ます。"))
                         .accessibilityIdentifier("personal-rediscovery-empty")
                 }
             }
@@ -143,7 +141,7 @@ struct PersonalRediscoveryHistoryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
-        .accessibilityHint("写真を大きく開きます。まどの表示や今日の回数は変わりません")
+        .accessibilityHint("写真を大きく開きます")
         .accessibilityIdentifier("personal-rediscovery-\(previous ? "previous" : "result")-\(grant.id)")
         #if DEBUG
         .accessibilityValue(identifier)
@@ -202,13 +200,13 @@ struct PersonalRediscoveryHistoryView: View {
                                             operationCreatedAt: date, now: date)
             switch outcome {
             case .committed: message = "別の一枚に選び直しました。"
-            case .existing: message = "今日はもう選び直しました。ここから同じ写真を何度でも開けます。"
+            case .existing: message = "今日はもう選び直しました。"
             case .refreshRequired: message = "画面を新しくしました。もう一度お試しください。"
             case .unavailable: message = "別の写真を選べませんでした。今日の1回はまだ残っています。"
             }
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
         } catch {
-            message = "別の写真を選べませんでした。時間をおいてお試しください。"
+            message = "別の写真を選べませんでした。少し待ってから、もう一度お試しください。"
         }
         reload()
     }
