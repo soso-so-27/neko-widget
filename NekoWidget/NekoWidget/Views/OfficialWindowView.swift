@@ -714,17 +714,6 @@ struct OfficialWindowView: View {
         }
     }
 
-    private var discoverySources: [PublicWindowPresentationSource] {
-        if !relatedWindows.isEmpty { return relatedWindows }
-        // Widget/deep-link entry has no list presenter. Use the same build-owned
-        // registry as the main list while preserving this window's source.
-        return OfficialWindowConfiguration.definitions.map { definition in
-            definition.id == store.windowID
-                ? PublicWindowPresentationSource(store: store, refresh: refreshFeed, preview: previewFeed)
-                : PublicWindowPresentationSource(store: .forWindow(definition))
-        }
-    }
-
     private var introduction: some View {
         let status = OfficialWindowStatusPresentation(isConfigured: store.endpoint != nil,
             stopped: stoppedHere, checking: isChecking, failed: hasRefreshFailure,
@@ -747,15 +736,6 @@ struct OfficialWindowView: View {
                     .frame(minHeight: 44)
                     .disabled(isChecking)
                     .accessibilityIdentifier("official-window-refresh-retry")
-            }
-            if status.showsDiscovery {
-                NavigationLink {
-                    PublicWindowDiscoveryView(sources: discoverySources)
-                } label: {
-                    Label("公式のまどを見る", systemImage: "building.2")
-                        .frame(minHeight: 44)
-                }
-                .accessibilityIdentifier("official-window-state-discovery")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

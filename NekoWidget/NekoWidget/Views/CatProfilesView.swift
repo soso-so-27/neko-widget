@@ -84,7 +84,7 @@ struct CatProfilesView: View {
     }
 
     private enum OrganizationDestination: String, Identifiable {
-        case unassigned, excluded
+        case unassigned
         var id: String { rawValue }
     }
 
@@ -126,11 +126,6 @@ struct CatProfilesView: View {
                     photos: presentation.unassignedPhotos,
                     profiles: presentation.profiles,
                     actions: actions
-                )
-            case .excluded:
-                LegacyCatExclusionReviewView(
-                    photos: presentation.legacyExcludedPhotos,
-                    restore: actions.restoreLegacyExclusions
                 )
             }
         }
@@ -266,14 +261,6 @@ struct CatProfilesView: View {
                     Label("どの猫か決めていない写真", systemImage: "photo.on.rectangle")
                 }
                 .accessibilityIdentifier("cat-profiles-unassigned")
-            }
-            if !presentation.legacyExcludedPhotos.isEmpty {
-                Button {
-                    organizationDestination = .excluded
-                } label: {
-                    Label("前に外した写真", systemImage: "arrow.uturn.backward")
-                }
-                .accessibilityIdentifier("cat-profiles-excluded")
             }
             Button {
                 showsAbout = true

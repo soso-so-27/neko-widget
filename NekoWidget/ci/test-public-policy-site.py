@@ -328,7 +328,6 @@ class PublicPolicySiteTests(unittest.TestCase):
 
     def test_photo_album_disclosure_stays_aligned_with_implementation(self):
         service = PHOTO_ALBUM_SERVICE.read_text(encoding="utf-8")
-        settings = SETTINGS_VIEW.read_text(encoding="utf-8")
         info = INFO_PLIST.read_text(encoding="utf-8")
         for phrase in (
             "PHAssetCollectionChangeRequest.creationRequestForAssetCollection",
@@ -339,10 +338,9 @@ class PublicPolicySiteTests(unittest.TestCase):
             self.assertIn(phrase, service)
         self.assertIn("PHAssetCreationRequest.forAsset()", service)
         self.assertIn("request.addResource", service)
-        self.assertIn(
-            "見つけた猫写真を、写真アプリのアルバムにまとめます（写真は複製しません）。",
-            settings,
-        )
+        # The album's Settings screen was removed (10/31); the app no longer
+        # carries this sentence. The public privacy page still describes the
+        # album and is updated separately with the owner's approval.
         self.assertIn("NSPhotoLibraryAddUsageDescription", info)
         self.assertIn("「自分のお気に入りに追加」を選んだ届いた写真", info)
         self.assertIn("写真を自動で追加することはありません", info)

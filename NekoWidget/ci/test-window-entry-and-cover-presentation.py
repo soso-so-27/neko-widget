@@ -46,16 +46,16 @@ class WindowPresentation(unittest.TestCase):
     def assert_official_introduction_accessibility(self, source):
         introduction=source.split('private var introduction: some View {',1)[1].split('private func photoButton(',1)[0]
         self.assertNotIn('.accessibilityIdentifier("official-window-introduction")',introduction)
-        for identifier in ('official-window-state-title', 'official-window-refresh-retry', 'official-window-state-discovery'):
+        for identifier in ('official-window-state-title', 'official-window-refresh-retry'):
             self.assertEqual(introduction.count('.accessibilityIdentifier("'+identifier+'")'),1)
         self.assertIn('Label(status.title, systemImage: "photo.on.rectangle")',introduction)
-        retry=introduction.split('if store.endpoint != nil, !stoppedHere {',1)[1].split('if status.showsDiscovery {',1)[0]
+        retry=introduction.split('if store.endpoint != nil, !stoppedHere {',1)[1]
         self.assertIn('await refresh(interactive: true)',retry)
         self.assertIn('.disabled(isChecking)',retry)
         self.assertIn('official-window-refresh-retry',retry)
-        discovery=introduction.split('if status.showsDiscovery {',1)[1]
-        self.assertIn('PublicWindowDiscoveryView(sources: discoverySources)',discovery)
-        self.assertIn('official-window-state-discovery',discovery)
+        # Other official windows are added from the まど tab, not from a stopped window (10/31).
+        self.assertNotIn('PublicWindowDiscoveryView',introduction)
+        self.assertNotIn('official-window-state-discovery',introduction)
 
     def test_official_empty_state_child_identifiers_and_actions_remain_distinct(self):
         official=(ROOT/"NekoWidget/Views/OfficialWindowView.swift").read_text(encoding="utf-8")

@@ -533,7 +533,6 @@ struct MainTabView: View {
     @State private var relatedPhotoRoute: PhotoRediscoveryRoute?
     @State private var relatedPhotoUsesLibraryScope = false
     @State private var showsSettings = false
-    @State private var showsCatProfiles = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
@@ -708,15 +707,6 @@ struct MainTabView: View {
                 profiles: catProfilesPresentation.profiles,
                 scopeID: $showcaseScopeID
             )
-        }
-        .sheet(isPresented: $showsCatProfiles) {
-            NavigationStack {
-                CatProfilesView(presentation: catProfilesPresentation, actions: catProfilesActions,
-                                opensProfileSettings: true)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) {
-                        Button("閉じる") { showsCatProfiles = false }
-                    } }
-            }
         }
         .sheet(isPresented: $showsSettings, onDismiss: {
             photoLibraryRevision &+= 1
@@ -1384,9 +1374,6 @@ struct MainTabView: View {
                 photoLibraryCatButton(profile.displayName, identifier: profile.identifier)
             }
             photoLibraryCatButton("未分類", identifier: "unassigned")
-            Divider()
-            Button("猫のプロフィール", systemImage: "cat.fill") { showsCatProfiles = true }
-                .accessibilityIdentifier("photos-cat-profiles")
         } label: {
             HStack(spacing: 6) {
                 Text((photoLibraryProfileIdentifier.map { currentPhotoLibraryProfileNames[$0] ?? "未分類" } ?? "すべての猫") + "の写真")

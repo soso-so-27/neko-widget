@@ -104,7 +104,6 @@ struct SettingsView: View {
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
-    @State private var hasRestoredTools = false
     @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
     @AppStorage(AlbumPrototype.slideshowKey) private var albumSlideshow = false
     @State private var showsWindowSupportPreview = false
@@ -217,13 +216,6 @@ struct SettingsView: View {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
-                // For the everyday personal Widget; くもりのまど keeps its own day.
-                NavigationLink {
-                    PersonalRediscoveryHistoryView()
-                } label: {
-                    Label("今日の一枚を選び直す", systemImage: "clock.arrow.circlepath")
-                }
-                .accessibilityIdentifier("settings-personal-rediscovery")
             } header: {
                 Text("ホーム画面")
             }
@@ -268,12 +260,23 @@ struct SettingsView: View {
                 PlusSettingsSection()
             }
 
+            // 保存 (10/31): 自動保存 first, then moving to a new iPhone, right here.
             Section {
-                // One door for everything about keeping and moving data.
-                NavigationLink { saveAndTransferView } label: {
-                    Label("自動保存とファイル", systemImage: "externaldrive")
+                if ManagedPreservationConfiguration.current.isEnabled {
+                    NavigationLink { AppRecordSettingsView() } label: { AutoSaveSettingsRow() }
+                        .accessibilityIdentifier("settings-managed-preservation")
                 }
-                .accessibilityIdentifier("settings-save-and-transfer")
+                NavigationLink {
+                    CatProfileTransferView(actions: catProfilesActions,
+                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
+                } label: {
+                    Label("機種変更のとき", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .accessibilityIdentifier("settings-cat-profile-transfer")
+                // The old iCloud copies are retired; only test fixtures still open them.
+                if let personalArchiveStore {
+                    PersonalArchiveSettingsLink(store: personalArchiveStore, noteStore: memoStore)
+                }
             } header: {
                 Text("保存")
             }
@@ -462,47 +465,6 @@ struct SettingsView: View {
         return "\(access)・\(settings.range.rawValue)"
     }
 
-    /// 保存 (10/31): 自動保存 first, then what anyone can keep as a file.
-    /// Leftovers of two iPhones' records show only while there are some.
-    private var saveAndTransferView: some View {
-        Form {
-            if ManagedPreservationConfiguration.current.isEnabled {
-                Section {
-                    NavigationLink { AppRecordSettingsView() } label: { AutoSaveSettingsRow() }
-                        .accessibilityIdentifier("settings-managed-preservation")
-                }
-            }
-            Section {
-                NavigationLink { MemoryNoteExportView(store: memoStore) } label: {
-                    Label("メモを書き出す", systemImage: "square.and.arrow.up")
-                }
-                .accessibilityIdentifier("settings-memory-note-export")
-                NavigationLink {
-                    CatProfileTransferView(actions: catProfilesActions,
-                        hasProfiles: !catProfilesPresentation.profiles.isEmpty)
-                } label: {
-                    Label("機種変更のとき", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .accessibilityIdentifier("settings-cat-profile-transfer")
-                if hasRestoredTools {
-                    NavigationLink { RestoredToolsView() } label: {
-                        Label("戻した記録", systemImage: "arrow.counterclockwise")
-                    }
-                    .accessibilityIdentifier("settings-restored-tools")
-                }
-                // The old iCloud copies are retired; only test fixtures still open them.
-                if let personalArchiveStore {
-                    PersonalArchiveSettingsLink(store: personalArchiveStore, noteStore: memoStore)
-                }
-            } header: {
-                Text("ファイルで残す")
-            }
-        }
-        .navigationTitle("保存")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { hasRestoredTools = ((try? ToolBackupFiles.saved()) ?? []).isEmpty == false }
-    }
-
     private var photoSettingsView: some View {
         Form {
             Section {
@@ -564,17 +526,6 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings-excluded-photos")
 
-                NavigationLink {
-                    PhotoLibraryAlbumSettingsView(
-                        state: albumState,
-                        canUpdate: canUpdatePhotoLibraryAlbum,
-                        albumLimit: $draft.albumLimit,
-                        isSavingSettings: isSaving || isPhotoSettingsSavePending,
-                        update: updatePhotoLibraryAlbum
-                    )
-                } label: {
-                    Label("写真アプリの「うちの子」アルバム", systemImage: "rectangle.stack.badge.plus")
-                }
                 // Which cat photos the Widget may show; the scan itself covers every photo.
                 Picker("ウィジェットに出す写真", selection: $draft.range) {
                     ForEach(PhotoRangePresentation.allCases) { range in
@@ -923,94 +874,6 @@ struct SettingsView: View {
     private func cleanupVerificationExport() {
         TemporaryExportFileLifecycle.removeManagedFile(at: exportedFile?.url)
         exportedFile = nil
-    }
-}
-
-private struct PhotoLibraryAlbumSettingsView: View {
-    let state: AlbumPresentationState
-    let canUpdate: Bool
-    @Binding var albumLimit: Int
-    let isSavingSettings: Bool
-    let update: () -> Void
-
-    @State private var showsPhotoShuffleGuide = false
-
-    var body: some View {
-        Form {
-            Section {
-                Stepper(value: $albumLimit, in: 50...1_000, step: 50) {
-                    LabeledContent(
-                        "アルバムに入れる最大枚数",
-                        value: "\(albumLimit.formatted())枚"
-                    )
-                }
-
-                if isSavingSettings {
-                    Label("枚数を保存しています…", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                status
-
-                Button(action: update) {
-                    Label(updateTitle, systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(!canUpdate || isSavingSettings || state == .updating)
-                .accessibilityIdentifier("settings-photo-library-album-update")
-            } header: {
-                Text("写真アプリの「うちの子」")
-            } footer: {
-                Text("見つけた猫写真を、写真アプリのアルバムにまとめます（写真は複製しません）。")
-            }
-
-            Section {
-                Button("写真シャッフルの設定手順", systemImage: "lock.rotation") {
-                    showsPhotoShuffleGuide = true
-                }
-            }
-        }
-        .navigationTitle("写真アプリの「うちの子」アルバム")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showsPhotoShuffleGuide) {
-            PhotoShuffleGuideView()
-        }
-    }
-
-    @ViewBuilder
-    private var status: some View {
-        switch state {
-        case .idle:
-            Text("まだアルバムを作っていません")
-                .foregroundStyle(.secondary)
-        case .updating:
-            HStack {
-                ProgressView()
-                Text("アルバムを更新しています…")
-            }
-        case let .ready(photoCount, updatedAt):
-            VStack(alignment: .leading, spacing: 4) {
-                Label("\(photoCount.formatted())枚をアルバムに入れました", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                if let updatedAt {
-                    Text("最後の更新：\(updatedAt.formatted(.dateTime.month().day().hour().minute()))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        case let .failed(message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-        }
-    }
-
-    private var updateTitle: String {
-        switch state {
-        case .idle: "アルバムを作る"
-        case .updating: "更新しています…"
-        case .ready: "アルバムを更新する"
-        case .failed: "もう一度試す"
-        }
     }
 }
 
