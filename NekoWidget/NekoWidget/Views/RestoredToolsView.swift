@@ -23,9 +23,9 @@ struct RestoredToolsView: View {
                 }
             }
             if failed { Text("復元した記録を読み込めませんでした。記録は消えていません。") }
-            else if backups.isEmpty { Text("前の記録はありません。") }
+            else if backups.isEmpty { Text("戻した記録はありません。") }
         }
-        .navigationTitle("前の記録")
+        .navigationTitle("戻した記録")
         .task {
             do { backups = try ToolBackupFiles.saved(); failed = false }
             catch { failed = true }

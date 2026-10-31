@@ -39,7 +39,7 @@ struct AutoSaveSettingsRow: View {
     @ObservedObject private var persistence = AppRecordPersistence.shared
     var body: some View {
         LabeledContent {
-            Text(persistence.enabled ? "オン" : "オフ")
+            Text(!persistence.enabled ? "オフ" : persistence.failing || persistence.conflict ? "保存できていません" : "オン")
         } label: {
             Label("自動保存", systemImage: "checkmark.icloud")
         }
@@ -488,7 +488,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings-cat-profile-transfer")
                 if hasRestoredTools {
                     NavigationLink { RestoredToolsView() } label: {
-                        Label("前の記録", systemImage: "arrow.counterclockwise")
+                        Label("戻した記録", systemImage: "arrow.counterclockwise")
                     }
                     .accessibilityIdentifier("settings-restored-tools")
                 }

@@ -444,7 +444,9 @@ final class AppRecordPersistence: ObservableObject {
         var requiredDatasetID: UUID? = nil
     }
     static let consentVersion = "app-records-automatic-v1"
-    @Published private(set) var title = "自動保存はオフです"
+    @Published private(set) var title = "自動保存はオフです" { didSet { failing = false } }
+    /// The last attempt failed and nothing has been saved since.
+    @Published private(set) var failing = false
     @Published private(set) var detail: String?
     @Published private(set) var enabled = false
     @Published private(set) var busy = false
@@ -917,7 +919,18 @@ final class AppRecordPersistence: ObservableObject {
             detail = "どちらの記録も残っています。下から、使う方を選んでください。"
         } else {
             title = "まだ保存していない変更があります"
-            detail = (error as? LocalizedError)?.errorDescription ?? "保存できませんでした。このiPhoneの記録は残っています。"
+            detail = Self.failureDetail(error)
+        }
+        failing = true
+    }
+
+    /// The shared wording points at a list to reload; automatic saving retries by itself.
+    private static func failureDetail(_ error: Error) -> String {
+        switch error as? ManagedPreservationError {
+        case .unavailable?, .interrupted?, .invalidResponse?:
+            "通信できなかったため、まだ保存できていません。少しすると自動でやり直します。"
+        default:
+            (error as? LocalizedError)?.errorDescription ?? "保存できませんでした。このiPhoneの記録は残っています。"
         }
     }
 
@@ -928,6 +941,7 @@ final class AppRecordPersistence: ObservableObject {
         requested = true; nextAttempt = .distantPast
         title = "まだ保存していない変更があります"
         detail = ManagedPreservationError.authenticationRequired.errorDescription
+        failing = true
     }
 #if DEBUG
     func verifyAcceptedSaveFences() async throws {
@@ -1137,12 +1151,23 @@ struct AppRecordSettingsView: View {
 
     @ViewBuilder private var settingsSections: some View {
             Section {
-                Label(persistence.title, systemImage: persistence.enabled ? "checkmark.icloud" : "icloud.slash")
-                    .accessibilityIdentifier("app-record-save-status")
-                if let detail = persistence.detail { Text(detail).font(.footnote) }
-                Text("猫のこと、メモとその写真、ツールに書いたことを自動で保存します。新しいiPhoneでも、サインインすれば戻せます。")
-                Text("写真アプリの写真や動画そのものは保存しません。保存したものが、まどの相手に送られることはありません。")
-                    .font(.footnote).foregroundStyle(.secondary)
+                // Plus ending outranks any retry message: nothing new is saved until it comes back.
+                if plusEnded {
+                    Label("自動保存は止まっています", systemImage: "icloud.slash")
+                        .accessibilityIdentifier("app-record-save-status")
+                    Text("Plusが終わったので、新しい保存は止まっています。保存したものは、終わってから12か月は書き出せます。")
+                    if offersPlus { plusOfferButton }
+                } else {
+                    Label(persistence.title, systemImage: statusSymbol)
+                        .accessibilityIdentifier("app-record-save-status")
+                    if let detail = persistence.detail { Text(detail).font(.footnote) }
+                }
+                // Once saving, the status is the whole story; the explanation is for deciding to start.
+                if !persistence.enabled {
+                    Text("猫のこと、メモとその写真、ツールに書いたことを自動で保存します。新しいiPhoneでも、サインインすれば戻せます。")
+                    Text("写真アプリの写真や動画そのものは保存しません。保存したものが、まどの相手に送られることはありません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             if let error = authentication.errorMessage { Section { Text(error).foregroundStyle(.red) } }
             if authentication.accountDeletionState != nil {
@@ -1235,19 +1260,22 @@ struct AppRecordSettingsView: View {
             if let quota = ManagedPreservationView.shownQuota(authentication.usage?.productQuota, trial: quotaTrial) {
                 ProductQuotaSummary(quota: quota)
             }
-            if !persistence.conflict {
+            if !persistence.conflict && !plusEnded {
                 Button("保存状況を確かめる") { Task { await persistence.retry() } }
                     .disabled(persistence.busy)
             }
         }
-        if plusEnded || (authentication.membership?.linked == false && !hasPlusHere) {
+        if !plusEnded && authentication.membership?.linked == false && !hasPlusHere {
             Section {
-                Text(plusEnded
-                     ? "Plusが終わったので、新しい保存は止まっています。保存したものは、終わってから12か月は書き出せます。"
-                     : "Plusを始めると、保存が始まります。それまでの記録は、このiPhoneに残っています。")
+                Text("Plusを始めると、保存が始まります。それまでの記録は、このiPhoneに残っています。")
                 if offersPlus { plusOfferButton }
             }
         }
+    }
+
+    private var statusSymbol: String {
+        guard persistence.enabled else { return "icloud.slash" }
+        return persistence.failing || persistence.conflict ? "exclamationmark.icloud" : "checkmark.icloud"
     }
 
     private var plusOfferButton: some View {
