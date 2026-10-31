@@ -1,0 +1,58 @@
+name: Resume retained owner-only build 319
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: testflight-upload
+  cancel-in-progress: false
+jobs:
+  upload:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 20
+    environment: testflight
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
+      PRESERVATION_APPROVAL: ${{ vars.PRESERVATION_PILOT_ENABLED }}
+      PRESERVATION_SCOPE: ${{ vars.PRESERVATION_PILOT_SCOPE }}
+      BILLING_APPROVAL: ${{ vars.BILLING_SANDBOX_ENABLED }}
+      BILLING_SCOPE: ${{ vars.BILLING_SANDBOX_SCOPE }}
+      OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
+      OWNER_INTERNAL_TESTER_ID: ${{ secrets.OWNER_INTERNAL_TESTER_ID }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Check approved runtime before restoring any artifact
+        env:
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          node NekoWidget/ci/check-retained-319-runtime.mjs
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+      - name: Restore and upload the authenticated retained build without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          gh run download 41113053231 --repo soso-so-27/neko-widget \
+            --name nekowidget-signed-artifacts-41113053231-2 --dir "$RUNNER_TEMP/retained-319"
+          python3 NekoWidget/ci/restore-owner-319.py "$RUNNER_TEMP/retained-319"
+      - name: Remove the existing API credential from the ephemeral runner
+        if: always()
+        shell: bash
+        run: rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"

@@ -1699,8 +1699,8 @@ jobs:
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          OWNER_INTERNAL_GROUP_ID: ${{ vars.OWNER_INTERNAL_GROUP_ID }}
-          OWNER_INTERNAL_TESTER_ID: ${{ vars.OWNER_INTERNAL_TESTER_ID }}
+          OWNER_INTERNAL_GROUP_ID: ${{ secrets.OWNER_INTERNAL_GROUP_ID }}
+          OWNER_INTERNAL_TESTER_ID: ${{ secrets.OWNER_INTERNAL_TESTER_ID }}
           SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail
@@ -1749,7 +1749,8 @@ jobs:
           }
 
           if [[ "$DISTRIBUTION_PROFILE" == "owner-internal" ]]; then
-            node "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/check-owner-testflight-recipient.mjs"
+            node "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/check-owner-testflight-recipient.mjs" \
+              --authenticated-artifact "$RUNNER_TEMP" --ipa "$IPA_PATH"
           fi
           run_altool_stage validate \
             --validate-app \
