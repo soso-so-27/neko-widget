@@ -52,7 +52,7 @@ final class RecordExportController: ObservableObject {
                 if generation == token {
                     self.failureKind = PreservationExportFailure.classify(error)
                     self.error = (error as? LocalizedError)?.errorDescription
-                        ?? "ファイルを準備できませんでした。元の写真とメモはそのままです。"
+                        ?? "ファイルを準備できませんでした。もう一度お試しください。"
                 }
             }
         }
@@ -79,7 +79,7 @@ final class RecordExportController: ObservableObject {
         // An old share-sheet callback must not dismiss or clean a later export.
         if payload?.id == completed.id { payload = nil }
         remove(completed)
-        if failed { error = "ファイルの保存・共有を完了できませんでした。元の写真とメモはそのままです。" }
+        if failed { error = "ファイルの保存・共有を完了できませんでした。もう一度お試しください。" }
     }
 
     @discardableResult
@@ -135,7 +135,7 @@ struct MemoryNoteExportView: View {
                 .disabled(exporter.preparing || exporter.payload != nil)
                 .accessibilityIdentifier("memory-note-export-start")
             } footer: {
-                Text("このiPhoneのメモと日付、猫の名前を1つのファイルにまとめて書き出します（写真は入りません）。保管した写真は、それぞれのメモの「…」から書き出せます。")
+                Text("メモと日付、猫の名前を1つのファイルにまとめます（写真は入りません）。")
             }
             if exporter.preparing { ProgressView() }
             if let error = exporter.error {
@@ -527,12 +527,12 @@ struct PhotoMemoryNoteEditor: View {
                     Toggle("測定日を指定", isOn: $weightDateKnown).accessibilityIdentifier("memo-weight-date-toggle")
                     if weightDateKnown { DatePicker("測定日", selection: $weightDate, displayedComponents: .date) }
                 }
-            } footer: { Text("体重は入れなくてもかまいません。測った日は、写真を撮った日とは別に残せます。") }
+            }
                 .disabled(isSaving || savedNotice != nil || accountChanged)
             if let savedNotice { Section { Text(savedNotice).foregroundStyle(.secondary) } }
         } else if loadFailed {
             Section {
-                Text("メモを読み込めませんでした。書いたメモは消えていません。")
+                Text("メモを読み込めませんでした。")
                 Button("もう一度読み込む") { Task { await load() } }
                     .disabled(isLoading)
             }
@@ -593,14 +593,14 @@ struct PhotoMemoryNoteEditor: View {
                 Button("削除", role: .destructive) { Task { await save("") } }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("写真とお気に入りは残ります。メモの文章・体重・測定日は削除します（iCloudのメモも書き換える設定なら、iCloudからも消えます）。")
+                Text("写真は残り、メモの文章・体重・測定日が削除されます。")
             }
             .alert("メモを保存できませんでした", isPresented: Binding(
                 get: { saveError != nil }, set: { if !$0 { saveError = nil } }
             )) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text(saveError ?? "入力内容は残っています。もう一度保存してください。")
+                Text(saveError ?? "少し待ってから、もう一度お試しください。")
             }
             .interactiveDismissDisabled(hasChanges || isSaving)
             .task {
@@ -702,7 +702,7 @@ struct PhotoMemoryNoteEditor: View {
         guard isLoaded, !isSaving else { return }
         guard !createsNewMemo || (value.isEmpty && !weightEnabled)
                 || membershipAccess.decision(for: .createPersonalMemo) == .allowed else {
-            saveError = "新しくメモを書くにはPlusが必要です。書いた文章はそのままです。"
+            saveError = "新しくメモを書くにはPlusが必要です。"
             return
         }
         isSaving = true
@@ -747,7 +747,7 @@ struct PhotoMemoryNoteEditor: View {
             saveError = "ほかの画面でメモが変更されました。書いた文をコピーしてから、開き直してください。"
         } catch {
             saveError = (error as? LocalizedError)?.errorDescription
-                ?? "入力内容は残っています。もう一度保存してください。"
+                ?? "少し待ってから、もう一度お試しください。"
         }
     }
 }

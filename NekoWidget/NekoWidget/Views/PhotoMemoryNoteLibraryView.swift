@@ -762,7 +762,7 @@ struct PhotoMemoryNoteDetailView: View {
                 ContentUnavailableView {
                     Label("メモを読み込めませんでした", systemImage: "note.text")
                 } description: {
-                    Text("保存されている内容は変更していません。")
+                    Text("少し待ってから、もう一度お試しください。")
                 } actions: {
                     Button("もう一度読み込む") { Task { await reload() } }
                 }
@@ -857,7 +857,7 @@ struct PhotoMemoryNoteDetailView: View {
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("写真とお気に入り、診察メモに入れた分は残ります。メモの文章・体重・測定日は削除します。") }
+        } message: { Text("写真と診察メモに入れた分は残り、メモの文章・体重・測定日が削除されます。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }

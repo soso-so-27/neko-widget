@@ -138,12 +138,9 @@ struct CatProfilesView: View {
             NavigationStack {
                 Form {
                     Section {
-                        Text("写真を選んで、写っている猫にまとめられます。すべての写真を分ける必要はありません。")
+                        Text("写真を選んで、写っている猫にまとめられます。")
                     } footer: {
                         Text(CatIndividualRecognitionCopy.unavailable)
-                    }
-                    Section {
-                        Text("猫を登録しなくても使えます。名前や写真の分け方は、このiPhoneに保存されます。")
                     }
                 }
                 .navigationTitle("猫ごとの写真について")
@@ -213,7 +210,7 @@ struct CatProfilesView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("猫ごとに写真を見返す")
                         .font(.headline)
-                    Text("写真を1枚選んで、写っている猫に名前を付けるところから。あとから写真を追加できます。")
+                    Text("写真を1枚選んで、写っている猫に名前を付けます。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -644,8 +641,6 @@ private struct AddCatProfileView: View {
                             .font(.footnote)
                         }
                     }
-                } footer: {
-                    Text("選んだ写真はこの子の写真に追加されます。誕生日などは、あとから設定できます。")
                 }
 
                 if let reference = draft.lifeReference {
@@ -655,13 +650,13 @@ private struct AddCatProfileView: View {
                         }
                         Button("この日付は使わない") { draft.lifeReference = nil }
                     } footer: {
-                        Text("前に入れた日付です。この子のプロフィールに使います。")
+                        Text("前に入れた日付です。")
                     }
                 }
 
                 if saveFailed {
                     Section {
-                        Text("追加できませんでした。入力はそのままなので、もう一度お試しください。")
+                        Text("追加できませんでした。もう一度お試しください。")
                             .font(.footnote)
                             .foregroundStyle(.red)
                     }
@@ -774,10 +769,10 @@ struct ToolCatPicker<Legacy: View>: View {
                 }
             }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("名前だけで登録できます。写真や日付はあとから設定できます。") }
+        }
         .alert("プロフィールを追加できませんでした", isPresented: $failed) {
             Button("閉じる", role: .cancel) {}
-        } message: { Text("入力は残っています。もう一度お試しください。") }
+        } message: { Text("もう一度お試しください。") }
     }
 }
 
@@ -902,7 +897,7 @@ struct ToolPromoteCatButton: View {
         }.disabled(busy)
         .alert("プロフィールにできませんでした", isPresented: $failed) {
             Button("閉じる", role: .cancel) {}
-        } message: { Text("記録と写真はそのままです。少し待ってから、もう一度お試しください。") }
+        } message: { Text("少し待ってから、もう一度お試しください。") }
     }
 }
 

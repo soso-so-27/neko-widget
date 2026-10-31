@@ -34,7 +34,7 @@ struct CatCandidateCurationView: View {
                     ContentUnavailableView(
                         "外した写真はありません",
                         systemImage: "cat",
-                        description: Text("写真の「…」や、アルバムで写真を長押しして「猫の写真から外す」を選ぶと外せます。")
+                        description: Text("写真の「…」から「猫の写真から外す」を選ぶと外せます。")
                     )
                     .frame(maxWidth: .infinity, minHeight: 230)
                     .listRowBackground(Color.clear)
@@ -59,8 +59,6 @@ struct CatCandidateCurationView: View {
                 }
             } header: {
                 Text("猫の写真から外した写真")
-            } footer: {
-                Text("外した写真は、このアプリの写真・アルバム・ウィジェットに出なくなるだけです。写真アプリの写真は消えません。")
             }
         }
         .navigationTitle(showsSourceSettings ? "写真の整理" : "外した写真")
@@ -78,8 +76,6 @@ struct CatCandidateCurationView: View {
                 }
             }
             Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("写真アプリの写真はそのままです。")
         }
     }
 
@@ -98,7 +94,7 @@ struct CatCandidateCurationView: View {
 
             if sourceStatus == .unavailable {
                 Label(
-                    "選んだアルバムが見つかりません。選び直すまでは、前に見つけた写真を表示します。",
+                    "選んだアルバムが見つかりません。選び直してください。",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.footnote)
@@ -110,8 +106,6 @@ struct CatCandidateCurationView: View {
             }
         } header: {
             Text("どの写真から探すか")
-        } footer: {
-            Text("ふつうは写真全体から探します。アルバムを選ぶと、その中だけを探します。")
         }
     }
 
@@ -176,7 +170,7 @@ struct PhotoSourceAlbumSelectionView: View {
                 Section {
                     if status == .unavailable {
                         Label(
-                            "選んだアルバムが見つかりません。選び直すまでは、前に見つけた写真を表示します。",
+                            "選んだアルバムが見つかりません。選び直してください。",
                             systemImage: "exclamationmark.triangle.fill"
                         )
                         .font(.footnote)
@@ -209,8 +203,6 @@ struct PhotoSourceAlbumSelectionView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-            } footer: {
-                Text("対象を変えると、写真を探し直します。選んだアルバムが見つからないときは、前に見つけた写真を残します。")
             }
         }
         .navigationTitle("写真の対象")
