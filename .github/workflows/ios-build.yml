@@ -859,7 +859,6 @@ jobs:
           xcrun --sdk macosx swiftc \
             -parse-as-library \
             Shared/Models/NormalizedRect.swift \
-            NekoWidget/Services/CatSimilarityGroupingCore.swift \
             NekoWidget/Views/CatProfilesPresentation.swift \
             ci/verify-cat-profiles-presentation.swift \
             -o "$RUNNER_TEMP/verify-cat-profiles-presentation"
@@ -870,117 +869,8 @@ jobs:
           fi
           grep -Fq 'Text(CatIndividualRecognitionCopy.unavailable)' \
             NekoWidget/Views/CatProfilesView.swift
-
-      - name: Verify local cat similarity grouping
-        working-directory: NekoWidget
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcrun --sdk macosx swiftc \
-            -parse-as-library \
-            Shared/Models/NormalizedRect.swift \
-            NekoWidget/Services/CatSimilarityGroupingCore.swift \
-            ci/verify-cat-similarity-grouping.swift \
-            -o "$RUNNER_TEMP/verify-cat-similarity-grouping"
-          "$RUNNER_TEMP/verify-cat-similarity-grouping"
-
-      - name: Verify cat similarity review presentation
-        working-directory: NekoWidget
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcrun --sdk macosx swiftc \
-            -parse-as-library \
-            NekoWidget/Views/CatSimilarityReviewPresentation.swift \
-            ci/verify-cat-similarity-review-presentation.swift \
-            -o "$RUNNER_TEMP/verify-cat-similarity-review-presentation"
-          "$RUNNER_TEMP/verify-cat-similarity-review-presentation"
-
-      - name: Verify cat similarity privacy boundary
-        working-directory: NekoWidget
-        shell: bash
-        run: |
-          set -euo pipefail
-          service="NekoWidget/Services/CatSimilarityGroupingService.swift"
-          core="NekoWidget/Services/CatSimilarityGroupingCore.swift"
-          grep -Fq 'static let requestRevision = 2' "$core"
-          grep -Fq 'options.isNetworkAccessAllowed = false' "$service"
-          if grep -REn \
-            'VNFeaturePrint|VNGenerateImageFeaturePrintRequest|CatSimilarityCandidate(Group|Instance)' \
-            Shared/Sharing NekoWidget/Services/JSONExporter.swift SharingService; then
-            echo "FeaturePrint proposal data crossed a sharing/export boundary" >&2
-            exit 1
-          fi
-          if grep -En 'SharedLog\.|JSONEncoder\(|:[[:space:]]*Codable|CatHouseholdIdentityStore\(' \
-            "$service"; then
-            echo "Similarity service gained persistence or logging authority" >&2
-            exit 1
-          fi
-
-      - name: Verify read-only cat identity experiment
-        working-directory: NekoWidget
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcrun --sdk macosx swiftc \
-            -parse-as-library \
-            NekoWidget/Services/CatIdentityExperimentCore.swift \
-            NekoWidget/Services/CatIdentityExperimentExporter.swift \
-            ci/verify-cat-identity-experiment.swift \
-            -o "$RUNNER_TEMP/verify-cat-identity-experiment"
-          "$RUNNER_TEMP/verify-cat-identity-experiment"
-
-          service="NekoWidget/Services/CatIdentityExperimentService.swift"
-          exporter="NekoWidget/Services/CatIdentityExperimentExporter.swift"
-          grep -Fq 'options.isNetworkAccessAllowed = false' "$service"
-          grep -Fq 'containsPhotoIdentifiers: false' \
-            NekoWidget/Services/CatIdentityExperimentCore.swift
-          grep -Fq 'cat-identity-held-out-v3' \
-            NekoWidget/Services/CatIdentityExperimentCore.swift
-          grep -Fq 'labeledEpisodeIndexByProfile' "$service"
-          grep -Fq '撮影日時だけでは停止しません' \
-            NekoWidget/Views/CatIdentityExperimentView.swift
-          if grep -Fq 'let datedAssets' "$service"; then
-            echo "Identity experiment restored the timestamp hard gate" >&2
-            exit 1
-          fi
-          if grep -Fq 'options.isNetworkAccessAllowed = true' "$service"; then
-            echo "Identity experiment enabled PhotoKit network access" >&2
-            exit 1
-          fi
-          if grep -En \
-            'SharedLog\.|CatHouseholdIdentityStore\(|mutateCatHouseholdIdentity|JSONEncoder\(|:[[:space:]]*Codable' \
-            "$service"; then
-            echo "Identity experiment service gained write or logging authority" >&2
-            exit 1
-          fi
-          if grep -REn \
-            'CatIdentityExperiment|VNGenerateImageFeaturePrintRequest' \
-            Shared/Sharing NekoWidget/Services/JSONExporter.swift SharingService; then
-            echo "Identity experiment data crossed sharing/export boundaries" >&2
-            exit 1
-          fi
-          grep -Fq 'FileManager.default.temporaryDirectory' "$exporter"
-          grep -Fq 'photo.detectedCatCount <= 1' \
-            NekoWidget/Views/CatIdentityExperimentView.swift
-          grep -Fq 'networkAccessAllowed: false' \
-            NekoWidget/Views/CatIdentityExperimentView.swift
           grep -Fq 'CatProfileBoundingBoxSelector.select(' \
             NekoWidget/App/AppRootView.swift
-          if grep -Fq 'CatIdentityExperimentView' \
-            NekoWidget/Views/SettingsView.swift \
-            NekoWidget/Views/CatProfilesView.swift \
-            NekoWidget/Views/MainTabView.swift \
-            NekoWidget/Views/HomeView.swift \
-            NekoWidget/Views/OnboardingView.swift; then
-            echo "Retired identity experiment became reachable from product UI" >&2
-            exit 1
-          fi
-          if grep -Fq 'viewModel.catSimilarityCandidateInstances(' \
-            NekoWidget/App/AppRootView.swift; then
-            echo "Retired identity candidates returned to the daily render path" >&2
-            exit 1
-          fi
 
       - name: Verify five-screen onboarding presentation
         working-directory: NekoWidget
