@@ -1,10 +1,6 @@
 import Foundation
 import SensitiveContentAnalysis
 
-enum MomentSenderPolicy {
-    static let currentVersion = 2
-}
-
 #if !NEKO_SHARE_EXTENSION
 /// Keeps inbound moderation fail-closed without turning a missing or
 /// temporarily unavailable system analyzer into a permanent sensitive-content

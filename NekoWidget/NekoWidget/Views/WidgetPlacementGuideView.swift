@@ -92,25 +92,3 @@ struct WidgetPlacementGuideView: View {
         }
     }
 }
-
-private struct WidgetPlacementStepRow: View {
-    let number: Int
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(number.formatted())
-                .font(.subheadline.bold())
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(Color.accentColor, in: Circle())
-
-            Text(text)
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-        }
-        .padding(14)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("手順\(number)。\(text)")
-    }
-}
