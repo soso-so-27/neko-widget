@@ -492,10 +492,9 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-restored-tools")
                 }
-                // The old iCloud copies: internal builds only; 1.0 starts after them.
-                if InternalBuildPresentationAvailability.isAvailable,
-                   personalArchiveStore != nil || PersonalArchiveStore.isConfigured {
-                    PersonalArchiveSettingsLink(store: personalArchiveStore ?? .shared, noteStore: memoStore)
+                // The old iCloud copies are retired; only test fixtures still open them.
+                if let personalArchiveStore {
+                    PersonalArchiveSettingsLink(store: personalArchiveStore, noteStore: memoStore)
                 }
             } header: {
                 Text("ファイルで残す")

@@ -656,7 +656,7 @@ struct ManagedPreservationView: View {
             Button("保存したものを書き出す") { coordinator.exportAllCopies(using: exporter) }
                 .disabled(!coordinator.canExportAllCopies)
                 .accessibilityIdentifier("preservation-export-all")
-        } footer: { Text(PreservationExportWording.footer) }
+        }
     }
 
     private var recordsSection: some View {
@@ -795,8 +795,6 @@ struct ManagedPreservationView: View {
 /// Whole-account export, shared by 自動保存 and アカウント. The archive builder
 /// reports kinds only; the wording lives here.
 enum PreservationExportWording {
-    static let footer = "猫のこと、メモ、家族の手帳、ツールの記録を、写真のコピーと一緒に1つのファイル（ZIP）にまとめます。「ファイル」に保存したり、パソコンに送ったりできます。"
-
     static func phase(_ phase: PreservationExportPhase) -> String {
         switch phase {
         case .reading: "保存したものを読み込んでいます…"
