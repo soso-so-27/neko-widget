@@ -402,7 +402,8 @@ def main() -> None:
         fail("Internal report metadata scope mismatch.")
     try:
         for path, extension in ((args.archive / APP_INFO_RELATIVE_PATH, False), (args.archive / SHARE_INFO_RELATIVE_PATH, True), (args.archive / WIDGET_INFO_RELATIVE_PATH, True)):
-            verify_info(load_dictionary_plist(path, "Report archive Info.plist"), report_settings, extension=extension)
+            verify_info(load_dictionary_plist(path, "Report archive Info.plist"), report_settings, extension=extension,
+                        share_extension=path == args.archive / SHARE_INFO_RELATIVE_PATH)
         verify_ipa(args.ipa, report_settings)
     except ValueError as error:
         fail(str(error))

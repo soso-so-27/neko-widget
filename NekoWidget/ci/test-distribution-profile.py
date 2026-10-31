@@ -5,6 +5,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -127,6 +128,12 @@ class DistributionProfileTests(unittest.TestCase):
                 for relative in profile.PLISTS:
                     p = info.parent / relative
                     data = plistlib.loads(p.read_bytes()); data.update(app_info(relative != 'Info.plist'))
+                    if relative in profile.PLISTS[:2]:
+                        data.update(GroupShareExtensionEnabled='YES', GroupWindowsEnabled='YES',
+                                    GroupShareKeychainGroup='SYNTHETIC.jp.nekowidget.app.group-share')
+                    if relative == profile.PLISTS[1]:
+                        data.update(GroupShareAPIBaseURL=profile.ORIGIN, SharingFeatureEnabled='YES',
+                                    SharingMediaEnabled='YES', SharingReviewPreviewEnabled='NO')
                     p.write_bytes(plistlib.dumps(data))
                     bundle.writestr('Payload/NekoWidget.app/' + relative, p.read_bytes())
             options = root / 'export.plist'; options.write_bytes(plistlib.dumps({'testFlightInternalTestingOnly': True}))
@@ -148,6 +155,36 @@ class DistributionProfileTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             upload[-1] = profile.REVIEWED
             self.assertNotEqual(subprocess.run(upload, capture_output=True).returncode, 0)
+
+            # Exercise the actual retained-bundle entry point, not just its shared validator.
+            trust = root / 'moderation-key-trust-manifest.json'
+            trust.write_bytes(b'{"synthetic":true}\n')
+            retained = root / 'bundle.tar.gz'
+            def write_bundle():
+                with tarfile.open(retained, 'w:gz') as bundle:
+                    bundle.add(archive, arcname=archive.name)
+                    for item in (output, ipa, trust):
+                        bundle.add(item, arcname=item.name)
+            verify_bundle = [sys.executable, str(ROOT / 'ci/verify-signed-artifact-contents.py'),
+                '--bundle', str(retained), '--external-metadata', str(output), '--external-ipa', str(ipa),
+                '--release-mode', 'media-staging', '--external-trust-manifest', str(trust),
+                '--expected-trust-manifest-sha256', hashlib.sha256(trust.read_bytes().rstrip(b'\n')).hexdigest()]
+            write_bundle()
+            result = subprocess.run(verify_bundle, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            # The share exception must never permit the same configuration on Widget.
+            widget = info.parent / profile.PLISTS[2]
+            widget_info = plistlib.loads(widget.read_bytes())
+            widget_info['GroupShareExtensionEnabled'] = 'YES'
+            widget.write_bytes(plistlib.dumps(widget_info))
+            rejected_writer = subprocess.run(command, capture_output=True)
+            self.assertNotEqual(rejected_writer.returncode, 0)
+            self.assertIn(b'Widget cannot receive Group Share configuration', rejected_writer.stderr)
+            write_bundle()
+            rejected_bundle = subprocess.run(verify_bundle, capture_output=True)
+            self.assertNotEqual(rejected_bundle.returncode, 0)
+            self.assertIn(b'Widget cannot receive Group Share configuration', rejected_bundle.stderr)
 
     def test_existing_pending_data_guards_remain_before_reads(self):
         source = (ROOT / 'NekoWidget/Services/GroupReportingProvider.swift').read_text(encoding='utf-8')
