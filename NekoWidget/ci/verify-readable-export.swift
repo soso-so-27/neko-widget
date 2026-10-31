@@ -138,6 +138,58 @@ struct Fixture {
         let remaining = (try? FileManager.default.contentsOfDirectory(at: exports, includingPropertiesForKeys: nil)) ?? []
         try require(remaining.isEmpty, "incomplete export retained after " + message)
     }
+    static func verifyOnlyArchive(_ payload: PhotoMemoryNoteExportPayload) throws {
+        let manager = FileManager.default
+        // No skipsHiddenFiles option: even one hidden plaintext file must fail.
+        let entries = try manager.contentsOfDirectory(at: payload.directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        try require(entries.count == 1, "plaintext staging files retained")
+        let actual = entries[0]
+        let values = try actual.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        try require(values.isRegularFile == true && values.isSymbolicLink == false,
+                    "export contains a directory or symbolic link")
+        let expectedURL = payload.fileURL.resolvingSymlinksInPath().standardizedFileURL
+        let actualURL = actual.resolvingSymlinksInPath().standardizedFileURL
+        let root = payload.directory.resolvingSymlinksInPath().standardizedFileURL
+        try require(actualURL == expectedURL && actualURL.deletingLastPathComponent() == root,
+                    "unexpected file in export directory")
+        let expectedAttributes = try manager.attributesOfItem(atPath: payload.fileURL.path)
+        let actualAttributes = try manager.attributesOfItem(atPath: actual.path)
+        guard let expectedInode = expectedAttributes[.systemFileNumber] as? NSNumber,
+              let actualInode = actualAttributes[.systemFileNumber] as? NSNumber,
+              let expectedDevice = expectedAttributes[.systemNumber] as? NSNumber,
+              let actualDevice = actualAttributes[.systemNumber] as? NSNumber else {
+            throw NSError(domain: "ReadableExportCheck", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "missing filesystem identity"])
+        }
+        try require(actualInode == expectedInode && actualDevice == expectedDevice,
+                    "export file identity changed")
+    }
+
+    static func verifyCleanupRejectsLeftovers(_ payload: PhotoMemoryNoteExportPayload) throws {
+        func mustReject(_ candidate: PhotoMemoryNoteExportPayload) throws {
+            var rejected = false
+            do { try verifyOnlyArchive(candidate) } catch { rejected = true }
+            try require(rejected, "cleanup check accepted a real leftover or link")
+        }
+        let hidden = payload.directory.appendingPathComponent(".synthetic-leftover.json")
+        try Data("synthetic plaintext".utf8).write(to: hidden)
+        try mustReject(payload)
+        try FileManager.default.removeItem(at: hidden)
+        let folder = payload.directory.appendingPathComponent("synthetic-leftover", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        try mustReject(payload)
+        try FileManager.default.removeItem(at: folder)
+        // A singleton link is still forbidden even when it points to the right ZIP.
+        let links = payload.directory.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: links, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: links) }
+        let link = links.appendingPathComponent("archive.zip")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: payload.fileURL)
+        try mustReject(.init(id: UUID(), fileURL: link, directory: links))
+        try verifyOnlyArchive(payload)
+    }
+
     static func main() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("readable-export-check-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -161,28 +213,8 @@ struct Fixture {
                 try require(text.contains(version == 4 && tool == "PhotoMemoryNotes" ? "合成メモ2999" : "ひなたぼっこ"), "readable text missing")
                 if tool != "PhotoMemoryNotes" || version == 3 { try require(data == f.original, "original JSON changed") }
             }
-            let loose = try FileManager.default.contentsOfDirectory(at: payload.directory, includingPropertiesForKeys: nil)
-            if loose != [payload.fileURL] {
-                // Read only this synthetic export directory. Keep the failing
-                // assertion intact until the actual cause has been observed.
-                func describe(_ url: URL) throws -> [String: Any] {
-                    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-                    let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
-                    return ["name": url.lastPathComponent, "url": url.absoluteString,
-                            "standardizedURL": url.standardizedFileURL.absoluteString,
-                            "resolvedURL": url.resolvingSymlinksInPath().standardizedFileURL.absoluteString,
-                            "regular": values.isRegularFile ?? false, "directory": values.isDirectory ?? false,
-                            "symlink": values.isSymbolicLink ?? false,
-                            "inode": attributes[.systemFileNumber] ?? "unknown", "device": attributes[.systemNumber] ?? "unknown",
-                            "bytes": attributes[.size] ?? "unknown"]
-                }
-                let inspection: [String: Any] = ["syntheticExportInspection": true, "count": loose.count,
-                    "expected": try describe(payload.fileURL), "entries": try loose.map(describe)]
-                var line = try JSONSerialization.data(withJSONObject: inspection, options: [.sortedKeys])
-                line.append(10)
-                try FileHandle.standardError.write(contentsOf: line)
-            }
-            try require(loose == [payload.fileURL], "plaintext staging files retained")
+            try verifyOnlyArchive(payload)
+            try verifyCleanupRejectsLeftovers(payload)
             let size = try payload.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize!
             var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
             print("PASS v\(version) readable ZIP, \(size) bytes, \(elapsed)s, process peak RSS \(usage.ru_maxrss) bytes")
