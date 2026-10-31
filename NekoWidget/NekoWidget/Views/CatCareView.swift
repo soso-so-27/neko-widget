@@ -19,7 +19,7 @@ struct CatCareEntryView: View {
                 ContentUnavailableView(
                     "まだ猫のプロフィールがありません",
                     systemImage: "cat",
-                    description: Text("ツールの「猫のプロフィール」で猫を登録すると、ここに1匹ずつ情報をまとめられます。")
+                    description: Text("「猫のプロフィール」で猫を登録してください。")
                 )
             } else if let profile = selectedProfile {
                 CatCareDetailView(profile: profile, otherProfiles: profiles.count > 1 ? profiles : [],
@@ -222,7 +222,7 @@ struct CatCareDetailView: View {
                 Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
             } else if store.unreadableCatCount > 0 {
                 Section {
-                    Label("開けない記録があるので、いまは保存できません。アプリを最新にしてください（記録は消えていません）。",
+                    Label("開けない記録があるので、いまは保存できません。アプリを最新にしてください。",
                           systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
@@ -247,8 +247,6 @@ struct CatCareDetailView: View {
                 if familyNotebook.hasFamily {
                     // Test builds only (a family can be made only there).
                     Text("家族と書いています（試作・まだ送りません）。")
-                } else {
-                    Text("このiPhoneの中だけに保存され、ほかには送られません。")
                 }
             }
             .font(.footnote)
@@ -279,7 +277,7 @@ struct CatCareDetailView: View {
         .alert("保存できませんでした", isPresented: $saveFailed) {
             Button("閉じる", role: .cancel) {}
         } message: {
-            Text("書いた内容は画面に残っています。少し待ってから、もう一度お試しください。")
+            Text("少し待ってから、もう一度お試しください。")
         }
         .sheet(item: $editing) { editor in
             CatCareListEntrySheet(editor: editor, catID: catID) { result in
@@ -545,8 +543,6 @@ struct CatCareDetailView: View {
             listRow(title: "ワクチン", detail: vaccinationSummary, kind: .vaccination)
         } header: {
             Text("健康")
-        } footer: {
-            Text("体重は、写真のメモの「体重を添える」でも記録できます。")
         }
     }
 
@@ -579,7 +575,7 @@ struct CatCareDetailView: View {
         } header: {
             Text("家の情報")
         } footer: {
-            Text("ほかの猫とも共通です。一度書けば、どの猫にも載ります。")
+            Text("ほかの猫とも共通です。")
         }
     }
 
@@ -1179,7 +1175,7 @@ struct ToolCatCareSection<Extra: View>: View {
             }
             .accessibilityIdentifier(identifier)
             if filled.isEmpty {
-                Text("まだ何も書いていません。下のボタンから「この子のこと」を開いて書けます。")
+                Text("まだ何も書いていません。")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(identifier + "-empty")
             }

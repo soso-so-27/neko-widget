@@ -217,11 +217,11 @@ struct LostCatDraftView: View {
             contactSection.disabled(!loaded)
             reportSection
             Section {
-                ToolImportantInformation(text: "連絡先は、画像とチラシに載ります。チラシを貼るときは、場所の管理者に確かめてください。")
+                ToolImportantInformation(text: "チラシを貼るときは、場所の管理者に確かめてください。")
             }
             if candidateRefreshError {
                 Section {
-                    Text("前に入れた内容を読み込めませんでした。ここに書いた内容はそのままです。")
+                    Text("前に入れた内容を読み込めませんでした。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -458,7 +458,7 @@ struct LostCatDraftView: View {
         if let profile = profiles.first(where: { $0.identifier == key }) {
             let fields = CatCareSummary.lostCatReportFields(catCareRecord)
             ToolCatCareSection(title: "届け出の情報", lines: fields, subject: .profile(profile),
-                               footer: "チラシ・画像には載りません。警察・保健所・動物愛護センターに伝えるときに使えます。",
+                               footer: "チラシ・画像には載りません。",
                                identifier: "lost-cat-report", editIdentifier: "lost-cat-open-cat-care") {
                 Button("まとめてコピー", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = ([profile.displayName] + fields.map { "\($0.0)：\($0.1)" })
@@ -851,8 +851,6 @@ private struct LostCatPhotoCropView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                Text("拡大して動かし、猫がよく見えるようにします。")
-                    .font(.subheadline).foregroundStyle(.secondary)
                 GeometryReader { geometry in
                     let scale = min(geometry.size.width / image.size.width, geometry.size.height / image.size.height)
                     let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
@@ -950,7 +948,7 @@ private struct LostCatGuideView: View {
                     Link("地域の窓口・保護情報を調べる", destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/shuyo/")!)
                 }
                 Section("3  写真で周囲に知らせる") {
-                    Text("ここで作る画像はLINEやSNSに載せられ、A4チラシは印刷して配れます。貼るときは、その場所の管理者に確かめてください。")
+                    Text("チラシを貼るときは、その場所の管理者に確かめてください。")
                 }
                 Section {
                     Link("環境省の詳しい案内", destination: URL(string: "https://www.env.go.jp/nature/dobutsu/aigo/shuyo/if.html")!)
@@ -998,7 +996,7 @@ private struct LostCatPreviewView: View {
             ScrollView {
                 if !issues.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("書いた内容は残っています").font(.headline)
+                        Text("直すところがあります").font(.headline)
                         ForEach(issues.keys.sorted(), id: \.self) { key in
                             Text(issues[key] ?? "").foregroundStyle(.red)
                         }
@@ -1022,7 +1020,7 @@ private struct LostCatPreviewView: View {
                 }
             }
             if exportError {
-                Text("作れませんでした。書いた内容は残っているので、もう一度お試しください。")
+                Text("作れませんでした。もう一度お試しください。")
                     .font(.footnote).foregroundStyle(.red).padding()
             }
         }
