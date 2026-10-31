@@ -47,33 +47,6 @@ private enum CatIdentityLoadState: Equatable {
     case failed
 }
 
-/// Notification taps can arrive while an earlier private-window activation is
-/// suspended in Keychain/App Group work. This gate makes activation and route
-/// publication one ordered operation; the generation check then drops every
-/// queued route except the newest one before it can mutate the selected window.
-private actor MomentNotificationRoutingGate {
-    private var isHeld = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func acquire() async {
-        guard isHeld else {
-            isHeld = true
-            return
-        }
-        await withCheckedContinuation { waiters.append($0) }
-    }
-
-    func release() {
-        guard !waiters.isEmpty else {
-            isHeld = false
-            return
-        }
-        waiters.removeFirst().resume()
-    }
-}
-
-private let momentNotificationRoutingGate = MomentNotificationRoutingGate()
-
 struct LibraryPresentationVersion: Hashable {
     let photoContentRevision: Int
     let removedPhotoRevision: Int
@@ -249,7 +222,6 @@ final class AppViewModel: ObservableObject {
     private let todayPhotoSelectionStore: TodayPhotoSelectionStore
     private let albumSelector: AlbumCandidateSelector
     private let exporter: JSONExporter
-    private let momentSharingCoordinator: MomentSharingCoordinator
     private let store: LibraryStore?
     private let storeInitializationError: String?
     private let curationStore: CatCandidateCurationStore?
@@ -315,12 +287,8 @@ final class AppViewModel: ObservableObject {
     }
 
     private var isManualRescanRequestPending = false
-    private var sharingSyncObserver: NSObjectProtocol?
-    private var momentPresentationRefreshObserver: NSObjectProtocol?
     private var receivedMemoryImportObserver: NSObjectProtocol?
     private var todayDayChangeObserver: NSObjectProtocol?
-    private var familyWindowRefreshSequence = 0
-    private var momentNotificationRouteGeneration = 0
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
     /// records outside that album disappear from candidate surfaces at once.
@@ -471,7 +439,6 @@ final class AppViewModel: ObservableObject {
         todayPhotoSelectionState = todaySelectionStore.load()
         albumSelector = AlbumCandidateSelector()
         exporter = JSONExporter()
-        momentSharingCoordinator = MomentSharingCoordinator()
 
         do {
             store = try LibraryStore()
@@ -512,24 +479,6 @@ final class AppViewModel: ObservableObject {
                 "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
             ]
         )
-        sharingSyncObserver = NotificationCenter.default.addObserver(
-            forName: .sharingMediaSyncRequested,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await self?.synchronizeMomentSharing(trigger: "pairing-or-consent")
-            }
-        }
-        momentPresentationRefreshObserver = NotificationCenter.default.addObserver(
-            forName: .momentSharingPresentationNeedsRefresh,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await self?.refreshFamilyWindowOutputs(trigger: "local-state-change")
-            }
-        }
         receivedMemoryImportObserver = NotificationCenter.default.addObserver(
             forName: .receivedMemoryImportNeedsRefresh,
             object: nil,
@@ -558,12 +507,6 @@ final class AppViewModel: ObservableObject {
     }
 
     deinit {
-        if let sharingSyncObserver {
-            NotificationCenter.default.removeObserver(sharingSyncObserver)
-        }
-        if let momentPresentationRefreshObserver {
-            NotificationCenter.default.removeObserver(momentPresentationRefreshObserver)
-        }
         if let receivedMemoryImportObserver {
             NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
         }
@@ -641,13 +584,6 @@ final class AppViewModel: ObservableObject {
         var startupSnapshotNeedsSave = false
         var loadedScanState: ScanState?
         SharedLog.app.info("lifecycle", "Application startup began")
-        // The Share Extension promises that a queued explicit send resumes
-        // when the app opens. Keep that lifecycle independent from scanner,
-        // curation and cat-identity storage health.
-        Task { @MainActor [weak self] in
-            await self?.synchronizeMomentSharing(trigger: "launch")
-        }
-
         guard await loadCatCandidateCuration() else {
             // Curation is part of the candidate authority. Recover only the
             // managed-album identifier from the snapshot so both external
@@ -776,36 +712,6 @@ final class AppViewModel: ObservableObject {
         authorizationService.presentLimitedLibraryPicker(from: viewController)
     }
 
-    /// Foreground activation is the reliable v1 synchronization point.
-    /// Any background execution is best effort and is never required for data
-    /// correctness or promised to the user.
-    func pollMomentSharingWhileActive(isSceneActive: Bool) async {
-#if DEBUG
-        if isUIFixture { return }
-#endif
-        let configuration = SharingAPIConfiguration.current
-        let pairingState: PairingState?
-        do {
-            pairingState = try await Task.detached(priority: .utility) {
-                try PairingStateStore.load()
-            }.value
-        } catch {
-            return
-        }
-        guard !Task.isCancelled, isSceneActive else { return }
-        let hasCurrentConsent =
-            pairingState?.mediaSharingConsentVersion
-                == PairingMediaSharingConsent.currentVersion
-            && pairingState?.mediaSharingConsentAcceptedAt != nil
-        guard MomentForegroundRefreshPolicy.shouldPoll(
-            isSceneActive: isSceneActive,
-            isMediaAvailable: configuration.isMediaAvailable,
-            isPaired: pairingState?.phase == .paired,
-            hasCurrentConsent: hasCurrentConsent
-        ) else { return }
-        await synchronizeMomentSharing(trigger: "foreground-poll")
-    }
-
     func syncOnActive() async {
         await synchronizeOnActive(refreshLimitedAccess: true)
     }
@@ -814,9 +720,6 @@ final class AppViewModel: ObservableObject {
 #if DEBUG
         if isUIFixture { return }
 #endif
-        Task { @MainActor [weak self] in
-            await self?.synchronizeMomentSharing(trigger: "foreground")
-        }
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "sync_on_active")
             return
@@ -2166,216 +2069,6 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func synchronizeMomentSharing(trigger: String) async {
-        await synchronizeMomentSharing(
-            trigger: trigger,
-            expectedSpaceID: nil
-        )
-    }
-
-    private func synchronizeMomentSharing(
-        trigger: String,
-        expectedSpaceID: String?
-    ) async {
-        guard UIApplication.shared.isProtectedDataAvailable else {
-            // The room credential is intentionally WhenUnlockedThisDeviceOnly.
-            // A launch/prewarm can reach this task before protected data is
-            // readable; defer without asking the installation guard to
-            // interpret that temporary condition as credential loss.
-            SharedLog.app.warning(
-                "moment-sharing",
-                "Moment synchronization deferred",
-                metadata: [
-                    "trigger": String(trigger.prefix(32)),
-                    "sharingFailureReason": "protected-data-unavailable"
-                ]
-            )
-            return
-        }
-        await momentSharingCoordinator.synchronize(
-            trigger: trigger,
-            expectedSpaceID: expectedSpaceID
-        )
-        guard !Task.isCancelled else { return }
-        if let expectedSpaceID {
-            guard Self.activePrivateWindowMatches(spaceID: expectedSpaceID) else {
-                SharedLog.app.info(
-                    "moment-notification",
-                    "Notification refresh stopped because the selected private window changed"
-                )
-                return
-            }
-        }
-        await refreshFamilyWindowOutputs(trigger: trigger)
-        guard !Task.isCancelled else { return }
-        // FamilyWindowView owns a separate presentation model. Tell an open
-        // screen to reload the durable ledger only; it must not start another
-        // network pass and form a synchronization loop.
-        NotificationCenter.default.post(
-            name: .momentSharingContentNeedsReload,
-            object: nil
-        )
-    }
-
-    func refreshFamilyWindowOutputs(trigger: String) async {
-        guard UIApplication.shared.isProtectedDataAvailable else {
-            SharedLog.app.warning(
-                "moment-sharing",
-                "Family window presentation refresh deferred",
-                metadata: [
-                    "sharingFailureReason": "protected-data-unavailable",
-                    "trigger": String(trigger.prefix(32))
-                ]
-            )
-            return
-        }
-        familyWindowRefreshSequence += 1
-        let refreshSequence = familyWindowRefreshSequence
-        // The durable sharing ledger may already have hidden, revoked or
-        // removed the previously presented item. Keep Home fail-closed while
-        // bootstrap, state validation and Widget publication are in flight.
-        familyWindowPresentation = .empty
-        var lifecycleToken: SharingLifecycleGate.Token?
-        do {
-            let bootstrap = try await PairingInstallationGuard.bootstrapAsync()
-            lifecycleToken = bootstrap.lifecycleToken
-            guard refreshSequence == familyWindowRefreshSequence else { return }
-            privateWindowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
-                pairing: bootstrap.state,
-                validating: bootstrap.lifecycleToken
-            )
-            let configuration = SharingAPIConfiguration.current
-            guard configuration.isMediaAvailable,
-                  bootstrap.state.phase == .paired,
-                  bootstrap.state.mediaSharingConsentVersion
-                    == PairingMediaSharingConsent.currentVersion,
-                  bootstrap.state.mediaSharingConsentAcceptedAt != nil
-            else {
-                familyWindowPresentation = .empty
-                _ = try await widgetCacheBuilder.clearFamilyWindow(
-                    validating: bootstrap.lifecycleToken,
-                    windowDisplayName: bootstrap.state.spaceID == nil
-                        ? nil
-                        : privateWindowDisplayName
-                )
-                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-                return
-            }
-
-            let stateAndInputs = try await Task.detached(priority: .utility) {
-                let state = try MomentSharingStateStore.load(
-                    validating: bootstrap.lifecycleToken
-                )
-                return (state, Self.familyWindowInputs(from: state))
-            }.value
-            guard refreshSequence == familyWindowRefreshSequence else { return }
-            let presentation = MomentFamilyWindowPresentationPolicy.make(
-                inputs: stateAndInputs.1,
-                now: .now
-            )
-            let latestItem = presentation.latestStableID.flatMap { stableID in
-                stateAndInputs.0.inbox.first(where: { $0.id == stableID })
-            }
-            let familyManifest = try await widgetCacheBuilder.buildFamilyWindow(
-                from: latestItem,
-                freshUntil: presentation.priorityUntil,
-                windowDisplayName: privateWindowDisplayName,
-                validating: bootstrap.lifecycleToken
-            )
-            guard refreshSequence == familyWindowRefreshSequence else { return }
-            // WidgetCacheBuilder revalidates both lifecycle and the durable
-            // inbox immediately before publication. Do not surface the same
-            // candidate on Home until that fail-closed boundary succeeds.
-            if familyManifest.item != nil {
-                familyWindowPresentation = presentation
-            }
-            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-            SharedLog.app.debug(
-                "family-window",
-                "Family presentation refreshed",
-                metadata: [
-                    "displayable": "\(familyWindowPresentation.safeCount)",
-                    "priority": "\(familyWindowPresentation.isPriority)",
-                    "trigger": String(trigger.prefix(32))
-                ]
-            )
-        } catch {
-            guard refreshSequence == familyWindowRefreshSequence else { return }
-            familyWindowPresentation = .empty
-            if let lifecycleToken {
-                _ = try? await widgetCacheBuilder.clearFamilyWindow(
-                    validating: lifecycleToken,
-                    windowDisplayName: privateWindowDisplayName
-                )
-                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-            }
-            Self.logError(
-                error,
-                category: "family-window",
-                operation: "refresh_presentation"
-            )
-        }
-    }
-
-    private nonisolated static func familyWindowInputs(
-        from state: MomentSharingState
-    ) -> [MomentFamilyWindowPresentationInput] {
-        state.inbox.map { item in
-            let presentationState: MomentFamilyWindowItemState
-            switch item.state {
-            case .available: presentationState = .available
-            case .acknowledged: presentationState = .acknowledged
-            case .blocked: presentationState = .blocked
-            case .revoked: presentationState = .revoked
-            }
-            return MomentFamilyWindowPresentationInput(
-                stableID: item.id,
-                state: presentationState,
-                imageURL: validatedReceivedMomentImageURL(for: item),
-                committedAt: item.committedAt,
-                receivedAt: item.receivedAt,
-                changeSequence: item.changeSequence,
-                moderationHidden: state.isModerationHidden(item.id)
-            )
-        }
-    }
-
-    private nonisolated static func validatedReceivedMomentImageURL(
-        for item: MomentInboxItem
-    ) -> URL? {
-        guard item.state == .available || item.state == .acknowledged,
-              let filename = item.localJPEGFileName,
-              filename == "\(item.id).jpg",
-              filename == (filename as NSString).lastPathComponent,
-              let directory = SharedContainer.momentSharingReceivedDirectoryURL
-        else { return nil }
-        let url = directory.appendingPathComponent(filename, isDirectory: false)
-        let resolvedDirectory = directory.resolvingSymlinksInPath().standardizedFileURL
-        let resolvedURL = url.resolvingSymlinksInPath().standardizedFileURL
-        guard resolvedURL.deletingLastPathComponent() == resolvedDirectory,
-              let values = try? resolvedURL.resourceValues(
-                forKeys: [.isRegularFileKey, .fileSizeKey]
-              ),
-              values.isRegularFile == true,
-              let fileSize = values.fileSize,
-              fileSize > 0,
-              fileSize <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28,
-              let source = CGImageSourceCreateWithURL(
-                resolvedURL as CFURL,
-                [kCGImageSourceShouldCache: false] as CFDictionary
-              ),
-              CGImageSourceGetCount(source) == 1,
-              CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-                as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(width),
-              (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(height)
-        else { return nil }
-        return resolvedURL
-    }
-
     func handleURL(_ url: URL) {
         // A group window's home-screen photo opens that window in the まど tab.
         if let groupWindowID = GroupWidgetCache.windowID(fromOpenURL: url) {
@@ -2414,87 +2107,9 @@ final class AppViewModel: ObservableObject {
                 localIdentifier: localIdentifier,
                 shownAt: link.shownAt
             )
-        case let .familyWindow(localWindowID, sourceDigest, action):
-            guard SharingAPIConfiguration.current.isReviewVisible else {
-                errorMessage = "いまはこのまどを開けません。"
-                SharedLog.app.info(
-                    "deeplink",
-                    "Ignored family window deep link because sharing is unavailable"
-                )
-                return
-            }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let localWindowID {
-                    do {
-                        _ = try await PairingInstallationGuard.activatePrivateWindowAsync(
-                            localWindowID: localWindowID
-                        )
-                        await MomentPushSubscriptionService.shared
-                            .reconcileRegistration()
-                        await self.refreshFamilyWindowOutputs(
-                            trigger: "widget-window-selection"
-                        )
-                    } catch {
-                        self.errorMessage = "このまどを開けませんでした。「まど」タブから開き直してください。"
-                        Self.logError(
-                            error,
-                            category: "family-window",
-                            operation: "activate_widget_window"
-                        )
-                        return
-                    }
-                }
-                self.pendingFamilyNotificationRoute = nil
-                self.pendingFamilyMomentSourceDigest = nil
-                if action == .viewPhoto,
-                   let localWindowID,
-                   let sourceDigest {
-                    do {
-                        let bootstrap = try PairingInstallationGuard.bootstrap()
-                        guard let catalog = try PrivateWindowCatalogStore.load(),
-                              let window = catalog.windows.first(where: {
-                                  $0.localWindowID == localWindowID
-                              }),
-                              let spaceID = window.spaceID,
-                              let momentID = try WidgetCacheBuilder.retainedFamilyMomentID(
-                                  forSourceDigest: sourceDigest,
-                                  localWindowID: localWindowID,
-                                  validating: bootstrap.lifecycleToken
-                              )
-                        else {
-                            // An exact-photo tap must not silently become a
-                            // different photo. Use the existing app alert before
-                            // presenting any new sheet when its target is gone.
-                            self.errorMessage = "この写真は開けませんでした。表示できる期間が終わったか、削除されたのかもしれません。"
-                            SharedLog.app.info(
-                                "deeplink",
-                                "Exact Widget photo is no longer available"
-                            )
-                            return
-                        }
-                        self.pendingFamilyNotificationRoute = MomentNotificationRoute(
-                            kind: .newMoment,
-                            target: MomentNotificationRouteTarget(
-                                spaceID: spaceID,
-                                momentID: momentID
-                            )
-                        )
-                    } catch {
-                        self.errorMessage = "この写真を開けませんでした。時間をおいてもう一度お試しください。"
-                        Self.logError(
-                            error,
-                            category: "family-window",
-                            operation: "resolve_widget_photo"
-                        )
-                        return
-                    }
-                } else {
-                    self.pendingFamilyMomentSourceDigest = sourceDigest
-                }
-                self.isFamilyWindowPresented = true
-                SharedLog.app.info("deeplink", "Opened private window from Widget")
-            }
+        case .familyWindow:
+            // Installed legacy Widget URLs must not activate a different window.
+            errorMessage = "このまどは利用できなくなりました。まどタブから、みんなのまどを開いてください。"
             return
         }
         guard let readyRoute = candidatePhotoRouteGate.receive(
@@ -2512,129 +2127,6 @@ final class AppViewModel: ObservableObject {
             return
         }
         openPhotoRoute(readyRoute)
-    }
-
-    func handleMomentNotificationRoute(_ route: MomentNotificationRoute) async {
-        momentNotificationRouteGeneration &+= 1
-        let generation = momentNotificationRouteGeneration
-        await momentNotificationRoutingGate.acquire()
-        guard generation == momentNotificationRouteGeneration else {
-            await momentNotificationRoutingGate.release()
-            return
-        }
-        await handleSerializedMomentNotificationRoute(
-            route,
-            generation: generation
-        )
-        await momentNotificationRoutingGate.release()
-    }
-
-    private func handleSerializedMomentNotificationRoute(
-        _ route: MomentNotificationRoute,
-        generation: Int
-    ) async {
-        guard SharingAPIConfiguration.current.isMediaAvailable else {
-            errorMessage = "いまはこの写真を開けません。"
-            SharedLog.app.info(
-                "moment-notification",
-                "Ignored notification route because sharing is unavailable"
-            )
-            return
-        }
-
-        if let target = route.target {
-            do {
-                guard let catalog = try PrivateWindowCatalogStore.load()
-                else {
-                    errorMessage = "この写真が届いたまどを開けませんでした。「まど」タブから開いてください。"
-                    SharedLog.app.info(
-                        "moment-notification",
-                        "Ignored notification because its private window was unavailable",
-                        metadata: ["kind": route.kind.rawValue]
-                    )
-                    return
-                }
-                let matches = catalog.windows.filter { $0.spaceID == target.spaceID }
-                guard matches.count == 1, let targetWindow = matches.first else {
-                    errorMessage = "この写真が届いたまどが見つかりませんでした。「まど」タブから開いてください。"
-                    SharedLog.app.info(
-                        "moment-notification",
-                        "Ignored notification because its private window could not be resolved",
-                        metadata: ["kind": route.kind.rawValue]
-                    )
-                    return
-                }
-
-                let switchesWindow = catalog.activeWindowID != targetWindow.localWindowID
-                if switchesWindow {
-                    _ = try await PairingInstallationGuard.activatePrivateWindowAsync(
-                        localWindowID: targetWindow.localWindowID
-                    )
-                    guard generation == momentNotificationRouteGeneration else { return }
-                    NotificationCenter.default.post(
-                        name: .momentSharingPresentationNeedsRefresh,
-                        object: nil
-                    )
-                }
-                // Open the verified destination immediately. FamilyWindowView
-                // keeps the route pending until synchronization materializes
-                // exactly one matching moment, so the tap never appears inert
-                // while the network is still running.
-                pendingFamilyMomentSourceDigest = nil
-                pendingFamilyNotificationRoute = route
-                isFamilyWindowPresented = true
-                // Synchronization reads only the now-active window. It never
-                // walks credentials for unrelated windows in response to this
-                // foreground notification tap.
-                await synchronizeMomentSharing(
-                    trigger: "notification-target",
-                    expectedSpaceID: target.spaceID
-                )
-                guard generation == momentNotificationRouteGeneration else { return }
-                if switchesWindow {
-                    await MomentPushSubscriptionService.shared.reconcileRegistration()
-                    guard generation == momentNotificationRouteGeneration else { return }
-                }
-                SharedLog.app.info(
-                    "moment-notification",
-                    "Opened targeted private window from notification",
-                    metadata: ["kind": route.kind.rawValue]
-                )
-                return
-            } catch {
-                errorMessage = "この写真が届いたまどを開けませんでした。少し時間をおいて、「まど」タブから開いてください。"
-                Self.logError(
-                    error,
-                    category: "moment-notification",
-                    operation: "activate_notification_window"
-                )
-                return
-            }
-        }
-
-        pendingFamilyMomentSourceDigest = nil
-        pendingFamilyNotificationRoute = route
-        isFamilyWindowPresented = true
-        SharedLog.app.info(
-            "moment-notification",
-            "Opened selected private window from notification",
-            metadata: ["kind": route.kind.rawValue]
-        )
-    }
-
-    private nonisolated static func activePrivateWindowMatches(
-        spaceID: String
-    ) -> Bool {
-        do {
-            guard let catalog = try PrivateWindowCatalogStore.load(),
-                  let active = catalog.windows.first(where: {
-                      $0.localWindowID == catalog.activeWindowID
-                  })
-            else { return false }
-            return active.spaceID == spaceID
-        } catch {
-            return false
-        }
     }
 
     private func openPendingDeepLinkIfNeeded() {
