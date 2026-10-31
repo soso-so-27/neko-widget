@@ -39,16 +39,6 @@ class AlbumShelfLayoutTests(unittest.TestCase):
         self.assertIn("PhotoMemoryNotesListView(photos: memoryNotePhotos", routes)
         self.assertIn("PhotoMemoryNoteDetailView(recordID: identifier", routes)
 
-    def test_settings_sheet_supplies_cat_album_routes_explicitly(self):
-        source = read("NekoWidget/Views/MainTabView.swift")
-        settings = block(source, "private var settingsSheet:", "private func photosDestination")
-        self.assertIn(".environment(\\.catProfileAlbumsDestination, catProfileAlbumsDestination)", settings)
-        self.assertEqual(source.count(".environment(\\.catProfileAlbumsDestination, catProfileAlbumsDestination)"), 2)
-        destination = block(source, "private var catProfileAlbumsDestination:", "private var settingsSheet:")
-        self.assertIn("albumsView(scope: .profile(identifier)", destination)
-        self.assertIn("defaultScope: .profile(identifier)", destination)
-        self.assertNotIn("photoLibrarySelectedScope", destination)
-
     def test_secondary_disclosure_identifier_belongs_only_to_label(self):
         source = read("NekoWidget/Views/LikedPhotosView.swift")
         disclosure = block(source, "DisclosureGroup {", "var yearArchive:")

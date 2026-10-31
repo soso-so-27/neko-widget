@@ -195,7 +195,6 @@ private struct PhotoLibraryPagerUnderline: View {
 enum PhotosRoute: Hashable {
     case photo(String)
     case collectionPhoto(String)
-    case automaticAlbums
     case unavailableWidgetPhoto
 }
 
@@ -570,18 +569,11 @@ struct MainTabView: View {
             lastViewedTab = tab.rawValue
             selectedTab = tab
         })) {
-            // 1.0: 写真・まど・アルバム・ツール. Otherwise the order public builds have now.
-            if Version1.isOn {
-                photosTab
-                windowsTab
-                albumTab
-                toolsTab
-            } else {
-                albumTab
-                photosTab
-                windowsTab
-                toolsTab
-            }
+            // 1.0: 写真・まど・アルバム・ツール.
+            photosTab
+            windowsTab
+            albumTab
+            toolsTab
         }
     }
 
@@ -662,7 +654,6 @@ struct MainTabView: View {
         tabContent
         .environment(\.toolProfileActions, catProfilesActions)
         .environment(\.receivedPhotoIdentifiers, receivedPhotoIdentifiers)
-        .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
         .environment(\.showcaseOpenOne, { identifier in
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
         })
@@ -953,19 +944,15 @@ struct MainTabView: View {
 
     }
 
-    @ViewBuilder private var albumRoot: some View {
-        if Version1.isOn {
-            AlbumPrototypeView(
-                letters: hasPhotoAccess ? currentMonthlyWindowCollection?.letters ?? [] : [],
-                movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
-                catPhotos: hasPhotoAccess ? catPhotos : [],
-                assignments: currentPhotoLibraryAssignments,
-                profileNames: currentPhotoLibraryProfileNames,
-                openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) }
-            )
-        } else {
-            albumsView()
-        }
+    private var albumRoot: some View {
+        AlbumPrototypeView(
+            letters: hasPhotoAccess ? currentMonthlyWindowCollection?.letters ?? [] : [],
+            movies: hasPhotoAccess ? currentSeasonalMovieRecords : [],
+            catPhotos: hasPhotoAccess ? catPhotos : [],
+            assignments: currentPhotoLibraryAssignments,
+            profileNames: currentPhotoLibraryProfileNames,
+            openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) }
+        )
     }
 
     private var showcaseCandidates: [PhotoPresentation] {
@@ -1498,17 +1485,6 @@ struct MainTabView: View {
         .accessibilityIdentifier("photos-theme-row")
     }
 
-    private var catProfileAlbumsDestination: CatProfileAlbumsDestination {
-        { identifier, close in
-            AnyView(albumsView(scope: .profile(identifier), openPhotosOverride: close)
-                .navigationDestination(for: AlbumRoute.self) { route in
-                    albumDestination(for: route, defaultScope: .profile(identifier))
-                }
-                .navigationDestination(for: AlbumCatalogRoute.self, destination: albumCatalogDestination)
-                .navigationDestination(for: MemoriesRoute.self) { memoriesDestination(for: $0) })
-        }
-    }
-
     private var settingsSheet: some View {
         SettingsSheetHost(onClose: { showsSettings = false }) {
             SettingsView(
@@ -1545,9 +1521,6 @@ struct MainTabView: View {
                 personalArchiveStore: personalArchiveStore
             )
         }
-        // The settings sheet is presented outside the TabView's environment.
-        // Its profile-photo destination needs the same explicit album routes.
-        .environment(\.catProfileAlbumsDestination, catProfileAlbumsDestination)
     }
 
     @ViewBuilder
@@ -1574,8 +1547,6 @@ struct MainTabView: View {
                         PhotoLibraryReadingPosition.diagnose("rebuild returned collection \(photoLibraryPositionKey) revision=\(photoLibraryRevision)")
                     }
                 }
-        case .automaticAlbums:
-            automaticAlbumsView
         case .unavailableWidgetPhoto:
             ContentUnavailableView {
                 Label("この写真は開けません", systemImage: "photo")
@@ -2156,21 +2127,6 @@ struct MainTabView: View {
         hasPhotoAccess && (currentHouseholdAlbumCatalog?.sections.contains(where: { $0.id != .all }) == true
             || currentMonthlyWindowCollection?.letters.isEmpty == false
             || !currentSeasonalMovieRecords.isEmpty)
-    }
-
-    private var automaticAlbumsView: some View {
-        AlbumView(
-            sections: currentHouseholdAlbumCatalog?.sections ?? [],
-            scan: scan,
-            profiles: catProfilesPresentation.profiles,
-            photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-            profileActions: catProfilesActions,
-            selectedScope: .constant(.everyone),
-            showsProfilePicker: false
-        )
-        .navigationTitle("アルバム")
-        .navigationBarTitleDisplayMode(.inline)
-        .membershipFeature(.browseAlbums, hasContent: hasAutomaticAlbumContent)
     }
 
     @ViewBuilder
