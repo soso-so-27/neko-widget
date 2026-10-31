@@ -470,8 +470,6 @@ struct SettingsView: View {
                 Section {
                     NavigationLink { AppRecordSettingsView() } label: { AutoSaveSettingsRow() }
                         .accessibilityIdentifier("settings-managed-preservation")
-                } footer: {
-                    Text("猫のこと、メモ、ツールに書いたことを自動で保存して、新しいiPhoneで戻せます。Plusの機能です。")
                 }
             }
             Section {
@@ -498,8 +496,6 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("ファイルで残す")
-            } footer: {
-                Text("Plusがなくても、メモや猫のことをファイルにして、手元に残したり新しいiPhoneへ移したりできます。")
             }
         }
         .navigationTitle("保存")
@@ -587,8 +583,6 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("表示と整理")
-            } footer: {
-                Text("変更は自動で保存します。候補から外しても、写真アプリの写真は消えません。")
             }
 
             Section {
@@ -603,8 +597,6 @@ struct SettingsView: View {
                 .disabled(isRescanning || isScanning || !hasPhotoAccess)
             } header: {
                 Text("困ったとき")
-            } footer: {
-                Text("猫の写真が見つからないときや、猫ではない写真が混ざるときに。ふだんは新しい写真を自動で探します。")
             }
 
             if isSaving {
@@ -969,15 +961,13 @@ private struct PhotoLibraryAlbumSettingsView: View {
             } header: {
                 Text("写真アプリの「うちの子」")
             } footer: {
-                Text("見つけた猫写真を、写真アプリのアルバムにまとめます（写真は複製しません）。枚数を変えても、お気に入りの写真は残ります。")
+                Text("見つけた猫写真を、写真アプリのアルバムにまとめます（写真は複製しません）。")
             }
 
             Section {
                 Button("写真シャッフルの設定手順", systemImage: "lock.rotation") {
                     showsPhotoShuffleGuide = true
                 }
-            } footer: {
-                Text("写真シャッフルはiPhoneの機能です。アルバムを更新したら、ロック画面の設定でアルバムを選び直してください。")
             }
         }
         .navigationTitle("写真アプリの「うちの子」アルバム")

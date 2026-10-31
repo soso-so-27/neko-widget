@@ -119,7 +119,7 @@ struct ManagedPreservationView: View {
                 .accessibilityIdentifier("preservation-account-delete-confirm")
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("保存した写真・メモと復旧用のコピーをすべて削除し、Appleとの連携も解除します。元に戻せないので、必要な記録は先に書き出してください。このiPhoneの写真・メモ、以前iCloudに保存したもの、まどの写真は残ります。Plusは自動では解約されないので、App Storeのサブスクリプションから解約してください。")
+            Text("保存したものはすべて消え、元に戻せません。Plusは解約されないので、App Storeのサブスクリプションから解約してください。")
         }
         .confirmationDialog("このアカウントにPlusを連携しますか？",
                             isPresented: $confirmsMembershipLink, titleVisibility: .visible) {
@@ -170,10 +170,13 @@ struct ManagedPreservationView: View {
                 if let draft = coordinator.draft { newCopySection(draft) }
                 // Plus is started and linked from 自動保存; here only a link
                 // that still needs attention is shown.
-                else if !isAccountEntry || coordinator.membership?.canSave != true { membershipSection }
+                // 自動保存 already shows Plus and the amount used; the account
+                // screen keeps the address and, once Plus ended, the deadline.
+                else if !isAccountEntry { membershipSection }
                 noticeContactSection
-                if coordinator.membership?.access != .pilot { retentionSection }
-                usageSection
+                if coordinator.membership?.access != .pilot,
+                   !isAccountEntry || coordinator.membership?.canSave == false { retentionSection }
+                if !isAccountEntry { usageSection }
                 // A selected-copy entry must not become a second route for
                 // editing unrelated records. The settings entry retains browsing.
                 if allowsRecordBrowsing {
@@ -215,7 +218,7 @@ struct ManagedPreservationView: View {
                             .accessibilityIdentifier("preservation-account-delete")
                     }
                 } footer: {
-                    Text("サインアウトしても、保存した記録は残ります。アカウントを削除すると、保存したコピーはすべて消えます。Plusの解約は、App Store のサブスクリプションから別に行ってください。")
+                    Text("Plusの解約は、App Storeのサブスクリプションから行ってください。")
                 }
             }
             }
@@ -228,15 +231,13 @@ struct ManagedPreservationView: View {
             switch state {
             case .unconfirmed, .resolvingPending:
                 Text("削除の依頼が届いたか確かめています")
-                Text("通信が途切れました。削除の依頼が届いたか、下のボタンで確かめてください。")
-                    .font(.footnote).foregroundStyle(.secondary)
                 Button("届いたか確かめる") { coordinator.checkAccountDeletion() }
                 if state == .unconfirmed && coordinator.isSignedIn {
                     Button("もう一度削除を依頼する", role: .destructive) { coordinator.deleteServiceAccount() }
                 }
             case .processing:
                 Text("アカウントを削除しています")
-                Text("保存した写真・メモと復旧用のコピーを削除しています。この画面を閉じても、削除は続きます。")
+                Text("この画面を閉じても、削除は続きます。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("削除状況を確認") { coordinator.checkAccountDeletion() }
             case .completed:
@@ -250,7 +251,7 @@ struct ManagedPreservationView: View {
             }
             Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
         } footer: {
-            Text("このiPhoneの写真・メモ、以前iCloudに保存したもの、まどの写真は残ります。Plusは、アカウントを削除しても解約されません。")
+            Text("Plusは、アカウントを削除しても解約されません。")
         }
         .accessibilityIdentifier("preservation-account-deletion-status")
     }
@@ -275,9 +276,7 @@ struct ManagedPreservationView: View {
         } header: { Text("サインイン") }
         footer: {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Appleでサインインすると、そのアカウントで保存した記録を読み込みます。サインインしただけでは、保存や購入は始まりません。")
-                Text("Appleのメールアドレスは、保存を続けられなくなったときの、書き出しや削除のお知らせに使います。メールに写真やメモは入りません。")
-                Text("まだ保存していないメモは、このiPhoneだけに残ります。同じアカウントでサインインするまで表示されず、ほかのアカウントに移ったり、自動で保存されたりすることもありません。")
+                Text("メールアドレスは、保存についての大事なお知らせにだけ使います。")
                 Button("このiPhoneのサインイン情報を消す") { coordinator.signOut() }
             }
         }
@@ -358,9 +357,6 @@ struct ManagedPreservationView: View {
             Button("連絡先を確認") { coordinator.checkNoticeContact() }
                 .accessibilityIdentifier("preservation-notice-contact-check")
         } header: { Text("お知らせの送り先") }
-        footer: {
-            Text("Appleのメールアドレスを表示しています。お知らせが届いたと確認できるまで、保存した記録は削除されません。")
-        }
     }
 
     private var usageSection: some View {
@@ -527,19 +523,10 @@ struct ManagedPreservationView: View {
                 case .active, .grace:
                     Text("保存されています。書き出しの期限はまだありません。")
                 case .expired:
-                    Text("新しく保存することはできません。写真とメモは、これまでどおり見たり、まとめて書き出したりできます。")
                     if let dueAt = retention.dueAt {
-                        Text(retention.finalNoticeDeliveredAt == nil
-                             ? "書き出せる期限の目安（削除のお知らせメールが届くと、延びることがあります）"
-                             : "書き出せる期限")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        Text(Self.deadline(dueAt))
-                            .font(.footnote).foregroundStyle(.secondary)
+                        LabeledContent(retention.finalNoticeDeliveredAt == nil ? "書き出せる期限の目安" : "書き出せる期限",
+                                       value: Self.deadline(dueAt))
                     }
-                    Text(retention.finalNoticeDeliveredAt == nil
-                         ? "削除のお知らせメールが届いたかは、まだ確認できていません。"
-                         : "削除のお知らせメールを送りました。読まれたかどうかはわかりません。")
-                        .font(.footnote).foregroundStyle(.secondary)
                 case .unknown:
                     Text("Plusを確認できません。保存した記録はそのまま残っています。")
                 case .unlinked:
@@ -553,7 +540,7 @@ struct ManagedPreservationView: View {
                 .accessibilityIdentifier("preservation-retention-check")
         } header: { Text("Plusが終わったあとの書き出し") }
         footer: {
-            Text("Plusが切れてから12か月間は書き出せます。削除のお知らせメールが届いてからも、30日以上は書き出せます。同じApple AccountでPlusを再開すると、期限はなくなります。")
+            Text("Plusを再開すると、期限はなくなります。")
         }
     }
 
@@ -858,7 +845,7 @@ struct PreservationExportProgressSection: View {
                     .accessibilityIdentifier("preservation-export-cancel")
             }
         } footer: {
-            Text("画面を閉じたりアプリを離れたりすると、書き出しは止まります。保存したものはそのままです。")
+            Text("画面を閉じたりアプリを離れたりすると、書き出しは止まります。")
         }
     }
 }
@@ -872,7 +859,7 @@ struct PreservationExportSignInSection: View {
         Section {
             Text("サインインして書き出しを続けます")
                 .font(.headline).accessibilityIdentifier("preservation-export-reauthentication")
-            Text("準備できた分は、このiPhoneに一時的に残しています。同じApple Accountでサインインすると、続きから書き出せます。")
+            Text("同じApple Accountでサインインすると、続きから書き出せます。")
             if let challenge = coordinator.preparedExportSignIn {
                 SignInWithAppleButton(.continue) { request in
                     request.requestedScopes = [.email]
@@ -891,7 +878,7 @@ struct PreservationExportSignInSection: View {
                 exporter.cancelPreparation(); coordinator.cancelExportReauthentication()
             }.accessibilityIdentifier("preservation-export-cancel-reauthentication")
         } footer: {
-            Text("この画面を閉じたりアプリを離れたりすると、書き出しは止まります。保存したものはそのままです。")
+            Text("画面を閉じたりアプリを離れたりすると、書き出しは止まります。")
         }
     }
 }
