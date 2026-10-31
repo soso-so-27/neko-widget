@@ -700,9 +700,6 @@ struct AppRootView: View {
             )
         }
         let profiles = identity.profiles.map { profile -> CatProfilePresentation in
-            let memberships = projection.membershipByProfile[profile.id]?.values.filter {
-                $0.decision == .included
-            } ?? []
             let confirmedIdentifiers = projection.confirmedByProfile[profile.id] ?? []
             let confirmed = confirmedIdentifiers
                 .map { identifier in
@@ -763,10 +760,7 @@ struct AppRootView: View {
                     adoptionDay: Self.profileLifeDate(profile, kind: .adoptionDay),
                     primaryKind: lifeReference?.kind
                 ),
-                keyPhotoIdentifier: profile.keyPhotoLocalIdentifier,
-                similarityReferencePhotoCount: memberships.lazy.filter {
-                    $0.isSimilarityReference
-                }.count
+                keyPhotoIdentifier: profile.keyPhotoLocalIdentifier
             )
         }
 
@@ -833,9 +827,6 @@ struct AppRootView: View {
             exportProfileDates: { try viewModel.exportCatProfileDates() },
             previewProfileImport: { try viewModel.previewCatProfileImport($0) },
             importProfileDates: { await viewModel.importCatProfileDates($0) },
-            currentSimilarityCandidates: {
-                viewModel.catSimilarityCandidateInstances
-            },
             createProfile: { draft in
                 let reference = Self.lifeReference(from: draft.lifeReference)
                 let identifier = await viewModel.createCatProfile(
@@ -919,15 +910,6 @@ struct AppRootView: View {
             },
             restoreLegacyExclusions: { identifiers in
                 await viewModel.restoreCatCandidates(localIdentifiers: identifiers)
-            },
-            confirmSimilarityGroup: { identifier, candidates in
-                guard let profileID = UUID(uuidString: identifier) else {
-                    return .conflict(reason: .invalidGroup)
-                }
-                return await viewModel.confirmCatSimilarityGroup(
-                    profileID: profileID,
-                    candidates: candidates
-                )
             },
             deleteProfile: { identifier in
                 guard let profileID = UUID(uuidString: identifier) else { return false }

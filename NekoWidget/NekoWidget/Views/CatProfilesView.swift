@@ -7,7 +7,6 @@ struct CatProfilesViewActions {
     var exportProfileDates: () throws -> Data
     var previewProfileImport: (Data) throws -> CatProfileImportPreview
     var importProfileDates: (CatProfileImportPreview) async -> Result<Bool, Error>
-    var currentSimilarityCandidates: @MainActor () -> [CatSimilarityCandidateInstance]
     var createProfile: (CatProfileDraftPresentation) async -> String?
     var updateName: (
         _ profileIdentifier: String,
@@ -42,19 +41,12 @@ struct CatProfilesViewActions {
     ) async -> Bool
     var excludeFromHousehold: (_ photoIdentifiers: [String]) async -> Void
     var restoreLegacyExclusions: (_ photoIdentifiers: [String]) async -> Void
-    /// The only similarity-review action that writes identity membership.
-    /// Generation, splitting, and deferring remain local to the review view.
-    var confirmSimilarityGroup: (
-        _ profileIdentifier: String,
-        _ candidates: [CatSimilarityCandidateInstance]
-    ) async -> CatSimilarityGroupConfirmationOutcome
     var deleteProfile: (_ profileIdentifier: String) async -> Bool
 
     static let noOp = CatProfilesViewActions(
         exportProfileDates: { throw CatProfileTransferError.notReady },
         previewProfileImport: { _ in throw CatProfileTransferError.notReady },
         importProfileDates: { _ in .failure(CatProfileTransferError.notReady) },
-        currentSimilarityCandidates: { [] },
         createProfile: { _ in nil },
         updateName: { _, _ in false },
         updateLifeDates: { _, _ in false },
@@ -66,9 +58,6 @@ struct CatProfilesViewActions {
         replacePhotoAssignments: { _ in false },
         excludeFromHousehold: { _ in },
         restoreLegacyExclusions: { _ in },
-        confirmSimilarityGroup: { _, _ in
-            .conflict(reason: .invalidGroup)
-        },
         deleteProfile: { _ in false }
     )
 }

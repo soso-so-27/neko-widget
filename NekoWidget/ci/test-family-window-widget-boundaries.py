@@ -2161,7 +2161,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "NekoWidget/Views/CatCandidateCurationView.swift",
             "NekoWidget/Views/CatProfilePhotoCurationViews.swift",
             "NekoWidget/Views/CatProfilesView.swift",
-            "NekoWidget/Views/CatSimilarityReviewView.swift",
             "NekoWidget/Views/GrowthAlbumView.swift",
             "NekoWidget/Views/LikedPhotosView.swift",
             "NekoWidget/Views/OnboardingPresentation.swift",

@@ -8,7 +8,6 @@ enum CatProfilesPresentationVerifier {
         try verifiesManyToManyPhotoMembership()
         try verifiesCreationPickerIncludesSharedAndOlderPhotos()
         try verifiesProfileAlbumLinkPresentation()
-        try verifiesSimilarityReviewKeepsCatInstancesSeparate()
         try verifiesMixedBatchAssignmentsArePreserved()
         try verifiesProfileOnlyTimePolicies()
         try verifiesProfileBoundingBoxSelection()
@@ -128,32 +127,6 @@ enum CatProfilesPresentationVerifier {
         try require(
             value.photoAlbumOptions.first?.identifier == "mugi-album",
             "regular Photos album option did not cross the presentation boundary"
-        )
-    }
-
-    private static func verifiesSimilarityReviewKeepsCatInstancesSeparate() throws {
-        let left = CatSimilarityCandidateInstance(
-            assetLocalIdentifier: "two-cats",
-            boundingBox: NormalizedRect(
-                x: 0.05,
-                y: 0.10,
-                width: 0.35,
-                height: 0.60
-            )
-        )
-        let right = CatSimilarityCandidateInstance(
-            assetLocalIdentifier: "two-cats",
-            boundingBox: NormalizedRect(
-                x: 0.60,
-                y: 0.10,
-                width: 0.35,
-                height: 0.60
-            )
-        )
-        let value = CatProfilesPresentation(similarityCandidates: [left, right])
-        try require(
-            value.similarityCandidates == [left, right],
-            "two cat instances in one photo were collapsed before review"
         )
     }
 

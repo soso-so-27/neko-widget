@@ -157,7 +157,6 @@ struct CatProfilePresentation: Identifiable, Equatable {
     var photoAlbumLink: CatProfilePhotoAlbumLinkPresentation? = nil
     var lifeDates: CatProfileLifeDatesPresentation = .init()
     var keyPhotoIdentifier: String? = nil
-    var similarityReferencePhotoCount: Int = 0
 
     var id: String { identifier }
 
@@ -262,10 +261,6 @@ struct CatProfilesPresentation: Equatable {
     var profiles: [CatProfilePresentation]
     var photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     var unassignedPhotos: [CatProfilePhotoPresentation]
-    /// Input contract retained for the archived, read-only identity experiment.
-    /// Product presentation builders leave this empty, so ordinary rendering
-    /// does not enumerate unresolved detector instances.
-    var similarityCandidates: [CatSimilarityCandidateInstance]
     var legacyExcludedPhotos: [LegacyExcludedCatPhotoPresentation]
     /// Build 13's one household-wide date. It is offered only while creating
     /// the first profile and is never silently copied to every cat.
@@ -276,7 +271,6 @@ struct CatProfilesPresentation: Equatable {
         profiles: [CatProfilePresentation] = [],
         photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation] = [],
         unassignedPhotos: [CatProfilePhotoPresentation] = [],
-        similarityCandidates: [CatSimilarityCandidateInstance] = [],
         legacyExcludedPhotos: [LegacyExcludedCatPhotoPresentation] = [],
         legacyLifeReference: CatProfileLifeReferencePresentation? = nil,
         postureDiagnostics: CatPostureDiagnosticsPresentation = .init()
@@ -284,7 +278,6 @@ struct CatProfilesPresentation: Equatable {
         self.profiles = profiles
         self.photoAlbumOptions = photoAlbumOptions
         self.unassignedPhotos = unassignedPhotos
-        self.similarityCandidates = similarityCandidates
         self.legacyExcludedPhotos = legacyExcludedPhotos
         self.legacyLifeReference = legacyLifeReference
         self.postureDiagnostics = postureDiagnostics
