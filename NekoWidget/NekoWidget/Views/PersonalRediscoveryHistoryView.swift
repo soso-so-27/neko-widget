@@ -332,9 +332,6 @@ private struct PersonalRediscoveryFixturePhoto: View {
             }, excludedCatCandidateIdentifiers: [], excludeFromCatCandidates: { _ in },
             restoreCatCandidates: { _ in }, profiles: [], assignmentsByPhotoIdentifier: [:],
             replaceProfileAssignments: { _ in true },
-            deliveryActions: PhotoWindowDeliveryActions(destinations: { [] },
-                prepare: { _ in throw MemoryPhotoJPEGExportError.photoUnavailable },
-                send: { _, _, _ in "確認用のため送信しません" }),
             rediscoveryStore: model.store)
             .toolbar { ToolbarItem(placement: .bottomBar) {
                 Text(identifier).font(.caption2)

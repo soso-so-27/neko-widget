@@ -80,18 +80,6 @@ class LimitedExternalBetaReportingTests(unittest.TestCase):
         )
 
     def test_ui_hides_report_and_exposes_beta_safety_fallback(self) -> None:
-        family = self.source("NekoWidget/Views/FamilyWindowView.swift")
-        self.assertGreaterEqual(
-            family.count("if model.isEncryptedReportAvailable"),
-            4,
-        )
-        for phrase in (
-            "TestFlightのベータ版フィードバック",
-            "この相手をブロック",
-            "サポートを開く",
-            "写真・招待コード・確認フレーズ・鍵を添付せず",
-        ):
-            self.assertIn(phrase, family)
 
         settings = self.source("NekoWidget/Views/SettingsView.swift")
         self.assertIn(

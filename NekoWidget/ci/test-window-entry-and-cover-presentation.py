@@ -7,41 +7,8 @@ import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 MAIN=(ROOT/"NekoWidget/Views/MainTabView.swift").read_text(encoding="utf-8")
 class WindowPresentation(unittest.TestCase):
-    def assert_family_retry_accessibility(self, source):
-        collection=source.split('private func collectionContent(_ value: Projection) -> some View {',1)[1]
-        failed=collection.split('} else if model.error != nil {',1)[1].split('} else if value.items.isEmpty',1)[0]
-        self.assertEqual(failed.count('.accessibilityIdentifier("family-collection-load-failed")'),1)
-        self.assertEqual(failed.count('.accessibilityIdentifier("family-collection-retry")'),1)
-        label,button=failed.split('Button(',1)
-        self.assertIn('Label(',label)
-        self.assertIn('                        .accessibilityIdentifier("family-collection-load-failed")',label)
-        self.assertNotIn('family-collection-load-failed',button)
-        self.assertIn('await reload()',button)
-        self.assertIn('.disabled(model.loading)',button)
-        self.assertIn('.frame(minHeight: 44)',button)
-        self.assertIn('.accessibilityIdentifier("family-collection-retry")',button)
-        self.assertIn('if !value.items.isEmpty || !value.withdrawn.isEmpty {',collection)
-        self.assertIn('ForEach(value.items)',collection)
-        self.assertIn('ForEach(value.withdrawn)',collection)
 
-    def test_family_failure_label_and_retry_keep_distinct_identifiers_and_photos(self):
-        family=(ROOT/"NekoWidget/Views/FamilyRecordView.swift").read_text(encoding="utf-8")
-        self.assert_family_retry_accessibility(family)
 
-    def test_family_retry_identifier_regressions_are_rejected(self):
-        family=(ROOT/"NekoWidget/Views/FamilyRecordView.swift").read_text(encoding="utf-8")
-        state='                        .accessibilityIdentifier("family-collection-load-failed")\n'
-        retry='                        .accessibilityIdentifier("family-collection-retry")\n'
-        self.assertEqual(family.count(state),1)
-        self.assertEqual(family.count(retry),1)
-        # Restore the original parent modifier at the exact VStack closing line.
-        anchor=retry+'                }\n'
-        self.assertEqual(family.count(anchor),1)
-        parent=family.replace(state,'').replace(anchor,anchor+'                .accessibilityIdentifier("family-collection-load-failed")\n')
-        duplicate_parent=family.replace(anchor,anchor+'                .accessibilityIdentifier("family-collection-load-failed")\n')
-        for name,broken in [('original parent ID',parent),('duplicate parent ID',duplicate_parent),('missing state ID',family.replace(state,'')),('missing retry ID',family.replace(retry,''))]:
-            with self.subTest(regression=name), self.assertRaises(AssertionError):
-                self.assert_family_retry_accessibility(broken)
 
     def assert_official_introduction_accessibility(self, source):
         introduction=source.split('private var introduction: some View {',1)[1].split('private func photoButton(',1)[0]
@@ -71,29 +38,6 @@ class WindowPresentation(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.assert_official_introduction_accessibility(broken)
 
-    def test_empty_entry_keeps_two_separate_readable_routes(self):
-        empty=MAIN.split('private var emptyWindowCard:',1)[1].split('private var windowAdditionControl:',1)[0]
-        self.assertIn('if supportsPrivateWindows',empty)
-        self.assertIn('NavigationLink { connectionOptions }',empty)
-        self.assertIn('NavigationLink { discovery }',empty)
-        self.assertNotIn('createAndOpenWindow',empty)
-    def test_daily_photos_precede_empty_guidance(self):
-        body=MAIN.split('struct WindowListView:',1)[1].split('private var availabilityMessage:',1)[0]
-        self.assertLess(body.index('ForEach(connectedWindows)'),body.index('emptyWindowCard'))
-        self.assertIn('if windows.isEmpty, receivingPublicWindows.isEmpty',body)
-    def test_same_clock_drives_image_and_voiceover(self):
-        cover=MAIN.split('private func windowCard(',1)[1].split('private func coverPlaceholder(',1)[0]
-        self.assertIn('windowCard(window, at: now)',cover)
-        self.assertIn('let now = max(Date.now, coverClock)',cover)
-        self.assertIn('windowCover(for: window, at: now)',cover)
-        self.assertIn('windowAccessibilityStatus(for: window, isSetup: isSetup, at: now)',cover)
-        self.assertEqual(cover.count('cover.isVisible(at: now)'),2)
-        self.assertIn('.task(id: deadline)',cover)
-        self.assertIn('deadline > now',cover)
-        self.assertIn('catch { return }',cover)
-        self.assertIn('!Task.isCancelled',cover)
-        self.assertIn('photo?.displayUntil == deadline',cover)
-        self.assertIn('coverClock = max(Date.now, deadline)',cover)
     def assert_cover_visibility_boundary(self, service):
         body=service.split('func isVisible(at now: Date) -> Bool {',1)[1].split('\n}\n',1)[0]
         self.assertEqual(' '.join(body.split()), ' '.join('''
@@ -106,7 +50,6 @@ class WindowPresentation(unittest.TestCase):
     def test_source_does_not_advance_expiry_boundary(self):
         service=(ROOT/"NekoWidget/Services/PrivateWindowCoverPhotoService.swift").read_text(encoding="utf-8")
         self.assert_cover_visibility_boundary(service)
-        self.assertIn('初回はおすすめ、あとから選べる',MAIN)
 
     def test_expiry_and_moderation_boundary_regressions_are_rejected(self):
         service=(ROOT/"NekoWidget/Services/PrivateWindowCoverPhotoService.swift").read_text(encoding="utf-8")

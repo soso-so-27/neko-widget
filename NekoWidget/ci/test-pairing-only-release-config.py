@@ -169,23 +169,6 @@ class PairingOnlyReleaseConfigTests(unittest.TestCase):
                 self.assertIn("<string>$(SHARING_RELEASE_MODE)</string>", source)
 
     def test_pairing_ui_discloses_the_build_scope(self) -> None:
-        sources = "\n".join(
-            (ROOT / relative).read_text(encoding="utf-8")
-            for relative in (
-                "NekoWidget/Views/PairingView.swift",
-                "NekoWidget/Views/HomeView.swift",
-                "NekoWidget/Views/SettingsView.swift",
-            )
-        )
-        self.assertIn('"ペアリングのみ"', sources)
-        self.assertIn("このBuildでは写真を保存・送信しません", sources)
-        family_window = (ROOT / "NekoWidget/Views/FamilyWindowView.swift").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("まどの設定", family_window)
-        self.assertIn("相手とiPhone", family_window)
-        self.assertIn("if !model.isPaired", family_window)
-        self.assertIn("PairingView()", family_window)
         share_extension = (
             ROOT / "NekoWidgetShareExtension/ShareViewController.swift"
         ).read_text(encoding="utf-8")

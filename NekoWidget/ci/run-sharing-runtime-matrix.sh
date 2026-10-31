@@ -504,7 +504,7 @@ view.write_text(source, encoding="utf-8")
     "outputs": exported,
 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-view = Path("NekoWidget/Views/MomentDeliveryComposer.swift")
+view = Path("NekoWidget/Views/PhotoNoteInput.swift")
 source = view.read_text(encoding="utf-8")
 for name, filename in [
     ("GRAY", "cat-gray-portrait.png"),

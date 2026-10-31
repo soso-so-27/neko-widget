@@ -834,31 +834,10 @@ jobs:
             NekoWidget/App/AppRootView.swift
           grep -Fq 'にお気に入りへ追加した猫の写真' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq '.navigationDestination(isPresented: $opensActiveWindow)' \
-            NekoWidget/Views/MainTabView.swift
-          if grep -Fq '.sheet(isPresented: $opensActiveWindow)' \
-            NekoWidget/Views/MainTabView.swift; then
-            echo "The private window must not cover the main tab bar" >&2
-            exit 1
-          fi
-          if grep -Fq 'Text("ハートは相手へ・思い出は自分だけ")' \
-            NekoWidget/Views/FamilyWindowView.swift; then
-            echo "The private-window photo actions must not repeat explanatory copy" >&2
-            exit 1
-          fi
-          grep -Fq 'accessibilityIdentifier("family-window-saved-memory-state")' \
-            NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq 'case .retry: "ハートを再送"' \
-            NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq 'case .unavailable: "ハートを送れません"' \
-            NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq '.disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)' \
-            NekoWidget/Views/FamilyWindowView.swift
           grep -Fq 'Image(systemName: isSelected ? "bookmark.fill" : "bookmark")' \
             NekoWidgetWidget/NekoWidgetView.swift
           if grep -Eq 'foregroundStyle\(\.pink\)|systemImage:.*star' \
-            NekoWidgetWidget/NekoWidgetView.swift \
-            NekoWidget/Views/FamilyWindowView.swift; then
+            NekoWidgetWidget/NekoWidgetView.swift; then
             echo "Private-window memory and heart controls must use one visual language" >&2
             exit 1
           fi

@@ -13,7 +13,6 @@ struct MonthlyWindowView: View {
     var profiles: [CatProfilePresentation] = []
     var assignmentsByPhotoIdentifier: [String: Set<String>] = [:]
     var replaceProfileAssignments: ([String: Set<String>]) async -> Bool = { _ in true }
-    var deliveryActions: PhotoWindowDeliveryActions? = nil
 
     var body: some View {
         ZStack {
@@ -31,7 +30,6 @@ struct MonthlyWindowView: View {
                     profiles: profiles,
                     assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                     replaceProfileAssignments: replaceProfileAssignments,
-                    deliveryActions: deliveryActions,
                     navigationTitle: "\(presentation.monthNumber)月のまとめ"
                 )
             } else {

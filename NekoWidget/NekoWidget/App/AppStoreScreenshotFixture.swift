@@ -4,47 +4,6 @@ import Foundation
 import SwiftUI
 import UIKit
 
-/// An offline driver for the shipping received-photo control view. Completion
-/// is explicit fixture input, not evidence of PhotoKit import or heart delivery.
-@MainActor
-final class ReceivedPhotoActionFixture: ObservableObject {
-    enum Action: String { case save, remove, heart }
-    struct Request {
-        let action: Action
-        let photoID: Int
-        var description: String { "\(action.rawValue)|\(photoID)" }
-    }
-
-    @Published private(set) var savedIDs = Set<Int>()
-    @Published private(set) var importedIDs = Set<Int>()
-    @Published private(set) var hearts: [Int: MomentReceivedPhotoActions.HeartState] = [2: .retry, 3: .unavailable]
-    @Published private(set) var pending: Request?
-    @Published private(set) var lastRequest: Request?
-
-    func request(_ action: Action, photoID: Int) {
-        guard pending == nil else { return }
-        let request = Request(action: action, photoID: photoID)
-        lastRequest = request
-        pending = request
-    }
-
-    func finishPresentation() {
-        guard let pending else { return }
-        switch pending.action {
-        case .save:
-            savedIDs.insert(pending.photoID)
-            importedIDs.insert(pending.photoID)
-        case .remove:
-            savedIDs.remove(pending.photoID)
-        case .heart:
-            hearts[pending.photoID] = .sent
-        }
-        self.pending = nil
-    }
-
-    func cancelPresentation() { pending = nil }
-}
-
 struct AppStoreScreenshotFixtureLoadedImage: Hashable {
     let localIdentifier: String
     let loaderIdentifier: UUID
@@ -627,11 +586,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
                         excludedCatCandidateIdentifiers: [],
                         excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
                         profiles: [], assignmentsByPhotoIdentifier: [:],
-                        replaceProfileAssignments: { _ in true },
-                        deliveryActions: scenario == "review-photo-layout" ? PhotoWindowDeliveryActions(
-                            destinations: { [] },
-                            prepare: { _ in throw MemoryPhotoJPEGExportError.photoUnavailable },
-                            send: { _, _, _ in "fixture-no-send" }) : nil
+                        replaceProfileAssignments: { _ in true }
                     )
                     .environment(\.showcaseOpenOne, { _ in })
                     .environment(\.showcaseAddPhoto, { _, _ in
@@ -648,8 +603,7 @@ private struct MainlineAcceptanceFixtureRootView: View {
                             AppStoreScreenshotFixture.photos.prefix(2).map { ($0.localIdentifier, "お母さんから") }),
                         exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
                 }
-            } else if scenario == "family-settings" {
-                NavigationStack { FamilyWindowView(initialPresentation: .settings) }
+
             } else if scenario == "solo-memories-rediscovery" {
                 SoloRediscoveryFixtureView()
             } else if scenario == "monthly-save" || scenario == "monthly-save-unconfirmed" {
@@ -802,8 +756,6 @@ private struct SoloMemoriesFixtureView: View {
     @State private var savedFixturePhotoIdentifiers: Set<String> = ["app-store-screenshot-fixture-9"]
     @State private var excludedFixturePhotoIdentifiers = Set<String>()
     @State private var clearedFirstCatAssignments = false
-    @State private var preparedDeliveryIdentifier = "none"
-    @State private var fixtureSendCount = 0
     @State private var didSeedMemo = false
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
@@ -967,8 +919,6 @@ private struct SoloMemoriesFixtureView: View {
                     .accessibilityValue("|" + loadedPhotoIdentifiers.joined(separator: "|") + "|")
                 Text(highlightMemoryRequest)
                     .accessibilityIdentifier("solo-memories-highlight-memory-request")
-                Text("\(preparedDeliveryIdentifier)|\(fixtureSendCount)")
-                    .accessibilityIdentifier("solo-memories-delivery-state")
             }
             .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
             .allowsHitTesting(false)
@@ -1050,7 +1000,7 @@ private struct SoloMemoriesFixtureView: View {
                 excludedCatCandidateIdentifiers: excludedFixturePhotoIdentifiers,
                 excludeFromCatCandidates: excludeFixturePhotos, restoreCatCandidates: { _ in },
                 profiles: [], assignmentsByPhotoIdentifier: [:],
-                replaceProfileAssignments: { _ in true }, deliveryActions: fixtureDeliveryActions
+                replaceProfileAssignments: { _ in true }
             )
             .overlay(alignment: .topLeading) {
                 // Route metadata is a fixture assertion aid. Actual paging and
@@ -1076,8 +1026,7 @@ private struct SoloMemoriesFixtureView: View {
             presentation: refreshed, setMemorySaved: recordMemory,
             libraryPhotos: fixturePhotos,
             excludedCatCandidateIdentifiers: excludedFixturePhotoIdentifiers,
-            excludeFromCatCandidates: excludeFixturePhotos,
-            deliveryActions: fixtureDeliveryActions
+            excludeFromCatCandidates: excludeFixturePhotos
         )
         .overlay(alignment: .topLeading) {
             Text(snapshot.periodIdentifier)
@@ -1107,8 +1056,7 @@ private struct SoloMemoriesFixtureView: View {
                 initialPhoto: first, widgetShownAt: nil, showsWidgetTiming: false,
                 setMemorySaved: recordMemory, excludedCatCandidateIdentifiers: excludedFixturePhotoIdentifiers,
                 excludeFromCatCandidates: excludeFixturePhotos, restoreCatCandidates: { _ in },
-                profiles: [], assignmentsByPhotoIdentifier: [:], replaceProfileAssignments: { _ in true },
-                deliveryActions: fixtureDeliveryActions)
+                profiles: [], assignmentsByPhotoIdentifier: [:], replaceProfileAssignments: { _ in true })
         } else {
             ContentUnavailableView("この猫の写真を開けません", systemImage: "cat")
         }
@@ -1128,25 +1076,6 @@ private struct SoloMemoriesFixtureView: View {
         excludedFixturePhotoIdentifiers.formUnion(identifiers)
     }
 
-    private var fixtureDeliveryActions: PhotoWindowDeliveryActions {
-        PhotoWindowDeliveryActions(
-            destinations: { [MomentDeliveryDestination(localWindowID: "fixture-family",
-                bindingSHA256: Data(repeating: 1, count: 32), displayName: "家族のまど")] },
-            prepare: { photo in
-                guard let image = AppStoreScreenshotFixture.image(for: photo.localIdentifier) else {
-                    throw MemoryPhotoJPEGExportError.photoUnavailable
-                }
-                preparedDeliveryIdentifier = photo.localIdentifier
-                let preview = try MomentCanonicalPreviewBuilder.build(image: image)
-                return MomentShareIngressPhoto(canonicalJPEG: preview.jpeg,
-                    capturedAt: photo.creationDate, pixelWidth: preview.pixelWidth, pixelHeight: preview.pixelHeight)
-            },
-            send: { _, _, _ in
-                fixtureSendCount += 1
-                return nil
-            }
-        )
-    }
 
     private var usesCatProfiles: Bool { scenario.contains("-cats") }
 

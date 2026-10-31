@@ -106,7 +106,6 @@ struct SettingsView: View {
     @State private var showsMembershipPreview = false
     @AppStorage(AlbumPrototype.yearNowKey) private var albumYearNow = false
     @AppStorage(AlbumPrototype.slideshowKey) private var albumSlideshow = false
-    @State private var showsWindowSupportPreview = false
     @State private var cloudyWindowError: String?
 
     private var canOpenMembershipOffer: Bool {
@@ -220,42 +219,6 @@ struct SettingsView: View {
                 Text("ホーム画面")
             }
 
-            // Two-person window settings; group windows keep theirs inside each window.
-            if (SharingAPIConfiguration.current.isReviewVisible || SharingAPIConfiguration.current.isAvailable)
-                && GroupWindowClientProvider.ui == nil {
-                Section {
-                    if SharingAPIConfiguration.current.isReviewVisible {
-                        NavigationLink {
-                            if SharingAPIConfiguration.current.isMediaAvailable {
-                                FamilyWindowView(initialPresentation: .settings)
-                            } else if SharingAPIConfiguration.current.isAvailable {
-                                PairingView()
-                            } else {
-                                SharingReviewPreviewView()
-                            }
-                        } label: {
-                            LabeledContent {
-                                Text(privateWindowDisplayName)
-                            } label: {
-                                Label("まどの設定", systemImage: "window.vertical.closed")
-                            }
-                        }
-                        .accessibilityIdentifier("settings-sharing-review")
-                    }
-                    if SharingAPIConfiguration.current.isAvailable {
-                        NavigationLink {
-                            BlockedSharingView()
-                        } label: {
-                            Label("ブロックした相手", systemImage: "hand.raised")
-                        }
-                        .accessibilityIdentifier("settings-blocked-sharing")
-                    }
-                } header: {
-                    Text("まど")
-                }
-            }
-
-            // Plus sits with 保存, the thing it pays for, after the everyday sections.
             if canOpenMembershipOffer {
                 PlusSettingsSection()
             }
@@ -333,12 +296,7 @@ struct SettingsView: View {
                             }
                             .accessibilityIdentifier("settings-membership-preview")
                         }
-                        Button {
-                            showsWindowSupportPreview = true
-                        } label: {
-                            Label("まどの再開のプレビュー", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .accessibilityIdentifier("settings-window-support-preview")
+
                     }
                     if InternalBuildPresentationAvailability.isAvailable {
                         // To see the clearing again today (test builds only). The
@@ -393,9 +351,6 @@ struct SettingsView: View {
             MembershipOfferSheet(model: .preview(), context: .settings) { _ in
                 showsMembershipPreview = false
             }
-        }
-        .sheet(isPresented: $showsWindowSupportPreview) {
-            WindowSupportResumePreviewView()
         }
         .onChange(of: settings) { oldSettings, newSettings in
             // Each settings section saves independently. Merge incoming values

@@ -75,20 +75,9 @@ struct AppRootView: View {
                 onboardingInvitation = next
                 return
             }
-            // Completion follows a successful pairing, never merely a tap.
-            if (try? PairingStateStore.load())?.phase == .paired {
-                completeOnboardingWithoutPhotoAccess()
-                viewModel.isFamilyWindowPresented = true
-            }
         }) {
             NavigationStack {
-                Group {
-                    if GroupWindowClientProvider.ui != nil {
-                        OnboardingInvitationHelpView()
-                    } else {
-                        PairingView(initialSetupPath: .join)
-                    }
-                }
+                OnboardingInvitationHelpView()
                 .toolbar { ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") { showsInvitationJoin = false }
                 } }
@@ -273,9 +262,12 @@ struct AppRootView: View {
     private func widgetPhotoDestination(_ opening: WidgetPhotoOpening,
                                         close: @escaping () -> Void) -> some View {
         switch opening.destination {
-        case let .family(localWindowID, sourceDigest):
-            FamilyWidgetPhotoView(localWindowID: localWindowID,
-                                  sourceDigest: sourceDigest, onClose: close)
+        case .family:
+            NavigationStack {
+                ContentUnavailableView("このまどは利用できません", systemImage: "rectangle.slash",
+                    description: Text("「まど」タブから、みんなのまどを開いてください。"))
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { WidgetPhotoCloseButton(close: close) } }
+            }
         case let .official(route):
             NavigationStack {
                 Group {

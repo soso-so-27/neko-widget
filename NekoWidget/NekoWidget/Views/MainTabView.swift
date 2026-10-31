@@ -421,6 +421,7 @@ struct MainTabView: View {
 
     private var showsMadoTab: Bool {
         SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
+            || Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String == "YES"
             || OfficialWindowConfiguration.definitions.contains { $0.endpoint != nil }
     }
 
@@ -628,14 +629,10 @@ struct MainTabView: View {
 
     @ViewBuilder private var windowsTab: some View {
         if SharingAPIConfiguration.current.isReviewVisible || GroupWindowClientProvider.ui != nil
+            || Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String == "YES"
             || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
             NavigationStack {
-                WindowListView(
-                    opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
-                    pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
-                    pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute,
-                    showSettings: { showsSettings = true }
-                )
+                WindowListView()
             }
             // The window screens start 「写真を届ける」 from these cat photos.
             // Set on the stack: pushed screens take the stack's environment.
@@ -770,6 +767,7 @@ struct MainTabView: View {
             relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
+            deepLinkedFamilyWindowIsPresented = false
         }
         .onChange(of: groupWindowOpenInbox.pendingWindowID, initial: true) { _, windowID in
             // A group window's home-screen photo: show the まど tab, where
@@ -3160,51 +3158,18 @@ private struct PhotoRelatedAlbumsSheet: View {
 private struct WindowListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @StateObject private var model = PairingViewModel()
     @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
-
-    @Binding var opensActiveWindow: Bool
-    @Binding var pendingFamilyMomentSourceDigest: String?
-    @Binding var pendingFamilyNotificationRoute: MomentNotificationRoute?
-
-    @State private var windows: [PrivateWindowCatalogEntry] = []
-    @State private var activeWindowID: String?
-    @State private var isLoading = true
-    @State private var switchingWindowID: String?
-    @State private var catalogLoadMessage: String?
-    @State private var pendingPreparationCounts: [String: Int] = [:]
-    @State private var pairingPhases: [String: PairingPhase] = [:]
-    @State private var catalogReloadRevision = 0
-    @State private var requestedSetupPath: PairingSetupPath?
     @State private var publicStates: [String: OfficialWindowState]
     @State private var publicRefreshFailures: [String: UUID] = [:]
-    @State private var coverPhotos: [String: PrivateWindowCoverPresentation] = [:]
-    @State private var coverClock: Date = .now
-    @State private var windowErrors: Set<String> = []
     @State private var addingPublicWindowID: String?
     @State private var addedPublicWindows = 0
     @State private var addPublicWindowError: String?
-
-    let supportsPrivateWindows: Bool
     let publicWindows: [PublicWindowPresentationSource]
-    let showSettings: (() -> Void)?
 
-    init(opensActiveWindow: Binding<Bool>,
-         pendingFamilyMomentSourceDigest: Binding<String?>,
-         pendingFamilyNotificationRoute: Binding<MomentNotificationRoute?>,
-         // With group windows on, the two-person window is not shown anywhere (10/21).
-         supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible
-             && GroupWindowClientProvider.ui == nil,
-         officialStore: OfficialWindowStore = .shared,
+    init(officialStore: OfficialWindowStore = .shared,
          refreshOfficialFeed: (() async throws -> Void)? = nil,
          previewOfficialFeed: (() async throws -> OfficialWindowPreview)? = nil,
-         publicWindows: [PublicWindowPresentationSource]? = nil,
-         showSettings: (() -> Void)? = nil) {
-        self.showSettings = showSettings
-        _opensActiveWindow = opensActiveWindow
-        _pendingFamilyMomentSourceDigest = pendingFamilyMomentSourceDigest
-        _pendingFamilyNotificationRoute = pendingFamilyNotificationRoute
-        self.supportsPrivateWindows = supportsPrivateWindows
+         publicWindows: [PublicWindowPresentationSource]? = nil) {
         let sources = publicWindows ?? OfficialWindowConfiguration.definitions.map { definition in
             definition.id == officialStore.windowID
                 ? PublicWindowPresentationSource(store: officialStore, refresh: refreshOfficialFeed, preview: previewOfficialFeed)
@@ -3214,53 +3179,56 @@ private struct WindowListView: View {
         _publicStates = State(initialValue: Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.store.snapshot()) }))
     }
 
-    private var cardColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), alignment: .top),
-              count: dynamicTypeSize >= .xxxLarge ? 1 : 2)
-    }
-
-    private var receivingPublicWindows: [PublicWindowPresentationSource] {
-        publicWindows.filter { publicStates[$0.id]?.isSubscribed == true }
-    }
-
-    // MARK: 1.0: the まど tab as what arrives to me
-
-    private var usesArrivalLayout: Bool {
-        Version1.isOn && GroupWindowClientProvider.ui != nil
-    }
-
-    /// 「わたしのまど」: the windows I share and the official ones I added, each
-    /// as its latest photo. 「見つける」: official windows not added yet, with
-    /// 「加える」. Adding moves the window up into mine. Nothing 「近日」.
-    @ViewBuilder private var arrivalLayout: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let groupClient = GroupWindowClientProvider.ui {
-                GroupWindowListSection(client: groupClient, compactHeader: true)
-            }
-            ForEach(receivingPublicWindows) { source in
-                publicCard(source, presentation: .wide)
-                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
-                                            removal: .opacity))
-            }
+    @ViewBuilder private var groupSection: some View {
+        if let client = GroupWindowClientProvider.ui {
+            GroupWindowListSection(client: client, compactHeader: Version1.isOn)
+        } else if Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String == "YES" {
+            ContentUnavailableView("みんなのまどを読み込めません", systemImage: "window.vertical.closed",
+                description: Text("ねこのまどを開き直してください。"))
+                .accessibilityIdentifier("group-window-unavailable")
         }
-        let discoverable = publicWindows.filter { publicStates[$0.id]?.isSubscribed != true }
-        if !discoverable.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("公式のまどを追加")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .accessibilityAddTraits(.isHeader)
-                ForEach(discoverable) { source in
-                    publicCard(source, presentation: .row)
-                        .overlay(alignment: .trailing) { addButton(source) }
-                        .transition(.opacity)
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 22) {
+                if Version1.isOn {
+                    arrivalLayout
+                } else {
+                    groupSection
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()),
+                                             count: dynamicTypeSize >= .xxxLarge ? 1 : 2), spacing: 22) {
+                        ForEach(receivingPublicWindows) { source in publicCard(source) }
+                    }.accessibilityIdentifier("window-list-receiving")
+                    NavigationLink { PublicWindowDiscoveryView(sources: publicWindows) } label: {
+                        Label("公式のまどを見る", systemImage: "safari")
+                    }.accessibilityIdentifier("window-list-discover")
                 }
             }
-            .accessibilityIdentifier("window-list-discover-section")
+            .sensoryFeedback(.success, trigger: addedPublicWindows)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
-        if let addPublicWindowError {
-            Text(addPublicWindowError).font(.footnote).foregroundStyle(.secondary)
+        .navigationTitle("まど")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .onAppear { reloadPublicStates() }
+        .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
+            reloadPublicStates()
         }
+        .sheet(item: Binding(
+            get: { GroupWindowClientProvider.ui != nil ? invitationInbox.pending : nil },
+            set: { if $0 == nil { invitationInbox.discard() } }
+        )) { invitation in
+            GroupInvitationJoinSheet(invitation: invitation)
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await reload()
+        }
+    }
+    private var receivingPublicWindows: [PublicWindowPresentationSource] {
+        publicWindows.filter { publicStates[$0.id]?.isSubscribed == true }
     }
 
     private func addButton(_ source: PublicWindowPresentationSource) -> some View {
@@ -3278,8 +3246,6 @@ private struct WindowListView: View {
         .accessibilityIdentifier("public-window-add-\(source.id)")
     }
 
-    /// The same saved setting as 「このまどを受け取る」 in the window itself,
-    /// then the move up and a light tick; the first photo follows.
     private func add(_ source: PublicWindowPresentationSource) {
         addingPublicWindowID = source.id
         do {
@@ -3313,523 +3279,32 @@ private struct WindowListView: View {
         publicStates = Dictionary(uniqueKeysWithValues: publicWindows.map { ($0.id, $0.store.snapshot()) })
     }
 
-    private var discovery: some View {
-        PublicWindowDiscoveryView(sources: publicWindows)
-    }
-
-    private var connectionOptions: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                windowAdditionControl
-                if let message = model.operationErrorMessage {
-                    Text(message).font(.footnote).foregroundStyle(.red)
-                        .accessibilityIdentifier("window-add-error")
-                }
-            }
-            .padding(20)
-            .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
-        }
-        .navigationTitle("まどを作る・参加する")
-        .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
-        .accessibilityIdentifier("window-connection-options")
-    }
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 22) {
-                if usesArrivalLayout {
-                    arrivalLayout
-                } else {
-                    if let groupClient = GroupWindowClientProvider.ui {
-                        // Windows people share come first (1-4); public windows follow.
-                        GroupWindowListSection(client: groupClient)
-                        if !Version1.isOn, !receivingPublicWindows.isEmpty {
-                            Text("公式のまど")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .accessibilityAddTraits(.isHeader)
-                        }
-                    }
-                    if !connectedWindows.isEmpty || !setupWindows.isEmpty
-                        || (!Version1.isOn && !receivingPublicWindows.isEmpty) {
-                        LazyVGrid(columns: cardColumns, spacing: 22) {
-                            ForEach(connectedWindows) { window in
-                                windowCard(window)
-                            }
-                            if !Version1.isOn {
-                                ForEach(receivingPublicWindows) { source in publicCard(source) }
-                            }
-                            ForEach(setupWindows) { window in windowCard(window) }
-                        }
-                        .accessibilityIdentifier("window-list-receiving")
-                    }
-                    if isLoading, windows.isEmpty {
-                        ProgressView("まどを読み込んでいます…")
-                            .frame(maxWidth: .infinity, minHeight: 240)
-                    } else if windows.isEmpty, let message = availabilityMessage {
-                        unavailableWindowContent(message: message)
-                    } else {
-                        if isLoading {
-                            ProgressView("まどを更新しています…")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else if let message = availabilityMessage {
-                            cachedWindowWarning(message: message)
-                        }
-
-                        if !Version1.isOn, GroupWindowClientProvider.ui != nil {
-                            legacyPublicWindowEntry
-                        } else if !Version1.isOn, windows.isEmpty, receivingPublicWindows.isEmpty {
-                            emptyWindowCard
-                        }
-
-                        if let message = model.operationErrorMessage {
-                            Text(message).font(.footnote).foregroundStyle(.red)
-                        }
-
-                    }
-                    if Version1.isOn { publicWindowEntry }
-                }
-            }
-            .sensoryFeedback(.success, trigger: addedPublicWindows)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        }
-        .navigationTitle("まど")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if supportsPrivateWindows {
-                    connectionEntry
-                    // Without group windows, the public list is reached from here.
-                    NavigationLink { discovery } label: {
-                        Label("公式のまど", systemImage: "safari")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    .accessibilityLabel("公式のまどを探す")
-                    .accessibilityIdentifier("window-list-discover")
-                }
-            }
-        }
-        .background(Color(.systemGroupedBackground))
-        .onAppear { reloadPublicStates() }
-        .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
-            reloadPublicStates()
-        }
-        .navigationDestination(isPresented: Binding(
-            get: { supportsPrivateWindows && opensActiveWindow },
-            set: { opensActiveWindow = $0 }
-        )) {
-            activeWindowDestination
-                .id(activeWindowID ?? "no-active-window")
-        }
-        .onChange(of: opensActiveWindow, initial: true) { _, opens in
-            // Links that used to open the two-person window only show this tab.
-            if opens && !supportsPrivateWindows { opensActiveWindow = false }
-        }
-        // A group invitation link joins here, in the まど tab itself.
-        .sheet(item: Binding(
-            get: { GroupWindowClientProvider.ui != nil ? invitationInbox.pending : nil },
-            set: { if $0 == nil { invitationInbox.discard() } }
-        )) { invitation in
-            GroupInvitationJoinSheet(invitation: invitation)
-        }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            await reload()
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(
-                for: .momentSharingPresentationNeedsRefresh
-            )
-        ) { _ in
-            catalogReloadRevision += 1
-            coverPhotos = [:]
-            Task { await reloadCatalogPresentation() }
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(
-                for: .momentSharingContentNeedsReload
-            )
-        ) { _ in
-            catalogReloadRevision += 1
-            coverPhotos = [:]
-            reloadPreparationCounts()
-            Task { await reloadCatalogPresentation() }
-        }
-    }
-
-    private var availabilityMessage: String? {
-        model.bootstrapRetryMessage ?? catalogLoadMessage
-    }
-
-    private var connectionEntry: some View {
-        NavigationLink { connectionOptions } label: {
-            Image(systemName: "person.badge.plus")
-        }
-        .accessibilityLabel("まどを作る・参加する")
-        .accessibilityIdentifier("window-list-connect")
-    }
-
-    private var pausesWindowChanges: Bool {
-        isLoading || availabilityMessage != nil
-    }
-
-    private func unavailableWindowContent(message: String) -> some View {
-        VStack(spacing: 16) {
-            ContentUnavailableView(
-                "みんなのまどを読み込めません",
-                systemImage: "arrow.triangle.2.circlepath",
-                description: Text(message)
-            )
-
-            Button("もう一度試す") {
-                Task { await reload() }
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("window-list-retry")
-        }
-    }
-
-    private func cachedWindowWarning(message: String) -> some View {
+    @ViewBuilder private var arrivalLayout: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(
-                "前回読み込んだまどを表示しています",
-                systemImage: "exclamationmark.triangle.fill"
-            )
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.orange)
-
-            Text(message)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            Button("もう一度試す") {
-                Task { await reload() }
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("window-list-cached-retry")
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var publicWindowEntry: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("公式のまど")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityAddTraits(.isHeader)
-            ForEach(publicWindows) { source in
-                publicCard(source, presentation: .row)
+            groupSection
+            ForEach(receivingPublicWindows) { source in
+                publicCard(source, presentation: .wide)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                            removal: .opacity))
             }
         }
-        .accessibilityIdentifier("window-list-start")
-    }
-
-    private var legacyPublicWindowEntry: some View {
-        NavigationLink { discovery } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "building.2")
-                    .font(.title3)
-                    .foregroundStyle(.tint)
-                    .frame(width: 32)
-                Text(receivingPublicWindows.isEmpty ? "公式のまどを見る" : "ほかの公式のまど")
-                    .font(.body.weight(.semibold))
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-            }
-            .padding(14)
-            .frame(minHeight: 44)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("window-list-start")
-    }
-
-    private var emptyWindowCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("まどをはじめる").font(.title2)
-                .accessibilityAddTraits(.isHeader)
-            if supportsPrivateWindows {
-                VStack(alignment: .leading, spacing: 8) {
-                    NavigationLink { connectionOptions } label: {
-                        Label("まどを作る・参加する", systemImage: "person.badge.plus")
-                            .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("window-list-start-private")
-                    Text("家族や友だちと写真を届け合います。")
-                        .font(.subheadline).foregroundStyle(.secondary)
+        let discoverable = publicWindows.filter { publicStates[$0.id]?.isSubscribed != true }
+        if !discoverable.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("公式のまどを追加")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(discoverable) { source in
+                    publicCard(source, presentation: .row)
+                        .overlay(alignment: .trailing) { addButton(source) }
+                        .transition(.opacity)
                 }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                NavigationLink { discovery } label: {
-                    Label("公式のまどを見る", systemImage: "photo")
-                        .frame(minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("window-list-start")
-                Text("選ぶだけで写真が届きます。")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
+            .accessibilityIdentifier("window-list-discover-section")
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    @ViewBuilder
-    private var windowAdditionControl: some View {
-        if let pending = setupWindows.first {
-            Button { open(pending) } label: {
-                Label("\(pending.displayName)の設定を続ける", systemImage: "arrow.right.circle")
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.bordered)
-            .disabled(model.isWorking || pausesWindowChanges)
-            .accessibilityIdentifier("window-list-resume-setup")
-        } else if windows.count >= PrivateWindowCatalogState.maximumProductWindowCount {
-            Label(
-                windows.count > PrivateWindowCatalogState.maximumProductWindowCount
-                    ? "いまは新しいまどを追加できません"
-                    : "まどは\(PrivateWindowCatalogState.maximumProductWindowCount)つまで使えます",
-                systemImage: "rectangle.stack"
-            )
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("window-list-product-limit")
-        } else {
-            if let groupClient = GroupWindowClientProvider.ui {
-                // One place to start a window. New windows are group windows,
-                // also for two people; existing two-person windows keep working.
-                NavigationLink { GroupWindowCreateScreen(client: groupClient) } label: {
-                    Text("まどを作る（\(GroupWindowPresentation.memberLimit)人まで）")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.isWorking || pausesWindowChanges)
-                .accessibilityIdentifier("window-list-create-group")
-            } else {
-                setupAction("新しいまどを作る", path: .create, identifier: "window-list-create")
-            }
-            setupAction("招待されたまどに参加する", path: .join, identifier: "window-list-join")
-            setupAction("このiPhoneで以前のまどを使う", path: .recover, identifier: "window-list-recover")
-        }
-        if pausesWindowChanges {
-            Text(availabilityMessage ?? "みんなのまどを読み込んでいます…")
-                .font(.footnote).foregroundStyle(.secondary)
-            if availabilityMessage != nil {
-                Button("もう一度試す") { Task { await reload() } }
-                    .frame(minHeight: 44)
-            }
-        }
-    }
-
-    private func setupAction(_ title: String, path: PairingSetupPath, identifier: String) -> some View {
-        Button { createAndOpenWindow(setupPath: path) } label: {
-            Text(title).frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.bordered)
-        .disabled(model.isWorking || pausesWindowChanges)
-        .accessibilityIdentifier(identifier)
-    }
-
-    private var connectedWindows: [PrivateWindowCatalogEntry] {
-        groupedWindows.connectedWindowIDs.compactMap { windowByID($0) }
-    }
-
-    private var setupWindows: [PrivateWindowCatalogEntry] {
-        groupedWindows.setupWindowIDs.compactMap { windowByID($0) }
-    }
-
-    private var groupedWindows: PrivateWindowListPresentation {
-        PrivateWindowListPresentationPolicy.make(inputs: windows.map { window in
-            PrivateWindowListPresentationInput(
-                localWindowID: window.localWindowID,
-                createdAt: window.createdAt,
-                phase: pairingPhases[window.localWindowID]
-            )
-        })
-    }
-
-    private func windowByID(_ id: String) -> PrivateWindowCatalogEntry? {
-        windows.first { $0.localWindowID == id }
-    }
-
-    private func createAndOpenWindow(setupPath: PairingSetupPath) {
-        guard !model.isWorking, !pausesWindowChanges else { return }
-        Task {
-            let previousActiveWindowID = activeWindowID
-            await model.createAnotherPrivateWindow()
-            await reloadCatalogPresentation()
-            guard let createdWindowID = activeWindowID,
-                  createdWindowID != previousActiveWindowID
-            else { return }
-            requestedSetupPath = setupPath
-            opensActiveWindow = true
-        }
-    }
-
-    private func windowCard(_ window: PrivateWindowCatalogEntry) -> some View {
-        // A state change refreshes both the image and the outer VoiceOver value.
-        // TimelineView's scheduled redraw alone can leave the Button's AX value stale.
-        let now = max(Date.now, coverClock)
-        let deadline = coverPhotos[window.localWindowID]?.photo?.displayUntil
-        return windowCard(window, at: now)
-            .task(id: deadline) {
-                guard let deadline, deadline > now else { return }
-                do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) }
-                catch { return }
-                guard !Task.isCancelled,
-                      coverPhotos[window.localWindowID]?.photo?.displayUntil == deadline else { return }
-                coverClock = max(Date.now, deadline)
-            }
-    }
-
-    private func windowCard(_ window: PrivateWindowCatalogEntry, at now: Date) -> some View {
-        let isActive = window.localWindowID == activeWindowID
-        let isSwitching = window.localWindowID == switchingWindowID
-        let isSetup = groupedWindows.setupWindowIDs.contains(window.localWindowID)
-
-        return Button {
-            open(window)
-        } label: {
-            if isSetup {
-                WindowPhotoCard(title: window.displayName, kind: .setup) {
-                    VStack(spacing: 18) {
-                        Image("ToolCat-tilt").resizable().scaledToFit()
-                            .frame(width: 58, height: 58).accessibilityHidden(true)
-                        if isSwitching {
-                            ProgressView()
-                        } else {
-                            VStack(spacing: 8) {
-                                Text(windowPrimaryStatusLabel(for: window))
-                                    .foregroundStyle(windowErrors.contains(window.localWindowID)
-                                                     ? Color.orange : Color.primary)
-                                Label("設定を開く", systemImage: "chevron.right")
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                                .font(.caption.weight(.medium))
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            } else {
-                WindowPhotoCard(title: window.displayName, kind: .shared) {
-                    windowCover(for: window, at: now)
-                        .overlay(alignment: .topTrailing) {
-                            if isSwitching {
-                                ProgressView().padding(8).background(.thinMaterial, in: Capsule()).padding(8)
-                            } else if windowErrors.contains(window.localWindowID) {
-                                Label("開けませんでした", systemImage: "exclamationmark.circle.fill")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.red)
-                                    .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
-                            }
-                        }
-                        .overlay(alignment: .bottomLeading) {
-                            if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
-                                Label("\(pendingCount.formatted())枚 届ける準備中", systemImage: "clock")
-                                    .font(.caption.weight(.semibold))
-                                    .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
-                            }
-                        }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(
-            model.isWorking
-                || isLoading
-                || (pausesWindowChanges && !isActive)
-        )
-        .accessibilityIdentifier("window-list-row-\(window.localWindowID)")
-        .accessibilityLabel(isSetup ? window.displayName : "\(window.displayName)、写真を届け合うまど")
-        .accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup, at: now))
-        .accessibilityHint(
-            pausesWindowChanges && !isActive
-                ? "読み込みが終わると、このまどを開けます"
-                : "このまどを開きます"
-        )
-    }
-
-    private func windowCover(for window: PrivateWindowCatalogEntry, at now: Date) -> some View {
-        GeometryReader { geometry in
-            if let cover = coverPhotos[window.localWindowID]?.photo,
-               cover.isVisible(at: now), let image = UIImage(data: cover.jpeg) {
-                Image(uiImage: image).resizable().scaledToFill()
-                    .frame(width: geometry.size.width, height: geometry.size.height).clipped()
-            } else {
-                VStack(spacing: 12) {
-                    Image("ToolCat-hide").resizable().scaledToFit()
-                        .frame(width: 58, height: 58)
-                    Text(coverPlaceholder(for: window))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private func windowAccessibilityStatus(for window: PrivateWindowCatalogEntry, isSetup: Bool, at now: Date) -> String {
-        let visiblePhoto = coverPhotos[window.localWindowID]?.photo.flatMap { cover in
-            cover.isVisible(at: now) && UIImage(data: cover.jpeg) != nil ? cover : nil
-        }
-        var parts = [isSetup ? windowPrimaryStatusLabel(for: window)
-                     : visiblePhoto != nil ? "写真あり" : coverPlaceholder(for: window)]
-        if !isSetup, let visiblePhoto {
-            parts.append(visiblePhoto.origin == .received ? "相手から届いた写真" : "届けた写真")
-        }
-        if windowErrors.contains(window.localWindowID) {
-            parts.append(isSetup ? "設定を開いて確認" : "開いて確かめてください")
-        }
-        if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
-            parts.append("届ける準備中 \(pendingCount.formatted())枚")
-        }
-        return parts.joined(separator: "、")
-    }
-
-    private func coverPlaceholder(for window: PrivateWindowCatalogEntry) -> String {
-        guard let status = coverPhotos[window.localWindowID]?.status else {
-            return availabilityMessage == nil ? "写真を読み込み中" : "写真を読み込めません"
-        }
-        switch status {
-        case .noPhotos: return "いまは写真がありません"
-        case .noRetainedImage: return "写真が残っていません"
-        case .unavailable: return "写真を読み込めません"
-        case .notConnected: return "まだつながっていません"
-        case .photo: return "写真の表示期間が終わりました"
-        }
-    }
-
-    private func open(_ window: PrivateWindowCatalogEntry) {
-        guard !model.isWorking, !isLoading else { return }
-        guard window.localWindowID != activeWindowID else {
-            requestedSetupPath = nil
-            opensActiveWindow = true
-            return
-        }
-        guard !pausesWindowChanges else { return }
-
-        switchingWindowID = window.localWindowID
-        Task {
-            await model.activatePrivateWindow(localWindowID: window.localWindowID)
-            await reloadCatalogPresentation()
-            switchingWindowID = nil
-            guard activeWindowID == window.localWindowID else { return }
-            requestedSetupPath = nil
-            opensActiveWindow = true
+        if let addPublicWindowError {
+            Text(addPublicWindowError).font(.footnote).foregroundStyle(.secondary)
         }
     }
 
@@ -3853,266 +3328,9 @@ private struct WindowListView: View {
                 publicStates[source.id] = source.store.snapshot()
             }
         }
-#if DEBUG
-        if loadMixedFixtureIfNeeded() { return }
-#endif
-        guard supportsPrivateWindows else {
-            isLoading = false
-            return
-        }
-        isLoading = true
-        await model.bootstrap()
-        // Render the authenticated local catalog immediately. Network name
-        // reconciliation is freshness work and must not turn the whole picker
-        // into a loading screen when one inactive window is offline.
-        await reloadCatalogPresentation()
-        isLoading = false
-        await model.synchronizeWindowNamesForWindowList()
-        await reloadCatalogPresentation()
-    }
-
-    private struct CatalogPresentationSnapshot: Sendable {
-        let windows: [PrivateWindowCatalogEntry]
-        let activeWindowID: String
-        let pairingPhases: [String: PairingPhase]
-        let coverPhotos: [String: PrivateWindowCoverPresentation]
-        let windowErrors: Set<String>
-    }
-
-    private func reloadCatalogPresentation() async {
-#if DEBUG
-        if loadMixedFixtureIfNeeded() { return }
-#endif
-        guard supportsPrivateWindows else { return }
-        catalogReloadRevision += 1
-        let revision = catalogReloadRevision
-        do {
-            let snapshot = try await Task.detached(priority: .userInitiated) {
-                try Self.loadCatalogPresentationSnapshot()
-            }.value
-            guard revision == catalogReloadRevision else { return }
-            guard let snapshot else {
-                windows = []
-                activeWindowID = nil
-                pendingPreparationCounts = [:]
-                pairingPhases = [:]
-                catalogLoadMessage = nil
-                coverPhotos = [:]
-                windowErrors = []
-                return
-            }
-            windows = snapshot.windows
-            activeWindowID = snapshot.activeWindowID
-            pairingPhases = snapshot.pairingPhases
-            coverPhotos = snapshot.coverPhotos
-            windowErrors = snapshot.windowErrors
-            catalogLoadMessage = nil
-            reloadPreparationCounts()
-        } catch {
-            guard revision == catalogReloadRevision else { return }
-            coverPhotos = [:]
-            catalogLoadMessage = windows.isEmpty
-                ? "まどを読み込めませんでした。少し時間をおいて、もう一度お試しください。"
-                : "まどの一覧を新しくできませんでした。前回の一覧を表示しています。"
-        }
-    }
-
-#if DEBUG
-    /// Only the account read is replaced. The shipping list, controls, grouping,
-    /// accessibility and layouts are used by the mixed-state UI regression.
-    private func loadMixedFixtureIfNeeded() -> Bool {
-        guard CommandLine.arguments.contains("--window-list-ui-fixture") else { return false }
-        if CommandLine.arguments.contains("--window-list-empty-private") {
-            windows = []; pairingPhases = [:]; coverPhotos = [:]; windowErrors = []
-            activeWindowID = nil; isLoading = false
-            return true
-        }
-        guard CommandLine.arguments.contains("--window-list-mixed") else { return false }
-        let date = Date(timeIntervalSince1970: 1_700_000_000)
-        let pairedID = "10000000-0000-0000-0000-000000000001"
-        let failedID = "10000000-0000-0000-0000-000000000002"
-        windows = [
-            .init(localWindowID: pairedID, displayName: "マイファミリー", spaceID: "fixture-space",
-                  credentialAccount: nil, createdAt: date, updatedAt: date),
-            .init(localWindowID: failedID, displayName: "ねことも", spaceID: nil,
-                  credentialAccount: nil, createdAt: date.addingTimeInterval(1), updatedAt: date.addingTimeInterval(1))
-        ]
-        activeWindowID = failedID
-        pairingPhases = [pairedID: .paired, failedID: .failed]
-        windowErrors = [failedID]
-        if let jpeg = MomentExperiencePhotoFixture.image(index: 1).jpegData(compressionQuality: 0.8) {
-            coverPhotos = [pairedID: .init(photo: .init(jpeg: jpeg, displayUntil: Date().addingTimeInterval(CommandLine.arguments.contains("--window-list-expiring-cover") ? 5 : 3600), origin: .sent), status: .photo)]
-        }
-        isLoading = false
-        return true
-    }
-#endif
-
-    private nonisolated static func loadCatalogPresentationSnapshot() throws
-        -> CatalogPresentationSnapshot? {
-        guard let catalog = try PrivateWindowCatalogStore.load() else {
-            return nil
-        }
-        let phasePairs: [(String, PairingPhase)] = catalog.windows.compactMap { window in
-            guard let state = try? PairingStateStore.load(
-                localWindowID: window.localWindowID
-            ) else { return nil }
-            return (window.localWindowID, state.phase)
-        }
-        return CatalogPresentationSnapshot(
-            windows: catalog.windows.sorted {
-                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
-                return $0.localWindowID < $1.localWindowID
-            },
-            activeWindowID: catalog.activeWindowID,
-            pairingPhases: Dictionary(uniqueKeysWithValues: phasePairs),
-            coverPhotos: Dictionary(uniqueKeysWithValues: catalog.windows.map { window in
-                (window.localWindowID, PrivateWindowCoverPhotoService.load(for: window))
-            }),
-            windowErrors: Set(catalog.windows.compactMap { window in
-                guard let state = try? PairingStateStore.load(localWindowID: window.localWindowID),
-                      state.lastError != nil else { return nil }
-                return window.localWindowID
-            })
-        )
-    }
-
-    private func windowConnectionLabel(
-        for window: PrivateWindowCatalogEntry
-    ) -> String {
-        guard let phase = pairingPhases[window.localWindowID] else {
-            return window.spaceID == nil ? "設定を続ける" : "読み込んでいます…"
-        }
-        switch phase {
-        case .unpaired:
-            return "設定を続ける"
-        case .creatingInvitation:
-            return "招待を準備中"
-        case .awaitingInvitee:
-            return "相手の参加待ち"
-        case .joining:
-            return "招待を確認中"
-        case .claimingRecovery:
-            return "このiPhoneで使えるようにしています…"
-        case .pendingRecoveryApproval:
-            return "相手の承認を待っています"
-        case .recoveryAwaitingCompletion:
-            return "もうすぐ使えます"
-        case .pendingApproval:
-            return "相手の承認を待っています"
-        case .approvalRequired:
-            return "参加を承認してください"
-        case .awaitingCompletion:
-            return "相手の確認を待っています"
-        case .paired:
-            return "写真を届け合えます"
-        case .failed:
-            return "設定を終えられませんでした"
-        }
-    }
-
-    private func windowPrimaryStatusLabel(
-        for window: PrivateWindowCatalogEntry
-    ) -> String {
-        pairingPhases[window.localWindowID] == .unpaired
-            ? "設定を続ける"
-            : windowConnectionLabel(for: window)
-    }
-
-    private func reloadPreparationCounts() {
-        guard SharingAPIConfiguration.current.isShareExtensionHandoffAvailable else {
-            pendingPreparationCounts = [:]
-            return
-        }
-        do {
-            let admissions = try MomentShareHandoffStore.activeAdmissions()
-            let snapshot = try MomentShareHandoffStore.presentationSnapshot()
-            let onlyWindowID = windows.count == 1 ? windows[0].localWindowID : nil
-            var windowIDByDestinationKey: [String: String] = [:]
-            for admission in admissions {
-                guard let localWindowID = admission.localWindowID ?? onlyWindowID else {
-                    continue
-                }
-                windowIDByDestinationKey[admission.id.uuidString.lowercased()] = localWindowID
-            }
-
-            var nextCounts: [String: Int] = [:]
-            for status in snapshot.statuses {
-                guard let localWindowID = windowIDByDestinationKey[status.destinationKey]
-                else { continue }
-                nextCounts[localWindowID, default: 0] += 1
-            }
-            pendingPreparationCounts = nextCounts
-        } catch {
-            // Presentation-only failure is not evidence that a queued photo
-            // disappeared. Keep the last verified per-window counts.
-        }
-    }
-
-    @ViewBuilder
-    private var activeWindowDestination: some View {
-#if DEBUG
-        if CommandLine.arguments.contains("--window-list-ui-fixture"),
-           CommandLine.arguments.contains("--window-list-mixed") {
-            PairingView(fixtureModel: PairingViewModel.failedSetupFixture())
-        } else {
-            productionWindowDestination
-        }
-#else
-        productionWindowDestination
-#endif
-    }
-
-    @ViewBuilder
-    private var productionWindowDestination: some View {
-        if SharingAPIConfiguration.current.isMediaAvailable {
-            FamilyWindowView(
-                initialSetupPath: requestedSetupPath,
-                pendingMemorySourceDigest: $pendingFamilyMomentSourceDigest,
-                pendingNotificationRoute: $pendingFamilyNotificationRoute
-            )
-        } else if SharingAPIConfiguration.current.isAvailable {
-            PairingView(initialSetupPath: requestedSetupPath)
-        } else if SharingAPIConfiguration.current.isReviewPreviewEnabled {
-            SharingReviewPreviewView()
-        } else {
-            EmptyView()
-        }
     }
 }
 
-private struct SubtleWindowThumbnail: View {
-    let showsSetupMark: Bool
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.accentColor.opacity(0.035))
-
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.accentColor.opacity(0.72), lineWidth: 1.5)
-
-            Rectangle()
-                .fill(Color.accentColor.opacity(0.42))
-                .frame(width: 1)
-                .padding(.vertical, 3)
-
-            Rectangle()
-                .fill(Color.accentColor.opacity(0.42))
-                .frame(height: 1)
-                .padding(.horizontal, 3)
-
-            if showsSetupMark {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Color.accentColor, Color(.secondarySystemBackground))
-                    .offset(x: 14, y: 14)
-            }
-        }
-        .frame(width: 38, height: 38)
-    }
-}
 
 #if DEBUG
 /// The shipping list and navigation with an isolated public store. Private
@@ -4127,7 +3345,6 @@ struct WindowListNavigationFixture: View {
         endpoint: URL(string: "https://official.invalid/windows/cat-tabby-nap/catalog.json"),
         catID: "generated-tabby-nap"), initiallySubscribed: false)
     @State private var selectedTab = 2
-    @State private var opensActiveWindow = false
 
     private var sources: [PublicWindowPresentationSource] {
         var result = [PublicWindowPresentationSource(store: model.store,
@@ -4148,11 +3365,7 @@ struct WindowListNavigationFixture: View {
             Text("写真").tabItem { Label("写真", systemImage: "photo") }.tag(0)
             Text("アルバム").tabItem { Label("アルバム", systemImage: "photo.stack") }.tag(1)
             NavigationStack {
-                WindowListView(opensActiveWindow: $opensActiveWindow,
-                               pendingFamilyMomentSourceDigest: .constant(nil),
-                               pendingFamilyNotificationRoute: .constant(nil),
-                               supportsPrivateWindows: CommandLine.arguments.contains("--window-list-mixed") || CommandLine.arguments.contains("--window-list-empty-private"),
-                               officialStore: model.store,
+                WindowListView(officialStore: model.store,
                                refreshOfficialFeed: { try await model.refresh() },
                                previewOfficialFeed: { try await model.preview() },
                                publicWindows: sources)

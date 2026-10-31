@@ -264,11 +264,11 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             tab_body.index("if SharingAPIConfiguration.current.isReviewVisible"),
             tab_body.index("WindowListView("),
         )
-        destination = main_tab.split("private var activeWindowDestination", 1)[1].split(
-            "\n    }\n}", 1
-        )[0]
-        self.assertIn("isReviewPreviewEnabled", destination)
-        self.assertIn("EmptyView()", destination)
+        self.assertNotIn("private var activeWindowDestination", main_tab)
+        self.assertNotIn("FamilyWindowView(", main_tab)
+        self.assertNotIn("PairingView(", main_tab)
+        self.assertFalse((ROOT / "NekoWidget/Views/FamilyWindowView.swift").exists())
+        self.assertFalse((ROOT / "NekoWidget/Views/PairingView.swift").exists())
 
         share = (
             ROOT / "NekoWidgetShareExtension/ShareViewController.swift"
