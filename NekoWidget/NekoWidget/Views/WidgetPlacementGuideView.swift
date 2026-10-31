@@ -62,7 +62,7 @@ struct WidgetPlacementGuideView: View {
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .accessibilityIdentifier("widget-placement-steps")
 
-            Text("置くと、写真タブのこのカードは消えます。")
+            Text("置いたウィジェットを長押しして「この子のくもりのまど」を選ぶと、押して晴らす、きょうの1枚になります。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
