@@ -9,6 +9,7 @@ final class RecordExportController: ObservableObject {
     @Published var payload: PhotoMemoryNoteExportPayload?
     @Published private(set) var preparing = false
     @Published private(set) var error: String?
+    @Published private(set) var failureKind: PreservationExportFailure?
     private var operation: Task<Void, Never>?
     private var generation = UUID()
     private static var pendingCleanup: [UUID: PhotoMemoryNoteExportPayload] = [:]
@@ -18,7 +19,7 @@ final class RecordExportController: ObservableObject {
         verify: @escaping @MainActor () async throws -> Void = {}
     ) {
         guard !preparing, payload == nil, retryCleanup() else { return }
-        error = nil
+        error = nil; failureKind = nil
         preparing = true
         let token = UUID()
         generation = token
@@ -43,11 +44,13 @@ final class RecordExportController: ObservableObject {
                 prepared = nil
             } catch let pending as PhotoMemoryNoteExportCleanupPending {
                 for item in pending.payloads { remove(item) }
-                if generation == token { error = PhotoMemoryNoteExportError.cleanupFailed.errorDescription }
+                if generation == token { error = PhotoMemoryNoteExportError.cleanupFailed.errorDescription; failureKind = .cleanup }
             } catch is CancellationError {
+                if generation == token { failureKind = .cancelled }
                 // The immutable source and any other export remain unchanged.
             } catch {
                 if generation == token {
+                    self.failureKind = PreservationExportFailure.classify(error)
                     self.error = (error as? LocalizedError)?.errorDescription
                         ?? "ファイルを準備できませんでした。元の写真とメモはそのままです。"
                 }
@@ -56,10 +59,15 @@ final class RecordExportController: ObservableObject {
     }
 
     func cancelPreparation() {
+        if preparing { failureKind = .cancelled }
         generation = UUID()
         operation?.cancel()
         operation = nil
         preparing = false
+    }
+
+    func recordPreparationFailure(_ error: Error) {
+        failureKind = PreservationExportFailure.classify(error)
     }
 
     func invalidate() {
@@ -87,6 +95,7 @@ final class RecordExportController: ObservableObject {
         } catch {
             Self.pendingCleanup[value.id] = value
             self.error = PhotoMemoryNoteExportError.cleanupFailed.errorDescription
+            self.failureKind = .cleanup
         }
     }
 }

@@ -80,10 +80,11 @@ enum ManagedPreservationExport {
                                       using exporter: RecordExportController,
                                       validate: @escaping ManagedPreservationCoordinator.ExportValidation,
                                       reauthenticate: Reauthenticate? = nil,
-                                      progress: @escaping @Sendable (Int, Int) async -> Void) {
+                                      progress: @escaping @Sendable (Int, Int) async -> Void,
+                                      phase: @escaping @Sendable (PreservationExportPhase) async -> Void = { _ in }) {
         let completed = CompletedExport()
         exporter.prepare(build: {
-            let (payload, session) = try await archiveAll(client: client, reauthenticate: reauthenticate, progress: progress)
+            let (payload, session) = try await archiveAll(client: client, reauthenticate: reauthenticate, progress: progress, phase: phase)
             await completed.set(session)
             return payload
         }, verify: {
@@ -95,29 +96,29 @@ enum ManagedPreservationExport {
 
     private static func archiveAll(client: ManagedPreservationClient,
                                    reauthenticate: Reauthenticate?,
-                                   progress: @escaping @Sendable (Int, Int) async -> Void)
+                                   progress: @escaping @Sendable (Int, Int) async -> Void,
+                                   phase: @escaping @Sendable (PreservationExportPhase) async -> Void)
         async throws -> (PhotoMemoryNoteExportPayload, ExportSession) {
         let session = ExportSession(client: client, checkpoint: try await client.captureSessionCheckpoint(),
                                     reauthenticate: reauthenticate)
         try await session.atCompleteBoundary()
-        let first: ManagedPreservationExportPageFile
-        do { first = try await client.exportPage() }
-        catch ManagedPreservationError.exportUnsupported {
-            // Compatibility with deployed pilot servers predating export pages.
-            // Never use this fallback for throttling, malformed pages or partial data.
-            try await session.requireCurrent()
-            let (payload, generation, legacyCheckpoint) = try await archiveAllLegacy(client: client, progress: progress)
-            let legacySession = ExportSession(client: client, checkpoint: legacyCheckpoint, reauthenticate: nil)
-            await legacySession.bind(generation)
-            return (payload, legacySession)
-        }
+        // A flat-list fallback omits v4 fragments and cannot guarantee a complete export.
+        let expectedHead = try await client.automaticRecordHeadID()
+        let first = try await client.exportPage()
         await session.bind(first.generation)
         let pages = ExportPages(client: client, session: session, first: first)
         var payload: PhotoMemoryNoteExportPayload?
         do {
             try await session.requireCurrent()
-            let result = try await PhotoMemoryNoteExporter.createBulkArchive(recordCount: first.totalRecords,
-                fetch: { index in try await pages.next(index) }, progress: progress)
+            let result = try await ReadablePreservationExport.build(count: first.totalRecords, expectedHead: expectedHead,
+                fetch: { index in try await pages.next(index) }, progress: progress,
+                validateContents: { index, directory in try await ToolBackupValidation.validate(index, at: directory) },
+                renderContents: { tool, data, photos in
+                    if tool == "FamilyNotebook" {
+                        return try FamilyNotebookReadableText.render(FamilyNotebookBackup.decode(data).copies.map(\.snapshot))
+                    }
+                    return try ReadablePreservationText.render(data, title: ReadablePreservationText.title(tool), photoPaths: photos)
+                }, phase: phase)
             payload = result
             try await pages.finish()
             try await session.requireCurrent()
@@ -151,7 +152,7 @@ enum ManagedPreservationExport {
             self.client = client; self.session = session; self.page = first
             self.generation = first.generation; self.totalRecords = first.totalRecords
         }
-        func next(_ index: Int) async throws -> PhotoMemoryNoteBulkEntry {
+        func next(_ index: Int) async throws -> ManagedPreservationExportSnapshot {
             guard index == completed, completed < totalRecords else { throw ManagedPreservationError.invalidResponse }
             try await session.requireCurrent()
             var data = try page.nextRecordData()
@@ -168,12 +169,9 @@ enum ManagedPreservationExport {
             guard let data else { throw ManagedPreservationError.invalidResponse }
             let snapshot = try await client.decodeExportRecord(data)
             try await session.requireCurrent()
-            let document = try snapshot.document.validated()
+            _ = try snapshot.document.validated()
             completed += 1
-            return PhotoMemoryNoteBulkEntry(recordID: snapshot.record.id, revision: snapshot.record.revision,
-                text: document.text, capturedAt: document.capturedAt, writtenAt: document.writtenAt,
-                updatedAt: document.updatedAt, catNames: document.catNames, jpegData: snapshot.jpegData, weight: document.weight,
-                toolBackupJSON: try document.toolBackup.map { try JSONEncoder().encode($0) })
+            return snapshot
         }
         func finish() async throws {
             try await session.requireCurrent()
@@ -305,6 +303,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var usageLoading = false
     @Published private(set) var usageMessage: String?
     @Published private(set) var exportProgress: (completed: Int, total: Int)?
+    @Published private(set) var exportPhase: PreservationExportPhase = .reading
     @Published private(set) var exportAuthenticationNeeded = false
     @Published private(set) var preparedExportSignIn: ManagedPreservationChallenge?
     @Published var consentToNewSave = false
@@ -830,9 +829,11 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
+    var canExportAllCopies: Bool { isSignedIn && !isBusy }
+
     func exportAllCopies(using exporter: RecordExportController) {
-        guard isSignedIn, !isBusy, canExport else { return }
-        run { ticket in
+        guard isSignedIn, !isBusy, !exporter.preparing, exporter.payload == nil else { return }
+        run(onFailure: { exporter.recordPreparationFailure($0) }) { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
             self.usageTask?.cancel(); self.usageTask = nil; self.usageRequestID = UUID()
             self.membershipTask?.cancel(); self.membershipTask = nil; self.membershipRequestID = UUID()
@@ -853,6 +854,11 @@ final class ManagedPreservationCoordinator: ObservableObject {
                         guard let self, self.viewEpoch == ticket,
                               self.authenticatedOwnerID == owner else { return }
                         self.exportProgress = (completed, total)
+                    }
+                }, phase: { [weak self] phase in
+                    await MainActor.run {
+                        guard let self, self.viewEpoch == ticket, self.authenticatedOwnerID == owner else { return }
+                        self.exportPhase = phase
                     }
                 })
         }
@@ -1228,7 +1234,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
         }
     }
 
-    private func run(authenticatedOperation: Bool = true, _ operation: @escaping @MainActor (UUID) async throws -> Void) {
+    private func run(authenticatedOperation: Bool = true, onFailure: (@MainActor (Error) -> Void)? = nil,
+                     _ operation: @escaping @MainActor (UUID) async throws -> Void) {
         guard isEnabled, !isBusy else { return }
         let ticket = viewEpoch
         isBusy = true; errorMessage = nil; statusMessage = nil
@@ -1244,6 +1251,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
             }
             catch {
                 guard self.viewEpoch == ticket else { return }
+                onFailure?(error)
                 let known = error as? ManagedPreservationError
                 if known == .authenticationRequired || known == .staleSession {
                     self.clearAccountPresentation()

@@ -3,6 +3,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Readable automatic-save export: actual graph, hashes, chunk reassembly and
+# ZIP64 writer with synthetic records only; no service or lease is contacted.
+python3 ci/prepare-readable-export-check.py "$RUNNER_TEMP/readable-export-models.swift"
+xcrun swiftc -O -parse-as-library \
+  NekoWidget/Services/PhotoMemoryNoteStore.swift \
+  NekoWidget/Services/PhotoMemoryNoteExporter.swift \
+  NekoWidget/Services/FamilyNotebookCore.swift \
+  "$RUNNER_TEMP/readable-export-models.swift" \
+  NekoWidget/Services/ReadablePreservationExport.swift \
+  ci/verify-readable-export.swift -o "$RUNNER_TEMP/verify-readable-export"
+READABLE_EXPORT_SAMPLE="$RUNNER_TEMP/readable-export-synthetic.zip" "$RUNNER_TEMP/verify-readable-export"
+
+
 # Public programme boundaries: local publisher/Worker and native metadata.
 # No UI suite, remote calls or publication.
 node --test ../OfficialWindowService/test/program.test.js ../OfficialWindowService/test/black-cat-days.test.js ../OfficialWindowService/test/program-black-cat.test.js ../OfficialWindowService/test/black-cat-loop.test.js ../OfficialWindowService/test/black-cat-loop-monitor.test.js

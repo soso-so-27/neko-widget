@@ -19,7 +19,7 @@ struct PhotoMemoryNoteBulkEntry: Sendable {
 struct PhotoMemoryNoteExportPayload: Identifiable, Sendable {
     let id: UUID
     let fileURL: URL
-    fileprivate let directory: URL
+    let directory: URL
 
     /// Call after the system share sheet has finished using its copy.
     /// Only this export's UUID directory is removed; other exports are untouched.
@@ -384,7 +384,7 @@ enum PhotoMemoryNoteExporter {
         }
     }
 
-    private static func archiveFiles(
+    static func archiveFiles(
         text: String,
         capturedAt: Date?,
         writtenAt: Date?,
@@ -573,7 +573,7 @@ enum PhotoMemoryNoteExporter {
 
 /// Stored ZIP64 entries are written directly to a protected temporary file.
 /// The central directory keeps only filenames, sizes and offsets in memory.
-private final class StoredZIP64Writer {
+final class StoredZIP64Writer {
     private struct Entry {
         let name: Data
         let checksum: UInt32
