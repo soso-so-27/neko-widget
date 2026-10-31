@@ -3165,12 +3165,12 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoDeletionMessage(_ item: MomentInboxItem) -> String {
         if model.isSavedMemory(item) {
-            return "このiPhoneから削除します（元に戻せません）。自分のお気に入りは残ります。"
+            return "このiPhoneから削除します（元に戻せません）。相手の画面からは消えません。"
         }
         if model.hasImportedMemory(item) {
-            return "このiPhoneから削除します（元に戻せません）。写真アプリに保存した写真は残ります。"
+            return "このiPhoneから削除します（元に戻せません）。相手の画面からは消えません。"
         }
-        return "このiPhoneから削除します（元に戻せません）。"
+        return "このiPhoneから削除します（元に戻せません）。相手の画面からは消えません。"
     }
 
     private func safetyHiddenExplanation(_ item: MomentInboxItem) -> String {
