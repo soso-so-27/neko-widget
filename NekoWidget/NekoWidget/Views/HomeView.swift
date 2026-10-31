@@ -772,7 +772,7 @@ struct HomeView: View {
             ContentUnavailableView {
                 Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")
             } description: {
-                Text("写真アプリに猫の写真を入れるか、写真へのアクセスを確かめてください。")
+                Text("写真へのアクセスを確かめてください。")
             } actions: {
                 VStack(spacing: 10) {
                     if isLimitedAccess {
@@ -865,21 +865,10 @@ struct PhotoShuffleGuideView: View {
                         GuideStep(number: 1, title: "ロック画面を長押し", detail: "「＋」をタップします。")
                         GuideStep(number: 2, title: "「写真シャッフル」を選ぶ", detail: "上部のカテゴリから開きます。")
                         GuideStep(number: 3, title: "「アルバム」を選ぶ", detail: "写真アプリの「うちの子」アルバムを選びます。")
-                        GuideStep(number: 4, title: "頻度を「ロック時」に", detail: "ロック解除のたびに別の1枚を楽しめます。", isLast: true)
+                        GuideStep(number: 4, title: "頻度を「ロック時」に", detail: "ロック解除のたびに写真が変わります。", isLast: true)
                     }
                     .padding(.horizontal, 16)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-
-                    Label {
-                        Text("写真シャッフルは、設定したときの写真を使います。新しい写真を出すには、壁紙でアルバムを選び直してください。")
-                            .font(.subheadline)
-                    } icon: {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
-                    }
-                    .padding(16)
-                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
-
                 }
                 .padding(20)
             }

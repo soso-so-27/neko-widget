@@ -44,8 +44,6 @@ struct WindowSupportResumeView: View {
                             .accessibilityIdentifier("window-support-restore")
                     }
                     if !model.grantsAccess {
-                        Text("届いている写真や入力中の内容は、そのまま残ります。")
-                            .font(.footnote).foregroundStyle(.secondary)
                         Button("更新") { Task { await model.refresh() } }
                             .disabled(model.isWorking)
                             .accessibilityIdentifier("window-support-refresh")
@@ -83,7 +81,7 @@ struct WindowSupportResumeView: View {
             .accessibilityIdentifier("window-support-confirm-approval")
             Button("今はしない", role: .cancel) { approvalID = nil }
         } message: {
-            Text("あなたへの請求はありません。相手が最後に「このまどで続ける」を押すと、また写真を届けられます。")
+            Text("あなたへの請求はありません。")
         }
         .sheet(isPresented: $showsRestore, onDismiss: { Task { await model.refresh() } }) {
             if !model.isPreview { MembershipRestoreSheet() }
@@ -135,7 +133,7 @@ struct WindowSupportResumeView: View {
             } else {
                 Text("相手の確認を待っています").font(.headline)
                     .accessibilityIdentifier("window-support-pending")
-                Text("まどを作った人に、5分以内に同じまどの設定で「このまどを続ける」を開いてもらってください。")
+                Text("まどを作った人に、5分以内に「このまどを続ける」を開いてもらってください。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 if model.isPreview {
                     Button("相手の承認を再現") { Task { await model.simulateApprovalForPreview() } }
@@ -145,7 +143,7 @@ struct WindowSupportResumeView: View {
         } else if let request = model.pendingApproval {
             Text("相手から、このまどを続けるお願いが届いています").font(.headline)
                 .accessibilityIdentifier("window-support-approval-needed")
-            Text("相手のPlusで続けられます。あなたへの請求はありません。")
+            Text("相手のPlusで続けられます。")
                 .font(.subheadline).foregroundStyle(.secondary)
             Button("内容を見る") {
                 approvalID = request.id

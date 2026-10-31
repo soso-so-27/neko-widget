@@ -49,7 +49,7 @@ struct BlockedSharingView: View {
                         .accessibilityIdentifier("blocked-sharing-start-new")
                     } else {
                         if entry.phase == .pending {
-                            Text("ブロックが済んだか確かめられていません。解除するときは、下の「ブロックを解除」を押してください。")
+                            Text("ブロックが済んだか確かめられていません。")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         Button("ブロックを解除") { confirmationTarget = entry }
@@ -58,11 +58,6 @@ struct BlockedSharingView: View {
                 }
                 .disabled(isWorking)
             }
-            Section {
-                Text("ブロックを解除しても、前のまどは戻りません。もう一度届け合うには、新しいまどを作ります。")
-                Text("ほかのiPhoneや、前のバージョンでブロックした相手は表示されません。")
-            }
-            .font(.footnote).foregroundStyle(.secondary)
         }
         .navigationTitle("ブロックした相手")
         .navigationBarTitleDisplayMode(.inline)
@@ -84,7 +79,7 @@ struct BlockedSharingView: View {
             }
             Button("キャンセル", role: .cancel) { confirmationTarget = nil }
         } message: { _ in
-            Text("前のまどや削除した写真は戻りません。また届け合うときは、新しいまどを作って招待してください。")
+            Text("前のまどや削除した写真は戻りません。")
         }
         .navigationDestination(isPresented: $showsNewWindow) {
             PairingView(initialSetupPath: .create)
@@ -128,11 +123,11 @@ struct BlockedSharingView: View {
                 NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
             }
             entries = try MomentBlockWithdrawalStore.entries(installationMarker: marker)
-            completionMessage = "ブロックを解除しました。また届け合うときは、新しいまどを作ってください。"
+            completionMessage = "ブロックを解除しました。"
         } catch {
             // Keep the capability and request ID after any unknown result so
             // a retry can finish the same withdrawal without claiming success.
-            errorMessage = "ブロックを解除できたか確かめられませんでした。インターネットにつながるところで、もう一度「ブロックを解除」を押してください。"
+            errorMessage = "ブロックを解除できたか確かめられませんでした。インターネットにつながるところで、もう一度お試しください。"
         }
         isWorking = false
     }

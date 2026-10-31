@@ -67,8 +67,6 @@ struct MomentDeliveryComposer: View {
                                             in: RoundedRectangle(cornerRadius: 16))
                                 .id("composer-note-input")
                                 .disabled(isSending)
-                            Text("届けるメモは100文字・改行2回まで。自分だけのメモは変わりません。")
-                                .font(.caption).foregroundStyle(.secondary)
                         } else if caption.isEmpty,
                                   let personalMemo, !personalMemo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             Button {
@@ -127,9 +125,6 @@ struct MomentDeliveryComposer: View {
                             .accessibilityIdentifier("photo-window-change-destination")
                         }
                     }
-                    Text("写真とメモがこのまどに届き、あとから2人で見返せます。")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     if isEditingCaption {
                         Button {
                             finishCaptionEditing()
@@ -197,13 +192,13 @@ struct MomentDeliveryComposer: View {
             .alert("届ける写真について", isPresented: $showsSharingInformation) {
                 Button("閉じる", role: .cancel) {}
             } message: {
-                Text("写真は位置情報を消してメモと一緒に届き、ホーム画面の写真（ウィジェット）にも出ます。まどを終了すると開けなくなるので、残したいものは先に書き出してください。")
+                Text("写真は位置情報を消して、メモと一緒に届きます。ウィジェットにも出ます。")
             }
             .alert("送るメモを破棄しますか？", isPresented: $showsDiscardConfirmation) {
                 Button("破棄してやめる", role: .destructive, action: onCancel)
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("この画面の入力を破棄します。元の自分のメモは残ります。")
+                Text("この画面で入力したメモは消えます。")
             }
             .onChange(of: isCaptionFocused) { _, focused in
                 // Interactive keyboard dismissal also finishes editing.

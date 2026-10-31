@@ -129,7 +129,7 @@ struct InitialScanView: View {
                         .font(.title2.bold())
                         .multilineTextAlignment(.center)
 
-                    Text("写真を探し終えました。猫が大きく写った写真を写真アプリに入れるか、写真へのアクセスの範囲を確かめて、もう一度探してください。")
+                    Text("写真へのアクセスを確かめて、もう一度探してください。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -180,11 +180,7 @@ struct InitialScanView: View {
 
             if widgetGuideAction != nil, scan.displayedCatCount > 0 {
                 Label {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("ホーム画面に猫写真を").font(.headline)
-                        Text("ウィジェットを置くと、見つけた写真が時間とともに入れ替わります。")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
+                    Text("ホーム画面に猫写真を").font(.headline)
                 } icon: { Image(systemName: "rectangle.on.rectangle") }
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
@@ -202,14 +198,11 @@ struct InitialScanView: View {
                     )
                     Text("新しい写真 \(quickScanned.formatted()) / \(quickTotal.formatted())枚を調べています")
                         .font(.caption.monospacedDigit())
-                    Text("今見つかっている数です。すべて調べ終えると変わることがあります。")
-                        .font(.caption)
-                        .multilineTextAlignment(.center)
                 }
                 .foregroundStyle(.secondary)
             } else if scan.hasDeferredAssets {
                 Label(
-                    "このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度調べられます。",
+                    "読み込めなかった\(scan.deferredAssets.formatted())枚は、設定の「写真の表示と整理」からもう一度探せます。",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
@@ -271,7 +264,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.isPreparingGroupedAlbums {
-                Text("人といっしょ・おでかけなどに必要な情報を端末内で確認しています。確認できた写真から順に追加します。")
+                Text("「人といっしょ」「おでかけ」などのアルバムを作っています。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -289,12 +282,6 @@ struct ScanProgressCard: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-
-                if scan.isPreparingGroupedAlbums {
-                    Text("写真を探すのは、アプリを開いている間に進みます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             } else if let lastScannedAt = scan.lastScannedAt {
                 Label(
                     lastScannedAt.formatted(.relative(presentation: .named)),
@@ -305,7 +292,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.hasFinalResult, scan.hasDeferredAssets {
-                Text("このiPhoneで読み込めなかった\(scan.deferredAssets.formatted())枚は、まだ調べていません。設定の「写真の表示と整理」→「最初から探し直す」で、もう一度調べられます。")
+                Text("読み込めなかった写真が\(scan.deferredAssets.formatted())枚あります。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

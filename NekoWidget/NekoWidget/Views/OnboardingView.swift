@@ -429,7 +429,7 @@ private struct OnboardingScanPage: View {
                 .padding(.top, 28)
 
                 if isFinalZero {
-                    Text("猫が大きく写った写真を写真アプリに入れるか、写真へのアクセスを確かめてから、もう一度探してください。")
+                    Text("写真へのアクセスを確かめて、もう一度探してください。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     VStack(spacing: 10) {
@@ -576,7 +576,7 @@ private struct OnboardingPlusOfferPage: View {
                 .font(.body)
                 .frame(maxWidth: 440, alignment: .leading)
 
-                Text("Plusにしなくても、見つけた写真の一覧・お気に入り・招待されたまどは、このまま無料で使えます。")
+                Text("Plusにしなくても、このまま無料で使えます。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -633,7 +633,7 @@ struct OnboardingInvitationHelpView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("届いた招待リンクを開いてください", systemImage: "link")
                         .font(.headline)
-                    Text("メッセージやLINEで届いた「nekonomado.com/join」で始まるリンクを開くと、参加の画面が出ます。")
+                    Text("「nekonomado.com/join」で始まるリンクを開くと、参加できます。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
