@@ -920,8 +920,8 @@ struct MainTabView: View {
             await seasonalMovieArchive.load()
         }
         .task(id: scenePhase) {
-            guard scenePhase == .active,
-                  personalArchiveStore != nil || PersonalArchiveStore.isConfigured else { return }
+            // The old iCloud copies are retired; only test fixtures still reach them.
+            guard scenePhase == .active, personalArchiveStore != nil else { return }
             let archiveStore = personalArchiveStore ?? .shared
             // Only explicitly enrolled records can have pending reflections.
             guard let account = try? await archiveStore.accountContext() else { return }

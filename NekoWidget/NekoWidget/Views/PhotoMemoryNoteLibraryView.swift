@@ -213,10 +213,8 @@ struct PhotoMemoryNotesListView: View {
         self.registeredProfileIdentifiers = registeredProfileIdentifiers
         self.currentProfileNames = currentProfileNames
         self.readingPositionKey = readingPositionKey
-        // The old iCloud copies are read in internal builds only; 1.0 starts
-        // after them, so no one else has any to read.
-        let enabled = archiveStore != nil || (PersonalArchiveStore.isConfigured && InternalBuildPresentationAvailability.isAvailable)
-        self.archiveEnabled = enabled
+        // The old iCloud copies are retired; only test fixtures still open them.
+        self.archiveEnabled = archiveStore != nil
         self.archiveStore = archiveStore ?? .shared
         self.openPhotos = openPhotos
         self.isEmbedded = isEmbedded
@@ -592,7 +590,8 @@ struct PersonalArchivePhotosSection: View {
     init(photos: [PhotoPresentation], archiveStore: PersonalArchiveStore? = nil,
          store: PhotoMemoryNoteStore = .shared) {
         self.photos = photos
-        let canRead = archiveStore != nil || PersonalArchiveStore.isConfigured
+        // The old iCloud copies are retired; only test fixtures still open them.
+        let canRead = archiveStore != nil
         let resolvedStore = archiveStore ?? .shared
         self.enabled = canRead
         self.archiveStore = resolvedStore
@@ -752,7 +751,8 @@ struct PhotoMemoryNoteDetailView: View {
         self.recordID = recordID
         self.photos = photos
         self.store = store
-        self.archiveEnabled = archiveStore != nil || (PersonalArchiveStore.isConfigured && InternalBuildPresentationAvailability.isAvailable)
+        // The old iCloud copies are retired; only test fixtures still open them.
+        self.archiveEnabled = archiveStore != nil
         self.archiveStore = archiveStore ?? .shared
     }
 

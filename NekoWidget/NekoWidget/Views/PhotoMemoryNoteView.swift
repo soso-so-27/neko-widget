@@ -681,7 +681,8 @@ struct PhotoMemoryNoteEditor: View {
     }
 
     private func prepareEnrollment(for local: PhotoMemoryNoteRecord) async {
-        guard PersonalArchiveStore.isConfigured || archiveStore !== PersonalArchiveStore.shared else { return }
+        // The old iCloud copies are retired; only test fixtures still offer them.
+        guard archiveStore !== PersonalArchiveStore.shared else { return }
         do {
             let coordinator = PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
             guard try await coordinator.syncStatus(photoIdentifier: local.photoIdentifier) == .localOnly,
