@@ -598,7 +598,8 @@ struct CatProfileConfirmedPhotosView: View {
         .navigationTitle("\(profile.displayName)の写真")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .top) {
-            if albumsDestination != nil && !isSelecting {
+            // 「この子のアルバム」 left the 1.0 app (10/31); the older build keeps it.
+            if albumsDestination != nil && !isSelecting && !Version1.isOn {
                 Button {
                     showsAlbums = true
                 } label: {

@@ -136,7 +136,7 @@ struct OfficialWindowStatusPresentation {
         case .checking: "少しお待ちください。"
         case .paused: "また届くようになったら、ここで見られます。"
         case .verificationExpired: "「もう一度確認」を押してください。"
-        case .photosExpired: "新しい写真を確かめるか、ほかのまどを探してみてください。"
+        case .photosExpired: "少し待ってから、もう一度お試しください。"
         case .failed, .imageUnavailable: "少し待ってから、もう一度お試しください。"
         case .noPublication: "新しい写真が出たら、このまどに届きます。"
         case .notChecked: "受け取るかどうかは、見てから決められます。"

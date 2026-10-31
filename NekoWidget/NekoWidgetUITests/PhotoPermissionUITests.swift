@@ -4132,7 +4132,8 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal() {
+    func testCatPhotoAlbumsLargeTextEmptyFilterAndDismissal() throws {
+        throw XCTSkip("「この子のアルバム」は 10/31 に外した。")
         let app = XCUIApplication()
         app.launchArguments = ["--app-store-screenshot-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
