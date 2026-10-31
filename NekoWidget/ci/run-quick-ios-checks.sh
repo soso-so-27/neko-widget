@@ -33,11 +33,23 @@ for row in rows:
     assert settings['SHARING_API_BASE_URL'] == 'https://neko-window-sharing-staging.nakanishisoya.workers.dev'
 print('PASS resolved owner build settings before compilation')
 PY
-python3 ci/preflight-group-share-settings.py "$RUNNER_TEMP/owner-internal-build-settings.json" --owner-internal
+owner_settings_paths=("$RUNNER_TEMP/owner-internal-build-settings.json")
+production_settings_paths=("$RUNNER_TEMP/production-group-share-settings.json")
+for target in NekoWidgetShareExtension NekoWidgetWidgetExtension; do
+  owner_output="$RUNNER_TEMP/owner-$target-settings.json"
+  production_output="$RUNNER_TEMP/production-$target-settings.json"
+  xcodebuild -project NekoWidget.xcodeproj -target "$target" -configuration Release \
+    -sdk iphonesimulator "${owner_build_settings[@]}" -showBuildSettings -json > "$owner_output"
+  xcodebuild -project NekoWidget.xcodeproj -target "$target" -configuration Release \
+    -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json > "$production_output"
+  owner_settings_paths+=("$owner_output")
+  production_settings_paths+=("$production_output")
+done
+python3 ci/preflight-group-share-settings.py "${owner_settings_paths[@]}" --owner-internal
 xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Release \
   -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json \
   > "$RUNNER_TEMP/production-group-share-settings.json"
-python3 ci/preflight-group-share-settings.py "$RUNNER_TEMP/production-group-share-settings.json"
+python3 ci/preflight-group-share-settings.py "${production_settings_paths[@]}"
 
 # CoreSimulator installation can hang after a successful build. Bound the
 # simulator commands so an environment stall cannot consume the entire job.

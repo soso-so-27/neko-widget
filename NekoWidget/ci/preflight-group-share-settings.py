@@ -62,8 +62,8 @@ def verify(rows, owner_internal=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("settings", type=Path)
+    parser.add_argument("settings", type=Path, nargs="+")
     parser.add_argument("--owner-internal", action="store_true")
     args = parser.parse_args()
-    verify(json.loads(args.settings.read_text()), args.owner_internal)
+    verify([row for path in args.settings for row in json.loads(path.read_text())], args.owner_internal)
     print("PASS source photo/report configuration before compilation (not signing verification)")
