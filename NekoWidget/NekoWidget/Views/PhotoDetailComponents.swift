@@ -415,3 +415,10 @@ struct MomentZoomablePhoto: UIViewRepresentable {
         }
     }
 }
+
+enum MomentPhotoThumbnailLayout {
+    static func contentMode(for size: CGSize) -> ContentMode {
+        let ratio = size.width / max(1, size.height)
+        return ratio >= 2.5 || ratio <= 0.4 ? .fit : .fill
+    }
+}

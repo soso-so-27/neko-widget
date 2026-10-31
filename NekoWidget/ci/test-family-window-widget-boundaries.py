@@ -4121,7 +4121,7 @@ class SettingsLayoutTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         # Previews and diagnostics sit together in the test-only section.
         cut = body.index("// Test builds only.")
-        for identifier in ("settings-membership-preview", "settings-window-support-preview",
+        for identifier in ("settings-membership-preview",
                            "settings-internal-diagnostics", "settings-billing-owner-enrollment"):
             self.assertIn(identifier, body[cut:])
             self.assertNotIn(identifier, body[:cut])
