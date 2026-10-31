@@ -174,42 +174,6 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
     }
 }
 
-/// Public presentation metadata, fetched separately from the v1 photo catalog.
-/// Only the current week and two preceding Mondays can name archive channels.
-struct OfficialWeeklyThemeIndex: Codable, Equatable, Sendable {
-    struct Theme: Codable, Equatable, Sendable {
-        let name: String
-        let weekStart: String
-        let channelID: String
-
-    }
-    let schemaVersion: Int
-    let generatedAt: Date
-    let validUntil: Date
-    let themes: [Theme]
-
-    func validate(at now: Date) throws {
-        guard schemaVersion == 1, generatedAt <= now.addingTimeInterval(300), validUntil > now,
-              validUntil > generatedAt, validUntil.timeIntervalSince(generatedAt) <= OfficialWindowCatalog.maximumLifetime,
-              (1...3).contains(themes.count) else { throw OfficialWindowError.invalidCatalog }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3_600)!
-        let day = calendar.startOfDay(for: now)
-        let monday = calendar.date(byAdding: .day, value: -((calendar.component(.weekday, from: day) + 5) % 7), to: day)!
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = calendar; formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
-        for (index, theme) in themes.enumerated() {
-            let date = formatter.string(from: calendar.date(byAdding: .day, value: -7 * index, to: monday)!)
-            guard theme.weekStart == date, !theme.name.isEmpty, theme.name.count <= 30,
-                  theme.name == theme.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !theme.name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || $0.value == 0x2028 || $0.value == 0x2029 }),
-                  theme.channelID == (index == 0 ? "weekly-theme" : "weekly-theme-" + date.replacingOccurrences(of: "-", with: ""))
-            else { throw OfficialWindowError.invalidCatalog }
-        }
-    }
-}
-
 enum OfficialWindowError: Error {
     case notConfigured, unavailableStorage, invalidCatalog, invalidImage, invalidResponse, subscriptionChanged
 }

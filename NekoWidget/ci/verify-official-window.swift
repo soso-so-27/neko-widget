@@ -633,35 +633,6 @@ struct OfficialWindowChecks {
         rejects("old cycle cannot replace the current daily edition") { try loopStore.accept(firstCycle, for: request) }
         check(nextCycle.widgetPhotos(at: nextCycle.validUntil, blackCatDailyEnabled: true).isEmpty,
               "Repeating delivery weakened the midnight Widget deadline")
-        let monday = calendar.date(byAdding: .day, value: -((calendar.component(.weekday, from: day) + 5) % 7), to: day)!
-        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone; formatter.dateFormat = "yyyy-MM-dd"
-        let themes = (0..<3).map { i -> OfficialWeeklyThemeIndex.Theme in
-            let date = formatter.string(from: calendar.date(byAdding: .day, value: -7 * i, to: monday)!)
-            return .init(name: ["あくび", "おなか", "箱"][i], weekStart: date,
-                channelID: i == 0 ? "weekly-theme" : "weekly-theme-" + date.replacingOccurrences(of: "-", with: ""))
-        }
-        let index = OfficialWeeklyThemeIndex(schemaVersion: 1, generatedAt: now, validUntil: now.addingTimeInterval(3600), themes: themes)
-        try index.validate(at: now)
-        rejects("weekly metadata lease expired") { try index.validate(at: index.validUntil) }
-        let wrong = OfficialWeeklyThemeIndex(schemaVersion: 1, generatedAt: now, validUntil: index.validUntil,
-            themes: [.init(name: "猫", weekStart: themes[0].weekStart, channelID: "private-window")])
-        rejects("metadata selected a private window") { try wrong.validate(at: now) }
-        let weekly = PublicWindowDefinition(id: "weekly-theme", displayName: "今週のテーマ", subtitle: "以前のまど",
-            endpoint: endpoint.deletingLastPathComponent().appendingPathComponent("windows/weekly-theme/catalog.json"))
-        check(themes[1].definition(relativeTo: weekly)?.endpoint?.host == endpoint.host, "Theme archive escaped the configured origin")
-        check(themes[1].definition(relativeTo: weekly)?.endpoint?.lastPathComponent == "catalog.json", "Theme archive lost catalog path")
-        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-        PreviewURLProtocol.configure(["themes.json": .init(data: try encoder.encode(index))])
-        let store = OfficialWindowStore.forWindow(weekly, containerURL: root)
-        let client = OfficialWindowClient(previewEndpoint: endpoint, protocolClasses: [PreviewURLProtocol.self])
-        let fetched = try await client.weeklyThemes(store: store)
-        check(fetched.themes == themes, "Weekly names/history did not reach the adapter")
-        check(PreviewURLProtocol.requests() == ["themes.json"], "Metadata fetched a photo or credential")
-        check(!store.snapshot().isSubscribed, "Metadata browsing created a subscription")
-        PreviewURLProtocol.configure(["themes.json": .init(data: try encoder.encode(wrong))])
-        do { _ = try await client.weeklyThemes(store: store); fatalError("Unsafe weekly metadata accepted") }
-        catch { assertions += 1 }
     }
 
     static func verifyPreview(catalog: OfficialWindowCatalog, photo: OfficialCatPhoto, image: Data,
