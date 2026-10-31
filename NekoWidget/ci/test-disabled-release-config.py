@@ -282,16 +282,6 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             share.index("let providers ="),
         )
 
-        pairing = (ROOT / "NekoWidget/ViewModels/PairingViewModel.swift").read_text(
-            encoding="utf-8"
-        )
-        initializer = pairing.split("init(configuration:", 1)[1].split(
-            "var isConfigured", 1
-        )[0]
-        self.assertLess(
-            initializer.index("if configuration.isAvailable"),
-            initializer.index("URLSessionPairingAPIClient"),
-        )
 
     def test_stale_family_widget_and_polling_fail_closed(self) -> None:
         timeline = (

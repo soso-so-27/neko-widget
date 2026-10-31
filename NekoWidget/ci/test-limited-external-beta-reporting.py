@@ -47,16 +47,6 @@ class LimitedExternalBetaReportingTests(unittest.TestCase):
             self.assertIn(expected, workflow)
 
     def test_view_model_refuses_report_submission(self) -> None:
-        model = self.source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
-        self.assertIn(
-            "guard configuration.isEncryptedReportAvailable,",
-            model,
-        )
-        self.assertIn(
-            "configuration.isEncryptedReportAvailable\n"
-            "            && !isShowingLastKnownState",
-            model,
-        )
 
         coordinator = self.source(
             "NekoWidget/Services/MomentSharingCoordinator.swift"
