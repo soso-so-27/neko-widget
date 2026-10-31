@@ -186,7 +186,8 @@ def main() -> None:
                     member = archive.getmember("NekoWidget.xcarchive/Products/Applications/NekoWidget.app/" + relative)
                     if not member.isfile() or member.size > MAXIMUM_JSON_BYTES:
                         fail("Report archive Info.plist invalid.")
-                    verify_info(plistlib.loads(archive.extractfile(member).read()), report_settings, extension=extension)
+                    verify_info(plistlib.loads(archive.extractfile(member).read()), report_settings, extension=extension,
+                                share_extension=relative == "PlugIns/NekoWidgetShareExtension.appex/Info.plist")
                 verify_ipa(args.external_ipa, report_settings)
             except (ValueError, KeyError, plistlib.InvalidFileException) as error:
                 fail("Internal report artifact boundary invalid: " + str(error))
