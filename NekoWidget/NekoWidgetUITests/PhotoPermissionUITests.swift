@@ -1842,6 +1842,8 @@ final class SoloMemoriesUITests: XCTestCase {
         let account = app.buttons["app-record-account"]
         for _ in 0..<4 where !account.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(account.waitForExistence(timeout: 5), app.debugDescription)
+        // Everything saved comes out as one file from the same screen.
+        XCTAssertTrue(app.buttons["app-record-export"].waitForExistence(timeout: 5), app.debugDescription)
         if archiveListingConflict {
             XCTAssertFalse(app.staticTexts["記録が更新されています。最新の内容を読み込み直してください。"].exists)
         }
