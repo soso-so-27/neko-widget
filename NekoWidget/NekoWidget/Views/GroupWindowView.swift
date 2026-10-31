@@ -1474,6 +1474,10 @@ struct GroupWindowMembersScreen: View {
 final class GroupWindowOpenInbox: ObservableObject {
     static let shared = GroupWindowOpenInbox()
     @Published private(set) var pendingWindowID: String?
+    @Published private(set) var showsCreatePrompt = false
+
+    func showCreateFromShare() { pendingWindowID = nil; showsCreatePrompt = true }
+    func dismissCreatePrompt() { showsCreatePrompt = false }
 
     func open(windowID: String) { pendingWindowID = windowID }
     func consume() { pendingWindowID = nil }
@@ -1680,9 +1684,15 @@ struct GroupWindowListSection: View {
                     NavigationLink {
                         GroupWindowCreateScreen(client: model.client)
                     } label: {
-                        Image(systemName: "plus")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 44, height: 32)
+                        if openInbox.showsCreatePrompt {
+                            Label("まどを作る", systemImage: "plus")
+                                .font(.body.weight(.semibold))
+                                .frame(minHeight: 44)
+                        } else {
+                            Image(systemName: "plus")
+                                .font(.body.weight(.semibold))
+                                .frame(width: 44, height: 32)
+                        }
                     }
                     .disabled(model.isWorking)
                     .accessibilityLabel("まどを作る")

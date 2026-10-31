@@ -15,7 +15,7 @@ protocol GroupBillingSigner: Sendable {
 
 struct GroupHostBillingSigner: GroupBillingSigner {
     static let path = "/v3/group-windows/billing-connection"
-#if os(iOS)
+#if os(iOS) && !NEKO_SHARE_EXTENSION
     private func credential(endpoint: URL) throws -> BillingCredential {
         let config = BillingClientConfiguration.current
         let sharing = SharingAPIConfiguration.current
@@ -33,7 +33,7 @@ struct GroupHostBillingSigner: GroupBillingSigner {
     }
 #endif
     func accountID(endpoint: URL) throws -> String {
-#if os(iOS)
+#if os(iOS) && !NEKO_SHARE_EXTENSION
         guard let account = try credential(endpoint: endpoint).billingAccountID else { throw GroupClientError.authenticationRequired }
         return account
 #else
@@ -41,7 +41,7 @@ struct GroupHostBillingSigner: GroupBillingSigner {
 #endif
     }
     func headers(endpoint: URL, accountID: String, body: Data) throws -> [String: String] {
-#if os(iOS)
+#if os(iOS) && !NEKO_SHARE_EXTENSION
         let value = try credential(endpoint: endpoint)
         guard value.billingAccountID == accountID, let key = value.billingKeyID else { throw GroupClientError.authenticationRequired }
         let timestamp = Int(Date().timeIntervalSince1970), nonce = BillingProtocolCodec.randomNonce()

@@ -419,16 +419,11 @@ def validate_share_extension_boundary(
     share_info: dict,
     failures: list[str],
 ) -> tuple[bool, bool]:
-    """Keep enabled-mode Share Extension capture-only and installation-bound.
+    """Legacy pair credentials never authorize delivery from an extension.
 
-    The disabled archive separately uses a zero-item activation rule and
-    an early runtime refusal, so this boundary is defense in depth for every
-    mode where the extension is intentionally visible.
-
-    The extension cannot read the host app's ordinary-container installation
-    marker. Direct network delivery therefore remains an unconditional release
-    failure. The only supported path is a protected, short-lived handoff whose
-    host-side promotion is installation-bound.
+    Group sharing has a separate, explicit build switch and dedicated Keychain
+    scope. Bind its photo-only endpoint to the host; never copy report keys. Old
+    archives without that switch retain the capture-only boundary.
     """
 
     app_direct = parsed_flag(
@@ -476,6 +471,30 @@ def validate_share_extension_boundary(
         failures.append(
             "Share Extension SharingShareExtensionHandoffEnabled does not match the app."
         )
+    group_share_product = "GroupShareExtensionEnabled" in share_info
+    if group_share_product:
+        app_group_share = parsed_flag(app_info, "GroupShareExtensionEnabled", failures)
+        share_group_share = parsed_flag(share_info, "GroupShareExtensionEnabled", failures)
+        if app_group_share != share_group_share:
+            failures.append("Group Share Extension switch does not match the app.")
+        if share_info.get("SharingReleaseMode") != app_info.get("SharingReleaseMode"):
+            failures.append("Group Share Extension release mode does not match the app.")
+        if share_info.get("GroupWindowsEnabled") != app_info.get("GroupWindowsEnabled"):
+            failures.append("Group Share Extension group switch does not match the app.")
+        if share_info.get("GroupShareAPIBaseURL", "") != app_info.get("SharingAPIBaseURL", ""):
+            failures.append("Group Share Extension photo endpoint does not match the app.")
+        if (share_info.get("SharingInternalEncryptedReportEnabled") is not False
+                or share_info.get("SharingInternalEncryptedReportScope") != ""
+                or share_info.get("GroupReportingProductionEnabled", "NO") != "NO"):
+            failures.append("Group Share Extension must keep every reporting route OFF.")
+        if share_group_share:
+            if not (truthy(app_info.get("GroupWindowsEnabled")) and truthy(share_info.get("GroupWindowsEnabled"))
+                    and app_media and share_media and app_pairing and share_pairing
+                    and app_info.get("SharingReleaseMode") in ("production", "media-staging")):
+                failures.append("Group Share Extension requires the enabled group media runtime.")
+        app_scope = app_info.get("GroupShareKeychainGroup", "")
+        if not app_scope or "$" in app_scope or share_info.get("GroupShareKeychainGroup") != app_scope:
+            failures.append("Group Share Extension Keychain scope must be resolved and match the app.")
     for key in (
         "AppPrivacyURL",
         "AppSupportURL",
@@ -488,8 +507,10 @@ def validate_share_extension_boundary(
     ):
         if str(share_info.get(key, "")).strip():
             failures.append(
-                f"Share Extension {key} must be absent; capture-only handoff has no network configuration."
+                f"Share Extension {key} must be absent; host/report configuration is not photo-send authority."
             )
+    if not group_share_product and str(share_info.get("GroupShareAPIBaseURL", "")).strip():
+        failures.append("Photo endpoint requires an explicit Group Share Extension configuration.")
     return app_handoff, app_direct
 
 

@@ -3,6 +3,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Shared composer and isolated credential/transport contracts. Synthetic only;
+# this does not claim a signed iPhone extension's entitlements were exercised.
+xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  Shared/Sharing/GroupWindowCore.swift Shared/Sharing/GroupShareCreateRequest.swift \
+  Shared/Sharing/PairingCore.swift Shared/Models/WidgetRenderPlan.swift \
+  Shared/Models/WidgetManifest.swift Shared/Sharing/MomentSharingCore.swift \
+  NekoWidget/Services/GroupWindowContract.swift NekoWidget/Services/GroupWindowWire.swift \
+  NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
+  NekoWidget/Services/GroupWindowTransport.swift NekoWidget/Services/GroupShareAccess.swift \
+  NekoWidgetShareExtension/GroupShareComposer.swift NekoWidgetShareExtension/GroupShareService.swift \
+  ci/verify-group-share.swift -o "$RUNNER_TEMP/group-share-tests"
+"$RUNNER_TEMP/group-share-tests"
+
 # Readable automatic-save export: actual graph, hashes, chunk reassembly and
 # ZIP64 writer with synthetic records only; no service or lease is contacted.
 python3 ci/prepare-readable-export-check.py "$RUNNER_TEMP/readable-export-models.swift"
@@ -28,6 +41,7 @@ xcrun swiftc -parse-as-library -D OFFICIAL_WINDOW_CHECKS \
 python3 ci/test-disabled-release-config.py
 python3 ci/test-disabled-release-build-settings.py
 python3 ci/test-group-window-release.py
+python3 ci/test-group-share-boundary.py
 python3 ci/test-distribution-profile.py
 node --test ci/test-owner-testflight-recipient.mjs
 node --test ci/test-retained-319-runtime.mjs

@@ -275,11 +275,11 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertLess(
             share.index("guard !SharingAPIConfiguration.current.isDisabledRelease"),
-            share.index("configureView()"),
+            share.index("let loading ="),
         )
         self.assertLess(
             share.index("guard !SharingAPIConfiguration.current.isDisabledRelease"),
-            share.index("selectedImageProvider()"),
+            share.index("let providers ="),
         )
 
         pairing = (ROOT / "NekoWidget/ViewModels/PairingViewModel.swift").read_text(

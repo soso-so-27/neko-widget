@@ -5,6 +5,7 @@ enum MomentSenderPolicy {
     static let currentVersion = 2
 }
 
+#if !NEKO_SHARE_EXTENSION
 /// Keeps inbound moderation fail-closed without turning a missing or
 /// temporarily unavailable system analyzer into a permanent sensitive-content
 /// verdict. Retry decisions leave the relay delivery unacknowledged so the
@@ -27,6 +28,7 @@ enum MomentInboundModerationPolicy {
         }
     }
 }
+#endif
 
 protocol MomentModerating: Sendable {
     func requireSafeImage(at url: URL) async throws

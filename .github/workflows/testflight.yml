@@ -1181,7 +1181,7 @@ jobs:
               requires_apple_sign_in=True,
           )
           validate_profile(widget_path, widget_id, "Widget")
-          validate_profile(share_path, share_id, "Share Extension", requires_safety_analysis=False)
+          validate_profile(share_path, share_id, "Share Extension", requires_safety_analysis=True)
           PY
 
           app_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$app_profile_plist")"
@@ -1463,7 +1463,19 @@ jobs:
           contains_exact_line "$APP_GROUP_ID" <<< "$share_signed_groups"
           [[ "$app_safety_entitlement" == "analysis" ]]
           [[ -z "$widget_safety_entitlement" ]]
-          [[ -z "$share_safety_entitlement" ]]
+          [[ "$share_safety_entitlement" == "analysis" ]]
+          python3 - "$app_entitlements" "$share_entitlements" "$widget_entitlements" <<'PY'
+          import os, plistlib, sys
+          app, share, widget = [plistlib.load(open(path, "rb")) for path in sys.argv[1:]]
+          team = app["com.apple.developer.team-identifier"]
+          app_id = os.environ["APP_BUNDLE_ID"]
+          share_id = os.environ["SHARE_EXTENSION_BUNDLE_ID"]
+          scope = f"{team}.{app_id}.group-share"
+          assert app.get("keychain-access-groups") == [f"{team}.{app_id}", scope]
+          assert share.get("keychain-access-groups") == [f"{team}.{share_id}", scope]
+          assert scope not in widget.get("keychain-access-groups", [])
+          print("PASS group photo Keychain isolation: app + share only, private defaults retained")
+          PY
           [[ "$app_push_environment" == "production" ]]
           [[ -z "$widget_push_environment" ]]
           [[ -z "$share_push_environment" ]]

@@ -408,6 +408,7 @@ struct MainTabView: View {
     var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
+    @State private var groupShareNavigationGeneration = UUID()
     @Environment(\.membershipAccess) private var membershipAccess
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
     @ObservedObject private var careStore = CatCareStore.shared
@@ -639,6 +640,7 @@ struct MainTabView: View {
             // The window screens start 「写真を届ける」 from these cat photos.
             // Set on the stack: pushed screens take the stack's environment.
             .environment(\.groupWindowCatPhotos, catPhotos)
+            .id(groupShareNavigationGeneration)
             .tabItem {
                 Label("まど", systemImage: "window.vertical.closed")
                     .accessibilityIdentifier("main-tab-windows")
@@ -834,8 +836,17 @@ struct MainTabView: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
                 consumeShowcaseLaunchRequest()
+                if GroupWindowClientProvider.ui != nil, GroupShareCreateRequest.consume() {
+                    didApplyInitialTab = true
+                    groupWindowOpenInbox.showCreateFromShare()
+                    groupShareNavigationGeneration = UUID()
+                    selectedTab = .windows
+                }
                 Task { await refreshMadoArrivals() }
-            } else if selectedTab == .windows { rememberMadoVisit() }
+            } else {
+                groupWindowOpenInbox.dismissCreatePrompt()
+                if selectedTab == .windows { rememberMadoVisit() }
+            }
         }
         .task {
             if !showsMadoTab && !didApplyInitialTab {
@@ -859,6 +870,7 @@ struct MainTabView: View {
             Task { await refreshMadoArrivals() }
         }
         .onChange(of: selectedTab) { oldTab, tab in
+            if tab != .windows { groupWindowOpenInbox.dismissCreatePrompt() }
             if oldTab == .windows && tab != .windows { rememberMadoVisit() }
             lastViewedTab = tab.rawValue
             if tab != .tools { showcaseWaitingToOpen = nil }

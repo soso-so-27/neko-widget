@@ -26,7 +26,7 @@ def verify_readiness(policy, *, profile, mode, internal_reports):
     verify_distribution_readiness(policy, profile=profile, mode=mode, internal_reports=internal_reports)
 
 
-def verify_info(info, *, extension=False):
+def verify_info(info, *, extension=False, share_extension=False):
     if info.get(OFF_KEY) != "YES" or info.get("SharingInternalEncryptedReportEnabled") is not False:
         raise ValueError("Owner internal artifact must explicitly disable all real reports.")
     if info.get("SharingInternalEncryptedReportScope") != "":
@@ -40,6 +40,21 @@ def verify_info(info, *, extension=False):
             raise ValueError("Owner internal extensions cannot have a reporting recipient.")
         if info.get("SharingShareExtensionSendEnabled", "NO") not in (False, "NO"):
             raise ValueError("Direct extension send must stay OFF.")
+        group_keys = ("GroupShareExtensionEnabled", "GroupShareAPIBaseURL", "GroupShareKeychainGroup")
+        if any(key in info for key in group_keys):
+            if not share_extension:
+                raise ValueError("Widget cannot receive Group Share configuration.")
+            enabled = info.get("GroupShareExtensionEnabled")
+            if enabled not in ("YES", "NO") or info.get("GroupWindowsEnabled") != enabled:
+                raise ValueError("Group Share switch must match the group runtime.")
+            if info.get("GroupShareAPIBaseURL") != ORIGIN:
+                raise ValueError("Owner Group Share photo endpoint changed.")
+            scope = info.get("GroupShareKeychainGroup")
+            if not isinstance(scope, str) or "$" in scope or not scope.endswith(".group-share"):
+                raise ValueError("Group Share Keychain scope must be resolved.")
+            if (info.get("SharingFeatureEnabled") != "YES" or info.get("SharingMediaEnabled") != "YES"
+                    or info.get("SharingReviewPreviewEnabled") not in (False, "NO")):
+                raise ValueError("Owner Group Share media runtime changed.")
         return
     if info.get("SharingReleaseMode") != "media-staging" or info.get("SharingAPIBaseURL") != ORIGIN:
         raise ValueError("Owner internal target changed.")
@@ -50,18 +65,31 @@ def verify_info(info, *, extension=False):
             raise ValueError("Owner internal cannot enable preview or direct extension send.")
 
 
+def verify_products(infos):
+    for relative, info in infos.items():
+        verify_info(info, extension=relative != "Info.plist", share_extension=relative == PLISTS[1])
+    app, share = infos[PLISTS[0]], infos[PLISTS[1]]
+    if "GroupShareExtensionEnabled" in share:
+        for key in ("GroupShareExtensionEnabled", "GroupWindowsEnabled", "GroupShareKeychainGroup"):
+            if app.get(key) != share.get(key):
+                raise ValueError("Owner Group Share configuration differs from host: " + key)
+        if share.get("GroupShareAPIBaseURL") != app.get("SharingAPIBaseURL"):
+            raise ValueError("Owner Group Share endpoint differs from host.")
+
+
 def verify_app(app):
-    for relative in PLISTS:
-        verify_info(plistlib.loads((app / relative).read_bytes()), extension=relative != "Info.plist")
+    verify_products({relative: plistlib.loads((app / relative).read_bytes()) for relative in PLISTS})
 
 
 def verify_ipa(path):
     with zipfile.ZipFile(path) as archive:
+        infos = {}
         for relative in PLISTS:
             name = "Payload/NekoWidget.app/" + relative
             if archive.namelist().count(name) != 1 or archive.getinfo(name).file_size > 1024 * 1024:
                 raise ValueError("Owner internal IPA plist missing, duplicate or oversized.")
-            verify_info(plistlib.loads(archive.read(name)), extension=relative != "Info.plist")
+            infos[relative] = plistlib.loads(archive.read(name))
+        verify_products(infos)
 
 
 def main():

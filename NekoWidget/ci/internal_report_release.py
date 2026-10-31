@@ -23,10 +23,10 @@ def settings(requested, mode, approval, scope, billing_requested=False):
     return {ENABLED: requested, SCOPE_KEY: SCOPE if requested else ""}
 
 
-def verify_info(info, expected, *, extension=False):
+def verify_info(info, expected, *, extension=False, share_extension=False):
     if expected.get("OwnerInternalReportsDisabled") is True:
         from distribution_profile import verify_info as verify_owner_info
-        verify_owner_info(info, extension=extension)
+        verify_owner_info(info, extension=extension, share_extension=share_extension)
     elif info.get("OwnerInternalReportsDisabled") == "YES":
         raise ValueError("Owner internal artifact cannot use reviewed distribution metadata.")
     flag, scope = (False, "") if extension else (expected[ENABLED], expected[SCOPE_KEY])
@@ -86,7 +86,8 @@ def verify_ipa(path, expected):
         for name, extension in paths.items():
             if names.count(name) != 1 or archive.getinfo(name).file_size > 1024 * 1024:
                 raise ValueError("IPA report Info.plist missing, duplicate or oversized.")
-            verify_info(plistlib.loads(archive.read(name)), expected, extension=extension)
+            verify_info(plistlib.loads(archive.read(name)), expected, extension=extension,
+                        share_extension=name.endswith("NekoWidgetShareExtension.appex/Info.plist"))
 
 
 def main():
@@ -129,7 +130,8 @@ def main():
             if not args.share_info_plist or not args.widget_info_plist:
                 raise ValueError("Both compiled extensions are required.")
             for path, extension in ((args.app_info_plist, False), (args.share_info_plist, True), (args.widget_info_plist, True)):
-                verify_info(plistlib.loads(path.read_bytes()), expected, extension=extension)
+                verify_info(plistlib.loads(path.read_bytes()), expected, extension=extension,
+                            share_extension=path == args.share_info_plist)
         elif args.export_options_plist:
             options = plistlib.loads(args.export_options_plist.read_bytes())
             if expected[ENABLED]:
