@@ -850,7 +850,7 @@ struct FamilyWindowView: View {
                 memoryRemovalTarget = nil
             }
         } message: { _ in
-            Text("お気に入りから外します。写真アプリへコピーした写真は削除されません。")
+            Text("写真アプリへコピーした写真は削除されません。")
         }
     }
 
@@ -867,7 +867,7 @@ struct FamilyWindowView: View {
             .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("すべてのまどで、まだ届いていない写真を取り消します。届いたか確かめている途中の写真は、二重に届かないよう残します。")
+            Text("すべてのまどで、まだ届いていない写真を取り消します。")
         }
         .confirmationDialog(
             "準備中の写真をすべて取り消しますか？",
@@ -880,7 +880,7 @@ struct FamilyWindowView: View {
             .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("すべてのまどで、準備中の写真を取り消します。準備が終わって届ける順番を待っている写真は残ります。")
+            Text("すべてのまどで、準備中の写真を取り消します。")
         }
         .confirmationDialog(
             "届けられなかった写真の表示をすべて消しますか？",
@@ -893,7 +893,7 @@ struct FamilyWindowView: View {
             .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("「届けられなかった写真」と「届いたか分からない写真」の表示を消します。写真が送り直されることはありません。")
+            Text("写真が送り直されることはありません。")
         }
     }
 
@@ -1251,20 +1251,19 @@ struct FamilyWindowView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("下の「写真を届ける」から1枚選んで、相手に届けます。写真や自分だけのメモが勝手に届くことはありません。")
+                    Text("下の「写真を届ける」から1枚選んで、相手に届けます。")
                 }
                 Section("これから届ける写真") {
-                    Text("写真とメモはこのまどに残り、2人でいつでも見返せます。ホーム画面の写真（ウィジェット）にも出ます。")
+                    Text("写真とメモはこのまどに残り、2人でいつでも見返せます。")
                 }
                 Section("前に届けた写真") {
-                    Text("前に届けた写真は、見られる期限がこれまでどおりです。写真を開いてメモを付けると、このまどに残せます（期限のある写真は書き出しに入りません）。")
+                    Text("前に届けた写真は、見られる期限がこれまでどおりです。")
                 }
                 Section("書き出しと、まどの終了") {
-                    Text("写真とメモは「このまどの写真」の「…」から書き出せます。まどを終了すると、写真とメモは開けなくなります。")
-                    Text("いつまでも残ることや、2人ともすべてのiPhoneをなくしたときに元に戻せることは、保証していません。")
+                    Text("まどを終了すると、写真とメモは開けなくなります。先に「…」から書き出せます。")
                 }
                 Section("残せる量") {
-                    Text("まどごとに写真100枚・メモ1,000件まで。いっぱいになっても、古い写真が勝手に消えることはありません。")
+                    Text("まどごとに写真100枚・メモ1,000件までです。")
                 }
             }
             .navigationTitle("このまどの写真")
@@ -1655,7 +1654,7 @@ struct FamilyWindowView: View {
                 .font(.footnote)
                 .foregroundStyle(.orange)
             if model.isShowingLastKnownState {
-                Text("前回読み込んだ内容を表示しています。もう一度読み込めるまで、写真を届けたり変更したりはできません。")
+                Text("前回読み込んだ内容を表示しています。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1775,7 +1774,7 @@ struct FamilyWindowView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     Label("ホーム画面にも、このまどを。", systemImage: "rectangle.on.rectangle")
                         .font(.title2)
-                    Text("ホーム画面の写真（ウィジェット）に、このまどに届いた写真が出ます。アプリを開かなくても、写真の下からハートを送れます。")
+                    Text("ホーム画面の写真（ウィジェット）に、このまどに届いた写真が出ます。")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     widgetGuidePlacementPicker
@@ -1794,10 +1793,6 @@ struct FamilyWindowView: View {
                             .accessibilityIdentifier("family-window-widget-guide-source")
                     }
                     .fixedSize(horizontal: false, vertical: true)
-                    Text("中・大のサイズなら、写真の右下のしおりから、お気に入りにも入れられます。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2536,11 +2531,6 @@ struct FamilyWindowView: View {
                 Text(acceptance.acceptedAt.formatted(.dateTime.month().day().hour().minute()))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                if let expiresAt = acceptance.unreceivedExpiresAt {
-                    Text("相手が受け取らなかった場合、\(expiresAt.formatted(.dateTime.month().day().hour().minute()))に削除されます")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
             Spacer(minLength: 0)
         }
@@ -3136,12 +3126,6 @@ struct FamilyWindowView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text("写真は公開されません。届けるために預かる暗号化した写真は、受け取られてから7日（受け取られないときは30日）でサーバーから消します。届いた写真は、このiPhoneに最長90日・500枚まで残ります。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Text("届けた写真の控えは、このiPhoneに最長30日・200件まで残ります。ほかのiPhoneや、入れ直したアプリでは見られません。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
             Text("お気に入りに追加した写真は、位置情報を消して写真アプリに保存され、自分のお気に入りと写真まとめに入ります。相手には知らされません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -3181,10 +3165,10 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoDeletionMessage(_ item: MomentInboxItem) -> String {
         if model.isSavedMemory(item) {
-            return "このiPhoneから削除します（元に戻せません）。自分のお気に入りはそのままで、相手の画面からも消えません。"
+            return "このiPhoneから削除します（元に戻せません）。相手の画面からは消えません。"
         }
         if model.hasImportedMemory(item) {
-            return "このiPhoneから削除します（元に戻せません）。写真アプリに保存した写真はそのままで、相手の画面からも消えません。"
+            return "このiPhoneから削除します（元に戻せません）。相手の画面からは消えません。"
         }
         return "このiPhoneから削除します（元に戻せません）。相手の画面からは消えません。"
     }
@@ -3800,10 +3784,6 @@ private struct MomentSentPhotoDetail: View {
                             }
                             Section("届けた日") {
                                 Text(record.serverAcceptedAt.formatted(.dateTime.month().day().hour().minute()))
-                            }
-                            Section("このiPhoneの控え") {
-                                Text("届けた写真の控えは、最長30日・200件まで残ります。前に届けた写真は、小さな控えしか残っていないことがあります。")
-                                    .font(.footnote)
                             }
                         }
                     }

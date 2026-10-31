@@ -3135,8 +3135,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("届いた写真が見られるのは最長90日です。残したい写真は「自分のお気に入りに追加」を押してください。", family)
         self.assertIn("届いた写真が見られるのは最長90日です。残したい写真は「自分のお気に入りに追加」を押してください。", family)
         self.assertIn("「相手に届きました」は、相手が写真を見たという意味ではありません。", family)
-        self.assertIn("届けた写真の控えは、このiPhoneに最長30日・200件まで残ります。ほかのiPhoneや、入れ直したアプリでは見られません。", family)
-        self.assertIn("届けた写真の控えは、このiPhoneに最長30日・200件まで残ります。ほかのiPhoneや、入れ直したアプリでは見られません。", family)
         self.assertIn("MomentSentRecordCard(record: record, caption: caption)", family)
         target_record = section(
             family,
