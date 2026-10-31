@@ -650,6 +650,9 @@ struct PlusSettingsSection: View {
     @State private var showsRestore = false
     @State private var showsManagement = false
     @State private var isRechecking = false
+    @State private var purchasedJustNow = false
+    @State private var offersAutoSave = false
+    @State private var showsAutoSave = false
 
     private enum Status { case notMember, member, unknown }
 
@@ -702,8 +705,31 @@ struct PlusSettingsSection: View {
             Text(status == .member ? "Plus（利用中）" : status == .unknown ? "Plus（購入状況を確認できません）" : "Plus")
                 .accessibilityIdentifier(status == .member ? "settings-membership-active"
                                          : status == .unknown ? "settings-membership-unknown" : "settings-membership-header")
-                .sheet(isPresented: $showsOffer, onDismiss: refreshMembership) {
-                    MembershipOfferSheet(model: .live(), context: .settings) { _ in showsOffer = false }
+                .sheet(isPresented: $showsOffer, onDismiss: {
+                    refreshMembership()
+                    // Saving is what Plus pays for: ask once, right after buying.
+                    if purchasedJustNow, ManagedPreservationConfiguration.current.isEnabled,
+                       !AppRecordPersistence.shared.enabled { offersAutoSave = true }
+                    purchasedJustNow = false
+                }) {
+                    MembershipOfferSheet(model: .live(), context: .settings) { result in
+                        purchasedJustNow = result == .completed
+                        showsOffer = false
+                    }
+                }
+                .alert("自動保存も始めますか？", isPresented: $offersAutoSave) {
+                    Button("保存を始める") { showsAutoSave = true }
+                    Button("あとで", role: .cancel) { }
+                } message: {
+                    Text("猫のこと、メモ、ツールに書いたことを自動で保存して、新しいiPhoneでも戻せます。")
+                }
+                .sheet(isPresented: $showsAutoSave) {
+                    NavigationStack {
+                        AppRecordSettingsView()
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showsAutoSave = false } }
+                            }
+                    }
                 }
                 .sheet(isPresented: $showsRestore, onDismiss: refreshMembership) {
                     MembershipRestoreSheet()

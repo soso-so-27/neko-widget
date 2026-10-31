@@ -213,7 +213,9 @@ struct PhotoMemoryNotesListView: View {
         self.registeredProfileIdentifiers = registeredProfileIdentifiers
         self.currentProfileNames = currentProfileNames
         self.readingPositionKey = readingPositionKey
-        let enabled = archiveStore != nil || PersonalArchiveStore.isConfigured
+        // The old iCloud copies are read in internal builds only; 1.0 starts
+        // after them, so no one else has any to read.
+        let enabled = archiveStore != nil || (PersonalArchiveStore.isConfigured && InternalBuildPresentationAvailability.isAvailable)
         self.archiveEnabled = enabled
         self.archiveStore = archiveStore ?? .shared
         self.openPhotos = openPhotos
@@ -735,11 +737,14 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var preservingWithService = false
     @State private var savedPhotoURL: URL?
 
+    /// A memo is saved by 自動保存; its own 「保存状況」 entry stays for the
+    /// selected-copy UI fixture only (10/31).
     private var servicePreservationEnabled: Bool {
 #if DEBUG
-        if CommandLine.arguments.contains("--memory-service-preservation-entry-fixture") { return true }
+        CommandLine.arguments.contains("--memory-service-preservation-entry-fixture")
+#else
+        false
 #endif
-        return ManagedPreservationConfiguration.current.isEnabled
     }
 
     init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
@@ -747,7 +752,7 @@ struct PhotoMemoryNoteDetailView: View {
         self.recordID = recordID
         self.photos = photos
         self.store = store
-        self.archiveEnabled = archiveStore != nil || PersonalArchiveStore.isConfigured
+        self.archiveEnabled = archiveStore != nil || (PersonalArchiveStore.isConfigured && InternalBuildPresentationAvailability.isAvailable)
         self.archiveStore = archiveStore ?? .shared
     }
 
@@ -852,7 +857,7 @@ struct PhotoMemoryNoteDetailView: View {
         .confirmationDialog("このメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除", role: .destructive) { Task { await delete() } }
             Button("キャンセル", role: .cancel) {}
-        } message: { Text("写真とお気に入り、診察メモに入れた分は残ります。メモの文章・体重・測定日は削除します（iCloudのメモも書き換える設定なら、iCloudからも消えます）。") }
+        } message: { Text("写真とお気に入り、診察メモに入れた分は残ります。メモの文章・体重・測定日は削除します。") }
         .alert("メモを変更できませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("閉じる", role: .cancel) {}
         } message: { Text(error ?? "") }

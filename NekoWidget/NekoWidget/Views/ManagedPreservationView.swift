@@ -20,6 +20,8 @@ struct ManagedPreservationView: View {
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
     private let allowsManualSaving: Bool
+    /// Opened from 自動保存 → アカウント: the account itself, not one copy.
+    private var isAccountEntry: Bool { allowsRecordBrowsing && coordinator.draft == nil && !allowsManualSaving }
 
     init(configuration: ManagedPreservationConfiguration = .current,
          draft: ManagedPreservationDraft? = nil, client: ManagedPreservationClient? = nil,
@@ -45,7 +47,7 @@ struct ManagedPreservationView: View {
                                        description: Text("このバージョンでは、まだ使えません。写真やメモが送られることはありません。"))
             }
         }
-        .navigationTitle("保存した記録")
+        .navigationTitle(isAccountEntry ? "アカウント" : "保存した記録")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(coordinator.hasUnsecuredMemo)
         .interactiveDismissDisabled(coordinator.hasUnsecuredMemo)
@@ -135,10 +137,12 @@ struct ManagedPreservationView: View {
             if coordinator.exportAuthenticationNeeded {
                 exportAuthenticationSection
             } else {
-            Section {
-                Text("選んだ写真とメモのコピーを、ねこのまどに保存します。写真アプリの写真や動画のバックアップではありません。")
-                Text("以前iCloudに保存したものとは別で、自動では移りません。写真がまとめて自動で保存されることもありません。")
-                    .font(.footnote).foregroundStyle(.secondary)
+            if !isAccountEntry {
+                Section {
+                    Text("選んだ写真とメモのコピーを、ねこのまどに保存します。写真アプリの写真や動画のバックアップではありません。")
+                    Text("以前iCloudに保存したものとは別で、自動では移りません。写真がまとめて自動で保存されることもありません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             if let error = coordinator.errorMessage {
                 Section { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText)
@@ -164,7 +168,9 @@ struct ManagedPreservationView: View {
             else if coordinator.selected != nil { detailSection }
             else {
                 if let draft = coordinator.draft { newCopySection(draft) }
-                else { membershipSection }
+                // Plus is started and linked from 自動保存; here only a link
+                // that still needs attention is shown.
+                else if !isAccountEntry || coordinator.membership?.canSave != true { membershipSection }
                 noticeContactSection
                 if coordinator.membership?.access != .pilot { retentionSection }
                 usageSection
@@ -173,7 +179,8 @@ struct ManagedPreservationView: View {
                 if allowsRecordBrowsing {
                     if allowsManualSaving { toolBackupSection }
                     if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
-                    recordsSection
+                    // One-by-one copies left from testing; nobody else has a list to see.
+                    if !isAccountEntry || !coordinator.records.isEmpty || coordinator.hasMore { recordsSection }
                 }
             }
             if coordinator.isBusy {

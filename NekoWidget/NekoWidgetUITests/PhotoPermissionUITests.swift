@@ -1826,29 +1826,23 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(app.staticTexts["app-record-fixture-photo-count"].label, "写真の送信 0回")
         app.buttons["保存・復元"].tap()
-        let consent = app.switches["app-record-consent"]
-        XCTAssertTrue(consent.waitForExistence(timeout: 10), app.debugDescription)
+        // One button starts saving (10/31); its consent is the text above it.
+        let start = app.buttons["app-record-enable"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.switches["app-record-consent"].exists)
         XCTAssertFalse(app.buttons["ツールを保存する"].exists)
-        XCTAssertFalse(app.buttons["app-record-enable"].isEnabled)
-        // SwiftUI's labelled row can have an inert center at this text size;
-        // use its native UISwitch as the existing veterinary tests do.
-        let thumb = consent.switches.firstMatch
-        XCTAssertTrue(thumb.exists, consent.debugDescription); thumb.tap()
-        let consentEnabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: consent)
-        XCTAssertEqual(XCTWaiter.wait(for: [consentEnabled], timeout: 5), .completed)
-        XCTAssertTrue(app.buttons["app-record-enable"].isEnabled)
-        app.buttons["app-record-enable"].tap()
+        start.tap()
         let saved = app.staticTexts["app-record-save-status"]
         XCTAssertTrue(NSPredicate(format: "label == %@", "保存済み").evaluate(with: saved) || saved.waitForExistence(timeout: 10))
         let completes = expectation(for: NSPredicate(format: "label == %@", "保存済み"), evaluatedWith: saved)
         wait(for: [completes], timeout: 20)
         capture("automatic-save-one-time-consent")
-        let managesSubscription = app.buttons["app-record-membership-manage"]
-        for _ in 0..<4 where !managesSubscription.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(managesSubscription.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(managesSubscription.isHittable)
+        // Plus lives in Settings' own section; this screen keeps the account door.
+        XCTAssertFalse(app.buttons["app-record-membership-manage"].exists)
+        let account = app.buttons["app-record-account"]
+        for _ in 0..<4 where !account.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(account.waitForExistence(timeout: 5), app.debugDescription)
         if archiveListingConflict {
-            XCTAssertTrue(app.staticTexts["Plusで自動保存できます"].waitForExistence(timeout: 5), app.debugDescription)
             XCTAssertFalse(app.staticTexts["記録が更新されています。最新の内容を読み込み直してください。"].exists)
         }
         capture("automatic-save-apple-contract-entry")
@@ -5621,7 +5615,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         for identifier in ["app-record-enable", "app-record-signin", "app-record-membership-manage", "preservation-copy-save"] {
             XCTAssertFalse(app.buttons[identifier].exists, "A copy's read-only status must not expose \(identifier).")
         }
-        for title in ["購入状況を再確認", "サブスクリプションを管理", "購入を復元", "このiPhoneの自動保存をオフにする"] {
+        for title in ["購入状況を再確認", "サブスクリプションを管理", "購入を復元", "このiPhoneで自動保存をやめる"] {
             XCTAssertFalse(app.buttons[title].exists, "A copy's status must not expose unrelated action: \(title).")
         }
         attach(app, name: "icloud-copy-readonly-save-status")
@@ -5632,7 +5626,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(memo.waitForExistence(timeout: 5))
         XCTAssertEqual(memo.label, originalMemo, "Checking a saved copy must leave its memo unchanged.")
         XCTAssertFalse(app.buttons["app-record-enable"].exists)
-        XCTAssertFalse(app.buttons["このiPhoneの自動保存をオフにする"].exists)
+        XCTAssertFalse(app.buttons["このiPhoneで自動保存をやめる"].exists)
     }
 
     @MainActor
