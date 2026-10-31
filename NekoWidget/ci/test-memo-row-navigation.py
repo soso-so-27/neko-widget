@@ -8,7 +8,7 @@ UI = (ROOT / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encodin
 
 class MemoRowNavigationTests(unittest.TestCase):
     def test_plain_memo_link_has_a_hit_shape_without_thumbnail(self):
-        row = VIEW.split("private func row(", 1)[1].split("struct PersonalArchivePhotosSection", 1)[0]
+        row = VIEW.split("private func row(", 1)[1].split("private struct MemoryNotesSearchBar", 1)[0]
         self.assertIn(".contentShape(Rectangle())", row)
         denied = UI.split("func testAlbumRootUpdatesAndPreservesFavoritesAndReflectionDestinations()", 1)[1].split("    @MainActor", 1)[0]
         self.assertIn('unavailableMemo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()', denied)

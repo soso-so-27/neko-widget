@@ -2862,7 +2862,7 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(existing.waitForExistence(timeout: 5))
         for _ in 0..<4 where !existing.isHittable { app.swipeUp() }
         XCTAssertTrue(existing.isHittable)
-        XCTAssertTrue(app.buttons["settings-personal-archive"].exists)
+        XCTAssertFalse(app.buttons["settings-personal-archive"].exists)
         XCTAssertFalse(app.buttons["settings-managed-preservation"].exists)
         capture("managed-preservation-disabled-settings")
         app.terminate()
@@ -2905,7 +2905,8 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testPersonalArchiveExportCancellationKeepsPhotoAndText() {
+    func testPersonalArchiveExportCancellationKeepsPhotoAndText() throws {
+        throw XCTSkip("以前のiCloud記録は外しました（11/1）。入口がないため止めます。")
         let app = launchRecordPortabilityFixture()
         openSettings(in: app)
         revealSaveSection(app)
@@ -3514,7 +3515,8 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    func testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText() {
+    func testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText() throws {
+        throw XCTSkip("以前のiCloud記録は外しました（11/1）。入口がないため止めます。")
         let app = XCUIApplication()
         app.launchArguments = ["--personal-archive-ui-fixture", "--photo-window-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -5236,7 +5238,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
-    func testICloudCopySaveStatusUsesSelectedRecordWithoutAutomaticSaveControls() {
+    func testICloudCopySaveStatusUsesSelectedRecordWithoutAutomaticSaveControls() throws {
+        throw XCTSkip("以前のiCloud記録は外しました（11/1）。入口がないため止めます。")
         let app = XCUIApplication()
         app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "ICloudCopyStatusUITest.\(UUID().uuidString)"
         // Inject only isolated records. Exercise the shipping destination,
@@ -5288,7 +5291,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let app = XCUIApplication()
         let preferenceSuite = "PhotoLibrarySelectionUITest.\(UUID().uuidString)"
         app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite
-        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-cloud",
+        app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture",
                                "--memory-service-preservation-entry-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
@@ -5303,73 +5306,25 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertLessThan(all.frame.minX, favorites.frame.minX)
         XCTAssertLessThan(favorites.frame.minX, entry.frame.minX)
         all.tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "preserved-photo-")).firstMatch
-            .waitForExistence(timeout: 10), "Preserved photos remain reachable in All.")
-        attach(app, name: "photos-all-preserved-copies")
         entry.tap()
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-note-row-")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         XCTAssertFalse(row.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        "Memo rows must expose their reading content as one accessible link.")
-        let archived = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "memory-archive-row-")).firstMatch
-        XCTAssertTrue(archived.waitForExistence(timeout: 10), "Cloud-only records belong in the same reading list.")
         attach(app, name: "memory-library-list")
         let search = app.searchFields["memory-notes-search"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("おふろ")
-        XCTAssertTrue(archived.waitForExistence(timeout: 5))
-        XCTAssertFalse(row.exists)
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("寝息")
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
         attach(app, name: "memory-library-search")
-        archived.tap()
+        row.tap()
         XCTAssertTrue(app.buttons["memory-note-photo"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["memory-note-body"].label, "はじめてのおふろ。タオルにくるまって、やっとひと安心。")
+        XCTAssertTrue(app.staticTexts["memory-note-body"].label.contains("小さな寝息"))
         XCTAssertTrue(app.navigationBars["メモ"].exists)
-        app.buttons["personal-archive-record-menu"].tap()
-        let archivePreserve = app.buttons["memory-note-managed-preserve"]
-        XCTAssertTrue(archivePreserve.waitForExistence(timeout: 5))
-        XCTAssertTrue(archivePreserve.isEnabled)
-        attach(app, name: "memory-library-cloud-service-entry")
-        archivePreserve.tap()
-        XCTAssertTrue(app.navigationBars["サービスに保管"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["はじめてのおふろ。タオルにくるまって、やっとひと安心。"].waitForExistence(timeout: 10))
-        let preparedPhoto = app.descendants(matching: .any).matching(identifier: "preservation-copy-photo").firstMatch
-        XCTAssertTrue(preparedPhoto.waitForExistence(timeout: 10))
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "loaded"), object: preparedPhoto)], timeout: 15), .completed)
-        attach(app, name: "memory-library-cloud-selected-service-copy")
-        let consent = app.switches["内容を確認して、保存に同意する"]
-        for _ in 0..<6 where !consent.isHittable { app.swipeUp() }
-        XCTAssertTrue(consent.waitForExistence(timeout: 10))
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: consent)], timeout: 10), .completed)
-        XCTAssertEqual(consent.value as? String, "0", "Opening an existing copy must not grant upload consent.")
-        let preparedSave = app.buttons["preservation-copy-save"]
-        for _ in 0..<6 where !preparedSave.exists { app.swipeUp() }
-        XCTAssertTrue(preparedSave.waitForExistence(timeout: 10))
-        XCTAssertFalse(preparedSave.isEnabled)
-        // Hittable can remain true while a Form row is behind the translucent
-        // navigation bar. Keep the actual switch hit point inside the content.
-        let serviceBar = app.navigationBars["サービスに保管"]
-        for _ in 0..<6 where !consent.isHittable || consent.frame.minY < serviceBar.frame.maxY + 16 {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
-                .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60)))
-        }
-        XCTAssertGreaterThanOrEqual(consent.frame.minY, serviceBar.frame.maxY + 16)
-        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        XCTAssertEqual(consent.value as? String, "1")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "enabled == true"), object: preparedSave)], timeout: 10), .completed,
-            "The synthetic pilot must be usable; a failed fixture must not masquerade as consent protection.")
-        consent.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        XCTAssertEqual(consent.value as? String, "0")
-        XCTAssertFalse(preparedSave.isEnabled)
-        attach(app, name: "memory-library-cloud-explicit-consent-only")
-        app.buttons["閉じる"].tap()
-        XCTAssertTrue(app.navigationBars["メモ"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 5))
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Search must remain reachable after returning from a matching record.")
         attach(app, name: "memory-library-return-from-search")
-        XCTAssertEqual(search.value as? String, "おふろ", "Returning must preserve the search query.")
+        XCTAssertEqual(search.value as? String, "寝息", "Returning must preserve the search query.")
         search.tap()
         let closeSearch = app.buttons["閉じる"]
         XCTAssertTrue(closeSearch.waitForExistence(timeout: 5))
@@ -5414,17 +5369,6 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         all.tap()
-        app.terminate()
-
-        // A cloud-only memo is also a memo; no local PhotoKit note is required.
-        app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite + ".cloud-only"
-        app.launchArguments += ["--memory-library-cloud-only"]
-        app.launch()
-        XCTAssertTrue(entry.waitForExistence(timeout: 15))
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "isSelected == true"), object: entry)], timeout: 10), .completed)
-        XCTAssertTrue(archived.waitForExistence(timeout: 10))
-        XCTAssertFalse(row.exists, "This first-visit decision must use only the existing cloud copy.")
         app.terminate()
 
         // The three shipping lists keep distinct reading positions. Fixture
@@ -5560,9 +5504,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         entry.tap()
         XCTAssertFalse(app.buttons["memory-notes-menu"].exists,
                        "The embedded notes section must not add a second Photos menu.")
-        app.buttons["photos-more"].tap()
-        XCTAssertTrue(app.buttons["iCloudから読み込む"].waitForExistence(timeout: 5),
-                      "An empty library must still offer explicit cloud restoration.")
+        XCTAssertFalse(app.buttons["iCloudから読み込む"].exists,
+                       "The retired iCloud copies offer no restoration entry.")
         app.terminate()
 
         app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = preferenceSuite + ".empty"
@@ -5578,7 +5521,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
-    func testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion() {
+    func testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion() throws {
+        throw XCTSkip("以前のiCloud記録は外しました（11/1）。入口がないため止めます。")
         let app = XCUIApplication()
         app.launchArguments = ["--photo-window-ui-fixture", "--memory-library-fixture", "--memory-library-linked-archive",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]

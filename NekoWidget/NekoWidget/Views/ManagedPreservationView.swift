@@ -960,42 +960,12 @@ struct ManagedPreservationMembershipFixture: View {
 }
 #endif
 
-/// Prepares one existing iCloud copy without enabling reflection, refreshing the
-/// cloud, changing the original, or sending anything to the service.
-@MainActor
-enum ManagedPreservationCopyPreparation {
-    static func archive(recordID: UUID, store: PersonalArchiveStore,
-                        expectedAccount: String, copyID: UUID) async throws -> ManagedPreservationDraft {
-        let before = try await store.readingSnapshot(expectedAccount: expectedAccount)
-        guard let selected = before.records.first(where: { $0.id == recordID }),
-              !selected.isDeletionPending, selected.state != .conflict,
-              let raw = selected.jpegData else { throw ManagedPreservationError.invalidRecord }
-        let worker = Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            return try PersonalArchiveImage.jpeg(from: raw)
-        }
-        let jpeg = try await withTaskCancellationHandler { try await worker.value }
-            onCancel: { worker.cancel() }
-        try Task.checkCancellation()
-        let after = try await store.readingSnapshot(expectedAccount: expectedAccount)
-        guard after.records.first(where: { $0.id == recordID }) == selected else {
-            throw ManagedPreservationError.conflict
-        }
-        let document = ManagedPreservationDocument(formatVersion: selected.context?.weight == nil ? 1 : 2,
-            text: selected.text, capturedAt: selected.capturedAt,
-            writtenAt: selected.context?.writtenAt, updatedAt: selected.context?.updatedAt,
-            catNames: selected.context?.catNames ?? [], photoFile: "photo.jpg", weight: selected.context?.weight)
-        return ManagedPreservationDraft(recordID: copyID, document: try document.validated(), jpegData: jpeg)
-    }
-}
-
-/// One selected photo and memo, whether its source is Photos or an existing
-/// iCloud copy. The prepared ID/content survive retry and authentication changes.
+/// One selected photo and memo from Photos. The prepared ID/content survive
+/// retry and authentication changes.
 @MainActor
 struct ManagedPreservationPhotoView: View {
     private enum Source {
         case photo(PhotoPresentation, PhotoMemoryNoteContext, PhotoMemoryNoteStore)
-        case archive(UUID, PersonalArchiveStore, String)
     }
     private let source: Source
     @Environment(\.dismiss) private var dismiss
@@ -1012,10 +982,6 @@ struct ManagedPreservationPhotoView: View {
 
     init(photo: PhotoPresentation, context: PhotoMemoryNoteContext, noteStore: PhotoMemoryNoteStore) {
         source = .photo(photo, context, noteStore)
-    }
-
-    init(archiveRecordID: UUID, archiveStore: PersonalArchiveStore, expectedAccount: String) {
-        source = .archive(archiveRecordID, archiveStore, expectedAccount)
     }
 
     private var usesEntryFixture: Bool {
@@ -1067,14 +1033,6 @@ struct ManagedPreservationPhotoView: View {
                 if phase == .background && draft == nil { attempt = UUID() }
                 if phase == .active && draft == nil { attempt = UUID() }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
-                .receive(on: DispatchQueue.main)) { _ in
-                if case .archive = source {
-                    attempt = UUID()
-                    draft = nil
-                    errorMessage = PersonalArchiveError.accountChanged.errorDescription
-                }
-            }
         }
         .onDisappear {
             access.stop()
@@ -1095,12 +1053,6 @@ struct ManagedPreservationPhotoView: View {
             if usesEntryFixture && fixture == nil { fixture = try PreservationNativeFixture.make(.pilotCopyResultLost) }
 #endif
             switch source {
-            case let .archive(recordID, store, expectedAccount):
-                let prepared = try await ManagedPreservationCopyPreparation.archive(recordID: recordID,
-                    store: store, expectedAccount: expectedAccount, copyID: draftID)
-                try Task.checkCancellation()
-                guard token == attempt else { return }
-                draft = prepared
             case let .photo(photo, context, noteStore):
                 access.start(photos: [photo])
                 guard access.photo(for: photo.localIdentifier) != nil else {

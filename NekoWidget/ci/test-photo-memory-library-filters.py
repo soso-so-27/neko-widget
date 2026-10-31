@@ -17,7 +17,6 @@ class MemoryLibraryFilterContracts(unittest.TestCase):
     def test_private_text_scope_does_not_depend_on_photo_access(self):
         items = VIEW.split('private var items: [MemoryReadingItem] {')[1].split('@ViewBuilder private var readingList')[0]
         self.assertNotIn('access.photo', items)
-        self.assertIn('let other = copies.filter', items)
 
     def test_sort_controls_grouping_and_position(self):
         self.assertIn('sort.date(captured: item.date, updated: item.updatedAt)', VIEW)

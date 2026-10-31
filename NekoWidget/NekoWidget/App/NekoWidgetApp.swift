@@ -76,7 +76,7 @@ struct NekoWidgetApp: App {
             } else if CommandLine.arguments.contains("--membership-access-ui-fixture") {
                 MembershipAccessFixture()
             } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
-                PersonalArchiveUIFixture()
+                LibraryRootUIFixture()
             } else if CommandLine.arguments.contains("--evacuation-ui-fixture") {
                 EvacuationFixtureView()
             } else if CommandLine.arguments.contains("--care-handoff-ui-fixture") {
