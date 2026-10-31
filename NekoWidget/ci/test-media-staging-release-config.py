@@ -1064,20 +1064,11 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         configuration = (
             ROOT / "Shared/Sharing/SharingAPIConfiguration.swift"
         ).read_text(encoding="utf-8")
-        pairing = (ROOT / "NekoWidget/Views/PairingView.swift").read_text(
-            encoding="utf-8"
-        )
-        family = (ROOT / "NekoWidget/Views/FamilyWindowView.swift").read_text(
-            encoding="utf-8"
-        )
         self.assertIn("<key>SharingPrivacyURL</key>", info)
         self.assertIn("<string>$(SHARING_PRIVACY_URL)</string>", info)
         self.assertIn('info["SharingPrivacyURL"]', configuration)
         self.assertIn("&& privacyURL != nil", configuration)
         self.assertIn("hasSmallOrderX25519PublicKey", configuration)
-        self.assertEqual(pairing.count('Link("プライバシーポリシーを確認"'), 2)
-        self.assertEqual(pairing.count('Link("コミュニティ基準を確認"'), 2)
-        self.assertIn('Link("プライバシーポリシー"', family)
 
 
 def load_tests(loader, standard_tests, pattern):

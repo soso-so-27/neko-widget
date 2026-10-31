@@ -2588,7 +2588,6 @@ struct PhotoBrowserView: View {
     let assignmentsByPhotoIdentifier: [String: Set<String>]
     let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
     private let browserPhotos: [PhotoPresentation]
-    private let deliveryActions: PhotoWindowDeliveryActions?
     private let dayCollectionDate: Date?
     private let rediscoveryStore: PersonalRediscoveryStore?
     private let browserPhotoIdentifiers: [String]
@@ -2610,10 +2609,7 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoExportTask: Task<Void, Never>?
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
-    @State private var deliveryPhoto: PhotoPresentation?
     @State private var groupDelivery: GroupDeliveryRequest?
-    @StateObject private var photoDeliveryModel = MomentSharingViewModel()
-    @State private var stagedDeliveryID: String?
     @State private var showsWidgetInformation = false
     @StateObject private var personalNote: PhotoMemoryNotePresentation
     @State private var personalNotePhoto: PhotoPresentation?
@@ -2632,7 +2628,6 @@ struct PhotoBrowserView: View {
         profiles: [CatProfilePresentation],
         assignmentsByPhotoIdentifier: [String: Set<String>],
         replaceProfileAssignments: @escaping ([String: Set<String>]) async -> Bool,
-        deliveryActions: PhotoWindowDeliveryActions? = nil,
         dayCollectionDate: Date? = nil,
         rediscoveryStore: PersonalRediscoveryStore? = nil,
         memoryNoteStore: PhotoMemoryNoteStore = .shared,
@@ -2664,7 +2659,6 @@ struct PhotoBrowserView: View {
         self.profiles = profiles
         self.assignmentsByPhotoIdentifier = assignmentsByPhotoIdentifier
         self.replaceProfileAssignments = replaceProfileAssignments
-        self.deliveryActions = deliveryActions
         self.dayCollectionDate = dayCollectionDate
         self.rediscoveryStore = rediscoveryStore
         self.browserPhotos = browserPhotos
@@ -2790,20 +2784,7 @@ struct PhotoBrowserView: View {
                     }
                     .accessibilityIdentifier("photo-memory-note-read-error")
                 }
-                if canDeliverToWindow {
-                    Button {
-                        // Opening destination selection never sends the photo.
-                        deliveryPhoto = selectedPhoto
-                    } label: {
-                        Label("まどに届ける", systemImage: "paperplane.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 48)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityHint("届け先を選んでから、写真とメモを確認します")
-                    .accessibilityIdentifier("photo-browser-deliver")
-                    .disabled(isExportingMemoryPhoto)
-                }
+
             }
 
             if isExportingMemoryPhoto {
@@ -3161,42 +3142,10 @@ struct PhotoBrowserView: View {
                 GroupLibraryDeliverySheet(client: client, localIdentifier: request.localIdentifier)
             }
         }
-        .sheet(item: $deliveryPhoto) { photo in
-            PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live(model: photoDeliveryModel),
-                noteStore: personalNote.store,
-                onCancel: { deliveryPhoto = nil },
-                onStaged: { _ in
-                    stagedDeliveryID = photoDeliveryModel.lastStagedPhotoID
-                    deliveryPhoto = nil
-                })
-                .environment(\.dynamicTypeSize, dynamicTypeSize)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let stagedDeliveryID, !photoDeliveryModel.isShowingLastKnownState {
-                MomentPhotoDeliveryProgressView(photos: photoDeliveryModel.outgoingPhotoProgress.filter {
-                    $0.id == stagedDeliveryID
-                })
-                .padding(.horizontal, 12)
-                .background(.ultraThinMaterial)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)) { _ in
-            if stagedDeliveryID != nil { photoDeliveryModel.reloadContentFromDisk() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
-            if stagedDeliveryID != nil { photoDeliveryModel.reloadContentFromDisk() }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .confirmedMemorySavedStateChanged)) { notification in
             guard let change = notification.object as? ConfirmedMemorySavedState,
                   browserPhotoByIdentifier[change.localIdentifier] != nil else { return }
             confirmedMemorySavedStates[change.localIdentifier] = change.isSaved
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .momentSharingSynchronizationSucceeded)) { notification in
-            if stagedDeliveryID != nil,
-               let completion = notification.object as? MomentSynchronizationSuccess,
-               completion.spaceID == photoDeliveryModel.pairingState?.spaceID {
-                photoDeliveryModel.reloadContentFromDisk()
-            }
         }
         .alert(
             "写真を書き出せませんでした",
@@ -3256,15 +3205,6 @@ struct PhotoBrowserView: View {
         }
     }
 
-    private var canDeliverToWindow: Bool {
-#if DEBUG
-        if deliveryActions != nil { return true }
-#endif
-        // This delivers to two-person windows, which are hidden with group windows on.
-        return SharingAPIConfiguration.current.isMediaAvailable
-            && SharingAPIConfiguration.current.isShareExtensionHandoffAvailable
-            && GroupWindowClientProvider.ui == nil
-    }
 
     private func cloudyPhotoAge(_ photo: PhotoPresentation) -> String? {
         guard let date = photo.creationDate else { return nil }
@@ -3430,7 +3370,6 @@ struct PhotoBrowserView: View {
                 profiles: profiles,
                 assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                 replaceProfileAssignments: replaceProfileAssignments,
-                deliveryActions: deliveryActions,
                 dayCollectionDate: date
             )
         }

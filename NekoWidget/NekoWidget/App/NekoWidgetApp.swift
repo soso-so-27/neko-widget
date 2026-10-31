@@ -69,15 +69,10 @@ struct NekoWidgetApp: App {
                 ToolBackupFixtureView()
             } else if BillingInternalDiagnosticsLaunch.isActive {
                 BillingInternalDiagnosticsRootView()
-            } else if CommandLine.arguments.contains("--moderation-resolution-ui-fixture") {
-                moderationResolutionFixture
             } else if CommandLine.arguments.contains("--managed-preservation-membership-ui-fixture") {
                 ManagedPreservationMembershipFixture()
             } else if CommandLine.arguments.contains("--membership-offer-ui-fixture") {
                 MembershipOfferFixture()
-            } else if CommandLine.arguments.contains("--window-support-resume-ui-fixture") {
-                WindowSupportResumePreviewView(initialScenario:
-                    CommandLine.arguments.contains("--window-support-owner") ? .ownerApproval : .pending)
             } else if CommandLine.arguments.contains("--membership-access-ui-fixture") {
                 MembershipAccessFixture()
             } else if CommandLine.arguments.contains("--personal-archive-ui-fixture") {
@@ -88,8 +83,6 @@ struct NekoWidgetApp: App {
                 CareHandoffFixtureView()
             } else if CommandLine.arguments.contains("--lost-cat-draft-ui-fixture") {
                 LostCatDraftFixtureView()
-            } else if CommandLine.arguments.contains("--family-record-ui-fixture") {
-                FamilyRecordUIFixture()
             } else if CommandLine.arguments.contains("--widget-photo-opening-ui-fixture") {
                 WidgetPhotoOpeningFixture()
             } else if CommandLine.arguments.contains("--personal-rediscovery-ui-fixture") {
@@ -102,18 +95,8 @@ struct NekoWidgetApp: App {
                 AppStoreScreenshotFixtureRootView()
             } else if CommandLine.arguments.contains("--cat-profile-photo-flow-fixture") {
                 CatProfilePhotoFlowFixture()
-            } else if CommandLine.arguments.contains("--photo-delivery-progress-ui-fixture") {
-                MomentPhotoDeliveryProgressFixture()
             } else if CommandLine.arguments.contains("--photo-window-ui-fixture") {
-                PhotoWindowDeliveryFixture()
-            } else if CommandLine.arguments.contains("--moment-composer-ui-fixture") {
-                MomentDeliveryComposerFixture()
-            } else if CommandLine.arguments.contains("--moment-history-ui-fixture") {
-                MomentSentHistoryFixture()
-            } else if CommandLine.arguments.contains("--moment-shared-album-ui-fixture") {
-                MomentSharedAlbumFixture()
-            } else if CommandLine.arguments.contains("--moment-received-ui-fixture") {
-                MomentReceivedLayoutFixture()
+                PhotoMemoryNoteFixture()
             } else if CommandLine.arguments.contains("--sharing-runtime-self-test") {
                 SharingRuntimeSelfTestRootView()
             } else {
@@ -125,16 +108,7 @@ struct NekoWidgetApp: App {
         }
     }
 
-#if DEBUG
-    @ViewBuilder
-    private var moderationResolutionFixture: some View {
-#if targetEnvironment(simulator)
-        ModerationResolutionUIFixture()
-#else
-        Color.clear
-#endif
-    }
-#endif
+
 }
 
 @MainActor

@@ -23,9 +23,6 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.main_tab = (ROOT / "NekoWidget/Views/MainTabView.swift").read_text(
             encoding="utf-8"
         )
-        self.family_window = (
-            ROOT / "NekoWidget/Views/FamilyWindowView.swift"
-        ).read_text(encoding="utf-8")
         self.presentation = (
             ROOT / "NekoWidget/Views/MomentSharingPresentation.swift"
         ).read_text(encoding="utf-8")
@@ -616,60 +613,16 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
             "@Binding var pendingFamilyNotificationRoute: MomentNotificationRoute?",
             self.main_tab,
         )
-        self.assertIn(
-            "pendingNotificationRoute: $pendingFamilyNotificationRoute",
-            self.main_tab,
-        )
-        self.assertIn(
-            "@Binding private var pendingNotificationRoute: MomentNotificationRoute?",
-            self.family_window,
-        )
 
-        consume = self.family_window.split(
-            "private func consumePendingNotificationRoute()", 1
-        )[1].split("private var pendingMemoryTargetBootstrapPhase", 1)[0]
-        self.assertIn("guard let route = pendingNotificationRoute", consume)
-        self.assertIn("route.target?.momentID", consume)
-        self.assertIn("case .newMoment:", consume)
-        self.assertIn("selectedMomentForDetail = target", consume)
-        self.assertIn("focusedMomentID = momentID", consume)
-        self.assertIn("case .heart:", consume)
-        self.assertIn("selectedSentRecord = matches[0]", consume)
-        self.assertIn("focusedSentMomentID = momentID", consume)
 
         # A target-bearing route is one atomic capability. It remains pending
         # until both its authenticated window and exactly one photo resolve;
         # only a legacy targetless v1 route may fall back to the collection.
-        targeted = consume.split("if let target = route.target", 1)[1].split(
-            "// Legacy notifications", 1
-        )[0]
-        self.assertIn("model.pairingState?.spaceID == target.spaceID", targeted)
-        self.assertEqual(targeted.count("guard matches.count == 1"), 2)
-        self.assertEqual(targeted.count("pendingNotificationRoute = nil"), 2)
-        first_resolution = targeted.index("guard matches.count == 1")
-        first_consume = targeted.index("pendingNotificationRoute = nil")
-        self.assertLess(first_resolution, first_consume)
-        legacy = consume.split("// Legacy notifications", 1)[1]
-        self.assertIn("pendingNotificationRoute = nil", legacy)
-        self.assertIn("selectedSharedPhoto = nil", legacy)
 
         sent_record = self.presentation.split(
             "struct MomentSentRecordPresentation", 1
         )[1].split("struct MomentOutgoingPresentation", 1)[0]
         self.assertIn("let momentID: String?", sent_record)
-        self.assertIn("$0.momentID == momentID", targeted)
-        self.assertIn("item: $selectedSharedPhoto", self.family_window)
-        self.assertNotIn("item: $selectedSentRecord", self.family_window)
-        self.assertNotIn("item: $selectedMomentForDetail", self.family_window)
-        self.assertIn("写真を開いています…", self.family_window)
-        self.assertIn("family-window-notification-route-progress", self.family_window)
-        self.assertIn("family-window-notification-route-retry", self.family_window)
-        self.assertIn("family-window-notification-route-dismiss", self.family_window)
-        self.assertIn("この写真を表示できません", self.family_window)
-        self.assertIn("写真を読み込めません", self.family_window)
-        self.assertIn("resolvePendingNotificationRoute()", self.family_window)
-        self.assertIn("finishPendingNotificationResolutionIfNeeded()", self.family_window)
-        self.assertIn("consumePendingNotificationRoute()", self.family_window)
 
     def test_visible_notification_authorization_requires_an_explicit_tap(self) -> None:
         request = self.service.split(
@@ -680,20 +633,8 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertNotIn(".sound", request)
         self.assertNotIn(".badge", request)
         self.assertIn("settings.alertSetting", self.service)
-        self.assertIn("family-window-notification-enable", self.family_window)
 
-    def test_denied_notification_permission_links_to_ios_settings(self) -> None:
-        self.assertIn("family-window-notification-open-settings", self.family_window)
-        self.assertIn("UIApplication.openSettingsURLString", self.family_window)
-        self.assertIn("バナーで知らせる", self.family_window)
 
-    def test_notification_copy_does_not_claim_immediate_delivery(self) -> None:
-        self.assertIn("写真とハートの通知", self.family_window)
-        self.assertIn("まだオンにしていません", self.family_window)
-        self.assertIn("通知センターにだけ表示", self.family_window)
-        self.assertIn("オン", self.family_window)
-        self.assertNotIn("選択中のまどの通知", self.family_window)
-        self.assertNotIn("写真やハートが届いたら必ずすぐ通知します", self.family_window)
 
     def test_heart_notification_is_text_only_and_privacy_minimized(self) -> None:
         notification = self.service.split(

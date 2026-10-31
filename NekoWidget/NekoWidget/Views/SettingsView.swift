@@ -220,42 +220,6 @@ struct SettingsView: View {
                 Text("ホーム画面")
             }
 
-            // Two-person window settings; group windows keep theirs inside each window.
-            if (SharingAPIConfiguration.current.isReviewVisible || SharingAPIConfiguration.current.isAvailable)
-                && GroupWindowClientProvider.ui == nil {
-                Section {
-                    if SharingAPIConfiguration.current.isReviewVisible {
-                        NavigationLink {
-                            if SharingAPIConfiguration.current.isMediaAvailable {
-                                FamilyWindowView(initialPresentation: .settings)
-                            } else if SharingAPIConfiguration.current.isAvailable {
-                                PairingView()
-                            } else {
-                                SharingReviewPreviewView()
-                            }
-                        } label: {
-                            LabeledContent {
-                                Text(privateWindowDisplayName)
-                            } label: {
-                                Label("まどの設定", systemImage: "window.vertical.closed")
-                            }
-                        }
-                        .accessibilityIdentifier("settings-sharing-review")
-                    }
-                    if SharingAPIConfiguration.current.isAvailable {
-                        NavigationLink {
-                            BlockedSharingView()
-                        } label: {
-                            Label("ブロックした相手", systemImage: "hand.raised")
-                        }
-                        .accessibilityIdentifier("settings-blocked-sharing")
-                    }
-                } header: {
-                    Text("まど")
-                }
-            }
-
-            // Plus sits with 保存, the thing it pays for, after the everyday sections.
             if canOpenMembershipOffer {
                 PlusSettingsSection()
             }

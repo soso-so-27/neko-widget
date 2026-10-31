@@ -1083,9 +1083,6 @@ struct PhotoMemoryNoteLibraryFixture: View {
                             excludeFromCatCandidates: { _ in }, restoreCatCandidates: { _ in },
                             profiles: [], assignmentsByPhotoIdentifier: [:],
                             replaceProfileAssignments: { _ in true },
-                            deliveryActions: PhotoWindowDeliveryActions(destinations: { [] },
-                                prepare: { _ in throw MemoryPhotoJPEGExportError.photoUnavailable },
-                                send: { _, _, _ in "Fixture has no delivery" }),
                             memoryNoteStore: Self.store)
                     }
                 default: Text("Fixture route is unavailable")

@@ -9,7 +9,7 @@ export const codePaths=Object.freeze([
  'NekoWidget/ci/moderation_readiness.py','NekoWidget/ci/verify-moderation-readiness.mjs','NekoWidget/ci/write-moderation-release-metadata.py',
  'NekoWidget/ci/internal_report_release.py','NekoWidget/ci/release-testflight.py',
  'NekoWidget/ci/verify-moderation-upload-payload.py','NekoWidget/ci/verify-signed-artifact-contents.py',
- 'NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift','NekoWidget/NekoWidget/Views/FamilyWindowView.swift',
+ 'NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift','NekoWidget/NekoWidget/Views/GroupWindowView.swift','NekoWidget/NekoWidget/Views/PhotoDetailComponents.swift',
  'NekoWidget/NekoWidget/Info.plist','NekoWidget/NekoWidgetShareExtension/Info.plist','NekoWidget/NekoWidgetWidget/Info.plist',
  'NekoWidget/SharingService/scripts/check-staging-runtime.mjs','NekoWidget/SharingService/scripts/staging-runtime-check-lib.mjs',
  'NekoWidget/SharingService/migrations/0035_moderation_owner_scope_adoption.sql','NekoWidget/SharingService/migrations/0036_moderation_owner_report_key.sql',

@@ -4,6 +4,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Shared photo/memo fixtures remain available after removing the pair-window UI.
+# Parse DEBUG sources too: the shipping Release build does not compile these branches.
+xcrun swiftc -frontend -parse -D DEBUG \
+  NekoWidget/Views/PhotoDetailComponents.swift NekoWidget/Views/PhotoNoteInput.swift \
+  NekoWidget/Views/PhotoMemoryNoteFixture.swift NekoWidget/App/AppStoreScreenshotFixture.swift \
+  NekoWidget/App/NekoWidgetApp.swift NekoWidget/Views/MainTabView.swift \
+  NekoWidgetUITests/PhotoPermissionUITests.swift
+
 owner_build_settings=(
   OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO GROUP_WINDOWS_ENABLED=YES
   SHARING_RELEASE_MODE=media-staging SHARING_FEATURE_ENABLED=YES SHARING_MEDIA_ENABLED=YES

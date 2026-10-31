@@ -19,6 +19,9 @@ test('the recorded release is accepted only for its reviewed code',async()=>{
 });
 
 test('signed review covers the human review UI and its database authorization rules',()=>{
+ assert.ok(codePaths.includes('NekoWidget/NekoWidget/Views/GroupWindowView.swift'));
+ assert.ok(codePaths.includes('NekoWidget/NekoWidget/Views/PhotoDetailComponents.swift'));
+ assert.ok(!codePaths.includes('NekoWidget/NekoWidget/Views/FamilyWindowView.swift'));
  assert.ok(codePaths.includes('NekoWidget/SharingService/src/moderation-owner-console.ts'));
  assert.ok(codePaths.includes('NekoWidget/SharingService/migrations/0049_moderation_review_duration.sql'));
 });
