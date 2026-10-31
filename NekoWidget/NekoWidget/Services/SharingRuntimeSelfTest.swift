@@ -10735,7 +10735,11 @@ actor SharingRuntimeSelfTestRunner {
                                                          authorizationCode: Data("synthetic".utf8), appleUserID: "synthetic-apple-user")
                     clock.advance(0)
                     return try await fixture.client.captureSessionCheckpoint()
-                }, progress: { count, _ in if count == 50 { clock.advance(500) } })
+                }, progress: { count, _ in
+                    // Counts restart when packaging begins. Expire only at the
+                    // first download-page boundary, not a later writing phase.
+                    if count == 50, await fixture.server.exportCounts().pages == 1 { clock.advance(500) }
+                })
             try await finish()
             guard renewals == 1, await fixture.server.authCounts().exchanges == 1 else {
                 throw ManagedPreservationError.invalidResponse
