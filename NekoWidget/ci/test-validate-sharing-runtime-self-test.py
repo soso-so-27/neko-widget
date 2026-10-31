@@ -29,6 +29,7 @@ CASES = {
     "moment-sent-delivery-receipt-boundary",
     "moment-paw-reaction-boundary",
     "moment-imported-memory-boundary",
+    "retained-widget-publication",
     "moment-inbound-moderation-retry-policy",
     "moderation-dual-key-configuration",
     "moment-commit-ack-metadata",
