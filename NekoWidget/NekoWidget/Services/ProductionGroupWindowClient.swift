@@ -56,7 +56,7 @@ actor ProductionGroupWindowClient: GroupWindowClient {
         self.outboxDirectory = try Self.outboxURL(outboxDirectory, context: namespace + "|" + endpoint.absoluteString)
         self.operations = try GroupOperationStore(directory: self.outboxDirectory.appendingPathComponent("http-operations", isDirectory: true))
 #if os(iOS) && !NEKO_SHARE_EXTENSION
-        _ = try self.secrets.read("identity")
+        (self.secrets as? GroupSharePublishingStore)?.refreshSnapshot()
 #endif
         _ = try GroupHTTPRequest.make(endpoint: endpoint, path: "/v3/group-identities/challenges", body: Data(), identity: nil)
     }

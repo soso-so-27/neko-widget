@@ -128,6 +128,16 @@ final class GroupSharePublishingStore: GroupSecretStore, Sendable {
         self.original = original
         self.snapshot = snapshot
     }
+    /// Seed existing destinations after an update, even when the app opens in
+    /// Photos. A locked/unavailable Keychain must not disable the host client.
+    func refreshSnapshot() {
+        guard (try? read("identity")) != nil else {
+            // read() also publishes the confirmed-empty marker for a fresh app.
+            return
+        }
+        guard let accounts = try? original.accounts(prefix: "window:") else { return }
+        for account in accounts { _ = try? read(account) }
+    }
     private func publish(_ data: Data?, account: String) {
         guard account == "identity" || account.hasPrefix("window:") else { return }
         do {

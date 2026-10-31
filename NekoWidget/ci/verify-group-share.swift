@@ -130,7 +130,11 @@ actor ShareStub: GroupShareServing {
         record.packet = packet; record.pinnedRevision = 1; record.pinnedHash = hash
         record.keys = ["1": Data(repeating: 7, count: 32)]
         record.rosterHashes = ["1": hash]
-        try publisher.write(GroupWire.encode(record), account: "window:" + windowID, createOnly: false)
+        // A pre-update destination is seeded without opening its app screen.
+        try original.write(GroupWire.encode(record), account: "window:" + windowID, createOnly: false)
+        publisher.refreshSnapshot()
+        let seeded = try snapshot.read("window:" + windowID)
+        precondition(seeded != nil)
         let reader = GroupShareReadingStore(snapshot: snapshot, checkpoints: checkpoints)
         record.nameCheckpoint = .init(rosterRevision: 1, nameRevision: 2, ciphertextHash: Data(repeating: 8, count: 32))
         try reader.write(GroupWire.encode(record), account: "window:" + windowID, createOnly: false)
