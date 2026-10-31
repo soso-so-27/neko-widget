@@ -83,19 +83,6 @@ enum OfficialWindowConfiguration {
     }
 }
 
-extension OfficialWeeklyThemeIndex.Theme {
-    func definition(relativeTo current: PublicWindowDefinition) -> PublicWindowDefinition? {
-        guard current.id == "weekly-theme", weekStart.utf8.count == 10,
-              channelID == "weekly-theme" || channelID == "weekly-theme-" + weekStart.replacingOccurrences(of: "-", with: ""),
-              OfficialWindowCatalog.isIdentifier(channelID),
-              let base = OfficialWindowConfiguration.validatedEndpoint(current.endpoint) else { return nil }
-        let endpoint = channelID == current.id ? base : base.deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(channelID).appendingPathComponent("catalog.json")
-        return PublicWindowDefinition(id: channelID, displayName: name, subtitle: weekStart,
-            endpoint: OfficialWindowConfiguration.validatedEndpoint(endpoint))
-    }
-}
-
 struct OfficialWindowState: Codable, Sendable {
     var windowID: String = OfficialWindowCatalog.sourceID
     var subscriptionID: UUID?
@@ -505,20 +492,6 @@ actor OfficialWindowClient {
             try catalog.validate(at: Date(), expectedChannelID: store.windowID, expectedCatID: store.definition.catID)
             return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
         }
-    }
-
-    /// Memory-only metadata for the current theme and its bounded history.
-    /// No subscription, cache write, private identity or remote URL discovery.
-    func weeklyThemes(store: OfficialWindowStore) async throws -> OfficialWeeklyThemeIndex {
-        guard store.windowID == "weekly-theme", let endpoint = store.endpoint else { throw OfficialWindowError.notConfigured }
-        let session = makeSession()
-        defer { session.invalidateAndCancel() }
-        let url = endpoint.deletingLastPathComponent().appendingPathComponent("themes.json")
-        let data = try await fetch(url, session: session, limit: 16 * 1024, contentType: "application/json")
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        let result = try decoder.decode(OfficialWeeklyThemeIndex.self, from: data)
-        try result.validate(at: Date())
-        return result
     }
 
     private func fetchCatalog(_ endpoint: URL, expectedChannelID: String, expectedCatID: String?, session: URLSession) async throws -> OfficialWindowCatalog {
