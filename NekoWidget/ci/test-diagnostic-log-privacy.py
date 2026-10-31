@@ -921,10 +921,13 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
         )
 
         share = source(targets[3])
-        self.assertIn("sharingError.errorDescription", share)
+        self.assertIn("GroupShareComposerModel.message(for: error)", share)
+        composer = source("NekoWidgetShareExtension/GroupShareComposer.swift")
+        self.assertNotIn("error.localizedDescription", composer)
+        self.assertNotIn("String(describing: error)", composer)
         self.assertIn(
-            "写真を保存できませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。",
-            share,
+            "届けられたか確認できませんでした。少し待ってから、もう一度お試しください。",
+            composer,
         )
 
         log_view = source(targets[4])

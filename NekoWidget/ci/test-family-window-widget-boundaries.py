@@ -2597,25 +2597,16 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
 
         share_view = source("NekoWidgetShareExtension/ShareViewController.swift")
-        self.assertIn("configureDestinationMenu(admissions)", share_view)
-        destination_menu = section(
-            share_view,
-            "private func configureDestinationMenu(",
-            "private func destinationPickerTitles(",
-        )
-        self.assertIn("destinationButton.isHidden = false", destination_menu)
-        self.assertIn("UIAction(", destination_menu)
-        self.assertIn("self.selectAdmission(admission, pickerTitle: title)", destination_menu)
-        self.assertIn("selectedAdmission?.id == admission.id ? .on : .off", destination_menu)
-        self.assertIn("attributes: isAmbiguous ? .disabled : []", destination_menu)
-        self.assertIn("duplicateDestinationNames(for: admissions)", destination_menu)
-        self.assertIn("名前を変えてください", share_view)
-        self.assertIn("選んだまどにだけ届きます", share_view)
-        self.assertIn('アプリの「まど」で「\\(admission.displayName)」を開くと、写真が届きます。', share_view)
-        self.assertIn("選んだまどには、もう届けられません。ほかのまどに勝手に届くことはありません。", share_view)
-        self.assertIn("admissionID: selectedAdmission.id", share_view)
-        self.assertIn("selectedAdmission = nil", share_view)
-        self.assertIn("continueButton.isEnabled = false", share_view)
+        # The old catalog remains readable by the app, but must never grant
+        # the group Share Extension a destination or a fallback recipient.
+        self.assertNotIn("MomentShareHandoffStore", share_view)
+        self.assertNotIn("selectedAdmission", share_view)
+        self.assertIn("service: try GroupShareService.live()", share_view)
+        composer = source("NekoWidgetShareExtension/GroupShareComposer.swift")
+        self.assertIn("windows.contains(where: { $0.id == window.id })", composer)
+        self.assertIn("attemptedWindowID == selected.id", composer)
+        self.assertIn("windowID: selected.id, operationID: operationID", composer)
+        self.assertIn(".disabled(!GroupShareComposerModel.canDeliver(window))", composer)
 
         pairing_store = source("Shared/Sharing/PairingKeychainStore.swift")
         self.assertIn(
@@ -2656,15 +2647,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
             paired_validation,
         )
 
-        share_view = source("NekoWidgetShareExtension/ShareViewController.swift")
-        self.assertIn(
-            'destinationLabel.text = "届け先　\\(admission.displayName)"',
-            share_view,
-        )
-        self.assertIn(
-            'detailLabel.text = "この写真を\\(admission.displayName)',
-            share_view,
-        )
+        self.assertIn("Text(selected.name)", composer)
+        self.assertIn("Text(window.name)", composer)
 
         handoff = source("Shared/Sharing/MomentShareHandoffStore.swift")
         binding = section(
