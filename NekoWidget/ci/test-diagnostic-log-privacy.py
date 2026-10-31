@@ -877,8 +877,6 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
     def test_user_visible_unknown_errors_use_fixed_recovery_copy(self) -> None:
         targets = (
             "NekoWidget/ViewModels/AppViewModel.swift",
-            "NekoWidget/ViewModels/PairingViewModel.swift",
-            "NekoWidget/ViewModels/MomentSharingViewModel.swift",
             "NekoWidgetShareExtension/ShareViewController.swift",
             "NekoWidget/Views/LogView.swift",
         )
@@ -905,22 +903,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             app,
         )
 
-        pairing = source(targets[1])
-        self.assertIn('"Could not remove consumed invitation material"', pairing)
-        self.assertNotIn('"Could not scrub consumed invitation secret"', pairing)
-        self.assertIn("operationErrorMessage = Self.userFacingMessage(for: error)", pairing)
-        self.assertIn("updated.lastError = operationErrorMessage", pairing)
-        self.assertIn("if state?.lastError != nil", pairing)
-
-        moment = source(targets[2])
-        self.assertIn("if let momentError = error as? MomentSharingError", moment)
-        self.assertIn("if let pairingError = error as? PairingError", moment)
-        self.assertIn(
-            "まどを読み込めませんでした。少し待ってから、もう一度お試しください。",
-            moment,
-        )
-
-        share = source(targets[3])
+        share = source(targets[1])
         self.assertIn("GroupShareComposerModel.message(for: error)", share)
         composer = source("NekoWidgetShareExtension/GroupShareComposer.swift")
         self.assertNotIn("error.localizedDescription", composer)
@@ -930,7 +913,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             composer,
         )
 
-        log_view = source(targets[4])
+        log_view = source(targets[2])
         self.assertIn("SharedLog.errorMetadata(error, category: .diagnostics)", log_view)
         self.assertIn(
             "診断情報を書き出せませんでした。iPhoneの空き容量を確かめて、もう一度お試しください。",

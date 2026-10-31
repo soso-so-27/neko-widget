@@ -10,7 +10,7 @@ xcrun swiftc -frontend -parse -D DEBUG \
   NekoWidget/Views/PhotoDetailComponents.swift NekoWidget/Views/PhotoNoteInput.swift \
   NekoWidget/Views/PhotoMemoryNoteFixture.swift NekoWidget/App/AppStoreScreenshotFixture.swift \
   NekoWidget/App/NekoWidgetApp.swift NekoWidget/Views/MainTabView.swift \
-  NekoWidgetUITests/PhotoPermissionUITests.swift
+  NekoWidgetUITests/PhotoPermissionUITests.swift NekoWidget/Services/SharingRuntimeSelfTest.swift
 
 owner_build_settings=(
   OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO GROUP_WINDOWS_ENABLED=YES

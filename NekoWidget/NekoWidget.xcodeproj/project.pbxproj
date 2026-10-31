@@ -36,8 +36,6 @@
 		E02609220000000000000006 /* PersonalWidgetMembershipStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */; };
 		E02609220000000000000008 /* MembershipAccessContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609220000000000000007 /* MembershipAccessContext.swift */; };
 		E02609210000000000000003 /* MembershipOfferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000004 /* MembershipOfferView.swift */; };
-		C09D345411BC400BBB805EB4 /* WindowSupportResumeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */; };
-		05282243C4C04065AD6112F7 /* WindowSupportResumeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */; };
 		E02609210000000000000001 /* MembershipOfferModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609210000000000000002 /* MembershipOfferModel.swift */; };
 		E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */; };
 		E02609080000000000000001 /* PhotoNoteInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* PhotoNoteInput.swift */; };
@@ -98,8 +96,6 @@
 		100000000000000000000143 /* PairingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021B /* PairingAPIClient.swift */; };
 		100000000000000000000148 /* CanonicalPreviewBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021C /* CanonicalPreviewBuilder.swift */; };
 		100000000000000000000149 /* DailySharingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021D /* DailySharingStore.swift */; };
-		10000000000000000000014A /* DailySharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021E /* DailySharingAPIClient.swift */; };
-		10000000000000000000014B /* DailySharingSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021F /* DailySharingSyncCoordinator.swift */; };
 		10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022A /* SharingRuntimeSelfTest.swift */; };
 		10000000000000000000014E /* HomeLocationClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022C /* HomeLocationClassifier.swift */; };
 		10000000000000000000014F /* GrowthAlbumSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023A /* GrowthAlbumSelector.swift */; };
@@ -141,11 +137,9 @@
 		100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025A /* MomentBackgroundRefreshService.swift */; };
 		100000000000000000000178 /* MomentShareIngressService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000354 /* MomentShareIngressService.swift */; };
 		100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000256 /* MomentShareHandoffProcessor.swift */; };
-		10000000000000000000016E /* MomentSharingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000254 /* MomentSharingViewModel.swift */; };
 		10000000000000000000016F /* PhotoDetailComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000255 /* PhotoDetailComponents.swift */; };
 		100000000000000000000173 /* MomentSharingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000257 /* MomentSharingPresentation.swift */; };
 		100000000000000000000174 /* PairingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000258 /* PairingPresentation.swift */; };
-		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */; };
 		100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025B /* MonthlyWindowPresentation.swift */; };
@@ -378,8 +372,6 @@
 		E02609220000000000000004 /* PersonalWidgetMembershipStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalWidgetMembershipStore.swift; sourceTree = "<group>"; };
 		E02609220000000000000007 /* MembershipAccessContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipAccessContext.swift; sourceTree = "<group>"; };
 		E02609210000000000000004 /* MembershipOfferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferView.swift; sourceTree = "<group>"; };
-		D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeClient.swift; sourceTree = "<group>"; };
-		94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSupportResumeModel.swift; sourceTree = "<group>"; };
 		E02609210000000000000002 /* MembershipOfferModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembershipOfferModel.swift; sourceTree = "<group>"; };
 		E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateWindowCoverPhotoService.swift; sourceTree = "<group>"; };
 		E02609080000000000000002 /* PhotoNoteInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoNoteInput.swift; sourceTree = "<group>"; };
@@ -454,11 +446,8 @@
 		F0000000000000000000021B /* PairingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingAPIClient.swift; sourceTree = "<group>"; };
 		F0000000000000000000021C /* CanonicalPreviewBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalPreviewBuilder.swift; sourceTree = "<group>"; };
 		F0000000000000000000021D /* DailySharingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingStore.swift; sourceTree = "<group>"; };
-		F0000000000000000000021E /* DailySharingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingAPIClient.swift; sourceTree = "<group>"; };
-		F0000000000000000000021F /* DailySharingSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingSyncCoordinator.swift; sourceTree = "<group>"; };
 		F0000000000000000000022A /* SharingRuntimeSelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingRuntimeSelfTest.swift; sourceTree = "<group>"; };
 		F0000000000000000000022C /* HomeLocationClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLocationClassifier.swift; sourceTree = "<group>"; };
-		F00000000000000000000221 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
 		BC19F186A11B000000000002 /* HouseholdAlbumCatalogCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HouseholdAlbumCatalogCoordinator.swift; sourceTree = "<group>"; };
 		F0000000000000000000025B /* MonthlyWindowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowPresentation.swift; sourceTree = "<group>"; };
@@ -535,7 +524,6 @@
 		F00000000000000000000253 /* MomentSharingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingCoordinator.swift; sourceTree = "<group>"; };
 		F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentBlockWithdrawalStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000025A /* MomentBackgroundRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentBackgroundRefreshService.swift; sourceTree = "<group>"; };
-		F00000000000000000000254 /* MomentSharingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000255 /* PhotoDetailComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDetailComponents.swift; sourceTree = "<group>"; };
 		F00000000000000000000256 /* MomentShareHandoffProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareHandoffProcessor.swift; sourceTree = "<group>"; };
 		F00000000000000000000257 /* MomentSharingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingPresentation.swift; sourceTree = "<group>"; };
@@ -863,8 +851,6 @@
 				F0000000000000000000021B /* PairingAPIClient.swift */,
 				F0000000000000000000021C /* CanonicalPreviewBuilder.swift */,
 				F0000000000000000000021D /* DailySharingStore.swift */,
-				F0000000000000000000021E /* DailySharingAPIClient.swift */,
-				F0000000000000000000021F /* DailySharingSyncCoordinator.swift */,
 				F0000000000000000000022A /* SharingRuntimeSelfTest.swift */,
 				F0000000000000000000022D /* CatCandidateCurationStore.swift */,
 				F0000000000000000000022E /* CatHouseholdIdentityStore.swift */,
@@ -931,8 +917,6 @@
 				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
 				F00000000000000000000262 /* PlusPurchaseStore.swift */,
 				E02310230000000000000002 /* PlusAuthorityCache.swift */,
-				D7513E944C11438AA0492CBE /* WindowSupportResumeClient.swift */,
-				94C75CC620AE4AB4A6AED056 /* WindowSupportResumeModel.swift */,
 				E02609210000000000000002 /* MembershipOfferModel.swift */,
 				F00000000000000000000263 /* BillingClientCore.swift */,
 				F00000000000000000000264 /* BillingKeychainStore.swift */,
@@ -946,8 +930,6 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000220 /* AppViewModel.swift */,
-				F00000000000000000000221 /* PairingViewModel.swift */,
-				F00000000000000000000254 /* MomentSharingViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -1315,14 +1297,11 @@
 				100000000000000000000143 /* PairingAPIClient.swift in Sources */,
 				100000000000000000000148 /* CanonicalPreviewBuilder.swift in Sources */,
 				100000000000000000000149 /* DailySharingStore.swift in Sources */,
-				10000000000000000000014A /* DailySharingAPIClient.swift in Sources */,
-				10000000000000000000014B /* DailySharingSyncCoordinator.swift in Sources */,
 				10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */,
 				A02610090000000000000001 /* WidgetCacheImageLoader.swift in Sources */,
 				A02610090000000000000002 /* WidgetManifestReader.swift in Sources */,
 				100000000000000000000152 /* CatCandidateCurationStore.swift in Sources */,
 				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
-				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
 				E02609210000000000000003 /* MembershipOfferView.swift in Sources */,
 				BC19F186A11B000000000001 /* HouseholdAlbumCatalogCoordinator.swift in Sources */,
@@ -1336,8 +1315,6 @@
 				10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */,
 				100000000000000000000180 /* PlusPurchaseStore.swift in Sources */,
 				E02310230000000000000001 /* PlusAuthorityCache.swift in Sources */,
-				C09D345411BC400BBB805EB4 /* WindowSupportResumeClient.swift in Sources */,
-				05282243C4C04065AD6112F7 /* WindowSupportResumeModel.swift in Sources */,
 				E02609210000000000000001 /* MembershipOfferModel.swift in Sources */,
 				100000000000000000000181 /* BillingClientCore.swift in Sources */,
 				100000000000000000000182 /* BillingKeychainStore.swift in Sources */,
@@ -1401,7 +1378,6 @@
 				A16700000000000000000079 /* PersonalWidgetBackgroundRefresh.swift in Sources */,
 				100000000000000000000178 /* MomentShareIngressService.swift in Sources */,
 				100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */,
-				10000000000000000000016E /* MomentSharingViewModel.swift in Sources */,
 				10000000000000000000016F /* PhotoDetailComponents.swift in Sources */,
 				E02609080000000000000001 /* PhotoNoteInput.swift in Sources */,
 				E02609090000000000000011 /* PhotoMemoryNoteFixture.swift in Sources */,
