@@ -581,6 +581,7 @@ final class AppViewModel: ObservableObject {
 #endif
         guard !hasStarted else { return }
         hasStarted = true
+        Task { @MainActor [weak self] in await self?.maintainRetainedSharingStorage() }
         var startupSnapshotNeedsSave = false
         var loadedScanState: ScanState?
         SharedLog.app.info("lifecycle", "Application startup began")
@@ -720,6 +721,7 @@ final class AppViewModel: ObservableObject {
 #if DEBUG
         if isUIFixture { return }
 #endif
+        Task { @MainActor [weak self] in await self?.maintainRetainedSharingStorage() }
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "sync_on_active")
             return
@@ -2066,6 +2068,17 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "export", operation: "export_json")
             setError(error)
             return nil
+        }
+    }
+
+    /// Retain the existing disabled-build cleanup policy without constructing a relay client.
+    private func maintainRetainedSharingStorage() async {
+        guard UIApplication.shared.isProtectedDataAvailable,
+              SharingAPIConfiguration.current.requiresLocalSharingPurge else { return }
+        do {
+            try await PairingInstallationGuard.resetLocalSharingForDisabledConfigurationAsync()
+        } catch {
+            Self.logError(error, category: "sharing-storage", operation: "disabled_cleanup")
         }
     }
 

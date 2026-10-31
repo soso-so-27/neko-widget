@@ -5,14 +5,11 @@ import UIKit
 import UserNotifications
 import WidgetKit
 
-/// iOS owns the execution time of app refresh tasks. This service therefore
-/// makes no immediate-delivery promise: it performs one bounded, authenticated
-/// synchronization only when the system wakes the host app with protected data
-/// available.
+/// Keep the registered background-task identifier for installed versions.
+/// Refresh only current group admissions; iOS controls when this can run.
 enum GroupBackgroundRefreshPolicy {
     static let taskIdentifier = "jp.nekowidget.app.background-moment-refresh"
     static let earliestBeginDelay: TimeInterval = 15 * 60
-
 }
 
 /// A privacy-minimized navigation hint shared by remote and local sharing
@@ -205,7 +202,6 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // app. Reconcile on every foreground activation; the signed PUT is
         // idempotent and extends the server-side bounded subscription lease.
         reconcileRemoteNotificationRegistration()
-        Task { await GroupAdmissionService.shared.refresh() }
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
@@ -225,10 +221,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         guard !Self.suppressesNormalServicesForDebugLaunch else { return }
 #endif
         // Do not cancel an in-flight callback here. If its network request has
-        // already reached the relay, cancellation could prevent the actor from
-        // observing staleness and re-registering the newest selected window.
-        // The generation/catalog CAS inside `register` makes both callbacks
-        // converge instead.
+        // already reached the service, cancellation could prevent the group
+        // coordinator from observing the newest token. Its epoch check makes
+        // callbacks converge instead.
         tokenRegistrationEpoch &+= 1
         let callbackEpoch = tokenRegistrationEpoch
         tokenRegistration = Task {
@@ -313,9 +308,8 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // Submit the next request before doing network work. If iOS terminates
         // this attempt, a later best-effort opportunity remains scheduled.
         scheduleNextRefresh()
-        // Do not cancel a remote-notification refresh that may already have
-        // authenticated and downloaded data. The scheduled task can safely run
-        // immediately after it through the process-wide serialized coordinator.
+        // Serialize scheduled refresh attempts. GroupAdmissionService also
+        // coalesces foreground and authenticated notification refreshes.
         let precedingRefresh = activeRefresh
         let operation = Task { @MainActor in
             await precedingRefresh?.value
