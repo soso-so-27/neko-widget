@@ -1823,7 +1823,6 @@ struct SavedMemoriesGalleryView: View {
     let exportPhotoBook: ([String]) async throws -> URL
 
     @State private var creationOutput: CreationOutput?
-    @State private var showsCreationOptions = false
     @State private var selectedExportIdentifiers: Set<String>
     @State private var isExportingPhotoBook = false
     @State private var photoBookExport: LikedPhotoBookExportFile?
@@ -1904,9 +1903,11 @@ struct SavedMemoriesGalleryView: View {
         .accessibilityIdentifier("saved-memories-gallery")
         .accessibilityValue(galleryAccessibilityValue)
         .toolbar {
-            if isCurrentPhotoLibraryPage && hasPhotoAccess && !photos.isEmpty {
+            // The public PDF entry was removed (10/31); test builds keep 本のイメージ.
+            if isCurrentPhotoLibraryPage && hasPhotoAccess && !photos.isEmpty
+                && (InternalBuildPresentationAvailability.isAvailable || isSelectingForExport) {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isSelectingForExport ? "キャンセル" : "PDFを作る") {
+                    Button(isSelectingForExport ? "キャンセル" : "本のイメージ") {
                         toggleExportMode()
                     }
                     .disabled(isExportingPhotoBook)
@@ -1918,9 +1919,6 @@ struct SavedMemoriesGalleryView: View {
             if hasPhotoAccess && isSelectingForExport {
                 exportActionBar
             }
-        }
-        .sheet(isPresented: $showsCreationOptions) {
-            creationOptions
         }
         .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
             LikedPhotoBookActivityView(activityItems: [export.url])
@@ -1952,7 +1950,6 @@ struct SavedMemoriesGalleryView: View {
             selectedExportIdentifiers.formIntersection(available)
             if available.isEmpty {
                 creationOutput = nil
-                showsCreationOptions = false
             }
         }
         .onDisappear {
@@ -2022,50 +2019,6 @@ struct SavedMemoriesGalleryView: View {
             return "お気に入り、表示できる写真\(visiblePhotos.count.formatted())枚、表示できない写真\(unavailableSavedPhotoCount.formatted())枚"
         }
         return "お気に入り、\(visiblePhotos.count.formatted())枚"
-    }
-
-    private var creationOptions: some View {
-        NavigationStack {
-            List {
-                Button {
-                    beginCreation(.pdf)
-                } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("PDF", systemImage: "doc.richtext")
-                            .font(.headline)
-                        Text("写真を1〜30枚選んで、PDFとして共有します。")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 8)
-                }
-                .accessibilityIdentifier("saved-memories-create-pdf")
-
-                if InternalBuildPresentationAvailability.isAvailable {
-                    Button {
-                        beginCreation(.bookPreview)
-                    } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("本のイメージ", systemImage: "book.closed")
-                            .font(.headline)
-                        Text("写真を20枚選んで、このiPhoneで本の形を確認します。")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 8)
-                }
-                    .accessibilityIdentifier("saved-memories-create-book-preview")
-                }
-            }
-            .navigationTitle("作るものを選ぶ")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("キャンセル") { showsCreationOptions = false }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
     }
 
     @ViewBuilder
@@ -2193,15 +2146,14 @@ struct SavedMemoriesGalleryView: View {
             } else {
                 creationOutput = nil
             }
-        } else {
-            showsCreationOptions = true
+        } else if InternalBuildPresentationAvailability.isAvailable {
+            beginCreation(.bookPreview)
         }
     }
 
     private func beginCreation(_ output: CreationOutput) {
         selectedExportIdentifiers.removeAll()
         creationOutput = output
-        showsCreationOptions = false
     }
 
     private func toggleExportSelection(_ identifier: String) {

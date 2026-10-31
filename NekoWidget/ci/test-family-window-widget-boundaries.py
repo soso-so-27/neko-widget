@@ -1880,7 +1880,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertNotIn("var requestedSettings = settings", settings)
         self.assertIn("isPhotoSettingsSavePending = true", settings)
-        self.assertIn("!canUpdate || isSavingSettings || state == .updating", settings)
+        # The 「うちの子」 album screen left Settings (10/31).
+        self.assertNotIn("PhotoLibraryAlbumSettingsView", settings)
         photo_settings = section(
             settings,
             "private var photoSettingsView: some View",
