@@ -311,8 +311,7 @@ ORCHESTRATION_SCOPE = "ci-orchestration-v1"
 POLICY_DOC_SCOPE = "public-policy-docs-v1"
 POLICY_DOC_PATHS = frozenset({
     "docs/index.html", "docs/privacy/index.html", "docs/community/index.html",
-    "docs/support/index.html", "docs/app/index.html",
-    "docs/app/privacy/index.html", "docs/app/support/index.html",
+    "docs/support/index.html",
 })
 POLICY_DOC_WORKFLOW_STEP = """      - name: Validate public policy pages
         if: steps.scope.outputs.runtime_scope == 'public-policy-docs-v1'

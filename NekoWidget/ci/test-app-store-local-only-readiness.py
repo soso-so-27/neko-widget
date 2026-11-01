@@ -432,7 +432,7 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         self.assertEqual("COPY_VALID", json.loads(copy_result.stdout)["status"])
 
     def test_cli_cannot_override_site_or_supply_three_local_evidence_files(self) -> None:
-        self.assertEqual(REPOSITORY / "docs" / "app", VALIDATOR.DEFAULT_SITE_ROOT)
+        self.assertEqual(REPOSITORY / "docs", VALIDATOR.DEFAULT_SITE_ROOT)
         for arguments in (
             ["--site-root", "C:/dummy"],
             ["--release-evidence", "evidence.json"],
@@ -452,7 +452,7 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
 
     def test_submission_uses_canonical_clean_head_sources_only(self) -> None:
         self.assertEqual(
-            [],
+            ["release_mode: local-only publication is retired; use the production release route"],
             VALIDATOR.validate_canonical_release_source_binding(MANIFEST),
         )
         with tempfile.TemporaryDirectory() as directory:

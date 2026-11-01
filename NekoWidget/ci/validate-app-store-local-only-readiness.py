@@ -36,11 +36,9 @@ DEFAULT_OWNER_INPUT = PROJECT / "docs" / "app-store" / "local-only-owner-input.j
 DEFAULT_CONTACT_APPROVAL = (
     PROJECT / "docs" / "app-store" / "local-only-contact-approval.json"
 )
-DEFAULT_SITE_ROOT = PROJECT.parent / "docs" / "app"
+DEFAULT_SITE_ROOT = PROJECT.parent / "docs"
 CANONICAL_RELEASE_SOURCE_PATHS = (
     "NekoWidget/docs/app-store/local-only-ja.json",
-    "docs/app/support/index.html",
-    "docs/app/privacy/index.html",
 )
 
 EXPECTED_PRIVACY_URL = "https://soso-so-27.github.io/neko-widget/app/privacy/"
@@ -545,7 +543,7 @@ def validate_canonical_release_source_binding(manifest_path: Path) -> list[str]:
         canonical_manifest = DEFAULT_MANIFEST.resolve()
     except OSError as error:
         return [f"manifest: could not resolve canonical path: {error}"]
-    blockers: list[str] = []
+    blockers: list[str] = ["release_mode: local-only publication is retired; use the production release route"]
     if selected_manifest != canonical_manifest:
         blockers.append(
             "manifest: non-copy readiness must use the canonical local-only-ja.json"
