@@ -1207,7 +1207,7 @@ struct AppRecordSettingsView: View {
         }) {
             MembershipOfferSheet(model: .live(), context: .preservation) { _ in showsPlusOffer = false }
         }
-        .task { authentication.start() }
+        .task { authentication.start(observingOnly: true) }
         .onDisappear {
             AppIdleTimer.setPreventSleep(false, for: "preservation-export")
             exporter.cancelPreparation(); authentication.stop()
@@ -1226,8 +1226,10 @@ struct AppRecordSettingsView: View {
         }
         .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
         .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
-        .onChange(of: authentication.membership?.canSave) { _, canSave in
-            if canSave == true, persistence.enabled { Task { await persistence.retry() } }
+        .onChange(of: authentication.membership?.canSave) { previous, canSave in
+            if canSave == true, persistence.enabled, previous == false || persistence.planEnded {
+                Task { await persistence.retry() }
+            }
         }
         .onChange(of: plusEnded) { _, ended in persistence.notePlanEnded(ended) }
         .onChange(of: exporter.preparing) { _, preparing in
@@ -1269,7 +1271,21 @@ struct AppRecordSettingsView: View {
         if authentication.accountDeletionState != nil {
             Section { Text("アカウントを削除しているため、使えません。") }
         } else if !authentication.isSignedIn {
-            signedOutSections
+            if authentication.preparedSignIn != nil {
+                signedOutSections
+            } else {
+                Section {
+                    if authentication.isBusy { ProgressView("準備しています…") }
+                    else {
+                        // Explicit verification may renew access; opening the
+                        // screen or receiving a read error must not do so.
+                        Button("もう一度試す") { authentication.start() }
+                            .disabled(persistence.busy)
+                            .accessibilityIdentifier("app-record-check-session")
+                    }
+                }
+                if persistence.enabled { savingSections }
+            }
         } else if !persistence.enabled {
             Section {
                 if offersPlus && authentication.membership?.canSave != true { plusOfferButton }
@@ -1524,6 +1540,8 @@ private actor AppRecordFixtureServer {
     func resetMeasuredRoutes() { measuredRoutes = [:] }
     func measuredRequestCounts() -> [String: Int] { measuredRoutes }
     func useUninterruptedMetadataBatches() { metadataBatchMode = true; interruptMetadataPart = false }
+    private var accountReadsUnavailable = false
+    func simulateAccountReadFailure() { accountReadsUnavailable = true }
     private var rejectVisibleInventory = false
     func simulateArchiveListingConflict() { rejectVisibleInventory = true }
     private var maximumIndexVersion = 4
@@ -1583,13 +1601,16 @@ private actor AppRecordFixtureServer {
     func request(_ request: URLRequest) throws -> (Data, URLResponse) {
         requests += 1
         guard let url = request.url, url.host?.hasSuffix(".app-record-fixture.invalid") == true else { throw ToolBackupError.invalid }
-        let route = url.pathComponents.map { UUID(uuidString: $0) == nil ? $0 : "{id}" }.joined(separator: "/")
+        let route = "/" + url.pathComponents.dropFirst().map { UUID(uuidString: $0) == nil ? $0 : "{id}" }.joined(separator: "/")
         measuredRoutes[(request.httpMethod ?? "GET") + " " + route, default: 0] += 1
         func response(_ json: [String: Any], _ code: Int = 200) throws -> (Data, URLResponse) {
             (try JSONSerialization.data(withJSONObject: json), HTTPURLResponse(url: url, statusCode: code, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"])!)
         }
         func failure(_ code: String, _ status: Int) throws -> (Data, URLResponse) { try response(["error": ["code": code]], status) }
+        if accountReadsUnavailable, ["/v1/membership", "/v1/usage"].contains(url.path) {
+            return try failure("SESSION_INVALID", 401)
+        }
         if url.path == "/v1/tool-metadata-batches/recovery" {
             guard metadataBatchMode, metadataBatchID != nil else { return try failure("TOOL_METADATA_BATCH_NOT_FOUND", 404) }
             metadataUncovered = false; metadataRecoveries += 1
@@ -1784,6 +1805,17 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static var preparationPhase = "開始"
+    static var measurementSummary = ""
+    func installRenewableFixtureCredential(expired: Bool) throws -> ManagedPreservationSessionStore.Credential {
+        let store = ManagedPreservationSessionStore(origin: configuration.origin!.absoluteString)
+        guard let previous = try store.load() else { throw ToolBackupError.invalid }
+        let value = ManagedPreservationSessionStore.Credential(token: previous.token, ownerId: previous.ownerId,
+            expiresAt: Date().addingTimeInterval(expired ? -1 : 900),
+            deviceGrant: .init(grantId: UUID().uuidString.lowercased(), idleExpiresAt: Date().addingTimeInterval(86400), appleUserID: "synthetic-user"),
+            devicePrivateKey: P256.Signing.PrivateKey().rawRepresentation)
+        guard try store.save(value, replacing: previous) else { throw ToolBackupError.invalid }
+        return value
+    }
     func verifySettingsSessionInterference() async throws {
         Self.preparationPhase = "一項目変更の往復を計測"
         await server.useUninterruptedMetadataBatches()
@@ -1798,7 +1830,12 @@ private final class AppRecordFixture {
         let began = Date()
         await persistence.retry()
         guard persistence.title == "保存済み", await server.counts().1 == photosBefore else { throw ToolBackupError.storage }
-        print("AUTOSAVE_SINGLE_EDIT seconds=\(Date().timeIntervalSince(began)) routes=\(await server.measuredRequestCounts()) photoPUT=0")
+        let elapsed = Date().timeIntervalSince(began)
+        let routes = await server.measuredRequestCounts()
+        let routeJSON = try JSONSerialization.data(withJSONObject: routes, options: [.sortedKeys])
+        let mutations = routes.filter { $0.key.hasPrefix("PUT ") }.values.reduce(0, +)
+        Self.measurementSummary = "AUTOSAVE_SINGLE_EDIT seconds=\(elapsed) total=\(routes.values.reduce(0, +)) mutationPUT=\(mutations) photoPUT=0 routes=\(String(decoding: routeJSON, as: UTF8.self))"
+        print(Self.measurementSummary)
 
         Self.preparationPhase = "保存途中の通常照会401を再現"
         let saveClient = authenticationClient()
@@ -1809,17 +1846,66 @@ private final class AppRecordFixture {
         await persistence.retry()
         guard await server.metadataCounts().uncovered else { throw ToolBackupError.storage }
         let account = ManagedPreservationCoordinator(configuration: configuration, client: authenticationClient(), purpose: .account)
-        account.start()
-        for _ in 0..<200 {
-            if !account.isBusy && !account.membershipLoading { break }
-            try await Task.sleep(for: .milliseconds(10))
+        func settle(_ account: ManagedPreservationCoordinator) async throws {
+            for _ in 0..<300 {
+                if !account.isBusy && !account.membershipLoading && !account.usageLoading { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw ToolBackupError.storage
         }
-        guard !account.isSignedIn else { throw ToolBackupError.storage }
-        do { try await saveClient.requireSessionCheckpoint(checkpoint); throw ToolBackupError.storage }
-        catch ManagedPreservationError.staleSession { }
-        guard try ManagedPreservationSessionStore(origin: configuration.origin!.absoluteString).load() == nil else { throw ToolBackupError.storage }
-        print("AUTOSAVE_INTERFERENCE reproduced: account membership 401 cleared shared credential; save checkpoint stale; account signed out")
+        account.start(observingOnly: true)
+        try await settle(account)
+        account.refreshUsage()
+        try await settle(account)
+        guard account.isSignedIn, account.preparedSignIn == nil, account.membership == nil,
+              account.membershipMessage != nil, account.usage == nil, account.usageMessage != nil else { throw ToolBackupError.storage }
+        try await saveClient.requireSessionCheckpoint(checkpoint)
         account.stop()
+        await persistence.retry()
+        guard persistence.title == "保存済み", !(await server.metadataCounts().uncovered) else { throw ToolBackupError.storage }
+
+        Self.preparationPhase = "更新可能な認証も照会では変更しない"
+        let store = ManagedPreservationSessionStore(origin: configuration.origin!.absoluteString)
+        let renewable = try installRenewableFixtureCredential(expired: false)
+        let renewableSaveClient = authenticationClient()
+        let renewableCheckpoint = try await renewableSaveClient.captureSessionCheckpoint()
+        await server.simulateAccountReadFailure()
+        account.start(observingOnly: true)
+        try await settle(account)
+        account.refreshUsage()
+        try await settle(account)
+        guard account.isSignedIn, account.preparedSignIn == nil, try store.load() == renewable else { throw ToolBackupError.storage }
+        try await renewableSaveClient.requireSessionCheckpoint(renewableCheckpoint)
+        account.stop()
+
+        Self.preparationPhase = "期限切れの確認中はサインアウトと区別"
+        let expired = try installRenewableFixtureCredential(expired: true)
+        let before = await server.counts().0
+        account.start(observingOnly: true)
+        try await settle(account)
+        guard !account.isSignedIn, account.preparedSignIn == nil, account.errorMessage != nil,
+              try store.load() == expired, await server.counts().0 == before else { throw ToolBackupError.storage }
+        account.stop()
+
+        Self.preparationPhase = "照会中の本当のowner切替は拒否"
+        let previous = try installRenewableFixtureCredential(expired: false)
+        let replacement = ManagedPreservationSessionStore.Credential(token: String(repeating: "z", count: 43),
+            ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(900))
+        let racing = ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in
+            guard request.url?.path == "/v1/membership", try store.save(replacement, replacing: previous) else { throw ToolBackupError.storage }
+            return (Data("{\"linked\":true,\"status\":\"active\"}".utf8),
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!)
+        })
+        guard try await racing.observeSessionIfAvailable() else { throw ToolBackupError.storage }
+        do { _ = try await racing.membership(observingOnly: true); throw ToolBackupError.storage }
+        catch ManagedPreservationError.staleSession { }
+        guard try store.load() == replacement else { throw ToolBackupError.storage }
+        // Ordinary authenticated work still handles a genuine rejection using
+        // its original strict path. The observation option is not a new grant.
+        do { _ = try await authenticationClient().membership(); throw ToolBackupError.storage }
+        catch ManagedPreservationError.authenticationRequired { }
+        guard try store.load() == nil else { throw ToolBackupError.storage }
+        print("AUTOSAVE_INTERFERENCE fixed: legacy/renewable credential and save checkpoint preserved, upload resumed; expired observation does not renew; actual owner change rejected")
     }
     func verifyRepeatedPhotoInterruption() async throws {
         Self.preparationPhase = "45MBの合成写真を準備"
@@ -2332,6 +2418,9 @@ struct AppRecordPersistenceFixtureView: View {
             else {
                 VStack {
                     Text(result.isEmpty ? "自動保存の検査を準備中…" : result)
+                    if !AppRecordFixture.measurementSummary.isEmpty {
+                        Text(AppRecordFixture.measurementSummary).accessibilityIdentifier("autosave-measurements")
+                    }
                     if !AppRecordFixture.journalIdentityProbe.isEmpty {
                         Text(AppRecordFixture.journalIdentityProbe).accessibilityIdentifier("journal-identity-probe")
                     }
@@ -2405,6 +2494,14 @@ struct AppRecordPersistenceFixtureView: View {
             }
             do {
                 let prepared = try await AppRecordFixture.make()
+                if CommandLine.arguments.contains("--app-records-observation-ui") {
+                    await prepared.persistence.enable()
+                    guard prepared.persistence.title == "保存済み" else { throw ToolBackupError.storage }
+                    await prepared.server.simulateAccountReadFailure()
+                    _ = try prepared.installRenewableFixtureCredential(expired: CommandLine.arguments.contains("--app-records-expired-session"))
+                    fixture = prepared
+                    return
+                }
                 if CommandLine.arguments.contains("--app-records-settings-conflict") {
                     await prepared.server.simulateArchiveListingConflict()
                 }

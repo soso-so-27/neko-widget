@@ -359,7 +359,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         self.draft = draft; self.onExport = onExport; canExport = onExport != nil
     }
 
-    func start() {
+    func start(observingOnly: Bool = false) {
         guard isEnabled else { return }
         run(authenticatedOperation: false) { ticket in
             self.clearAccountPresentation()
@@ -377,7 +377,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 return
             }
             try await self.client.reloadSessionFromSecureStorage()
-            let authenticated = try await self.client.prepareSessionIfAvailable()
+            let authenticated: Bool
+            if observingOnly { authenticated = try await self.client.observeSessionIfAvailable() }
+            else { authenticated = try await self.client.prepareSessionIfAvailable() }
             try self.check(ticket)
             self.isSignedIn = authenticated
             if authenticated { try await self.loadPresentation(ticket) }
@@ -977,16 +979,14 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard purpose == .account else { return try await loadFirstPage(ticket) }
         // Automatic-save settings need authenticated membership, not an archive
         // inventory that can legitimately change while a save is in progress.
-        let checkpoint = try await client.captureSessionCheckpoint()
+        let owner = try await client.accountObservationOwnerID()
         try check(ticket)
-        if authenticatedOwnerID != checkpoint.ownerID {
+        if authenticatedOwnerID != owner {
             clearAccountPresentation()
         }
-        try await client.requireSessionCheckpoint(checkpoint)
-        try check(ticket)
         isSignedIn = true
-        authenticatedOwnerID = checkpoint.ownerID
-        loadMembership(ticket, owner: checkpoint.ownerID)
+        authenticatedOwnerID = owner
+        loadMembership(ticket, owner: owner)
     }
 
     private func loadFirstPage(_ ticket: UUID) async throws {
@@ -1077,11 +1077,14 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
             }
             do {
-                _ = try await self.client.prepareSession(expectedOwner: owner)
+                if self.purpose != .account { _ = try await self.client.prepareSession(expectedOwner: owner) }
                 try self.check(ticket)
-                let result = try await self.client.membership()
+                let result = try await self.client.membership(observingOnly: self.purpose == .account)
                 try self.check(ticket)
-                guard try await self.client.sessionOwnerID() == owner,
+                let currentOwner: String?
+                if self.purpose == .account { currentOwner = try await self.client.accountObservationOwnerID() }
+                else { currentOwner = try await self.client.sessionOwnerID() }
+                guard currentOwner == owner,
                       self.authenticatedOwnerID == owner else { throw ManagedPreservationError.staleSession }
                 guard self.membershipRequestID == requestID else { return }
                 self.membership = result
@@ -1115,11 +1118,13 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
             }
             do {
-                _ = try await self.client.prepareSession(expectedOwner: owner)
+                if self.purpose != .account { _ = try await self.client.prepareSession(expectedOwner: owner) }
                 try self.check(ticket)
-                let result = try await self.client.usage()
+                let result = try await self.client.usage(observingOnly: self.purpose == .account)
                 try self.check(ticket)
-                let currentOwner = try await self.client.sessionOwnerID()
+                let currentOwner: String?
+                if self.purpose == .account { currentOwner = try await self.client.accountObservationOwnerID() }
+                else { currentOwner = try await self.client.sessionOwnerID() }
                 guard currentOwner == owner, self.authenticatedOwnerID == owner else {
                     throw ManagedPreservationError.staleSession
                 }

@@ -1458,8 +1458,28 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         XCTAssertTrue(app.staticTexts["自動保存の照会干渉と一項目の計測を確認しました"].waitForExistence(timeout: 90), app.debugDescription)
+        print(app.staticTexts["autosave-measurements"].label)
         capture("automatic-save-account-observation")
         app.terminate()
+        for expired in [false, true] {
+            app.launchArguments = ["--app-records-ui-fixture", "--app-records-observation-ui",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if expired { app.launchArguments.append("--app-records-expired-session") }
+            app.launch()
+            XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 60), app.debugDescription)
+            app.buttons["保存・復元"].tap()
+            XCTAssertTrue(app.navigationBars["自動保存"].waitForExistence(timeout: 10), app.debugDescription)
+            if expired {
+                XCTAssertTrue(app.buttons["app-record-check-session"].waitForExistence(timeout: 10), app.debugDescription)
+            } else {
+                XCTAssertTrue(app.buttons["app-record-pause"].waitForExistence(timeout: 10), app.debugDescription)
+            }
+            XCTAssertFalse(app.buttons["app-record-signin"].exists, app.debugDescription)
+            XCTAssertFalse(app.staticTexts["サインインすると、保存が始まります。"].exists, app.debugDescription)
+            XCTAssertEqual(app.staticTexts["app-record-save-status"].label, "保存済み", app.debugDescription)
+            capture(expired ? "automatic-save-expired-observation" : "automatic-save-401-observation")
+            app.terminate()
+        }
     }
     @MainActor
     private func verifyAutomaticSaveKeepsAcknowledgementAndResumesCleanup() {

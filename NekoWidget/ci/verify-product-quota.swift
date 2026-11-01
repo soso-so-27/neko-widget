@@ -6,7 +6,8 @@ final class UsageTransportFixture {
     let legacy: Bool
     let denied: Bool
     init(legacy: Bool = false, denied: Bool = false) { self.legacy = legacy; self.denied = denied }
-    func authenticated(_ method: String, path: String, query: [URLQueryItem], maximumBytes: Int) async throws -> Data {
+    func authenticated(_ method: String, path: String, query: [URLQueryItem], maximumBytes: Int,
+                       invalidatesSession: Bool = true) async throws -> Data {
         precondition(method == "GET" && path == "/v1/usage" && maximumBytes == 4096)
         calls.append(query)
         if denied { throw ManagedPreservationError.authenticationRequired }

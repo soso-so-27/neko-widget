@@ -4,7 +4,7 @@ import sys
 
 source = Path('NekoWidget/Services/ManagedPreservationClient.swift').read_text(encoding='utf-8')
 model = source[source.index('struct ManagedPreservationUsage:'):source.index('/// Read existing host-only identity.')]
-start = source.index('    func usage() async throws -> ManagedPreservationUsage {')
+start = source.index('    func usage(observingOnly: Bool = false) async throws -> ManagedPreservationUsage {')
 method = source[start:source.index('\n    }', start) + 6]
 checks = Path('NekoWidget/Services/SharingRuntimeSelfTest.swift').read_text(encoding='utf-8')
 start = checks.index('    static func testManagedPreservationUsageBoundary()')
