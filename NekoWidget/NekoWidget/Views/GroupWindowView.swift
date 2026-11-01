@@ -619,6 +619,7 @@ struct GroupWindowScreen: View {
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var openedEntry: GroupWindowLocalPhotoStore.Entry?
     @State private var showsForgetConfirmation = false
+    @State private var confirmsDiscardFailedDelivery = false
     @Environment(\.dismiss) private var dismiss
 
     init(client: any GroupWindowMediaClient, windowID: String, formerName: String? = nil) {
@@ -812,9 +813,13 @@ struct GroupWindowScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
-                Button("やめる") { model.discardFailedDelivery() }
+                Button("やめる") { confirmsDiscardFailedDelivery = true }
                     .buttonStyle(.bordered)
                     .frame(minHeight: 44)
+                    .confirmationDialog("この写真を届けるのをやめますか？", isPresented: $confirmsDiscardFailedDelivery,
+                                        titleVisibility: .visible) {
+                        Button("届けるのをやめる", role: .destructive) { model.discardFailedDelivery() }
+                    } message: { Text("この写真はまどに届きません。iPhoneの写真はそのままです。") }
                 Button {
                     Task { await model.retryFailedDelivery() }
                 } label: {

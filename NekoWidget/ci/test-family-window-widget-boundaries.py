@@ -2821,7 +2821,8 @@ class GroupWindowPausedTests(unittest.TestCase):
         checks = source("ci/run-cheap-safety-checks.sh")
         self.assertIn("NekoWidget/Views/GroupWindowSetupView.swift", checks)
         self.assertIn("がPlusを続けると、また届くようになります。", paused)
-        self.assertIn("自分でまどを作る（14日間無料）", paused)
+        self.assertIn("自分でまどを作る", paused)
+        self.assertNotIn("14日間無料", paused)
         self.assertIn("GroupWindowPresentation.isMyWindow(window)", paused)
         # Owner sees continue; members see who can resume.
         self.assertLess(paused.index("if !GroupWindowPresentation.isMyWindow(window)"), paused.index('"group-window-paused"'))
