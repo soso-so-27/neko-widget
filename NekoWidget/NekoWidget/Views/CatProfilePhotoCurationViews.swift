@@ -469,6 +469,10 @@ struct CatProfileLifeReferenceEditor: View {
             }
         } header: {
             Text(kind.title)
+        } footer: {
+            if kind == .birthday {
+                Text("分からないときは、だいたいの日付で大丈夫です。")
+            }
         }
     }
 

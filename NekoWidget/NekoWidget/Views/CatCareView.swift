@@ -227,13 +227,20 @@ struct CatCareDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            if let hint = progress.nextHint {
-                // One line, not a dashboard: what the next entry unlocks.
+            if farewell == nil {
+                // The same ring as on the ツール tab, so writing here visibly fills it.
+                // One line beside it, not a dashboard: what the next entry is for.
                 Section {
-                    Label(hint, systemImage: "arrow.right.circle")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("cat-care-next-hint")
+                    HStack(spacing: 12) {
+                        CatCareRing(progress: progress, lineWidth: 4)
+                            .frame(width: 30, height: 30)
+                        Text(progress.filled >= progress.total ? "すべてそろっています"
+                             : progress.nextHint ?? "あと\(progress.total - progress.filled)つでそろいます")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("cat-care-next-hint")
                 }
             }
             // Folded by default: four short rows that say how full each part is.
@@ -480,11 +487,11 @@ struct CatCareDetailView: View {
             TextField("療法食や、ほかの猫と分けてあげることなど", text: $draft.specialDiet, axis: .vertical)
                 .lineLimit(1...3)
                 .familyNotebookNote(catID, .specialDiet)
-            TextField("水", text: $draft.water)
+            TextField("水（例：1日2回とりかえる）", text: $draft.water)
                 .familyNotebookNote(catID, .water)
-            TextField("トイレ", text: $draft.litter)
+            TextField("トイレ（例：システムトイレ・1日2回そうじ）", text: $draft.litter)
                 .familyNotebookNote(catID, .litter)
-            TextField("接し方・苦手なこと", text: $draft.temperament, axis: .vertical)
+            TextField("接し方・苦手なこと（例：抱っこが苦手）", text: $draft.temperament, axis: .vertical)
                 .lineLimit(1...4)
                 .familyNotebookNote(catID, .temperament)
         }
@@ -604,8 +611,11 @@ struct CatCareDetailView: View {
 
 // MARK: - Progress (what is filled, and what that makes)
 
-/// Which entries are in. Every row of この子のこと counts once, so the ring
-/// on the ツール tab and the 「基本　3 / 7」 rows here always agree.
+/// Which entries are in: the ones a tool reads and every household can
+/// answer (「なし」 counts). Optional rows (療法食, つながらないときの連絡先,
+/// かかりつけの電話, 集合場所, 薬) can be written but are not counted, so a
+/// full ring means ready, not 「every box typed in」. The ring on the ツール
+/// tab and the 「基本　3 / 7」 rows here use this one count.
 struct CatCareProgress {
     let basics: (Int, Int)
     let health: (Int, Int)
@@ -628,9 +638,8 @@ struct CatCareProgress {
                         draft.sex != .unknown, draft.neutered != .unknown, draft.indoorOnly != .unknown]
                        + (hasLifeDates.map { [$0] } ?? []))
         health = count([draft.conditionsFilled, draft.allergyStatus != .unknown, weights, vaccinations])
-        living = count([meals, has(draft.specialDiet), has(draft.water), has(draft.litter), has(draft.temperament)])
-        household = count([has(draft.ownerContact), has(draft.backupContact), has(draft.vetName),
-                           has(draft.vetPhone), has(draft.meetingPlace)])
+        living = count([meals, has(draft.water), has(draft.litter), has(draft.temperament)])
+        household = count([has(draft.ownerContact), has(draft.vetName)])
 
         // What each tool reads first: 「あと2つで「預けるとき」の項目がそろいます」.
         let tools: [(String, [Bool])] = [
@@ -643,6 +652,24 @@ struct CatCareProgress {
             .filter { $0.1 > 0 }
             .min { ($0.1, $0.0) < ($1.1, $1.0) }
             .map { "あと\($0.1)つで「\($0.0)」の項目がそろいます" }
+    }
+}
+
+/// The ring around a cat: one arc that grows as この子のこと is filled.
+struct CatCareRing: View {
+    let progress: CatCareProgress
+    let lineWidth: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color(.tertiarySystemFill), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: progress.total == 0 ? 0 : CGFloat(progress.filled) / CGFloat(progress.total))
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.easeOut(duration: 0.5), value: progress.filled)
+        }
+        .accessibilityHidden(true)
     }
 }
 
