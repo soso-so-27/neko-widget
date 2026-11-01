@@ -447,6 +447,8 @@ final class AppRecordPersistence: ObservableObject {
     @Published private(set) var title = "自動保存はオフです" { didSet { failing = false } }
     /// The last attempt failed and nothing has been saved since.
     @Published private(set) var failing = false
+    /// Plus has ended for the linked account, so nothing new is saved until it resumes.
+    @Published private(set) var planEnded = false
     @Published private(set) var detail: String?
     @Published private(set) var enabled = false
     @Published private(set) var busy = false
@@ -812,6 +814,7 @@ final class AppRecordPersistence: ObservableObject {
             let membership = try await client.membership()
             try await require(value, checkpoint)
             guard membership.canSave else { throw ManagedPreservationError.membershipRequired }
+            planEnded = false
             let support = try await client.usage().toolSnapshots
             guard (support?.maximumIndexVersion ?? 0) >= 3 else { throw ManagedPreservationError.servicePaused }
             let previous: ToolBackupIndex?
@@ -922,7 +925,11 @@ final class AppRecordPersistence: ObservableObject {
             detail = Self.failureDetail(error)
         }
         failing = true
+        if error as? ManagedPreservationError == .membershipRequired { planEnded = true }
     }
+
+    /// The account screen learns about the plan before a save is tried.
+    func notePlanEnded(_ ended: Bool) { planEnded = ended }
 
     /// The shared wording points at a list to reload; automatic saving retries by itself.
     private static func failureDetail(_ error: Error) -> String {
@@ -1130,6 +1137,7 @@ struct AppRecordSettingsView: View {
         .onChange(of: authentication.membership?.canSave) { _, canSave in
             if canSave == true, persistence.enabled { Task { await persistence.retry() } }
         }
+        .onChange(of: plusEnded) { _, ended in persistence.notePlanEnded(ended) }
         .onChange(of: exporter.preparing) { _, preparing in
             AppIdleTimer.setPreventSleep(preparing && scenePhase == .active, for: "preservation-export")
             if !preparing { authentication.cancelExportReauthentication() }
