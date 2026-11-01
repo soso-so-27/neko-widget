@@ -1,5 +1,20 @@
 import Foundation
 
+/// Backward-compatible metadata in the existing vaccination collection. A
+/// reserved row has only `kind`, never `givenOn`: old projections safely skip
+/// incomplete rows instead of displaying an invented vaccination/date. No new
+/// operation field, value case, collection, or server schema is introduced.
+enum FamilyNotebookVaccinationAnswer {
+    static func recordID(cat: UUID) -> UUID {
+        var bytes = cat.uuid
+        bytes.0 ^= 0x80
+        return UUID(uuid: bytes)
+    }
+    static func target(cat: UUID) -> FamilyNotebookTarget {
+        .init(familyCatID: cat, collection: .vaccination, recordID: recordID(cat: cat), field: .kind)
+    }
+}
+
 enum FamilyNotebookMigrationError: Error, Equatable {
     case unreadableSource, unsupportedSchema, invalidSource, missingCatMapping, ambiguousCatMapping, changedRecordMapping
 }
@@ -197,6 +212,11 @@ enum FamilyNotebookMigration {
                 } else if let stamp = state.household.vet {
                     try vet(stamp.value, catID: id, source: source, at: stamp.editedAt)
                 }
+                if let answer = input.vaccinationAnswer {
+                    try put(.kind, answer.value == .none ? .text(CatCareVaccinationStatus.noneText) : .clear,
+                            catID: id, collection: .vaccination, recordID: FamilyNotebookVaccinationAnswer.recordID(cat: id),
+                            source: source + ":vaccination-answer", at: answer.editedAt)
+                }
                 for item in input.weights {
                     let key = source + ":weight:" + item.id.uuidString.lowercased()
                     let recordID = try record(key, catID: id, makeRecordID: makeRecordID)
@@ -223,6 +243,9 @@ enum FamilyNotebookMigration {
                 for item in input.vaccinations {
                     let key = source + ":vaccination:" + item.id.uuidString.lowercased()
                     let recordID = try record(key, catID: id, makeRecordID: makeRecordID)
+                    guard recordID != FamilyNotebookVaccinationAnswer.recordID(cat: id) else {
+                        throw FamilyNotebookMigrationError.invalidSource
+                    }
                     if let deleted = item.deletedAt {
                         try put(nil, nil, catID: id, collection: .vaccination, recordID: recordID, source: key, at: deleted)
                     } else {

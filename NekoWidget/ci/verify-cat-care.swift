@@ -20,6 +20,7 @@ struct VerifyCatCare {
         try memoWeights()
         try portableBackup()
         try conditionsStatus()
+        try absenceAnswers()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
     }
 
@@ -60,6 +61,97 @@ struct VerifyCatCare {
         try check(CatCareMerge.merge(cat, oldEdit).conditionsStatus == .unknown && oldEdit.conditions?.value == "", "clear wins without resurrecting old none")
         try check(oldEdit.setConditions(status: .recorded, text: "  投薬中  ", editedAt: t1.addingTimeInterval(4), editedBy: "new-phone")
                   && oldEdit.conditions?.value == "投薬中", "recorded edit uses existing text limits")
+    }
+
+    static func absenceAnswers() throws {
+        var cat = CatCareRecord(catID: UUID())
+        var household = CatCareHousehold()
+        try check(cat.microchipStatus == .unknown && cat.vaccinationStatus == .unknown
+                  && household.vetStatus == .unknown, "empty legacy fields are not explicit negative answers")
+        var state = CatCareState(deviceID: "phone", now: t0); state.cats = [cat]
+        let oldBytes = try CatCareDecoding.encode(state)
+        let oldJSON = try JSONSerialization.jsonObject(with: oldBytes) as! [String: Any]
+        let oldCat = (oldJSON["cats"] as! [[String: Any]])[0]
+        try check(oldCat["vaccinationAnswer"] == nil, "untouched legacy JSON gains no optional key")
+        try check(CatCareLimits.normalizedMicrochip("なし") == nil, "15-digit validator remains strict")
+        try check(!cat.setMicrochip(status: .recorded, number: "なし", editedAt: t1, editedBy: "a"), "negative answer cannot be a number")
+        for invalid in ["", "123", "３９２１４１０００１２３４５６", "39214100012345x"] {
+            try check(!cat.setMicrochip(status: .recorded, number: invalid, editedAt: t1, editedBy: "a"), "invalid chip rejected")
+        }
+        try check(cat.setMicrochip(status: .none, editedAt: t1, editedBy: "a"), "explicit no chip saved")
+        try check(cat.microchipStatus == .none && cat.microchip?.value == "なし", "chip uses legacy string")
+        try check(!(CatCareLostCat.publicLine(cat, today: day) ?? "").contains("マイクロチップあり"), "no chip never claims an implanted chip")
+        let noChip = cat
+        _ = cat.setMicrochip(status: .none, editedAt: t1.addingTimeInterval(1), editedBy: "b")
+        try check(cat == noChip, "same chip answer preserves provenance")
+        _ = cat.setMicrochip(status: .recorded, number: "392-141 000123456", editedAt: t1.addingTimeInterval(2), editedBy: "old")
+        try check(cat.microchipStatus == .recorded && cat.microchip?.value == "392141000123456", "valid chip normalized")
+        try check(CatCareMerge.merge(noChip, cat).microchipStatus == .recorded, "legacy chip edit replaces none")
+        _ = cat.setMicrochip(status: .unknown, editedAt: t1.addingTimeInterval(3), editedBy: "a")
+        try check(CatCareMerge.merge(noChip, cat).microchipStatus == .unknown, "chip clear is a single newer stamp")
+
+        try check(household.setVet(status: .none, editedAt: t1, editedBy: "a"), "no vet is explicit")
+        try check(household.vetStatus == .none && household.vet?.value.phone == "", "none vet has no phone")
+        let noVet = household
+        try check(!household.setVet(status: .recorded, name: "なし", phone: "03-0000-0000", editedAt: t1, editedBy: "a")
+                  && household == noVet, "contradictory vet edit rejected atomically")
+        try check(!household.setVet(status: .recorded, editedAt: t1, editedBy: "a"), "recorded vet requires name")
+        _ = household.setVet(status: .none, editedAt: t1.addingTimeInterval(1), editedBy: "b")
+        try check(household == noVet, "same vet answer preserves provenance")
+        _ = household.setVet(status: .recorded, name: "  ねこ病院  ", phone: "03-0000-0000", editedAt: t1.addingTimeInterval(2), editedBy: "old")
+        try check(CatCareMerge.merge(noVet, household).vetStatus == .recorded, "legacy vet edit replaces none")
+        _ = household.setVet(status: .unknown, note: "検討中", editedAt: t1.addingTimeInterval(3), editedBy: "a")
+        try check(household.vetStatus == .unknown, "note alone is not a chosen vet")
+        _ = cat.setVetOverride(status: .none, editedAt: t1, editedBy: "a")
+        try check(cat.vetStatus(household: noVet) == .none, "family vet override uses same contract")
+
+        try check(!cat.setVaccinationStatus(.recorded, editedAt: t1, editedBy: "a"), "no history cannot claim recorded")
+        try check(cat.setVaccinationStatus(.none, editedAt: t1, editedBy: "a"), "empty history accepts explicit none")
+        try check(cat.vaccinationStatus == .none && cat.vaccinations.isEmpty, "no invented date or vaccination row")
+        let noVaccines = cat
+        _ = cat.setVaccinationStatus(.none, editedAt: t1.addingTimeInterval(1), editedBy: "b")
+        try check(cat == noVaccines, "same vaccination answer preserves provenance")
+        cat.vaccinations.append(.init(kind: "3種", givenOn: day, editedAt: t1.addingTimeInterval(2), editedBy: "old"))
+        let withVaccines = cat
+        try check(cat.vaccinationStatus == .recorded, "old app addition always overrides none")
+        try check(!cat.setVaccinationStatus(.none, editedAt: t1.addingTimeInterval(3), editedBy: "a")
+                  && cat == withVaccines, "negative answer cannot erase active history")
+        try check(!cat.setVaccinationStatus(.unknown, editedAt: t1, editedBy: "a"), "clear cannot erase history either")
+        cat.vaccinations.markDeleted(cat.vaccinations[0].id, at: t1.addingTimeInterval(4), by: "old")
+        try check(cat.vaccinationStatus == .unknown, "last deletion does not resurrect old none")
+        _ = cat.setVaccinationStatus(.none, editedAt: t1.addingTimeInterval(5), editedBy: "a")
+        try check(cat.vaccinationStatus == .none && cat.vaccinations.count == 1 && cat.vaccinations[0].deletedAt != nil,
+                  "reconfirming none retains tombstones")
+        _ = cat.setVaccinationStatus(.unknown, editedAt: t1.addingTimeInterval(6), editedBy: "a")
+        try check(CatCareMerge.merge(noVaccines, cat).vaccinationStatus == .unknown, "clear stamp wins merge")
+        try check(CatCareMerge.merge(noVaccines, withVaccines).vaccinationStatus == .recorded, "merge cannot hide vaccination")
+
+        var savedCat = noVaccines
+        _ = savedCat.setMicrochip(status: .none, editedAt: t1.addingTimeInterval(7), editedBy: "a")
+        state.cats = [savedCat]; state.household = noVet
+        let bytes = try CatCareDecoding.encode(state)
+        var object = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        var rawCat = (object["cats"] as! [[String: Any]])[0]
+        try check(Set(rawCat.keys).subtracting(oldCat.keys) == ["vetOverride", "microchip", "vaccinationAnswer"],
+                  "only optional answer and existing optional fields appear; no renamed fields")
+        try check(rawCat["microchipStatus"] == nil && rawCat["vaccinationStatus"] == nil && object["schemaVersion"] as? Int == 1,
+                  "derived states and schema unchanged")
+        struct LegacyRecord: Decodable {
+            let microchip: CatCareStamped<String>?
+            let vaccinations: [CatCareVaccination]
+            let vetOverride: CatCareStamped<CatCareVet?>?
+        }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let legacy = try decoder.decode(LegacyRecord.self, from: JSONSerialization.data(withJSONObject: rawCat))
+        try check(legacy.microchip == savedCat.microchip && legacy.vaccinations.isEmpty && legacy.vetOverride == savedCat.vetOverride,
+                  "old typed reader accepts strings, vet, empty history and ignores additive metadata")
+        let restored = try CatCareDecoding.backupState(CatCareDecoding.portable(bytes, deviceID: "restored"))
+        try check(restored.cats == state.cats && restored.household == state.household, "portable restores values and stamps")
+        rawCat.removeValue(forKey: "vaccinationAnswer"); object["cats"] = [rawCat]
+        let oldRewrite = try CatCareDecoding.backupState(JSONSerialization.data(withJSONObject: object))
+        try check(oldRewrite.cats[0].vaccinationStatus == .unknown && oldRewrite.cats[0].microchip == savedCat.microchip,
+                  "old rewrite losing optional metadata degrades to unknown, never a false vaccination")
+        print("Cat care absence answers: legacy reader, JSON, portable and merge passed")
     }
 
     static func portableBackup() throws {
