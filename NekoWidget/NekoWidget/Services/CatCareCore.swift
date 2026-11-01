@@ -123,6 +123,10 @@ enum CatCareVaccinationStatus: String, CaseIterable, Sendable {
     static let noneText = "受けていない"
 }
 enum CatCareMicrochipStatus: String, CaseIterable, Sendable { case unknown, none, recorded }
+struct CatCareMicrochipAnswer: Codable, Equatable, Sendable {
+    var status: CatCareAbsenceAnswer
+    var numberEdit: CatCareStamped<String>?
+}
 typealias CatCareVetStatus = CatCareConditionsStatus
 
 struct CatCarePhotoRef: Codable, Equatable, Sendable {
@@ -236,9 +240,11 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var birthday: CatCareStamped<CatCareDay?>?
     var coat: CatCareStamped<String>?
     var marks: CatCareStamped<String>?
-    /// 15 digits, empty, or the explicit human-readable answer "なし".
+    /// 15 digits or empty. Never put a negative answer in the number slot:
+    /// older public-flyer readers treat every nonempty string as implanted.
     /// Shown in full on screen and on paper (owner decision 10/20).
     var microchip: CatCareStamped<String>?
+    var microchipAnswer: CatCareStamped<CatCareMicrochipAnswer>?
     var indoorOnly: CatCareStamped<CatCareTriState>?
 
     var facePhoto: CatCareStamped<CatCarePhotoRef?>?
@@ -271,9 +277,10 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
 
     var microchipStatus: CatCareMicrochipStatus {
         let text = (microchip?.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if text == CatCareConditionsStatus.noneText { return .none }
-        guard let digits = CatCareLimits.normalizedMicrochip(text), !digits.isEmpty else { return .unknown }
-        return .recorded
+        if let digits = CatCareLimits.normalizedMicrochip(text), !digits.isEmpty { return .recorded }
+        guard text.isEmpty, let answer = microchipAnswer,
+              answer.value.status == .none, answer.value.numberEdit == microchip else { return .unknown }
+        return .none
     }
 
     @discardableResult
@@ -282,12 +289,16 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
         let value: String
         switch status {
         case .unknown: value = ""
-        case .none: value = CatCareConditionsStatus.noneText
+        case .none: value = ""
         case .recorded:
             guard let digits = CatCareLimits.normalizedMicrochip(number), !digits.isEmpty else { return false }
             value = digits
         }
         if microchip?.value != value { microchip = .init(value: value, editedAt: editedAt, editedBy: editedBy) }
+        let answer = CatCareMicrochipAnswer(status: status == .none ? .none : .unknown, numberEdit: microchip)
+        if microchipAnswer?.value != answer {
+            microchipAnswer = .init(value: answer, editedAt: editedAt, editedBy: editedBy)
+        }
         return true
     }
 
@@ -450,6 +461,12 @@ enum CatCareMerge {
         r.coat = pick(a.coat, b.coat)
         r.marks = pick(a.marks, b.marks)
         r.microchip = pick(a.microchip, b.microchip)
+        if let x = a.microchipAnswer, let y = b.microchipAnswer,
+           x.editedAt == y.editedAt, x.value != y.value {
+            var conservative = x.editedBy >= y.editedBy ? x : y
+            conservative.value = .init(status: .unknown, numberEdit: nil)
+            r.microchipAnswer = conservative
+        } else { r.microchipAnswer = pick(a.microchipAnswer, b.microchipAnswer) }
         r.indoorOnly = pick(a.indoorOnly, b.indoorOnly)
         r.facePhoto = pick(a.facePhoto, b.facePhoto)
         r.bodyPhoto = pick(a.bodyPhoto, b.bodyPhoto)

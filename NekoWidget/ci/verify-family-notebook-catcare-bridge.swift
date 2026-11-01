@@ -123,6 +123,11 @@ enum FamilyNotebookCatCareBridgeVerifier {
         try require(!mappings.contains { $0.recordID == target.recordID }, "metadata never becomes a local vaccination ID")
         let restored = try CatCareDecoding.backupState(CatCareDecoding.portable(CatCareDecoding.encode(received)))
         try require(restored.cats == received.cats, "family projection portable restore retains answer and provenance")
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .microchip), value: .text("392141000123456"), author: author)
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .microchip), value: .clear, author: author)
+        let oldNumberClear = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: received)
+        try require(oldNumberClear.cats[0].microchipStatus == .unknown && oldNumberClear.cats[0].microchip?.value == "",
+                    "old number edit then clear cannot resurrect an earlier negative answer")
 
         // Edit and return through the same migration/delta path used by the app.
         var cleared = received

@@ -24,7 +24,7 @@ enum FamilyNotebookCatCareBridge {
             for collection in lists {
                 let ids = Set(snapshot.operations.filter { $0.target.familyCatID == cat && $0.target.collection == collection }.compactMap { $0.target.recordID })
                 for record in ids.sorted(by: { $0.uuidString < $1.uuidString }) {
-                    if collection == .vaccination && record == FamilyNotebookVaccinationAnswer.recordID(cat: cat) { continue }
+                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat)].contains(record) { continue }
                     let prefix = sourcePrefix(local, collection)
                     if result.contains(where: { $0.familyCatID == cat && $0.recordID == record && $0.sourceKey.hasPrefix(prefix) }) { continue }
                     result.append(.init(sourceKey: prefix + makeID().uuidString.lowercased(), familyCatID: cat, recordID: record))
@@ -61,10 +61,28 @@ enum FamilyNotebookCatCareBridge {
             for collection in lists {
                 for item in snapshot.mappings where item.familyCatID == cat && item.recordID != nil {
                     guard let record = item.recordID, let localID = localRecordID(item, cat: local, collection: collection) else { continue }
-                    if collection == .vaccination && record == FamilyNotebookVaccinationAnswer.recordID(cat: cat) { continue }
+                    if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat)].contains(record) { continue }
                     let values = Values(snapshot: snapshot, cat: cat, collection: collection, record: record)
                     try apply(values, localID: localID, into: &state.cats[index])
                 }
+            }
+            if let answer = snapshot.fieldState(for: FamilyNotebookMicrochipAnswer.target(cat: cat)), !answer.isDeleted {
+                var status: CatCareAbsenceAnswer
+                switch answer.operation.value {
+                case .text(FamilyNotebookMicrochipAnswer.noneText): status = .none
+                case .clear: status = .unknown
+                default: throw FamilyNotebookError.invalidValue
+                }
+                if let number = snapshot.fieldState(for: .init(familyCatID: cat, field: .microchip)) {
+                    let newer: Bool
+                    if let n = number.operation.importedSourceEditedAt, let a = answer.operation.importedSourceEditedAt,
+                       number.operation.editedAt == answer.operation.editedAt {
+                        newer = n > a
+                    } else { newer = number.operation.version > answer.operation.version }
+                    if newer { status = .unknown }
+                }
+                state.cats[index].microchipAnswer = .init(value: .init(status: status, numberEdit: state.cats[index].microchip),
+                    editedAt: answer.operation.editedAt, editedBy: "family:" + answer.operation.author.personID)
             }
             if let answer = snapshot.fieldState(for: FamilyNotebookVaccinationAnswer.target(cat: cat)), !answer.isDeleted {
                 var value: CatCareAbsenceAnswer
@@ -78,7 +96,8 @@ enum FamilyNotebookCatCareBridge {
                 // negative answer after an older app added/deleted a vaccine.
                 let invalidatingEdit = snapshot.operations.filter { operation in
                     guard operation.target.familyCatID == cat, operation.target.collection == .vaccination,
-                          operation.target.recordID != FamilyNotebookVaccinationAnswer.recordID(cat: cat) else { return false }
+                          operation.target.recordID != FamilyNotebookVaccinationAnswer.recordID(cat: cat),
+                          operation.target.recordID != FamilyNotebookMicrochipAnswer.recordID(cat: cat) else { return false }
                     if let source = operation.importedSourceEditedAt, let answerSource = answer.operation.importedSourceEditedAt,
                        operation.editedAt == answer.operation.editedAt {
                         return source > answerSource

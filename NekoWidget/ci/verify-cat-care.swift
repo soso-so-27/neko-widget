@@ -79,7 +79,9 @@ struct VerifyCatCare {
             try check(!cat.setMicrochip(status: .recorded, number: invalid, editedAt: t1, editedBy: "a"), "invalid chip rejected")
         }
         try check(cat.setMicrochip(status: .none, editedAt: t1, editedBy: "a"), "explicit no chip saved")
-        try check(cat.microchipStatus == .none && cat.microchip?.value == "なし", "chip uses legacy string")
+        try check(cat.microchipStatus == .none && cat.microchip?.value == "", "negative answer never enters legacy number slot")
+        try check(CatCareLimits.normalizedMicrochip(cat.microchip!.value) == "", "legacy number form still accepts its value")
+        try check(cat.microchip!.value.isEmpty, "old public flyer nonempty check cannot claim an implanted chip")
         try check(!(CatCareLostCat.publicLine(cat, today: day) ?? "").contains("マイクロチップあり"), "no chip never claims an implanted chip")
         let noChip = cat
         _ = cat.setMicrochip(status: .none, editedAt: t1.addingTimeInterval(1), editedBy: "b")
@@ -145,7 +147,7 @@ struct VerifyCatCare {
         let bytes = try CatCareDecoding.encode(state)
         var object = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
         var rawCat = (object["cats"] as! [[String: Any]])[0]
-        try check(Set(rawCat.keys).subtracting(oldCat.keys) == ["vetOverride", "microchip", "vaccinationAnswer"],
+        try check(Set(rawCat.keys).subtracting(oldCat.keys) == ["vetOverride", "microchip", "microchipAnswer", "vaccinationAnswer"],
                   "only optional answer and existing optional fields appear; no renamed fields")
         try check(rawCat["microchipStatus"] == nil && rawCat["vaccinationStatus"] == nil && object["schemaVersion"] as? Int == 1,
                   "derived states and schema unchanged")
@@ -160,9 +162,10 @@ struct VerifyCatCare {
                   "old typed reader accepts strings, vet, empty history and ignores additive metadata")
         let restored = try CatCareDecoding.backupState(CatCareDecoding.portable(bytes, deviceID: "restored"))
         try check(restored.cats == state.cats && restored.household == state.household, "portable restores values and stamps")
-        rawCat.removeValue(forKey: "vaccinationAnswer"); object["cats"] = [rawCat]
+        rawCat.removeValue(forKey: "vaccinationAnswer"); rawCat.removeValue(forKey: "microchipAnswer"); object["cats"] = [rawCat]
         let oldRewrite = try CatCareDecoding.backupState(JSONSerialization.data(withJSONObject: object))
-        try check(oldRewrite.cats[0].vaccinationStatus == .unknown && oldRewrite.cats[0].microchip == savedCat.microchip,
+        try check(oldRewrite.cats[0].vaccinationStatus == .unknown && oldRewrite.cats[0].microchipStatus == .unknown
+                  && oldRewrite.cats[0].microchip == savedCat.microchip,
                   "old rewrite losing optional metadata degrades to unknown, never a false vaccination")
         print("Cat care absence answers: legacy reader, JSON, portable and merge passed")
     }

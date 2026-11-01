@@ -15,6 +15,17 @@ enum FamilyNotebookVaccinationAnswer {
     }
 }
 
+enum FamilyNotebookMicrochipAnswer {
+    static let noneText = "入っていない"
+    static func recordID(cat: UUID) -> UUID {
+        var bytes = cat.uuid; bytes.0 ^= 0x40
+        return UUID(uuid: bytes)
+    }
+    static func target(cat: UUID) -> FamilyNotebookTarget {
+        .init(familyCatID: cat, collection: .vaccination, recordID: recordID(cat: cat), field: .kind)
+    }
+}
+
 enum FamilyNotebookMigrationError: Error, Equatable {
     case unreadableSource, unsupportedSchema, invalidSource, missingCatMapping, ambiguousCatMapping, changedRecordMapping
 }
@@ -199,6 +210,13 @@ enum FamilyNotebookMigration {
                 for (field, stamp) in texts {
                     if let stamp { try text(field, stamp.value, catID: id, source: source, at: stamp.editedAt) }
                 }
+                if let answer = input.microchipAnswer {
+                    // Never export a stale negative answer after an older app
+                    // changed the number. Preserve the old number field itself.
+                    try put(.kind, input.microchipStatus == .none ? .text(FamilyNotebookMicrochipAnswer.noneText) : .clear,
+                            catID: id, collection: .vaccination, recordID: FamilyNotebookMicrochipAnswer.recordID(cat: id),
+                            source: source + ":microchip-answer", at: answer.editedAt, reassertSameValue: true)
+                }
                 if let stamp = input.sex { try text(.sex, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
                 if let stamp = input.neutered { try text(.neutered, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
                 if let stamp = input.indoorOnly { try text(.indoorOnly, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
@@ -243,7 +261,8 @@ enum FamilyNotebookMigration {
                 for item in input.vaccinations {
                     let key = source + ":vaccination:" + item.id.uuidString.lowercased()
                     let recordID = try record(key, catID: id, makeRecordID: makeRecordID)
-                    guard recordID != FamilyNotebookVaccinationAnswer.recordID(cat: id) else {
+                    guard recordID != FamilyNotebookVaccinationAnswer.recordID(cat: id),
+                          recordID != FamilyNotebookMicrochipAnswer.recordID(cat: id) else {
                         throw FamilyNotebookMigrationError.invalidSource
                     }
                     if let deleted = item.deletedAt {
