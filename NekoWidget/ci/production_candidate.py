@@ -6,6 +6,7 @@ accepted by the signed archive/export commands, even if supplied in protected va
 import argparse
 import base64
 import datetime
+import fnmatch
 import hashlib
 import importlib.util
 import ipaddress
@@ -189,6 +190,14 @@ def verify_signatures(app):
                 > datetime.datetime.now(datetime.timezone.utc), "Distribution profile is expired")
         require(entitlements.get("application-identifier") == f"{team}.{info['CFBundleIdentifier']}"
                 and profile["Entitlements"].get("application-identifier") == entitlements["application-identifier"], "Signature identity differs from profile")
+        for key, actual in entitlements.items():
+            allowed = profile["Entitlements"].get(key)
+            if isinstance(actual, list):
+                require(isinstance(allowed, list) and all(any(
+                    fnmatch.fnmatchcase(item, pattern) if isinstance(item, str) and isinstance(pattern, str)
+                    else item == pattern for pattern in allowed) for item in actual), "Signed capability not authorized by profile: " + key)
+            else:
+                require(actual == allowed, "Signed capability differs from profile: " + key)
         require(entitlements.get("get-task-allow", False) is False and profile["Entitlements"].get("get-task-allow") is False
                 and not profile.get("ProvisionedDevices") and not profile.get("ProvisionsAllDevices"), "Not an App Store distribution signature")
         require(entitlements.get("com.apple.security.application-groups") == [info["AppGroupIdentifier"]], "App Group signature differs")
@@ -217,7 +226,13 @@ def run_build(contract, arguments, *, synthetic=False):
     command = ["xcodebuild", "-project", "NekoWidget.xcodeproj", "-scheme", "NekoWidget", "-configuration", "Release"]
     command += arguments + [f"{k}={v}" for k, v in expected.items()]
     if any(action in arguments for action in ("build", "archive")):
-        probe = [item for item in command if item not in ("build", "archive")]
+        probe = []
+        items = iter(command)
+        for item in items:
+            if item in ("-archivePath", "-resultBundlePath"):
+                next(items)  # Inspect settings without creating the archive's output paths.
+            elif item not in ("build", "archive"):
+                probe.append(item)
         rows = json.loads(subprocess.run(probe + ["-showBuildSettings", "-json"], cwd=ROOT,
                                         check=True, capture_output=True, text=True).stdout)
         require(rows and any(row["target"] == "NekoWidget" for row in rows), "Missing resolved app settings")

@@ -50,6 +50,17 @@ class ProductionCandidateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             candidate.run_build(self.contract, ["archive", "-sdk", "iphoneos"], synthetic=True)
 
+    def test_settings_probe_cannot_consume_archive_output_paths(self):
+        from types import SimpleNamespace
+        result = SimpleNamespace(stdout=json.dumps([{"target": "NekoWidget", "buildSettings": self.settings}]))
+        with patch.object(candidate.subprocess, "run", return_value=result) as run:
+            candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "-archivePath", "candidate.xcarchive",
+                                               "-resultBundlePath", "candidate.xcresult", "archive"], synthetic=True)
+        probe, archive = [call.args[0] for call in run.call_args_list]
+        self.assertNotIn("-archivePath", probe); self.assertNotIn("candidate.xcarchive", probe)
+        self.assertNotIn("-resultBundlePath", probe); self.assertNotIn("candidate.xcresult", probe)
+        self.assertIn("-archivePath", archive); self.assertIn("-resultBundlePath", archive)
+
     def test_reject_recipient_origin_and_incomplete_inputs(self):
         for key, value in [("SHARING_MODERATION_PUBLIC_KEY", "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg"),
                            ("SHARING_MODERATION_PUBLIC_KEY", "A" * 43),
