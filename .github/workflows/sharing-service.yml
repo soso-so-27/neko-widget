@@ -12,6 +12,10 @@ on:
       - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
       - ".github/workflows/sharing-staging-monitor.yml"
+      - "NekoWidget/ci/plan-ios-ci.py"
+      - "NekoWidget/ci/test-plan-ios-ci.py"
+      - "NekoWidget/ci/ios_ci_scope.py"
+      - "NekoWidget/ci/app_icon_ci.py"
       - ".gitattributes"
   pull_request:
     paths:
@@ -24,6 +28,10 @@ on:
       - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
       - ".github/workflows/sharing-staging-monitor.yml"
+      - "NekoWidget/ci/plan-ios-ci.py"
+      - "NekoWidget/ci/test-plan-ios-ci.py"
+      - "NekoWidget/ci/ios_ci_scope.py"
+      - "NekoWidget/ci/app_icon_ci.py"
       - ".gitattributes"
   workflow_dispatch:
 
@@ -40,12 +48,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      scope: ${{ steps.plan.outputs.runtime_scope }}
+      # A change to CI selection itself must exercise the backend jobs too.
+      # It must not report a green plan while all owning checks are skipped.
+      scope: ${{ steps.plan.outputs.runtime_scope == 'ci-orchestration-v1' && 'full-v1' || steps.plan.outputs.runtime_scope }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Test backend selection boundaries
+        run: python NekoWidget/ci/test-plan-ios-ci.py PreservationSharingPlanTests
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}

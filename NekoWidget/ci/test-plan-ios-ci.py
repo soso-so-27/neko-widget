@@ -6919,6 +6919,37 @@ class PreservationExportCorrectionInputTests(unittest.TestCase):
 
 
 class PreservationSharingPlanTests(unittest.TestCase):
+    def test_main_backend_selection_does_not_require_native_success(self):
+        # #664 reached FULL_SCOPE on main and stopped before any backend job:
+        # find_evidence compared the Sharing run with iOS workflow runs.
+        for selected_scope in (scope.FULL_SCOPE, scope.APP_DATA_SCOPE, scope.APP_VIEW_SCOPE):
+            with self.subTest(scope=selected_scope), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); event = root / "event.json"; event.write_text("{}")
+                env = {"GITHUB_WORKFLOW": "Sharing service check", "GITHUB_EVENT_NAME": "push",
+                       "GITHUB_REPOSITORY": "soso-so-27/neko-widget", "GITHUB_SHA": "a" * 40,
+                       "GITHUB_RUN_ID": "7", "GITHUB_REF": "refs/heads/main",
+                       "GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(root / "output")}
+                identity = {"id": 5, "path": ".github/workflows/sharing-service.yml", "state": "active"}
+                run = {"id": 7, "workflow_id": 5, "path": identity["path"], "event": "push",
+                       "head_sha": env["GITHUB_SHA"], "head_branch": "main",
+                       "repository": {"full_name": env["GITHUB_REPOSITORY"]},
+                       "head_repository": {"full_name": env["GITHUB_REPOSITORY"]}}
+                log = io.StringIO()
+                with patch.dict(os.environ, env), \
+                        patch.object(planner, "changed_paths", return_value=None), \
+                        patch.object(planner, "runtime_scope", return_value=selected_scope), \
+                        patch.object(planner, "retained_selector_repair_inputs", return_value=False), \
+                        patch.object(planner, "github_api", side_effect=[identity, run]), \
+                        patch.object(planner, "find_evidence", side_effect=AssertionError("backend must execute independently")), \
+                        contextlib.redirect_stdout(log):
+                    planner.main()
+                output = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual(output["runtime_scope"], selected_scope)
+                self.assertTrue(all(output[flag] == "false" for flag in ("build", "smoke", "sharing", "app_ui")))
+                plan = json.loads(log.getvalue().split("SHARING_BACKEND_PLAN_JSON=", 1)[1])
+                self.assertFalse(plan["native_evidence"])
+                self.assertNotIn("IOS_CI_PLAN_JSON=", log.getvalue())
+
     def test_backend_plan_requires_actual_same_repo_workflow_and_never_uses_native_reuse(self):
         env = {"GITHUB_WORKFLOW": "Sharing service check", "GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": "soso-so-27/neko-widget",
                "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "7"}
