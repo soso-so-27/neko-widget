@@ -3281,7 +3281,8 @@ final class SoloMemoriesUITests: XCTestCase {
             for _ in 0..<10 { if price.isHittable { break }; app.swipeUp() }
             XCTAssertEqual(price.label, "その後は月額¥980")
             let values = app.descendants(matching: .any)["membership-offer-values"].firstMatch
-            for line in ["毎日、新しい1枚がホーム画面に", "自動でたまるアルバムと月のまとめ", "まどを作って、家族と写真を届け合う"] {
+            for line in ["毎日、新しい1枚がホーム画面に", "自動でたまるアルバム、月のまとめ、季節のムービー", "写真に新しいメモを書く",
+                         "まどを作って、家族と写真を届け合う", "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"] {
                 XCTAssertTrue(values.label.contains(line), "Missing value: \(line)")
             }
             let reassurance = app.descendants(matching: .any)["membership-offer-reassurance"].firstMatch
