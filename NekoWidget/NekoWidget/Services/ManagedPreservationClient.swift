@@ -1031,6 +1031,27 @@ actor ManagedPreservationClient {
         }
     }
 
+    /// A single save may reuse its preflight read, but never another owner's
+    /// observation or an unbounded capacity cache. The server still admits PUTs.
+    struct SaveUsage: Sendable {
+        let value: ManagedPreservationUsage
+        fileprivate let checkpoint: SessionCheckpoint
+        fileprivate let observedAt: Date
+    }
+    func saveUsage() async throws -> SaveUsage {
+        let checkpoint = try captureSessionCheckpoint()
+        let value = try await usage()
+        try requireSessionCheckpoint(checkpoint)
+        return SaveUsage(value: value, checkpoint: checkpoint, observedAt: sessionNow())
+    }
+    func usageForUpload(_ observation: SaveUsage?) async throws -> ManagedPreservationUsage {
+        guard let observation else { return try await usage() }
+        try requireSessionCheckpoint(observation.checkpoint)
+        let age = sessionNow().timeIntervalSince(observation.observedAt)
+        guard age >= 0, age <= 30 else { return try await usage() }
+        return observation.value
+    }
+
     struct ProductQuotaRecount: Decodable, Sendable {
         let version: Int; let processed: Int; let nextCursor: String?
     }

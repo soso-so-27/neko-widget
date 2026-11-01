@@ -97,6 +97,20 @@ struct SaveLifetimeCheck {
             precondition(g.ends == (synchronous ? [1] : []))
         }
 
+        // A debounced committed edit may start once when the app closes,
+        // but only under the same bounded grant and cancellation protection.
+        let closingGrant = Grant(), closingWork = Work()
+        let closing = closingGrant.make()
+        closing.setForeground(false)
+        let finalEdit = Task { await closing.run(startsInBackground: true) { await closingWork.save() } }
+        await until { closingWork.starts == 1 }
+        precondition(closingGrant.begins == 1)
+        closingGrant.callbacks[0]()
+        await until { closingWork.cancellations == 1 }
+        closingWork.unwind = true
+        await finalEdit.value
+        precondition(closingGrant.ends == [1])
+
         let w = Work(), l = grant.make()
         let t = Task { await l.run { await w.save() } }
         await until { w.starts == 1 }

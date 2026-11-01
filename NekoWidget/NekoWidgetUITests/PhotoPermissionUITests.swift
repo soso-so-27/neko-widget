@@ -1451,6 +1451,20 @@ final class SoloMemoriesUITests: XCTestCase {
         app.terminate()
     }
     @MainActor
+    func testAutomaticSaveEfficiencyAndCleanupPriority() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-efficiency-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["保存の回数・片づけの分離・編集の集約を確認しました"].waitForExistence(timeout: 120), app.debugDescription)
+        print(app.staticTexts["autosave-measurements"].label)
+        capture("automatic-save-efficiency-and-cleanup-priority")
+        app.terminate()
+        verifyAutomaticSaveKeepsAcknowledgementAndResumesCleanup()
+    }
+
+    @MainActor
     func testAutomaticSaveSettingsDoNotInvalidateSession() {
         continueAfterFailure = false
         let app = XCUIApplication()

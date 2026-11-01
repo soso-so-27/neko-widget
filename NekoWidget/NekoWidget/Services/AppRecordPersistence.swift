@@ -442,7 +442,10 @@ final class AppRecordSaveLifetime {
         guard foreground != value else { return }
         foreground = value
         if value { endLease(); return }
-        guard let operation, !operation.task.isCancelled else { return }
+        beginBackgroundLease()
+    }
+    private func beginBackgroundLease() {
+        guard lease == nil, let operation, !operation.task.isCancelled else { return }
         let leaseID = UUID()
         lease = (leaseID, nil)
         let handle = begin { [weak self] in
@@ -456,7 +459,7 @@ final class AppRecordSaveLifetime {
         lease = (leaseID, handle)
     }
 
-    func run(_ work: @escaping @MainActor () async -> Void) async {
+    func run(startsInBackground: Bool = false, _ work: @escaping @MainActor () async -> Void) async {
         while let previous = operation {
             let interrupted = previous.task.isCancelled
             await previous.task.value
@@ -464,13 +467,14 @@ final class AppRecordSaveLifetime {
             // An ordinary overlapping caller only joins the existing save.
             if !interrupted { return }
         }
-        guard foreground, !Task.isCancelled else { return }
+        guard foreground || startsInBackground, !Task.isCancelled else { return }
         let id = UUID()
         let task = Task { [self] in
             await work()
             if operation?.id == id { operation = nil; endLease() }
         }
         operation = (id, task)
+        if !foreground { beginBackgroundLease() }
         await task.value
     }
 
@@ -536,6 +540,45 @@ final class AppRecordPersistence: ObservableObject {
     private var requested = true
     private var waitingForEditor = false
     private var nextAttempt = Date.distantPast
+    private var transientFailures = 0
+    private var firstEditAt: Date?
+    private var saveAfter = Date.distantPast
+    private var cleanupTask: Task<Void, Never>?
+    private var cleanupYield = false
+    private var cleanupRequiredForCapacity = false
+    private var cleanupForeground = true
+    private var cleanupNextAttempt = Date.distantPast
+    private var cleanupPending = false
+    private struct IndexKey: Equatable {
+        let owner: String; let origin: String; let dataset: UUID?
+        let revision: Int; let snapshot: UUID; let hash: String
+    }
+    private var cachedIndex: (key: IndexKey, index: ToolBackupIndex)?
+    private var cachedMembership: (value: ManagedPreservationMembership, checkpoint: ManagedPreservationClient.SessionCheckpoint, date: Date)?
+    private func saveMembership(_ checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws -> ManagedPreservationMembership {
+        if let cachedMembership {
+            let age = Date().timeIntervalSince(cachedMembership.date)
+            if age >= 0, age <= 10, cachedMembership.value.canSave {
+                do {
+                    try await client.requireSessionCheckpoint(cachedMembership.checkpoint)
+                    try await client.requireSessionCheckpoint(checkpoint)
+                    return cachedMembership.value
+                } catch { self.cachedMembership = nil }
+            }
+        }
+        let value = try await client.membership()
+        try await client.requireSessionCheckpoint(checkpoint)
+        cachedMembership = value.canSave ? (value, checkpoint, Date()) : nil
+        return value
+    }
+
+    private func committed(now: Date = Date()) {
+        requested = true
+        cleanupYield = true
+        if firstEditAt == nil { firstEditAt = now }
+        saveAfter = min(now.addingTimeInterval(2), firstEditAt!.addingTimeInterval(5))
+    }
+    private func flushEdits() { firstEditAt = nil; saveAfter = .distantPast }
     private struct AcceptedSave {
         let binding: Binding
         let fence: ManagedPreservationClient.LocalSessionFence
@@ -605,7 +648,7 @@ final class AppRecordPersistence: ObservableObject {
         self.bindingURL = bindingURL
         observer = NotificationCenter.default.addObserver(forName: .appRecordsCommitted, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in
-                self?.requested = true
+                self?.committed()
                 if let self, self.enabled {
                     // A delayed notification (including a migration during
                     // restore) must not relabel already acknowledged bytes.
@@ -615,11 +658,11 @@ final class AppRecordPersistence: ObservableObject {
             }
         }
         datasetObserver = NotificationCenter.default.addObserver(forName: .appRecordDatasetChanged, object: nil, queue: nil) { [weak self] _ in
-            Task { @MainActor in self?.datasetGeneration = UUID() }
+            Task { @MainActor in self?.datasetGeneration = UUID(); self?.cachedIndex = nil; self?.cachedMembership = nil }
         }
         editingObserver = NotificationCenter.default.addObserver(forName: .appRecordEditingFinished, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in
-                self?.requested = true
+                self?.committed()
                 self?.nextAttempt = .distantPast
             }
         }
@@ -665,13 +708,15 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
     private func collectParts(_ value: Binding,
-                              checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
+                              checkpoint: ManagedPreservationClient.SessionCheckpoint, yielding: Bool = false) async throws {
         var after: UUID?
         for _ in 0..<4 {
+            if yielding { try await cleanupBoundary(value, checkpoint: checkpoint) }
             try await require(value, checkpoint)
             let candidates = try await client.toolCleanupCandidates(after: after, checkpoint: checkpoint)
             if candidates.items.isEmpty && candidates.nextCursor == nil { return }
             for item in candidates.items {
+                if yielding { try await cleanupBoundary(value, checkpoint: checkpoint) }
                 try await require(value, checkpoint)
                 do { try await client.deleteToolCleanupCandidate(item, checkpoint: checkpoint) }
                 catch ManagedPreservationError.notFound { }
@@ -683,20 +728,33 @@ final class AppRecordPersistence: ObservableObject {
     }
     func setActive(_ value: Bool) {
         active = value
+        cleanupForeground = value
+        if !value { cleanupYield = true; flushEdits() }
         saveLifetime.setForeground(value)
-        if !value { loop?.cancel(); loop = nil; return }
+        if !value {
+            loop?.cancel(); loop = nil
+            if requested, enabled { Task { [weak self] in await self?.synchronize(background: true) } }
+            return
+        }
         guard loop == nil, configuration.isEnabled else { return }
         requested = true
-        nextAttempt = .distantPast
+        nextAttempt = .distantPast; cleanupNextAttempt = .distantPast
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, self.active else { return }
                 await self.synchronize()
-                do { try await Task.sleep(for: .seconds(8)) } catch { return }
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }
     }
+    private func yieldCleanup() async {
+        if let cleanupTask {
+            if !cleanupRequiredForCapacity { cleanupYield = true }
+            await cleanupTask.value
+        }
+    }
     func enable() async {
+        await yieldCleanup()
         guard !busy, let origin = configuration.origin?.absoluteString else { return }
         do {
             let checkpoint = try await client.prepareSession(expectedOwner: try binding()?.owner)
@@ -714,14 +772,16 @@ final class AppRecordPersistence: ObservableObject {
         } catch { report(error) }
     }
     func pause() {
+        cleanupYield = true; cachedIndex = nil; cachedMembership = nil
         do {
             guard var value = try binding() else { return }
             value.enabled = false; try write(value)
             title = "自動保存はオフです"
         } catch { report(error) }
     }
-    func retry() async { requested = true; conflict = false; nextAttempt = .distantPast; await synchronize() }
+    func retry() async { flushEdits(); requested = true; conflict = false; nextAttempt = .distantPast; await synchronize() }
     func resolveConflict(useRemote: Bool) async {
+        await yieldCleanup()
         guard !busy else { return }
         busy = true
         do {
@@ -783,8 +843,97 @@ final class AppRecordPersistence: ObservableObject {
         }
         return record
     }
-    private func synchronize() async {
-        await saveLifetime.run { [self] in await synchronizeOnce() }
+    private func indexKey(_ value: Binding, revision: Int, head: AppRecordHead) throws -> IndexKey {
+        IndexKey(owner: value.owner, origin: value.origin, dataset: try AppRecordDataset.pointer()?.datasetID,
+                 revision: revision, snapshot: head.snapshotID, hash: head.indexHash)
+    }
+    private func decodedIndex(_ remote: (ManagedPreservationRecord, AppRecordHead), value: Binding,
+                              checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws -> ToolBackupIndex {
+        try await require(value, checkpoint)
+        let key = try indexKey(value, revision: remote.0.revision, head: remote.1)
+        if let cachedIndex, cachedIndex.key == key { return cachedIndex.index }
+        let record = try await index(remote.1)
+        let decoded = try await ToolBackupTransfer.loadIndex(record, client: client)
+        try await require(value, checkpoint)
+        guard key == (try indexKey(value, revision: remote.0.revision, head: remote.1)) else { throw ToolBackupError.changed }
+        cachedIndex = (key, decoded)
+        return decoded
+    }
+    private func cleanupBoundary(_ value: Binding, checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
+        guard cleanupForeground, (!cleanupYield || cleanupRequiredForCapacity), !busy else { throw CancellationError() }
+        try await require(value, checkpoint)
+        guard let current = try binding(), current.revision == value.revision,
+              current.snapshotID == value.snapshotID, current.pending == nil else { throw CancellationError() }
+    }
+    private func enqueueCleanup(_ initial: Binding, remote: (ManagedPreservationRecord, AppRecordHead)?,
+                                checkpoint: ManagedPreservationClient.SessionCheckpoint,
+                                retainedIndex: ToolBackupIndex? = nil, requiredForCapacity: Bool = false) {
+        guard cleanupTask == nil, cleanupForeground, Date() >= cleanupNextAttempt else { return }
+        cleanupYield = false; cleanupPending = true
+        cleanupRequiredForCapacity = requiredForCapacity
+        cleanupTask = Task { [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            await self.runCleanup(initial, remote: remote, checkpoint: checkpoint, retainedIndex: retainedIndex)
+            self.cleanupTask = nil
+            self.cleanupRequiredForCapacity = false
+        }
+    }
+    private func runCleanup(_ initial: Binding, remote: (ManagedPreservationRecord, AppRecordHead)?,
+                            checkpoint: ManagedPreservationClient.SessionCheckpoint,
+                            retainedIndex: ToolBackupIndex?) async {
+        var value = initial
+        do {
+            try await cleanupBoundary(value, checkpoint: checkpoint)
+            let retained: Set<UUID>
+            if let retainedIndex { retained = retainedIndex.recordIDs }
+            else if !(value.retiring ?? []).isEmpty, let remote {
+                let decoded = try await decodedIndex(remote, value: value, checkpoint: checkpoint)
+                retained = decoded.recordIDs
+            } else { retained = [] }
+            for retiring in value.retiring ?? [] where retiring != value.snapshotID {
+                try await cleanupBoundary(value, checkpoint: checkpoint)
+                do {
+                    let pending = try ToolBackupFiles.pendingDeletions(owner: value.owner).first { $0.id == retiring }
+                    let old: ToolBackupIndex
+                    if let pending { old = pending.index }
+                    else {
+                        let snapshot = try await client.detail(retiring).record
+                        guard let part = snapshot.document.toolBackup, let bytes = Data(base64Encoded: part.payload) else { throw ToolBackupError.invalid }
+                        old = try await ToolBackupTransfer.loadIndex(snapshot, client: client)
+                    }
+                    guard old.version >= 3 else { throw ToolBackupError.invalid }
+                    let cleanupBinding = value
+                    try await ToolBackupTransfer.delete(old, client: client, retaining: retained, continueCleanup: { [weak self] in
+                        guard let self else { throw CancellationError() }
+                        try await self.cleanupBoundary(cleanupBinding, checkpoint: checkpoint)
+                    }) { _, _ in }
+                } catch ManagedPreservationError.notFound { }
+                try await require(value, checkpoint)
+                value.retiring?.removeAll { $0 == retiring }; try write(value)
+                if cleanupRequiredForCapacity, (value.retiring ?? []).count < 6 { return }
+            }
+            try await collectParts(value, checkpoint: checkpoint, yielding: true)
+            cleanupNextAttempt = .distantPast; cleanupPending = false
+        } catch is CancellationError {
+            // Yield only at completed request boundaries; journals stay durable.
+        } catch {
+            cachedIndex = nil
+            cleanupNextAttempt = Date().addingTimeInterval(60)
+            // Cleanup never changes the save's title/error or its retry deadline.
+        }
+    }
+
+    private func synchronize(background: Bool = false) async {
+        guard Date() >= saveAfter, Date() >= nextAttempt else { return }
+        if cleanupTask != nil, !requested { return }
+        await saveLifetime.run(startsInBackground: background) { [self] in
+            // The bounded background grant must also cover waiting for an
+            // in-flight cleanup request to reach its safe yield boundary.
+            await yieldCleanup()
+            guard !Task.isCancelled else { return }
+            await synchronizeOnce()
+        }
     }
     private func synchronizeOnce() async {
         guard active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
@@ -798,8 +947,10 @@ final class AppRecordPersistence: ObservableObject {
             try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
             // Every live store commit and foreground entry requests work. An
             // idle timer must not reassemble years of notes every eight seconds.
-            guard requested || value.pending != nil || !(value.retiring ?? []).isEmpty || waitingForEditor else { return }
+            guard requested || cleanupPending || value.pending != nil || !(value.retiring ?? []).isEmpty || waitingForEditor else { return }
+            if !requested, Date() < cleanupNextAttempt { return }
             let currentFingerprint = try AppRecordDataset.fingerprint()
+            flushEdits()
             if waitingForEditor, currentFingerprint == value.fingerprint {
                 // A long editing session must not poll the server every eight
                 // seconds merely because a previously seen restore is waiting.
@@ -808,7 +959,7 @@ final class AppRecordPersistence: ObservableObject {
             }
             // No network polling for an unchanged dataset. Foreground entry and
             // commits request one check; conflict detection also occurs at CAS.
-            guard Self.needsAuthenticatedWork(value, fingerprint: currentFingerprint, requested: requested) else { return }
+            guard Self.needsAuthenticatedWork(value, fingerprint: currentFingerprint, requested: requested || cleanupPending) else { return }
             // Only actual work/foreground checks may renew access. An unchanged
             // eight-second timer must not extend device idle expiry or call Apple.
             let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
@@ -824,7 +975,7 @@ final class AppRecordPersistence: ObservableObject {
             requested = false
             let remote = try await remoteHead(headID)
             try await require(value, checkpoint)
-            if let retiring = remote?.1.retiring {
+            if remote?.0.revision != value.revision, let retiring = remote?.1.retiring {
                 value.retiring = Array(Set((value.retiring ?? []) + retiring)); try write(value)
             }
             if remote?.0.revision != value.revision {
@@ -856,49 +1007,30 @@ final class AppRecordPersistence: ObservableObject {
             if remote?.0.revision == value.revision, remote?.1.snapshotID == value.snapshotID {
                 accepted = try await acceptedSave(value, checkpoint: checkpoint)
             }
-            // Retry only queued, previously accepted automatic snapshots. The
-            // server head reference refuses removal of the current snapshot.
-            cleanup = true
-            let retained: Set<UUID>
-            if !(value.retiring ?? []).isEmpty, let remote {
-                let current = try await index(remote.1)
-                let decoded = try await ToolBackupTransfer.loadIndex(current, client: client)
-                retained = decoded.recordIDs
-            } else { retained = [] }
-            for retiring in value.retiring ?? [] where retiring != remote?.1.snapshotID {
-                do {
-                    let pending = try ToolBackupFiles.pendingDeletions(owner: value.owner).first { $0.id == retiring }
-                    let old: ToolBackupIndex
-                    if let pending { old = pending.index }
-                    else {
-                        let snapshot = try await client.detail(retiring).record
-                        guard let part = snapshot.document.toolBackup, let bytes = Data(base64Encoded: part.payload) else { throw ToolBackupError.invalid }
-                        old = try await ToolBackupTransfer.loadIndex(snapshot, client: client)
-                    }
-                    guard old.version >= 3 else { throw ToolBackupError.invalid }
-                    try await ToolBackupTransfer.delete(old, client: client, retaining: retained) { _, _ in }
-                } catch ManagedPreservationError.notFound { }
-                try await require(value, checkpoint)
-                value.retiring?.removeAll { $0 == retiring }; try write(value)
-            }
-            try await collectParts(value, checkpoint: checkpoint)
             if value.fingerprint == currentFingerprint, value.pending == nil {
-                // Editing may have committed while cleanup was awaiting I/O.
-                // Never overwrite its waiting state with an older fingerprint.
                 guard stillSaved(accepted) else { throw ToolBackupError.changed }
-                title = "保存済み"; detail = nil; return
+                title = "保存済み"; detail = nil; transientFailures = 0
+                enqueueCleanup(value, remote: remote, checkpoint: checkpoint)
+                return
+            }
+            // A seventh outstanding retirement cannot be published. Keep the
+            // existing six-entry bound and make room before preparing any PUT.
+            if (value.retiring ?? []).count >= 6 {
+                enqueueCleanup(value, remote: remote, checkpoint: checkpoint, requiredForCapacity: true)
+                requested = true
+                return
             }
             cleanup = false; accepted = nil
-            let membership = try await client.membership()
+            let membership = try await saveMembership(checkpoint)
             try await require(value, checkpoint)
             guard membership.canSave else { throw ManagedPreservationError.membershipRequired }
             planEnded = false
-            let support = try await client.usage().toolSnapshots
+            let usage = try await client.saveUsage()
+            let support = usage.value.toolSnapshots
             guard (support?.maximumIndexVersion ?? 0) >= 3 else { throw ManagedPreservationError.servicePaused }
             let previous: ToolBackupIndex?
             if let remote {
-                let record = try await index(remote.1)
-                previous = try await ToolBackupTransfer.loadIndex(record, client: client)
+                previous = try await decodedIndex(remote, value: value, checkpoint: checkpoint)
             } else { previous = nil }
             let saved: ToolBackupFiles.Saved
             if let pending = value.pending,
@@ -931,7 +1063,7 @@ final class AppRecordPersistence: ObservableObject {
             title = "保存中…"
             detail = "アプリを閉じても、次に開いたときに自動で続けます。"
             phase = "準備した記録を送信"
-            do { try await ToolBackupTransfer.upload(saved, client: client) { _, _ in } }
+            do { try await ToolBackupTransfer.upload(saved, client: client, confirmedUsage: usage) { _, _ in } }
             catch ManagedPreservationError.snapshotAbandoned {
                 try await require(value, checkpoint)
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil; value.pendingPrevious = nil
@@ -957,17 +1089,12 @@ final class AppRecordPersistence: ObservableObject {
             // The publication is complete before any old snapshot is removed.
             accepted = try await acceptedSave(value, checkpoint: checkpoint)
             releaseUploadedPayload(saved.id, owner: value.owner)
-            title = try AppRecordDataset.fingerprint() == value.fingerprint ? "保存済み" : "保存待ちの変更があります"
-            detail = nil
-            // Reclaim only the previous automatically published index, after
-            // the new CAS head is durable. Shared pieces are server-protected.
-            cleanup = true
-            if let previous {
-                try await require(value, checkpoint)
-                try await ToolBackupTransfer.delete(previous, client: client, retaining: saved.index.recordIDs) { _, _ in }
-                value.retiring?.removeAll { $0 == previous.snapshotID }; try write(value)
-                try await collectParts(value, checkpoint: checkpoint)
-            }
+            title = stillSaved(accepted) ? "保存済み" : "保存待ちの変更があります"
+            detail = nil; transientFailures = 0
+            if !stillSaved(accepted) { requested = true }
+            // The already validated immutable index belongs to this exact CAS.
+            cachedIndex = (try indexKey(value, revision: revision, head: head), saved.index)
+            enqueueCleanup(value, remote: nil, checkpoint: checkpoint, retainedIndex: saved.index)
         } catch AppRecordEditingError.inProgress {
             waitingForEditor = true
             title = "入力が終わるのを待っています"
@@ -991,7 +1118,12 @@ final class AppRecordPersistence: ObservableObject {
             detail = "入力を終えてから、もう一度復元してください。"
             requested = true; nextAttempt = .distantPast; return
         }
-        nextAttempt = Date().addingTimeInterval(60)
+        cachedIndex = nil; cachedMembership = nil
+        let transient = Self.isConnectionFailure(error)
+        if transient {
+            transientFailures += 1
+            nextAttempt = Date().addingTimeInterval(transientFailures == 1 ? 5 : transientFailures == 2 ? 15 : 60)
+        } else { nextAttempt = Date().addingTimeInterval(60) }
         if let failure = error as? ManagedPreservationError,
            [.membershipRequired, .servicePaused, .capacityReached, .authenticationRequired, .staleSession].contains(failure) {
             nextAttempt = Date().addingTimeInterval(300)
@@ -1051,6 +1183,32 @@ final class AppRecordPersistence: ObservableObject {
         failing = true
     }
 #if DEBUG
+    func finishCleanupForFixture() async { await cleanupTask?.value }
+    func allowCleanupForFixture(_ allowed: Bool) { cleanupForeground = allowed; cleanupNextAttempt = .distantPast }
+    var retirementCountForFixture: Int { (try? binding()?.retiring?.count) ?? 0 }
+    var cleanupFinishedForFixture: Bool {
+        cleanupTask == nil && ((try? binding()?.retiring?.isEmpty) ?? true)
+    }
+    func verifySchedulingForFixture() throws {
+        let now = Date(timeIntervalSince1970: 1000)
+        firstEditAt = nil
+        committed(now: now)
+        guard saveAfter == now.addingTimeInterval(2) else { throw ToolBackupError.storage }
+        for i in 1...5 { committed(now: now.addingTimeInterval(Double(i))) }
+        guard saveAfter == now.addingTimeInterval(5) else { throw ToolBackupError.storage }
+        flushEdits()
+        transientFailures = 0
+        for seconds in [5.0, 15.0, 60.0, 60.0] {
+            let began = Date()
+            report(URLError(.networkConnectionLost))
+            guard (seconds - 0.1...seconds + 1).contains(nextAttempt.timeIntervalSince(began)) else { throw ToolBackupError.storage }
+        }
+        for error in [ManagedPreservationError.membershipRequired, .servicePaused, .capacityReached, .authenticationRequired, .staleSession] {
+            let began = Date(); report(error)
+            guard (299.9...301).contains(nextAttempt.timeIntervalSince(began)) else { throw ToolBackupError.storage }
+        }
+        transientFailures = 0; nextAttempt = .distantPast; planEnded = false
+    }
     func stopLoopForFixture() {
         precondition(CommandLine.arguments.contains("--app-records-ui-fixture") && !busy)
         loop?.cancel(); loop = nil
@@ -1107,8 +1265,7 @@ final class AppRecordPersistence: ObservableObject {
     func verifyCleanupAcknowledgedState() throws {
         guard let value = try binding(), value.pending == nil,
               value.fingerprint == (try AppRecordDataset.fingerprint()),
-              !(value.retiring ?? []).isEmpty, requested, title == "保存済み",
-              detail?.contains("前に保存したデータの片づけ") == true else { throw ToolBackupError.storage }
+              !(value.retiring ?? []).isEmpty, !busy, title == "保存済み", !failing else { throw ToolBackupError.storage }
     }
 
     func verifyEditingPublicationFences() async throws {
@@ -1560,7 +1717,16 @@ struct AppRecordSavedPhoto: View {
 /// backend integration tests; this fixture drives the normal iPhone stores/UI.
 private actor AppRecordFixtureServer {
     private var measuredRoutes: [String: Int] = [:]
-    func resetMeasuredRoutes() { measuredRoutes = [:] }
+    private var routesAtHead: [String: Int] = [:]
+    private var headWrites = 0
+    private var routeOrder: [String] = []
+    private var holdDeletion = false
+    private var deletionWaiter: CheckedContinuation<Void, Never>?
+    func resetMeasuredRoutes() { measuredRoutes = [:]; routesAtHead = [:]; headWrites = 0; routeOrder = [] }
+    func savedMeasurement() -> ([String: Int], Int, [String]) { (routesAtHead, headWrites, routeOrder) }
+    func holdNextDeletion() { holdDeletion = true }
+    func deletionIsWaiting() -> Bool { deletionWaiter != nil }
+    func releaseDeletion() { let waiter = deletionWaiter; deletionWaiter = nil; waiter?.resume() }
     func measuredRequestCounts() -> [String: Int] { measuredRoutes }
     func useUninterruptedMetadataBatches() { metadataBatchMode = true; interruptMetadataPart = false }
     private var accountReadsUnavailable = false
@@ -1621,11 +1787,17 @@ private actor AppRecordFixtureServer {
         })?.key, var row = records[id], let revision = row["revision"] as? Int else { throw ToolBackupError.invalid }
         row["revision"] = revision + 1; records[id] = row; generation += 1
     }
-    func request(_ request: URLRequest) throws -> (Data, URLResponse) {
+    func request(_ request: URLRequest) async throws -> (Data, URLResponse) {
         requests += 1
         guard let url = request.url, url.host?.hasSuffix(".app-record-fixture.invalid") == true else { throw ToolBackupError.invalid }
         let route = "/" + url.pathComponents.dropFirst().map { UUID(uuidString: $0) == nil ? $0 : "{id}" }.joined(separator: "/")
-        measuredRoutes[(request.httpMethod ?? "GET") + " " + route, default: 0] += 1
+        let routeLabel = (request.httpMethod ?? "GET") + " " + route
+        measuredRoutes[routeLabel, default: 0] += 1
+        routeOrder.append(routeLabel)
+        if request.httpMethod == "DELETE", holdDeletion {
+            holdDeletion = false
+            await withCheckedContinuation { deletionWaiter = $0 }
+        }
         func response(_ json: [String: Any], _ code: Int = 200) throws -> (Data, URLResponse) {
             (try JSONSerialization.data(withJSONObject: json), HTTPURLResponse(url: url, statusCode: code, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"])!)
@@ -1785,6 +1957,7 @@ private actor AppRecordFixtureServer {
             records[id] = ["recordId": id.uuidString.lowercased(), "revision": revision, "document": document,
                 "photoBase64": body["photoBase64"] ?? NSNull(), "photoSHA256": photo.map { ToolBackupIndex.hash($0) as Any } ?? NSNull()]
             generation += 1
+            if document["toolBackup"] == nil { routesAtHead = measuredRoutes; headWrites += 1 }
             if photo != nil, interruptCommittedPhotos { throw CancellationError() }
             return try response(["recordId": id.uuidString.lowercased(), "revision": revision])
         }
@@ -1843,10 +2016,108 @@ private final class AppRecordFixture {
         guard try store.load() == value else { throw ToolBackupError.invalid }
         return value
     }
+    func verifyEfficientAutomaticSave() async throws {
+        await server.useUninterruptedMetadataBatches()
+        await persistence.enable()
+        await persistence.finishCleanupForFixture()
+        guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        let repository = try CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
+        var plan = repository.committed
+        await server.resetMeasuredRoutes()
+        let photos = await server.counts().1
+        Self.preparationPhase = "一項目の確定までを計測"
+        plan.contact += " 一項目の変更"
+        try repository.commit(plan, newPhotos: [:])
+        await Task.yield()
+        let began = Date()
+        await persistence.retry()
+        let saveSeconds = Date().timeIntervalSince(began)
+        guard persistence.title == "保存済み", !persistence.busy else { throw ToolBackupError.storage }
+        let atSave = await server.savedMeasurement().0
+        await persistence.finishCleanupForFixture()
+        let allSeconds = Date().timeIntervalSince(began)
+        let all = await server.measuredRequestCounts()
+        guard atSave["GET /v1/usage"] == 1, atSave["DELETE /v1/records/{id}"] == nil,
+              atSave["GET /v1/records/{id}"] == 1,
+              all.values.reduce(0, +) < 19, await server.counts().1 == photos else { throw ToolBackupError.storage }
+        func counts(_ routes: [String: Int]) -> String {
+            let json = try! JSONSerialization.data(withJSONObject: routes, options: [.sortedKeys])
+            return "requests=\(routes.values.reduce(0,+)) PUT=\(routes.filter { $0.key.hasPrefix("PUT ") }.values.reduce(0,+)) routes=\(String(decoding: json, as: UTF8.self))"
+        }
+        Self.measurementSummary = "AUTOSAVE_EFFICIENCY savedSeconds=\(saveSeconds) \(counts(atSave)); totalSeconds=\(allSeconds) \(counts(all)); photoPUT=0"
+        print(Self.measurementSummary)
+        Self.preparationPhase = "片づけ途中でも新しい保存を優先"
+        await server.holdNextDeletion()
+        plan.contact += " 片づけを待たない変更"
+        try repository.commit(plan, newPhotos: [:]); await Task.yield()
+        await persistence.retry()
+        for _ in 0..<300 {
+            if await server.deletionIsWaiting() { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard await server.deletionIsWaiting(), !persistence.busy, persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        plan.contact += " 片づけ中の次の変更"
+        try repository.commit(plan, newPhotos: [:]); await Task.yield()
+        let before = await server.savedMeasurement().1
+        let waiting = Task { await persistence.retry() }
+        for _ in 0..<10 { await Task.yield() }
+        guard await server.savedMeasurement().1 == before else { throw ToolBackupError.storage }
+        await server.releaseDeletion()
+        await waiting.value
+        guard persistence.title == "保存済み", !persistence.busy,
+              await server.savedMeasurement().1 == before + 1 else { throw ToolBackupError.storage }
+        let order = await server.savedMeasurement().2
+        let lastHead = order.lastIndex(of: "PUT /v1/records/{id}")!
+        let previousHead = order[..<lastHead].lastIndex(of: "PUT /v1/records/{id}")!
+        guard order[(previousHead+1)..<lastHead].filter({ $0.hasPrefix("DELETE ") }).count == 1 else { throw ToolBackupError.storage }
+        await persistence.finishCleanupForFixture()
+        try await persistence.verifyAcceptedSaveFences()
+        Self.preparationPhase = "三回の編集を一つにまとめる"
+        persistence.setActive(true)
+        try await Task.sleep(for: .milliseconds(200))
+        await persistence.finishCleanupForFixture()
+        await server.resetMeasuredRoutes()
+        for i in 0..<3 {
+            plan.contact += " 続けて編集\(i)"
+            try repository.commit(plan, newPhotos: [:])
+            try await Task.sleep(for: .milliseconds(350))
+        }
+        for _ in 0..<150 {
+            if await server.savedMeasurement().1 == 1, !persistence.busy, persistence.title == "保存済み" { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        persistence.stopLoopForFixture()
+        await persistence.finishCleanupForFixture()
+        guard await server.savedMeasurement().1 == 1, persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        Self.measurementSummary += "; threeEditsSnapshots=1; cleanupPriority=PASS"
+        Self.preparationPhase = "未整理六件の上限を保持"
+        persistence.allowCleanupForFixture(false)
+        for i in 0..<6 {
+            plan.contact += " 未整理\(i)"
+            try repository.commit(plan, newPhotos: [:]); await Task.yield()
+            await persistence.retry()
+            guard persistence.title == "保存済み", persistence.retirementCountForFixture == i + 1 else { throw ToolBackupError.storage }
+        }
+        plan.contact += " 上限で待つ変更"
+        try repository.commit(plan, newPhotos: [:]); await Task.yield()
+        let cappedHeads = await server.savedMeasurement().1
+        await persistence.retry()
+        guard await server.savedMeasurement().1 == cappedHeads, persistence.retirementCountForFixture == 6 else { throw ToolBackupError.storage }
+        persistence.allowCleanupForFixture(true)
+        await persistence.retry()
+        await persistence.finishCleanupForFixture()
+        guard persistence.retirementCountForFixture == 5 else { throw ToolBackupError.storage }
+        await persistence.retry()
+        await persistence.finishCleanupForFixture()
+        guard await server.savedMeasurement().1 == cappedHeads + 1, persistence.retirementCountForFixture == 0 else { throw ToolBackupError.storage }
+        Self.measurementSummary += "; retirementLimit=6 PASS"
+        try persistence.verifySchedulingForFixture()
+    }
     func verifySettingsSessionInterference() async throws {
         Self.preparationPhase = "一項目変更の往復を計測"
         await server.useUninterruptedMetadataBatches()
         await persistence.enable()
+        await persistence.finishCleanupForFixture()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
         await server.resetMeasuredRoutes()
         let photosBefore = await server.counts().1
@@ -1864,6 +2135,7 @@ private final class AppRecordFixture {
         Self.measurementSummary = "AUTOSAVE_SINGLE_EDIT seconds=\(elapsed) total=\(routes.values.reduce(0, +)) mutationPUT=\(mutations) photoPUT=0 routes=\(String(decoding: routeJSON, as: UTF8.self))"
         print(Self.measurementSummary)
 
+        await persistence.finishCleanupForFixture()
         Self.preparationPhase = "保存途中の通常照会401を再現"
         let saveClient = authenticationClient()
         let checkpoint = try await saveClient.captureSessionCheckpoint()
@@ -1891,6 +2163,7 @@ private final class AppRecordFixture {
         await persistence.retry()
         guard persistence.title == "保存済み", !(await server.metadataCounts().uncovered) else { throw ToolBackupError.storage }
 
+        await persistence.finishCleanupForFixture()
         Self.preparationPhase = "更新可能な認証も照会では変更しない"
         let store = ManagedPreservationSessionStore(origin: configuration.origin!.absoluteString)
         let renewable = try installRenewableFixtureCredential(expired: false)
@@ -2039,6 +2312,7 @@ private final class AppRecordFixture {
         Self.preparationPhase = "旧形式を保存"
         await server.useIndexVersion(3)
         await persistence.enable()
+        await persistence.finishCleanupForFixture()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
         let client = authenticationClient()
         guard let owner = try await client.sessionOwnerID() else { throw ToolBackupError.invalid }
@@ -2073,6 +2347,7 @@ private final class AppRecordFixture {
         await server.useIndexVersion(4)
         await persistence.retry()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        await persistence.finishCleanupForFixture()
         try verifyRetiredMetadata(oldIndex.snapshotID)
         guard try Data(contentsOf: restoredMarker) == oldReceipt,
               try Data(contentsOf: restoredPayload) == Data("original restored bytes".utf8) else { throw ToolBackupError.invalid }
@@ -2094,6 +2369,7 @@ private final class AppRecordFixture {
         await persistence.retry()
         let (_, after) = await server.counts()
         guard persistence.title == "保存済み", before == after else { throw ToolBackupError.storage }
+        await persistence.finishCleanupForFixture()
         try verifyRetiredMetadata(index.snapshotID)
         let expected = try await PhotoMemoryNoteStore.shared.records()
         let original = try AppRecordJSON.read(url)
@@ -2184,6 +2460,7 @@ private final class AppRecordFixture {
     func verifyCleanupFailureAndAutomaticResume() async throws {
         Self.preparationPhase = "初回保存"
         await persistence.enable()
+        await persistence.finishCleanupForFixture()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
         Self.preparationPhase = "保存完了の境界"
         try await persistence.verifyAcceptedSaveFences()
@@ -2196,6 +2473,7 @@ private final class AppRecordFixture {
         plan.contact += " 整理中断後も保存完了"
         try repository.commit(plan, newPhotos: [:])
         await persistence.retry()
+        await persistence.finishCleanupForFixture()
         try persistence.verifyCleanupAcknowledgedState()
         guard let owner = try await authenticationClient().sessionOwnerID(),
               !(try ToolBackupFiles.pendingDeletions(owner: owner)).isEmpty else { throw ToolBackupError.storage }
@@ -2203,7 +2481,7 @@ private final class AppRecordFixture {
         persistence.setActive(true)
         Self.preparationPhase = "整理の自動再開"
         for _ in 0..<100 {
-            if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
+            if !persistence.busy, persistence.cleanupFinishedForFixture, persistence.title == "保存済み", persistence.detail == nil { break }
             try await Task.sleep(for: .milliseconds(100))
         }
         persistence.stopLoopForFixture()
@@ -2219,7 +2497,7 @@ private final class AppRecordFixture {
         persistence.setActive(true)
         Self.preparationPhase = "送信の自動再開"
         for _ in 0..<100 {
-            if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
+            if !persistence.busy, persistence.cleanupFinishedForFixture, persistence.title == "保存済み", persistence.detail == nil { break }
             try await Task.sleep(for: .milliseconds(100))
         }
         persistence.stopLoopForFixture()
@@ -2232,7 +2510,9 @@ private final class AppRecordFixture {
             AppRecordDataset.committed(url)
         }
         await persistence.retry()
-        guard persistence.title == "保存待ちの変更があります", persistence.detail != nil else { throw ToolBackupError.storage }
+        await persistence.finishCleanupForFixture()
+        await Task.yield()
+        guard persistence.title == "保存待ちの変更があります" else { throw ToolBackupError.storage }
         await persistence.retry()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
     }
@@ -2462,6 +2742,14 @@ struct AppRecordPersistenceFixtureView: View {
             }
         }
         .task {
+            if CommandLine.arguments.contains("--app-records-efficiency-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifyEfficientAutomaticSave()
+                    result = "保存の回数・片づけの分離・編集の集約を確認しました"
+                } catch { result = "効率の検査失敗: " + AppRecordFixture.preparationPhase }
+                return
+            }
             if CommandLine.arguments.contains("--app-records-session-probe") {
                 do {
                     let probe = try await AppRecordFixture.make()
