@@ -227,7 +227,7 @@ struct CatCareDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            if let hint = CatCareProgress(draft: draft, record: currentRecord).nextHint {
+            if let hint = progress.nextHint {
                 // One line, not a dashboard: what the next entry unlocks.
                 Section {
                     Label(hint, systemImage: "arrow.right.circle")
@@ -238,10 +238,10 @@ struct CatCareDetailView: View {
             }
             // Folded by default: four short rows that say how full each part is.
             // Open one to write in it; nothing is hidden, only folded.
-            folded("basics", "基本", basicsCount) { basicsSection }
-            folded("health", "健康", healthCount) { healthSection }
-            folded("living", "暮らし", livingCount) { livingSection }
-            folded("household", "家の情報", householdCount) { householdSection }
+            folded("basics", "基本", progress.basics) { basicsSection }
+            folded("health", "健康", progress.health) { healthSection }
+            folded("living", "暮らし", progress.living) { livingSection }
+            folded("household", "家の情報", progress.household) { householdSection }
             if familyNotebook.hasFamily {
                 Section { Text("家族と一緒に書いています。") }
                     .font(.footnote)
@@ -311,59 +311,11 @@ struct CatCareDetailView: View {
 
     // MARK: Sections
 
-    /// The top of the page: how far this cat's page is, and what each entry
-    /// makes possible (the lost-cat picture, the care sheet, the vet sheet).
-    private var progressSection: some View {
-        let progress = CatCareProgress(draft: draft, record: currentRecord)
-        return Section {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle().stroke(Color(.tertiarySystemFill), lineWidth: 7)
-                        Circle()
-                            .trim(from: 0, to: progress.total == 0 ? 0 : CGFloat(progress.filled) / CGFloat(progress.total))
-                            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                            .animation(.easeOut(duration: 0.4), value: progress.filled)
-                        Text("\(progress.filled)")
-                            .font(.title3.bold().monospacedDigit())
-                    }
-                    .frame(width: 58, height: 58)
-                    .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(progress.filled >= progress.total ? "すべて書けています"
-                             : "\(progress.filled) / \(progress.total) 書けています")
-                            .font(.headline)
-                        if let hint = progress.nextHint {
-                            Text(hint).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                HStack(spacing: 10) {
-                    ForEach(progress.sheets, id: \.title) { sheet in
-                        VStack(spacing: 5) {
-                            VStack(spacing: 4) {
-                                Image(systemName: sheet.isComplete ? "checkmark.circle.fill" : "doc.text")
-                                    .font(.title3)
-                                    .foregroundStyle(sheet.isComplete ? Color.green : Color.secondary)
-                                Text(sheet.title).font(.caption.weight(.semibold))
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 64)
-                            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            Text(sheet.isComplete ? "完成" : "\(sheet.done) / \(sheet.total)")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(sheet.isComplete ? Color.green : Color.secondary)
-                        }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(sheet.title)、\(sheet.isComplete ? "完成" : "\(sheet.done)／\(sheet.total)")")
-                    }
-                }
-            }
-            .padding(.vertical, 6)
-            .accessibilityIdentifier("cat-care-progress")
-        } footer: {
-            Text("ここに書くほど、「迷子のとき」「預けるとき」「病院で見せる」で使える内容が増えます。")
-        }
+    /// The same count as the ring on the ツール tab, so a row filled here moves it.
+    private var progress: CatCareProgress {
+        var lifeDates: Bool?
+        if case let .profile(profile) = subject { lifeDates = profile.lifeReference != nil }
+        return CatCareProgress(draft: draft, record: currentRecord, hasLifeDates: lifeDates)
     }
 
     /// 「ミケ（4歳）」 and what the dates are for: read-only facts go in the footer, not in rows.
@@ -460,33 +412,6 @@ struct CatCareDetailView: View {
     }
 
     @State private var openParts: Set<String> = []
-
-    private func filled(_ value: String) -> Bool { !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    private var basicsCount: (Int, Int) {
-        var values = [filled(draft.coat), filled(draft.marks), filled(draft.microchip),
-                      draft.sex != .unknown, draft.neutered != .unknown, draft.indoorOnly != .unknown]
-        if case let .profile(profile) = subject { values.append(profile.lifeReference != nil) }
-        return (values.filter { $0 }.count, values.count)
-    }
-
-    private var healthCount: (Int, Int) {
-        let values = [filled(draft.conditions), draft.allergyStatus != .unknown,
-                      (currentRecord?.activeWeights.count ?? 0) > 0, (currentRecord?.activeVaccinations.count ?? 0) > 0]
-        return (values.filter { $0 }.count, values.count)
-    }
-
-    private var livingCount: (Int, Int) {
-        let values = [(currentRecord?.activeMeals.count ?? 0) > 0, filled(draft.specialDiet), filled(draft.water),
-                      filled(draft.litter), filled(draft.temperament)]
-        return (values.filter { $0 }.count, values.count)
-    }
-
-    private var householdCount: (Int, Int) {
-        let values = [filled(draft.ownerContact), filled(draft.backupContact), filled(draft.vetName),
-                      filled(draft.vetPhone), filled(draft.meetingPlace)]
-        return (values.filter { $0 }.count, values.count)
-    }
 
     /// A part of この子のこと: one row while folded (「健康　2 / 4」), the whole
     /// section when opened. Tapping the row again folds it.
@@ -674,54 +599,45 @@ struct CatCareDetailView: View {
 
 // MARK: - Progress (what is filled, and what that makes)
 
-/// Which entries are in, and how close each tool's sheet is. The fields are
-/// the ones the sheets print; nothing is counted twice.
+/// Which entries are in. Every row of この子のこと counts once, so the ring
+/// on the ツール tab and the 「基本　3 / 7」 rows here always agree.
 struct CatCareProgress {
-    struct Sheet: Equatable {
-        let title: String
-        let done: Int
-        let total: Int
-        var isComplete: Bool { done >= total }
-    }
+    let basics: (Int, Int)
+    let health: (Int, Int)
+    let living: (Int, Int)
+    let household: (Int, Int)
+    /// The tool whose entries are closest to all in, for one line at the top.
+    let nextHint: String?
 
-    let filled: Int
-    let total: Int
-    let sheets: [Sheet]
+    var filled: Int { basics.0 + health.0 + living.0 + household.0 }
+    var total: Int { basics.1 + health.1 + living.1 + household.1 }
 
-    init(draft: CatCareDraft, record: CatCareRecord?) {
+    /// `hasLifeDates` is nil for a tool's cat with no profile (no birthday row).
+    init(draft: CatCareDraft, record: CatCareRecord?, hasLifeDates: Bool?) {
         func has(_ value: String) -> Bool { !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let items: [(String, Bool)] = [
-            ("毛色", has(draft.coat)),
-            ("特徴", has(draft.marks)),
-            ("連絡先", has(draft.ownerContact)),
-            ("ごはん", (record?.activeMeals.count ?? 0) > 0),
-            ("水", has(draft.water)),
-            ("トイレ", has(draft.litter)),
-            ("接し方", has(draft.temperament)),
-            ("かかりつけ", has(draft.vetName)),
-            ("体重", (record?.activeWeights.count ?? 0) > 0),
-            ("ワクチン", (record?.activeVaccinations.count ?? 0) > 0),
-            ("持病", has(draft.conditions)),
-            ("アレルギー", draft.allergyStatus != .unknown)
-        ]
-        filled = items.filter(\.1).count
-        total = items.count
-        func sheet(_ title: String, _ names: [String]) -> Sheet {
-            let picked = items.filter { names.contains($0.0) }
-            return Sheet(title: title, done: picked.filter(\.1).count, total: picked.count)
-        }
-        sheets = [
-            sheet("迷子", ["毛色", "特徴", "連絡先"]),
-            sheet("預ける", ["ごはん", "水", "トイレ", "接し方", "かかりつけ"]),
-            sheet("病院", ["体重", "ワクチン", "持病", "アレルギー", "かかりつけ"])
-        ]
-    }
+        func count(_ values: [Bool]) -> (Int, Int) { (values.filter { $0 }.count, values.count) }
+        let meals = (record?.activeMeals.count ?? 0) > 0
+        let weights = (record?.activeWeights.count ?? 0) > 0
+        let vaccinations = (record?.activeVaccinations.count ?? 0) > 0
+        basics = count([has(draft.coat), has(draft.marks), has(draft.microchip),
+                        draft.sex != .unknown, draft.neutered != .unknown, draft.indoorOnly != .unknown]
+                       + (hasLifeDates.map { [$0] } ?? []))
+        health = count([has(draft.conditions), draft.allergyStatus != .unknown, weights, vaccinations])
+        living = count([meals, has(draft.specialDiet), has(draft.water), has(draft.litter), has(draft.temperament)])
+        household = count([has(draft.ownerContact), has(draft.backupContact), has(draft.vetName),
+                           has(draft.vetPhone), has(draft.meetingPlace)])
 
-    /// The sheet closest to done: 「あと2つで「預ける」の控えが完成」.
-    var nextHint: String? {
-        sheets.filter { !$0.isComplete }
-            .min { ($0.total - $0.done, $0.title) < ($1.total - $1.done, $1.title) }
-            .map { "「\($0.title)」はあと\($0.total - $0.done)つで完成" }
+        // What each tool reads first: 「あと2つで「預けるとき」の項目がそろいます」.
+        let tools: [(String, [Bool])] = [
+            ("迷子のとき", [has(draft.coat), has(draft.marks), has(draft.ownerContact)]),
+            ("預けるとき", [meals, has(draft.water), has(draft.litter), has(draft.temperament), has(draft.vetName)]),
+            ("病院で見せる", [weights, vaccinations, has(draft.conditions), draft.allergyStatus != .unknown,
+                          has(draft.vetName)])
+        ]
+        nextHint = tools.map { ($0.0, $0.1.filter { !$0 }.count) }
+            .filter { $0.1 > 0 }
+            .min { ($0.1, $0.0) < ($1.1, $1.0) }
+            .map { "あと\($0.1)つで「\($0.0)」の項目がそろいます" }
     }
 }
 

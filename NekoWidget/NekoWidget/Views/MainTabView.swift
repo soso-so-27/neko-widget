@@ -218,23 +218,22 @@ private enum ToolTint {
     static let emergencyBrown = Color(red: 0.68, green: 0.36, blue: 0.19)
 }
 
-/// A cat in the row above the tools: round photo with a ring of twelve
-/// marks around it (one per entry in この子のこと), and the name. The ring
-/// fills as entries go in; no numbers.
+/// A cat in the row above the tools: round photo with a ring around it that
+/// fills as この子のこと is written in; no numbers. A cat that has passed
+/// away keeps the photo and name only: nothing asks to be filled in.
 private struct CatChip: View {
     let profile: CatProfilePresentation
     let progress: CatCareProgress
+    let departed: Bool
 
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                let total = max(progress.total, 1)
-                let gap: CGFloat = 0.015
-                ForEach(0 ..< total, id: \.self) { index in
+                if !departed {
+                    Circle().stroke(Color(.tertiarySystemFill), lineWidth: 3.5)
                     Circle()
-                        .trim(from: CGFloat(index) / CGFloat(total) + gap, to: CGFloat(index + 1) / CGFloat(total) - gap)
-                        .stroke(index < progress.filled ? Color.accentColor : Color(.tertiarySystemFill),
-                                style: StrokeStyle(lineWidth: 3.5, lineCap: .butt))
+                        .trim(from: 0, to: progress.total == 0 ? 0 : CGFloat(progress.filled) / CGFloat(progress.total))
+                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
                 CatProfileThumbnail(photo: profile.coverPhoto)
@@ -251,7 +250,8 @@ private struct CatChip: View {
         .frame(width: 72)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(profile.displayName)、この子のこと \(progress.total)項目中\(progress.filled)項目")
+        .accessibilityLabel(departed ? profile.displayName
+                            : "\(profile.displayName)、この子のこと \(progress.total)項目中\(progress.filled)項目")
     }
 }
 
@@ -410,6 +410,7 @@ struct MainTabView: View {
     @Environment(\.membershipAccess) private var membershipAccess
     @ObservedObject private var groupWindowOpenInbox = GroupWindowOpenInbox.shared
     @ObservedObject private var careStore = CatCareStore.shared
+    @AppStorage(CatFarewell.key) private var farewellJSON = ""
     @State private var didApplyInitialTab = false
     @AppStorage("navigation.lastTab.v1") private var lastViewedTab = AppTab.memories.rawValue
     @State private var arrivalDates: [String: [Date]] = [:]
@@ -1074,7 +1075,8 @@ struct MainTabView: View {
                             actions: catProfilesActions
                         )
                     } label: {
-                        CatChip(profile: profile, progress: careProgress(for: profile))
+                        CatChip(profile: profile, progress: careProgress(for: profile),
+                                departed: farewellDays[profile.identifier] != nil)
                     }
                     .buttonStyle(ToolCardButtonStyle())
                     .accessibilityIdentifier("tools-cat-\(profile.identifier)")
@@ -1102,12 +1104,17 @@ struct MainTabView: View {
         .accessibilityIdentifier("tools-cat-strip")
     }
 
-    /// How far this cat's この子のこと is, for the chip's small line.
+    /// How far this cat's この子のこと is, for the ring around the chip.
     private func careProgress(for profile: CatProfilePresentation) -> CatCareProgress {
         let record = careStore.state?.cats.first { $0.profileID?.uuidString == profile.identifier }
         let draft = record.map { CatCareDraft(record: $0, household: careStore.state?.household ?? CatCareHousehold()) }
             ?? CatCareDraft()
-        return CatCareProgress(draft: draft, record: record)
+        return CatCareProgress(draft: draft, record: record, hasLifeDates: profile.lifeReference != nil)
+    }
+
+    /// Cats whose farewell day is recorded (1.0 only, as in この子のこと).
+    private var farewellDays: [String: CatCareDay] {
+        Version1.isOn ? CatFarewell.days(farewellJSON) : [:]
     }
 
     private func toolSection<Content: View>(_ title: String,
