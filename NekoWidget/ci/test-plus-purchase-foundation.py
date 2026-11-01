@@ -295,6 +295,23 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             self.assertNotIn("ねこのまど Plus", ui)
             self.assertNotIn("¥980", ui)
 
+    def test_widget_resume_entry_is_only_on_the_widget_opened_photo(self) -> None:
+        # ADR-027 5章: the Widget that kept its last photo offers Plus where it
+        # is opened, and nowhere else; the sheet never opens by itself.
+        main = source("NekoWidget/Views/MainTabView.swift")
+        self.assertIn("decision(for: .refreshPersonalWidget) == .membershipRequired", main)
+        self.assertIn("showsWidgetTiming: openedFromWidget && !personalWidgetPaused", main)
+        self.assertIn("if openedFromWidget, personalWidgetPaused { WidgetResumeOffer() }", main)
+        offer = section(main, "private struct WidgetResumeOffer: View {", "\n}\n")
+        self.assertIn("MembershipOfferSheet(model: .live(), context: .widgetResume)", offer)
+        self.assertNotIn("presentsImmediately", offer)
+        self.assertNotIn("PlusOfferPrompt", offer)
+        for relative in (
+            "NekoWidget/Views/LikedPhotosView.swift",
+            "NekoWidget/App/AppRootView.swift",
+        ):
+            self.assertNotIn(".widgetResume", source(relative))
+
     def test_offer_observes_shared_authority_without_enabling_unknown_or_active_purchase(self) -> None:
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         view = source("NekoWidget/Views/MembershipOfferView.swift")
