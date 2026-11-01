@@ -34,9 +34,19 @@ export class PayloadWork {
     if (signal?.aborted) { release(); throw busy(); }
     return release;
   }
-  async run<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const release = await this.acquire(signal);
-    try { return await operation(); } finally { release(); }
+  run<T>(operation: () => Promise<T>, signal?: AbortSignal,
+    context?: Pick<ExecutionContext, 'waitUntil'>): Promise<T> {
+    const work = (async () => {
+      const release = await this.acquire(signal);
+      try { return await operation(); } finally { release(); }
+    })();
+    // A cancelled Worker invocation can discard the finally continuation and
+    // leave this isolate's permit occupied. Retain settlement, NOT just the
+    // abort signal. Never release while the operation still owns its payload.
+    // Workers' post-disconnect waitUntil limit still applies; this is not an
+    // unbounded background job or permission to continue after that limit.
+    context?.waitUntil(work.then(() => {}, () => {}));
+    return work;
   }
 }
 
