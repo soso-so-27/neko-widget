@@ -36,6 +36,29 @@ final class FamilyNotebookStore: @unchecked Sendable {
         var sharingEnded: Bool?
         var farewellDecisions: [FamilyNotebookFarewellDecision]?
 
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion, familyID, revision, clock, operations, outboxIDs
+            case acknowledgements, mappings, ledgerKeys, sharingEnded, farewellDecisions
+        }
+
+        // Backup fingerprints compare encoded bytes. Set iteration order can
+        // change on decoding the same state, so serialize only these unordered
+        // collections in a stable order. Keep operation/history order intact.
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(schemaVersion, forKey: .schemaVersion)
+            try values.encode(familyID, forKey: .familyID)
+            try values.encode(revision, forKey: .revision)
+            try values.encode(clock, forKey: .clock)
+            try values.encode(operations, forKey: .operations)
+            try values.encode(outboxIDs.sorted { $0.uuidString < $1.uuidString }, forKey: .outboxIDs)
+            try values.encode(acknowledgements, forKey: .acknowledgements)
+            try values.encode(mappings, forKey: .mappings)
+            try values.encode(ledgerKeys.sorted(), forKey: .ledgerKeys)
+            try values.encodeIfPresent(sharingEnded, forKey: .sharingEnded)
+            try values.encodeIfPresent(farewellDecisions, forKey: .farewellDecisions)
+        }
+
         var snapshot: FamilyNotebookSnapshot {
             .init(familyID: familyID, revision: revision, clock: clock, operations: operations,
                   mappings: mappings, ledgerKeys: ledgerKeys, outbox: operations.filter { outboxIDs.contains($0.id) },

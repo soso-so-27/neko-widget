@@ -61,6 +61,31 @@ struct VerifyFamilyNotebook {
             let encoded = try FamilyNotebookBackup.encode(decoded)
             try check(encoded == baseline, "unchanged backup must keep identical fingerprint bytes")
         }
+        var legacy = try JSONSerialization.jsonObject(with: baseline) as! [String: Any]
+        var copies = legacy["copies"] as! [[String: Any]]
+        var legacyState = copies[0]["state"] as! [String: Any]
+        legacyState["outboxIDs"] = Array((legacyState["outboxIDs"] as! [String]).reversed())
+        legacyState["ledgerKeys"] = Array((legacyState["ledgerKeys"] as! [String]).reversed())
+        copies[0]["state"] = legacyState; legacy["copies"] = copies
+        let oldOrder = try FamilyNotebookBackup.decode(JSONSerialization.data(withJSONObject: legacy))
+        try check(oldOrder.copies[0].state == state, "legacy unordered arrays remain readable")
+        try check(try FamilyNotebookBackup.encode(oldOrder) == baseline, "legacy order canonicalizes without losing state")
+        for count in [0, 1] {
+            var small = manifest
+            small.copies[0].state.outboxIDs = Set(state.outboxIDs.prefix(count))
+            small.copies[0].state.ledgerKeys = Set(state.ledgerKeys.prefix(count))
+            let bytes = try FamilyNotebookBackup.encode(small)
+            try check(try FamilyNotebookBackup.encode(FamilyNotebookBackup.decode(bytes)) == bytes, "empty and single-entry sets stay stable")
+        }
+        var edited = manifest
+        edited.copies[0].state.ledgerKeys.insert("new-synthetic-ledger")
+        try check(try FamilyNotebookBackup.encode(edited) != baseline, "actual ledger change still changes fingerprint bytes")
+        edited = manifest
+        edited.copies[0].state.outboxIDs.remove(state.outboxIDs.first!)
+        try check(try FamilyNotebookBackup.encode(edited) != baseline, "outbox acknowledgement still changes fingerprint bytes")
+        edited = manifest
+        edited.copies[0].state.operations.reverse()
+        try check(try FamilyNotebookBackup.encode(edited) != baseline, "operation order is preserved, not normalized")
         try check(try Data(contentsOf: path.appendingPathComponent("family-notebook.json")) == original, "stability check leaves source untouched")
     }
 
