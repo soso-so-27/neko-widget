@@ -133,7 +133,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
                 try FamilyNotebookCore.validate(target: entry.target, value: entry.value)
                 if state.operations.contains(where: { $0.target.removes(entry.target) }) { continue }
                 let current = state.snapshot.fieldState(for: entry.target)
-                if current?.operation.value == entry.value && current != nil { continue }
+                if let current, current.operation.value == entry.value,
+                   !entry.reassertSameValue || entry.editedAt <= current.operation.editedAt { continue }
                 let operation = try makeOperation(state: state, target: entry.target, value: entry.value,
                     author: author, editedAt: entry.editedAt)
                 state.operations = try FamilyNotebookCore.merge(state.operations, [operation])

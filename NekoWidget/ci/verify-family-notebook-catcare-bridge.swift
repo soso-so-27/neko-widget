@@ -150,8 +150,15 @@ enum FamilyNotebookCatCareBridgeVerifier {
         let freshProjection = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: privateCare)
         try require(freshProjection.cats[0].vaccinationStatus == .unknown && freshProjection.cats[0].activeVaccinations.isEmpty,
                     "fresh receiver sees later vaccine tombstone and cannot resurrect none")
-        _ = try reopened.edit(target: target, value: .text(CatCareVaccinationStatus.noneText), author: author)
-        let reconfirmed = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: privateCare)
+        var newAnswer = freshProjection
+        _ = newAnswer.cats[0].setVaccinationStatus(.none, editedAt: Date().addingTimeInterval(1), editedBy: "receiver")
+        let confirmation = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: newAnswer, unreadableCatCount: 0)),
+                                                               familyID: family, mappings: reopened.snapshot().mappings).plan
+        try reopened.applyLocalChanges(confirmation, author: author)
+        let confirmedSnapshot = try reopened.snapshot()
+        try reopened.applyLocalChanges(confirmation, author: author)
+        try require(try reopened.snapshot() == confirmedSnapshot, "reconfirm retry does not enqueue duplicate operations")
+        let reconfirmed = try FamilyNotebookCatCareBridge.apply(confirmedSnapshot, to: privateCare)
         try require(reconfirmed.cats[0].vaccinationStatus == .none, "explicit reconfirmation after deletion works")
         print("Family CatCare absence answers: import, clear, legacy edits and reopen passed")
     }

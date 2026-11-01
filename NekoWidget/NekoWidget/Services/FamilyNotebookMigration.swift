@@ -148,7 +148,7 @@ enum FamilyNotebookMigration {
         mutating func put(_ field: FamilyNotebookField?, _ value: FamilyNotebookValue?,
                           catID: UUID, collection: FamilyNotebookCollection = .cat,
                           recordID: UUID? = nil, parentID: UUID? = nil,
-                          source: String, at date: Date) throws {
+                          source: String, at date: Date, reassertSameValue: Bool = false) throws {
             guard date.timeIntervalSince1970.isFinite else { throw FamilyNotebookMigrationError.invalidSource }
             let target = FamilyNotebookTarget(familyCatID: catID, collection: collection,
                 recordID: recordID, parentRecordID: parentID, field: field)
@@ -159,7 +159,7 @@ enum FamilyNotebookMigration {
             // Store.applyImport separates this source date from the new author's
             // import time. Clinical dates are also preserved as explicit values.
             entries.append(.init(ledgerKey: source + ":" + collection.rawValue + ":" + (field?.rawValue ?? "deleted"),
-                                 target: target, value: value, editedAt: date))
+                                 target: target, value: value, editedAt: date, reassertSameValue: reassertSameValue))
         }
 
         mutating func text(_ field: FamilyNotebookField, _ value: String, catID: UUID,
@@ -215,7 +215,7 @@ enum FamilyNotebookMigration {
                 if let answer = input.vaccinationAnswer {
                     try put(.kind, answer.value == .none ? .text(CatCareVaccinationStatus.noneText) : .clear,
                             catID: id, collection: .vaccination, recordID: FamilyNotebookVaccinationAnswer.recordID(cat: id),
-                            source: source + ":vaccination-answer", at: answer.editedAt)
+                            source: source + ":vaccination-answer", at: answer.editedAt, reassertSameValue: true)
                 }
                 for item in input.weights {
                     let key = source + ":weight:" + item.id.uuidString.lowercased()
