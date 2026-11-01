@@ -126,11 +126,18 @@ struct VerifyCatCare {
         try check(CatCareMerge.merge(noVaccines, cat).vaccinationStatus == .unknown, "clear stamp wins merge")
         try check(CatCareMerge.merge(noVaccines, withVaccines).vaccinationStatus == .recorded, "merge cannot hide vaccination")
         var invalidated = noVaccines
-        invalidated.vaccinationAnswer?.value = .unknown
+        invalidated.vaccinationAnswer?.value.status = .unknown
         invalidated.vaccinationAnswer?.editedBy = "earlier-author"
         try check(CatCareMerge.merge(noVaccines, invalidated) == CatCareMerge.merge(invalidated, noVaccines)
                   && CatCareMerge.merge(noVaccines, invalidated).vaccinationStatus == .unknown,
                   "identical-time invalidation cannot revive none through merge direction or author order")
+        var sameSecond = noVaccines
+        sameSecond.vaccinations.append(.init(kind: "3種", givenOn: day, editedAt: t1, editedBy: "a", deletedAt: t1))
+        try check(sameSecond.vaccinationStatus == .unknown, "new deleted ID invalidates none even with identical author and time")
+        _ = sameSecond.setVaccinationStatus(.none, editedAt: t1.addingTimeInterval(1), editedBy: "a")
+        var sameSecondState = state; sameSecondState.cats = [sameSecond]
+        let preciseRestore = try CatCareDecoding.backupState(CatCareDecoding.portable(CatCareDecoding.encode(sameSecondState)))
+        try check(preciseRestore.cats[0].vaccinationStatus == .none, "history-bound reconfirmation survives timestamp precision of backup JSON")
 
         var savedCat = noVaccines
         _ = savedCat.setMicrochip(status: .none, editedAt: t1.addingTimeInterval(7), editedBy: "a")

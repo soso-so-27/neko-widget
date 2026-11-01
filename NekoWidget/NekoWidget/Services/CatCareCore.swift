@@ -112,6 +112,12 @@ struct CatCareVet: Codable, Equatable, Sendable {
 /// An answer about an empty history is not a vaccination with an invented date.
 /// Old CatCare readers ignore this optional metadata; actual entries always win.
 enum CatCareAbsenceAnswer: String, Codable, Equatable, Sendable { case unknown, none }
+struct CatCareVaccinationAnswer: Codable, Equatable, Sendable {
+    var status: CatCareAbsenceAnswer
+    /// Binds an answer to the retained history, including tombstones. An old
+    /// app adding/deleting a new ID invalidates it even within the same second.
+    var observedVaccinationIDs: [UUID]
+}
 enum CatCareVaccinationStatus: String, CaseIterable, Sendable {
     case unknown, none, recorded
     static let noneText = "受けていない"
@@ -243,7 +249,7 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var weights: [CatCareWeight] = []
     var medications: [CatCareMedication] = []
     var vaccinations: [CatCareVaccination] = []
-    var vaccinationAnswer: CatCareStamped<CatCareAbsenceAnswer>?
+    var vaccinationAnswer: CatCareStamped<CatCareVaccinationAnswer>?
 
     var meals: [CatCareMeal] = []
     var specialDiet: CatCareStamped<String>?
@@ -287,13 +293,10 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
 
     var vaccinationStatus: CatCareVaccinationStatus {
         if !activeVaccinations.isEmpty { return .recorded }
-        guard let answer = vaccinationAnswer, answer.value == .none else { return .unknown }
+        guard let answer = vaccinationAnswer, answer.value.status == .none else { return .unknown }
         // An older app may add and later delete a vaccination without knowing
         // about the answer. Such edits must not resurrect an earlier "none".
-        let fresh = vaccinations.allSatisfy {
-            let at = max($0.editedAt, $0.deletedAt ?? $0.editedAt)
-            return at < answer.editedAt || (at == answer.editedAt && $0.editedBy <= answer.editedBy)
-        }
+        let fresh = answer.value.observedVaccinationIDs == vaccinations.map(\.id).sorted { $0.uuidString < $1.uuidString }
         return fresh ? .none : .unknown
     }
 
@@ -303,7 +306,8 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
         if status == .recorded { return !activeVaccinations.isEmpty }
         guard activeVaccinations.isEmpty else { return false }
         if status == .none && vaccinationStatus == .none { return true }
-        let value: CatCareAbsenceAnswer = status == .none ? .none : .unknown
+        let value = CatCareVaccinationAnswer(status: status == .none ? .none : .unknown,
+            observedVaccinationIDs: vaccinations.map(\.id).sorted { $0.uuidString < $1.uuidString })
         if vaccinationAnswer?.value != value || status == .none {
             vaccinationAnswer = .init(value: value, editedAt: editedAt, editedBy: editedBy)
         }
@@ -459,7 +463,9 @@ enum CatCareMerge {
         // deterministic winner, independent of merge direction or author order.
         if let x = a.vaccinationAnswer, let y = b.vaccinationAnswer,
            x.editedAt == y.editedAt, x.value != y.value {
-            r.vaccinationAnswer = x.value == .unknown ? x : y
+            var conservative = x.editedBy >= y.editedBy ? x : y
+            conservative.value = .init(status: .unknown, observedVaccinationIDs: [])
+            r.vaccinationAnswer = conservative
         } else {
             r.vaccinationAnswer = pick(a.vaccinationAnswer, b.vaccinationAnswer)
         }

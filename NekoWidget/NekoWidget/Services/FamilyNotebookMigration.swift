@@ -213,7 +213,7 @@ enum FamilyNotebookMigration {
                     try vet(stamp.value, catID: id, source: source, at: stamp.editedAt)
                 }
                 if let answer = input.vaccinationAnswer {
-                    try put(.kind, answer.value == .none ? .text(CatCareVaccinationStatus.noneText) : .clear,
+                    try put(.kind, answer.value.status == .none ? .text(CatCareVaccinationStatus.noneText) : .clear,
                             catID: id, collection: .vaccination, recordID: FamilyNotebookVaccinationAnswer.recordID(cat: id),
                             source: source + ":vaccination-answer", at: answer.editedAt, reassertSameValue: true)
                 }

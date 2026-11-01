@@ -86,7 +86,8 @@ enum FamilyNotebookCatCareBridge {
                     return operation.version > answer.operation.version
                 }.max { $0.version < $1.version }
                 if value == .none && invalidatingEdit != nil { value = .unknown }
-                state.cats[index].vaccinationAnswer = .init(value: value,
+                state.cats[index].vaccinationAnswer = .init(value: .init(status: value,
+                    observedVaccinationIDs: state.cats[index].vaccinations.map(\.id).sorted { $0.uuidString < $1.uuidString }),
                     editedAt: max(answer.operation.editedAt, invalidatingEdit?.editedAt ?? answer.operation.editedAt),
                     editedBy: "family:" + (invalidatingEdit?.author.personID ?? answer.operation.author.personID))
             }
