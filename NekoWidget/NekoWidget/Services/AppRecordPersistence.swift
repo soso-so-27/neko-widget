@@ -1345,6 +1345,7 @@ struct AppRecordSettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var starting = false
     @State private var confirmsLocal = false
+    @State private var confirmsPause = false
     @State private var confirmsRemote = false
     @State private var showsPlusOffer = false
     @AppStorage(ManagedPreservationView.QuotaTrial.key)
@@ -1489,8 +1490,12 @@ struct AppRecordSettingsView: View {
                 NavigationLink("アカウント") { ManagedPreservationView() }
                     .accessibilityIdentifier("app-record-account")
                 if persistence.enabled, authentication.accountDeletionState == nil {
-                    Button("このiPhoneで自動保存をやめる") { persistence.pause() }
+                    Button("このiPhoneで自動保存をやめる") { confirmsPause = true }
                         .accessibilityIdentifier("app-record-pause")
+                        .confirmationDialog("このiPhoneで自動保存をやめますか？", isPresented: $confirmsPause,
+                                            titleVisibility: .visible) {
+                            Button("自動保存をやめる", role: .destructive) { persistence.pause() }
+                        } message: { Text("保存した記録と、このiPhoneの記録は残ります。新しい変更は保存されなくなります。") }
                 }
             }
         }

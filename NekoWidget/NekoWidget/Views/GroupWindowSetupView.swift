@@ -34,7 +34,7 @@ enum GroupWindowPresentation {
         if let error = error as? GroupSubscriptionError {
             switch error {
             case .ownerPlusRequired:
-                return "まどを作るには、Plus（14日間無料で試せます）が必要です。"
+                return "まどを作るには、Plusが必要です。"
             case .windowPaused:
                 return "このまどは止まっています。作った人がPlusを続けると、また写真を届けられます。"
             }
@@ -607,7 +607,7 @@ struct GroupWindowMembersView: View {
                 Button {
                     onCreateOwnWindow()
                 } label: {
-                    Text("自分でまどを作る（14日間無料）")
+                    Text("自分でまどを作る")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.bordered)
@@ -1073,6 +1073,7 @@ final class GroupJoinModel: ObservableObject {
 }
 
 struct GroupJoinView: View {
+    @State private var confirmsCancel = false
     @ObservedObject var model: GroupJoinModel
     var onOpenWindow: (() -> Void)? = nil
 
@@ -1187,11 +1188,12 @@ struct GroupJoinView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("group-join-admission-paused")
             }
-            Button("参加をやめる", role: .destructive) {
-                Task { await model.cancel() }
-            }
+            Button("参加をやめる", role: .destructive) { confirmsCancel = true }
             .disabled(model.isWorking)
             .accessibilityIdentifier("group-join-cancel")
+            .confirmationDialog("参加をやめますか？", isPresented: $confirmsCancel, titleVisibility: .visible) {
+                Button("参加をやめる", role: .destructive) { Task { await model.cancel() } }
+            } message: { Text("もう一度参加するには、新しい招待リンクが要ります。") }
         }
     }
 

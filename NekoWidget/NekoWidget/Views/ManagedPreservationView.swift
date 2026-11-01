@@ -12,6 +12,8 @@ struct ManagedPreservationView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var confirmsDeletion = false
     @State private var confirmsAccountDeletion = false
+    @State private var confirmsSignOut = false
+    @State private var confirmsForgetSignIn = false
     @State private var needsResume = false
     @State private var confirmsMembershipLink = false
     @State private var confirmsDraftDiscard = false
@@ -210,8 +212,11 @@ struct ManagedPreservationView: View {
             }
             if coordinator.isSignedIn && coordinator.accountDeletionState == nil {
                 Section {
-                    Button("サインアウト", role: .destructive) { coordinator.signOut() }
+                    Button("サインアウト", role: .destructive) { confirmsSignOut = true }
                         .disabled(coordinator.isBusy)
+                        .confirmationDialog("サインアウトしますか？", isPresented: $confirmsSignOut, titleVisibility: .visible) {
+                            Button("サインアウト", role: .destructive) { coordinator.signOut() }
+                        } message: { Text("保存した記録は残ります。このiPhoneでの自動保存は止まり、サインインし直すと続きます。") }
                     if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
                         Button("保存用のアカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
                             .disabled(coordinator.hasUnsecuredMemo)
@@ -277,7 +282,11 @@ struct ManagedPreservationView: View {
         footer: {
             VStack(alignment: .leading, spacing: 12) {
                 Text("メールアドレスは、保存についての大事なお知らせにだけ使います。")
-                Button("このiPhoneのサインイン情報を消す") { coordinator.signOut() }
+                Button("このiPhoneのサインイン情報を消す") { confirmsForgetSignIn = true }
+                    .confirmationDialog("このiPhoneのサインイン情報を消しますか？", isPresented: $confirmsForgetSignIn,
+                                        titleVisibility: .visible) {
+                        Button("サインイン情報を消す", role: .destructive) { coordinator.signOut() }
+                    } message: { Text("保存した記録は残ります。もう一度サインインすると、また使えます。") }
             }
         }
     }
