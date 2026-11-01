@@ -1520,6 +1520,10 @@ struct AppRecordSavedPhoto: View {
 /// Isolated synthetic transport. The real D1/S3 reference graph is checked by
 /// backend integration tests; this fixture drives the normal iPhone stores/UI.
 private actor AppRecordFixtureServer {
+    private var measuredRoutes: [String: Int] = [:]
+    func resetMeasuredRoutes() { measuredRoutes = [:] }
+    func measuredRequestCounts() -> [String: Int] { measuredRoutes }
+    func useUninterruptedMetadataBatches() { metadataBatchMode = true; interruptMetadataPart = false }
     private var rejectVisibleInventory = false
     func simulateArchiveListingConflict() { rejectVisibleInventory = true }
     private var maximumIndexVersion = 4
@@ -1579,6 +1583,8 @@ private actor AppRecordFixtureServer {
     func request(_ request: URLRequest) throws -> (Data, URLResponse) {
         requests += 1
         guard let url = request.url, url.host?.hasSuffix(".app-record-fixture.invalid") == true else { throw ToolBackupError.invalid }
+        let route = url.pathComponents.map { UUID(uuidString: $0) == nil ? $0 : "{id}" }.joined(separator: "/")
+        measuredRoutes[(request.httpMethod ?? "GET") + " " + route, default: 0] += 1
         func response(_ json: [String: Any], _ code: Int = 200) throws -> (Data, URLResponse) {
             (try JSONSerialization.data(withJSONObject: json), HTTPURLResponse(url: url, statusCode: code, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"])!)
@@ -1778,6 +1784,43 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static var preparationPhase = "開始"
+    func verifySettingsSessionInterference() async throws {
+        Self.preparationPhase = "一項目変更の往復を計測"
+        await server.useUninterruptedMetadataBatches()
+        await persistence.enable()
+        guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
+        await server.resetMeasuredRoutes()
+        let photosBefore = await server.counts().1
+        let repository = try CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
+        var plan = repository.committed
+        plan.contact += " 一項目の変更"
+        try repository.commit(plan, newPhotos: [:])
+        let began = Date()
+        await persistence.retry()
+        guard persistence.title == "保存済み", await server.counts().1 == photosBefore else { throw ToolBackupError.storage }
+        print("AUTOSAVE_SINGLE_EDIT seconds=\(Date().timeIntervalSince(began)) routes=\(await server.measuredRequestCounts()) photoPUT=0")
+
+        Self.preparationPhase = "保存途中の通常照会401を再現"
+        let saveClient = authenticationClient()
+        let checkpoint = try await saveClient.captureSessionCheckpoint()
+        await server.useMetadataBatches()
+        plan.contact += " 中断の再現"
+        try repository.commit(plan, newPhotos: [:])
+        await persistence.retry()
+        guard await server.metadataCounts().uncovered else { throw ToolBackupError.storage }
+        let account = ManagedPreservationCoordinator(configuration: configuration, client: authenticationClient(), purpose: .account)
+        account.start()
+        for _ in 0..<200 {
+            if !account.isBusy && !account.membershipLoading { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard !account.isSignedIn else { throw ToolBackupError.storage }
+        do { try await saveClient.requireSessionCheckpoint(checkpoint); throw ToolBackupError.storage }
+        catch ManagedPreservationError.staleSession { }
+        guard try ManagedPreservationSessionStore(origin: configuration.origin!.absoluteString).load() == nil else { throw ToolBackupError.storage }
+        print("AUTOSAVE_INTERFERENCE reproduced: account membership 401 cleared shared credential; save checkpoint stale; account signed out")
+        account.stop()
+    }
     func verifyRepeatedPhotoInterruption() async throws {
         Self.preparationPhase = "45MBの合成写真を準備"
         let files = FileManager.default.enumerator(at: AppRecordDataset.support,
@@ -2302,6 +2345,14 @@ struct AppRecordPersistenceFixtureView: View {
             }
         }
         .task {
+            if CommandLine.arguments.contains("--app-records-session-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifySettingsSessionInterference()
+                    result = "自動保存の照会干渉と一項目の計測を確認しました"
+                } catch { result = "照会干渉の検査失敗: \(AppRecordFixture.preparationPhase)" }
+                return
+            }
             if CommandLine.arguments.contains("--app-records-background-probe") {
                 await backgroundProbe.run {
                     result = "background probe ready"

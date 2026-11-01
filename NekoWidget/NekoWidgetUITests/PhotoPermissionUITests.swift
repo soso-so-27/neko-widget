@@ -1451,6 +1451,17 @@ final class SoloMemoriesUITests: XCTestCase {
         app.terminate()
     }
     @MainActor
+    func testAutomaticSaveSettingsDoNotInvalidateSession() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-session-probe",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["自動保存の照会干渉と一項目の計測を確認しました"].waitForExistence(timeout: 90), app.debugDescription)
+        capture("automatic-save-account-observation")
+        app.terminate()
+    }
+    @MainActor
     private func verifyAutomaticSaveKeepsAcknowledgementAndResumesCleanup() {
         continueAfterFailure = false
         let app = XCUIApplication()
