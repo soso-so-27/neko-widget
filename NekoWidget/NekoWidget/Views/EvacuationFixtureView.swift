@@ -12,7 +12,6 @@ struct EvacuationFixtureView: View {
     private let vetMode: Bool
     private let noteStore: PhotoMemoryNoteStore
     private let visitStore: VeterinaryVisitStore
-    private let archiveStore: PersonalArchiveStore
     @State private var weightRecord: PhotoMemoryNoteRecord?
     @State private var editingWeight = false
     private static let mugi = UUID(uuidString: "E0260929-0000-0000-0000-000000000001")!
@@ -26,7 +25,6 @@ struct EvacuationFixtureView: View {
         vetMode = ProcessInfo.processInfo.environment["NEKO_EVACUATION_VET"] == "1"
         noteStore = PhotoMemoryNoteStore(fileURL: directory.appendingPathComponent("notes.json"))
         visitStore = VeterinaryVisitStore(directory: directory.appendingPathComponent("visits", isDirectory: true))
-        archiveStore = PersonalArchiveStore(directory: directory.appendingPathComponent("archive", isDirectory: true), transport: nil)
         let reuse = CareHandoffStore(directory: directory.deletingLastPathComponent()
             .appendingPathComponent(key + "-other-tool", isDirectory: true))
         if vetMode, reuse.plan.cats.isEmpty {
@@ -78,7 +76,7 @@ struct EvacuationFixtureView: View {
                 }
                 .sheet(isPresented: $editingWeight) {
                     if let record = weightRecord {
-                        PhotoMemoryNoteEditor(record: record, photo: nil, store: noteStore, archiveStore: archiveStore,
+                        PhotoMemoryNoteEditor(record: record, photo: nil, store: noteStore,
                             careStore: reuseStore, evacuationStore: store, onSaved: {
                                 Task { weightRecord = try? await noteStore.record(id: record.id) }
                             })

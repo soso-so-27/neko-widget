@@ -46,20 +46,7 @@ struct AutoSaveSettingsRow: View {
     }
 }
 
-struct PersonalArchiveSettingsLink: View {
-    let store: PersonalArchiveStore
-    var noteStore: PhotoMemoryNoteStore = .shared
-
-    var body: some View {
-        NavigationLink { PersonalArchiveView(store: store, noteStore: noteStore) } label: {
-            Label("以前のiCloud記録", systemImage: "icloud")
-        }
-        .accessibilityIdentifier("settings-personal-archive")
-    }
-}
-
 struct SettingsView: View {
-    @Environment(\.photoMemoStore) private var memoStore
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
     let highResolutionRecoverySample: DetectionAccuracySamplePresentation
@@ -86,7 +73,6 @@ struct SettingsView: View {
     let catProfilesActions: CatProfilesViewActions
     let privateWindowDisplayName: String
     let showWidgetPlacementGuide: () -> Void
-    private let personalArchiveStore: PersonalArchiveStore?
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
@@ -138,8 +124,7 @@ struct SettingsView: View {
         catProfilesPresentation: CatProfilesPresentation,
         catProfilesActions: CatProfilesViewActions,
         privateWindowDisplayName: String,
-        showWidgetPlacementGuide: @escaping () -> Void,
-        personalArchiveStore: PersonalArchiveStore? = nil
+        showWidgetPlacementGuide: @escaping () -> Void
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
@@ -167,7 +152,6 @@ struct SettingsView: View {
         self.catProfilesActions = catProfilesActions
         self.privateWindowDisplayName = privateWindowDisplayName
         self.showWidgetPlacementGuide = showWidgetPlacementGuide
-        self.personalArchiveStore = personalArchiveStore
         _draft = State(initialValue: settings)
     }
 
@@ -236,10 +220,6 @@ struct SettingsView: View {
                     Label("機種変更のとき", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .accessibilityIdentifier("settings-cat-profile-transfer")
-                // The old iCloud copies are retired; only test fixtures still open them.
-                if let personalArchiveStore {
-                    PersonalArchiveSettingsLink(store: personalArchiveStore, noteStore: memoStore)
-                }
             } header: {
                 Text("保存")
             }

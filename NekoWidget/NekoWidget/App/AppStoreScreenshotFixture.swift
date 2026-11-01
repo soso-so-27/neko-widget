@@ -277,9 +277,6 @@ enum AppStoreScreenshotFixture {
 
 @MainActor
 struct AppStoreScreenshotFixtureRootView: View {
-    private static let archiveStore = PersonalArchiveStore(directory:
-        FileManager.default.temporaryDirectory.appendingPathComponent("AppStoreArchiveFixture/\(UUID().uuidString)"),
-        transport: PersonalArchiveFixtureTransport())
     var widgetPhotoIdentifier: String? = nil
     var widgetPhotoShownAt: Date? = nil
     var photoAccess = true
@@ -459,7 +456,6 @@ struct AppStoreScreenshotFixtureRootView: View {
             selectPhotoSourceAlbum: { _ in },
             refreshPhotoSourceAlbums: {},
             exportJSON: { nil },
-            personalArchiveStore: Self.archiveStore,
             startsInPhotos: startsInPhotos
         )
     }
@@ -722,7 +718,6 @@ private final class SoloMemoriesFixturePersistence: ObservableObject {
     let defaults: UserDefaults
     let recommendations: AlbumHighlightRecommendationStore
     let memoryNotes: PhotoMemoryNoteStore
-    let archive: PersonalArchiveStore
 
     init(scenario: String) {
         let suiteName = "neko.fixture.albums.\(scenario)"
@@ -735,8 +730,6 @@ private final class SoloMemoriesFixturePersistence: ObservableObject {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("SoloMemoriesFixture/\(UUID().uuidString)")
         memoryNotes = PhotoMemoryNoteStore(fileURL: directory.appendingPathComponent("notes.json"))
-        archive = PersonalArchiveStore(directory: directory.appendingPathComponent("archive"),
-                                       transport: PersonalArchiveFixtureTransport())
     }
 }
 
@@ -876,7 +869,7 @@ private struct SoloMemoriesFixtureView: View {
                     monthlyBrowser(snapshot)
                 case let .memoryNote(identifier):
                     PhotoMemoryNoteDetailView(recordID: identifier, photos: fixturePhotos,
-                        store: persistence.memoryNotes, archiveStore: persistence.archive)
+                        store: persistence.memoryNotes)
                 case .photo, .seasonalMovie, .memoryNotes, .memoryNotePhoto:
                     FixtureDetailView(routeKey: detailRouteKey(route))
                 }
@@ -939,7 +932,7 @@ private struct SoloMemoriesFixtureView: View {
                     exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
             case .notes:
                 PhotoMemoryNotesListView(photos: fixturePhotos, store: persistence.memoryNotes,
-                    archiveStore: persistence.archive, isEmbedded: true) { photoSection = .all }
+                    isEmbedded: true) { photoSection = .all }
             }
         }
         .navigationTitle("写真")

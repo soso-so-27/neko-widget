@@ -403,7 +403,6 @@ struct MainTabView: View {
     let selectPhotoSourceAlbum: (String?) async -> Void
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
-    var personalArchiveStore: PersonalArchiveStore? = nil
     var startsInPhotos = false
 
     @State private var selectedTab: AppTab = .memories
@@ -703,16 +702,6 @@ struct MainTabView: View {
             presentDeferredWidgetGuide()
         }) {
             settingsSheet
-                .onAppear {
-#if DEBUG
-                    PersonalArchiveSettingsTrace.shared.record("sheet-appeared")
-#endif
-                }
-                .onDisappear {
-#if DEBUG
-                    PersonalArchiveSettingsTrace.shared.record("sheet-disappeared")
-#endif
-                }
         }
         .sheet(item: $relatedPhotoRoute, onDismiss: { relatedPhotoUsesLibraryScope = false }) { route in
             relatedAlbumsSheet(for: route)
@@ -909,15 +898,6 @@ struct MainTabView: View {
             guard scenePhase == .active else { return }
             if memoriesPath.isEmpty { albumHighlightsReferenceDate = Date() }
             await seasonalMovieArchive.load()
-        }
-        .task(id: scenePhase) {
-            // The old iCloud copies are retired; only test fixtures still reach them.
-            guard scenePhase == .active, personalArchiveStore != nil else { return }
-            let archiveStore = personalArchiveStore ?? .shared
-            // Only explicitly enrolled records can have pending reflections.
-            guard let account = try? await archiveStore.accountContext() else { return }
-            try? await PhotoMemoCoordinator(noteStore: memoStore, archiveStore: archiveStore)
-                .retryUpdates(expectedAccount: account)
         }
     }
 
@@ -1412,7 +1392,7 @@ struct MainTabView: View {
                                     receivedPhotoSourceLabels: receivedPhotoSourceLabels,
                                     exportPhotoBook: exportPhotoBook)
         case .notes:
-            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore,
+            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore,
                                      isEmbedded: true,
                                      openCatPreparedness: nil,
                                      selectedProfileIdentifier: photoLibraryProfileIdentifier,
@@ -1438,8 +1418,6 @@ struct MainTabView: View {
             refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
             catProfilesPresentation: catProfilesPresentation, catProfilesActions: catProfilesActions,
             isEmbedded: true,
-            supplementaryPhotos: photoLibraryProfileIdentifier == nil ? AnyView(PersonalArchivePhotosSection(
-                photos: hasPhotoAccess ? catPhotos : [], archiveStore: personalArchiveStore)) : nil,
             readingPositionKey: photoLibraryPositionKey(.all),
             showsCatProfileNavigation: false,
             headerAccessory: catProfilesPresentation.profiles.isEmpty ? nil : AnyView(photoLibraryCatPicker),
@@ -1517,8 +1495,7 @@ struct MainTabView: View {
                 showWidgetPlacementGuide: {
                     replaysWidgetGuideAfterSettingsDismiss = true
                     showsSettings = false
-                },
-                personalArchiveStore: personalArchiveStore
+                }
             )
         }
     }
@@ -1922,13 +1899,7 @@ struct MainTabView: View {
             albumProfileActions: catProfilesActions,
             albumScope: .constant(scope),
             showSettings: {
-#if DEBUG
-                PersonalArchiveSettingsTrace.shared.record("album-action")
-#endif
                 showsSettings = true
-#if DEBUG
-                PersonalArchiveSettingsTrace.shared.record("binding:\(showsSettings)")
-#endif
             },
             showsReflectionArchive: showsReflectionArchive,
             showsHighlightArchive: showsHighlightArchive,
@@ -1974,14 +1945,13 @@ struct MainTabView: View {
     private func memoriesDestination(for route: MemoriesRoute, libraryContext: Bool = false) -> some View {
         switch route {
         case .memoryNotes:
-            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore, archiveStore: personalArchiveStore) {
+            PhotoMemoryNotesListView(photos: memoryNotePhotos, store: memoStore) {
                 photoLibrarySelection.select(.all)
                 photosPath = NavigationPath()
                 selectedTab = .photos
             }
         case let .memoryNote(identifier):
-            PhotoMemoryNoteDetailView(recordID: identifier, photos: memoryNotePhotos, store: memoStore,
-                                      archiveStore: personalArchiveStore)
+            PhotoMemoryNoteDetailView(recordID: identifier, photos: memoryNotePhotos, store: memoStore)
         case let .memoryNotePhoto(identifier):
             PhotoMemoryNotePhotoDestination(recordID: identifier, photos: memoryNotePhotos, store: memoStore) { photo in
                 photoDetail(for: photo.localIdentifier, shownAt: nil, openedFromWidget: false, fromNote: true, libraryContext: libraryContext)

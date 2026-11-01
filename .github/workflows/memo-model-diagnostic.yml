@@ -7,13 +7,9 @@ on:
     paths:
       - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift'
       - 'NekoWidget/NekoWidget/Services/VeterinaryVisitStore.swift'
-      - 'NekoWidget/NekoWidget/Services/PersonalArchiveStore.swift'
-      - 'NekoWidget/NekoWidget/Services/PersonalArchiveCloudClient.swift'
-      - 'NekoWidget/NekoWidget/Services/PhotoMemoCoordinator.swift'
       - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift'
       - 'NekoWidget/ci/verify-photo-memory-notes.swift'
       - 'NekoWidget/ci/verify-veterinary-visits.swift'
-      - 'NekoWidget/ci/verify-personal-archive.swift'
       - 'NekoWidget/ci/verify-photo-memory-note-export.swift'
 
 permissions:
@@ -35,7 +31,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Verify memo, consultation, archive and export with injected local fixtures
+      - name: Verify memo, consultation and export with injected local fixtures
         working-directory: NekoWidget
         shell: bash
         run: |
@@ -46,8 +42,6 @@ jobs:
             "$RUNNER_TEMP/verify-notes"
             xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-visits"
             "$RUNNER_TEMP/verify-visits"
-            xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" NekoWidget/Services/PersonalArchiveStore.swift NekoWidget/Services/PersonalArchiveCloudClient.swift NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoCoordinator.swift ci/verify-personal-archive.swift -o "$RUNNER_TEMP/verify-archive"
-            "$RUNNER_TEMP/verify-archive"
             xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoryNoteExporter.swift ci/verify-photo-memory-note-export.swift -o "$RUNNER_TEMP/verify-export"
             "$RUNNER_TEMP/verify-export"
           } 2>&1 | tee "$RUNNER_TEMP/neko-memo-model-diagnostic/models.log"

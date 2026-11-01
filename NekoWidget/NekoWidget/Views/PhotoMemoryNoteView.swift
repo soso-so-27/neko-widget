@@ -271,18 +271,6 @@ struct PhotoMemoryNoteEditor: View {
     let onSaved: () -> Void
     private let recordID: UUID?
     private let context: PhotoMemoryNoteContext?
-    private let archiveStore: PersonalArchiveStore
-    private let archiveAccount: String?
-    private let didUpdateArchive: ((PersonalArchiveRecord) -> Void)?
-    @State private var archiveRecord: PersonalArchiveRecord?
-    @State private var operationID = UUID()
-    @State private var accountChanged = false
-    @State private var savedNotice: String?
-    @State private var linkedLocalRecord: PhotoMemoryNoteRecord?
-    @State private var enrollmentRecord: PhotoMemoryNoteRecord?
-    @State private var enrollmentJPEG: Data?
-    @State private var enrollmentAccount: String?
-    @State private var confirmsArchiveUpdates = false
     @StateObject private var photoAccess = PhotoMemoryNotePhotoAccess()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -305,10 +293,7 @@ struct PhotoMemoryNoteEditor: View {
     @State private var weightCatID: UUID?
     @State private var weightCatName: String?
 
-    private var originalWeight: PhotoMemoWeight? {
-        if let original { return original.weight }
-        return archiveRecord?.context?.weight.map { PhotoMemoWeight(value: $0, catID: nil) }
-    }
+    private var originalWeight: PhotoMemoWeight? { original?.weight }
     @ObservedObject private var careStore: CareHandoffStore = .shared
     @ObservedObject private var evacuationStore: EvacuationStore = .shared
     private var photoCats: [PhotoMemoryNoteCat] { original?.context?.cats ?? context?.cats ?? [] }
@@ -349,20 +334,16 @@ struct PhotoMemoryNoteEditor: View {
     }
 
     init(photo: PhotoPresentation, store: PhotoMemoryNoteStore,
-         context: PhotoMemoryNoteContext? = nil, archiveStore: PersonalArchiveStore = .shared,
+         context: PhotoMemoryNoteContext? = nil,
          onSaved: @escaping () -> Void) {
         self.photo = photo
         self.store = store
         self.context = context ?? PhotoMemoryNoteContext(capturedAt: photo.creationDate, cats: [])
         self.onSaved = onSaved
-        self.archiveStore = archiveStore
-        archiveAccount = nil
-        didUpdateArchive = nil
         recordID = nil
     }
 
     init(record: PhotoMemoryNoteRecord, photo: PhotoPresentation?, store: PhotoMemoryNoteStore,
-         archiveStore: PersonalArchiveStore = .shared,
          careStore: CareHandoffStore? = nil, evacuationStore: EvacuationStore? = nil,
          onSaved: @escaping () -> Void) {
         self.photo = photo
@@ -370,25 +351,8 @@ struct PhotoMemoryNoteEditor: View {
         self.context = nil
         self.recordID = record.id
         self.onSaved = onSaved
-        self.archiveStore = archiveStore
         _careStore = ObservedObject(wrappedValue: careStore ?? .shared)
         _evacuationStore = ObservedObject(wrappedValue: evacuationStore ?? .shared)
-        archiveAccount = nil
-        didUpdateArchive = nil
-    }
-
-    init(archiveRecord: PersonalArchiveRecord, archiveStore: PersonalArchiveStore,
-         account: String, noteStore: PhotoMemoryNoteStore = .shared,
-         didUpdate: @escaping (PersonalArchiveRecord) -> Void) {
-        photo = nil
-        store = noteStore
-        recordID = nil
-        context = nil
-        self.archiveStore = archiveStore
-        archiveAccount = account
-        didUpdateArchive = didUpdate
-        onSaved = {}
-        _archiveRecord = State(initialValue: archiveRecord)
     }
 
     private var normalizedText: String {
@@ -396,11 +360,11 @@ struct PhotoMemoryNoteEditor: View {
     }
 
     private var createsNewMemo: Bool {
-        original == nil && recordID == nil && archiveRecord == nil && linkedLocalRecord == nil
+        original == nil && recordID == nil
     }
 
     private var hasChanges: Bool {
-        isLoaded && savedNotice == nil && (normalizedText != (original?.text ?? archiveRecord?.text ?? "")
+        isLoaded && (normalizedText != (original?.text ?? "")
             || draftWeight != originalWeight || (weightEnabled && !validWeight))
     }
 
@@ -411,14 +375,7 @@ struct PhotoMemoryNoteEditor: View {
 
     @ViewBuilder
     private var notePhotoSection: some View {
-        if let data = archiveRecord?.jpegData {
-            Section {
-                MemoArchivePhoto(data: data)
-                    .frame(width: 80, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .accessibilityHidden(true)
-            }
-        } else if let savedPhotoURL {
+        if let savedPhotoURL {
             Section {
                 AppRecordSavedPhoto(url: savedPhotoURL)
                     .frame(width: 80, height: 80)
@@ -464,7 +421,7 @@ struct PhotoMemoryNoteEditor: View {
                 PhotoNoteInput(text: $text, focus: $isWriting,
                     maximumCharacters: PhotoMemoryNoteStore.maximumCharacters,
                     audience: "自分だけ", identifier: "photo-memory-note-text", minimumHeight: 160)
-                    .disabled(isSaving || savedNotice != nil || accountChanged)
+                    .disabled(isSaving)
             }
             Section {
                 Toggle("体重を添える", isOn: $weightEnabled).accessibilityIdentifier("memo-weight-toggle")
@@ -487,8 +444,7 @@ struct PhotoMemoryNoteEditor: View {
                     if weightDateKnown { DatePicker("測定日", selection: $weightDate, displayedComponents: .date) }
                 }
             }
-                .disabled(isSaving || savedNotice != nil || accountChanged)
-            if let savedNotice { Section { Text(savedNotice).foregroundStyle(.secondary) } }
+                .disabled(isSaving)
         } else if loadFailed {
             Section {
                 Text("メモを読み込めませんでした。")
@@ -519,17 +475,15 @@ struct PhotoMemoryNoteEditor: View {
                     .accessibilityIdentifier("photo-memory-note-close")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(savedNotice == nil ? "保存" : "完了") {
+                    Button("保存") {
                         isWriting = false; isMeasuring = false
-                        if savedNotice != nil { dismiss() }
-                        else if enrollmentRecord != nil { confirmsArchiveUpdates = true }
-                        else if normalizedText.isEmpty && !weightEnabled && (original != nil || archiveRecord != nil) {
+                        if normalizedText.isEmpty && !weightEnabled && original != nil {
                             confirmsDelete = true
                         } else {
                             Task { await save(normalizedText) }
                         }
                     }
-                    .disabled((!hasChanges && savedNotice == nil) || !validWeight || text.count > PhotoMemoryNoteStore.maximumCharacters || isSaving || accountChanged)
+                    .disabled(!hasChanges || !validWeight || text.count > PhotoMemoryNoteStore.maximumCharacters || isSaving)
                     .accessibilityIdentifier("photo-memory-note-save")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
@@ -541,12 +495,6 @@ struct PhotoMemoryNoteEditor: View {
             .confirmationDialog("変更を保存せずに閉じますか？", isPresented: $confirmsDiscard, titleVisibility: .visible) {
                 Button("保存せずに閉じる", role: .destructive) { dismiss() }
                 Button("編集を続ける", role: .cancel) {}
-            }
-            .confirmationDialog("iCloudのメモも書き換えますか？", isPresented: $confirmsArchiveUpdates, titleVisibility: .visible) {
-                Button("iCloudにも保存") { Task { await save(normalizedText) } }
-                Button("編集に戻る", role: .cancel) {}
-            } message: {
-                Text("この写真はiCloudにも保管しています。これからは、メモを直したり消したりすると、iCloudのメモも同じように変わります。")
             }
             .confirmationDialog("この写真のメモを削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
                 Button("削除", role: .destructive) { Task { await save("") } }
@@ -576,14 +524,6 @@ struct PhotoMemoryNoteEditor: View {
                 if phase == .active { photoAccess.refresh() }
             }
             .onDisappear { photoAccess.stop() }
-            .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
-                .receive(on: DispatchQueue.main)) { _ in
-                // A local memo can be edited independently of iCloud. Editors
-                // tied to an archive account keep the existing invalidation.
-                guard archiveAccount != nil || enrollmentAccount != nil else { return }
-                accountChanged = true
-                saveError = "Apple Accountが変わりました。書いた文をコピーしてから、開き直してください。"
-            }
         }
         .appRecordEditing(retainWhileHidden: hasChanges || isSaving)
     }
@@ -593,24 +533,6 @@ struct PhotoMemoryNoteEditor: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            if let archiveRecord, let archiveAccount {
-                guard try await archiveStore.accountContext() == archiveAccount else {
-                    throw PersonalArchiveError.accountChanged
-                }
-                text = archiveRecord.text
-                loadWeight(archiveRecord.context?.weight.map { PhotoMemoWeight(value: $0, catID: nil) })
-                let coordinator = PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
-                if let local = try await coordinator.localRecord(forArchive: archiveRecord, expectedAccount: archiveAccount) {
-                    linkedLocalRecord = local
-                    original = local.note
-                    text = local.note.text
-                    loadWeight(local.note.weight)
-                    await prepareEnrollment(for: local)
-                }
-                isLoaded = true
-                loadFailed = false
-                return
-            }
             let loaded: PhotoMemoryNote?
             if let recordID {
                 guard let record = try await store.record(id: recordID) else {
@@ -627,9 +549,6 @@ struct PhotoMemoryNoteEditor: View {
             if let loaded { savedPhotoURL = try await store.photoURL(for: loaded.id) }
             text = loaded?.text ?? ""
             loadWeight(loaded?.weight)
-            if let loaded, let local = try await store.record(id: loaded.id) {
-                await prepareEnrollment(for: local)
-            }
             loadFailed = false
             isLoaded = true
             // Opening an existing note first reads it; writing is always optional.
@@ -637,24 +556,6 @@ struct PhotoMemoryNoteEditor: View {
             guard !Task.isCancelled else { return }
             loadFailed = true
         }
-    }
-
-    private func prepareEnrollment(for local: PhotoMemoryNoteRecord) async {
-        // The old iCloud copies are retired; only test fixtures still offer them.
-        guard archiveStore !== PersonalArchiveStore.shared else { return }
-        do {
-            let coordinator = PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
-            guard try await coordinator.syncStatus(photoIdentifier: local.photoIdentifier) == .localOnly,
-                  let account = try? await archiveStore.accountContext(),
-                  let copy = try await coordinator.linkedArchive(for: local, expectedAccount: account),
-                  copy.text == local.note.text, copy.context?.weight == local.note.weight?.value,
-                  copy.state == .stored, !copy.isDeletionPending else { return }
-            // Only an explicit link and matching content qualify; the Save
-            // confirmation enrolls it, never this read.
-            enrollmentRecord = local
-            enrollmentJPEG = copy.jpegData
-            enrollmentAccount = account
-        } catch { /* Local editing remains available without opting into cloud. */ }
     }
 
     private func save(_ value: String) async {
@@ -667,41 +568,16 @@ struct PhotoMemoryNoteEditor: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let coordinator = PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
-            if let enrollmentRecord, let enrollmentAccount {
-                _ = try await coordinator.enableUpdates(for: enrollmentRecord, jpegData: enrollmentJPEG,
-                                                        expectedAccount: enrollmentAccount)
-                self.enrollmentRecord = nil
-            }
             let weightChange = PhotoMemoWeightChange.set(draftWeight)
-            let result: PhotoMemoSaveResult
-            if let linkedLocalRecord {
-                result = try await coordinator.saveLocal(text: value, recordID: linkedLocalRecord.id,
-                    expectedRevision: linkedLocalRecord.note.revision, expectedAccount: archiveAccount, weightChange: weightChange)
-            } else if let archiveRecord, let archiveAccount {
-                result = try await coordinator.saveArchive(record: archiveRecord, text: value,
-                    operationID: operationID, expectedAccount: archiveAccount, weightChange: weightChange)
-            } else if let recordID, let original {
-                result = try await coordinator.saveLocal(text: value, recordID: recordID,
-                    expectedRevision: original.revision, expectedAccount: nil, weightChange: weightChange)
+            if let recordID, let original {
+                _ = try await store.save(text: value, recordID: recordID,
+                    expectedRevision: original.revision, weightChange: weightChange)
             } else if let photo {
-                result = try await coordinator.saveLocal(text: value, photoIdentifier: photo.localIdentifier,
+                _ = try await store.save(text: value, for: photo.localIdentifier,
                     expectedRevision: original?.revision, context: context, weightChange: weightChange)
             } else { throw PhotoMemoryNoteStoreError.invalidIdentifier }
-            if let updated = result.archiveRecord {
-                self.archiveRecord = updated
-                didUpdateArchive?(updated)
-            }
             onSaved()
-            switch result.reflection {
-            case .localOnly, .stored: dismiss()
-            case .pending:
-                savedNotice = "このiPhoneに保存しました。iCloudには、つながったときに保存されます。"
-            case .conflict:
-                savedNotice = "このiPhoneに保存しました。iCloudに別の変更があるので、「保管状況を確認」から確かめてください。"
-            case .accountChanged:
-                savedNotice = "このiPhoneに保存しました。Apple Accountを確かめてから、「保管状況を確認」を押してください。"
-            }
+            dismiss()
         } catch PhotoMemoryNoteStoreError.conflict {
             saveError = "ほかの画面でメモが変更されました。書いた文をコピーしてから、開き直してください。"
         } catch {

@@ -1,8 +1,6 @@
 import SwiftUI
 import Photos
 import UIKit
-import CloudKit
-import ImageIO
 
 @MainActor
 final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
@@ -11,29 +9,10 @@ final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
     @Published private(set) var savedPhotos: [UUID: URL] = [:]
     @Published private(set) var isLoaded = false
     @Published private(set) var failed = false
-    @Published private(set) var archive: PersonalArchiveReadingSnapshot?
-    @Published private(set) var archiveError: String?
-    @Published private(set) var isRefreshingCloud = false
-    @Published private(set) var coalescedRecordIDs: [UUID: UUID] = [:]
-    private let archiveStore: PersonalArchiveStore?
-    private var allowsArchiveRead = true
     private var request = UUID()
 
-    init(store: PhotoMemoryNoteStore, archiveStore: PersonalArchiveStore? = nil) {
+    init(store: PhotoMemoryNoteStore) {
         self.store = store
-        self.archiveStore = archiveStore
-    }
-
-    func clearArchive() {
-        request = UUID()
-        archive = nil
-        coalescedRecordIDs = [:]
-        archiveError = nil
-    }
-
-    func setSceneActive(_ active: Bool) {
-        allowsArchiveRead = active
-        if !active { clearArchive() }
     }
 
     func reload() async {
@@ -53,45 +32,6 @@ final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
             records = []
             failed = true
             isLoaded = true
-        }
-        guard let archiveStore, allowsArchiveRead, request == token, !Task.isCancelled else { return }
-        do {
-            let snapshot = try await archiveStore.readingSnapshot()
-            let coordinator = PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
-            try await coordinator.reconcile(expectedAccount: snapshot.account.context)
-            let currentRecords = try await store.records()
-            let links = try await coordinator.coalescedRecordIDs(localRecords: currentRecords, snapshot: snapshot)
-            guard allowsArchiveRead, request == token, !Task.isCancelled else { return }
-            records = currentRecords
-            coalescedRecordIDs = links
-            archive = snapshot
-            archiveError = nil
-        } catch {
-            guard allowsArchiveRead, request == token, !Task.isCancelled else { return }
-            archive = nil
-            coalescedRecordIDs = [:]
-            archiveError = (error as? PersonalArchiveError)?.errorDescription
-                ?? "iCloudに保管した記録を読み込めませんでした。"
-        }
-    }
-
-    func refreshFromCloud() async {
-        guard let archiveStore, allowsArchiveRead, !isRefreshingCloud else { return }
-        isRefreshingCloud = true
-        defer { isRefreshingCloud = false }
-        let token = UUID()
-        request = token
-        do {
-            _ = try await archiveStore.refresh()
-            guard allowsArchiveRead, request == token, !Task.isCancelled else { return }
-            await reload()
-        } catch {
-            guard allowsArchiveRead, request == token, !Task.isCancelled else { return }
-            // Validate the account again before keeping any cached cloud rows.
-            await reload()
-            guard allowsArchiveRead, !Task.isCancelled else { return }
-            archiveError = (error as? PersonalArchiveError)?.errorDescription
-                ?? "iCloudから読み込めませんでした。"
         }
     }
 }
@@ -143,40 +83,23 @@ final class PhotoMemoryNotePhotoAccess: ObservableObject {
 }
 
 private struct MemoryReadingItem: Identifiable {
-    let local: PhotoMemoryNoteRecord?
-    let preserved: PersonalArchiveRecord?
-    var id: String { local.map { "note-\($0.id)" } ?? "archive-\(preserved!.id)" }
-    var text: String { local?.note.text ?? preserved?.text ?? "" }
-    var weight: PhotoMemoWeightValue? { local != nil ? local?.note.weight?.value : preserved?.context?.weight }
-    var cats: [String] { local?.note.context?.cats.map(\.name) ?? preserved?.context?.catNames ?? [] }
-    var date: Date {
-        local?.note.context?.capturedAt ?? preserved?.capturedAt
-            ?? local?.note.writtenAt ?? preserved?.context?.writtenAt
-            ?? local?.note.updatedAt ?? preserved!.createdAt
-    }
-    var updatedAt: Date { local?.note.updatedAt ?? preserved?.context?.updatedAt ?? preserved!.createdAt }
-    var savedIdentifiers: Set<String> { Set(local?.note.context?.cats.map { $0.id.uuidString } ?? []) }
+    let local: PhotoMemoryNoteRecord
+    var id: String { "note-\(local.id)" }
+    var text: String { local.note.text }
+    var weight: PhotoMemoWeightValue? { local.note.weight?.value }
+    var cats: [String] { local.note.context?.cats.map(\.name) ?? [] }
+    var date: Date { local.note.context?.capturedAt ?? local.note.writtenAt ?? local.note.updatedAt }
+    var updatedAt: Date { local.note.updatedAt }
+    var savedIdentifiers: Set<String> { Set(local.note.context?.cats.map { $0.id.uuidString } ?? []) }
     var dateLabel: String {
-        if local?.note.context?.capturedAt != nil || preserved?.capturedAt != nil { return "撮影" }
-        if local?.note.writtenAt != nil || preserved?.context?.writtenAt != nil { return "メモ" }
-        return local != nil ? "更新" : "メモ"
-    }
-    var archiveLabel: String {
-        guard let preserved else { return "" }
-        if preserved.isDeletionPending { return "削除待ち" }
-        switch preserved.state {
-        case .stored: return ""
-        case .pending: return "iCloudへの保管待ち"
-        case .partial: return "iCloudから写真を戻せていません"
-        case .conflict: return "iCloudに別の変更があります"
-        }
+        if local.note.context?.capturedAt != nil { return "撮影" }
+        if local.note.writtenAt != nil { return "メモ" }
+        return "更新"
     }
 }
 
 struct PhotoMemoryNotesListView: View {
     let photos: [PhotoPresentation]
-    let archiveStore: PersonalArchiveStore
-    private let archiveEnabled: Bool
     let isEmbedded: Bool
     let openCatPreparedness: (() -> Void)?
     let openPhotos: () -> Void
@@ -193,12 +116,8 @@ struct PhotoMemoryNotesListView: View {
     @State private var sort: PhotoMemoryNoteLibraryPolicy.Sort = .captured
     @State private var search = ""
     @State private var isSearchFocused = false
-    @State private var selectedArchive: PersonalArchiveRecord?
-    @State private var selectedArchiveAccount: String?
-    @State private var selectedSourceNote: UUID?
 
     init(photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
-         archiveStore: PersonalArchiveStore? = nil,
          isEmbedded: Bool = false,
          openCatPreparedness: (() -> Void)? = nil,
          selectedProfileIdentifier: String? = nil,
@@ -213,51 +132,44 @@ struct PhotoMemoryNotesListView: View {
         self.registeredProfileIdentifiers = registeredProfileIdentifiers
         self.currentProfileNames = currentProfileNames
         self.readingPositionKey = readingPositionKey
-        // The old iCloud copies are retired; only test fixtures still open them.
-        self.archiveEnabled = archiveStore != nil
-        self.archiveStore = archiveStore ?? .shared
         self.openPhotos = openPhotos
         self.isEmbedded = isEmbedded
         self.openCatPreparedness = openCatPreparedness
-        _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store,
-            archiveStore: archiveStore))
+        _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(store: store))
     }
 
     private var items: [MemoryReadingItem] {
-        let sources = library.records.map {
-            PersonalArchiveSourceSnapshot(noteID: $0.id, revision: $0.note.revision,
-                                          photoIdentifier: $0.photoIdentifier)
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        var result: [MemoryReadingItem] = []
+        for record in library.records {
+            let item = MemoryReadingItem(local: record)
+            guard !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || item.weight != nil,
+                  PhotoMemoryNoteLibraryPolicy.includes(selected: selectedProfileIdentifier, identifiers: identifiers(for: item)),
+                  query.isEmpty || matches(item, query: query) else { continue }
+            result.append(item)
         }
-        let links = (library.archive?.exactLinkedRecordIDs(matching: sources) ?? [:])
-            .merging(library.coalescedRecordIDs) { _, current in current }
-        let copies = library.archive?.records ?? []
-        let byID = Dictionary(copies.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let joinedIDs = Set(links.values)
-        let local = library.records.map {
-            MemoryReadingItem(local: $0, preserved: links[$0.id].flatMap { byID[$0] })
-        }
-        let other = copies.filter { !joinedIDs.contains($0.id) }.map {
-            MemoryReadingItem(local: nil, preserved: $0)
-        }
-        return (local + other).filter {
-            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.weight != nil
-        }.filter {
-            PhotoMemoryNoteLibraryPolicy.includes(selected: selectedProfileIdentifier, identifiers: identifiers(for: $0))
-        }.filter { item in
-            let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-            let names = identifiers(for: item).compactMap { currentProfileNames[$0] }
-            let values = [item.text] + item.cats + names + [item.weight?.kilogramsText ?? "",
-                item.weight?.measuredOn ?? "", item.date.formatted(.dateTime.year().month().day()),
-                item.updatedAt.formatted(.dateTime.year().month().day())]
-            return query.isEmpty || values.joined(separator: " ").localizedStandardContains(query)
-        }.sorted {
-            let first = sortingDate($0), second = sortingDate($1)
-            return first == second ? $0.id < $1.id : first > second
-        }
+        return result.sorted(by: isOrderedBefore)
+    }
+
+    private func matches(_ item: MemoryReadingItem, query: String) -> Bool {
+        let names: [String] = identifiers(for: item).compactMap { currentProfileNames[$0] }
+        var values: [String] = [item.text]
+        values += item.cats
+        values += names
+        values.append(item.weight?.kilogramsText ?? "")
+        values.append(item.weight?.measuredOn ?? "")
+        values.append(item.date.formatted(.dateTime.year().month().day()))
+        values.append(item.updatedAt.formatted(.dateTime.year().month().day()))
+        return values.joined(separator: " ").localizedStandardContains(query)
+    }
+
+    private func isOrderedBefore(_ first: MemoryReadingItem, _ second: MemoryReadingItem) -> Bool {
+        let firstDate = sortingDate(first), secondDate = sortingDate(second)
+        return firstDate == secondDate ? first.id < second.id : firstDate > secondDate
     }
 
     private func identifiers(for item: MemoryReadingItem) -> Set<String> {
-        PhotoMemoryNoteLibraryPolicy.identifiers(photoIdentifier: item.local?.photoIdentifier,
+        PhotoMemoryNoteLibraryPolicy.identifiers(photoIdentifier: item.local.photoIdentifier,
             saved: item.savedIdentifiers, current: currentPhotoAssignments, registered: registeredProfileIdentifiers)
     }
 
@@ -273,7 +185,6 @@ struct PhotoMemoryNotesListView: View {
 
     @ViewBuilder private var readingList: some View {
         let visible = items
-        let displayedAccount = library.archive?.account.context
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if library.failed {
@@ -282,14 +193,6 @@ struct PhotoMemoryNotesListView: View {
                         Button("もう一度読み込む") { Task { await library.reload() } }
                     }
                 }
-                if let error = library.archiveError {
-                    Section {
-                        Text(error).font(.subheadline).foregroundStyle(.secondary)
-                        Button("iCloudから読み込む") { Task { await library.refreshFromCloud() } }
-                            .disabled(library.isRefreshingCloud)
-                    }
-                }
-                if library.isRefreshingCloud { ProgressView("iCloudから読み込んでいます…") }
                 if !library.isLoaded {
                     ProgressView()
                 } else if visible.isEmpty && !search.isEmpty {
@@ -301,14 +204,10 @@ struct PhotoMemoryNotesListView: View {
                         Text("写真を開いて、鉛筆のボタンから書けます。")
                     } actions: {
                         Button("写真を選ぶ", action: openPhotos)
-                        if archiveEnabled {
-                            Button("iCloudから読み込む") { Task { await library.refreshFromCloud() } }
-                                .disabled(library.isRefreshingCloud)
-                        }
                     }
                     .accessibilityIdentifier("memory-notes-empty")
                 } else {
-                    yearSections(visible, account: displayedAccount)
+                    yearSections(visible)
                 }
             }
             .padding(.horizontal, 16)
@@ -321,7 +220,7 @@ struct PhotoMemoryNotesListView: View {
                                        isSearching: !search.isEmpty)
     }
 
-    @ViewBuilder private func yearSections(_ visible: [MemoryReadingItem], account: String?) -> some View {
+    @ViewBuilder private func yearSections(_ visible: [MemoryReadingItem]) -> some View {
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
             let year = Calendar.current.component(.year, from: sortingDate(item))
             let startsYear = index == 0 || Calendar.current.component(.year, from: sortingDate(visible[index - 1])) != year
@@ -333,7 +232,7 @@ struct PhotoMemoryNotesListView: View {
                         .accessibilityAddTraits(.isHeader)
                         .padding(.horizontal, 16).padding(.top, index == 0 ? 0 : 24).padding(.bottom, 10)
                 }
-                readingLink(item, account: account)
+                readingLink(item)
                     .buttonStyle(.plain)
                     .padding(.horizontal, 16).padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -351,25 +250,13 @@ struct PhotoMemoryNotesListView: View {
         }
     }
 
-    @ViewBuilder private func readingLink(_ item: MemoryReadingItem, account: String?) -> some View {
-        if let local = item.local {
-            NavigationLink(value: MemoriesRoute.memoryNote(local.id)) {
-                row(item)
-            }
-            .accessibilityIdentifier("memory-note-row-\(local.id.uuidString)")
-            .accessibilityHint("メモを開いて全文を読み返します")
-            .accessibilityValue(item.preserved != nil ? "iCloudに保管済み" : "このiPhoneのメモ")
-        } else if let copy = item.preserved {
-            Button {
-                guard let account else { return }
-                isSearchFocused = false
-                selectedArchiveAccount = account
-                selectedSourceNote = nil
-                selectedArchive = copy
-            } label: { row(item) }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("memory-archive-row-\(copy.id.uuidString)")
+    private func readingLink(_ item: MemoryReadingItem) -> some View {
+        NavigationLink(value: MemoriesRoute.memoryNote(item.local.id)) {
+            row(item)
         }
+        .accessibilityIdentifier("memory-note-row-\(item.local.id.uuidString)")
+        .accessibilityHint("メモを開いて全文を読み返します")
+        .accessibilityValue("このiPhoneのメモ")
     }
 
     var body: some View {
@@ -397,35 +284,17 @@ struct PhotoMemoryNotesListView: View {
         .navigationTitle(isEmbedded ? "写真" : "メモあり")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { readingToolbar }
-        .navigationDestination(isPresented: Binding(
-            get: { selectedArchive != nil }, set: { if !$0 { selectedArchive = nil } }
-        )) {
-            archiveDestination
-        }
         .task {
-            library.setSceneActive(scenePhase == .active)
             access.start(photos: photos)
             await library.reload()
         }
-        .onChange(of: selectedArchive) { _, value in
-            if value == nil && scenePhase == .active { Task { await library.reload() } }
-        }
         .onChange(of: photos) { _, value in access.start(photos: value) }
         .onChange(of: scenePhase) { _, phase in
-            library.setSceneActive(phase == .active)
             if phase == .active {
                 access.refresh()
                 Task { await library.reload() }
-            } else {
-                selectedArchive = nil
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
-            .receive(on: DispatchQueue.main)) { _ in
-                selectedArchive = nil
-                library.clearArchive()
-                if scenePhase == .active { Task { await library.reload() } }
-            }
         .onDisappear {
             isSearchFocused = false
             access.stop()
@@ -433,18 +302,10 @@ struct PhotoMemoryNotesListView: View {
     }
 
     @ToolbarContentBuilder private var readingToolbar: some ToolbarContent {
-        if isCurrentPhotoLibraryPage, archiveEnabled || openCatPreparedness != nil {
+        if isCurrentPhotoLibraryPage, let openCatPreparedness {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
-                    if archiveEnabled {
-                        Button("iCloudから読み込む", systemImage: "icloud.and.arrow.down") {
-                            Task { await library.refreshFromCloud() }
-                        }.disabled(library.isRefreshingCloud)
-                    }
-                    if let openCatPreparedness {
-                        if archiveEnabled { Divider() }
-                        Button("迷子のとき", systemImage: "magnifyingglass", action: openCatPreparedness)
-                    }
+                    Button("迷子のとき", systemImage: "magnifyingglass", action: openCatPreparedness)
                 } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel(isEmbedded ? "写真のその他の操作" : "保管の操作")
                 .accessibilityIdentifier(isEmbedded ? "photos-more" : "memory-notes-menu")
@@ -452,31 +313,19 @@ struct PhotoMemoryNotesListView: View {
         }
     }
 
-    @ViewBuilder private var archiveDestination: some View {
-            if let selectedArchive, let selectedArchiveAccount {
-                PersonalArchiveRecordView(record: selectedArchive, store: archiveStore,
-                                          expectedAccount: selectedArchiveAccount, noteStore: library.store)
-            }
-    }
-
     private func row(_ item: MemoryReadingItem) -> some View {
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
             : AnyLayout(HStackLayout(alignment: .center, spacing: 14))
         return layout {
-            if let local = item.local, let photo = access.photo(for: local.photoIdentifier) {
+            if let photo = access.photo(for: item.local.photoIdentifier) {
                 PhotoAssetImageView(localIdentifier: photo.localIdentifier,
                     catBoundingBox: photo.catBoundingBox,
                     targetPixelSize: CGSize(width: 336, height: 336), showsFullImage: false)
                     .frame(width: 112, height: 112)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .accessibilityHidden(true)
-            } else if let local = item.local, let url = library.savedPhotos[local.id] {
+            } else if let url = library.savedPhotos[item.local.id] {
                 AppRecordSavedPhoto(url: url)
-                    .frame(width: 112, height: 112)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .accessibilityHidden(true)
-            } else if let data = item.preserved?.jpegData {
-                MemoryReadingThumbnail(data: data)
                     .frame(width: 112, height: 112)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .accessibilityHidden(true)
@@ -496,10 +345,6 @@ struct PhotoMemoryNotesListView: View {
                 }
                 Text("\(sort == .updated ? "更新" : item.dateLabel) \(sortingDate(item).formatted(.dateTime.month().day()))")
                     .font(.caption).foregroundStyle(.secondary)
-                if !item.archiveLabel.isEmpty {
-                    Label(item.archiveLabel, systemImage: "icloud")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
@@ -575,147 +420,10 @@ private struct MemoryNotesSearchBar: UIViewRepresentable {
     }
 }
 
-/// Explicitly preserved copies stay readable without PhotoKit permission.
-/// Hide a duplicate only with an exact note/revision link AND an accessible original.
-struct PersonalArchivePhotosSection: View {
-    let photos: [PhotoPresentation]
-    private let archiveStore: PersonalArchiveStore
-    private let enabled: Bool
-    @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var library: PhotoMemoryNoteLibraryPresentation
-    @StateObject private var access = PhotoMemoryNotePhotoAccess()
-    @State private var selected: PersonalArchiveRecord?
-    @State private var selectedAccount: String?
-
-    init(photos: [PhotoPresentation], archiveStore: PersonalArchiveStore? = nil,
-         store: PhotoMemoryNoteStore = .shared) {
-        self.photos = photos
-        // The old iCloud copies are retired; only test fixtures still open them.
-        let canRead = archiveStore != nil
-        let resolvedStore = archiveStore ?? .shared
-        self.enabled = canRead
-        self.archiveStore = resolvedStore
-        _library = StateObject(wrappedValue: PhotoMemoryNoteLibraryPresentation(
-            store: store, archiveStore: canRead ? resolvedStore : nil))
-    }
-
-    private var copies: [PersonalArchiveRecord] {
-        let sources = library.records.filter { access.photo(for: $0.photoIdentifier) != nil }.map {
-            PersonalArchiveSourceSnapshot(noteID: $0.id, revision: $0.note.revision,
-                                          photoIdentifier: $0.photoIdentifier)
-        }
-        let accessibleNoteIDs = Set(sources.map(\.noteID))
-        let links = (library.archive?.exactLinkedRecordIDs(matching: sources) ?? [:])
-            .merging(library.coalescedRecordIDs.filter { accessibleNoteIDs.contains($0.key) }) { _, current in current }
-        let linked = Set(links.values)
-        return (library.archive?.records ?? []).filter { !linked.contains($0.id) }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if enabled, !copies.isEmpty {
-                Text("iCloudに保管した写真").font(.headline)
-                archiveGrid
-            }
-            if enabled, let error = library.archiveError {
-                Text(error).font(.footnote).foregroundStyle(.secondary)
-                Button("もう一度読み込む") { Task { await library.reload() } }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier("photos-preserved-copies")
-        .navigationDestination(isPresented: Binding(
-            get: { selected != nil }, set: { if !$0 { selected = nil } }
-        )) {
-            if let selected, let selectedAccount {
-                PersonalArchiveRecordView(record: selected, store: archiveStore,
-                                          expectedAccount: selectedAccount, noteStore: library.store)
-            }
-        }
-        .task {
-            guard enabled else { return }
-            library.setSceneActive(scenePhase == .active)
-            access.start(photos: photos)
-            await library.reload()
-        }
-        .onChange(of: photos) { _, value in access.start(photos: value) }
-        .onChange(of: scenePhase) { _, phase in
-            library.setSceneActive(phase == .active)
-            if phase == .active && enabled {
-                access.refresh()
-                Task { await library.reload() }
-            } else { selected = nil }
-        }
-        .onChange(of: selected) { _, value in
-            if value == nil && scenePhase == .active { Task { await library.reload() } }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
-            .receive(on: DispatchQueue.main)) { _ in
-                selected = nil
-                library.clearArchive()
-                if enabled && scenePhase == .active { Task { await library.reload() } }
-            }
-        .onDisappear { access.stop() }
-    }
-
-    private var archiveGrid: some View {
-        let account = library.archive?.account.context
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
-            ForEach(copies) { copy in
-                Button {
-                    guard let account else { return }
-                    selectedAccount = account
-                    selected = copy
-                } label: {
-                    Color.clear.aspectRatio(1, contentMode: .fit)
-                        .overlay { MemoryReadingThumbnail(data: copy.jpegData ?? Data()) }
-                        .clipped()
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(copy.text.isEmpty ? "保管した写真" : copy.text)
-                .accessibilityIdentifier("preserved-photo-\(copy.id.uuidString)")
-                .id("archive-\(copy.id)")
-            }
-        }
-        .scrollTargetLayout()
-    }
-}
-
-/// Decode only a small display thumbnail, off the main actor; never decode the
-/// full archive JPEG for every row while SwiftUI builds its list.
-private struct MemoryReadingThumbnail: View {
-    let data: Data
-    @State private var image: UIImage?
-    var body: some View {
-        ZStack {
-            Color.secondary.opacity(0.12)
-            if let image { Image(uiImage: image).resizable().scaledToFill() }
-            else { Image(systemName: "photo").foregroundStyle(.secondary) }
-        }
-        .task(id: data) {
-            let bytes = data
-            let task = Task.detached(priority: .utility) { () -> UIImage? in
-                guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
-                      let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: 336
-                      ] as CFDictionary) else { return nil }
-                return UIImage(cgImage: thumbnail)
-            }
-            let result = await task.value
-            guard !Task.isCancelled else { return }
-            image = result
-        }
-    }
-}
-
 struct PhotoMemoryNoteDetailView: View {
     let recordID: UUID
     let photos: [PhotoPresentation]
     let store: PhotoMemoryNoteStore
-    let archiveStore: PersonalArchiveStore
-    private let archiveEnabled: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -728,10 +436,6 @@ struct PhotoMemoryNoteDetailView: View {
     @State private var deleting = false
     @State private var error: String?
     @State private var request = UUID()
-    @State private var archivedRecord: PersonalArchiveRecord?
-    @State private var archivedAccount: String?
-    @State private var reflection: PhotoMemoReflectionState = .localOnly
-    @State private var showsArchiveDetails = false
     @State private var addsToVet = false
     @State private var preservingWithService = false
     @State private var savedPhotoURL: URL?
@@ -746,14 +450,10 @@ struct PhotoMemoryNoteDetailView: View {
 #endif
     }
 
-    init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared,
-         archiveStore: PersonalArchiveStore? = nil) {
+    init(recordID: UUID, photos: [PhotoPresentation], store: PhotoMemoryNoteStore = .shared) {
         self.recordID = recordID
         self.photos = photos
         self.store = store
-        // The old iCloud copies are retired; only test fixtures still open them.
-        self.archiveEnabled = archiveStore != nil
-        self.archiveStore = archiveStore ?? .shared
     }
 
     private var detailContent: some View {
@@ -785,8 +485,6 @@ struct PhotoMemoryNoteDetailView: View {
                             NavigationLink(value: MemoriesRoute.memoryNotePhoto(record.id)) {
                                 AppRecordSavedPhoto(url: savedPhotoURL).aspectRatio(3.0 / 4.0, contentMode: .fit)
                             }.accessibilityLabel("保存した写真を大きく見る").accessibilityIdentifier("memory-note-photo")
-                        } else if let data = archivedRecord?.jpegData {
-                            MemoArchivePhoto(data: data, allowsExpansion: true)
                         } else {
                             Label("元の写真を開けません", systemImage: "photo")
                                 .font(.subheadline).foregroundStyle(.secondary)
@@ -795,15 +493,6 @@ struct PhotoMemoryNoteDetailView: View {
                 } status: {
                     Button("診察メモに追加", systemImage: "cross.case") { addsToVet = true }
                         .accessibilityIdentifier("memory-note-add-vet")
-                    if reflection == .pending || reflection == .conflict || reflection == .accountChanged {
-                        Text(reflection == .conflict ? "iCloudに別の変更があります。" : "iCloudへの保管待ち")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if archivedRecord != nil {
-                            Button("保管状況を確認") { showsArchiveDetails = true }
-                        } else {
-                            Button("保管状況を確認") { Task { await reload() } }
-                        }
-                    }
                 }
             } else if loaded {
                 ContentUnavailableView("このメモはありません", systemImage: "note.text",
@@ -819,20 +508,8 @@ struct PhotoMemoryNoteDetailView: View {
         .toolbar { detailToolbar }
         .sheet(isPresented: $editing, onDismiss: { Task { await reload() } }) {
             if let record {
-                PhotoMemoryNoteEditor(record: record, photo: access.photo(for: record.photoIdentifier), store: store,
-                                      archiveStore: archiveStore) {
+                PhotoMemoryNoteEditor(record: record, photo: access.photo(for: record.photoIdentifier), store: store) {
                     Task { await reload() }
-                }
-            }
-        }
-        .sheet(isPresented: $showsArchiveDetails, onDismiss: { Task { await reload() } }) {
-            if let archivedRecord, let archivedAccount {
-                NavigationStack {
-                    PersonalArchiveRecordView(record: archivedRecord, store: archiveStore,
-                        expectedAccount: archivedAccount, noteStore: store)
-                        .toolbar { ToolbarItem(placement: .cancellationAction) {
-                            Button("閉じる") { showsArchiveDetails = false }
-                        } }
                 }
             }
         }
@@ -868,12 +545,6 @@ struct PhotoMemoryNoteDetailView: View {
         .onChange(of: photos) { _, value in access.start(photos: value) }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { access.refresh(); if !editing { Task { await reload() } } }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .CKAccountChanged)
-            .receive(on: DispatchQueue.main)) { _ in
-            archivedRecord = nil
-            archivedAccount = nil
-            showsArchiveDetails = false
         }
         .onDisappear { access.stop() }
     }
@@ -923,19 +594,6 @@ struct PhotoMemoryNoteDetailView: View {
             savedPhotoURL = savedPhoto
             failed = false
             loaded = true
-            archivedRecord = nil
-            archivedAccount = nil
-            reflection = .localOnly
-            if let result, archiveEnabled,
-               let account = try? await archiveStore.accountContext() {
-                let coordinator = PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
-                let copy = try? await coordinator.linkedArchive(for: result, expectedAccount: account)
-                let status = try? await coordinator.syncStatus(photoIdentifier: result.photoIdentifier, expectedAccount: account)
-                guard request == token, !Task.isCancelled else { return }
-                archivedRecord = copy
-                archivedAccount = account
-                reflection = status ?? .pending
-            }
         } catch {
             guard request == token, !Task.isCancelled else { return }
             record = nil
@@ -949,14 +607,9 @@ struct PhotoMemoryNoteDetailView: View {
         deleting = true
         defer { deleting = false }
         do {
-            let result = try await PhotoMemoCoordinator(noteStore: store, archiveStore: archiveStore)
-                .saveLocal(text: "", recordID: record.id, expectedRevision: record.note.revision,
-                           expectedAccount: nil, weightChange: .set(nil))
-            if result.reflection == .stored || result.reflection == .localOnly { dismiss() }
-            else {
-                self.error = "このiPhoneのメモは削除しました。iCloudのメモはまだ消えていません。"
-                await reload()
-            }
+            _ = try await store.save(text: "", recordID: record.id, expectedRevision: record.note.revision,
+                                     weightChange: .set(nil))
+            dismiss()
         } catch {
             self.error = "メモを削除できませんでした。一覧に戻ってから、もう一度お試しください。"
         }
@@ -1023,9 +676,6 @@ struct PhotoMemoryNoteLibraryFixture: View {
     private static let store = PhotoMemoryNoteStore(fileURL:
         FileManager.default.temporaryDirectory
             .appendingPathComponent("PhotoMemoryLibraryUIFixture/\(UUID().uuidString)/state.json"))
-    private static let archiveStore = PersonalArchiveStore(directory:
-        FileManager.default.temporaryDirectory.appendingPathComponent("MemoryArchiveFixture/\(UUID().uuidString)"),
-        transport: PersonalArchiveFixtureTransport())
     @State private var ready = false
     @State private var failure = false
     @State private var path: [MemoriesRoute] = []
@@ -1071,10 +721,9 @@ struct PhotoMemoryNoteLibraryFixture: View {
             .navigationDestination(for: MemoriesRoute.self) { route in
                 switch route {
                 case .memoryNotes:
-                    PhotoMemoryNotesListView(photos: photos, store: Self.store,
-                        archiveStore: Self.archiveStore, openPhotos: {})
+                    PhotoMemoryNotesListView(photos: photos, store: Self.store, openPhotos: {})
                 case let .memoryNote(id):
-                    PhotoMemoryNoteDetailView(recordID: id, photos: photos, store: Self.store, archiveStore: Self.archiveStore)
+                    PhotoMemoryNoteDetailView(recordID: id, photos: photos, store: Self.store)
                 case let .memoryNotePhoto(id):
                     PhotoMemoryNotePhotoDestination(recordID: id, photos: photos, store: Self.store) { photo in
                         PhotoBrowserView(photos: [photo], libraryPhotos: photos, initialPhoto: photo,
@@ -1091,7 +740,7 @@ struct PhotoMemoryNoteLibraryFixture: View {
         }
         .sheet(isPresented: $showsSettings, onDismiss: { readingRevision &+= 1 }) {
             SettingsSheetHost(onClose: { showsSettings = false }) {
-                List { PersonalArchiveSettingsLink(store: Self.archiveStore, noteStore: Self.store) }
+                List {}
                     .navigationTitle("設定").navigationBarTitleDisplayMode(.inline)
             }
         }
@@ -1099,7 +748,6 @@ struct PhotoMemoryNoteLibraryFixture: View {
             guard !ready else { return }
             do {
                 if !CommandLine.arguments.contains("--memory-library-empty"),
-                   !CommandLine.arguments.contains("--memory-library-cloud-only"),
                    try await Self.store.records().isEmpty {
                     if CommandLine.arguments.contains("--memory-library-scroll") {
                         for number in 1...24 {
@@ -1123,26 +771,6 @@ struct PhotoMemoryNoteLibraryFixture: View {
                             context: PhotoMemoryNoteContext(capturedAt: Date(timeIntervalSince1970: 1_720_000_000), cats: []))
                     }
                 }
-                if (CommandLine.arguments.contains("--memory-library-cloud")
-                    || CommandLine.arguments.contains("--memory-library-cloud-only")),
-                   !CommandLine.arguments.contains("--memory-library-empty"),
-                   try await Self.archiveStore.records().isEmpty {
-                    let account = try await Self.archiveStore.accountContext()
-                    let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")?
-                        .jpegData(compressionQuality: 0.85)
-                    _ = try await Self.archiveStore.save(id: UUID(), jpegData: jpeg,
-                        text: "はじめてのおふろ。タオルにくるまって、やっとひと安心。",
-                        capturedAt: Date(timeIntervalSince1970: 1_700_000_000), expectedAccount: account)
-                }
-                if CommandLine.arguments.contains("--memory-library-linked-archive"),
-                   try await Self.archiveStore.records().isEmpty,
-                   let existing = try await Self.store.records().first {
-                    let account = try await Self.archiveStore.accountContext()
-                    let jpeg = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")?
-                        .jpegData(compressionQuality: 0.85)
-                    _ = try await PhotoMemoCoordinator(noteStore: Self.store, archiveStore: Self.archiveStore)
-                        .enableUpdates(for: existing, jpegData: jpeg, expectedAccount: account)
-                }
                 ready = true
             } catch { failure = true }
         }
@@ -1163,8 +791,7 @@ struct PhotoMemoryNoteLibraryFixture: View {
                     isEmbedded: true)
             } else {
                 ScrollView {
-                    PersonalArchivePhotosSection(photos: photos, archiveStore: Self.archiveStore,
-                                                 store: Self.store).padding(16)
+                    Color.clear.frame(maxWidth: .infinity, minHeight: 1).padding(16)
                 }
                 .restoringPhotoLibraryPosition(section: "all")
             }
@@ -1174,7 +801,7 @@ struct PhotoMemoryNoteLibraryFixture: View {
                                     exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) })
         case .notes:
             PhotoMemoryNotesListView(photos: photos, store: Self.store,
-                archiveStore: Self.archiveStore, isEmbedded: true) { selection.select(.all) }
+                isEmbedded: true) { selection.select(.all) }
         }
     }
 }
