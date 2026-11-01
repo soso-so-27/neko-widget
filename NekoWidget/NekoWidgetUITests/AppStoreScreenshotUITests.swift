@@ -347,7 +347,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "03-organized-memories")
         latestWork.tap()
-        guard app.descendants(matching: .any)["monthly-story"].waitForExistence(timeout: 15),
+        // The work opens as the book or the story, by the album's setting.
+        let openedWork = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier IN %@", ["monthly-story", "monthly-book"])
+        ).firstMatch
+        guard openedWork.waitForExistence(timeout: 15),
               waitForAnyFixturePhoto(in: app, numbers: Array(19...24)) else {
             fail("The newest work did not open as a story.", application: app)
             return
