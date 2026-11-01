@@ -403,8 +403,6 @@ struct CatCareDetailView: View {
                 }
             }
             .familyNotebookNote(catID, .microchip)
-        } header: {
-            Text("基本")
         } footer: {
             Text(basicsFooter)
                 .accessibilityIdentifier("cat-care-basics")
@@ -414,7 +412,8 @@ struct CatCareDetailView: View {
     @State private var openParts: Set<String> = []
 
     /// A part of この子のこと: one row while folded (「健康　2 / 4」), the whole
-    /// section when opened. Tapping the row again folds it.
+    /// section when opened. Tapping the row again folds it. The row is the
+    /// part's title, so the opened sections carry no header of their own.
     @ViewBuilder private func folded<Content: View>(_ key: String, _ title: String, _ count: (Int, Int),
                                                     @ViewBuilder content: () -> Content) -> some View {
         let isOpen = openParts.contains(key)
@@ -472,13 +471,11 @@ struct CatCareDetailView: View {
             listRow(title: "体重", detail: weightSummary, kind: .weight)
             listRow(title: "飲んでいる薬", detail: "\(currentRecord?.activeMedications.count ?? 0)件", kind: .medication)
             listRow(title: "ワクチン", detail: vaccinationSummary, kind: .vaccination)
-        } header: {
-            Text("健康")
         }
     }
 
     private var livingSection: some View {
-        Section("暮らし") {
+        Section {
             listRow(title: "ごはん", detail: "\(currentRecord?.activeMeals.count ?? 0)回", kind: .meal)
             TextField("療法食や、ほかの猫と分けてあげることなど", text: $draft.specialDiet, axis: .vertical)
                 .lineLimit(1...3)
@@ -503,8 +500,6 @@ struct CatCareDetailView: View {
                 .keyboardType(.phonePad)
                 .familyNotebookNote(catID, .vetPhone)
             TextField("避難のときの家族の集合場所", text: $draft.meetingPlace)
-        } header: {
-            Text("家の情報")
         } footer: {
             Text("ほかの猫とも共通です。")
         }

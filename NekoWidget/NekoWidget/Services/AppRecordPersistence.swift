@@ -1263,7 +1263,9 @@ struct AppRecordSettingsView: View {
 
     private var statusSymbol: String {
         guard persistence.enabled else { return "icloud.slash" }
-        return persistence.failing || persistence.conflict ? "exclamationmark.icloud" : "checkmark.icloud"
+        if persistence.failing || persistence.conflict { return "exclamationmark.icloud" }
+        // The check only once everything is in; while saving or after an interruption, a plain cloud.
+        return persistence.title == "保存済み" ? "checkmark.icloud" : "icloud"
     }
 
     private var plusOfferButton: some View {
