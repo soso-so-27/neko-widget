@@ -446,9 +446,19 @@ struct CatCareDetailView: View {
 
     private var healthSection: some View {
         Section {
-            TextField("持病（例：腎臓の療法食中）", text: $draft.conditions, axis: .vertical)
-                .lineLimit(1...4)
-                .familyNotebookNote(catID, .conditions)
+            // Like アレルギー: 「なし」 is an answer too, so a healthy cat's page can be all filled in.
+            Picker("持病", selection: $draft.conditionsStatus) {
+                Text("未記入").tag(CatCareConditionsStatus.unknown)
+                Text("なし").tag(CatCareConditionsStatus.none)
+                Text("あり").tag(CatCareConditionsStatus.recorded)
+            }
+            .familyNotebookNote(catID, .conditions)
+            .accessibilityIdentifier("cat-care-conditions-status")
+            if draft.conditionsStatus == .recorded {
+                TextField("持病の内容（例：腎臓の療法食中）", text: $draft.conditions, axis: .vertical)
+                    .lineLimit(1...4)
+                    .accessibilityIdentifier("cat-care-conditions-text")
+            }
             Picker("アレルギー", selection: $draft.allergyStatus) {
                 Text("未確認").tag(CatCareAllergy.Status.unknown)
                 Text("なし").tag(CatCareAllergy.Status.none)
@@ -578,7 +588,7 @@ struct CatCareDetailView: View {
         func take<Value: Equatable>(_ path: WritableKeyPath<CatCareDraft, Value>) {
             if draft[keyPath: path] == savedDraft[keyPath: path] { next[keyPath: path] = fresh[keyPath: path] }
         }
-        take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus)
+        take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus); take(\.conditionsStatus)
         let texts: [WritableKeyPath<CatCareDraft, String>] = [
             \.coat, \.marks, \.microchip, \.conditions, \.allergyText, \.specialDiet, \.water, \.litter,
             \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone, \.meetingPlace]
@@ -622,7 +632,7 @@ struct CatCareProgress {
         basics = count([has(draft.coat), has(draft.marks), has(draft.microchip),
                         draft.sex != .unknown, draft.neutered != .unknown, draft.indoorOnly != .unknown]
                        + (hasLifeDates.map { [$0] } ?? []))
-        health = count([has(draft.conditions), draft.allergyStatus != .unknown, weights, vaccinations])
+        health = count([draft.conditionsFilled, draft.allergyStatus != .unknown, weights, vaccinations])
         living = count([meals, has(draft.specialDiet), has(draft.water), has(draft.litter), has(draft.temperament)])
         household = count([has(draft.ownerContact), has(draft.backupContact), has(draft.vetName),
                            has(draft.vetPhone), has(draft.meetingPlace)])
@@ -631,7 +641,7 @@ struct CatCareProgress {
         let tools: [(String, [Bool])] = [
             ("迷子のとき", [has(draft.coat), has(draft.marks), has(draft.ownerContact)]),
             ("預けるとき", [meals, has(draft.water), has(draft.litter), has(draft.temperament), has(draft.vetName)]),
-            ("病院で見せる", [weights, vaccinations, has(draft.conditions), draft.allergyStatus != .unknown,
+            ("病院で見せる", [weights, vaccinations, draft.conditionsFilled, draft.allergyStatus != .unknown,
                           has(draft.vetName)])
         ]
         nextHint = tools.map { ($0.0, $0.1.filter { !$0 }.count) }
@@ -650,6 +660,8 @@ struct CatCareDraft: Equatable {
     var coat = ""
     var marks = ""
     var microchip = ""
+    var conditionsStatus: CatCareConditionsStatus = .unknown
+    /// What the condition is; only used while 「あり」 is chosen.
     var conditions = ""
     var allergyStatus: CatCareAllergy.Status = .unknown
     var allergyText = ""
@@ -665,6 +677,12 @@ struct CatCareDraft: Equatable {
 
     init() {}
 
+    /// 「なし」, or 「あり」 with what it is.
+    var conditionsFilled: Bool {
+        conditionsStatus == CatCareConditionsStatus.none
+            || (conditionsStatus == .recorded && !conditions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     init(record: CatCareRecord, household: CatCareHousehold) {
         sex = record.sex?.value ?? .unknown
         neutered = record.neutered?.value ?? .unknown
@@ -672,7 +690,8 @@ struct CatCareDraft: Equatable {
         coat = record.coat?.value ?? ""
         marks = record.marks?.value ?? ""
         microchip = record.microchip?.value ?? ""
-        conditions = record.conditions?.value ?? ""
+        conditionsStatus = record.conditionsStatus
+        conditions = conditionsStatus == .recorded ? record.conditions?.value ?? "" : ""
         allergyStatus = record.allergy?.value.status ?? .unknown
         allergyText = record.allergy?.value.text ?? ""
         specialDiet = record.specialDiet?.value ?? ""
@@ -699,7 +718,13 @@ struct CatCareDraft: Equatable {
         set(&r.coat, text(coat), empty: "")
         set(&r.marks, text(marks), empty: "")
         set(&r.microchip, microchip, empty: "")
-        set(&r.conditions, text(conditions), empty: "")
+        // 「あり」 with 「なし」 typed in is the none choice; 「あり」 with nothing typed keeps what was saved.
+        let details = conditionsStatus == .recorded ? text(conditions) : ""
+        let status: CatCareConditionsStatus = CatCareConditionsStatus.reading(details) == CatCareConditionsStatus.none
+            ? CatCareConditionsStatus.none : conditionsStatus
+        if (status, details) != (r.conditionsStatus, r.conditionsStatus == .recorded ? r.conditions?.value ?? "" : "") {
+            r.setConditions(status: status, text: details, editedAt: now, editedBy: by)
+        }
         set(&r.allergy, CatCareAllergy(status: allergyStatus, text: allergyStatus == .recorded ? text(allergyText) : ""),
             empty: CatCareAllergy())
         set(&r.specialDiet, text(specialDiet), empty: "")
@@ -1240,7 +1265,8 @@ enum CatCareSummary {
         fields.append(("性別", bothUnknown ? empty : sex + "・" + neutered))
         fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: CatCareDay(date: Date())) ?? empty))
         fields.append(("マイクロチップ", text(record?.microchip?.value)))
-        fields.append(("持病", text(record?.conditions?.value)))
+        fields.append(("持病", record?.conditionsStatus == CatCareConditionsStatus.none
+                       ? "なし（飼い主の記入）" : text(record?.conditions?.value)))
         let allergy: String = switch record?.allergy?.value.status ?? .unknown {
         case .none: "なし（飼い主の記入）"
         case .recorded: text(record?.allergy?.value.text)
