@@ -926,11 +926,14 @@ final class AppRecordPersistence: ObservableObject {
 
     private func synchronize(background: Bool = false) async {
         guard Date() >= saveAfter, Date() >= nextAttempt else { return }
-        if cleanupTask != nil {
-            guard requested else { return }
+        if cleanupTask != nil, !requested { return }
+        await saveLifetime.run(startsInBackground: background) { [self] in
+            // The bounded background grant must also cover waiting for an
+            // in-flight cleanup request to reach its safe yield boundary.
             await yieldCleanup()
+            guard !Task.isCancelled else { return }
+            await synchronizeOnce()
         }
-        await saveLifetime.run(startsInBackground: background) { [self] in await synchronizeOnce() }
     }
     private func synchronizeOnce() async {
         guard active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
