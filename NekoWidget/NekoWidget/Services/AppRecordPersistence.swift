@@ -457,7 +457,7 @@ final class AppRecordSaveLifetime {
     }
 
     func run(_ work: @escaping @MainActor () async -> Void) async {
-        if let previous = operation {
+        while let previous = operation {
             let interrupted = previous.task.isCancelled
             await previous.task.value
             // Foreground entry waits for cancelled I/O to unwind before retrying.
@@ -478,6 +478,16 @@ final class AppRecordSaveLifetime {
         let handle = lease?.handle
         lease = nil
         if let handle { end(handle) }
+    }
+}
+
+// UIKit adapter; the lifetime state machine above is also exercised without UIKit.
+extension AppRecordSaveLifetime {
+    static func system() -> AppRecordSaveLifetime {
+        AppRecordSaveLifetime(begin: { expiration in
+            let identifier = UIApplication.shared.beginBackgroundTask(withName: "Finish automatic save", expirationHandler: expiration)
+            return identifier == .invalid ? nil : identifier.rawValue
+        }, end: { UIApplication.shared.endBackgroundTask(UIBackgroundTaskIdentifier(rawValue: $0)) })
     }
 }
 
@@ -516,10 +526,7 @@ final class AppRecordPersistence: ObservableObject {
     private let client: ManagedPreservationClient
     private let bindingURL: URL
     private var loop: Task<Void, Never>?
-    private let saveLifetime = AppRecordSaveLifetime(begin: { expiration in
-        let identifier = UIApplication.shared.beginBackgroundTask(withName: "Finish automatic save", expirationHandler: expiration)
-        return identifier == .invalid ? nil : identifier.rawValue
-    }, end: { UIApplication.shared.endBackgroundTask(UIBackgroundTaskIdentifier(rawValue: $0)) })
+    private let saveLifetime = AppRecordSaveLifetime.system()
     private var active = false
     private var observer: NSObjectProtocol?
     private var datasetObserver: NSObjectProtocol?
@@ -572,7 +579,7 @@ final class AppRecordPersistence: ObservableObject {
             title = "保存済み"
             detail = "変更は保存されています。前に保存したデータの片づけは、アプリを開いている間に自動でやり直します。" +
                 ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
-            nextAttempt = Date().addingTimeInterval(60)
+            nextAttempt = Task.isCancelled ? .distantPast : Date().addingTimeInterval(60)
         } else if error is CancellationError || Task.isCancelled {
             // Leaving the app stops a save; it is not a failure, and the next open goes on with it.
             // A request cut off by the switch can fail as a network error after the
@@ -1021,6 +1028,21 @@ final class AppRecordPersistence: ObservableObject {
         failing = true
     }
 #if DEBUG
+    func stopLoopForFixture() {
+        precondition(CommandLine.arguments.contains("--app-records-ui-fixture") && !busy)
+        loop?.cancel(); loop = nil
+    }
+    func verifyInterruptedFailureClassification() async throws {
+        let cancelled = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            reportSyncFailure(URLError(.networkConnectionLost), cleanup: false, accepted: nil)
+            return title == "保存の途中です" && !failing && nextAttempt == .distantPast
+        }
+        guard await cancelled.value else { throw ToolBackupError.storage }
+        reportSyncFailure(URLError(.networkConnectionLost), cleanup: false, accepted: nil)
+        guard failing, nextAttempt > Date() else { throw ToolBackupError.storage }
+        nextAttempt = .distantPast
+    }
     func verifyAcceptedSaveFences() async throws {
         guard let value = try binding() else { throw ToolBackupError.storage }
         let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
@@ -1502,6 +1524,7 @@ private actor AppRecordFixtureServer {
     func useIndexVersion(_ version: Int) { maximumIndexVersion = version }
     private var metadataBatchMode = false
     private var interruptMetadataPart = false
+    private var metadataPartsUntilInterruption = 0
     private var metadataUncovered = false
     private var metadataManifest: [UUID: String] = [:]
     private var metadataBatchID: UUID?
@@ -1510,7 +1533,9 @@ private actor AppRecordFixtureServer {
     private var metadataPublications = 0
     private var metadataReplays = 0
     private var metadataRecoveries = 0
-    func useMetadataBatches() { metadataBatchMode = true; interruptMetadataPart = true }
+    func useMetadataBatches() {
+        metadataBatchMode = true; interruptMetadataPart = true; metadataPartsUntilInterruption = 1
+    }
     func metadataCounts() -> (publications: Int, replays: Int, uncovered: Bool) {
         (metadataPublications, metadataReplays, metadataUncovered)
     }
@@ -1532,6 +1557,10 @@ private actor AppRecordFixtureServer {
     func indexRateLimits() -> Int { indexRateLimitResponses }
     private var cancelNextDeletion = false
     private var cancelNextHead = false
+    private var interruptCommittedPhotos = false
+    private var photoPutRequests = 0
+    func interruptEveryCommittedPhoto() { interruptCommittedPhotos = true }
+    func photoRequestCount() -> Int { photoPutRequests }
     private var cleanupCommit: (@Sendable () throws -> Void)?
     func cancelDeletionOnce() { cancelNextDeletion = true }
     func cancelHeadOnce() { cancelNextHead = true }
@@ -1603,7 +1632,10 @@ private actor AppRecordFixtureServer {
                 generation += 1
             }
             metadataBodies[id] = ToolBackupIndex.hash(body); metadataUncovered = true
-            if interruptMetadataPart { interruptMetadataPart = false; throw CancellationError() }
+            if interruptMetadataPart {
+                if metadataPartsUntilInterruption == 0 { interruptMetadataPart = false; throw CancellationError() }
+                metadataPartsUntilInterruption -= 1
+            }
             return try response(["batchId": batch.uuidString.lowercased(), "recordId": id.uuidString.lowercased(), "revision": 1, "status": "part-staged"])
         }
         if metadataUncovered { return try failure("SESSION_INVALID", 401) }
@@ -1685,6 +1717,7 @@ private actor AppRecordFixtureServer {
             if let part = document["toolBackup"] as? [String: Any], let source = part["snapshotId"] as? String,
                let snapshot = UUID(uuidString: source), abandoned.contains(snapshot) { return try failure("TOOL_SNAPSHOT_ABANDONED", 409) }
             let expected = body["expectedRevision"] as? Int
+            if body["photoBase64"] is String { photoPutRequests += 1 }
             if document["text"] is String, document["toolBackup"] == nil, cancelNextHead {
                 cancelNextHead = false; throw CancellationError()
             }
@@ -1700,6 +1733,7 @@ private actor AppRecordFixtureServer {
             records[id] = ["recordId": id.uuidString.lowercased(), "revision": revision, "document": document,
                 "photoBase64": body["photoBase64"] ?? NSNull(), "photoSHA256": photo.map { ToolBackupIndex.hash($0) as Any } ?? NSNull()]
             generation += 1
+            if photo != nil, interruptCommittedPhotos { throw CancellationError() }
             return try response(["recordId": id.uuidString.lowercased(), "revision": revision])
         }
         if request.httpMethod == "DELETE" {
@@ -1731,7 +1765,7 @@ private actor AppRecordFixtureServer {
 private final class AppRecordFixture {
     let configuration: ManagedPreservationConfiguration
     let server: AppRecordFixtureServer
-    let persistence: AppRecordPersistence
+    var persistence: AppRecordPersistence
     let profiles: [CatProfile]
     init(configuration: ManagedPreservationConfiguration, server: AppRecordFixtureServer, profiles: [CatProfile]) {
         self.configuration = configuration; self.server = server; self.profiles = profiles
@@ -1742,6 +1776,58 @@ private final class AppRecordFixture {
         ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in try await self.server.request(request) })
     }
     static var preparationPhase = "開始"
+    func verifyRepeatedPhotoInterruption() async throws {
+        Self.preparationPhase = "45MBの合成写真を準備"
+        let files = FileManager.default.enumerator(at: AppRecordDataset.support,
+            includingPropertiesForKeys: nil)!.compactMap { $0 as? URL }.filter { $0.pathExtension == "jpg" }
+        guard files.count == 4 else { throw ToolBackupError.invalid }
+        let target = 45 * 1024 * 1024 / files.count
+        for (number, file) in files.enumerated() {
+            let original = try Data(contentsOf: file)
+            guard original.suffix(2) == Data([0xff, 0xd9]) else { throw ToolBackupError.invalid }
+            var jpeg = Data(original.dropLast(2))
+            // Valid JPEG comment segments enlarge transport payload, not pixels.
+            while jpeg.count < target {
+                let count = min(60_000, target - jpeg.count)
+                let length = count + 2
+                jpeg.append(contentsOf: [0xff, 0xfe, UInt8(length >> 8), UInt8(length & 255)])
+                jpeg.append(Data(repeating: UInt8(number + 1), count: count))
+            }
+            jpeg.append(contentsOf: [0xff, 0xd9])
+            guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+                  CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else { throw ToolBackupError.invalid }
+            try AppRecordDataset.writeBackedUp(jpeg, to: file)
+        }
+        await server.interruptEveryCommittedPhoto()
+        await persistence.enable()
+        let client = authenticationClient()
+        guard let owner = try await client.sessionOwnerID(), let first = try ToolBackupFiles.pending(owner: owner) else {
+            throw ToolBackupError.storage
+        }
+        for completed in 1...files.count {
+            Self.preparationPhase = "写真\(completed)枚目の中断後に再開"
+            guard persistence.title == "保存の途中です", !persistence.failing,
+                  await server.counts().1 == completed,
+                  try ToolBackupFiles.pending(owner: owner)?.id == first.id else { throw ToolBackupError.storage }
+            // Recreate client and coordinator: only durable receipts survive.
+            persistence = AppRecordPersistence(configuration: configuration, client: authenticationClient())
+            persistence.setActive(true)
+            for _ in 0..<1500 {
+                if !persistence.busy, ["保存の途中です", "保存済み"].contains(persistence.title) { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            persistence.setActive(false)
+        }
+        guard persistence.title == "保存済み", try ToolBackupFiles.pending(owner: owner) == nil,
+              await server.photoRequestCount() == files.count else { throw ToolBackupError.storage }
+        let head = try AppRecordHead.decode(await client.detail(AppRecordHead.id(
+            origin: configuration.origin!.absoluteString, owner: owner)).document)
+        guard head.snapshotID == first.id else { throw ToolBackupError.storage }
+        let folder = ToolBackupFiles.directory(first.id)
+        guard first.index.files.allSatisfy({ !FileManager.default.fileExists(atPath: folder.appendingPathComponent($0.path).path) }),
+              files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { throw ToolBackupError.storage }
+        print("PASS: 45 MiB photos, four lost acknowledgements, durable resume, no photo PUT replay, staging released, originals retained")
+    }
     func verifyMetadataBatchResume() async throws {
         Self.preparationPhase = "集約保存を中断"
         await server.useMetadataBatches()
@@ -1752,11 +1838,12 @@ private final class AppRecordFixture {
         let journal = ToolBackupFiles.directory(pending.id).appendingPathComponent("metadata-batch.json")
         let batch = try JSONDecoder().decode(ManagedPreservationClient.MetadataBatch.self,
             from: ToolBackupFiles.read(journal, maximum: 12 * 1024 * 1024))
+        guard batch.staged?.count == 1 else { throw ToolBackupError.storage }
         guard try ToolBackupFiles.sent(pending).isDisjoint(with: Set(batch.items.map(\.recordID))) else { throw ToolBackupError.storage }
         Self.preparationPhase = "未ACKの送信を通常の同期から再開"
         await persistence.retry()
         let counts = await server.metadataCounts()
-        guard persistence.title == "保存済み", counts.publications > 0, counts.replays > 0, !counts.uncovered,
+        guard persistence.title == "保存済み", counts.publications > 0, counts.replays == 1, !counts.uncovered,
               !FileManager.default.fileExists(atPath: journal.path) else { throw ToolBackupError.storage }
         Self.preparationPhase = "集約保存のheadと復元を照合"
         let headID = AppRecordHead.id(origin: configuration.origin!.absoluteString, owner: owner)
@@ -1941,6 +2028,7 @@ private final class AppRecordFixture {
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
         Self.preparationPhase = "保存完了の境界"
         try await persistence.verifyAcceptedSaveFences()
+        try await persistence.verifyInterruptedFailureClassification()
         let repository = try CareHandoffRepository(directory: AppRecordDataset.directory("CareHandoff"))
         let url = AppRecordDataset.directory("CareHandoff").appendingPathComponent("plan.json")
         var plan = try JSONDecoder().decode(CareHandoffPlan.self, from: Data(contentsOf: url))
@@ -1959,7 +2047,7 @@ private final class AppRecordFixture {
             if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
             try await Task.sleep(for: .milliseconds(100))
         }
-        persistence.setActive(false)
+        persistence.stopLoopForFixture()
         guard persistence.title == "保存済み", persistence.detail == nil,
               try ToolBackupFiles.pendingDeletions(owner: owner).isEmpty else { throw ToolBackupError.storage }
         await server.cancelHeadOnce()
@@ -1967,15 +2055,15 @@ private final class AppRecordFixture {
         plan.contact += " 送信中断"
         try repository.commit(plan, newPhotos: [:])
         await persistence.retry()
-        guard persistence.title == "未送信の変更があります",
-              persistence.detail?.contains("自動で再開") == true else { throw ToolBackupError.storage }
+        guard persistence.title == "保存の途中です",
+              persistence.detail == "アプリを開くと、自動で続けます。" else { throw ToolBackupError.storage }
         persistence.setActive(true)
         Self.preparationPhase = "送信の自動再開"
         for _ in 0..<100 {
             if !persistence.busy, persistence.title == "保存済み", persistence.detail == nil { break }
             try await Task.sleep(for: .milliseconds(100))
         }
-        persistence.setActive(false)
+        persistence.stopLoopForFixture()
         guard persistence.title == "保存済み", persistence.detail == nil else { throw ToolBackupError.storage }
         plan.contact += " 整理と同時に編集"
         Self.preparationPhase = "整理中の新しい編集"
@@ -1985,7 +2073,7 @@ private final class AppRecordFixture {
             AppRecordDataset.committed(url)
         }
         await persistence.retry()
-        guard persistence.title == "変更を保存待ち", persistence.detail != nil else { throw ToolBackupError.storage }
+        guard persistence.title == "保存待ちの変更があります", persistence.detail != nil else { throw ToolBackupError.storage }
         await persistence.retry()
         guard persistence.title == "保存済み" else { throw ToolBackupError.storage }
     }
@@ -2187,6 +2275,8 @@ private final class AppRecordFixture {
 
 @MainActor
 struct AppRecordPersistenceFixtureView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var backgroundProbe = AppRecordSaveLifetime.system()
     @State private var fixture: AppRecordFixture?
     @State private var result = ""
     @State private var counts = ""
@@ -2204,7 +2294,31 @@ struct AppRecordPersistenceFixtureView: View {
             }
         }
         .disabled(switching)
+        .onChange(of: scenePhase) { _, phase in
+            if CommandLine.arguments.contains("--app-records-background-probe") {
+                backgroundProbe.setForeground(phase == .active)
+            }
+        }
         .task {
+            if CommandLine.arguments.contains("--app-records-background-probe") {
+                await backgroundProbe.run {
+                    result = "background probe ready"
+                    do {
+                        try await Task.sleep(for: .seconds(8))
+                        result = UIApplication.shared.applicationState == .background
+                            ? "background probe completed in background" : "background probe missed background"
+                    } catch { result = "background probe cancelled" }
+                }
+                return
+            }
+            if CommandLine.arguments.contains("--app-records-photo-interruption-probe") {
+                do {
+                    let probe = try await AppRecordFixture.make()
+                    try await probe.verifyRepeatedPhotoInterruption()
+                    result = "45MBの中断再開と写真の再送なしを確認しました"
+                } catch { result = "中断再開の検査に失敗: \(AppRecordFixture.preparationPhase)" }
+                return
+            }
             if CommandLine.arguments.contains("--app-records-metadata-batch-probe") {
                 do {
                     let probe = try await AppRecordFixture.make()

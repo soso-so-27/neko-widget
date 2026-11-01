@@ -71,15 +71,17 @@ struct SaveLifetimeCheck {
         await until { work.cancellations == 1 }
         lifetime.setForeground(true)
         let foreground = Task { await lifetime.run { await work.save() } }
+        let simultaneousRetry = Task { await lifetime.run { await work.save() } }
         for _ in 0..<10 { await Task.yield() }
         precondition(work.starts == 2, "do not overlap cancelled work")
         work.unwind = true
         await until { work.starts == 3 }
         grant.callbacks[1]()
         for _ in 0..<10 { await Task.yield() }
-        precondition(work.cancellations == 1, "old expiry cannot cancel the resumed task")
+        precondition(work.cancellations == 1 && work.starts == 3,
+            "old expiry and simultaneous waiters cannot replace the resumed task")
         work.release = true
-        await manualRetry.value; await foreground.value
+        await manualRetry.value; await foreground.value; await simultaneousRetry.value
         precondition(grant.ends == [1, 2])
 
         for synchronous in [false, true] {
@@ -95,7 +97,7 @@ struct SaveLifetimeCheck {
             precondition(g.ends == (synchronous ? [1] : []))
         }
 
-        let g = Grant(), w = Work(), l = grant.make()
+        let w = Work(), l = grant.make()
         let t = Task { await l.run { await w.save() } }
         await until { w.starts == 1 }
         l.setForeground(false); l.setForeground(true)
@@ -104,7 +106,6 @@ struct SaveLifetimeCheck {
         precondition(w.starts == 1 && w.cancellations == 0)
         w.release = true
         await t.value; await joined.value
-        _ = g
         print("PASS: idle background, completion, timer/UI cancellation, expiry, immediate resume, stale expiry, denied grant, overlapping callers")
     }
 }
