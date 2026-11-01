@@ -56,20 +56,46 @@ jobs:
 
   personal-store:
     if: github.event_name == 'workflow_dispatch'
-    name: Personal store concurrency probe - not release evidence
+    name: Automatic save native test only - not release evidence
     runs-on: macos-15
-    timeout-minutes: 5
+    timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - name: Check atomic snapshots, publication races, and existing state machine
+      - name: Run the automatic save XCTest directly
         working-directory: NekoWidget
+        shell: bash
         run: |
-          xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
-            Shared/Models/WidgetManifest.swift Shared/Models/WidgetRenderPlan.swift \
-            Shared/Storage/PersonalRediscoveryStore.swift ci/verify-personal-rediscovery.swift \
-            -o "$RUNNER_TEMP/verify-personal-rediscovery"
-          "$RUNNER_TEMP/verify-personal-rediscovery"
+          set -euo pipefail
+          test "${GITHUB_REF#refs/heads/diagnostic/}" != "$GITHUB_REF"
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/devices.json"
+          DEVICE=$(python3 -c 'import json,os; d=json.load(open(os.environ["RUNNER_TEMP"]+"/devices.json")); print(next(x["udid"] for k,v in d["devices"].items() if k.endswith("iOS-26-2") for x in v if x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$DEVICE" \
+            -derivedDataPath "$RUNNER_TEMP/SaveDiagnostic" -resultBundlePath "$RUNNER_TEMP/SaveDiagnostic.xcresult" \
+            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
+            COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            test 2>&1 | tee "$RUNNER_TEMP/save-test.log"
+          python3 - <<'PY2'
+          import os,re
+          from pathlib import Path
+          text=Path(os.environ['RUNNER_TEMP'],'save-test.log').read_text()
+          cases=re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)",text)
+          expected='NekoWidgetUITests.SoloMemoriesUITests testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion'
+          assert cases == [(expected,'started'),(expected,'passed')], cases
+          PY2
+      - name: Attach test result
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: automatic-save-native-result
+          path: |
+            ${{ runner.temp }}/save-test.log
+            ${{ runner.temp }}/SaveDiagnostic.xcresult
+          retention-days: 7
