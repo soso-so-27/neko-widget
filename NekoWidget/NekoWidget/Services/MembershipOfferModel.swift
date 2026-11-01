@@ -74,6 +74,25 @@ enum PlusOfferContext: Equatable, Sendable {
     }
 }
 
+/// The cat photo at the top of the Plus screen: the place that opens the
+/// sheet names one of the person's own cat photos. Nothing is loaded until
+/// the screen shows; without one, the screen keeps its cat symbol.
+struct PlusOfferPhoto: Equatable, Sendable {
+    let localIdentifier: String
+    let catBoundingBox: CGRect?
+}
+
+private struct PlusOfferPhotoKey: EnvironmentKey {
+    static var defaultValue: PlusOfferPhoto? { nil }
+}
+
+extension EnvironmentValues {
+    var plusOfferPhoto: PlusOfferPhoto? {
+        get { self[PlusOfferPhotoKey.self] }
+        set { self[PlusOfferPhotoKey.self] = newValue }
+    }
+}
+
 /// The live sheet is offered only when the product and billing client are
 /// both configured. Otherwise every entry stays hidden, as Settings did before.
 enum PlusOfferAvailability {
@@ -533,6 +552,7 @@ struct MembershipOfferSheet: View {
     @StateObject private var model: MembershipOfferModel
     @State private var showsSubscriptionManagement = false
     @State private var showsManagementPreview = false
+    @Environment(\.plusOfferPhoto) private var placePhoto
     let context: PlusOfferContext
     let photo: UIImage?
     let onFinish: (MembershipOfferActionResult) -> Void
@@ -549,7 +569,7 @@ struct MembershipOfferSheet: View {
         NavigationStack {
             MembershipOfferView(
                 context: context,
-                photo: photo, offer: model.offer, isWorking: model.isWorking,
+                photo: photo, photoAsset: placePhoto, offer: model.offer, isWorking: model.isWorking,
                 canPurchase: model.canPurchase, canRestore: model.canRestore,
                 message: model.message,
                 isMember: model.isMember, purchaseTitle: model.purchaseTitle,
