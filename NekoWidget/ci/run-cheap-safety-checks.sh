@@ -38,6 +38,7 @@ xcrun swiftc -parse-as-library -D OFFICIAL_WINDOW_CHECKS \
   -o "$RUNNER_TEMP/verify-official-window"
 "$RUNNER_TEMP/verify-official-window"
 
+python3 ci/test-production-candidate.py
 python3 ci/test-disabled-release-config.py
 python3 ci/test-disabled-release-build-settings.py
 python3 ci/test-group-window-release.py

@@ -221,32 +221,18 @@ bounded 60 xcrun simctl boot "$device"
 bounded 300 xcrun simctl bootstatus "$device" -b &
 boot_pid=$!
 
-# Compile and launch the explicit public template once; empty endpoints cannot
-# reach production. Ordinary disabled Release settings were checked above.
-xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
-  -configuration Release -sdk iphonesimulator -xcconfig Config.Production.xcconfig \
-  -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
+# Synthetic, complete public configuration: reserved .test endpoints, no real
+# recipient, no upload. Inspect generated products before launch. Screenshots
+# show only the first screen; the six 1.0 presentation items still need review.
+python3 ci/production_candidate.py fixture --synthetic --contract "$RUNNER_TEMP/synthetic-production.json"
+python3 ci/production_candidate.py build --synthetic --contract "$RUNNER_TEMP/synthetic-production.json" -- \
+  -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
   -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
   SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
-  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
-  build
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES build
 wait "$boot_pid"
 app="$RUNNER_TEMP/QuickBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
-python3 - "$app" <<'PY'
-from pathlib import Path
-import plistlib, sys
-app = Path(sys.argv[1])
-info = plistlib.loads((app / 'Info.plist').read_bytes())
-assert info['SharingReleaseMode'] == 'production'
-assert info['GroupReportingProductionEnabled'] == 'YES'
-assert info['PersonalArchiveReadOnly'] == 'YES'
-assert not info.get('SharingAPIBaseURL'), 'CI template must not contact a real service'
-assert not info.get('SharingModerationPublicKey'), 'CI template must not contain a real recipient'
-actual = plistlib.loads((app / 'PrivacyInfo.xcprivacy').read_bytes())
-expected = plistlib.loads(Path('Production/PrivacyInfo.xcprivacy').read_bytes())
-assert actual == expected, 'public app bundled the wrong privacy manifest'
-print('PASS public template Info.plist and bundled privacy manifest (not a distributable archive)')
-PY
+python3 ci/production_candidate.py products --synthetic --contract "$RUNNER_TEMP/synthetic-production.json" --path "$app"
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
 reboot_simulator() {
   bounded 30 xcrun simctl shutdown "$device"
