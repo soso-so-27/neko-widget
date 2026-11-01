@@ -39,9 +39,11 @@ struct AutoSaveSettingsRow: View {
     @ObservedObject private var persistence = AppRecordPersistence.shared
     var body: some View {
         LabeledContent {
-            Text(!persistence.enabled ? "オフ" : persistence.failing || persistence.conflict ? "保存できていません" : "オン")
+            Text(!persistence.enabled ? "オフ"
+                : persistence.planEnded ? "止まっています"
+                : persistence.failing || persistence.conflict ? "保存できていません" : "オン")
         } label: {
-            Label("自動保存", systemImage: "checkmark.icloud")
+            Label("自動保存", systemImage: "icloud")
         }
     }
 }

@@ -1002,9 +1002,9 @@ struct GroupLibraryDeliverySheet: View {
         _list = StateObject(wrappedValue: GroupWindowListModel(client: client))
     }
 
-    private var openWindows: [GroupWindow] {
-        list.windows.filter { $0.state == .active && !GroupWindowPresentation.isPaused($0) }
-    }
+    /// Stopped windows stay in the list, greyed out, so the person sees why they can't send.
+    private var windows: [GroupWindow] { list.windows.filter { $0.state == .active } }
+    private var openWindows: [GroupWindow] { windows.filter { !GroupWindowPresentation.isPaused($0) } }
 
     var body: some View {
         NavigationStack {
@@ -1013,16 +1013,20 @@ struct GroupLibraryDeliverySheet: View {
                     GroupLibraryDeliveryStep(model: screen, localIdentifier: localIdentifier) { dismiss() }
                 } else if !list.hasLoaded {
                     ProgressView("まどを読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if openWindows.isEmpty {
-                    ContentUnavailableView("届けられるまどがありません", systemImage: "window.vertical.closed",
-                        description: Text("まどタブで、まどを作るか、届いた招待リンクから参加してください。"))
+                } else if windows.isEmpty {
+                    ContentUnavailableView("まどがまだありません", systemImage: "window.vertical.closed",
+                        description: Text("まどタブで作るか、招待リンクから参加できます。"))
                 } else {
-                    List(openWindows) { window in
+                    List(windows) { window in
+                        let paused = GroupWindowPresentation.isPaused(window)
                         Button { screen = GroupWindowScreenModel(client: client, windowID: window.id) } label: {
-                            LabeledContent(window.name, value: GroupWindowPresentation.memberCountText(window))
+                            LabeledContent(window.name,
+                                           value: paused ? "止まっています" : GroupWindowPresentation.memberCountText(window))
                                 .frame(minHeight: 44)
                         }
                         .foregroundStyle(.primary)
+                        .disabled(paused)
+                        .opacity(paused ? 0.45 : 1)
                     }
                     .accessibilityIdentifier("group-library-delivery-windows")
                 }

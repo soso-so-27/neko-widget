@@ -51,7 +51,7 @@ struct CatProfileTransferView: View {
                     .accessibilityIdentifier("cat-profile-transfer-import")
             }
         }
-        .navigationTitle("機種変更のときの引き継ぎ")
+        .navigationTitle("機種変更のとき")
         .fileExporter(isPresented: $showsExporter, document: document,
                       contentType: .json, defaultFilename: "ねこのプロフィール") { result in
             document = nil
