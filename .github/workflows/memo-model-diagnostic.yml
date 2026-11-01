@@ -65,11 +65,10 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Check atomic snapshots, publication races, and existing state machine
+      - name: Exercise production save lifetime before full app CI
         working-directory: NekoWidget
         run: |
-          xcrun --sdk macosx swiftc -parse-as-library -D PERSONAL_REDISCOVERY_CHECKS \
-            Shared/Models/WidgetManifest.swift Shared/Models/WidgetRenderPlan.swift \
-            Shared/Storage/PersonalRediscoveryStore.swift ci/verify-personal-rediscovery.swift \
-            -o "$RUNNER_TEMP/verify-personal-rediscovery"
-          "$RUNNER_TEMP/verify-personal-rediscovery"
+          set -euo pipefail
+          python3 ci/prepare-save-lifetime-check.py "$RUNNER_TEMP/save-lifetime.swift"
+          xcrun swiftc -parse-as-library "$RUNNER_TEMP/save-lifetime.swift" ci/verify-save-lifetime.swift -o "$RUNNER_TEMP/verify-save-lifetime"
+          "$RUNNER_TEMP/verify-save-lifetime"
