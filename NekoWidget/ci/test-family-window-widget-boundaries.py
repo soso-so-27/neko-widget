@@ -3010,7 +3010,8 @@ class VeterinaryCatCareTests(unittest.TestCase):
         # Empty items say so instead of inventing anything.
         fields = section(summary, "static func veterinaryFields(", "static func weightTrend(")
         self.assertIn('"未記入（飼い主に聞いてください）"', fields)
-        self.assertIn('("マイクロチップ", text(record?.microchip?.value))', fields)
+        self.assertIn('("マイクロチップ", record?.microchipStatus == CatCareMicrochipStatus.none', fields)
+        self.assertIn('? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))', fields)
         trend = summary[summary.index("static func weightTrend("):]
         self.assertIn("前回から", trend)
 
@@ -3030,7 +3031,8 @@ class LostCatCatCareTests(unittest.TestCase):
         self.assertIn("チラシ・画像には載りません", report)
         self.assertIn('editIdentifier: "lost-cat-open-cat-care"', report)
         fields = section(summary, "static func lostCatReportFields(", "/// Newest first")
-        self.assertIn('("マイクロチップ番号", text(record?.microchip?.value))', fields)
+        self.assertIn('("マイクロチップ番号", record?.microchipStatus == CatCareMicrochipStatus.none', fields)
+        self.assertIn('? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))', fields)
         # The flyer line says only that there is a chip.
         core = source("NekoWidget/Services/CatCareCore.swift")
         line = section(core, "static func publicLine(", "static func age(")
@@ -3070,7 +3072,8 @@ class EvacuationCatCareTests(unittest.TestCase):
         self.assertIn("attachments.append", share)
         matching = section(summary, "static func record(toolCatID:", "static func evacuationFields(")
         self.assertLess(matching.index("$0.catID == toolCatID"), matching.index("record(profileIdentifier:"))
-        self.assertIn('("マイクロチップ番号", chip.isEmpty ? empty : chip)', summary)
+        self.assertIn('("マイクロチップ番号", chip.isEmpty', summary)
+        self.assertIn('? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない（飼い主の記入）" : empty) : chip))', summary)
         # One PDF: supplies, destinations and every cat, after a confirmation.
         book = section(store, "func bookRecords()", "private static func normalizedJPEG(")
         self.assertIn("for cat in plan.cats { records.append(try shareRecord(", book)

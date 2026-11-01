@@ -399,17 +399,25 @@ struct CatCareDetailView: View {
             TextField("見分ける特徴（例：しっぽが短い、右耳に切れ込み）", text: $draft.marks, axis: .vertical)
                 .lineLimit(2...4)
                 .familyNotebookNote(catID, .marks)
-            VStack(alignment: .leading, spacing: 4) {
-                TextField("マイクロチップ番号（15桁）", text: $draft.microchip)
-                    .keyboardType(.numberPad)
-                    .font(.body.monospacedDigit())
-                    .accessibilityIdentifier("cat-care-microchip")
-                if microchipInvalid {
-                    Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
-                        .font(.caption).foregroundStyle(.orange)
-                }
+            Picker("マイクロチップ", selection: $draft.microchipStatus) {
+                Text("未記入").tag(CatCareMicrochipStatus.unknown)
+                Text("入っている").tag(CatCareMicrochipStatus.recorded)
+                Text("入っていない").tag(CatCareMicrochipStatus.none)
             }
             .familyNotebookNote(catID, .microchip)
+            .accessibilityIdentifier("cat-care-microchip-status")
+            if draft.microchipStatus == .recorded {
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("マイクロチップ番号（15桁）", text: $draft.microchip)
+                        .keyboardType(.numberPad)
+                        .font(.body.monospacedDigit())
+                        .accessibilityIdentifier("cat-care-microchip")
+                    if microchipInvalid {
+                        Label("15桁の数字にすると保存されます。", systemImage: "exclamationmark.circle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
         } footer: {
             Text(basicsFooter)
                 .accessibilityIdentifier("cat-care-basics")
@@ -478,6 +486,13 @@ struct CatCareDetailView: View {
             listRow(title: "体重", detail: weightSummary, kind: .weight)
             listRow(title: "飲んでいる薬", detail: "\(currentRecord?.activeMedications.count ?? 0)件", kind: .medication)
             listRow(title: "ワクチン", detail: vaccinationSummary, kind: .vaccination)
+            if currentRecord?.activeVaccinations.isEmpty ?? true {
+                // No history to list: 「受けていない」 is an answer too.
+                Toggle("ワクチンは受けていない", isOn: Binding(
+                    get: { draft.vaccinationStatus == CatCareVaccinationStatus.none },
+                    set: { draft.vaccinationStatus = $0 ? CatCareVaccinationStatus.none : .unknown }))
+                    .accessibilityIdentifier("cat-care-vaccination-none")
+            }
         }
     }
 
@@ -501,11 +516,19 @@ struct CatCareDetailView: View {
         Section {
             TextField("飼い主の連絡先", text: $draft.ownerContact)
             TextField("つながらないときの連絡先", text: $draft.backupContact)
-            TextField("かかりつけ病院の名前", text: $draft.vetName)
-                .familyNotebookNote(catID, .vetName)
-            TextField("かかりつけ病院の電話", text: $draft.vetPhone)
-                .keyboardType(.phonePad)
-                .familyNotebookNote(catID, .vetPhone)
+            Picker("かかりつけ", selection: $draft.vetStatus) {
+                Text("未記入").tag(CatCareVetStatus.unknown)
+                Text("決まっている").tag(CatCareVetStatus.recorded)
+                Text("まだない").tag(CatCareVetStatus.none)
+            }
+            .familyNotebookNote(catID, .vetName)
+            .accessibilityIdentifier("cat-care-vet-status")
+            if draft.vetStatus == .recorded {
+                TextField("かかりつけ病院の名前", text: $draft.vetName)
+                TextField("かかりつけ病院の電話", text: $draft.vetPhone)
+                    .keyboardType(.phonePad)
+                    .familyNotebookNote(catID, .vetPhone)
+            }
             TextField("避難のときの家族の集合場所", text: $draft.meetingPlace)
         } footer: {
             Text("ほかの猫とも共通です。")
@@ -539,7 +562,9 @@ struct CatCareDetailView: View {
     }
 
     private var vaccinationSummary: String {
-        guard let latest = currentRecord?.activeVaccinations.first else { return "未記入" }
+        guard let latest = currentRecord?.activeVaccinations.first else {
+            return draft.vaccinationStatus == CatCareVaccinationStatus.none ? CatCareVaccinationStatus.noneText : "未記入"
+        }
         return "\(latest.kind)（\(CatCareFormat.day(latest.givenOn))）"
     }
 
@@ -565,12 +590,17 @@ struct CatCareDetailView: View {
     private func save() {
         guard let catID, draft != savedDraft, store.canSave else { return }
         var value = draft
-        if let chip = CatCareLimits.normalizedMicrochip(draft.microchip) {
+        if draft.microchipStatus != .recorded {
+            value.microchip = ""
+            microchipInvalid = false
+        } else if let chip = CatCareLimits.normalizedMicrochip(draft.microchip), !chip.isEmpty {
             value.microchip = chip
             microchipInvalid = false
         } else {
+            // 「入っている」 with no full number yet: keep what was saved.
+            value.microchipStatus = savedDraft.microchipStatus
             value.microchip = savedDraft.microchip
-            microchipInvalid = true
+            microchipInvalid = !draft.microchip.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         let saved = store.update { state in
             guard let index = state.cats.firstIndex(where: { $0.catID == catID }) else { return }
@@ -591,6 +621,7 @@ struct CatCareDetailView: View {
             if draft[keyPath: path] == savedDraft[keyPath: path] { next[keyPath: path] = fresh[keyPath: path] }
         }
         take(\.sex); take(\.neutered); take(\.indoorOnly); take(\.allergyStatus); take(\.conditionsStatus)
+        take(\.microchipStatus); take(\.vaccinationStatus); take(\.vetStatus)
         let texts: [WritableKeyPath<CatCareDraft, String>] = [
             \.coat, \.marks, \.microchip, \.conditions, \.allergyText, \.specialDiet, \.water, \.litter,
             \.temperament, \.ownerContact, \.backupContact, \.vetName, \.vetPhone, \.meetingPlace]
@@ -634,19 +665,20 @@ struct CatCareProgress {
         let meals = (record?.activeMeals.count ?? 0) > 0
         let weights = (record?.activeWeights.count ?? 0) > 0
         let vaccinations = (record?.activeVaccinations.count ?? 0) > 0
-        basics = count([has(draft.coat), has(draft.marks), has(draft.microchip),
+            || draft.vaccinationStatus == CatCareVaccinationStatus.none
+        basics = count([has(draft.coat), has(draft.marks), draft.microchipFilled,
                         draft.sex != .unknown, draft.neutered != .unknown, draft.indoorOnly != .unknown]
                        + (hasLifeDates.map { [$0] } ?? []))
         health = count([draft.conditionsFilled, draft.allergyStatus != .unknown, weights, vaccinations])
         living = count([meals, has(draft.water), has(draft.litter), has(draft.temperament)])
-        household = count([has(draft.ownerContact), has(draft.vetName)])
+        household = count([has(draft.ownerContact), draft.vetFilled])
 
         // What each tool reads first: 「あと2つで「預けるとき」の項目がそろいます」.
         let tools: [(String, [Bool])] = [
             ("迷子のとき", [has(draft.coat), has(draft.marks), has(draft.ownerContact)]),
-            ("預けるとき", [meals, has(draft.water), has(draft.litter), has(draft.temperament), has(draft.vetName)]),
+            ("預けるとき", [meals, has(draft.water), has(draft.litter), has(draft.temperament), draft.vetFilled]),
             ("病院で見せる", [weights, vaccinations, draft.conditionsFilled, draft.allergyStatus != .unknown,
-                          has(draft.vetName)])
+                          draft.vetFilled])
         ]
         nextHint = tools.map { ($0.0, $0.1.filter { !$0 }.count) }
             .filter { $0.1 > 0 }
@@ -681,7 +713,11 @@ struct CatCareDraft: Equatable {
     var indoorOnly: CatCareTriState = .unknown
     var coat = ""
     var marks = ""
+    var microchipStatus: CatCareMicrochipStatus = .unknown
+    /// The number; only used while 「入っている」 is chosen.
     var microchip = ""
+    /// Only an answer while there is no vaccination in the list.
+    var vaccinationStatus: CatCareVaccinationStatus = .unknown
     var conditionsStatus: CatCareConditionsStatus = .unknown
     /// What the condition is; only used while 「あり」 is chosen.
     var conditions = ""
@@ -693,6 +729,7 @@ struct CatCareDraft: Equatable {
     var temperament = ""
     var ownerContact = ""
     var backupContact = ""
+    var vetStatus: CatCareVetStatus = .unknown
     var vetName = ""
     var vetPhone = ""
     var meetingPlace = ""
@@ -705,13 +742,27 @@ struct CatCareDraft: Equatable {
             || (conditionsStatus == .recorded && !conditions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
+    /// 「入っていない」, or 「入っている」 with a full number.
+    var microchipFilled: Bool {
+        microchipStatus == CatCareMicrochipStatus.none
+            || (microchipStatus == .recorded && !(CatCareLimits.normalizedMicrochip(microchip) ?? "").isEmpty)
+    }
+
+    /// 「まだない」, or 「決まっている」 with the hospital's name.
+    var vetFilled: Bool {
+        vetStatus == CatCareVetStatus.none
+            || (vetStatus == .recorded && !vetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     init(record: CatCareRecord, household: CatCareHousehold) {
         sex = record.sex?.value ?? .unknown
         neutered = record.neutered?.value ?? .unknown
         indoorOnly = record.indoorOnly?.value ?? .unknown
         coat = record.coat?.value ?? ""
         marks = record.marks?.value ?? ""
-        microchip = record.microchip?.value ?? ""
+        microchipStatus = record.microchipStatus
+        microchip = microchipStatus == .recorded ? record.microchip?.value ?? "" : ""
+        vaccinationStatus = record.vaccinationStatus
         conditionsStatus = record.conditionsStatus
         conditions = conditionsStatus == .recorded ? record.conditions?.value ?? "" : ""
         allergyStatus = record.allergy?.value.status ?? .unknown
@@ -722,8 +773,9 @@ struct CatCareDraft: Equatable {
         temperament = record.temperament?.value ?? ""
         ownerContact = household.ownerContact?.value ?? ""
         backupContact = household.backupContact?.value ?? ""
-        vetName = household.vet?.value.name ?? ""
-        vetPhone = household.vet?.value.phone ?? ""
+        vetStatus = household.vetStatus
+        vetName = vetStatus == .recorded ? household.vet?.value.name ?? "" : ""
+        vetPhone = vetStatus == .recorded ? household.vet?.value.phone ?? "" : ""
         meetingPlace = household.meetingPlace?.value ?? ""
     }
 
@@ -739,7 +791,14 @@ struct CatCareDraft: Equatable {
         set(&r.indoorOnly, indoorOnly, empty: .unknown)
         set(&r.coat, text(coat), empty: "")
         set(&r.marks, text(marks), empty: "")
-        set(&r.microchip, microchip, empty: "")
+        let chip = microchipStatus == .recorded ? microchip : ""
+        if (microchipStatus, chip) != (r.microchipStatus, r.microchipStatus == .recorded ? r.microchip?.value ?? "" : "") {
+            r.setMicrochip(status: microchipStatus, number: chip, editedAt: now, editedBy: by)
+        }
+        // A vaccination in the list is the answer; the toggle only speaks for an empty list.
+        if r.activeVaccinations.isEmpty, vaccinationStatus != .recorded, vaccinationStatus != r.vaccinationStatus {
+            r.setVaccinationStatus(vaccinationStatus, editedAt: now, editedBy: by)
+        }
         // 「あり」 with 「なし」 typed in is the none choice; 「あり」 with nothing typed keeps what was saved.
         let details = conditionsStatus == .recorded ? text(conditions) : ""
         let status: CatCareConditionsStatus = CatCareConditionsStatus.reading(details) == CatCareConditionsStatus.none
@@ -755,8 +814,12 @@ struct CatCareDraft: Equatable {
         set(&r.temperament, text(temperament), empty: "")
         set(&h.ownerContact, text(ownerContact), empty: "")
         set(&h.backupContact, text(backupContact), empty: "")
-        set(&h.vet, CatCareVet(name: text(vetName), phone: text(vetPhone), note: h.vet?.value.note ?? ""),
-            empty: CatCareVet())
+        let vet = vetStatus == .recorded ? (text(vetName), text(vetPhone)) : ("", "")
+        let savedVet = h.vetStatus == .recorded ? (h.vet?.value.name ?? "", h.vet?.value.phone ?? "") : ("", "")
+        if vetStatus != h.vetStatus || vet != savedVet {
+            // 「決まっている」 with no name yet returns false and keeps what was saved.
+            h.setVet(status: vetStatus, name: vet.0, phone: vet.1, note: h.vet?.value.note ?? "", editedAt: now, editedBy: by)
+        }
         set(&h.meetingPlace, text(meetingPlace), empty: "")
         r.reviewedAt = now
     }
@@ -1286,7 +1349,8 @@ enum CatCareSummary {
         let bothUnknown = (record?.sex?.value ?? .unknown) == .unknown && (record?.neutered?.value ?? .unknown) == .unknown
         fields.append(("性別", bothUnknown ? empty : sex + "・" + neutered))
         fields.append(("年齢", CatCareLostCat.age(record?.birthday?.value, today: CatCareDay(date: Date())) ?? empty))
-        fields.append(("マイクロチップ", text(record?.microchip?.value)))
+        fields.append(("マイクロチップ", record?.microchipStatus == CatCareMicrochipStatus.none
+                       ? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))
         fields.append(("持病", record?.conditionsStatus == CatCareConditionsStatus.none
                        ? "なし（飼い主の記入）" : text(record?.conditions?.value)))
         let allergy: String = switch record?.allergy?.value.status ?? .unknown {
@@ -1302,11 +1366,15 @@ enum CatCareSummary {
         let vaccinations = (record?.activeVaccinations ?? []).prefix(3).map {
             "\($0.kind)（\(CatCareFormat.day($0.givenOn))）" + ($0.proof != nil ? " 証明あり" : "")
         }
-        fields.append(("ワクチン", vaccinations.isEmpty ? empty : vaccinations.joined(separator: "\n")))
+        fields.append(("ワクチン", vaccinations.isEmpty
+                       ? (record?.vaccinationStatus == CatCareVaccinationStatus.none ? "受けていない（飼い主の記入）" : empty)
+                       : vaccinations.joined(separator: "\n")))
         fields.append(("体重の推移", weightTrend(record).map { $0.isEmpty ? empty : $0.joined(separator: "\n") } ?? empty))
         if let diet = record?.specialDiet?.value, !diet.isEmpty { fields.append(("療法食など", diet)) }
         let vet = record?.vetOverride?.value ?? household?.vet?.value
-        if let vet, !vet.isEmpty {
+        if let vet, vet.vetStatus == CatCareVetStatus.none {
+            fields.append(("かかりつけ病院", "まだない（飼い主の記入）"))
+        } else if let vet, !vet.isEmpty {
             fields.append(("かかりつけ病院", [vet.name, vet.phone].filter { !$0.isEmpty }.joined(separator: " ")))
         }
         return fields
@@ -1460,14 +1528,17 @@ enum CatCareSummary {
         if let latest = record?.activeWeights.first { about.append(CatCareFormat.weight(latest.grams)) }
         var fields: [(String, String)] = [("性別・年齢・体重", about.isEmpty ? empty : about.joined(separator: "・"))]
         let chip = (record?.microchip?.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        fields.append(("マイクロチップ番号", chip.isEmpty ? empty : chip))
+        fields.append(("マイクロチップ番号", chip.isEmpty
+                       ? (record?.microchipStatus == CatCareMicrochipStatus.none ? "入っていない（飼い主の記入）" : empty) : chip))
         let vaccinations = (record?.activeVaccinations ?? []).prefix(4).map { entry in
             var line = "\(entry.kind)（\(CatCareFormat.day(entry.givenOn))）"
             if let next = entry.nextDueOn { line += " 次回 \(CatCareFormat.day(next))" }
             if entry.proof != nil { line += " 証明あり" }
             return line
         }
-        fields.append(("ワクチン", vaccinations.isEmpty ? empty : vaccinations.joined(separator: "\n")))
+        fields.append(("ワクチン", vaccinations.isEmpty
+                       ? (record?.vaccinationStatus == CatCareVaccinationStatus.none ? "受けていない（飼い主の記入）" : empty)
+                       : vaccinations.joined(separator: "\n")))
         return fields
     }
 
@@ -1498,7 +1569,8 @@ enum CatCareSummary {
         }
         fields.append(("毛色", text(record?.coat?.value)))
         fields.append(("見分ける特徴", text(record?.marks?.value)))
-        fields.append(("マイクロチップ番号", text(record?.microchip?.value)))
+        fields.append(("マイクロチップ番号", record?.microchipStatus == CatCareMicrochipStatus.none
+                       ? "入っていない（飼い主の記入）" : text(record?.microchip?.value)))
         let indoor: String = switch record?.indoorOnly?.value ?? .unknown {
         case .yes: "室内飼い（外に慣れていない）"
         case .no: "外にも出る"
