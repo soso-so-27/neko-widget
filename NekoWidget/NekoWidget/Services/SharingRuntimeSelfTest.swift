@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import Security
 import UIKit
+import UniformTypeIdentifiers
 import CryptoKit
 import AuthenticationServices
 
