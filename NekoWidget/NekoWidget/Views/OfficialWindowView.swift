@@ -966,7 +966,7 @@ private struct OfficialPhotoDetailView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         if let caption = photo.caption { Text(verbatim: caption).font(.body) }
                         Text("提供元：\(photo.displayCredit(in: store.windowID))")
-                        if let date = photo.photographedOn { Text("撮影日：\(date)") }
+                        if let date = photo.photographedOn { Text("撮影日：\(DayText.japanese(date))") }
                         Text("掲載日：\(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading).padding(20)

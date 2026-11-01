@@ -280,7 +280,7 @@ private struct VeterinaryConsultationView: View {
                 } else {
                     Section("伝えたこと") {
                         if !visit.observations.isEmpty { Text(visit.observations) }
-                        if let day = visit.startedOn { Text("気付いた日 \(day)") }
+                        if let day = visit.startedOn { Text("気付いた日 \(DayText.japanese(day))") }
                         if !visit.questions.isEmpty { Text(visit.questions) }
                     }
                 }
@@ -517,7 +517,7 @@ private struct VeterinaryRecordPicker: View {
                                 PhotoAssetImageView(localIdentifier: photo.localIdentifier, catBoundingBox: nil,
                                     targetPixelSize: CGSize(width: 180, height: 180), showsFullImage: true)
                                     .frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 10))
-                                Text(photo.creationDate.map { "撮影 \(VeterinaryVisit.day($0))" } ?? "撮影日不明").foregroundStyle(.primary)
+                                Text(photo.creationDate.map { "撮影 \(DayText.japanese(VeterinaryVisit.day($0)))" } ?? "撮影日不明").foregroundStyle(.primary)
                             }
                         }
                     }
@@ -629,7 +629,7 @@ private struct VeterinaryRecordConfirmation: View {
 private struct VeterinaryEntryDates: View {
     let entry: VeterinaryVisitEntry
     var body: some View {
-        Text("撮影日 \(entry.capturedAt.map(VeterinaryVisit.day) ?? "不明") · メモを書いた日 \(entry.writtenAt.map(VeterinaryVisit.day) ?? "不明")")
+        Text("撮影日 \(entry.capturedAt.map { DayText.japanese(VeterinaryVisit.day($0)) } ?? "不明") · メモを書いた日 \(entry.writtenAt.map { DayText.japanese(VeterinaryVisit.day($0)) } ?? "不明")")
             .font(.caption).foregroundStyle(.secondary)
     }
 }
@@ -677,7 +677,7 @@ private struct VeterinaryReadView: View {
                     Text(displayName ?? visit.catName).font(.largeTitle.bold())
                     VeterinaryCatCareFields(fields: catCareFields)
                     Divider()
-                    if let day = visit.startedOn { Label("気付いた日 \(day)", systemImage: "calendar") }
+                    if let day = visit.startedOn { Label("気付いた日 \(DayText.japanese(day))", systemImage: "calendar") }
                     if !visit.observations.isEmpty { VStack(alignment: .leading, spacing: 8) { Text("家で気付いたこと").font(.headline); Text(visit.observations) } }
                     if !visit.questions.isEmpty { VStack(alignment: .leading, spacing: 8) { Text("聞きたいこと").font(.headline); Text(visit.questions) } }
                     ForEach(visit.orderedEntries) { entry in
@@ -743,7 +743,7 @@ private struct VeterinaryReadView: View {
     /// questions, and the chosen notes. The first chosen photo is included.
     private func makeExport(pdf: Bool) async {
         var fields = catCareFields
-        if let day = visit.startedOn { fields.append(("気付いた日", day)) }
+        if let day = visit.startedOn { fields.append(("気付いた日", DayText.japanese(day))) }
         if !visit.observations.isEmpty { fields.append(("家で気付いたこと", visit.observations)) }
         if !visit.questions.isEmpty { fields.append(("先生に聞きたいこと", visit.questions)) }
         for entry in visit.orderedEntries {
@@ -752,7 +752,7 @@ private struct VeterinaryReadView: View {
             if let weight = entry.weight, !catCareFields.contains(where: { $0.1.contains(CatCareFormat.weight(weight.grams)) }) {
                 lines.append("体重 \(CatCareFormat.weight(weight.grams))")
             }
-            if let captured = entry.capturedAt { lines.append("撮影日 \(VeterinaryVisit.day(captured))") }
+            if let captured = entry.capturedAt { lines.append("撮影日 \(DayText.japanese(VeterinaryVisit.day(captured)))") }
             if !lines.isEmpty { fields.append(("記録", lines.joined(separator: "\n"))) }
         }
         fields.append(("ご注意", "飼い主の記録をまとめたものです。医療の判断ではありません。"))
