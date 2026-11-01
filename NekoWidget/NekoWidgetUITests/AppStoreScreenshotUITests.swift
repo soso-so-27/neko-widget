@@ -316,33 +316,43 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments += japaneseLaunchArguments
         app.launchArguments.append("--app-store-screenshot-fixture")
+        // The month that just finished arrived as a work on the shelf.
+        app.launchArguments.append("--app-store-screenshot-album")
         app.launch()
 
         guard app.navigationBars["アルバム"].waitForExistence(timeout: 20),
-              app.descendants(matching: .any)["albums-root"].waitForExistence(timeout: 10) else {
-            fail("The Albums root did not appear first.", application: app)
+              app.buttons["album-prototype-past"].waitForExistence(timeout: 10) else {
+            fail("The Albums shelf did not appear first.", application: app)
             return
         }
-        XCTAssertFalse(app.segmentedControls["memories-section-picker"].exists)
-        XCTAssertFalse(app.buttons["album-primary-all-cat-photos"].exists)
-        captureScreenshot(named: "review-albums-root")
-
-        let organizedAlbum = app.descendants(matching: .any)["album-card-household_growth"].firstMatch
-        guard scrollUpUntilHittable(organizedAlbum, application: app),
-              waitForFixturePhotos(in: app, requirements: [(8, 1)]) else {
-            fail("The direct album cover did not render its fixture photo.", application: app)
+        // Starting the app never asks for Photos by itself (the fixture has no access).
+        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists,
+                       app.debugDescription)
+        // The newest work: last month's cover, or this year's book from 12/6.
+        let latestWork = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier IN %@", ["album-prototype-latest", "album-prototype-year"])
+        ).firstMatch
+        guard latestWork.waitForExistence(timeout: 10),
+              waitForAnyFixturePhoto(in: app, numbers: Array(19...24)) else {
+            fail("The newest work did not render its fixture cover.", application: app)
             return
         }
         captureScreenshot(named: "03-organized-memories")
-        organizedAlbum.tap()
-        let albumTitle = app.navigationBars["あの頃と今"]
-        guard albumTitle.waitForExistence(timeout: 10) else {
-            fail("The album cover did not open its collection directly.", application: app)
+        latestWork.tap()
+        guard app.descendants(matching: .any)["monthly-story"].waitForExistence(timeout: 15),
+              waitForAnyFixturePhoto(in: app, numbers: Array(19...24)) else {
+            fail("The newest work did not open as a story.", application: app)
             return
         }
-        albumTitle.buttons.element(boundBy: 0).tap()
-        guard app.navigationBars["アルバム"].waitForExistence(timeout: 10) else {
-            fail("The collection did not return to Albums.", application: app)
+        captureScreenshot(named: "review-monthly-story")
+        let closeStory = app.buttons["閉じる"].firstMatch
+        guard closeStory.waitForExistence(timeout: 5) else {
+            fail("The story has no close button.", application: app)
+            return
+        }
+        closeStory.tap()
+        guard app.buttons["album-prototype-past"].waitForExistence(timeout: 10) else {
+            fail("The story did not return to Albums.", application: app)
             return
         }
 
@@ -392,6 +402,8 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         XCTAssertFalse(app.buttons["photos-open-automatic-albums"].exists)
         captureScreenshot(named: "02-local-photo-window")
+        // Leave the Home Screen to the Widget capture that runs next.
+        app.terminate()
     }
 
     private var japaneseLaunchArguments: [String] {
@@ -449,6 +461,25 @@ final class AppStoreScreenshotUITests: XCTestCase {
         return false
     }
 
+    /// Any one of the given fixture photos has published its loaded state.
+    @MainActor
+    private func waitForAnyFixturePhoto(in application: XCUIApplication, numbers: [Int]) -> Bool {
+        let deadline = Date().addingTimeInterval(15)
+        repeat {
+            let loaded = numbers.contains { number in
+                application.descendants(matching: .any)
+                    .matching(identifier: "app-store-screenshot-fixture-photo-loaded-app-store-screenshot-fixture-\(number)")
+                    .count >= 1
+            }
+            if loaded {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return false
+    }
+
     @MainActor
     private func waitForFixturePhotos(
         in application: XCUIApplication,
@@ -494,5 +525,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         add(screenshot)
 
         XCTFail(message)
+        // A failure must not leave this app over the Home Screen for the Widget capture.
+        application.terminate()
     }
 }

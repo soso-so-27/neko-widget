@@ -258,6 +258,7 @@ enum SeasonalMovieVideoCatalog {
         in quarter: DateInterval,
         sourceAlbumIdentifier: String?
     ) -> PHFetchResult<PHAsset>? {
+        guard photoLibraryIsReadable else { return nil }
         let options = PHFetchOptions()
         options.predicate = NSPredicate(
             format: "creationDate >= %@ AND creationDate < %@ AND mediaType == %d",
@@ -286,6 +287,13 @@ enum SeasonalMovieVideoCatalog {
 /// Finds motion-capable seasonal candidates without uploading or persisting
 /// media. Existing cat-photo results are reused for stills and Live Photos;
 /// ordinary videos receive a narrow, on-device Vision check on three frames.
+/// Reading PHAssets before access is granted shows the system prompt. Every
+/// caller already requires photo access; this keeps a background preparation
+/// from asking on its own (the screenshot fixture starts without access).
+private var photoLibraryIsReadable: Bool {
+    [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite))
+}
+
 actor SeasonalMovieCandidateService {
     private struct VideoCatFrame {
         let seconds: TimeInterval
@@ -361,6 +369,7 @@ actor SeasonalMovieCandidateService {
                 byIdentifier[photo.localIdentifier] = photo
             }
         }
+        guard photoLibraryIsReadable else { return [] }
         let assets = PHAsset.fetchAssets(
             withLocalIdentifiers: Array(byIdentifier.keys),
             options: nil
