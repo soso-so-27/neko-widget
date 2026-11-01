@@ -647,10 +647,6 @@ struct MainTabView: View {
     private var presentedTabContent: some View {
         tabContent
         .environment(\.toolProfileActions, catProfilesActions)
-        // The Plus screen opens over its own cat: the best candidate, favorites first.
-        .environment(\.plusOfferPhoto, showcaseCandidates.first.map {
-            PlusOfferPhoto(localIdentifier: $0.localIdentifier, catBoundingBox: $0.catBoundingBox)
-        })
         .environment(\.receivedPhotoIdentifiers, receivedPhotoIdentifiers)
         .environment(\.showcaseOpenOne, { identifier in
             showcaseSession = ShowcaseSession(currentPhotoIdentifier: identifier, scopeID: "")
@@ -705,6 +701,11 @@ struct MainTabView: View {
         .sheet(item: $relatedPhotoRoute, onDismiss: { relatedPhotoUsesLibraryScope = false }) { route in
             relatedAlbumsSheet(for: route)
         }
+        // The Plus screen opens over its own cat (the best candidate, favorites
+        // first) from every tab and sheet below, Settings included.
+        .environment(\.plusOfferPhoto, showcaseCandidates.first.map {
+            PlusOfferPhoto(localIdentifier: $0.localIdentifier, catBoundingBox: $0.catBoundingBox)
+        })
     }
 
     private var routedTabContent: some View {
