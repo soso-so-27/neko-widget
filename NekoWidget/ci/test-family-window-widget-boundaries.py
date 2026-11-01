@@ -2977,7 +2977,9 @@ class CatCareTests(unittest.TestCase):
         tab = source("NekoWidget/Views/MainTabView.swift")
         # 10/22: the cat's card on the ツール tab opens the cat's page, whose
         # title switch leads to この子のこと (CatCareDetailView).
-        self.assertIn("CatChip(profile: profile, progress: careProgress(for: profile))", tab)
+        self.assertIn("CatChip(profile: profile, progress: careProgress(for: profile),", tab)
+        # 11/1: a cat whose farewell day is recorded shows no ring.
+        self.assertIn("departed: farewellDays[profile.identifier] != nil)", tab)
         detail = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
         self.assertIn('"cat-profile-page"', detail)
         self.assertIn("CatCareDetailView(profile: profile, otherProfiles: [], selectedProfileID: .constant(profile.identifier))", detail)
