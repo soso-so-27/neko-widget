@@ -19,7 +19,47 @@ struct VerifyCatCare {
         try lostCat()
         try memoWeights()
         try portableBackup()
+        try conditionsStatus()
         print("Cat care (この子のこと) model, merge, import and decoding checks passed")
+    }
+
+    static func conditionsStatus() throws {
+        var cat = CatCareRecord(catID: UUID())
+        try check(cat.conditionsStatus == .unknown, "missing conditions stay unknown")
+        cat.conditions = .init(value: "  \n", editedAt: t0, editedBy: "old-phone")
+        try check(cat.conditionsStatus == .unknown, "old empty text stays unknown")
+        cat.conditions = .init(value: "腎臓の療法食", editedAt: t0, editedBy: "old-phone")
+        let recorded = cat
+        try check(cat.conditionsStatus == .recorded, "old description remains recorded")
+        try check(cat.setConditions(status: .none, editedAt: t1, editedBy: "new-phone"), "none is an explicit edit")
+        try check(cat.conditions?.value == "なし" && cat.conditionsStatus == .none, "none remains a readable legacy string")
+        let unchanged = cat
+        try check(cat.setConditions(status: .none, editedAt: t1.addingTimeInterval(1), editedBy: "another"), "same value accepted")
+        try check(cat == unchanged, "no-op does not invent edit provenance")
+        try check(!cat.setConditions(status: .recorded, text: "  ", editedAt: t1, editedBy: "new-phone")
+                  && cat == unchanged, "missing details do not erase prior conditions")
+        try check(!cat.setConditions(status: .recorded, text: "なし", editedAt: t1, editedBy: "new-phone")
+                  && cat == unchanged, "recorded cannot encode an ambiguous none value")
+        try check(CatCareMerge.merge(recorded, cat) == CatCareMerge.merge(cat, recorded), "none and details share the existing merge unit")
+        try check(CatCareMerge.merge(recorded, cat).conditionsStatus == .none, "newer none wins")
+        var state = CatCareState(deviceID: "new-phone", now: t0); state.cats = [cat]
+        let bytes = try CatCareDecoding.encode(state)
+        let object = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        let rawCat = (object["cats"] as! [[String: Any]])[0]
+        try check(object["schemaVersion"] as? Int == 1 && rawCat["conditionsStatus"] == nil, "no new stored field or schema")
+        struct LegacyRecord: Decodable { let conditions: CatCareStamped<String>? }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let old = try decoder.decode(LegacyRecord.self, from: JSONSerialization.data(withJSONObject: rawCat))
+        try check(old.conditions == cat.conditions, "old string reader retains value and author/time")
+        let restored = try CatCareDecoding.backupState(CatCareDecoding.portable(bytes, deviceID: "restored-phone"))
+        try check(restored.cats[0].conditions == cat.conditions && restored.cats[0].conditionsStatus == .none, "portable backup restores explicit none")
+        var oldEdit = cat
+        oldEdit.conditions = .init(value: "投薬中", editedAt: t1.addingTimeInterval(2), editedBy: "old-phone")
+        try check(CatCareMerge.merge(cat, oldEdit).conditionsStatus == .recorded, "old app edit cannot leave a stale none flag")
+        try check(oldEdit.setConditions(status: .unknown, editedAt: t1.addingTimeInterval(3), editedBy: "new-phone"), "explicit clear accepted")
+        try check(CatCareMerge.merge(cat, oldEdit).conditionsStatus == .unknown && oldEdit.conditions?.value == "", "clear wins without resurrecting old none")
+        try check(oldEdit.setConditions(status: .recorded, text: "  投薬中  ", editedAt: t1.addingTimeInterval(4), editedBy: "new-phone")
+                  && oldEdit.conditions?.value == "投薬中", "recorded edit uses existing text limits")
     }
 
     static func portableBackup() throws {

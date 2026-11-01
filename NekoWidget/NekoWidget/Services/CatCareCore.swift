@@ -60,6 +60,21 @@ struct CatCareStamped<Value: Codable & Equatable & Sendable>: Codable, Equatable
 enum CatCareTriState: String, Codable, Equatable, Sendable { case unknown, yes, no }
 enum CatCareSex: String, Codable, Equatable, Sendable { case unknown, male, female }
 
+/// Presentation/editing state derived from the existing string. Do not add a
+/// second persisted flag: an older app can edit the string without updating it.
+enum CatCareConditionsStatus: String, CaseIterable, Sendable {
+    case unknown, none, recorded
+
+    /// An ordinary, readable value for old apps and the existing family field.
+    static let noneText = "なし"
+
+    static func reading(_ text: String?) -> Self {
+        let text = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return .unknown }
+        return text == noneText ? .none : .recorded
+    }
+}
+
 struct CatCareAllergy: Codable, Equatable, Sendable {
     enum Status: String, Codable, Equatable, Sendable { case unknown, none, recorded }
     var status: Status = .unknown
@@ -200,6 +215,31 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var deletedAt: Date?
 
     var id: UUID { catID }
+
+    var conditionsStatus: CatCareConditionsStatus {
+        CatCareConditionsStatus.reading(conditions?.value)
+    }
+
+    /// Preserve the v1 string wire format, its author/time, and one merge unit.
+    /// An empty description cannot claim a recorded condition; callers retain
+    /// their draft and ask for details. A literal "なし" uses the none choice.
+    @discardableResult
+    mutating func setConditions(status: CatCareConditionsStatus, text: String = "",
+                                editedAt: Date, editedBy: String) -> Bool {
+        let value: String
+        switch status {
+        case .unknown: value = ""
+        case .none: value = CatCareConditionsStatus.noneText
+        case .recorded:
+            let details = CatCareLimits.clippedText(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard CatCareConditionsStatus.reading(details) == .recorded else { return false }
+            value = details
+        }
+        if conditions?.value != value {
+            conditions = .init(value: value, editedAt: editedAt, editedBy: editedBy)
+        }
+        return true
+    }
 
     init(catID: UUID, profileID: UUID? = nil) {
         self.catID = catID
