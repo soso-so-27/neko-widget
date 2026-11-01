@@ -1,0 +1,70 @@
+name: Automatic-save observation diagnostic
+
+on:
+  push:
+    branches: ['diagnostic/autosave-status-*']
+    paths:
+      - '.github/workflows/autosave-observation-diagnostic.yml'
+      - 'NekoWidget/NekoWidget/Services/AppRecordPersistence.swift'
+      - 'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift'
+      - 'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift'
+      - 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autosave-observation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  observation:
+    name: Synthetic automatic-save observation only (not release evidence)
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Run the isolated production-client and settings fixture
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available --json | python3 -c '
+          import json,sys
+          devices=json.load(sys.stdin)["devices"].get("com.apple.CoreSimulator.SimRuntime.iOS-26-2", [])
+          candidates=[d["udid"] for d in devices if d.get("isAvailable") and d["name"].startswith("iPhone")]
+          if not candidates: raise SystemExit("Required iOS 26.2 simulator unavailable")
+          print(candidates[0])')
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \
+            -derivedDataPath "$RUNNER_TEMP/autosave-build" \
+            -resultBundlePath "$RUNNER_TEMP/autosave-observation.xcresult" \
+            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveSettingsDoNotInvalidateSession \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
+            COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES test 2>&1 | tee "$RUNNER_TEMP/autosave-observation.log"
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ['RUNNER_TEMP'], 'autosave-observation.log').read_text()
+          cases=re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)",log)
+          expected='NekoWidgetUITests.SoloMemoriesUITests testAutomaticSaveSettingsDoNotInvalidateSession'
+          if cases != [(expected,'started'),(expected,'passed')]:
+              raise SystemExit('The requested native test must run and pass exactly once; skipped is not success.')
+          PY
+      - name: Upload diagnostic result
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: autosave-observation-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/autosave-observation.log
+            ${{ runner.temp }}/autosave-observation.xcresult
+          retention-days: 7
+          if-no-files-found: warn
