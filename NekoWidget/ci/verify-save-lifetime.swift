@@ -95,7 +95,7 @@ struct SaveLifetimeCheck {
             precondition(g.ends == (synchronous ? [1] : []))
         }
 
-        let g = Grant(), w = Work(), l = grant.make()
+        let w = Work(), l = grant.make()
         let t = Task { await l.run { await w.save() } }
         await until { w.starts == 1 }
         l.setForeground(false); l.setForeground(true)
@@ -104,7 +104,6 @@ struct SaveLifetimeCheck {
         precondition(w.starts == 1 && w.cancellations == 0)
         w.release = true
         await t.value; await joined.value
-        _ = g
         print("PASS: idle background, completion, timer/UI cancellation, expiry, immediate resume, stale expiry, denied grant, overlapping callers")
     }
 }

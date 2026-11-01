@@ -1420,6 +1420,26 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    private func verifyAutomaticSaveInterruptionAndBackgroundLifetime() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-background-probe"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["background probe ready"].waitForExistence(timeout: 15), app.debugDescription)
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        // Give the real UIKit assertion time to finish while the app is backgrounded.
+        Thread.sleep(forTimeInterval: 9)
+        app.activate()
+        XCTAssertTrue(app.staticTexts["background probe completed in background"].waitForExistence(timeout: 5), app.debugDescription)
+        app.terminate()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-photo-interruption-probe"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["45MBの中断再開と写真の再送なしを確認しました"].waitForExistence(timeout: 120), app.debugDescription)
+        app.terminate()
+        verifyAutomaticSaveGroupsMetadataAndResumesInterruptedUnion()
+    }
+    @MainActor
     func testAutomaticPartitionedRecordsMigrationAndRestore() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1459,6 +1479,7 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion() {
+        verifyAutomaticSaveInterruptionAndBackgroundLifetime()
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--managed-preservation-membership-ui-fixture", "--preservation-tool-delete-pending-ui-fixture",
