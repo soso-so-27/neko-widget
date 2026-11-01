@@ -1486,7 +1486,7 @@ final class SoloMemoriesUITests: XCTestCase {
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let resume = app.buttons["preservation-resume-tool-deletion"]
-        XCTAssertTrue(app.navigationBars["サービスに保管"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["保存した記録"].waitForExistence(timeout: 10), app.debugDescription)
         for _ in 0..<12 where !resume.isHittable { app.swipeUp() }
         XCTAssertTrue(resume.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.staticTexts["preservation-transfer-foreground-guidance"].exists)
