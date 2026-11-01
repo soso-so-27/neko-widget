@@ -423,6 +423,64 @@ struct AppRecordHead: Codable, Equatable, Sendable {
     }
 }
 
+/// Owns the actual save, independently of the timer or a disappearing view's Task.
+/// A background grant can only finish work that has already started.
+@MainActor
+final class AppRecordSaveLifetime {
+    typealias Begin = (@escaping @MainActor @Sendable () -> Void) -> Int?
+    private let begin: Begin
+    private let end: (Int) -> Void
+    private var foreground = true
+    private var operation: (id: UUID, task: Task<Void, Never>)?
+    private var lease: (id: UUID, handle: Int?)?
+
+    init(begin: @escaping Begin, end: @escaping (Int) -> Void) {
+        self.begin = begin; self.end = end
+    }
+
+    func setForeground(_ value: Bool) {
+        guard foreground != value else { return }
+        foreground = value
+        if value { endLease(); return }
+        guard let operation, !operation.task.isCancelled else { return }
+        let leaseID = UUID()
+        lease = (leaseID, nil)
+        let handle = begin { [weak self] in
+            guard let self, self.lease?.id == leaseID else { return }
+            self.operation?.task.cancel()
+            self.endLease()
+        }
+        // Also tolerate expiry delivered synchronously by the grant provider.
+        guard lease?.id == leaseID else { if let handle { end(handle) }; return }
+        guard let handle else { lease = nil; operation.task.cancel(); return }
+        lease = (leaseID, handle)
+    }
+
+    func run(_ work: @escaping @MainActor () async -> Void) async {
+        if let previous = operation {
+            let interrupted = previous.task.isCancelled
+            await previous.task.value
+            // Foreground entry waits for cancelled I/O to unwind before retrying.
+            // An ordinary overlapping caller only joins the existing save.
+            if !interrupted { return }
+        }
+        guard foreground, !Task.isCancelled else { return }
+        let id = UUID()
+        let task = Task { [self] in
+            await work()
+            if operation?.id == id { operation = nil; endLease() }
+        }
+        operation = (id, task)
+        await task.value
+    }
+
+    private func endLease() {
+        let handle = lease?.handle
+        lease = nil
+        if let handle { end(handle) }
+    }
+}
+
 @MainActor
 final class AppRecordPersistence: ObservableObject {
     static let shared = AppRecordPersistence()
@@ -458,6 +516,10 @@ final class AppRecordPersistence: ObservableObject {
     private let client: ManagedPreservationClient
     private let bindingURL: URL
     private var loop: Task<Void, Never>?
+    private let saveLifetime = AppRecordSaveLifetime(begin: { expiration in
+        let identifier = UIApplication.shared.beginBackgroundTask(withName: "Finish automatic save", expirationHandler: expiration)
+        return identifier == .invalid ? nil : identifier.rawValue
+    }, end: { UIApplication.shared.endBackgroundTask(UIBackgroundTaskIdentifier(rawValue: $0)) })
     private var active = false
     private var observer: NSObjectProtocol?
     private var datasetObserver: NSObjectProtocol?
@@ -612,6 +674,7 @@ final class AppRecordPersistence: ObservableObject {
     }
     func setActive(_ value: Bool) {
         active = value
+        saveLifetime.setForeground(value)
         if !value { loop?.cancel(); loop = nil; return }
         guard loop == nil, configuration.isEnabled else { return }
         requested = true
@@ -712,6 +775,9 @@ final class AppRecordPersistence: ObservableObject {
         return record
     }
     private func synchronize() async {
+        await saveLifetime.run { [self] in await synchronizeOnce() }
+    }
+    private func synchronizeOnce() async {
         guard active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
         busy = true
         defer { busy = false }

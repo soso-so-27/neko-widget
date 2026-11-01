@@ -237,3 +237,8 @@ python3 ci/prepare-product-quota-check.py "$RUNNER_TEMP/product-quota-source.swi
 xcrun swiftc -D DEBUG -parse-as-library "$RUNNER_TEMP/product-quota-source.swift" \
   ci/verify-product-quota.swift -o "$RUNNER_TEMP/verify-product-quota"
 "$RUNNER_TEMP/verify-product-quota"
+
+python3 ci/prepare-save-lifetime-check.py "$RUNNER_TEMP/save-lifetime.swift"
+xcrun swiftc -parse-as-library "$RUNNER_TEMP/save-lifetime.swift" \
+  ci/verify-save-lifetime.swift -o "$RUNNER_TEMP/verify-save-lifetime"
+"$RUNNER_TEMP/verify-save-lifetime"
