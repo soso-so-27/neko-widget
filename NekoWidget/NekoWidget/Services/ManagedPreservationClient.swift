@@ -738,6 +738,42 @@ actor ManagedPreservationClient {
         catch ManagedPreservationError.authenticationRequired { return false }
     }
 
+    /// Merely opening automatic-save settings must not renew or invalidate the
+    /// credential used by an in-flight save. Expired renewable access is unknown,
+    /// not evidence that the person has signed out.
+    func observeSessionIfAvailable() throws -> Bool {
+        guard configuration.isEnabled else { return false }
+        let current = try store.load()
+        if !loaded || credential != current { credential = current; loaded = true; epoch &+= 1 }
+        guard let current, try store.deletionReceipt() == nil else { return false }
+        if current.expiresAt <= sessionNow() {
+            if current.isRenewable { throw ManagedPreservationError.unavailable }
+            return false
+        }
+        return true
+    }
+
+    func accountObservationOwnerID() throws -> String {
+        try Task.checkCancellation()
+        guard loaded, let credential, credential.expiresAt > sessionNow(),
+              try store.load() == credential, try store.deletionReceipt() == nil else {
+            throw ManagedPreservationError.staleSession
+        }
+        return credential.ownerId
+    }
+
+    func captureAccountObservationCheckpoint() throws -> SessionCheckpoint {
+        _ = try accountObservationOwnerID()
+        guard let credential else { throw ManagedPreservationError.staleSession }
+        return SessionCheckpoint(epoch: epoch, credential: credential)
+    }
+
+    func requireAccountObservationCheckpoint(_ checkpoint: SessionCheckpoint) throws {
+        try ensureEpoch(checkpoint.epoch)
+        _ = try accountObservationOwnerID()
+        guard credential == checkpoint.credential else { throw ManagedPreservationError.staleSession }
+    }
+
     private func requireDeviceItem(_ captured: ManagedPreservationSessionStore.Credential, epoch expectedEpoch: UInt64) throws {
         try Task.checkCancellation()
         try ensureEpoch(expectedEpoch)
@@ -959,8 +995,9 @@ actor ManagedPreservationClient {
         cancelSignIn()
     }
 
-    func membership() async throws -> ManagedPreservationMembership {
-        let data = try await authenticated("GET", path: "/v1/membership", maximumBytes: 4096)
+    func membership(observingOnly: Bool = false) async throws -> ManagedPreservationMembership {
+        let data = try await authenticated("GET", path: "/v1/membership", maximumBytes: 4096,
+                                           invalidatesSession: !observingOnly)
         let result: ManagedPreservationMembership = try decode(data)
         guard result.linked || result.status == .unknown else { throw ManagedPreservationError.invalidResponse }
         if result.access == .pilot {
@@ -971,17 +1008,19 @@ actor ManagedPreservationClient {
     }
 
     /// The server's authenticated snapshot is independent of membership.
-    func usage() async throws -> ManagedPreservationUsage {
+    func usage(observingOnly: Bool = false) async throws -> ManagedPreservationUsage {
         let data: Data
         var legacyResponse = false
         do {
             data = try await authenticated("GET", path: "/v1/usage",
-                query: [.init(name: "productQuotaVersion", value: "2")], maximumBytes: 4096)
+                query: [.init(name: "productQuotaVersion", value: "2")], maximumBytes: 4096,
+                invalidatesSession: !observingOnly)
         } catch ManagedPreservationError.requestRejected {
             // The old service rejects v2. Read its existing usage once; its
             // obsolete family-sharing policy is not a membership grant.
             legacyResponse = true
-            data = try await authenticated("GET", path: "/v1/usage", query: [], maximumBytes: 4096)
+            data = try await authenticated("GET", path: "/v1/usage", query: [], maximumBytes: 4096,
+                                           invalidatesSession: !observingOnly)
         }
         do {
             var result: ManagedPreservationUsage = try decode(data)
@@ -1447,11 +1486,21 @@ actor ManagedPreservationClient {
                                body: Data? = nil, revision: Int? = nil,
                                maximumBytes: Int = 65_536, responseFile: URL? = nil,
                                expectedMIMEType: String = "application/json", checkpoint: SessionCheckpoint? = nil,
-                               strictToolDeletion: Bool = false) async throws -> Data {
+                               strictToolDeletion: Bool = false, invalidatesSession: Bool = true) async throws -> Data {
         // Validate and capture in one actor turn, before the first suspension.
         // A caller's earlier check cannot bind a later request after sign-in changes.
         if let checkpoint { try requireSessionCheckpoint(checkpoint) }
-        guard try hasSession(), let captured = credential else { throw ManagedPreservationError.authenticationRequired }
+        if invalidatesSession {
+            guard try hasSession() else { throw ManagedPreservationError.authenticationRequired }
+        } else {
+            // Only these two observation reads may preserve an unconfirmed
+            // session. They still reject 401, expiry, deletion and owner changes.
+            guard method == "GET", ["/v1/membership", "/v1/usage"].contains(path), checkpoint == nil else {
+                throw ManagedPreservationError.invalidRecord
+            }
+            _ = try accountObservationOwnerID()
+        }
+        guard let captured = credential else { throw ManagedPreservationError.authenticationRequired }
         let capturedEpoch = epoch
         do {
             let data = try await request(method, path: path, query: query, body: body,
@@ -1462,8 +1511,12 @@ actor ManagedPreservationClient {
                   captured.expiresAt > sessionNow(), try store.load() == captured else {
                 throw ManagedPreservationError.staleSession
             }
+            if !invalidatesSession { _ = try accountObservationOwnerID() }
             return data
         } catch ManagedPreservationError.authenticationRequired {
+            // A temporarily uncovered owner generation also returns 401. A
+            // screen read must not expire the token of the batch completing it.
+            guard invalidatesSession else { throw ManagedPreservationError.unavailable }
             if epoch == capturedEpoch {
                 if captured.isRenewable {
                     // Access failure alone cannot invalidate the device proof key.
