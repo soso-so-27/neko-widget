@@ -8,6 +8,7 @@ enum FamilyNotebookCatCareBridgeVerifier {
         let family = UUID(), cat = UUID(), author = FamilyNotebookAuthor(personID: "sender", displayName: "家族")
         let source = try FamilyNotebookStore(directory: root.appendingPathComponent("source"), familyID: family, deviceID: "sender-device")
         var chosen = fixture.care; chosen.cats = [fixture.care.cats[0]]
+        _ = chosen.cats[0].setConditions(status: .none, editedAt: FamilyNotebookMigrationVerifier.then, editedBy: "sender")
         let link = FamilyNotebookLocalMapping(sourceKey: "cat:" + fixture.toolA.uuidString.lowercased(), familyCatID: cat,
             profileID: fixture.profileA, toolCatID: fixture.toolA)
         let plan = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: chosen, unreadableCatCount: 0)),
@@ -23,6 +24,9 @@ enum FamilyNotebookCatCareBridgeVerifier {
         try require(received.cats.count == 2 && received.cats[0] == privateCare.cats[0], "same name must never link or replace a private cat")
         try require(received.household == privateCare.household, "family projection must not change household contacts or vet")
         let imported = received.cats[1]
+        try require(imported.conditionsStatus == .none && imported.conditions?.value == "なし", "none survives the unchanged conditions operation and projection")
+        let conditionOperations = try source.snapshot().operations.filter { $0.target.field == .conditions }
+        try require(conditionOperations.count == 1 && conditionOperations[0].value == .text("なし"), "none uses one legacy field, not a new enum or operation")
         try require(imported.catID != fixture.toolA && imported.catID != fixture.toolB && imported.profileID == nil,
                     "remote identity must receive a new local tool ID, without a recognition profile")
         try require(imported.activeWeights.count == 1 && imported.activeMedications.count == 1 && imported.activeVaccinations.count == 1
@@ -55,6 +59,13 @@ enum FamilyNotebookCatCareBridgeVerifier {
         try require(try destination.snapshot() == committed, "retry after tool save failure must not enqueue a duplicate")
         let reopened = try FamilyNotebookStore(directory: root.appendingPathComponent("receiver"), familyID: family, deviceID: "receiver-device")
         let recovered = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: received)
+        try require(recovered.cats[1].conditionsStatus == .none, "none survives durable reopen and unrelated edits")
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .conditions), value: .clear, author: author)
+        let cleared = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: recovered)
+        try require(cleared.cats[1].conditionsStatus == .unknown, "family clear restores unknown, not none")
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .conditions), value: .text("通院中"), author: author)
+        let conditionEdited = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: cleared)
+        try require(conditionEdited.cats[1].conditionsStatus == .recorded && conditionEdited.cats[1].conditions?.value == "通院中", "legacy family text edit replaces none without a stale status")
         try require(recovered.cats[1].activeWeights[0].grams == 4600, "a crash before the tool write must recover from durable notebook")
         _ = try reopened.edit(target: .init(familyCatID: cat, collection: .weight, recordID: remoteRecord, field: nil), value: nil, author: author)
         let deleted = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: recovered)
