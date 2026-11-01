@@ -18,6 +18,10 @@ extension Notification.Name {
     static let momentSharingContentNeedsReload = Notification.Name(
         "jp.nekowidget.sharing.content-needs-reload"
     )
+    /// Pull-to-refresh on the まど tab: the group list reloads itself.
+    static let groupWindowListNeedsReload = Notification.Name(
+        "jp.nekowidget.group.list-needs-reload"
+    )
     static let momentSharingSynchronizationSucceeded = Notification.Name(
         "jp.nekowidget.sharing.synchronization-succeeded"
     )

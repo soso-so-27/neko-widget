@@ -186,6 +186,9 @@ struct AlbumPrototypeView: View {
     let assignments: [String: Set<String>]
     let profileNames: [String: String]
     let openMovie: (SeasonalMoviePeriodID) -> Void
+    /// Without Photos access there are no works to make: say that, not 「まだ作品はありません」.
+    var hasPhotoAccess = true
+    var requestPhotoAccess: () -> Void = {}
 
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
@@ -244,15 +247,27 @@ struct AlbumPrototypeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if let heroYear {
-                    yearCard(heroYear)
-                } else if let latest = letters.first {
-                    latestCard(latest)
-                }
-                yearShelf
-                if letters.isEmpty {
-                    ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
-                                           description: Text("猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"))
+                if !hasPhotoAccess {
+                    ContentUnavailableView {
+                        Label("写真へのアクセスが必要です", systemImage: "photo")
+                    } description: {
+                        Text("猫の写真から作品を作るには、写真へのアクセスを許可してください。")
+                    } actions: {
+                        Button("写真へのアクセスを許可") { requestPhotoAccess() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .accessibilityIdentifier("album-photo-access")
+                } else {
+                    if let heroYear {
+                        yearCard(heroYear)
+                    } else if let latest = letters.first {
+                        latestCard(latest)
+                    }
+                    yearShelf
+                    if letters.isEmpty {
+                        ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
+                                               description: Text("猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"))
+                    }
                 }
             }
             .padding(16)

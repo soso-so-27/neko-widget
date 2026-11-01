@@ -792,8 +792,11 @@ struct MainTabView: View {
             }
         }
         .alert("この作品は開けません", isPresented: $arrivalUnavailable) {
+            if !hasPhotoAccess { Button("写真へのアクセスを許可") { requestPhotoAccess() } }
             Button("閉じる", role: .cancel) { }
-        } message: { Text("写真へのアクセスとアルバムの設定を確認してください。") }
+        } message: {
+            Text(hasPhotoAccess ? "表示する写真の範囲を確かめてください。" : "写真へのアクセスを許可すると、作品を開けます。")
+        }
         .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
             guard route != nil else { return }
             relatedPhotoUsesLibraryScope = false
@@ -931,7 +934,9 @@ struct MainTabView: View {
             catPhotos: hasPhotoAccess ? catPhotos : [],
             assignments: currentPhotoLibraryAssignments,
             profileNames: currentPhotoLibraryProfileNames,
-            openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) }
+            openMovie: { memoriesPath.append(MemoriesRoute.seasonalMovie($0)) },
+            hasPhotoAccess: hasPhotoAccess,
+            requestPhotoAccess: requestPhotoAccess
         )
     }
 
@@ -1392,6 +1397,7 @@ struct MainTabView: View {
                                     readingPositionKey: photoLibraryPositionKey(.favorites),
                                     unavailableSavedPhotoCount: unavailablePhotoLibrarySavedCount,
                                     hasPhotoAccess: hasPhotoAccess,
+                                    requestPhotoAccess: requestPhotoAccess,
                                     savedStateReadFailed: savedPhotoStateReadFailed,
                                     receivedPhotoIdentifiers: receivedPhotoIdentifiers,
                                     ownCatPhotoIdentifiers: Set(currentPhotoLibraryAssignments.compactMap { $0.value.isEmpty ? nil : $0.key }),
@@ -3144,6 +3150,10 @@ private struct WindowListView: View {
         .navigationTitle("まど")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
+        .refreshable {
+            NotificationCenter.default.post(name: .groupWindowListNeedsReload, object: nil)
+            await reload()
+        }
         .onAppear { reloadPublicStates() }
         .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
             reloadPublicStates()

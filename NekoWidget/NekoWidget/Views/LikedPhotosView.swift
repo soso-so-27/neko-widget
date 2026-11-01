@@ -1819,6 +1819,8 @@ struct SavedMemoriesGalleryView: View {
     let readingPositionKey: String?
     let unavailableSavedPhotoCount: Int
     let hasPhotoAccess: Bool
+    /// The way to grant access, from the place that knows how (nil: no button).
+    let requestPhotoAccess: (() -> Void)?
     let savedStateReadFailed: Bool
     let exportPhotoBook: ([String]) async throws -> URL
 
@@ -1838,6 +1840,7 @@ struct SavedMemoriesGalleryView: View {
         readingPositionKey: String? = nil,
         unavailableSavedPhotoCount: Int = 0,
         hasPhotoAccess: Bool = true,
+        requestPhotoAccess: (() -> Void)? = nil,
         savedStateReadFailed: Bool = false,
         receivedPhotoIdentifiers: Set<String> = [],
         ownCatPhotoIdentifiers: Set<String> = [],
@@ -1853,6 +1856,7 @@ struct SavedMemoriesGalleryView: View {
         self.readingPositionKey = readingPositionKey
         self.unavailableSavedPhotoCount = max(0, unavailableSavedPhotoCount)
         self.hasPhotoAccess = hasPhotoAccess
+        self.requestPhotoAccess = requestPhotoAccess
         self.savedStateReadFailed = savedStateReadFailed
         self.exportPhotoBook = exportPhotoBook
         _creationOutput = State(initialValue: startsInExportMode ? .pdf : nil)
@@ -1961,9 +1965,17 @@ struct SavedMemoriesGalleryView: View {
     @ViewBuilder
     private var emptyGalleryState: some View {
         if !hasPhotoAccess {
-            ContentUnavailableView("写真へのアクセスを許可してください", systemImage: "photo",
-                description: Text("お気に入りの写真を表示するには、設定で許可してください。"))
-                .accessibilityIdentifier("saved-memories-photo-access-unavailable")
+            ContentUnavailableView {
+                Label("写真へのアクセスを許可してください", systemImage: "photo")
+            } description: {
+                Text("お気に入りの写真を表示するには、写真へのアクセスが必要です。")
+            } actions: {
+                if let requestPhotoAccess {
+                    Button("写真へのアクセスを許可", action: requestPhotoAccess)
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+            .accessibilityIdentifier("saved-memories-photo-access-unavailable")
         } else if savedStateReadFailed {
             ContentUnavailableView("お気に入りを開けませんでした", systemImage: "exclamationmark.triangle",
                 description: Text("少し待ってから、もう一度お試しください。"))
