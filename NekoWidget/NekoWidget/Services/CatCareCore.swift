@@ -231,6 +231,7 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var coat: CatCareStamped<String>?
     var marks: CatCareStamped<String>?
     /// 15 digits, empty, or the explicit human-readable answer "なし".
+    /// Shown in full on screen and on paper (owner decision 10/20).
     var microchip: CatCareStamped<String>?
     var indoorOnly: CatCareStamped<CatCareTriState>?
 
