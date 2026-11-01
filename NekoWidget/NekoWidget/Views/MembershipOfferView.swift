@@ -8,6 +8,8 @@ import UIKit
 struct MembershipOfferView: View {
     let context: PlusOfferContext
     let photo: UIImage?
+    /// One of the person's own cat photos, read from Photos only when shown.
+    let photoAsset: PlusOfferPhoto?
     let offer: MembershipOfferPresentation?
     let isWorking: Bool
     let canPurchase: Bool
@@ -39,6 +41,7 @@ struct MembershipOfferView: View {
     init(
         context: PlusOfferContext,
         photo: UIImage? = nil,
+        photoAsset: PlusOfferPhoto? = nil,
         offer: MembershipOfferPresentation?,
         isWorking: Bool,
         canPurchase: Bool,
@@ -55,6 +58,7 @@ struct MembershipOfferView: View {
     ) {
         self.context = context
         self.photo = photo
+        self.photoAsset = photoAsset
         self.offer = offer
         self.isWorking = isWorking
         self.canPurchase = canPurchase
@@ -120,6 +124,17 @@ struct MembershipOfferView: View {
                 Image(uiImage: photo)
                     .resizable()
                     .scaledToFill()
+                    .frame(height: 164)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .accessibilityLabel("あなたの猫の写真")
+                    .accessibilityIdentifier("membership-offer-photo")
+            } else if let photoAsset {
+                PhotoAssetImageView(localIdentifier: photoAsset.localIdentifier,
+                                    catBoundingBox: photoAsset.catBoundingBox,
+                                    targetPixelSize: CGSize(width: 1_200, height: 600),
+                                    targetAspectRatio: 2.5)
                     .frame(height: 164)
                     .frame(maxWidth: .infinity)
                     .clipped()
