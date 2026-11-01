@@ -1,26 +1,105 @@
 name: Private memo model diagnostic
+
 on:
   workflow_dispatch:
+  push:
+    branches: ['diagnostic/memo-veterinary-*']
+    paths:
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteStore.swift'
+      - 'NekoWidget/NekoWidget/Services/VeterinaryVisitStore.swift'
+      - 'NekoWidget/NekoWidget/Services/PhotoMemoryNoteExporter.swift'
+      - 'NekoWidget/ci/verify-photo-memory-notes.swift'
+      - 'NekoWidget/ci/verify-veterinary-visits.swift'
+      - 'NekoWidget/ci/verify-photo-memory-note-export.swift'
+
 permissions:
-  actions: read
   contents: read
+
+concurrency:
+  group: memo-model-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  inspect:
+  private-models:
+    if: github.event_name == 'push'
+    name: Apple persistence models only - not release evidence
     runs-on: macos-15
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Inspect existing failed test result without rebuilding
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Verify memo, consultation and export with injected local fixtures
+        working-directory: NekoWidget
         shell: bash
         run: |
           set -euo pipefail
-          gh api repos/soso-so-27/neko-widget/actions/artifacts/13078944619/zip > "$RUNNER_TEMP/result.zip"
-          unzip -q "$RUNNER_TEMP/result.zip" -d "$RUNNER_TEMP/result"
-          BUNDLE=$(find "$RUNNER_TEMP/result" -name '*.xcresult' -type d | head -1)
-          xcrun xcresulttool get test-results summary --path "$BUNDLE"
-          xcrun xcresulttool export diagnostics --path "$BUNDLE" --output-path "$RUNNER_TEMP/diagnostics"
-          find "$RUNNER_TEMP/diagnostics" -type f | head -50
-          find "$RUNNER_TEMP/diagnostics" -name '*.ips' -o -name '*.crash' | while read -r f; do cat "$f"; done
-          find "$RUNNER_TEMP/diagnostics" -name '*.txt' -o -name '*.log' | while read -r f; do grep -E 'Precondition|Fatal error|APP_RECORD|assertion failed|crash|Exception Type' "$f" | tail -30 || true; done
+          mkdir -p "$RUNNER_TEMP/neko-memo-model-diagnostic"
+          {
+            xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift ci/verify-photo-memory-notes.swift -o "$RUNNER_TEMP/verify-notes"
+            "$RUNNER_TEMP/verify-notes"
+            xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/VeterinaryVisitStore.swift ci/verify-veterinary-visits.swift -o "$RUNNER_TEMP/verify-visits"
+            "$RUNNER_TEMP/verify-visits"
+            xcrun swiftc -parse-as-library NekoWidget/Services/PhotoMemoryNoteStore.swift NekoWidget/Services/PhotoMemoryNoteExporter.swift ci/verify-photo-memory-note-export.swift -o "$RUNNER_TEMP/verify-export"
+            "$RUNNER_TEMP/verify-export"
+          } 2>&1 | tee "$RUNNER_TEMP/neko-memo-model-diagnostic/models.log"
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: memo-model-diagnostic-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/neko-memo-model-diagnostic
+          retention-days: 7
+          if-no-files-found: warn
+
+  personal-store:
+    if: github.event_name == 'workflow_dispatch'
+    name: Automatic save native test only - not release evidence
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Run the automatic save XCTest directly
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF#refs/heads/diagnostic/}" != "$GITHUB_REF"
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/devices.json"
+          DEVICE=$(python3 -c 'import json,os; d=json.load(open(os.environ["RUNNER_TEMP"]+"/devices.json")); print(next(x["udid"] for k,v in d["devices"].items() if k.endswith("iOS-26-2") for x in v if x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+            -sdk iphonesimulator -destination "platform=iOS Simulator,id=$DEVICE" \
+            -derivedDataPath "$RUNNER_TEMP/SaveDiagnostic" -resultBundlePath "$RUNNER_TEMP/SaveDiagnostic.xcresult" \
+            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
+            COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            test 2>&1 | tee "$RUNNER_TEMP/save-test.log"
+          python3 - <<'PY2'
+          import os,re
+          from pathlib import Path
+          text=Path(os.environ['RUNNER_TEMP'],'save-test.log').read_text()
+          cases=re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)",text)
+          expected='NekoWidgetUITests.SoloMemoriesUITests testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion'
+          assert cases == [(expected,'started'),(expected,'passed')], cases
+          PY2
+      - name: Summarize existing XCTest result
+        if: always()
+        shell: bash
+        run: xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/SaveDiagnostic.xcresult"
+      - name: Attach test result
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: automatic-save-native-result
+          path: |
+            ${{ runner.temp }}/save-test.log
+            ${{ runner.temp }}/SaveDiagnostic.xcresult
+          retention-days: 7
