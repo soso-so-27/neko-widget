@@ -252,7 +252,7 @@ struct AlbumPrototypeView: View {
                 yearShelf
                 if letters.isEmpty {
                     ContentUnavailableView("まだ作品はありません", systemImage: "photo.stack",
-                                           description: Text("猫の写真がひと月に 5 枚ほどたまると、その月のまとめが届きます。"))
+                                           description: Text("猫の写真がひと月に 5 枚ほどたまると、その月の作品がとどきます。"))
                 }
             }
             .padding(16)
@@ -306,7 +306,7 @@ struct AlbumPrototypeView: View {
                 }
                 .foregroundStyle(.primary)
             }
-            .accessibilityLabel("\(year)年の本、すべて見る")
+            .accessibilityLabel("\(year)年の作品、すべて見る")
             .accessibilityIdentifier("album-prototype-past")
             ScrollViewReader { reader in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -381,8 +381,8 @@ struct AlbumPrototypeView: View {
             .overlay(shape.stroke(Color.accentColor.opacity(0.8), lineWidth: 1.5))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(next.photoCount < MonthlyWindowBuilder.minimumSceneCount
-                ? "\(month)月の1冊、いま \(next.photoCount) 枚"
-                : "\(month)月の1冊、\(next.arrives.formatted(.dateTime.month(.defaultDigits).day()))にとどきます")
+                ? "\(month)月の作品、いま \(next.photoCount) 枚"
+                : "\(month)月の作品、\(next.arrives.formatted(.dateTime.month(.defaultDigits).day()))にとどきます")
         } else {
             let ahead = month > thisMonth
             shape.fill(Color(.tertiarySystemFill))
@@ -395,7 +395,7 @@ struct AlbumPrototypeView: View {
                 }
                 .opacity(ahead ? 0.5 : 1)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(ahead ? "\(month)月、これから" : "\(month)月、本はありません")
+                .accessibilityLabel(ahead ? "\(month)月、これから" : "\(month)月、作品はありません")
         }
     }
 
@@ -477,7 +477,7 @@ struct AlbumPrototypeView: View {
             .zoomSource(id, in: zoom)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel((wrapped ? "\(accessibilityTitle)、届きました" : accessibilityTitle)
+        .accessibilityLabel((wrapped ? "\(accessibilityTitle)、とどきました" : accessibilityTitle)
                             + (workNeedsPlus ? "、Plusで見られます" : ""))
     }
 }
@@ -635,7 +635,7 @@ struct PastWorksView: View {
             }
             .opacity(isAhead ? 0.5 : 1)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(isAhead ? "\(month)月、これから" : "\(month)月、本はありません")
+            .accessibilityLabel(isAhead ? "\(month)月、これから" : "\(month)月、作品はありません")
     }
 
     /// The year's work above its shelf: one row, not a thirteenth book.
@@ -649,7 +649,7 @@ struct PastWorksView: View {
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            Text(verbatim: "\(year)年の1冊").font(.system(.subheadline, design: .serif).weight(.bold))
+            Text(verbatim: "\(year)年の作品").font(.system(.subheadline, design: .serif).weight(.bold))
             Spacer()
             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
         }
@@ -1239,7 +1239,7 @@ private struct YearBookView: View {
                 HStack {
                     Color.clear.frame(width: 44, height: 44)
                     Spacer()
-                    Text(verbatim: "\(year)年の1冊")
+                    Text(verbatim: "\(year)年の作品")
                         .font(.system(.footnote, design: .serif))
                         .foregroundStyle(ink.opacity(0.55))
                     Spacer()
@@ -1337,7 +1337,7 @@ private struct YearBookView: View {
         case .colophon:
             VStack(alignment: .leading, spacing: 0) {
                 Spacer()
-                Text(verbatim: "\(year)年の1冊")
+                Text(verbatim: "\(year)年の作品")
                     .font(.system(size: 22, weight: .regular, design: .serif))
                 Text(verbatim: names)
                     .font(.footnote)
@@ -1711,7 +1711,7 @@ struct MonthlyBookView: View {
                 HStack {
                     Color.clear.frame(width: 44, height: 44)
                     Spacer()
-                    Text(verbatim: "\(letter.monthNumber)月の1冊")
+                    Text(verbatim: "\(letter.monthNumber)月の作品")
                         .font(.system(.footnote, design: .serif))
                         .foregroundStyle(Self.ink.opacity(0.55))
                     Spacer()
@@ -1826,7 +1826,7 @@ struct MonthlyBookView: View {
             // Like a printed book's last page: title, then the facts in two columns.
             VStack(alignment: .leading, spacing: 0) {
                 Spacer()
-                Text(verbatim: "\(letter.monthNumber)月の1冊")
+                Text(verbatim: "\(letter.monthNumber)月の作品")
                     .font(.system(size: 22, weight: .regular, design: .serif))
                 Text(verbatim: names)
                     .font(.footnote)

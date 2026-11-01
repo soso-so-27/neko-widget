@@ -527,7 +527,7 @@ struct HomeView: View {
                     .accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("ホーム画面にまどを置く").font(.headline)
+                    Text("ホーム画面にウィジェットを置く").font(.headline)
                     Text("長押し → ＋ → ねこのまど").font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)

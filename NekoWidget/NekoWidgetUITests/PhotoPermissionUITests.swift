@@ -3281,7 +3281,7 @@ final class SoloMemoriesUITests: XCTestCase {
             for _ in 0..<10 { if price.isHittable { break }; app.swipeUp() }
             XCTAssertEqual(price.label, "その後は月額¥980")
             let values = app.descendants(matching: .any)["membership-offer-values"].firstMatch
-            for line in ["毎日、新しい1枚がホーム画面に", "自動でたまるアルバム、月のまとめ、季節のムービー", "写真に新しいメモを書く",
+            for line in ["毎日、新しい1枚がホーム画面に", "自動でたまるアルバム、月の作品、季節のムービー", "写真に新しいメモを書く",
                          "まどを作って、家族と写真を届け合う", "猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる"] {
                 XCTAssertTrue(values.label.contains(line), "Missing value: \(line)")
             }
@@ -3355,12 +3355,12 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launch()
         let reasons: [(String, String?)] = [
             ("onboarding", nil), ("widget-resume", "ホーム画面の写真"),
-            ("monthly-summary", "月のまとめ"), ("new-memo", "新しいメモ"),
+            ("monthly-summary", "月の作品"), ("new-memo", "新しいメモ"),
             ("create-window", "まどを作る"), ("continue-window", "作った人のPlus"),
             ("continue-family", "家族の誰か1人のPlus"), ("preservation", "保存"), ("settings", nil),
         ]
         XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.buttons["membership-preview-open-monthly-summary"].label, "10月のまとめを見る")
+        XCTAssertEqual(app.buttons["membership-preview-open-monthly-summary"].label, "10月の作品を見る")
         for (identifier, reason) in reasons {
             let open = app.buttons["membership-preview-open-" + identifier]
             for _ in 0..<10 { if open.isHittable { break }; app.swipeUp() }

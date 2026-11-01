@@ -33,8 +33,8 @@ enum PlusOfferContext: Equatable, Sendable {
         switch self {
         case .onboarding: "Plusについて見る"
         case .widgetResume: "ウィジェットの写真を、毎日新しくする"
-        case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月のまとめを見る"
-        case .monthlySummary: "月のまとめ・ムービーを見る"
+        case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月の作品を見る"
+        case .monthlySummary: "月の作品・ムービーを見る"
         case .newMemo: "メモを書く"
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"
@@ -49,7 +49,7 @@ enum PlusOfferContext: Equatable, Sendable {
         switch self {
         case .onboarding, .settings: nil
         case .widgetResume: "ホーム画面の写真を毎日新しくするのは、Plusの機能です。"
-        case .monthlySummary: "月のまとめと季節のムービーは、Plusで見られます。"
+        case .monthlySummary: "月の作品と季節のムービーは、Plusで見られます。"
         case .newMemo: "新しいメモはPlusで書けます。書いたメモは、いつでも読めます。"
         case .createWindow: "まどを作るのは、Plusの機能です。"
         case .continueWindow: "このまどは、作った人のPlusで続きます。"
