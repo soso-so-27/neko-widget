@@ -540,8 +540,9 @@ struct NekoWidgetView: View {
                 Text(emptyStateSubtitle)
                     .font(family == .systemSmall ? .caption2 : .caption)
                     .foregroundStyle(QuietWindowPalette.cream.opacity(0.62))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .multilineTextAlignment(.center)
             }
             .padding(family == .systemSmall ? 14 : 20)
         }
