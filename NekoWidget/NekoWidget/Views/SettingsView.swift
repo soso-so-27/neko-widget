@@ -41,7 +41,7 @@ struct AutoSaveSettingsRow: View {
         LabeledContent {
             Text(!persistence.enabled ? "オフ"
                 : persistence.planEnded ? "止まっています"
-                : persistence.failing || persistence.conflict ? "保存できていません" : "オン")
+                : persistence.needsAttention ? "保存できていません" : "オン")
         } label: {
             Label("自動保存", systemImage: "icloud")
         }

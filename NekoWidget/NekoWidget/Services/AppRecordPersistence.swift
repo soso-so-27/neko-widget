@@ -512,9 +512,11 @@ final class AppRecordPersistence: ObservableObject {
         var requiredDatasetID: UUID? = nil
     }
     static let consentVersion = "app-records-automatic-v1"
-    @Published private(set) var title = "自動保存はオフです" { didSet { failing = false } }
+    @Published private(set) var title = "自動保存はオフです" { didSet { failing = false; retriesByItself = false } }
     /// The last attempt failed and nothing has been saved since.
     @Published private(set) var failing = false
+    /// The failure was the connection, so the next attempt comes without anyone pressing anything.
+    @Published private(set) var retriesByItself = false
     /// Plus has ended for the linked account, so nothing new is saved until it resumes.
     @Published private(set) var planEnded = false
     @Published private(set) var detail: String?
@@ -1002,8 +1004,29 @@ final class AppRecordPersistence: ObservableObject {
             detail = Self.failureDetail(error)
         }
         failing = true
+        retriesByItself = Self.isConnectionFailure(error)
         if error as? ManagedPreservationError == .membershipRequired { planEnded = true }
     }
+
+    private static func isConnectionFailure(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        guard let failure = error as? ManagedPreservationError else { return false }
+        return [.unavailable, .interrupted, .invalidResponse, .uploadTimedOut, .rateLimited].contains(failure)
+    }
+
+    /// Three states for the person: saved, saving, or something only they can resolve.
+    /// Steps inside a save and failures that retry by themselves all read as saving.
+    var shownTitle: String {
+        if failing { return retriesByItself ? "保存中…" : title }
+        return ["保存待ちの変更があります", "保存の準備中…", "保存の途中です"].contains(title) ? "保存中…" : title
+    }
+    var shownDetail: String? {
+        if failing && retriesByItself { return "通信が戻ると、自動で続けます。" }
+        if shownTitle == "保存中…" { return "アプリを閉じても、次に開いたときに自動で続けます。" }
+        // Tidying older saves is the app's own work, not something to read about.
+        return title == "保存済み" ? nil : detail
+    }
+    var needsAttention: Bool { (failing && !retriesByItself) || conflict }
 
     /// The account screen learns about the plan before a save is tried.
     func notePlanEnded(_ ended: Bool) { planEnded = ended }
@@ -1261,9 +1284,9 @@ struct AppRecordSettingsView: View {
                 Text("Plusが終わったため、新しい保存は止まっています。")
                 if offersPlus { plusOfferButton }
             } else {
-                Label(persistence.title, systemImage: statusSymbol)
+                Label(persistence.shownTitle, systemImage: statusSymbol)
                     .accessibilityIdentifier("app-record-save-status")
-                if let detail = persistence.detail { Text(detail).font(.footnote) }
+                if let detail = persistence.shownDetail { Text(detail).font(.footnote) }
                 else if !persistence.enabled { Text("猫のこと、メモ、ツールの記録を自動で保存して、新しいiPhoneに戻せます。") }
             }
         }
@@ -1355,7 +1378,7 @@ struct AppRecordSettingsView: View {
                 ProductQuotaSummary(quota: quota)
             }
             // Saving retries by itself; the button is only for a failure the person is looking at.
-            if persistence.failing && !persistence.conflict && !plusEnded {
+            if persistence.needsAttention && !persistence.conflict && !plusEnded {
                 Button("もう一度試す") { Task { await persistence.retry() } }
                     .disabled(persistence.busy)
                     .accessibilityIdentifier("app-record-retry")
@@ -1371,7 +1394,7 @@ struct AppRecordSettingsView: View {
 
     private var statusSymbol: String {
         guard persistence.enabled else { return "icloud.slash" }
-        if persistence.failing || persistence.conflict { return "exclamationmark.icloud" }
+        if persistence.needsAttention { return "exclamationmark.icloud" }
         // The check only once everything is in; while saving or after an interruption, a plain cloud.
         return persistence.title == "保存済み" ? "checkmark.icloud" : "icloud"
     }
