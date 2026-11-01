@@ -630,6 +630,46 @@ describe.sequential("App Store billing authority", () => {
     expect(await effectiveBillingEntitlement(testEnv, other.billingAccountId)).toMatchObject({grantsPlus: false});
   });
 
+  it.each([false, true])("recovers an expired lineage above current generation with a legacy job: %s", async (legacyJob) => {
+    await setAuthorityGates(true, true);
+    const value = await queuedTransaction();
+    await testEnv.DB.prepare(
+      "UPDATE billing_reconciliation_jobs SET request_generation = 199 WHERE original_transaction_id = ?",
+    ).bind(value.originalTransactionId).run();
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId,
+      value.originalTransactionId, async () => status({ ...value, expiresDateMs: nowMs - 1_000 }, 2));
+    expect(await testEnv.DB.prepare(
+      "SELECT request_generation, materialized_status FROM billing_effective_entitlement_current WHERE original_transaction_id = ?",
+    ).bind(value.originalTransactionId).first()).toEqual({ request_generation: 199, materialized_status: "expired" });
+    expect(await testEnv.DB.prepare(
+      "SELECT request_generation FROM billing_reconciliation_jobs WHERE original_transaction_id = ?",
+    ).bind(value.originalTransactionId).first()).toBeNull();
+
+    if (legacyJob) {
+      await testEnv.DB.prepare(
+        "INSERT INTO billing_reconciliation_jobs(original_transaction_id, requested_at, not_before, request_generation) VALUES (?, unixepoch(), unixepoch(), 6)",
+      ).bind(value.originalTransactionId).run();
+    }
+    await requestBillingReconciliation(testEnv, value.originalTransactionId);
+    expect(await testEnv.DB.prepare(
+      "SELECT request_generation FROM billing_reconciliation_jobs WHERE original_transaction_id = ?",
+    ).bind(value.originalTransactionId).first()).toEqual({ request_generation: 200 });
+    // Duplicate requests still advance the job; enqueueing alone must not grant Plus.
+    await requestBillingReconciliation(testEnv, value.originalTransactionId);
+    expect(await testEnv.DB.prepare(
+      "SELECT request_generation FROM billing_reconciliation_jobs WHERE original_transaction_id = ?",
+    ).bind(value.originalTransactionId).first()).toEqual({ request_generation: 201 });
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({ status: "expired", grantsPlus: false });
+
+    const repurchase = { ...value, transactionId: String(++immediateTransactionSequence), purchaseDateMs: nowMs };
+    await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId,
+      value.originalTransactionId, async () => ({ ...status(repurchase), fetchedAtMs: nowMs + 20_000 }));
+    expect(await testEnv.DB.prepare(
+      "SELECT request_generation, materialized_status, materialized_grants_plus FROM billing_effective_entitlement_current WHERE original_transaction_id = ?",
+    ).bind(value.originalTransactionId).first()).toEqual({ request_generation: 201, materialized_status: "active", materialized_grants_plus: 1 });
+    expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({ status: "active", grantsPlus: true });
+  });
+
   it("does not start immediate work through a closed upper or lower gate", async () => {
     await setAuthorityGates(true, true);
     const value = await queuedTransaction();
