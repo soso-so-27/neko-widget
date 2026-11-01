@@ -229,13 +229,7 @@ private struct CatChip: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                if !departed {
-                    Circle().stroke(Color(.tertiarySystemFill), lineWidth: 3.5)
-                    Circle()
-                        .trim(from: 0, to: progress.total == 0 ? 0 : CGFloat(progress.filled) / CGFloat(progress.total))
-                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
+                if !departed { CatCareRing(progress: progress, lineWidth: 3.5) }
                 CatProfileThumbnail(photo: profile.coverPhoto)
                     .frame(width: 52, height: 52)
                     .clipShape(Circle())
