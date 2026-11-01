@@ -41,7 +41,27 @@ struct VerifyFamilyNotebook {
         try boundaries(root.appendingPathComponent("boundaries"))
         try farewellConsent(root.appendingPathComponent("farewell"))
         try backup(root.appendingPathComponent("backup"))
+        try backupByteStability(root.appendingPathComponent("backup-stability"))
         print("Family notebook: convergence, offline restart, conflicts, tombstones, ACK, persistence and retained exit checks passed")
+    }
+
+    private static func backupByteStability(_ path: URL) throws {
+        let live = try store(path, "device-a")
+        for index in 0..<16 {
+            _ = try live.edit(target: water, value: .text("synthetic-\(index)"), author: a)
+        }
+        let original = try Data(contentsOf: path.appendingPathComponent("family-notebook.json"))
+        var state = try JSONDecoder().decode(FamilyNotebookStore.State.self, from: original)
+        state.ledgerKeys = Set((0..<16).map { "synthetic-ledger-\($0)" })
+        let manifest = FamilyNotebookBackup.Manifest(copies: [.init(id: UUID(), state: state)])
+        let baseline = try FamilyNotebookBackup.encode(manifest)
+        for _ in 0..<64 {
+            let decoded = try FamilyNotebookBackup.decode(baseline)
+            try check(decoded.copies[0].state == state, "backup round trip preserves all state")
+            let encoded = try FamilyNotebookBackup.encode(decoded)
+            try check(encoded == baseline, "unchanged backup must keep identical fingerprint bytes")
+        }
+        try check(try Data(contentsOf: path.appendingPathComponent("family-notebook.json")) == original, "stability check leaves source untouched")
     }
 
     private static func backup(_ path: URL) throws {
