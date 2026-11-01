@@ -28,7 +28,7 @@ struct MembershipOfferView: View {
     /// What Plus is, in the LP's words, plus saving (part of the 980 yen since 10/20).
     static let values = [
         ("毎日、新しい1枚がホーム画面に", "photo"),
-        ("自動でたまるアルバム、月の作品、季節のムービー", "rectangle.stack"),
+        ("月の作品、季節のムービー", "rectangle.stack"),
         ("写真に新しいメモを書く", "square.and.pencil"),
         ("まどを作って、家族と写真を届け合う", "person.2"),
         ("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud"),
