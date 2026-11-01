@@ -971,8 +971,10 @@ enum ToolBackupTransfer {
     /// A durable owner-bound journal keeps interrupted work explicitly visible.
     static func delete(_ index: ToolBackupIndex, client: ManagedPreservationClient,
                        retaining: Set<UUID> = [],
+                       continueCleanup: @escaping @Sendable () async throws -> Void = {},
                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
-        if index.version == 4 { try await deleteTree(index, client: client, retaining: retaining, progress: progress); return }
+        try await continueCleanup()
+        if index.version == 4 { try await deleteTree(index, client: client, retaining: retaining, continueCleanup: continueCleanup, progress: progress); return }
         try index.validate()
         let checkpoint = try await client.captureSessionCheckpoint()
         guard let owner = try await client.sessionOwnerID() else { throw ManagedPreservationError.authenticationRequired }
@@ -993,12 +995,13 @@ enum ToolBackupTransfer {
         try await client.requireSessionCheckpoint(checkpoint)
         try ToolBackupFiles.write(JSONEncoder().encode(ToolBackupFiles.Saved(owner: owner, index: index)), to: journal)
         if !deleted.contains(index.snapshotID) {
+            try await continueCleanup()
             do {
                 let snapshot = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(index.snapshotID, checkpoint: checkpoint) }
                 guard snapshot.record.revision == 1, let part = snapshot.document.toolBackup,
                       part.kind == "index", let bytes = Data(base64Encoded: part.payload),
                       try JSONDecoder().decode(ToolBackupIndex.self, from: bytes) == index else { throw ToolBackupError.invalid }
-                try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record, checkpoint: checkpoint) }
+                try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await continueCleanup(); try await client.delete(snapshot.record, checkpoint: checkpoint) }
             } catch ManagedPreservationError.notFound { }
             try await client.requireSessionCheckpoint(checkpoint)
             deleted.insert(index.snapshotID)
@@ -1007,6 +1010,7 @@ enum ToolBackupTransfer {
         completed = 1; await progress(completed, total)
         for file in index.files {
             for (offset, id) in file.records.enumerated() {
+                try await continueCleanup()
                 try await client.requireSessionCheckpoint(checkpoint)
                 if deleted.contains(id) { completed += 1; await progress(completed, total); continue }
                 // The accepted replacement still uses these immutable bytes.
@@ -1022,7 +1026,7 @@ enum ToolBackupTransfer {
                           part.snapshotId == (file.sourceSnapshotID ?? index.snapshotID).uuidString.lowercased(), part.path == file.path,
                           part.part == offset, part.count == file.records.count,
                           part.kind == (file.path.hasSuffix(".jpg") ? "photo" : "json") else { throw ToolBackupError.invalid }
-                    try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.delete(snapshot.record, checkpoint: checkpoint, requireUnreferenced: true) }
+                    try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await continueCleanup(); try await client.delete(snapshot.record, checkpoint: checkpoint, requireUnreferenced: true) }
                 } catch ManagedPreservationError.notFound { }
                   catch ManagedPreservationError.toolPartReferenced { /* Kept for another live copy. */ }
                 try await client.requireSessionCheckpoint(checkpoint)
@@ -1032,12 +1036,13 @@ enum ToolBackupTransfer {
             }
         }
         try await finishDeletion(index, owner: owner, journal: journal, receipt: receipt,
-                                 retaining: retaining, client: client, checkpoint: checkpoint)
+                                 retaining: retaining, client: client, checkpoint: checkpoint, continueCleanup: continueCleanup)
         await progress(total, total)
     }
 
     private static func deleteTree(_ index: ToolBackupIndex, client: ManagedPreservationClient,
-                                   retaining: Set<UUID>, progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
+                                   retaining: Set<UUID>, continueCleanup: @escaping @Sendable () async throws -> Void,
+                                   progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
         try index.validate()
         let checkpoint = try await client.captureSessionCheckpoint()
         guard let owner = try await client.sessionOwnerID(), try await client.usage().toolSnapshots?.strictPartDeletion == true,
@@ -1061,6 +1066,7 @@ enum ToolBackupTransfer {
         var completed = deleted.count
         await progress(completed, targets.count)
         for (id, node, file, offset) in remaining {
+            try await continueCleanup()
             try Task.checkCancellation(); try await client.requireSessionCheckpoint(checkpoint)
             do {
                 let found = try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.detail(id, checkpoint: checkpoint) }
@@ -1072,6 +1078,7 @@ enum ToolBackupTransfer {
                           part.kind == (file.path.hasSuffix(".jpg") ? "photo" : "json") else { throw ToolBackupError.invalid }
                 }
                 try await waitingForRateLimit(client: client, checkpoint: checkpoint) {
+                    try await continueCleanup()
                     try await client.delete(found.record, checkpoint: checkpoint, requireUnreferenced: node == nil)
                 }
             } catch ManagedPreservationError.notFound { }
@@ -1082,12 +1089,14 @@ enum ToolBackupTransfer {
             await progress(completed, targets.count)
         }
         try await finishDeletion(index, owner: owner, journal: journal, receipt: receipt,
-                                 retaining: retaining, client: client, checkpoint: checkpoint)
+                                 retaining: retaining, client: client, checkpoint: checkpoint, continueCleanup: continueCleanup)
     }
 
     private static func finishDeletion(_ index: ToolBackupIndex, owner: String, journal: URL, receipt: URL,
                                       retaining: Set<UUID>, client: ManagedPreservationClient,
-                                      checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
+                                      checkpoint: ManagedPreservationClient.SessionCheckpoint,
+                                      continueCleanup: @escaping @Sendable () async throws -> Void) async throws {
+        try await continueCleanup()
         try Task.checkCancellation(); try await client.requireSessionCheckpoint(checkpoint)
         guard owner == checkpoint.ownerID else { throw ManagedPreservationError.staleSession }
         if !retaining.contains(index.snapshotID), FileManager.default.fileExists(atPath:
@@ -1196,10 +1205,11 @@ enum ToolBackupTransfer {
     }
 
     static func upload(_ saved: ToolBackupFiles.Saved, client: ManagedPreservationClient,
+                       confirmedUsage: ManagedPreservationClient.SaveUsage? = nil,
                        progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
         let checkpoint = try await client.captureSessionCheckpoint()
         guard try await client.sessionOwnerID() == saved.owner else { throw ManagedPreservationError.staleSession }
-        let usage = try await client.usage()
+        let usage = try await client.usageForUpload(confirmedUsage)
         let additions = Set(saved.index.files.map { String($0.path.split(separator: "/")[0]) }).intersection(["CatCare", "FamilyNotebook"])
         guard additions.isEmpty || additions.isSubset(of: Set(usage.toolSnapshots?.supportedTools ?? [])) else {
             throw ManagedPreservationError.servicePaused

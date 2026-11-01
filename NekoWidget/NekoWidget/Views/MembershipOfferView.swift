@@ -8,6 +8,8 @@ import UIKit
 struct MembershipOfferView: View {
     let context: PlusOfferContext
     let photo: UIImage?
+    /// One of the person's own cat photos, read from Photos only when shown.
+    let photoAsset: PlusOfferPhoto?
     let offer: MembershipOfferPresentation?
     let isWorking: Bool
     let canPurchase: Bool
@@ -23,10 +25,13 @@ struct MembershipOfferView: View {
     let onClose: () -> Void
 
     static let heading = "うちの子との毎日を、続ける"
+    /// What Plus is, in the LP's words, plus saving (part of the 980 yen since 10/20).
     static let values = [
         ("毎日、新しい1枚がホーム画面に", "photo"),
-        ("自動でたまるアルバムと月のまとめ", "rectangle.stack"),
+        ("自動でたまるアルバム、月の作品、季節のムービー", "rectangle.stack"),
+        ("写真に新しいメモを書く", "square.and.pencil"),
         ("まどを作って、家族と写真を届け合う", "person.2"),
+        ("猫のこと・メモ・ツールの記録を保存して、新しいiPhoneに戻せる", "icloud"),
     ]
     static let reassurances = [
         "いつでも解約できます",
@@ -39,6 +44,7 @@ struct MembershipOfferView: View {
     init(
         context: PlusOfferContext,
         photo: UIImage? = nil,
+        photoAsset: PlusOfferPhoto? = nil,
         offer: MembershipOfferPresentation?,
         isWorking: Bool,
         canPurchase: Bool,
@@ -55,6 +61,7 @@ struct MembershipOfferView: View {
     ) {
         self.context = context
         self.photo = photo
+        self.photoAsset = photoAsset
         self.offer = offer
         self.isWorking = isWorking
         self.canPurchase = canPurchase
@@ -120,6 +127,17 @@ struct MembershipOfferView: View {
                 Image(uiImage: photo)
                     .resizable()
                     .scaledToFill()
+                    .frame(height: 164)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .accessibilityLabel("あなたの猫の写真")
+                    .accessibilityIdentifier("membership-offer-photo")
+            } else if let photoAsset {
+                PhotoAssetImageView(localIdentifier: photoAsset.localIdentifier,
+                                    catBoundingBox: photoAsset.catBoundingBox,
+                                    targetPixelSize: CGSize(width: 1_200, height: 600),
+                                    targetAspectRatio: 2.5)
                     .frame(height: 164)
                     .frame(maxWidth: .infinity)
                     .clipped()

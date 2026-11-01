@@ -43,6 +43,13 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
         app.swipeUp()
         XCTAssertTrue(app.buttons["settings-membership-preview"].exists)
+        // The Plus screen shows one of this person's cat photos, not a symbol.
+        app.buttons["settings-membership-preview"].tap()
+        XCTAssertTrue(app.staticTexts["membership-offer-heading"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["membership-offer-photo"].firstMatch.waitForExistence(timeout: 10),
+                      app.debugDescription)
+        XCTAssertTrue(waitForFixturePhotos(in: app, requirements: [(1, 1)]), app.debugDescription)
+        captureScreenshot(named: "review-plus-with-cat-photo")
         app.terminate()
     }
 

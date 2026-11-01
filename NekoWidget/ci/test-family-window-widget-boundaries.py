@@ -952,7 +952,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("return ordered", ordering)
         self.assertNotIn(".sorted", ordering)
 
-        self.assertIn('Text("ホーム画面にまどを置く").font(.headline)', home)
+        self.assertIn('Text("ホーム画面にウィジェットを置く").font(.headline)', home)
         self.assertIn("showWidgetPlacementGuide", home)
         self.assertIn("iPhoneの中の猫の写真を、ぜんぶ見つけます。", onboarding)
         self.assertIn("外には送りません。", onboarding)
@@ -2104,7 +2104,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             'Label("まど", systemImage: "window.vertical.closed")',
             main_tab,
         )
-        self.assertIn('Text("ホーム画面にまどを置く").font(.headline)', home)
+        self.assertIn('Text("ホーム画面にウィジェットを置く").font(.headline)', home)
         self.assertIn('Label("アルバム", systemImage: "photo.stack.fill")', main_tab)
         self.assertIn('.navigationTitle("写真")', home)
         self.assertIn('"window-settings-button"', home)
@@ -2821,7 +2821,8 @@ class GroupWindowPausedTests(unittest.TestCase):
         checks = source("ci/run-cheap-safety-checks.sh")
         self.assertIn("NekoWidget/Views/GroupWindowSetupView.swift", checks)
         self.assertIn("がPlusを続けると、また届くようになります。", paused)
-        self.assertIn("自分でまどを作る（14日間無料）", paused)
+        self.assertIn("自分でまどを作る", paused)
+        self.assertNotIn("14日間無料", paused)
         self.assertIn("GroupWindowPresentation.isMyWindow(window)", paused)
         # Owner sees continue; members see who can resume.
         self.assertLess(paused.index("if !GroupWindowPresentation.isMyWindow(window)"), paused.index('"group-window-paused"'))

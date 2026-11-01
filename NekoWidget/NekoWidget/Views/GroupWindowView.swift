@@ -619,6 +619,7 @@ struct GroupWindowScreen: View {
     @State private var prepared: GroupWindowScreenModel.PreparedPhoto?
     @State private var openedEntry: GroupWindowLocalPhotoStore.Entry?
     @State private var showsForgetConfirmation = false
+    @State private var confirmsDiscardFailedDelivery = false
     @Environment(\.dismiss) private var dismiss
 
     init(client: any GroupWindowMediaClient, windowID: String, formerName: String? = nil) {
@@ -812,9 +813,13 @@ struct GroupWindowScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
-                Button("やめる") { model.discardFailedDelivery() }
+                Button("やめる") { confirmsDiscardFailedDelivery = true }
                     .buttonStyle(.bordered)
                     .frame(minHeight: 44)
+                    .confirmationDialog("この写真を届けるのをやめますか？", isPresented: $confirmsDiscardFailedDelivery,
+                                        titleVisibility: .visible) {
+                        Button("届けるのをやめる", role: .destructive) { model.discardFailedDelivery() }
+                    } message: { Text("この写真はまどに届きません。iPhoneの写真はそのままです。") }
                 Button {
                     Task { await model.retryFailedDelivery() }
                 } label: {
@@ -1013,6 +1018,15 @@ struct GroupLibraryDeliverySheet: View {
                     GroupLibraryDeliveryStep(model: screen, localIdentifier: localIdentifier) { dismiss() }
                 } else if !list.hasLoaded {
                     ProgressView("まどを読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if windows.isEmpty, let message = list.message {
+                    ContentUnavailableView {
+                        Label("まどを読み込めませんでした", systemImage: "wifi.exclamationmark")
+                    } description: {
+                        Text(message)
+                    } actions: {
+                        Button("もう一度") { Task { await list.load() } }
+                    }
+                    .accessibilityIdentifier("group-library-delivery-failed")
                 } else if windows.isEmpty {
                     ContentUnavailableView("まどがまだありません", systemImage: "window.vertical.closed",
                         description: Text("まどタブで作るか、招待リンクから参加できます。"))
@@ -1735,9 +1749,34 @@ struct GroupWindowListSection: View {
                         .accessibilityIdentifier("group-window-list-loading")
                 }
             }
+            if model.windows.isEmpty, model.hasLoaded, model.message == nil, known.isEmpty {
+                // Nothing yet: one line and the way in.
+                VStack(spacing: 12) {
+                    Text("まだまどがありません。").font(.subheadline).foregroundStyle(.secondary)
+                    if compactHeader {
+                        NavigationLink {
+                            GroupWindowCreateScreen(client: model.client)
+                        } label: {
+                            Label("まどを作る", systemImage: "plus").frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier("group-window-empty-create")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+                .accessibilityIdentifier("group-window-empty")
+            }
             if let message = model.message {
                 if model.windows.isEmpty && known.isEmpty {
-                    Text(message).font(.footnote).foregroundStyle(.red)
+                    // Nothing to show and the relay could not be reached: say so, with a retry.
+                    VStack(spacing: 12) {
+                        Text(message).font(.footnote).foregroundStyle(.secondary)
+                        Button("もう一度") { Task { await model.load() } }
+                            .disabled(model.isWorking)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    .accessibilityIdentifier("group-window-list-failed")
                 } else {
                     // A refresh that failed is not an emergency: say so quietly, with a retry.
                     HStack(spacing: 8) {
@@ -1782,6 +1821,9 @@ struct GroupWindowListSection: View {
             GroupWidgetCache.markGroupWindowsOn()
             await model.load()
             await loadFormerWindows()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .groupWindowListNeedsReload)) { _ in
+            Task { await model.load() }
         }
         .task(id: openInbox.pendingWindowID) {
             guard let requested = openInbox.pendingWindowID else { return }

@@ -2,12 +2,14 @@ name: Automatic-save observation diagnostic
 
 on:
   push:
-    branches: ['diagnostic/autosave-status-*']
+    branches: ['diagnostic/autosave-status-*', 'diagnostic/autosave-efficiency-*']
     paths:
       - '.github/workflows/autosave-observation-diagnostic.yml'
       - 'NekoWidget/NekoWidget/Services/AppRecordPersistence.swift'
       - 'NekoWidget/NekoWidget/Services/ManagedPreservationClient.swift'
       - 'NekoWidget/NekoWidget/Services/ManagedPreservationCoordinator.swift'
+      - 'NekoWidget/NekoWidget/Services/ToolPreservation.swift'
+      - 'NekoWidget/ci/verify-save-lifetime.swift'
       - 'NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift'
 
 permissions:
@@ -21,7 +23,7 @@ jobs:
   observation:
     name: Synthetic automatic-save observation only (not release evidence)
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
@@ -41,11 +43,16 @@ jobs:
           print(candidates[0])')
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
+          python3 ci/prepare-save-lifetime-check.py "$RUNNER_TEMP/save-lifetime.swift"
+          swiftc -parse-as-library "$RUNNER_TEMP/save-lifetime.swift" ci/verify-save-lifetime.swift -o "$RUNNER_TEMP/save-lifetime"
+          "$RUNNER_TEMP/save-lifetime"
           xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$device" \
             -derivedDataPath "$RUNNER_TEMP/autosave-build" \
             -resultBundlePath "$RUNNER_TEMP/autosave-observation.xcresult" \
             -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveSettingsDoNotInvalidateSession \
+            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveEfficiencyAndCleanupPriority \
+            -only-testing:NekoWidgetUITests/SoloMemoriesUITests/testAutomaticPartitionedRecordsMigrationAndRestore \
             -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
             COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES test 2>&1 | tee "$RUNNER_TEMP/autosave-observation.log"
@@ -54,9 +61,14 @@ jobs:
           from pathlib import Path
           log=Path(os.environ['RUNNER_TEMP'], 'autosave-observation.log').read_text()
           cases=re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)",log)
-          expected='NekoWidgetUITests.SoloMemoriesUITests testAutomaticSaveSettingsDoNotInvalidateSession'
-          if cases != [(expected,'started'),(expected,'passed')]:
-              raise SystemExit('The requested native test must run and pass exactly once; skipped is not success.')
+          expected=['testAutomaticSaveSettingsDoNotInvalidateSession',
+                    'testAutomaticSaveEfficiencyAndCleanupPriority',
+                    'testAutomaticPartitionedRecordsMigrationAndRestore']
+          for name in expected:
+              found=[state for case,state in cases if case == 'NekoWidgetUITests.SoloMemoriesUITests '+name]
+              if found != ['started','passed']:
+                  raise SystemExit(name+': must run and pass exactly once; skipped is not success.')
+          if len(cases) != 2*len(expected): raise SystemExit('Unexpected native test selection')
           PY
       - name: Upload diagnostic result
         if: always()
