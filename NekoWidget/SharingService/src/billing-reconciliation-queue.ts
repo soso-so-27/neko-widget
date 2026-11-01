@@ -13,7 +13,8 @@ export async function requestBillingReconciliation(
      ON CONFLICT(original_transaction_id) DO UPDATE SET
        requested_at = MAX(billing_reconciliation_jobs.requested_at, excluded.requested_at),
        not_before = MIN(billing_reconciliation_jobs.not_before, excluded.not_before),
-       request_generation = billing_reconciliation_jobs.request_generation + 1,
+       request_generation = MAX(billing_reconciliation_jobs.request_generation + 1,
+                                excluded.request_generation),
        updated_at = unixepoch()`,
   ).bind(originalTransactionId, now, now, originalTransactionId).run();
 }
