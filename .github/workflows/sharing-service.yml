@@ -48,7 +48,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      scope: ${{ steps.plan.outputs.runtime_scope }}
+      # A change to CI selection itself must exercise the backend jobs too.
+      # It must not report a green plan while all owning checks are skipped.
+      scope: ${{ steps.plan.outputs.runtime_scope == 'ci-orchestration-v1' && 'full-v1' || steps.plan.outputs.runtime_scope }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
