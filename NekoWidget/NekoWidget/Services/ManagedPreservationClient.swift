@@ -762,6 +762,18 @@ actor ManagedPreservationClient {
         return credential.ownerId
     }
 
+    func captureAccountObservationCheckpoint() throws -> SessionCheckpoint {
+        _ = try accountObservationOwnerID()
+        guard let credential else { throw ManagedPreservationError.staleSession }
+        return SessionCheckpoint(epoch: epoch, credential: credential)
+    }
+
+    func requireAccountObservationCheckpoint(_ checkpoint: SessionCheckpoint) throws {
+        try ensureEpoch(checkpoint.epoch)
+        _ = try accountObservationOwnerID()
+        guard credential == checkpoint.credential else { throw ManagedPreservationError.staleSession }
+    }
+
     private func requireDeviceItem(_ captured: ManagedPreservationSessionStore.Credential, epoch expectedEpoch: UInt64) throws {
         try Task.checkCancellation()
         try ensureEpoch(expectedEpoch)
@@ -1499,6 +1511,7 @@ actor ManagedPreservationClient {
                   captured.expiresAt > sessionNow(), try store.load() == captured else {
                 throw ManagedPreservationError.staleSession
             }
+            if !invalidatesSession { _ = try accountObservationOwnerID() }
             return data
         } catch ManagedPreservationError.authenticationRequired {
             // A temporarily uncovered owner generation also returns 401. A

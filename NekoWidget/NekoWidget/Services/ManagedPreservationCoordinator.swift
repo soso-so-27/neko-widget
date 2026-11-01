@@ -979,14 +979,16 @@ final class ManagedPreservationCoordinator: ObservableObject {
         guard purpose == .account else { return try await loadFirstPage(ticket) }
         // Automatic-save settings need authenticated membership, not an archive
         // inventory that can legitimately change while a save is in progress.
-        let owner = try await client.accountObservationOwnerID()
+        let checkpoint = try await client.captureAccountObservationCheckpoint()
         try check(ticket)
-        if authenticatedOwnerID != owner {
+        if authenticatedOwnerID != checkpoint.ownerID {
             clearAccountPresentation()
         }
+        try await client.requireAccountObservationCheckpoint(checkpoint)
+        try check(ticket)
         isSignedIn = true
-        authenticatedOwnerID = owner
-        loadMembership(ticket, owner: owner)
+        authenticatedOwnerID = checkpoint.ownerID
+        loadMembership(ticket, owner: checkpoint.ownerID)
     }
 
     private func loadFirstPage(_ ticket: UUID) async throws {
