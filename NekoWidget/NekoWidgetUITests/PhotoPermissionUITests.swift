@@ -1420,6 +1420,26 @@ final class PhotoPermissionUITests: XCTestCase {
 /// write, movie export, or network operation is part of this fixture route.
 final class SoloMemoriesUITests: XCTestCase {
     @MainActor
+    private func verifyAutomaticSaveInterruptionAndBackgroundLifetime() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-background-probe"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["background probe ready"].waitForExistence(timeout: 15), app.debugDescription)
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        // Give the real UIKit assertion time to finish while the app is backgrounded.
+        Thread.sleep(forTimeInterval: 9)
+        app.activate()
+        XCTAssertTrue(app.staticTexts["background probe completed in background"].waitForExistence(timeout: 5), app.debugDescription)
+        app.terminate()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-photo-interruption-probe"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["45MBの中断再開と写真の再送なしを確認しました"].waitForExistence(timeout: 120), app.debugDescription)
+        app.terminate()
+        verifyAutomaticSaveGroupsMetadataAndResumesInterruptedUnion()
+    }
+    @MainActor
     func testAutomaticPartitionedRecordsMigrationAndRestore() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -1459,13 +1479,14 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     func testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion() {
+        verifyAutomaticSaveInterruptionAndBackgroundLifetime()
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--managed-preservation-membership-ui-fixture", "--preservation-tool-delete-pending-ui-fixture",
                                "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let resume = app.buttons["preservation-resume-tool-deletion"]
-        XCTAssertTrue(app.navigationBars["サービスに保管"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["保存した記録"].waitForExistence(timeout: 10), app.debugDescription)
         for _ in 0..<12 where !resume.isHittable { app.swipeUp() }
         XCTAssertTrue(resume.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.staticTexts["preservation-transfer-foreground-guidance"].exists)
