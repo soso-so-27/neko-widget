@@ -343,11 +343,11 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('app.buttons["saved-memories-selection-toggle"]', self.ui_test)
         self.assertIn('app.buttons["photo-book-export"]', self.ui_test)
         self.assertIn('"album-primary-all-cat-photos"', self.album_view)
-        self.assertIn(
-            'app.descendants(matching: .any)["album-card-household_growth"]',
-            self.ui_test,
-        )
-        self.assertIn("requirements: [(8, 1)]", self.ui_test)
+        self.assertIn('["monthly-story", "monthly-book"]', self.ui_test)
+        self.assertIn("numbers: Array(19...24)", self.ui_test)
+        self.assertIn('"--app-store-screenshot-album"', self.ui_test)
+        self.assertIn('"--app-store-screenshot-album"', self.fixture)
+        self.assertIn("identifiers = (1...24)", self.fixture)
         self.assertIn("requirements: [(9, 1), (10, 1), (11, 1)]", self.ui_test)
         self.assertNotIn("waitForStableRendering", self.ui_test)
 

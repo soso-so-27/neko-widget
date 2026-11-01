@@ -15,6 +15,11 @@ extension Version1 {
 
 /// The album as "works that arrive" and the monthly story (Version1).
 enum AlbumPrototype {
+    /// Reading a PHAsset before access is granted shows the system prompt.
+    /// The works only ever use photos the app was already allowed to read.
+    static var canReadPhotos: Bool {
+        [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite))
+    }
     static let enabledAtKey = "debug.albumPrototype.enabledAt.v1"
     static let openedKey = "debug.albumPrototype.opened.v1"
     /// Test only: deliver this year's work today instead of on 12/6.
@@ -321,7 +326,7 @@ struct AlbumPrototypeView: View {
                 }
                 .foregroundStyle(.primary)
             }
-            .accessibilityLabel("\(year)年の作品、すべて見る")
+            .accessibilityLabel(Text(verbatim: "\(year)年の作品、すべて見る"))
             .accessibilityIdentifier("album-prototype-past")
             ScrollViewReader { reader in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -421,7 +426,7 @@ struct AlbumPrototypeView: View {
         return arrivalCard(id: id, wrapped: !opened.contains(id), cover: AlbumPrototype.pickYear(photos).first,
                            caption: "1 年の作品", title: String(year), titleSize: 40,
                            names: AlbumPrototype.names(for: photos, assignments: assignments, profileNames: profileNames),
-                           accessibilityTitle: "\(year)年の作品") { yearStory = YearStory(year: year) }
+                           accessibilityTitle: "\(String(year))年の作品") { yearStory = YearStory(year: year) }
             .accessibilityIdentifier("album-prototype-year")
     }
 
@@ -574,7 +579,7 @@ struct PastWorksView: View {
                                 .zoomSource(YearStoryView.periodIdentifier(year), in: zoom)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(year)年の作品")
+                        .accessibilityLabel(Text(verbatim: "\(year)年の作品"))
                     }
                     // Twelve places, January first: months still to come and the
                     // ones without a book stay as empty places on the shelf.
@@ -936,7 +941,11 @@ struct MonthlyStoryView: View {
     }
 
     static func thumbnail(_ identifier: String, side: CGFloat = 160) async -> UIImage? {
-        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+#if DEBUG
+        if let image = AppStoreScreenshotFixture.image(for: identifier) { return image }
+#endif
+        guard AlbumPrototype.canReadPhotos,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = false
@@ -2021,8 +2030,9 @@ struct LivePhotoHold: ViewModifier {
                 }
             }
             .task(id: localIdentifier) {
-                isLive = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
-                    .firstObject?.mediaSubtypes.contains(.photoLive) ?? false
+                isLive = AlbumPrototype.canReadPhotos
+                    && PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+                        .firstObject?.mediaSubtypes.contains(.photoLive) ?? false
             }
             .task(id: shown) {
                 guard shown else { playing = nil; return }
@@ -2036,7 +2046,8 @@ struct LivePhotoHold: ViewModifier {
     }
 
     private static func livePhoto(_ identifier: String) async -> PHLivePhoto? {
-        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+        guard AlbumPrototype.canReadPhotos,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
         let options = PHLivePhotoRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
@@ -2162,7 +2173,11 @@ struct StoryPhotoView: View {
     }
 
     static func load(_ identifier: String) async -> UIImage? {
-        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+#if DEBUG
+        if let image = AppStoreScreenshotFixture.image(for: identifier) { return image }
+#endif
+        guard AlbumPrototype.canReadPhotos,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true

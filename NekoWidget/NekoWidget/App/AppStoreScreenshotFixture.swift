@@ -40,7 +40,7 @@ enum AppStoreScreenshotFixture {
         "app-store-screenshot-fixture-photo-loaded-"
     static let loadTracker = AppStoreScreenshotFixtureLoadTracker()
 
-    private static let identifiers = (1...18).map {
+    private static let identifiers = (1...24).map {
         "\(identifierPrefix)\($0)"
     }
     private static var imageCache: [String: UIImage] = [:]
@@ -84,7 +84,7 @@ enum AppStoreScreenshotFixture {
             date(year: 2022, month: 7, day: 6),
         ]
 
-        return identifiers.prefix(8).enumerated().map { index, identifier in
+        let scoped = identifiers.prefix(8).enumerated().map { index, identifier in
             PhotoPresentation(
                 localIdentifier: identifier,
                 creationDate: dates[index],
@@ -98,6 +98,35 @@ enum AppStoreScreenshotFixture {
                 albumIsOuting: index == 4,
                 detectedCatCount: index == 6 ? 2 : 1,
                 largestCatAreaRatio: index == 0 ? 0.62 : 0.34,
+                isGrowthEligible: true,
+                hasCurrentAlbumAnalysis: true
+            )
+        }
+        return scoped + albumPhotos
+    }
+
+    /// Six photos in the month that just finished, so the App Store album shot
+    /// shows one arrived work (`--app-store-screenshot-album` only). Six
+    /// different days: enough distinct scenes for a monthly work.
+    static var albumPhotos: [PhotoPresentation] {
+        guard CommandLine.arguments.contains("--app-store-screenshot-album") else { return [] }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        guard let thisMonth = calendar.dateInterval(of: .month, for: Date())?.start,
+              let lastMonth = calendar.date(byAdding: .month, value: -1, to: thisMonth) else { return [] }
+        return zip(identifiers[18...23], [2, 5, 9, 14, 20, 26]).enumerated().map { index, pair in
+            let (identifier, day) = pair
+            return PhotoPresentation(
+                localIdentifier: identifier,
+                creationDate: calendar.date(byAdding: DateComponents(day: day - 1, hour: 12), to: lastMonth)!,
+                catBoundingBox: CGRect(x: 0.18, y: 0.13, width: 0.64, height: 0.76),
+                isLiked: false,
+                likedAt: nil,
+                albumPostures: index == 2 ? [.sleeping] : [],
+                albumContainsPerson: false,
+                albumIsOuting: index == 4,
+                detectedCatCount: 1,
+                largestCatAreaRatio: 0.34,
                 isGrowthEligible: true,
                 hasCurrentAlbumAnalysis: true
             )
