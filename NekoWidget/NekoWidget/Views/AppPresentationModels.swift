@@ -1133,6 +1133,16 @@ enum FavoritePhotoOrigin: String, CaseIterable {
     }
 }
 
+/// A stored day ("2026-10-28", the records' own form) read as a date: 「2026年10月28日」.
+/// Anything else is shown as it is.
+enum DayText {
+    static func japanese(_ day: String) -> String {
+        let parts = day.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return day }
+        return "\(parts[0])年\(parts[1])月\(parts[2])日"
+    }
+}
+
 enum ReceivedPhotoAlbumPolicy {
     static func includes(isReceived: Bool, hasExplicitCat: Bool) -> Bool {
         !isReceived || hasExplicitCat

@@ -665,7 +665,7 @@ final class OfficialWindowUITests: XCTestCase {
         capture("official-photo-large-text-zoom", app)
         app.buttons["official-photo-information"].tap()
         XCTAssertTrue(app.navigationBars["写真の情報"].waitForExistence(timeout: 5))
-        let photographedOn = app.staticTexts["撮影日：2026-09-01"]
+        let photographedOn = app.staticTexts["撮影日：2026年9月1日"]
         for _ in 0..<5 where !photographedOn.isHittable {
             app.scrollViews["official-photo-information-content"].swipeUp()
         }

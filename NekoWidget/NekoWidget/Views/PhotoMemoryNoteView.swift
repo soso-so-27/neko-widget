@@ -205,7 +205,7 @@ struct PhotoMemoWeightLabel: View {
         VStack(alignment: .leading, spacing: 4) {
             Label("体重 \(weight.kilogramsText) kg", systemImage: "scalemass")
                 .font(.headline).accessibilityIdentifier("memory-note-weight")
-            Text("\(weight.catName ?? "猫を選んでいません") · 測定日 \(weight.measuredOn ?? "不明")")
+            Text("\(weight.catName ?? "猫を選んでいません") · 測定日 \(weight.measuredOn.map(DayText.japanese) ?? "不明")")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
