@@ -1809,11 +1809,15 @@ private final class AppRecordFixture {
     func installRenewableFixtureCredential(expired: Bool) throws -> ManagedPreservationSessionStore.Credential {
         let store = ManagedPreservationSessionStore(origin: configuration.origin!.absoluteString)
         guard let previous = try store.load() else { throw ToolBackupError.invalid }
+        // Real credentials arrive through the millisecond wire format. Do not
+        // compare a nanosecond fixture Date with its serialized round-trip.
+        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
         let value = ManagedPreservationSessionStore.Credential(token: previous.token, ownerId: previous.ownerId,
-            expiresAt: Date().addingTimeInterval(expired ? -1 : 900),
-            deviceGrant: .init(grantId: UUID().uuidString.lowercased(), idleExpiresAt: Date().addingTimeInterval(86400), appleUserID: "synthetic-user"),
+            expiresAt: now.addingTimeInterval(expired ? -1 : 900),
+            deviceGrant: .init(grantId: UUID().uuidString.lowercased(), idleExpiresAt: now.addingTimeInterval(86400), appleUserID: "synthetic-user"),
             devicePrivateKey: P256.Signing.PrivateKey().rawRepresentation)
         guard try store.save(value, replacing: previous) else { throw ToolBackupError.invalid }
+        guard try store.load() == value else { throw ToolBackupError.invalid }
         return value
     }
     func verifySettingsSessionInterference() async throws {
@@ -1890,7 +1894,8 @@ private final class AppRecordFixture {
         Self.preparationPhase = "照会中の本当のowner切替は拒否"
         let previous = try installRenewableFixtureCredential(expired: false)
         let replacement = ManagedPreservationSessionStore.Credential(token: String(repeating: "z", count: 43),
-            ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(900))
+            ownerId: UUID().uuidString.lowercased(),
+            expiresAt: Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) + 900))
         let racing = ManagedPreservationClient(configuration: configuration, requestOverride: { request, _ in
             guard request.url?.path == "/v1/membership", try store.save(replacement, replacing: previous) else { throw ToolBackupError.storage }
             return (Data("{\"linked\":true,\"status\":\"active\"}".utf8),
