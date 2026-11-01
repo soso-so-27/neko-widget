@@ -134,7 +134,7 @@ export async function route(request: Request, services: Services, context?: Pick
     const {session,batchId}=await services.auth.currentToolMetadataBatchSession(token);
     await services.ownerRequestLimiter?.admitToolMetadataBatch(session,batchId);
     return response(await services.archive.recoverMetadataBatch(token,batchId));
-  },request.signal);
+  },request.signal,context);
   if(request.method==='POST' && path==='/v1/tool-metadata-batches')return payloadWork.run(async()=>{
     const input=await body(request,4096);
     let session;
@@ -147,7 +147,7 @@ export async function route(request: Request, services: Services, context?: Pick
     if(continuation)await services.ownerRequestLimiter?.admitToolMetadataBatch(session,String(input.batchId));
     else await services.ownerRequestLimiter?.admit(session);
     return response(await services.archive.beginMetadataBatch(token,input));
-  },request.signal);
+  },request.signal,context);
   const batchRoute=/^\/v1\/tool-metadata-batches\/([0-9a-f-]+)\/(?:parts\/([0-9a-f-]+)|(finish))$/u.exec(path);
   if(batchRoute && ((request.method==='PUT' && batchRoute[2]) || (request.method==='POST' && batchRoute[3])))return payloadWork.run(async()=>{
     const batchId=batchRoute[1]!;
@@ -158,7 +158,7 @@ export async function route(request: Request, services: Services, context?: Pick
     const raw=await readBoundedBody(request.body,512*1024,()=>new ServiceError('INVALID_REQUEST'),request.signal,
       ()=>new ServiceError('REQUEST_TOO_LARGE',413));
     return response(await services.archive.stageMetadataBatch(token,batchId,batchRoute[2]!,raw));
-  },request.signal);
+  },request.signal,context);
   if (services.ownerRequestLimiter) {
     await services.ownerRequestLimiter.admit(await services.auth.requireSession(token));
   }
@@ -201,7 +201,7 @@ export async function route(request: Request, services: Services, context?: Pick
   if (request.method === 'POST' && path === '/v1/product-quota/recount') {
     const input = await body(request,1024);
     if (Object.keys(input).some(key => key !== 'after') || (input.after !== undefined && typeof input.after !== 'string')) throw new ServiceError('INVALID_REQUEST');
-    return payloadWork.run(async () => response(await services.archive.recountProductUsage(token,input.after as string | undefined)),request.signal);
+    return payloadWork.run(async () => response(await services.archive.recountProductUsage(token,input.after as string | undefined)),request.signal,context);
   }
   if (request.method === 'GET' && path === '/v1/tool-cleanup') {
     if ([...url.searchParams.keys()].some(key => key !== 'after') || url.searchParams.getAll('after').length > 1) throw new ServiceError('INVALID_REQUEST');
@@ -209,7 +209,7 @@ export async function route(request: Request, services: Services, context?: Pick
   }
   const abandonedSnapshot = /^\/v1\/tool-snapshots\/([0-9a-f-]+)\/abandon$/u.exec(path)?.[1];
   if (request.method === 'POST' && abandonedSnapshot) {
-    return payloadWork.run(async () => response(await services.archive.abandonToolSnapshot(token, abandonedSnapshot)), request.signal);
+    return payloadWork.run(async () => response(await services.archive.abandonToolSnapshot(token, abandonedSnapshot)), request.signal, context);
   }
   if (path === '/v1/membership' || path.startsWith('/v1/membership/')) {
     if (!services.membership) throw new ServiceError('MEMBERSHIP_NOT_CONFIGURED', 503);
@@ -260,7 +260,7 @@ export async function route(request: Request, services: Services, context?: Pick
         recordId(id);
         archiveEntered = true;
         return response(await services.archive.put(token, id, input));
-      }, request.signal);
+      }, request.signal, context);
     } catch (error) {
       if (!archiveEntered && services.toolTrial) {
         // Queue/body/UUID rejection never reaches ArchiveStore's normal debit.
@@ -278,7 +278,7 @@ export async function route(request: Request, services: Services, context?: Pick
     if (!revision || !/^\d+$/.test(revision)) throw new ServiceError('INVALID_REVISION');
     const strict = request.headers.get('x-tool-delete-unreferenced');
     if (strict !== null && strict !== '1') throw new ServiceError('INVALID_REQUEST');
-    return payloadWork.run(async () => response(await services.archive.remove(token, id, Number(revision), strict === '1')), request.signal);
+    return payloadWork.run(async () => response(await services.archive.remove(token, id, Number(revision), strict === '1')), request.signal, context);
   }
   throw new ServiceError('NOT_FOUND', 404);
 }
