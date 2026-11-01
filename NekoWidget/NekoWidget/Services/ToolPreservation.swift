@@ -1134,10 +1134,20 @@ enum ToolBackupTransfer {
             try await client.validateMetadataBatchItem(item, draft: metadataDraft(part, id: piece.id, saved: saved))
         }
         try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.beginMetadataBatch(batch, checkpoint: checkpoint) }
-        // Replaying a fixed part reconciles a response lost after the D1 commit.
-        // A local sent receipt is not written until the whole union is covered.
-        for item in batch.items {
+        // Preserve individual staging ACKs across interruptions. Only an ACK-lost
+        // part needs replay; do not charge another PUT for every earlier part.
+        // These are NOT sent receipts: publication/union validation stays below.
+        var progress = batch
+        var staged = Set(batch.staged ?? [])
+        guard staged.count == (batch.staged ?? []).count,
+              staged.isSubset(of: Set(batch.items.map(\.recordID))) else { throw ToolBackupError.invalid }
+        for item in batch.items where !staged.contains(item.recordID) {
             try await waitingForRateLimit(client: client, checkpoint: checkpoint) { try await client.stageMetadataBatch(batch, item: item, checkpoint: checkpoint) }
+            try await client.requireSessionCheckpoint(checkpoint)
+            staged.insert(item.recordID)
+            progress.staged = staged.sorted { $0.uuidString < $1.uuidString }
+            try ToolBackupFiles.write(JSONEncoder().encode(progress),
+                to: ToolBackupFiles.directory(saved.id).appendingPathComponent("metadata-batch.json"))
         }
         var ready = false
         for _ in 0..<512 {

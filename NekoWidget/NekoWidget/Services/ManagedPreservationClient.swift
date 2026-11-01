@@ -1316,6 +1316,9 @@ actor ManagedPreservationClient {
         let owner: String
         let snapshotID: UUID
         let items: [Item]
+        /// Per-part staging ACKs are not a completed snapshot or union receipt.
+        /// Optional for journals written by earlier app versions.
+        var staged: [UUID]? = nil
     }
     func metadataBatchItem(_ draft: ManagedPreservationDraft) throws -> MetadataBatch.Item {
         let document = try draft.document.validated()

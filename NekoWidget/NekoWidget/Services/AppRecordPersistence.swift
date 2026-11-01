@@ -1524,6 +1524,7 @@ private actor AppRecordFixtureServer {
     func useIndexVersion(_ version: Int) { maximumIndexVersion = version }
     private var metadataBatchMode = false
     private var interruptMetadataPart = false
+    private var metadataPartsUntilInterruption = 0
     private var metadataUncovered = false
     private var metadataManifest: [UUID: String] = [:]
     private var metadataBatchID: UUID?
@@ -1532,7 +1533,9 @@ private actor AppRecordFixtureServer {
     private var metadataPublications = 0
     private var metadataReplays = 0
     private var metadataRecoveries = 0
-    func useMetadataBatches() { metadataBatchMode = true; interruptMetadataPart = true }
+    func useMetadataBatches() {
+        metadataBatchMode = true; interruptMetadataPart = true; metadataPartsUntilInterruption = 1
+    }
     func metadataCounts() -> (publications: Int, replays: Int, uncovered: Bool) {
         (metadataPublications, metadataReplays, metadataUncovered)
     }
@@ -1629,7 +1632,10 @@ private actor AppRecordFixtureServer {
                 generation += 1
             }
             metadataBodies[id] = ToolBackupIndex.hash(body); metadataUncovered = true
-            if interruptMetadataPart { interruptMetadataPart = false; throw CancellationError() }
+            if interruptMetadataPart {
+                if metadataPartsUntilInterruption == 0 { interruptMetadataPart = false; throw CancellationError() }
+                metadataPartsUntilInterruption -= 1
+            }
             return try response(["batchId": batch.uuidString.lowercased(), "recordId": id.uuidString.lowercased(), "revision": 1, "status": "part-staged"])
         }
         if metadataUncovered { return try failure("SESSION_INVALID", 401) }
@@ -1832,11 +1838,12 @@ private final class AppRecordFixture {
         let journal = ToolBackupFiles.directory(pending.id).appendingPathComponent("metadata-batch.json")
         let batch = try JSONDecoder().decode(ManagedPreservationClient.MetadataBatch.self,
             from: ToolBackupFiles.read(journal, maximum: 12 * 1024 * 1024))
+        guard batch.staged?.count == 1 else { throw ToolBackupError.storage }
         guard try ToolBackupFiles.sent(pending).isDisjoint(with: Set(batch.items.map(\.recordID))) else { throw ToolBackupError.storage }
         Self.preparationPhase = "未ACKの送信を通常の同期から再開"
         await persistence.retry()
         let counts = await server.metadataCounts()
-        guard persistence.title == "保存済み", counts.publications > 0, counts.replays > 0, !counts.uncovered,
+        guard persistence.title == "保存済み", counts.publications > 0, counts.replays == 1, !counts.uncovered,
               !FileManager.default.fileExists(atPath: journal.path) else { throw ToolBackupError.storage }
         Self.preparationPhase = "集約保存のheadと復元を照合"
         let headID = AppRecordHead.id(origin: configuration.origin!.absoluteString, owner: owner)
