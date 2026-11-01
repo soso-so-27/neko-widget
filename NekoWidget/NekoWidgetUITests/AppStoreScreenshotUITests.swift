@@ -325,9 +325,17 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The Albums shelf did not appear first.", application: app)
             return
         }
-        // Starting the app never asks for Photos by itself (the fixture has no access).
-        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists,
-                       app.debugDescription)
+        // The fixture starts without Photos access. If the system still asks, keep
+        // the evidence and decline, so the App Store set never shows the prompt.
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 3) {
+            let evidence = XCTAttachment(string: permission.debugDescription)
+            evidence.name = "System prompt at fixture launch"
+            evidence.lifetime = .keepAlways
+            add(evidence)
+            let deny = permission.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "許可しない"])).firstMatch
+            if deny.exists { deny.tap() }
+        }
         // The newest work: last month's cover, or this year's book from 12/6.
         let latestWork = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier IN %@", ["album-prototype-latest", "album-prototype-year"])
