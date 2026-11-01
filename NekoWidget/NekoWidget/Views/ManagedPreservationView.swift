@@ -140,8 +140,6 @@ struct ManagedPreservationView: View {
             if !isAccountEntry {
                 Section {
                     Text("選んだ写真とメモのコピーを、ねこのまどに保存します。写真アプリの写真や動画のバックアップではありません。")
-                    Text("以前iCloudに保存したものとは別で、自動では移りません。写真がまとめて自動で保存されることもありません。")
-                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             if let error = coordinator.errorMessage {
@@ -521,7 +519,7 @@ struct ManagedPreservationView: View {
             if let retention = coordinator.retention {
                 switch retention.status {
                 case .active, .grace:
-                    Text("保存されています。書き出しの期限はまだありません。")
+                    Text("保存されています。")
                 case .expired:
                     if let dueAt = retention.dueAt {
                         LabeledContent(retention.finalNoticeDeliveredAt == nil ? "書き出せる期限の目安" : "書き出せる期限",
@@ -538,9 +536,9 @@ struct ManagedPreservationView: View {
             }
             Button("書き出せる期間を確認") { coordinator.checkRetention() }
                 .accessibilityIdentifier("preservation-retention-check")
-        } header: { Text("Plusが終わったあとの書き出し") }
+        } header: { Text("Plusが終わったあと") }
         footer: {
-            Text("Plusを再開すると、期限はなくなります。")
+            Text("期限があるのは保存したコピーの書き出しだけで、iPhoneの中の写真・まど・メモは残ります。Plusを再開すると、期限はなくなります。")
         }
     }
 
