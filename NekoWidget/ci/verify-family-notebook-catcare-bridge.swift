@@ -150,6 +150,10 @@ enum FamilyNotebookCatCareBridgeVerifier {
         let freshProjection = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: privateCare)
         try require(freshProjection.cats[0].vaccinationStatus == .unknown && freshProjection.cats[0].activeVaccinations.isEmpty,
                     "fresh receiver sees later vaccine tombstone and cannot resurrect none")
+        var staleAnswer = freshProjection.cats[0]
+        staleAnswer.vaccinationAnswer?.value = .none
+        try require(CatCareMerge.merge(staleAnswer, freshProjection.cats[0]).vaccinationStatus == .unknown,
+                    "merging a stale equal-stamp copy cannot undo observed family invalidation")
         var newAnswer = freshProjection
         _ = newAnswer.cats[0].setVaccinationStatus(.none, editedAt: Date().addingTimeInterval(1), editedBy: "receiver")
         let confirmation = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: newAnswer, unreadableCatCount: 0)),

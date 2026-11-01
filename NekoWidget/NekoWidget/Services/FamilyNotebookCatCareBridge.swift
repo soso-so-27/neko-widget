@@ -76,7 +76,7 @@ enum FamilyNotebookCatCareBridge {
                 // A deleted entry may never have been projected on this phone.
                 // Inspect its operations too, so a fresh phone cannot revive a
                 // negative answer after an older app added/deleted a vaccine.
-                if value == .none && snapshot.operations.contains(where: { operation in
+                let invalidatingEdit = snapshot.operations.filter { operation in
                     guard operation.target.familyCatID == cat, operation.target.collection == .vaccination,
                           operation.target.recordID != FamilyNotebookVaccinationAnswer.recordID(cat: cat) else { return false }
                     if let source = operation.importedSourceEditedAt, let answerSource = answer.operation.importedSourceEditedAt,
@@ -84,9 +84,11 @@ enum FamilyNotebookCatCareBridge {
                         return source > answerSource
                     }
                     return operation.version > answer.operation.version
-                }) { value = .unknown }
-                state.cats[index].vaccinationAnswer = .init(value: value, editedAt: answer.operation.editedAt,
-                                                          editedBy: "family:" + answer.operation.author.personID)
+                }.max { $0.version < $1.version }
+                if value == .none && invalidatingEdit != nil { value = .unknown }
+                state.cats[index].vaccinationAnswer = .init(value: value,
+                    editedAt: max(answer.operation.editedAt, invalidatingEdit?.editedAt ?? answer.operation.editedAt),
+                    editedBy: "family:" + (invalidatingEdit?.author.personID ?? answer.operation.author.personID))
             }
         }
         return state

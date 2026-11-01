@@ -454,7 +454,15 @@ enum CatCareMerge {
         r.weights = union(a.weights, b.weights)
         r.medications = union(a.medications, b.medications)
         r.vaccinations = union(a.vaccinations, b.vaccinations)
-        r.vaccinationAnswer = pick(a.vaccinationAnswer, b.vaccinationAnswer)
+        // Projection can invalidate a negative answer when it observes a newer
+        // clinical edit. At an identical timestamp, unknown is the conservative
+        // deterministic winner, independent of merge direction or author order.
+        if let x = a.vaccinationAnswer, let y = b.vaccinationAnswer,
+           x.editedAt == y.editedAt, x.value != y.value {
+            r.vaccinationAnswer = x.value == .unknown ? x : y
+        } else {
+            r.vaccinationAnswer = pick(a.vaccinationAnswer, b.vaccinationAnswer)
+        }
         r.meals = union(a.meals, b.meals)
         r.specialDiet = pick(a.specialDiet, b.specialDiet)
         r.water = pick(a.water, b.water)

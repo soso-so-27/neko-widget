@@ -125,6 +125,12 @@ struct VerifyCatCare {
         _ = cat.setVaccinationStatus(.unknown, editedAt: t1.addingTimeInterval(6), editedBy: "a")
         try check(CatCareMerge.merge(noVaccines, cat).vaccinationStatus == .unknown, "clear stamp wins merge")
         try check(CatCareMerge.merge(noVaccines, withVaccines).vaccinationStatus == .recorded, "merge cannot hide vaccination")
+        var invalidated = noVaccines
+        invalidated.vaccinationAnswer?.value = .unknown
+        invalidated.vaccinationAnswer?.editedBy = "earlier-author"
+        try check(CatCareMerge.merge(noVaccines, invalidated) == CatCareMerge.merge(invalidated, noVaccines)
+                  && CatCareMerge.merge(noVaccines, invalidated).vaccinationStatus == .unknown,
+                  "identical-time invalidation cannot revive none through merge direction or author order")
 
         var savedCat = noVaccines
         _ = savedCat.setMicrochip(status: .none, editedAt: t1.addingTimeInterval(7), editedBy: "a")
