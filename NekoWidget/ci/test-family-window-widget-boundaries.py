@@ -3034,7 +3034,8 @@ class LostCatCatCareTests(unittest.TestCase):
         # The flyer line says only that there is a chip.
         core = source("NekoWidget/Services/CatCareCore.swift")
         line = section(core, "static func publicLine(", "static func age(")
-        self.assertIn('.isEmpty { parts.append("マイクロチップあり") }', line)
+        # Empty and explicit none must not claim a chip on the public flyer.
+        self.assertIn('microchipStatus == .recorded { parts.append("マイクロチップあり") }', line)
         self.assertNotIn("parts.append(record?.microchip", line)
         # The published contact is added by a tap, never filled on its own.
         fill = section(view, "private func fillFromCatCare(", "@ViewBuilder private func fieldIssue(")

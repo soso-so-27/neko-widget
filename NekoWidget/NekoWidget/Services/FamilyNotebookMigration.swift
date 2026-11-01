@@ -1,5 +1,31 @@
 import Foundation
 
+/// Backward-compatible metadata in the existing vaccination collection. A
+/// reserved row has only `kind`, never `givenOn`: old projections safely skip
+/// incomplete rows instead of displaying an invented vaccination/date. No new
+/// operation field, value case, collection, or server schema is introduced.
+enum FamilyNotebookVaccinationAnswer {
+    static func recordID(cat: UUID) -> UUID {
+        var bytes = cat.uuid
+        bytes.0 ^= 0x80
+        return UUID(uuid: bytes)
+    }
+    static func target(cat: UUID) -> FamilyNotebookTarget {
+        .init(familyCatID: cat, collection: .vaccination, recordID: recordID(cat: cat), field: .kind)
+    }
+}
+
+enum FamilyNotebookMicrochipAnswer {
+    static let noneText = "入っていない"
+    static func recordID(cat: UUID) -> UUID {
+        var bytes = cat.uuid; bytes.0 ^= 0x40
+        return UUID(uuid: bytes)
+    }
+    static func target(cat: UUID) -> FamilyNotebookTarget {
+        .init(familyCatID: cat, collection: .vaccination, recordID: recordID(cat: cat), field: .kind)
+    }
+}
+
 enum FamilyNotebookMigrationError: Error, Equatable {
     case unreadableSource, unsupportedSchema, invalidSource, missingCatMapping, ambiguousCatMapping, changedRecordMapping
 }
@@ -133,7 +159,7 @@ enum FamilyNotebookMigration {
         mutating func put(_ field: FamilyNotebookField?, _ value: FamilyNotebookValue?,
                           catID: UUID, collection: FamilyNotebookCollection = .cat,
                           recordID: UUID? = nil, parentID: UUID? = nil,
-                          source: String, at date: Date) throws {
+                          source: String, at date: Date, reassertSameValue: Bool = false) throws {
             guard date.timeIntervalSince1970.isFinite else { throw FamilyNotebookMigrationError.invalidSource }
             let target = FamilyNotebookTarget(familyCatID: catID, collection: collection,
                 recordID: recordID, parentRecordID: parentID, field: field)
@@ -144,7 +170,7 @@ enum FamilyNotebookMigration {
             // Store.applyImport separates this source date from the new author's
             // import time. Clinical dates are also preserved as explicit values.
             entries.append(.init(ledgerKey: source + ":" + collection.rawValue + ":" + (field?.rawValue ?? "deleted"),
-                                 target: target, value: value, editedAt: date))
+                                 target: target, value: value, editedAt: date, reassertSameValue: reassertSameValue))
         }
 
         mutating func text(_ field: FamilyNotebookField, _ value: String, catID: UUID,
@@ -184,6 +210,13 @@ enum FamilyNotebookMigration {
                 for (field, stamp) in texts {
                     if let stamp { try text(field, stamp.value, catID: id, source: source, at: stamp.editedAt) }
                 }
+                if let answer = input.microchipAnswer {
+                    // Never export a stale negative answer after an older app
+                    // changed the number. Preserve the old number field itself.
+                    try put(.kind, input.microchipStatus == .none ? .text(FamilyNotebookMicrochipAnswer.noneText) : .clear,
+                            catID: id, collection: .vaccination, recordID: FamilyNotebookMicrochipAnswer.recordID(cat: id),
+                            source: source + ":microchip-answer", at: answer.editedAt, reassertSameValue: true)
+                }
                 if let stamp = input.sex { try text(.sex, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
                 if let stamp = input.neutered { try text(.neutered, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
                 if let stamp = input.indoorOnly { try text(.indoorOnly, stamp.value.rawValue, catID: id, source: source, at: stamp.editedAt) }
@@ -196,6 +229,11 @@ enum FamilyNotebookMigration {
                     try vet(stamp.value, catID: id, source: source, at: stamp.editedAt)
                 } else if let stamp = state.household.vet {
                     try vet(stamp.value, catID: id, source: source, at: stamp.editedAt)
+                }
+                if let answer = input.vaccinationAnswer {
+                    try put(.kind, answer.value.status == .none ? .text(CatCareVaccinationStatus.noneText) : .clear,
+                            catID: id, collection: .vaccination, recordID: FamilyNotebookVaccinationAnswer.recordID(cat: id),
+                            source: source + ":vaccination-answer", at: answer.editedAt, reassertSameValue: true)
                 }
                 for item in input.weights {
                     let key = source + ":weight:" + item.id.uuidString.lowercased()
@@ -223,6 +261,10 @@ enum FamilyNotebookMigration {
                 for item in input.vaccinations {
                     let key = source + ":vaccination:" + item.id.uuidString.lowercased()
                     let recordID = try record(key, catID: id, makeRecordID: makeRecordID)
+                    guard recordID != FamilyNotebookVaccinationAnswer.recordID(cat: id),
+                          recordID != FamilyNotebookMicrochipAnswer.recordID(cat: id) else {
+                        throw FamilyNotebookMigrationError.invalidSource
+                    }
                     if let deleted = item.deletedAt {
                         try put(nil, nil, catID: id, collection: .vaccination, recordID: recordID, source: key, at: deleted)
                     } else {

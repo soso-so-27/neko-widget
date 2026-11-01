@@ -221,6 +221,10 @@ struct FamilyNotebookImportEntry: Equatable, Sendable {
     let target: FamilyNotebookTarget
     let value: FamilyNotebookValue?
     let editedAt: Date
+    /// Local edit intent only, never part of the encrypted Operation DTO.
+    /// Reconfirming an empty history must advance its causal answer even when
+    /// the text is unchanged after a different (vaccination) target was edited.
+    var reassertSameValue = false
 }
 
 struct FamilyNotebookImportPlan: Equatable, Sendable {

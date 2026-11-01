@@ -2,6 +2,7 @@ import Foundation
 
 enum FamilyNotebookCatCareBridgeVerifier {
     static func run() throws {
+        try absenceAnswers()
         let fixture = FamilyNotebookMigrationVerifier.Fixture()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-catcare-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -80,5 +81,94 @@ enum FamilyNotebookCatCareBridgeVerifier {
                     && local.cats[0].vaccinations[0].proof == chosen.cats[0].vaccinations[0].proof,
                     "projection must retain existing local photos")
         print("PASS: family CatCare identity, privacy, lists, durable-before-tool recovery, retry and deletion")
+    }
+    static func absenceAnswers() throws {
+        let fixture = FamilyNotebookMigrationVerifier.Fixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-absence-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let family = UUID(), cat = UUID(), author = FamilyNotebookAuthor(personID: "owner", displayName: "飼い主")
+        let at = FamilyNotebookMigrationVerifier.then
+        var chosen = fixture.care; chosen.cats = [fixture.care.cats[0]]
+        chosen.cats[0].vaccinations = []
+        _ = chosen.cats[0].setMicrochip(status: .none, editedAt: at, editedBy: "owner")
+        _ = chosen.cats[0].setVaccinationStatus(.none, editedAt: at, editedBy: "owner")
+        _ = chosen.household.setVet(status: .none, editedAt: at, editedBy: "owner")
+        chosen.cats[0].vetOverride = nil
+        let link = FamilyNotebookLocalMapping(sourceKey: "cat:" + fixture.toolA.uuidString.lowercased(), familyCatID: cat,
+                                               profileID: fixture.profileA, toolCatID: fixture.toolA)
+        let plan = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: chosen, unreadableCatCount: 0)),
+                                                       familyID: family, mappings: [link]).plan
+        let source = try FamilyNotebookStore(directory: root.appendingPathComponent("source"), familyID: family, deviceID: "sender")
+        _ = try source.applyImport(plan, author: author, now: at)
+        let destination = try FamilyNotebookStore(directory: root.appendingPathComponent("destination"), familyID: family, deviceID: "receiver")
+        let operations = try source.snapshot().operations
+        let bytes = try JSONEncoder().encode(operations)
+        // The operation enum/fields are unchanged, including for old readers.
+        _ = try destination.receive(JSONDecoder().decode([FamilyNotebookOperation].self, from: bytes))
+        let mappings = try FamilyNotebookCatCareBridge.mappings(for: destination.snapshot())
+        _ = try destination.applyImport(.init(familyID: family, entries: [], mappings: mappings), author: author)
+        let reopened = try FamilyNotebookStore(directory: root.appendingPathComponent("destination"), familyID: family, deviceID: "receiver")
+        let privateCare = CatCareState(deviceID: "private", now: at)
+        let received = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: privateCare)
+        func require(_ value: Bool, _ message: String) throws { try FamilyNotebookMigrationVerifier.require(value, message) }
+        let answer = received.cats[0]
+        try require(answer.microchipStatus == .none && answer.vaccinationStatus == .none
+                    && answer.vetStatus(household: received.household) == .none, "all negative answers survive family import and reopen")
+        try require(received.household == privateCare.household, "shared vet never overwrites private household")
+        try require(answer.activeVaccinations.isEmpty && answer.vaccinations.isEmpty, "answer is not a synthetic dated clinical entry")
+        let target = FamilyNotebookVaccinationAnswer.target(cat: cat)
+        try require(operations.contains { $0.target == target && $0.value == .text(CatCareVaccinationStatus.noneText) }, "answer uses existing kind wire value")
+        try require(!operations.contains { $0.target.recordID == target.recordID && $0.target.field == .givenOn },
+                    "old projection requiring givenOn skips metadata without showing a false vaccination")
+        try require(!mappings.contains { $0.recordID == target.recordID }, "metadata never becomes a local vaccination ID")
+        let restored = try CatCareDecoding.backupState(CatCareDecoding.portable(CatCareDecoding.encode(received)))
+        try require(restored.cats == received.cats, "family projection portable restore retains answer and provenance")
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .microchip), value: .text("392141000123456"), author: author)
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .microchip), value: .clear, author: author)
+        let oldNumberClear = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: received)
+        try require(oldNumberClear.cats[0].microchipStatus == .unknown && oldNumberClear.cats[0].microchip?.value == "",
+                    "old number edit then clear cannot resurrect an earlier negative answer")
+
+        // Edit and return through the same migration/delta path used by the app.
+        var cleared = received
+        _ = cleared.cats[0].setMicrochip(status: .unknown, editedAt: at.addingTimeInterval(1), editedBy: "receiver")
+        _ = cleared.cats[0].setVaccinationStatus(.unknown, editedAt: at.addingTimeInterval(1), editedBy: "receiver")
+        _ = cleared.cats[0].setVetOverride(status: .unknown, editedAt: at.addingTimeInterval(1), editedBy: "receiver")
+        let back = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: cleared, unreadableCatCount: 0)),
+                                                       familyID: family, mappings: reopened.snapshot().mappings).plan
+        try reopened.applyLocalChanges(back, author: author)
+        let afterClear = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: received)
+        try require(afterClear.cats[0].microchipStatus == .unknown && afterClear.cats[0].vaccinationStatus == .unknown
+                    && afterClear.cats[0].vetStatus(household: afterClear.household) == .unknown, "clear returns through stable family fields")
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .microchip), value: .text("392141000123456"), author: author)
+        _ = try reopened.edit(target: .init(familyCatID: cat, field: .vetName), value: .text("ねこ病院"), author: author)
+        let recordID = UUID()
+        _ = try reopened.edit(target: .init(familyCatID: cat, collection: .vaccination, recordID: recordID, field: .kind), value: .text("3種"), author: author)
+        _ = try reopened.edit(target: .init(familyCatID: cat, collection: .vaccination, recordID: recordID, field: .givenOn), value: .day("2026-10-20"), author: author)
+        let newMappings = try FamilyNotebookCatCareBridge.mappings(for: reopened.snapshot())
+        _ = try reopened.applyImport(.init(familyID: family, entries: [], mappings: newMappings), author: author)
+        let edited = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: afterClear)
+        try require(edited.cats[0].microchipStatus == .recorded && edited.cats[0].vaccinationStatus == .recorded
+                    && edited.cats[0].vetStatus(household: edited.household) == .recorded, "old ordinary fields replace negative answers")
+        _ = try reopened.edit(target: target, value: .text(CatCareVaccinationStatus.noneText), author: author)
+        _ = try reopened.edit(target: .init(familyCatID: cat, collection: .vaccination, recordID: recordID, field: nil), value: nil, author: author)
+        let freshProjection = try FamilyNotebookCatCareBridge.apply(reopened.snapshot(), to: privateCare)
+        try require(freshProjection.cats[0].vaccinationStatus == .unknown && freshProjection.cats[0].activeVaccinations.isEmpty,
+                    "fresh receiver sees later vaccine tombstone and cannot resurrect none")
+        var staleAnswer = freshProjection.cats[0]
+        staleAnswer.vaccinationAnswer?.value.status = .none
+        try require(CatCareMerge.merge(staleAnswer, freshProjection.cats[0]).vaccinationStatus == .unknown,
+                    "merging a stale equal-stamp copy cannot undo observed family invalidation")
+        var newAnswer = freshProjection
+        _ = newAnswer.cats[0].setVaccinationStatus(.none, editedAt: Date().addingTimeInterval(1), editedBy: "receiver")
+        let confirmation = try FamilyNotebookMigration.prepare(source: .init(catCare: .init(state: newAnswer, unreadableCatCount: 0)),
+                                                               familyID: family, mappings: reopened.snapshot().mappings).plan
+        try reopened.applyLocalChanges(confirmation, author: author)
+        let confirmedSnapshot = try reopened.snapshot()
+        try reopened.applyLocalChanges(confirmation, author: author)
+        try require(try reopened.snapshot() == confirmedSnapshot, "reconfirm retry does not enqueue duplicate operations")
+        let reconfirmed = try FamilyNotebookCatCareBridge.apply(confirmedSnapshot, to: privateCare)
+        try require(reconfirmed.cats[0].vaccinationStatus == .none, "explicit reconfirmation after deletion works")
+        print("Family CatCare absence answers: import, clear, legacy edits and reopen passed")
     }
 }

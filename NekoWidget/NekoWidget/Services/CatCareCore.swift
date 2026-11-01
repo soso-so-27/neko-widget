@@ -86,7 +86,48 @@ struct CatCareVet: Codable, Equatable, Sendable {
     var phone: String = ""
     var note: String = ""
     var isEmpty: Bool { [name, phone, note].allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
+
+    var vetStatus: CatCareVetStatus {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let phone = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name == CatCareConditionsStatus.noneText && phone.isEmpty { return .none }
+        return name.isEmpty && phone.isEmpty ? .unknown : .recorded
+    }
+
+    static func answer(status: CatCareVetStatus, name: String, phone: String, note: String) -> Self? {
+        func clean(_ value: String) -> String {
+            CatCareLimits.clippedText(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        switch status {
+        case .unknown: return .init(note: clean(note))
+        case .none: return .init(name: CatCareConditionsStatus.noneText, note: clean(note))
+        case .recorded:
+            let name = clean(name)
+            guard !name.isEmpty, name != CatCareConditionsStatus.noneText else { return nil }
+            return .init(name: name, phone: clean(phone), note: clean(note))
+        }
+    }
 }
+
+/// An answer about an empty history is not a vaccination with an invented date.
+/// Old CatCare readers ignore this optional metadata; actual entries always win.
+enum CatCareAbsenceAnswer: String, Codable, Equatable, Sendable { case unknown, none }
+struct CatCareVaccinationAnswer: Codable, Equatable, Sendable {
+    var status: CatCareAbsenceAnswer
+    /// Binds an answer to the retained history, including tombstones. An old
+    /// app adding/deleting a new ID invalidates it even within the same second.
+    var observedVaccinationIDs: [UUID]
+}
+enum CatCareVaccinationStatus: String, CaseIterable, Sendable {
+    case unknown, none, recorded
+    static let noneText = "受けていない"
+}
+enum CatCareMicrochipStatus: String, CaseIterable, Sendable { case unknown, none, recorded }
+struct CatCareMicrochipAnswer: Codable, Equatable, Sendable {
+    var status: CatCareAbsenceAnswer
+    var numberEdit: CatCareStamped<String>?
+}
+typealias CatCareVetStatus = CatCareConditionsStatus
 
 struct CatCarePhotoRef: Codable, Equatable, Sendable {
     /// A copy inside the app's CatCare folder, so it survives Photos deletions.
@@ -175,6 +216,16 @@ struct CatCareHousehold: Codable, Equatable, Sendable {
     var backupContact: CatCareStamped<String>?
     var vet: CatCareStamped<CatCareVet>?
     var meetingPlace: CatCareStamped<String>?
+
+    var vetStatus: CatCareVetStatus { vet?.value.vetStatus ?? .unknown }
+
+    @discardableResult
+    mutating func setVet(status: CatCareVetStatus, name: String = "", phone: String = "", note: String = "",
+                         editedAt: Date, editedBy: String) -> Bool {
+        guard let value = CatCareVet.answer(status: status, name: name, phone: phone, note: note) else { return false }
+        if vet?.value != value { vet = .init(value: value, editedAt: editedAt, editedBy: editedBy) }
+        return true
+    }
 }
 
 struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
@@ -189,8 +240,11 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var birthday: CatCareStamped<CatCareDay?>?
     var coat: CatCareStamped<String>?
     var marks: CatCareStamped<String>?
-    /// 15 digits. Shown in full on screen and on paper (owner decision 10/20).
+    /// 15 digits or empty. Never put a negative answer in the number slot:
+    /// older public-flyer readers treat every nonempty string as implanted.
+    /// Shown in full on screen and on paper (owner decision 10/20).
     var microchip: CatCareStamped<String>?
+    var microchipAnswer: CatCareStamped<CatCareMicrochipAnswer>?
     var indoorOnly: CatCareStamped<CatCareTriState>?
 
     var facePhoto: CatCareStamped<CatCarePhotoRef?>?
@@ -201,6 +255,7 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
     var weights: [CatCareWeight] = []
     var medications: [CatCareMedication] = []
     var vaccinations: [CatCareVaccination] = []
+    var vaccinationAnswer: CatCareStamped<CatCareVaccinationAnswer>?
 
     var meals: [CatCareMeal] = []
     var specialDiet: CatCareStamped<String>?
@@ -218,6 +273,68 @@ struct CatCareRecord: Codable, Equatable, Identifiable, Sendable {
 
     var conditionsStatus: CatCareConditionsStatus {
         CatCareConditionsStatus.reading(conditions?.value)
+    }
+
+    var microchipStatus: CatCareMicrochipStatus {
+        let text = (microchip?.value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let digits = CatCareLimits.normalizedMicrochip(text), !digits.isEmpty { return .recorded }
+        guard text.isEmpty, let answer = microchipAnswer,
+              answer.value.status == .none, answer.value.numberEdit == microchip else { return .unknown }
+        return .none
+    }
+
+    @discardableResult
+    mutating func setMicrochip(status: CatCareMicrochipStatus, number: String = "",
+                               editedAt: Date, editedBy: String) -> Bool {
+        let value: String
+        switch status {
+        case .unknown: value = ""
+        case .none: value = ""
+        case .recorded:
+            guard let digits = CatCareLimits.normalizedMicrochip(number), !digits.isEmpty else { return false }
+            value = digits
+        }
+        if microchip?.value != value { microchip = .init(value: value, editedAt: editedAt, editedBy: editedBy) }
+        let answer = CatCareMicrochipAnswer(status: status == .none ? .none : .unknown, numberEdit: microchip)
+        if microchipAnswer?.value != answer {
+            microchipAnswer = .init(value: answer, editedAt: editedAt, editedBy: editedBy)
+        }
+        return true
+    }
+
+    var vaccinationStatus: CatCareVaccinationStatus {
+        if !activeVaccinations.isEmpty { return .recorded }
+        guard let answer = vaccinationAnswer, answer.value.status == .none else { return .unknown }
+        // An older app may add and later delete a vaccination without knowing
+        // about the answer. Such edits must not resurrect an earlier "none".
+        let fresh = answer.value.observedVaccinationIDs == vaccinations.map(\.id).sorted { $0.uuidString < $1.uuidString }
+        return fresh ? .none : .unknown
+    }
+
+    @discardableResult
+    mutating func setVaccinationStatus(_ status: CatCareVaccinationStatus,
+                                       editedAt: Date, editedBy: String) -> Bool {
+        if status == .recorded { return !activeVaccinations.isEmpty }
+        guard activeVaccinations.isEmpty else { return false }
+        if status == .none && vaccinationStatus == .none { return true }
+        let value = CatCareVaccinationAnswer(status: status == .none ? .none : .unknown,
+            observedVaccinationIDs: vaccinations.map(\.id).sorted { $0.uuidString < $1.uuidString })
+        if vaccinationAnswer?.value != value || status == .none {
+            vaccinationAnswer = .init(value: value, editedAt: editedAt, editedBy: editedBy)
+        }
+        return true
+    }
+
+    func vetStatus(household: CatCareHousehold) -> CatCareVetStatus {
+        (vetOverride?.value ?? household.vet?.value)?.vetStatus ?? .unknown
+    }
+
+    @discardableResult
+    mutating func setVetOverride(status: CatCareVetStatus, name: String = "", phone: String = "", note: String = "",
+                                 editedAt: Date, editedBy: String) -> Bool {
+        guard let value = CatCareVet.answer(status: status, name: name, phone: phone, note: note) else { return false }
+        if vetOverride?.value != value { vetOverride = .init(value: value, editedAt: editedAt, editedBy: editedBy) }
+        return true
     }
 
     /// Preserve the v1 string wire format, its author/time, and one merge unit.
@@ -344,6 +461,12 @@ enum CatCareMerge {
         r.coat = pick(a.coat, b.coat)
         r.marks = pick(a.marks, b.marks)
         r.microchip = pick(a.microchip, b.microchip)
+        if let x = a.microchipAnswer, let y = b.microchipAnswer,
+           x.editedAt == y.editedAt, x.value != y.value {
+            var conservative = x.editedBy >= y.editedBy ? x : y
+            conservative.value = .init(status: .unknown, numberEdit: nil)
+            r.microchipAnswer = conservative
+        } else { r.microchipAnswer = pick(a.microchipAnswer, b.microchipAnswer) }
         r.indoorOnly = pick(a.indoorOnly, b.indoorOnly)
         r.facePhoto = pick(a.facePhoto, b.facePhoto)
         r.bodyPhoto = pick(a.bodyPhoto, b.bodyPhoto)
@@ -352,6 +475,17 @@ enum CatCareMerge {
         r.weights = union(a.weights, b.weights)
         r.medications = union(a.medications, b.medications)
         r.vaccinations = union(a.vaccinations, b.vaccinations)
+        // Projection can invalidate a negative answer when it observes a newer
+        // clinical edit. At an identical timestamp, unknown is the conservative
+        // deterministic winner, independent of merge direction or author order.
+        if let x = a.vaccinationAnswer, let y = b.vaccinationAnswer,
+           x.editedAt == y.editedAt, x.value != y.value {
+            var conservative = x.editedBy >= y.editedBy ? x : y
+            conservative.value = .init(status: .unknown, observedVaccinationIDs: [])
+            r.vaccinationAnswer = conservative
+        } else {
+            r.vaccinationAnswer = pick(a.vaccinationAnswer, b.vaccinationAnswer)
+        }
         r.meals = union(a.meals, b.meals)
         r.specialDiet = pick(a.specialDiet, b.specialDiet)
         r.water = pick(a.water, b.water)
@@ -566,7 +700,7 @@ enum CatCareLostCat {
         }
         if let age = age(record?.birthday?.value, today: today) { parts.append(age) }
         if record?.indoorOnly?.value == .yes { parts.append("室内飼い") }
-        if !(record?.microchip?.value ?? "").isEmpty { parts.append("マイクロチップあり") }
+        if record?.microchipStatus == .recorded { parts.append("マイクロチップあり") }
         return parts.isEmpty ? nil : parts.joined(separator: "・")
     }
 
