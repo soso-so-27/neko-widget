@@ -168,7 +168,7 @@ enum OnboardingPresentationVerifier {
             "scan title changed"
         )
         try require(
-            OnboardingPresentationCopy.scanWidgetAction == "まどを置く",
+            OnboardingPresentationCopy.scanWidgetAction == "ウィジェットを置く",
             "scan page stopped offering Widget placement"
         )
         try require(

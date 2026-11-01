@@ -109,7 +109,7 @@ enum OnboardingPresentationCopy {
         "アプリを開いている間、新しい写真から順に探します。"
     ]
     static let scanCountLead = "いま"
-    static let scanWidgetAction = "まどを置く"
+    static let scanWidgetAction = "ウィジェットを置く"
     /// The quiet way past the Widget: straight into the 写真 tab.
     static let scanContinueAction = "あとで"
 
