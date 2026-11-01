@@ -457,7 +457,7 @@ final class AppRecordSaveLifetime {
     }
 
     func run(_ work: @escaping @MainActor () async -> Void) async {
-        if let previous = operation {
+        while let previous = operation {
             let interrupted = previous.task.isCancelled
             await previous.task.value
             // Foreground entry waits for cancelled I/O to unwind before retrying.

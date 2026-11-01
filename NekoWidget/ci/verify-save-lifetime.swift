@@ -71,15 +71,17 @@ struct SaveLifetimeCheck {
         await until { work.cancellations == 1 }
         lifetime.setForeground(true)
         let foreground = Task { await lifetime.run { await work.save() } }
+        let simultaneousRetry = Task { await lifetime.run { await work.save() } }
         for _ in 0..<10 { await Task.yield() }
         precondition(work.starts == 2, "do not overlap cancelled work")
         work.unwind = true
         await until { work.starts == 3 }
         grant.callbacks[1]()
         for _ in 0..<10 { await Task.yield() }
-        precondition(work.cancellations == 1, "old expiry cannot cancel the resumed task")
+        precondition(work.cancellations == 1 && work.starts == 3,
+            "old expiry and simultaneous waiters cannot replace the resumed task")
         work.release = true
-        await manualRetry.value; await foreground.value
+        await manualRetry.value; await foreground.value; await simultaneousRetry.value
         precondition(grant.ends == [1, 2])
 
         for synchronous in [false, true] {
