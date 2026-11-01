@@ -511,8 +511,10 @@ final class AppRecordPersistence: ObservableObject {
             detail = "変更は保存されています。前に保存したデータの片づけは、アプリを開いている間に自動でやり直します。" +
                 ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
             nextAttempt = Date().addingTimeInterval(60)
-        } else if error is CancellationError {
+        } else if error is CancellationError || Task.isCancelled {
             // Leaving the app stops a save; it is not a failure, and the next open goes on with it.
+            // A request cut off by the switch can fail as a network error after the
+            // person is back; counting it as a failure would hold the retry for a minute.
             title = "保存の途中です"
             detail = "アプリを開くと、自動で続けます。"
             nextAttempt = .distantPast
