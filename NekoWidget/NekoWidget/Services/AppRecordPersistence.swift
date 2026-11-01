@@ -512,8 +512,9 @@ final class AppRecordPersistence: ObservableObject {
                 ((error as? ToolBackupJournalError).map { "（確認コード: \($0.rawValue)）" } ?? "")
             nextAttempt = Date().addingTimeInterval(60)
         } else if error is CancellationError {
-            title = "まだ保存していない変更があります"
-            detail = "保存が途中で止まりました。アプリを開いている間に自動で再開します。"
+            // Leaving the app stops a save; it is not a failure, and the next open goes on with it.
+            title = "保存の途中です"
+            detail = "アプリを開くと、自動で続けます。"
             nextAttempt = .distantPast
         } else {
             report(error)
@@ -851,6 +852,7 @@ final class AppRecordPersistence: ObservableObject {
                 try await require(value, checkpoint); try write(value)
             }
             title = "保存中…"
+            detail = "アプリを閉じても、次に開いたときに自動で続けます。"
             phase = "準備した記録を送信"
             do { try await ToolBackupTransfer.upload(saved, client: client) { _, _ in } }
             catch ManagedPreservationError.snapshotAbandoned {
