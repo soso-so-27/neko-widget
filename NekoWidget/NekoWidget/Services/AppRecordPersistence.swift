@@ -1085,7 +1085,7 @@ final class AppRecordPersistence: ObservableObject {
         guard let value = try binding(), value.pending == nil,
               value.fingerprint == (try AppRecordDataset.fingerprint()),
               !(value.retiring ?? []).isEmpty, requested, title == "保存済み",
-              detail?.contains("以前の保存データの整理") == true else { throw ToolBackupError.storage }
+              detail?.contains("前に保存したデータの片づけ") == true else { throw ToolBackupError.storage }
     }
 
     func verifyEditingPublicationFences() async throws {
