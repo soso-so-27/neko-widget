@@ -246,6 +246,7 @@ private struct VeterinaryConsultationView: View {
     @State private var chosen: PhotoMemoryNoteRecord?
     @State private var pendingSource: PhotoMemoryNoteRecord?
     @State private var autosaveTask: Task<Void, Never>?
+    @State private var removingEntry: VeterinaryVisitEntry?
     @ObservedObject private var catCareStore = CatCareStore.shared
 
     private var changes: Bool {
@@ -301,7 +302,7 @@ private struct VeterinaryConsultationView: View {
                             if let weight = entry.weight { PhotoMemoWeightLabel(weight: weight) }
                             VeterinaryEntryDates(entry: entry)
                             if visit.completedAt == nil {
-                                Button("診察メモから外す", role: .destructive) { Task { await remove(entry) } }
+                                Button("診察メモから外す", role: .destructive) { removingEntry = entry }
                                     .accessibilityIdentifier("vet-remove-\(entry.id.uuidString)")
                             }
                         }.padding(.vertical, 6)
@@ -418,6 +419,8 @@ private struct VeterinaryConsultationView: View {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("この診察メモだけを削除します。") }
+        .confirmationDialog("診察メモから外しますか？", isPresented: removingEntryPresented, titleVisibility: .visible,
+                            presenting: removingEntry, actions: removalActions, message: removalMessage)
         .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || pendingSource != nil)
     }
     private func scheduleSave() {
@@ -461,6 +464,20 @@ private struct VeterinaryConsultationView: View {
             startedDay = formatter.date(from: day) ?? startedDay
         }
     }
+    // Kept out of the body chain so the type checker stays fast.
+    private var removingEntryPresented: Binding<Bool> {
+        Binding(get: { removingEntry != nil }, set: { if !$0 { removingEntry = nil } })
+    }
+
+    @ViewBuilder private func removalActions(_ entry: VeterinaryVisitEntry) -> some View {
+        Button("外す", role: .destructive) { Task { await remove(entry) } }
+        Button("キャンセル", role: .cancel) {}
+    }
+
+    private func removalMessage(_ entry: VeterinaryVisitEntry) -> some View {
+        Text("元の写真やメモは残ります。")
+    }
+
     private func remove(_ entry: VeterinaryVisitEntry) async {
         guard let visit, !busy else { return }
         busy = true; defer { busy = false }
