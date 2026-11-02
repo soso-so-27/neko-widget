@@ -770,7 +770,7 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn("authorizeForSandboxOwnerPreparation()", preparation)
         self.assertIn("prepareSandboxOwnerPending(", preparation)
         keychain = source("NekoWidget/Services/BillingKeychainStore.swift")
-        local = keychain[keychain.index("static func prepareSandboxOwnerPending("):keychain.index("#if DEBUG")]
+        local = keychain[keychain.index("static func prepareSandboxOwnerPending("):keychain.index("#if DEBUG\n    /// In-memory boundary exercise")]
         self.assertIn("BillingSandboxOwnerEnrollmentAvailability.isAvailable", local)
         self.assertIn("authorization.validatedForBootstrap()", local)
         self.assertLess(local.index("if let existing = try loadCredential()"), local.index("let marker = try createMarker()"))

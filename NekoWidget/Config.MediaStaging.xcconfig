@@ -3,6 +3,8 @@
 // from protected variables in the GitHub `testflight` Environment.
 #include "Config.xcconfig"
 
+// Compile internal presentation only into this explicitly internal Release.
+INTERNAL_PRESENTATION_CONDITION = INTERNAL_PRESENTATION
 SHARING_RELEASE_MODE = media-staging
 SHARING_FEATURE_ENABLED = YES
 // Remains off unless the protected internal release explicitly requests it.

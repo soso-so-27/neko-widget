@@ -196,6 +196,7 @@ struct GroupWidgetSnapshot: Codable, Equatable, Sendable {
     let cacheGeneration: String
 }
 
+#if DEBUG || INTERNAL_PRESENTATION
 // A caller-scoped, in-memory diagnostic. Only the internal UI creates one.
 // TaskLocal prevents unrelated actor calls from being counted in this load.
 // The lock protects inherited tasks (e.g. identity registration); no IDs, URLs,
@@ -273,6 +274,7 @@ final class GroupListTrace: @unchecked Sendable {
     }
 }
 
+#endif
 struct GroupNotificationRoute: Sendable {
     let windowID: String
     let requestID: String?

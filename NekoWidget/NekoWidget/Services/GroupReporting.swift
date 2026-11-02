@@ -168,6 +168,7 @@ final class GroupSafety: ObservableObject {
     }
 }
 
+#if DEBUG || INTERNAL_PRESENTATION
 /// Test builds: reports on this iPhone alone. Nothing is encrypted or sent;
 /// a report is "received" at once, and the answer is tried with a button.
 @MainActor
@@ -247,3 +248,5 @@ final class GroupReportingPrototype: GroupReportingService {
         return records[index]
     }
 }
+
+#endif

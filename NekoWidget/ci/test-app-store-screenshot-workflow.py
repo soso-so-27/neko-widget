@@ -63,8 +63,42 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('CAPTURE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2', self.workflow)
         self.assertIn('"iPhone 17 Pro Max"', self.workflow)
         self.assertIn('"iPhone 16 Pro Max"', self.workflow)
-        self.assertNotIn("simctl addmedia", self.workflow)
-        self.assertNotIn("ci/fixtures/cats", self.workflow)
+        # The original privacy-safe screenshot set still imports no Photos.
+        legacy = self.workflow.split("  capture-public-ipad:", 1)[0]
+        self.assertNotIn("simctl addmedia", legacy)
+        self.assertNotIn("ci/fixtures/cats", legacy)
+
+    def test_public_ipad_lane_uses_only_reviewed_media_and_public_release(self) -> None:
+        lane = self.workflow.split("  capture-public-ipad:", 1)[1]
+        self.assertIn("if: inputs.review_test == 'testReviewPublicIPadCompatibility'", lane)
+        self.assertIn("inputs.review_test != 'testReviewPublicIPadCompatibility'", self.workflow)
+        self.assertIn("production_candidate.py build --synthetic", lane)
+        self.assertIn("production_candidate.py products --synthetic", lane)
+        self.assertIn("info.get('UIDeviceFamily') != [1]", lane)
+        self.assertEqual(lane.count("simctl addmedia"), 1)
+        media = [line.strip().rstrip("\\").strip() for line in lane.splitlines()
+                 if line.strip().startswith("ci/fixtures/")]
+        self.assertEqual(media, ["ci/fixtures/cats/cat-orange-square.png",
+                                 "ci/fixtures/cats/cat-tuxedo-landscape.png",
+                                 "ci/fixtures/cats/cat-gray-portrait.png"])
+        for forbidden in ("-configuration Debug", "--app-store-screenshot-fixture",
+                          "-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration",
+                          "-exportArchive", "-retry-tests-on-failure"):
+            self.assertNotIn(forbidden, lane)
+        self.assertIn("-test-iterations 1", lane)
+        self.assertIn("if cases != [(expected, 'started'), (expected, 'passed')]", lane)
+
+    def test_public_ipad_walkthrough_uses_normal_entries_without_purchase(self) -> None:
+        method = self.ui_test.split("func testReviewPublicIPadCompatibility()", 1)[1].split(
+            "func testReviewPublicPresentation()", 1)[0]
+        for entry in ("onboarding-purpose-start", "initial-scan-continue", "main-tab-photos",
+                      "main-tab-windows", "tools-settings-button", "settings-membership-offer",
+                      "membership-offer-close"):
+            self.assertIn(entry, method)
+        for forbidden in ("--app-store-screenshot-fixture", "--review-public-presentation",
+                          'app.launchEnvironment[', 'tap("membership-offer-purchase"',
+                          'tap("membership-offer-restore"', 'tap("settings-membership-restore"'):
+            self.assertNotIn(forbidden, method)
 
     def test_capture_build_is_explicitly_local_only(self) -> None:
         required = {

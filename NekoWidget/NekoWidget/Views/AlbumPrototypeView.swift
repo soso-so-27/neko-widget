@@ -22,12 +22,14 @@ enum AlbumPrototype {
     }
     static let enabledAtKey = "debug.albumPrototype.enabledAt.v1"
     static let openedKey = "debug.albumPrototype.opened.v1"
+#if DEBUG || INTERNAL_PRESENTATION
     /// Test only: deliver this year's work today instead of on 12/6.
     static let yearNowKey = "debug.albumPrototype.yearNow.v1"
     /// Test only: a month's work opens as a book; this switch goes back to
     /// the earlier slideshow story instead.
     static let slideshowKey = "debug.albumPrototype.slideshow.v1"
 
+#endif
     /// The year's work arrives on 12/6: inside the early-December wave of year
     /// reviews, after November's work (12/1), before the holidays. December's
     /// own photos come with December's work on 1/1.
@@ -197,7 +199,11 @@ struct AlbumPrototypeView: View {
 
     @AppStorage(AlbumPrototype.enabledAtKey) private var enabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var openedJSON = ""
+#if DEBUG || INTERNAL_PRESENTATION
     @AppStorage(AlbumPrototype.yearNowKey) private var yearNow = false
+#else
+    private let yearNow = false
+#endif
     @State private var story: MonthlyWindowPresentation?
     /// The card the open work came out of (the top card or a book on the shelf).
     @State private var storySource = ""
@@ -718,6 +724,7 @@ struct MonthlyStoryView: View {
     let assignments: [String: Set<String>]
     let profileNames: [String: String]
 
+#if DEBUG || INTERNAL_PRESENTATION
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pages: [Page] = []
@@ -729,6 +736,7 @@ struct MonthlyStoryView: View {
     @State private var cardShare = StoryCardShareState<UIImage>()
     @AppStorage(AlbumPrototype.slideshowKey) private var opensAsSlideshow = false
 
+#endif
     static let pageSeconds: Double = 5
 
     enum Page: Hashable {
@@ -740,6 +748,7 @@ struct MonthlyStoryView: View {
         case card([PhotoPresentation], String)
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     private struct AdvanceKey: Hashable { let index: Int; let paused: Bool; let count: Int }
 
     private var preparationKey: MonthlyStoryPreparationKey {
@@ -766,15 +775,22 @@ struct MonthlyStoryView: View {
     /// 「10月の9枚」: the app's nines are named by when, the user's own by 自慢.
     private func cardTitle(_ count: Int) -> String { "\(letter.monthNumber)月の\(count)枚" }
 
+#endif
     var body: some View {
+#if DEBUG || INTERNAL_PRESENTATION
         if !opensAsSlideshow {
             MonthlyBookView(letter: letter, catPhotos: catPhotos,
                             assignments: assignments, profileNames: profileNames)
         } else {
             storyBody
         }
+#else
+        MonthlyBookView(letter: letter, catPhotos: catPhotos,
+                        assignments: assignments, profileNames: profileNames)
+#endif
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     private var storyBody: some View {
         ZStack {
             backdrop.ignoresSafeArea()
@@ -886,6 +902,7 @@ struct MonthlyStoryView: View {
         }
     }
 
+#endif
     private typealias Prepared = (pages: [Page], backdrop: Color?)
     private static var prepared = MonthlyStoryPreparationCache<Prepared>()
 
@@ -984,6 +1001,7 @@ struct MonthlyStoryView: View {
                      blue: Double(pixel[2]) / 255 * shade)
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     // MARK: Pages
 
     @ViewBuilder private func pageView(_ page: Page) -> some View {
@@ -1075,6 +1093,7 @@ struct MonthlyStoryView: View {
             Text(caption).font(.caption.weight(.semibold)).tracking(1.5).opacity(0.8)
         }
     }
+#endif
 }
 
 /// A cold-start URL waits here until current Photos and album metadata resolve.
@@ -1094,7 +1113,9 @@ enum AlbumArrivalNotice {
     static let userInfoKey = "albumArrival"
     private static let monthID = "album-arrival.month"
     private static let yearID = "album-arrival.year"
+#if DEBUG || INTERNAL_PRESENTATION
     private static let tryID = "album-arrival.try"
+#endif
     private static let hour = 9
 
     /// The next 1st at 9:00, and the month whose work it brings.
@@ -1130,6 +1151,7 @@ enum AlbumArrivalNotice {
         }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     /// Test only: last month's notice in 5 seconds, to see how it reads and
     /// where a tap goes. Asks for notifications the first time. False: not allowed.
     static func tryNow() async -> Bool {
@@ -1145,6 +1167,7 @@ enum AlbumArrivalNotice {
         return true
     }
 
+#endif
     private static func isAllowed(_ center: UNUserNotificationCenter) async -> Bool {
         let status = await center.notificationSettings().authorizationStatus
         return [UNAuthorizationStatus.authorized, .provisional, .ephemeral].contains(status)
@@ -1178,16 +1201,22 @@ struct YearStoryView: View {
     static func periodIdentifier(_ year: Int) -> String { "Y\(year)" }
 
     /// Test only: the earlier slideshow, for the year as for the month.
+#if DEBUG || INTERNAL_PRESENTATION
     @AppStorage(AlbumPrototype.slideshowKey) private var opensAsSlideshow = false
+#endif
 
     var body: some View {
         let input = YearStoryPreparationKey(year: year, catPhotos: catPhotos,
                                             assignments: assignments, profileNames: profileNames)
+#if DEBUG || INTERNAL_PRESENTATION
         if opensAsSlideshow {
             YearStoryContentView(input: input).id(input)
         } else {
             YearBookView(input: input).id(input)
         }
+#else
+        YearBookView(input: input).id(input)
+#endif
     }
 }
 
@@ -1416,6 +1445,7 @@ private struct YearBookView: View {
 
 /// A new input identity replaces the entire per-open state, cancels its tasks,
 /// and removes the former image before rebuilding the year's pages.
+#if DEBUG || INTERNAL_PRESENTATION
 private struct YearStoryContentView: View {
     let input: YearStoryPreparationKey
     private var year: Int { input.year }
@@ -1664,6 +1694,7 @@ private struct YearStoryContentView: View {
 /// Test builds only: the month's work as a book. Nothing is drawn to look
 /// like paper or cloth: the photos, white space and one serif. The pages are
 /// the story's own, laid out flat, and turn sideways at the reader's pace.
+#endif
 struct MonthlyBookView: View {
     let letter: MonthlyWindowPresentation
     let catPhotos: [PhotoPresentation]

@@ -607,7 +607,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcrun --sdk macosx swiftc \
+          xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION \
             -parse-as-library \
             NekoWidget/Services/PhotoBookPolicy.swift \
             ci/verify-photo-book-policy.swift \
@@ -672,7 +672,8 @@ jobs:
               position = directive.start() + directive[0].index("#")
               probe[position] = "_"
               positions.append((position, directive[1]))
-          # Preserve comment/string offsets and separately reject conditional gallery code.
+          # Preserve offsets; the accessibility declaration/binding must be unconditional.
+          # Internal-only book tools elsewhere in this gallery may be compiled out.
           whole = swift_declaration_source("".join(probe))
           if whole is None:
               raise SystemExit("Cannot verify favorites accessibility source context.")
@@ -684,8 +685,6 @@ jobs:
           for position, directive in positions:
               if whole[position] != "_":
                   continue  # A directive-shaped line inside a comment or string is not code.
-              if span[0] <= position < span[1]:
-                  raise SystemExit("Favorites accessibility must not be conditionally declared.")
               if directive == "if":
                   depth += 1
               else:
@@ -697,6 +696,21 @@ jobs:
                   gallery_depth = depth
           if depth or gallery_depth:
               raise SystemExit("Favorites accessibility must have unconditional source context.")
+          def require_unconditional(start, end):
+              depth = 0
+              for position, directive in positions:
+                  if whole[position] != "_":
+                      continue
+                  if start <= position < end:
+                      raise SystemExit("Favorites accessibility must not contain conditional clauses.")
+                  if position >= start:
+                      break
+                  if directive == "if":
+                      depth += 1
+                  elif directive == "endif":
+                      depth -= 1
+              if depth:
+                  raise SystemExit("Favorites accessibility must not be conditionally declared.")
           gallery, masked = source[span[0]:span[1]], whole[span[0]:span[1]]
           bodies = list(re.finditer(r"(?ms)^    var body: some View \{\n.*?^    \}", masked))
           if len(bodies) != 1:
@@ -713,10 +727,12 @@ jobs:
                   }
                   return "お気に入り、\(visiblePhotos.count.formatted())枚"
               }'''
-          for owner, active, expected in ((body, body_mask, binding), (gallery, masked, helper)):
+          for owner, active, expected, offset in ((body, body_mask, binding, span[0] + body_span[0]),
+                                                  (gallery, masked, helper, span[0])):
               if owner.count(expected) != 1:
                   raise SystemExit("Favorites accessibility binding, normal value, or recovery value changed.")
               start = owner.index(expected)
+              require_unconditional(offset + start, offset + start + len(expected))
               if active[start:start + len(expected)] != swift_declaration_source(expected):
                   raise SystemExit("Favorites accessibility contract must be active code, not a comment or string.")
           print("Favorites accessibility normal/recovery contract: PASS")

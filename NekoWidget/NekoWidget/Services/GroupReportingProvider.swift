@@ -11,7 +11,7 @@ enum GroupReportingProvider {
         // Owner OFF reads existing records locally (including hidden photos),
         // but never uses the successful-send prototype or opens a network path.
         let selected = Bundle.main.object(forInfoDictionaryKey: "GroupReportingProductionEnabled") as? String == "YES"
-        guard selected || config.isOwnerInternalReportsDisabled else { return GroupReportingPrototype() }
+        guard selected || config.isOwnerInternalReportsDisabled else { return internalFallback() }
         guard (InternalBuildPresentationAvailability.isAvailable || config.releaseMode == "production"),
               (config.isEncryptedReportAvailable || config.isOwnerInternalReportsDisabled),
               GroupWindowClientProvider.production != nil, let endpoint = config.baseURL,
@@ -42,7 +42,15 @@ enum GroupReportingProvider {
                 }
         } catch { return UnavailableGroupReporting() }
 #else
+        return internalFallback()
+#endif
+    }
+
+    private static func internalFallback() -> any GroupReportingService {
+#if DEBUG || INTERNAL_PRESENTATION
         return GroupReportingPrototype()
+#else
+        return UnavailableGroupReporting()
 #endif
     }
 }

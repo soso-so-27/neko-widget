@@ -1,3 +1,4 @@
+#if DEBUG || INTERNAL_PRESENTATION
 import SwiftUI
 import UIKit
 
@@ -212,3 +213,5 @@ private struct LogActivityView: UIViewControllerRepresentable {
         context: Context
     ) {}
 }
+
+#endif

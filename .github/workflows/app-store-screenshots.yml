@@ -274,7 +274,7 @@ jobs:
 
   capture-review:
     name: Capture changed screens
-    if: inputs.review_test != ''
+    if: inputs.review_test != '' && inputs.review_test != 'testReviewPublicIPadCompatibility'
     runs-on: macos-15
     timeout-minutes: 25
     env:
@@ -325,3 +325,139 @@ jobs:
           path: ${{ runner.temp }}/ui-review-screenshots/**/*.png
           if-no-files-found: warn
           retention-days: 14
+
+  capture-public-ipad:
+    name: One public Release iPad compatibility walk-through
+    if: inputs.review_test == 'testReviewPublicIPadCompatibility'
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - name: Check out exact requested source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve iPad destination before compiling
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun simctl list runtimes -j > "$RUNNER_TEMP/ipad-runtimes.json"
+          xcrun simctl list devicetypes -j > "$RUNNER_TEMP/ipad-types.json"
+          readarray_compat=$(python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          runtimes = json.loads((root / 'ipad-runtimes.json').read_text())['runtimes']
+          runtime = next(r['identifier'] for r in runtimes
+                         if r.get('isAvailable') and r.get('version') == '26.2' and '.iOS-' in r['identifier'])
+          kinds = [d for d in json.loads((root / 'ipad-types.json').read_text())['devicetypes']
+                   if d['name'].startswith('iPad')]
+          kind = next((d for d in kinds if d['name'] == 'iPad (A16)'), kinds[0])
+          print(runtime)
+          print(kind['identifier'])
+          print(kind['name'])
+          PY
+          )
+          runtime=$(printf '%s\n' "$readarray_compat" | sed -n '1p')
+          kind=$(printf '%s\n' "$readarray_compat" | sed -n '2p')
+          device=$(xcrun simctl create NekoPublicIPad "$kind" "$runtime")
+          printf 'IPAD_DEVICE=%s\n' "$device" >> "$GITHUB_ENV"
+          printf '%s\n%s\n' "$readarray_compat" "$device" > "$RUNNER_TEMP/ipad-destination.txt"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl ui "$device" appearance light
+          xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -showdestinations \
+            > "$RUNNER_TEMP/ipad-available-destinations.txt"
+          python3 - "$device" <<'PY'
+          import os, sys
+          from pathlib import Path
+          text = (Path(os.environ['RUNNER_TEMP']) / 'ipad-available-destinations.txt').read_text()
+          available = text.split('Ineligible destinations')[0]
+          if sys.argv[1] not in available:
+              raise SystemExit('iPad is not an available destination; do not change device family or build.')
+          PY
+      - name: Build the public Release boundary once
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/production_candidate.py fixture --synthetic --contract "$RUNNER_TEMP/ipad-contract.json"
+          python3 ci/production_candidate.py build --synthetic --contract "$RUNNER_TEMP/ipad-contract.json" -- \
+            build-for-testing -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$IPAD_DEVICE" \
+            -derivedDataPath "$RUNNER_TEMP/PublicIPadBuild" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            ONLY_ACTIVE_ARCH=YES 2>&1 | tee "$RUNNER_TEMP/ipad-public-build.log"
+          app="$RUNNER_TEMP/PublicIPadBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
+          python3 ci/production_candidate.py products --synthetic \
+            --contract "$RUNNER_TEMP/ipad-contract.json" --path "$app"
+          python3 - "$app/Info.plist" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], 'rb') as file:
+              info = plistlib.load(file)
+          if info.get('UIDeviceFamily') != [1]:
+              raise SystemExit('This must remain the iPhone-only product in iPad compatibility mode.')
+          print('Release iPhone-only app:', info.get('DTXcode'), info.get('DTSDKName'), info['UIDeviceFamily'])
+          PY
+          xcrun simctl install "$IPAD_DEVICE" "$app"
+          xcrun simctl addmedia "$IPAD_DEVICE" \
+            ci/fixtures/cats/cat-orange-square.png \
+            ci/fixtures/cats/cat-tuxedo-landscape.png \
+            ci/fixtures/cats/cat-gray-portrait.png
+          xcrun simctl privacy "$IPAD_DEVICE" grant photos jp.nekowidget.app
+      - name: Walk through the five public screens once
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_run=$(find "$RUNNER_TEMP/PublicIPadBuild/Build/Products" -maxdepth 1 -name '*.xctestrun' -print)
+          [[ -n "$test_run" && $(printf '%s\n' "$test_run" | wc -l | tr -d ' ') == 1 ]]
+          xcodebuild test-without-building -xctestrun "$test_run" \
+            -destination "platform=iOS Simulator,id=$IPAD_DEVICE" \
+            -resultBundlePath "$RUNNER_TEMP/PublicIPad.xcresult" \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testReviewPublicIPadCompatibility \
+            -parallel-testing-enabled NO -test-iterations 1 -testLanguage ja -testRegion JP \
+            2>&1 | tee "$RUNNER_TEMP/ipad-public-test.log"
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          text = (Path(os.environ['RUNNER_TEMP']) / 'ipad-public-test.log').read_text()
+          cases = re.findall(r"Test Case '-\[([^\]]+)\]' (started|passed|failed|skipped)", text)
+          expected = 'NekoWidgetUITests.AppStoreScreenshotUITests testReviewPublicIPadCompatibility'
+          if cases != [(expected, 'started'), (expected, 'passed')]:
+              raise SystemExit('Exactly one public iPad walk-through must run and pass; no skipped/retried test.')
+          PY
+      - name: Export screenshots even on failure
+        if: always()
+        shell: bash
+        run: |
+          if [[ -d "$RUNNER_TEMP/PublicIPad.xcresult" ]]; then
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/PublicIPad.xcresult" \
+              --output-path "$RUNNER_TEMP/ipad-public-screenshots"
+          fi
+      - name: Attach screenshots and native result
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: public-ipad-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/PublicIPad.xcresult
+            ${{ runner.temp }}/ipad-public-screenshots
+            ${{ runner.temp }}/ipad-public-build.log
+            ${{ runner.temp }}/ipad-public-test.log
+            ${{ runner.temp }}/ipad-destination.txt
+            ${{ runner.temp }}/ipad-available-destinations.txt
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Dispose of the ephemeral simulator
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${IPAD_DEVICE:-}" ]]; then
+            xcrun simctl shutdown "$IPAD_DEVICE" || true
+            xcrun simctl delete "$IPAD_DEVICE" || true
+          fi

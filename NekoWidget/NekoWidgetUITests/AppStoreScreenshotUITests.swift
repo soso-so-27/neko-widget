@@ -9,6 +9,83 @@ final class AppStoreScreenshotUITests: XCTestCase {
         executionTimeAllowance = 180
     }
 
+    /// Normal public Release UI; simctl supplies synthetic Photos externally.
+    @MainActor
+    func testReviewPublicIPadCompatibility() {
+        executionTimeAllowance = 300
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        func capture(_ name: String) {
+            captureScreenshot(named: "ipad-public-" + name)
+            let tree = XCTAttachment(string: app.debugDescription)
+            tree.name = "ipad-public-" + name + "-hierarchy"
+            tree.lifetime = .keepAlways
+            add(tree)
+        }
+        func tap(_ identifier: String, timeout: TimeInterval = 10) -> Bool {
+            let button = app.buttons[identifier].firstMatch
+            guard button.waitForExistence(timeout: timeout), button.isHittable else {
+                capture("unreachable-" + identifier)
+                XCTFail("Public iPad control is not hittable: " + identifier)
+                return false
+            }
+            button.tap()
+            return true
+        }
+        guard app.buttons["onboarding-purpose-start"].waitForExistence(timeout: 30) else {
+            capture("missing-onboarding"); XCTFail("Normal onboarding missing"); return
+        }
+        capture("01-onboarding")
+        guard tap("onboarding-purpose-start") else { return }
+        guard app.buttons["initial-scan-continue"].waitForExistence(timeout: 60) else {
+            capture("scan-not-ready"); XCTFail("Normal scan screen missing"); return
+        }
+        capture("02-onboarding-scan")
+        guard tap("initial-scan-continue") else { return }
+        if app.buttons["onboarding-plus-offer-skip"].waitForExistence(timeout: 3) {
+            guard tap("onboarding-plus-offer-skip") else { return }
+        }
+        guard tapTab(application: app, identifier: "main-tab-photos", fallbackLabel: "写真") else {
+            capture("missing-photos"); XCTFail("Photos tab missing"); return
+        }
+        capture("03-photos")
+        app.swipeUp()
+        capture("04-photos-scrolled")
+        guard tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") else {
+            capture("missing-windows"); XCTFail("Windows tab missing"); return
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["group-window-list"].firstMatch
+            .waitForExistence(timeout: 15), app.debugDescription)
+        capture("05-windows")
+        guard tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") else {
+            capture("missing-tools"); XCTFail("Tools tab missing"); return
+        }
+        guard tap("tools-settings-button") else { return }
+        XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
+        capture("06-settings")
+        let plus = app.buttons["settings-membership-offer"].firstMatch
+        guard scrollUpUntilHittable(plus, application: app, maximumSwipes: 5) else {
+            capture("missing-public-plus-entry")
+            XCTFail("Public Plus entry unavailable; no preview/restore fallback")
+            return
+        }
+        plus.tap()
+        XCTAssertTrue(app.staticTexts["membership-offer-heading"].firstMatch
+            .waitForExistence(timeout: 20), app.debugDescription)
+        capture("07-plus-sheet-top")
+        app.swipeUp()
+        capture("08-plus-sheet-bottom")
+        // Never purchase, restore, sign in, or send a photo in this visual check.
+        guard tap("membership-offer-close", timeout: 20) else { return }
+        XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
+        app.swipeUp()
+        capture("09-settings-bottom")
+        XCTAssertFalse(app.buttons["settings-membership-preview"].exists)
+        XCTAssertFalse(app.buttons["settings-internal-diagnostics"].exists)
+        app.terminate()
+    }
+
     @MainActor
     func testReviewPublicPresentation() {
         let app = XCUIApplication()

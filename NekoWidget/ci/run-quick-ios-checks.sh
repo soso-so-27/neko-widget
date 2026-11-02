@@ -12,7 +12,35 @@ xcrun swiftc -frontend -parse -D DEBUG \
   NekoWidget/App/NekoWidgetApp.swift NekoWidget/Views/MainTabView.swift \
   NekoWidgetUITests/PhotoPermissionUITests.swift NekoWidget/Services/SharingRuntimeSelfTest.swift
 
+# Parse the public, internal Release and DEBUG presentation variants. The
+# ordinary Release build below supplies the public type/link check.
+internal_boundary_sources=(
+  Shared/Models/OfficialWindowCatalog.swift
+  NekoWidget/Services/AppRecordPersistence.swift
+  NekoWidget/Services/BillingFreshAccountAuthorization.swift
+  NekoWidget/Services/BillingKeychainStore.swift
+  NekoWidget/Services/GroupReporting.swift
+  NekoWidget/Services/GroupReportingProvider.swift
+  NekoWidget/Services/GroupWindowContract.swift
+  NekoWidget/Services/MembershipOfferModel.swift
+  NekoWidget/Services/PhotoBookPolicy.swift
+  NekoWidget/Services/ProductionGroupWindowClient.swift
+  NekoWidget/Views/AlbumPrototypeView.swift
+  NekoWidget/Views/GroupWindowView.swift
+  NekoWidget/Views/LikedPhotosView.swift
+  NekoWidget/Views/LogView.swift
+  NekoWidget/Views/ManagedPreservationView.swift
+  NekoWidget/Views/SettingsView.swift
+)
+for condition in public internal debug; do
+  defines=()
+  if [[ "$condition" == internal ]]; then defines=(-D INTERNAL_PRESENTATION); fi
+  if [[ "$condition" == debug ]]; then defines=(-D DEBUG); fi
+  xcrun swiftc -frontend -parse "${defines[@]}" "${internal_boundary_sources[@]}"
+done
+
 owner_build_settings=(
+  INTERNAL_PRESENTATION_CONDITION=INTERNAL_PRESENTATION
   OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO GROUP_WINDOWS_ENABLED=YES
   SHARING_RELEASE_MODE=media-staging SHARING_FEATURE_ENABLED=YES SHARING_MEDIA_ENABLED=YES
   SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=YES SHARING_SHARE_EXTENSION_SEND_ENABLED=NO
@@ -37,6 +65,7 @@ for row in rows:
     settings = row['buildSettings']
     assert settings['OWNER_INTERNAL_REPORTS_DISABLED'] == 'YES', 'owner OFF overlay was overridden'
     assert settings['SHARING_RELEASE_MODE'] == 'media-staging'
+    assert 'INTERNAL_PRESENTATION' in settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'].split()
     assert settings['GROUP_REPORTING_PRODUCTION_ENABLED'] == 'NO'
     assert settings['SHARING_API_BASE_URL'] == 'https://neko-window-sharing-staging.nakanishisoya.workers.dev'
 print('PASS resolved owner build settings before compilation')
@@ -162,7 +191,7 @@ xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0
   -o "$RUNNER_TEMP/family-notebook-transport-tests"
 "$RUNNER_TEMP/family-notebook-transport-tests"
 
-xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \
   NekoWidget/Services/GroupWindowOperationStore.swift NekoWidget/Services/GroupWindowTransport.swift \
@@ -174,7 +203,7 @@ xcrun --sdk macosx swiftc -D GROUP_REPORT_CRYPTO_CHECKS -parse-as-library -targe
   Shared/Sharing/SharingAPIConfiguration.swift Shared/Sharing/GroupReportCrypto.swift ci/verify-group-report-crypto.swift \
   -o "$RUNNER_TEMP/group-report-crypto-tests"
 "$RUNNER_TEMP/group-report-crypto-tests" ci/fixtures/group-report-v3.json | node ci/verify-group-report-crypto.mjs --swift-stdin
-xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+xcrun --sdk macosx swiftc -D INTERNAL_PRESENTATION -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift Shared/Sharing/GroupReportCrypto.swift \
   NekoWidget/Services/GroupWindowContract.swift NekoWidget/Services/GroupWindowWire.swift \
   NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift NekoWidget/Services/GroupWindowTransport.swift \

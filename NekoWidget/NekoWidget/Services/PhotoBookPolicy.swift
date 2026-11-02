@@ -55,6 +55,7 @@ enum PhotoBookPolicy {
 
 /// Keeps the physical-book demand test separate from the existing local PDF.
 /// The test has no network, order, payment, PhotoKit, or export side effects.
+#if DEBUG || INTERNAL_PRESENTATION
 enum BookDemandValidationPolicy {
     static let requiredPhotoCount = 20
     static let proposedPriceYen = 4_980
@@ -65,6 +66,7 @@ enum BookDemandValidationPolicy {
     }
 }
 
+#endif
 /// Selects the sole currently liked local record for an explicit one-photo
 /// export. Missing, unliked, or duplicate records fail closed; callers must
 /// never substitute another photo.

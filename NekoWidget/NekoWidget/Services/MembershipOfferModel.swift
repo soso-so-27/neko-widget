@@ -149,9 +149,11 @@ final class MembershipOfferModel: ObservableObject {
     private var purchases: PlusPurchaseStore?
     private var observation: AnyCancellable?
     private var expiryTask: Task<Void, Never>?
+#if DEBUG || INTERNAL_PRESENTATION
     private var fixtureStatus: MembershipOfferFixtureStatus?
     private var fixtureExpiresAt: Date?
     private var fixtureAllowsPurchase = true
+#endif
     private var observedCatalogRevision: UInt64?
     private var offerLoadGeneration: UInt64 = 0
 
@@ -165,9 +167,17 @@ final class MembershipOfferModel: ObservableObject {
 
     var canPurchase: Bool {
         offer != nil && !isWorking && !isWaiting && !isMember
-            && !verificationRequired && (purchases?.canStartNewPurchase ?? fixtureAllowsPurchase)
+            && !verificationRequired && (purchases?.canStartNewPurchase ?? permitsPreviewPurchase)
             && !(purchases?.isPurchasing ?? false) && !(purchases?.isRestoring ?? false)
     }
+    private var permitsPreviewPurchase: Bool {
+#if DEBUG || INTERNAL_PRESENTATION
+        fixtureAllowsPurchase
+#else
+        false
+#endif
+    }
+
     var canRestore: Bool { !isWorking && !(purchases?.isPurchasing ?? false) && !(purchases?.isRestoring ?? false) }
 
     private init(
@@ -203,7 +213,9 @@ final class MembershipOfferModel: ObservableObject {
         defer { isWorking = false }
         let result = await purchaseAction(presentedOffer)
         await reloadOfferPresentation()
+#if DEBUG || INTERNAL_PRESENTATION
         if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
+#endif
         apply(result, restoring: false)
         updateMembershipState()
         if result == .offerChanged { apply(result, restoring: false) }
@@ -215,7 +227,9 @@ final class MembershipOfferModel: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         let result = await restoreAction()
+#if DEBUG || INTERNAL_PRESENTATION
         if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
+#endif
         apply(result, restoring: true)
         updateMembershipState()
         return result
@@ -284,12 +298,16 @@ final class MembershipOfferModel: ObservableObject {
         isWorking = true
         if let purchases {
             await purchases.refreshAfterForegroundEntry()
-        } else if let fixtureStatus {
-            switch fixtureStatus {
-            case .unknown, .authorityPending: self.fixtureStatus = .active
-            case .expired: self.fixtureStatus = .fresh
-            case .fresh, .active, .applePending: break
+        } else {
+#if DEBUG || INTERNAL_PRESENTATION
+            if let fixtureStatus {
+                switch fixtureStatus {
+                case .unknown, .authorityPending: self.fixtureStatus = .active
+                case .expired: self.fixtureStatus = .fresh
+                case .fresh, .active, .applePending: break
+                }
             }
+#endif
         }
         updateMembershipState()
         isWorking = false
@@ -320,31 +338,41 @@ final class MembershipOfferModel: ObservableObject {
                     self?.updateMembershipState()
                 }
             }
-        } else if let fixtureStatus {
-            if fixtureStatus == .active, let fixtureExpiresAt {
-                if fixtureExpiresAt <= .now {
-                    self.fixtureStatus = .expired
-                    updateMembershipState()
-                    return
+        } else {
+#if DEBUG || INTERNAL_PRESENTATION
+            if let fixtureStatus {
+                if fixtureStatus == .active, let fixtureExpiresAt {
+                    if fixtureExpiresAt <= .now {
+                        self.fixtureStatus = .expired
+                        updateMembershipState()
+                        return
+                    }
+                    expiryTask = Task { [weak self] in
+                        do { try await Task.sleep(for: .seconds(max(0, fixtureExpiresAt.timeIntervalSinceNow))) }
+                        catch { return }
+                        guard !Task.isCancelled else { return }
+                        self?.updateMembershipState()
+                    }
                 }
-                expiryTask = Task { [weak self] in
-                    do { try await Task.sleep(for: .seconds(max(0, fixtureExpiresAt.timeIntervalSinceNow))) }
-                    catch { return }
-                    guard !Task.isCancelled else { return }
-                    self?.updateMembershipState()
-                }
-            }
-            isMember = fixtureStatus == .active
-            isWaiting = fixtureStatus == .applePending || fixtureStatus == .authorityPending
-            verificationRequired = fixtureStatus == .unknown || fixtureStatus == .expired
-            fixtureAllowsPurchase = fixtureStatus == .fresh
-        } else { return }
+                isMember = fixtureStatus == .active
+                isWaiting = fixtureStatus == .applePending || fixtureStatus == .authorityPending
+                verificationRequired = fixtureStatus == .unknown || fixtureStatus == .expired
+                fixtureAllowsPurchase = fixtureStatus == .fresh
+            } else { return }
+#else
+            return
+#endif
+        }
         if isMember {
             purchaseTitle = "Plusを利用中です"
             message = nil
         } else if isWaiting {
             purchaseTitle = "購入の確認待ちです"
-            message = purchases?.pendingProductID != nil || fixtureStatus == .applePending
+            var applePending = purchases?.pendingProductID != nil
+#if DEBUG || INTERNAL_PRESENTATION
+            applePending = applePending || fixtureStatus == .applePending
+#endif
+            message = applePending
                 ? "Appleでの購入手続きが終わるのを待っています。もう一度購入しないでください。"
                 : "購入の確認を待っています。もう一度購入せずに、「購入状況を再確認」を押してください。"
         } else if verificationRequired {
@@ -356,6 +384,7 @@ final class MembershipOfferModel: ObservableObject {
         }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil) -> MembershipOfferModel {
         let model = preview(eligibleForIntroOffer: false)
         model.fixtureStatus = state
@@ -389,6 +418,7 @@ final class MembershipOfferModel: ObservableObject {
         )
     }
 
+#endif
 #if DEBUG
     /// Deterministic rendering regression for a quote changing between display
     /// and an explicit tap. No StoreKit, identity, or network is involved.
@@ -441,10 +471,12 @@ final class MembershipOfferModel: ObservableObject {
 #endif
 }
 
+#if DEBUG || INTERNAL_PRESENTATION
 enum MembershipOfferFixtureStatus: String {
     case fresh, active, applePending, authorityPending, unknown, expired
 }
 
+#endif
 @MainActor
 private final class MembershipStoreKitClient {
     private let configuration = PlusPurchaseConfiguration.current
@@ -551,7 +583,9 @@ private final class MembershipStoreKitClient {
 struct MembershipOfferSheet: View {
     @StateObject private var model: MembershipOfferModel
     @State private var showsSubscriptionManagement = false
+#if DEBUG || INTERNAL_PRESENTATION
     @State private var showsManagementPreview = false
+#endif
     @Environment(\.plusOfferPhoto) private var placePhoto
     let context: PlusOfferContext
     let photo: UIImage?
@@ -576,11 +610,15 @@ struct MembershipOfferSheet: View {
                 canRefresh: model.canRefresh,
                 onRefresh: { Task { await model.refresh() } },
                 onManageSubscription: {
+#if DEBUG || INTERNAL_PRESENTATION
                     if model.isPreview {
                         showsManagementPreview = true
                     } else {
                         showsSubscriptionManagement = true
                     }
+#else
+                    showsSubscriptionManagement = true
+#endif
                 },
                 onPurchase: {
                     Task {
@@ -606,11 +644,13 @@ struct MembershipOfferSheet: View {
                 Task { await model.refreshAfterSubscriptionManagement() }
             }
         }
+#if DEBUG || INTERNAL_PRESENTATION
         .alert("契約管理の操作確認", isPresented: $showsManagementPreview) {
             Button("閉じる", role: .cancel) { }
         } message: {
             Text("このプレビューではAppleの契約画面を開きません。契約や会員状態は変更していません。")
         }
+#endif
         .task { await model.load() }
     }
 }
@@ -766,6 +806,7 @@ struct PlusSettingsSection: View {
     }
 }
 
+#if DEBUG || INTERNAL_PRESENTATION
 /// Read-only, no-charge entry. This flag never grants purchase authority.
 enum MembershipOfferPreviewAvailability {
     static var isAvailable: Bool {
@@ -975,6 +1016,7 @@ struct BillingSandboxOwnerEnrollmentView: View {
     }
 }
 
+#endif
 #if DEBUG
 @MainActor
 final class BillingOwnerEnrollmentFixtureState {

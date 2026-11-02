@@ -63,6 +63,21 @@ class ProductionCandidateTests(unittest.TestCase):
         self.assertIn("-archivePath", archive); self.assertIn("-resultBundlePath", archive)
         self.assertFalse(any(item.startswith("SWIFT_ACTIVE_COMPILATION_CONDITIONS=") for item in archive))
 
+    def test_build_for_testing_uses_the_same_settings_boundary(self):
+        from types import SimpleNamespace
+        result = SimpleNamespace(stdout=json.dumps([{"target": "NekoWidget", "buildSettings": {
+            **self.settings, "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "NEKO_HOST_APP"}}]))
+        with patch.object(candidate.subprocess, "run", return_value=result) as run:
+            candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "build-for-testing"], synthetic=True)
+        probe, build = [call.args[0] for call in run.call_args_list]
+        self.assertIn("-showBuildSettings", probe)
+        self.assertNotIn("build-for-testing", probe)
+        self.assertIn("build-for-testing", build)
+        result.stdout = result.stdout.replace('NEKO_HOST_APP', 'NEKO_HOST_APP INTERNAL_PRESENTATION')
+        with patch.object(candidate.subprocess, "run", return_value=result) as run, self.assertRaises(ValueError):
+            candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "build-for-testing"], synthetic=True)
+        self.assertEqual(run.call_count, 1)
+
     def test_resolved_conditions_reject_debug_and_missing_target_boundary(self):
         from types import SimpleNamespace
         for target, conditions in [("NekoWidget", ""), ("NekoWidget", "DEBUG NEKO_HOST_APP"),
@@ -73,6 +88,31 @@ class ProductionCandidateTests(unittest.TestCase):
             with patch.object(candidate.subprocess, "run", return_value=result) as run, self.assertRaises(ValueError):
                 candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "build"], synthetic=True)
             self.assertEqual(run.call_count, 1, "Must fail before compilation")
+
+    def test_internal_defines_rejected_before_build_for_every_product(self):
+        from types import SimpleNamespace
+        for target in candidate.TARGETS:
+            for key, value in [
+                ("SWIFT_ACTIVE_COMPILATION_CONDITIONS", "INTERNAL_PRESENTATION NEKO_HOST_APP NEKO_SHARE_EXTENSION"),
+                ("INTERNAL_PRESENTATION_CONDITION", "INTERNAL_PRESENTATION"),
+                ("OTHER_SWIFT_FLAGS", "-DINTERNAL_PRESENTATION"),
+                ("OTHER_SWIFT_FLAGS", "-D INTERNAL_PRESENTATION"),
+                ("OTHER_SWIFT_FLAGS", '-D "INTERNAL_PRESENTATION"'),
+                ("OTHER_SWIFT_FLAGS", "-Xfrontend -D -Xfrontend INTERNAL_PRESENTATION"),
+                ("OTHER_SWIFT_FLAGS", "-DDEBUG"),
+                ("OTHER_SWIFT_FLAGS", "-DWIDGET_SCREENSHOT_FIXTURE"),
+            ]:
+                rows = [{"target": name, "buildSettings": {
+                    **self.settings,
+                    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": {
+                        "NekoWidget": "NEKO_HOST_APP", "NekoWidgetShareExtension": "NEKO_SHARE_EXTENSION",
+                        "NekoWidgetWidgetExtension": ""}[name]}} for name in candidate.TARGETS]
+                next(row for row in rows if row["target"] == target)["buildSettings"][key] = value
+                result = SimpleNamespace(stdout=json.dumps(rows))
+                with self.subTest(target=target, key=key, value=value):
+                    with patch.object(candidate.subprocess, "run", return_value=result) as run, self.assertRaises(ValueError):
+                        candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "build"], synthetic=True)
+                    self.assertEqual(run.call_count, 1, "Internal code must be rejected before compilation")
 
     def test_reject_recipient_origin_and_incomplete_inputs(self):
         for key, value in [("SHARING_MODERATION_PUBLIC_KEY", "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg"),

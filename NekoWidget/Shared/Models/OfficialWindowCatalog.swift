@@ -6,8 +6,10 @@ enum InternalBuildPresentationAvailability {
     static var isAvailable: Bool {
 #if DEBUG
         !CommandLine.arguments.contains("--review-public-presentation")
-#else
+#elseif INTERNAL_PRESENTATION
         (Bundle.main.object(forInfoDictionaryKey: "SharingReleaseMode") as? String) == "media-staging"
+#else
+        false
 #endif
     }
 }
