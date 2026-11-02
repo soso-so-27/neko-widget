@@ -942,10 +942,14 @@ final class UnrelatedUITests: XCTestCase {
         foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
         if foreground in methods:
             added |= {foreground}
-        first_count = (26 + int("testAutomaticRestoreProtectsUnsavedMemoDraft" in methods)
-                       + int(scope.SOLO_PARTITIONED_RECORDS_METHOD in methods))
+        first_count = (25 + int("testAutomaticRestoreProtectsUnsavedMemoDraft" in methods)
+                       + int(scope.SOLO_PARTITIONED_RECORDS_METHOD in methods)
+                       + int("testAutomaticSaveEfficiencyAndCleanupPriority" in methods))
         self.assertEqual((len(solo1), len(solo2)), (first_count, len(methods) - first_count))
         self.assertFalse(set(solo1) & set(solo2))
+        self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveEfficiencyAndCleanupPriority", solo1)
+        self.assertIn("NekoWidgetUITests/SoloMemoriesUITests/testAutomaticSaveSettingsDoNotInvalidateSession", solo2)
+        self.assertFalse(any(test.endswith("/" + method) for method in scope.SOLO_RETIRED_METHODS for test in solo1 + solo2))
         solo = solo1 + solo2
         other = scope.lane_tests(scope.FULL_SCOPE, "app-ui-other")
         self.assertTrue(solo and other)
@@ -971,6 +975,9 @@ final class UnrelatedUITests: XCTestCase {
         before_partitioned = tuple(name for name in complete if name != scope.SOLO_PARTITIONED_RECORDS_METHOD)
         before_automatic = tuple(name for name in before_partitioned if name not in scope.SOLO_AUTOMATIC_RESTORE_METHODS)
         self.assertIn(scope.solo_test_methods(source), (scope.SOLO_TEST_METHODS, before_automatic, before_partitioned, complete))
+        for added_method in scope.SOLO_SAVE_PROBE_METHODS:
+            with self.assertRaises(ValueError):
+                scope.solo_test_methods(source.replace("func " + added_method + "(", "func removedProbe("))
         name = scope.SOLO_TEST_METHODS[0]
         for changed in (source + "\nextension SoloMemoriesUITests { func testExtensionAdded() {} }\n",
                         source.replace("final class SoloMemoriesUITests: XCTestCase {",
@@ -991,7 +998,7 @@ final class UnrelatedUITests: XCTestCase {
         source = (CI.parent / "NekoWidgetUITests" / "PhotoPermissionUITests.swift").read_text(encoding="utf-8")
         method = "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity"
         foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"
-        automatic = set(scope.SOLO_AUTOMATIC_RESTORE_METHODS) | {scope.SOLO_PARTITIONED_RECORDS_METHOD}
+        automatic = set(scope.SOLO_AUTOMATIC_RESTORE_METHODS + scope.SOLO_SAVE_PROBE_METHODS) | {scope.SOLO_PARTITIONED_RECORDS_METHOD}
         self.assertEqual({name: shard for name, shard in scope.SOLO_ADDITIONAL_TEST_METHODS.items()
                           if name not in automatic}, {method: 1})
         present_automatic = tuple(name for name in scope.SOLO_ADDITIONAL_TEST_METHODS
@@ -1015,7 +1022,7 @@ final class UnrelatedUITests: XCTestCase {
             if shard == 1: additions += extra
             self.assertEqual(shards[shard], original[shard] + tuple(
                 "NekoWidgetUITests/SoloMemoriesUITests/" + name for name in additions))
-        self.assertEqual(len(set(shards[0] + shards[1])), 52 + len(extra) + len(present_automatic))
+        self.assertEqual(len(set(shards[0] + shards[1])), 51 + len(extra) + len(present_automatic))
         self.assertEqual({test.rsplit("/", 1)[1] for test in shards[0] + shards[1]}, set(expected))
 
     def test_foreground_deletion_addition_is_exhaustive_and_only_appends_solo2(self):
@@ -1074,7 +1081,7 @@ final class UnrelatedUITests: XCTestCase {
                     "    func " + name + "() {}" for name in names), 1)
         complete = adding(draft, showcase)
         historical_additions = {name: shard for name, shard in scope.SOLO_ADDITIONAL_TEST_METHODS.items()
-                                if name != scope.SOLO_PARTITIONED_RECORDS_METHOD}
+                                if name != scope.SOLO_PARTITIONED_RECORDS_METHOD and name not in scope.SOLO_SAVE_PROBE_METHODS}
         with patch.object(scope, "SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST", scope.source_digest(legacy)), \
                 patch.object(scope, "SOLO_ADDITIONAL_TEST_METHODS", historical_additions):
             self.assertEqual(scope.solo_test_methods(legacy), tuple(sorted(prior)))
@@ -1097,14 +1104,17 @@ final class UnrelatedUITests: XCTestCase {
     def test_partitioned_records_probe_requires_explicit_transition_and_only_appends_solo1(self):
         method = scope.SOLO_PARTITIONED_RECORDS_METHOD
         self.assertEqual(scope.SOLO_ADDITIONAL_TEST_METHODS[method], 0)
+        historical_additions = {name: shard for name, shard in scope.SOLO_ADDITIONAL_TEST_METHODS.items()
+                                if name not in scope.SOLO_SAVE_PROBE_METHODS}
         prior = scope.SOLO_TEST_METHODS + tuple(
-            name for name in scope.SOLO_ADDITIONAL_TEST_METHODS if name != method) + (
+            name for name in historical_additions if name != method) + (
                 "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion",)
         legacy = "final class SoloMemoriesUITests: XCTestCase {\n" + "\n".join(
             "    func " + name + "() {}" for name in prior) + "\n}\n"
         complete = legacy.replace("final class SoloMemoriesUITests: XCTestCase {",
             "final class SoloMemoriesUITests: XCTestCase {\n    func " + method + "() {}", 1)
-        with patch.object(scope, "SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST", scope.source_digest(legacy)):
+        with patch.object(scope, "SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST", scope.source_digest(legacy)), \
+                patch.object(scope, "SOLO_ADDITIONAL_TEST_METHODS", historical_additions):
             self.assertEqual(scope.solo_test_methods(legacy), tuple(sorted(prior)))
             self.assertEqual(scope.solo_test_methods(complete), tuple(sorted(prior + (method,))))
             for invalid in (legacy + "// changed\n",

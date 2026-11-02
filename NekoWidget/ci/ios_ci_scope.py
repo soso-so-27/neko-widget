@@ -837,11 +837,16 @@ SOLO_TEST_METHODS = (
     'testVeterinaryWithoutPhotoKeepsUnknownMeasurementDayAtLargestText',
     'testWeightOnlyMemoRemainsReadableAndEditable',
     'testWidgetPhotoOutsideCurrentScopeOffersAPathBack',
-    'testWindowSettingsPrioritizeDisplayAndKeepSafetyReachable',
 )
 
-# Main still carries the exact prior 51-method source until the product lands.
-# Only that frozen source may omit this reviewed addition; no unknown inventory.
+SOLO_RETIRED_METHODS = ("testWindowSettingsPrioritizeDisplayAndKeepSafetyReachable",)
+SOLO_SAVE_PROBE_METHODS = (
+    "testAutomaticSaveEfficiencyAndCleanupPriority",
+    "testAutomaticSaveSettingsDoNotInvalidateSession",
+)
+
+# Historical pre-addition sources remain supported only by their exact digest;
+# current sources must declare the complete reviewed inventory.
 SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST = "8a9658354055524d71673806cce28c9738956bf2ebe277b682e6933dbc1e31bf"
 SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST = "8118f420fc1df78f5d7f503dba3a19897e943d884d4ff01f350b406894155930"
 SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST = "19852592adb28d3f31df8dd4020cc9c0a2b32cb755036528ff67f354eb84646d"
@@ -855,6 +860,8 @@ SOLO_ADDITIONAL_TEST_METHODS = {
     "testAutomaticRestoreProtectsUnsavedMemoDraft": 0,
     "testAutomaticRestoredShowcaseWithoutPhotoAccess": 1,
     SOLO_PARTITIONED_RECORDS_METHOD: 0,
+    "testAutomaticSaveEfficiencyAndCleanupPriority": 0,
+    "testAutomaticSaveSettingsDoNotInvalidateSession": 1,
 }
 
 LANE_JOB_PREFIX = "Sharing checks"
@@ -2138,7 +2145,6 @@ WINDOW_HUB_COMPANIONS = TOOLS_HUB_COMPANIONS | {
     "NekoWidget/ci/test-family-window-widget-boundaries.py",
 }
 WINDOW_HUB_TESTS = tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for name in (
-    "testMixedWindowsKeepAdditionAndScopedRecoveryReachable",
     "testDiscoverReceiveGuideAndStopUpdatesWindowList",
     "testWindowListLargeTextKeepsDiscoveryAndPhotoReachable",
 ))
@@ -2158,8 +2164,7 @@ MEMBERSHIP_STATE_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name f
     "testMembershipOfferPreviewWaitingAndRestore",
     "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
     "testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
-)) + ("NekoWidgetUITests/MomentDeliveryComposerUITests/"
-      "testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate",)
+))
 
 
 
@@ -2307,7 +2312,6 @@ PRESERVATION_EXPORT_TESTS = (
     "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
     "NekoWidgetUITests/SoloMemoriesUITests/testMemoryNoteExportCancellationKeepsText",
     "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
-    "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
 )
 
 PURCHASE_CATALOG_BLOBS = {
@@ -2337,8 +2341,7 @@ PURCHASE_CATALOG_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + name f
     "testMembershipOfferPreviewWaitingAndRestore",
     "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
     "testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
-)) + ("NekoWidgetUITests/MomentDeliveryComposerUITests/"
-      "testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate",)
+))
 
 
 # Explicit Apple subscription management presentation only, against e829868.
@@ -3677,22 +3680,12 @@ REVIEWED_CAT_NOTE_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier
     "MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
     "MomentDeliveryComposerUITests/testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption",
     "SoloMemoriesUITests/testPersonalArchiveRestoresPhotoAndTextAndExplicitlySavesNewText",
-    "MomentDeliveryComposerUITests/testCaptionOnPhotoAndReturnFromKeyboard",
-    "MomentDeliveryComposerUITests/testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation",
-    "MomentDeliveryComposerUITests/testPhotoWindowRetryPreservesConfirmedPhotoAndCaption",
-    "MomentDeliveryComposerUITests/testPhotoWindowCancellationAndUnavailableSourcesDoNotSend",
-    "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
-    "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
 ))
 REVIEWED_PHOTO_ACTIONS_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
     "SoloMemoriesUITests/testEmptyAndSingleFavoriteRemainReachableIncludingDeniedAccess",
     "SoloMemoriesUITests/testAlbumRelatedPhotoRoutesPreserveScopeAndReturnToOrigin",
     "MomentDeliveryComposerUITests/testPersonalMemoryNoteSurvivesReopenStaysWithPhotoAndNeverBecomesCaption",
     "MomentDeliveryComposerUITests/testExistingMemoryReflectsOptedInEditsAndKeepsLocalNoteAfterArchiveDeletion",
-    "MomentDeliveryComposerUITests/testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation",
-    "MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
-    "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
-    "MomentDeliveryComposerUITests/testReceivedPhotosKeepTheirFramesAcrossAspectRatiosAndTextSizes",
 ))
 REVIEWED_MEMBERSHIP_OFFER_TESTS = tuple("NekoWidgetUITests/SoloMemoriesUITests/" + method for method in (
     "testMembershipOfferPreviewReturnsToPurpose",
@@ -3745,8 +3738,33 @@ WIDGET_UI_TESTS = tuple("NekoWidgetUITests/" + identifier for identifier in (
     "PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
     "PersonalRediscoveryUITests/testOneCandidateShowsPhotoWithoutSpendingADailyTurn",
     "SoloMemoriesUITests/testWidgetPhotoOutsideCurrentScopeOffersAPathBack",
-    "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
 ))
+
+
+# The pair-window UI operations removed in 934e24ea are retired from
+# these seven selections. Existing group contracts run in the normal quick/
+# safety jobs; they are not XCTest identifiers or proof of v3 UI interaction.
+GROUP_CONTRACT_SCOPES = frozenset({
+    WINDOW_HUB_SCOPE, REVIEWED_CAT_NOTE_SCOPE, REVIEWED_PHOTO_ACTIONS_SCOPE,
+    REVIEWED_MEMBERSHIP_STATE_SCOPE, REVIEWED_PURCHASE_CATALOG_SCOPE,
+    PRESERVATION_EXPORT_SCOPE, WIDGET_BEHAVIOR_SCOPE, WIDGET_LAYOUT_SCOPE,
+})
+GROUP_CONTRACT_CHECKS = (
+    ("ci/run-quick-ios-checks.sh", "ci/verify-group-windows.swift",
+     '"$RUNNER_TEMP/group-window-tests" ci/fixtures/group-roster-v3.json'),
+    ("ci/run-quick-ios-checks.sh", "ci/verify-group-adapter.swift",
+     '"$RUNNER_TEMP/group-adapter-tests" ci/fixtures/group-http-v3.json ci/fixtures/group-roster-v3.json | node ci/verify-native-group-http.mjs'),
+    ("ci/run-quick-ios-checks.sh", "ci/verify-group-reporting.swift",
+     '"$RUNNER_TEMP/group-reporting-tests" ci/fixtures/group-report-v3.json'),
+    ("ci/run-cheap-safety-checks.sh", "ci/verify-group-share.swift",
+     '"$RUNNER_TEMP/group-share-tests"'),
+)
+
+
+def group_contract_checks(scope: str) -> tuple[tuple[str, str, str], ...]:
+    if scope not in SCOPES:
+        raise ValueError("Unknown iOS runtime scope")
+    return GROUP_CONTRACT_CHECKS if scope in GROUP_CONTRACT_SCOPES else ()
 
 
 def smoke_tests(scope: str) -> tuple[str, ...]:
@@ -3939,10 +3957,22 @@ def solo_test_methods(source: str) -> tuple[str, ...]:
     # A missing probe in any other source, including partial additions, fails.
     before_partitioned = tuple(name for name in complete if name != SOLO_PARTITIONED_RECORDS_METHOD)
     before_automatic = tuple(name for name in before_partitioned if name not in SOLO_AUTOMATIC_RESTORE_METHODS)
+    # Keep the pre-retirement snapshots tied to their original digest. The
+    # removed method was last, so no surviving base method changes its shard.
+    historical_base = tuple(sorted(SOLO_TEST_METHODS + SOLO_RETIRED_METHODS))
+    historical_complete = tuple(sorted(
+        tuple(name for name in complete if name not in SOLO_SAVE_PROBE_METHODS)
+        + SOLO_RETIRED_METHODS))
+    historical_partitioned = tuple(name for name in historical_complete if name != SOLO_PARTITIONED_RECORDS_METHOD)
+    historical_automatic = tuple(name for name in historical_partitioned if name not in SOLO_AUTOMATIC_RESTORE_METHODS)
+    historical = (
+        actual == historical_base and source_digest(source) == SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST
+        or actual == historical_automatic and source_digest(source) == SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST
+        or actual == historical_partitioned and source_digest(source) == SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST)
     if (len(actual) != len(set(actual))
             or len(complete) != len(set(complete))
             or any(shard not in (0, 1) for shard in SOLO_ADDITIONAL_TEST_METHODS.values())
-            or actual != complete and not (
+            or actual != complete and not historical and not (
                 actual == SOLO_TEST_METHODS and source_digest(source) == SOLO_PRE_TOOL_BACKUP_SOURCE_DIGEST
                 or actual == before_automatic and source_digest(source) == SOLO_PRE_AUTOMATIC_RESTORE_SOURCE_DIGEST
                 or actual == before_partitioned and source_digest(source) == SOLO_PRE_PARTITIONED_RECORDS_SOURCE_DIGEST)):
@@ -3966,7 +3996,8 @@ def lane_tests(scope: str, lane: str) -> tuple[str, ...]:
             methods = solo_test_methods(source)
             offset = 0 if lane == "app-ui-solo-1" else 1
             # Append reviewed additions without moving prior shard assignments.
-            assigned = SOLO_TEST_METHODS[offset::2] + tuple(
+            base = SOLO_TEST_METHODS + tuple(name for name in SOLO_RETIRED_METHODS if name in methods)
+            assigned = base[offset::2] + tuple(
                 method for method, shard in SOLO_ADDITIONAL_TEST_METHODS.items()
                 if shard == offset and method in methods)
             foreground = "testToolBackupShowsForegroundGuidanceAndResumesInterruptedDeletion"

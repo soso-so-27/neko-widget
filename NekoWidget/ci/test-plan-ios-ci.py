@@ -25,6 +25,26 @@ planner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(planner)
 
 
+def assert_group_contract_checks(case, selected):
+    """Bind retained selections to real, already-running v3 contract commands."""
+    root = Path(__file__).resolve().parents[2]
+    checks = scope.group_contract_checks(selected)
+    case.assertEqual({source for _, source, _ in checks}, {
+        "ci/verify-group-windows.swift", "ci/verify-group-adapter.swift",
+        "ci/verify-group-reporting.swift", "ci/verify-group-share.swift",
+    })
+    case.assertEqual(len(checks), 4)
+    workflow = (root / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+    for runner, source, command in checks:
+        text = (root / "NekoWidget" / runner).read_text(encoding="utf-8")
+        case.assertTrue((root / "NekoWidget" / source).is_file(), source)
+        case.assertEqual(text.count("\n" + command + "\n"), 1, command)
+        compile_command = text.split("\n" + command + "\n", 1)[0].rsplit("xcrun ", 1)[1]
+        case.assertIn(source, compile_command)
+        case.assertIn('-o "' + command.split('"', 2)[1] + '"', compile_command)
+        case.assertIn("run: bash NekoWidget/" + runner, workflow)
+
+
 class OwnerCloudCorrectionTests(unittest.TestCase):
     def setUp(self):
         self.now=dt.datetime(2026,10,11,8,tzinfo=dt.timezone.utc)
@@ -6574,13 +6594,13 @@ class MembershipStateScopeTests(unittest.TestCase):
         handoff["handoffs/membership-state.md"] = handoff["handoffs/membership-state.md"].replace("100644", "120000")
         self.assertFalse(self.verify(handoff))
 
-    def test_all_five_methods_and_available_git_evidence_are_required(self):
+    def test_all_retained_methods_and_available_git_evidence_are_required(self):
         _, _, _, rows, source = self.candidate()
         for test in scope.MEMBERSHIP_STATE_TESTS:
             method = test.rsplit("/", 1)[-1]
             self.assertFalse(self.verify(rows, source=source.replace("func " + method, "func missing")), test)
             self.assertEqual(self.verify(rows, source=source.replace("func " + method, "func missing"), runtime=True), scope.FULL_SCOPE)
-        self.assertFalse(self.verify(rows, source=source.replace("MomentDeliveryComposerUITests", "OtherUITests")))
+        self.assertFalse(self.verify(rows, source=source.replace("SoloMemoriesUITests", "OtherUITests")))
         self.assertFalse(self.verify(rows, source=source.replace("func testMembershipOfferPreviewReturnsToPurpose() {}",
             "/* func testMembershipOfferPreviewReturnsToPurpose() {} */")))
         with patch.object(planner, "comparison_base", return_value=self.base), \
@@ -6680,13 +6700,13 @@ class PurchaseCatalogScopeTests(unittest.TestCase):
         handoff["handoffs/purchase-catalog.md"] = handoff["handoffs/purchase-catalog.md"].replace("100644", "120000")
         self.assertFalse(self.verify(handoff))
 
-    def test_all_five_methods_and_available_git_evidence_are_required(self):
+    def test_all_retained_methods_and_available_git_evidence_are_required(self):
         _, _, _, rows, source = self.candidate()
         for test in scope.PURCHASE_CATALOG_TESTS:
             method = test.rsplit("/", 1)[-1]
             self.assertFalse(self.verify(rows, source=source.replace("func " + method, "func missing")), test)
             self.assertEqual(self.verify(rows, source=source.replace("func " + method, "func missing"), runtime=True), scope.FULL_SCOPE)
-        self.assertFalse(self.verify(rows, source=source.replace("MomentDeliveryComposerUITests", "OtherUITests")))
+        self.assertFalse(self.verify(rows, source=source.replace("SoloMemoriesUITests", "OtherUITests")))
         self.assertFalse(self.verify(rows, source=source.replace("func testMembershipOfferPreviewReturnsToPurpose() {}",
             "/* func testMembershipOfferPreviewReturnsToPurpose() {} */")))
         with patch.object(planner, "comparison_base", return_value=self.base), \
@@ -6842,13 +6862,13 @@ class PreservationExportScopeTests(unittest.TestCase):
         handoff["handoffs/purchase-catalog.md"] = handoff["handoffs/purchase-catalog.md"].replace("100644", "120000")
         self.assertFalse(self.verify(handoff))
 
-    def test_all_four_methods_and_available_git_evidence_are_required(self):
+    def test_all_retained_methods_and_available_git_evidence_are_required(self):
         _, _, _, rows, source = self.candidate()
         for test in scope.PRESERVATION_EXPORT_TESTS:
             method = test.rsplit("/", 1)[-1]
             self.assertFalse(self.verify(rows, source=source.replace("func " + method, "func missing")), test)
             self.assertEqual(self.verify(rows, source=source.replace("func " + method, "func missing"), runtime=True), scope.FULL_SCOPE)
-        self.assertFalse(self.verify(rows, source=source.replace("MomentDeliveryComposerUITests", "OtherUITests")))
+        self.assertFalse(self.verify(rows, source=source.replace("SoloMemoriesUITests", "OtherUITests")))
         self.assertFalse(self.verify(rows, source=source.replace("func testManagedPreservationMembershipLinkConsentAndRetry() {}",
             "/* func testManagedPreservationMembershipLinkConsentAndRetry() {} */")))
         with patch.object(planner, "comparison_base", return_value=self.base), \
@@ -7400,7 +7420,8 @@ class PlanTests(unittest.TestCase):
         source = (Path(__file__).resolve().parents[2] / scope.MEMORY_TEST_PATH).read_text(encoding="utf-8")
         self.assertEqual(scope.native_tests(scope.WINDOW_HUB_SCOPE), scope.diagnostic_tests(
             "OfficialWindowUITests", ",".join(test.rsplit("/", 1)[-1] for test in scope.WINDOW_HUB_TESTS), source))
-        self.assertEqual(len(scope.WINDOW_HUB_TESTS), 3)
+        self.assertEqual(len(scope.WINDOW_HUB_TESTS), 2)
+        assert_group_contract_checks(self, scope.WINDOW_HUB_SCOPE)
         for path in rows:
             missing = dict(rows)
             del missing[path]
@@ -8678,9 +8699,10 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(required, (planner.BUILD, planner.BOOTSTRAP_SMOKE) + scope.sharing_jobs(selected_scope))
         self.assertTrue(scope.accepts_paths(selected_scope, paths))
         self.assertEqual(scope.lanes(selected_scope), ("runtime", "app-ui"))
+        assert_group_contract_checks(self, selected_scope)
         tests = scope.native_tests(selected_scope)
-        self.assertEqual(len(tests), 8)
-        self.assertEqual(len(set(tests)), 8)
+        self.assertEqual(len(tests), 4)
+        self.assertEqual(len(set(tests)), 4)
         root = Path(__file__).resolve().parents[2]
         self.assertTrue(scope.memory_tests_available((root / scope.MEMORY_TEST_PATH).read_text(encoding="utf-8"), tests))
         jobs = [{"name": name, "head_sha": self.sha, "status": "completed", "conclusion": "success"} for name in required]
@@ -8823,11 +8845,12 @@ class PlanTests(unittest.TestCase):
                                       (":100644 120000", "T"), (":100644 100644", "R100")):
                     self.assertEqual(selected(path, modes, status), scope.FULL_SCOPE)
 
-    def test_cat_note_eleven_existing_operations_keep_safety_jobs_and_distinct_evidence(self):
+    def test_cat_note_retained_operations_keep_safety_jobs_and_distinct_evidence(self):
         selected = scope.REVIEWED_CAT_NOTE_SCOPE
+        assert_group_contract_checks(self, selected)
         tests = scope.native_tests(selected)
-        self.assertEqual(len(tests), 11)
-        self.assertEqual(len(set(tests)), 11)
+        self.assertEqual(len(tests), 5)
+        self.assertEqual(len(set(tests)), 5)
         self.assertFalse(any("testAlbum" in test or "testPhotosOpenEachCats" in test for test in tests))
         root = Path(__file__).resolve().parents[2]
         self.assertTrue(scope.memory_tests_available((root / scope.MEMORY_TEST_PATH).read_text(encoding="utf-8"), tests))

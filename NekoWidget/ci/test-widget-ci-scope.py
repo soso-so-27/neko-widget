@@ -24,6 +24,26 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 
+def assert_group_contract_checks(case, selected):
+    """Bind retained selections to real, already-running v3 contract commands."""
+    root = Path(__file__).resolve().parents[2]
+    checks = scope.group_contract_checks(selected)
+    case.assertEqual({source for _, source, _ in checks}, {
+        "ci/verify-group-windows.swift", "ci/verify-group-adapter.swift",
+        "ci/verify-group-reporting.swift", "ci/verify-group-share.swift",
+    })
+    case.assertEqual(len(checks), 4)
+    workflow = (root / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+    for runner, source, command in checks:
+        text = (root / "NekoWidget" / runner).read_text(encoding="utf-8")
+        case.assertTrue((root / "NekoWidget" / source).is_file(), source)
+        case.assertEqual(text.count("\n" + command + "\n"), 1, command)
+        compile_command = text.split("\n" + command + "\n", 1)[0].rsplit("xcrun ", 1)[1]
+        case.assertIn(source, compile_command)
+        case.assertIn('-o "' + command.split('"', 2)[1] + '"', compile_command)
+        case.assertIn("run: bash NekoWidget/" + runner, workflow)
+
+
 class ReportRuntimeCancelledPlanHistoryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -588,8 +608,8 @@ class MembershipStateNativeBoundaryTests(unittest.TestCase):
             "testMembershipOfferPreviewWaitingAndRestore",
             "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
             "testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
-        )) + ("NekoWidgetUITests/MomentDeliveryComposerUITests/"
-              "testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate",)
+        ))
+        assert_group_contract_checks(self, selected)
         self.assertEqual(scope.native_tests(selected), expected)
         self.assertEqual(scope.lane_tests(selected, "app-ui"), expected)
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
@@ -663,8 +683,8 @@ class PurchaseCatalogNativeBoundaryTests(unittest.TestCase):
             "testMembershipOfferPreviewWaitingAndRestore",
             "testMembershipOfferExplainsExpiryWithoutChangingThePlan",
             "testMembershipAccessPreservesExistingMemoAndDistinguishesUnknown",
-        )) + ("NekoWidgetUITests/MomentDeliveryComposerUITests/"
-              "testWindowSupportResumeRequiresApprovalAndKeepsUnknownSeparate",)
+        ))
+        assert_group_contract_checks(self, selected)
         self.assertEqual(scope.native_tests(selected), expected)
         self.assertEqual(scope.lane_tests(selected, "app-ui"), expected)
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
@@ -729,8 +749,8 @@ class PreservationExportNativeBoundaryTests(unittest.TestCase):
             "NekoWidgetUITests/SoloMemoriesUITests/testManagedPreservationMembershipLinkConsentAndRetry",
             "NekoWidgetUITests/SoloMemoriesUITests/testMemoryNoteExportCancellationKeepsText",
             "NekoWidgetUITests/SoloMemoriesUITests/testPersonalArchiveExportCancellationKeepsPhotoAndText",
-            "NekoWidgetUITests/MomentDeliveryComposerUITests/testFamilyRecordKeepsOtherAuthorsWordsWhenPhotoIsWithdrawnAndRevokesAccess",
         )
+        assert_group_contract_checks(self, selected)
         self.assertEqual(scope.native_tests(selected), expected)
         self.assertEqual(scope.lane_tests(selected, "app-ui"), expected)
         self.assertEqual(scope.lanes(selected), ("runtime", "app-ui"))
@@ -1044,8 +1064,8 @@ class PrivateAppDataGalleryBoundaryTests(unittest.TestCase):
 class DiagnosticRouteBoundaryTests(unittest.TestCase):
     def test_window_diagnostic_selects_only_existing_requested_methods(self):
         source = (ROOT / "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(encoding="utf-8")
-        methods = ("testMixedWindowsKeepAdditionAndScopedRecoveryReachable",
-                   "testDiscoverReceiveGuideAndStopUpdatesWindowList",
+        assert_group_contract_checks(self, scope.WINDOW_HUB_SCOPE)
+        methods = ("testDiscoverReceiveGuideAndStopUpdatesWindowList",
                    "testWindowListLargeTextKeepsDiscoveryAndPhotoReachable")
         self.assertEqual(scope.diagnostic_tests("OfficialWindowUITests", ",".join(methods), source),
                          tuple("NekoWidgetUITests/OfficialWindowUITests/" + name for name in methods))
@@ -1098,7 +1118,6 @@ UI_TESTS = frozenset("NekoWidgetUITests/" + identifier for identifier in (
     "PersonalRediscoveryUITests/testDailyTurnKeepsYesterdayAndPreviousPhotoWithExistingPhotoActions",
     "PersonalRediscoveryUITests/testOneCandidateShowsPhotoWithoutSpendingADailyTurn",
     "SoloMemoriesUITests/testWidgetPhotoOutsideCurrentScopeOffersAPathBack",
-    "MomentDeliveryComposerUITests/testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto",
 ))
 CHANGE = ("return currentPhoto\n", "return nextPhoto\n")
 
@@ -1335,7 +1354,8 @@ class WidgetScopeTests(unittest.TestCase):
                     methods[identifier] = methods.get(identifier, 0) + 1
         for selected in (scope.WIDGET_BEHAVIOR_SCOPE, scope.WIDGET_LAYOUT_SCOPE):
             selected_ui = scope.lane_tests(selected, "app-ui")
-            self.assertEqual(len(selected_ui), 7)
+            self.assertEqual(len(selected_ui), 6)
+            assert_group_contract_checks(self, selected)
             self.assertEqual(set(selected_ui), UI_TESTS)
             for identifier in selected_ui:
                 self.assertEqual(methods.get(identifier), 1, identifier)
