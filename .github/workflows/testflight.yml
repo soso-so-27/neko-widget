@@ -852,14 +852,14 @@ jobs:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
         run: |
           set -euo pipefail
-          policy_revision="2026-11-02"
+          policy_revision="2026-11-03"
           case "$SELECTED_RELEASE_MODE" in
             disabled)
               echo "Local-only public policy retired; disabled release is unavailable." >&2
               exit 1
               ;;
             media-staging)
-              policy_revision="2026-11-02"
+              policy_revision="2026-11-03"
               policy_profile="public-1.0"
               policy_site_base="https://soso-so-27.github.io/neko-widget/"
               ;;
