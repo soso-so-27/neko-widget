@@ -121,11 +121,11 @@ struct NekoWidgetView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .foregroundStyle(.white.opacity(0.92))
-                                .padding(.horizontal, 12)
-                                .padding(.top, 20)
-                                .padding(.bottom, 12)
+                                .padding(.bottom, footerTextBottomInset)
+                                .padding(.horizontal, footerInset)
+                                .padding(.bottom, footerInset)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+                                .background { footerBand(fadeHeight: 16) }
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
                         } else if isWindowPhoto {
@@ -181,36 +181,29 @@ struct NekoWidgetView: View {
     /// so its name sits bottom-left like the official window's and the heart
     /// takes the free right side; the name then never shifts with the heart.
     private var familyPhotoFooter: some View {
-        HStack(alignment: .bottom, spacing: 6) {
-            if family == .systemSmall {
-                familyFooterText
-                familyHeartShortcut
-            } else {
-                familyHeartShortcut
-                familyFooterText
-                familyMemoryShortcut
+        ZStack(alignment: .bottom) {
+            // The band is only as tall as the text, never as tall as the
+            // 44pt controls, which carry their own dark circles. A hidden
+            // copy of the text sizes it across the full width.
+            familyFooterText
+                .hidden()
+                .padding(.horizontal, footerInset)
+                .padding(.bottom, footerInset)
+                .background { footerBand(fadeHeight: familyCaption == nil ? 16 : 26) }
+
+            HStack(alignment: .bottom, spacing: 6) {
+                if family == .systemSmall {
+                    familyFooterText
+                    familyHeartShortcut
+                } else {
+                    familyHeartShortcut
+                    familyFooterText
+                    familyMemoryShortcut
+                }
             }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-        .background {
-            VStack(spacing: 0) {
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.60)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: familyCaption == nil ? 16 : 26)
-                // Maintain contrast directly under both lines of text, even
-                // on a white photo; only the area above the footer fades out.
-                LinearGradient(
-                    colors: [.black.opacity(0.60), .black.opacity(0.63)],
-                    startPoint: .top, endPoint: .bottom
-                )
-            }
-            .padding(.top, familyCaption == nil ? -16 : -26)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, footerInset)
+            .padding(.bottom, footerInset)
         }
     }
 
@@ -221,12 +214,39 @@ struct NekoWidgetView: View {
             }
             familySourceLabel
         }
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: footerTextAlignment)
+        // Bottom-aligned with the control circles, not with their 44pt frames.
+        .padding(.bottom, footerTextBottomInset)
+        .frame(maxWidth: .infinity, alignment: footerTextAlignment)
         // Only the text is decorative. Hiding or disabling the entire
         // footer would also hide the controls from touch and VoiceOver.
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+
+    /// Fades in over the photo, then stays dark directly under the text so
+    /// a name stays readable on a white photo. Shared by window and official
+    /// Widgets so two of them side by side carry the same band.
+    private func footerBand(fadeHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.60)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: fadeHeight)
+            LinearGradient(
+                colors: [.black.opacity(0.60), .black.opacity(0.63)],
+                startPoint: .top, endPoint: .bottom
+            )
+        }
+        .padding(.top, -fadeHeight)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// Edge inset of the footer, and the 7pt a 30pt control circle sits
+    /// inside its 44pt frame: text bottoms align with the circle bottoms.
+    private let footerInset: CGFloat = 12
+    private let footerTextBottomInset: CGFloat = 7
 
     /// Small: left, beside the photo edge. Larger: centred between the controls.
     private var footerTextAlignment: Alignment {
