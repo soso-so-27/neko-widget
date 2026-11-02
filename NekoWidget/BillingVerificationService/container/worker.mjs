@@ -4,6 +4,7 @@ import { admitBudget, confirmBudget, expireBudget, readSmallResponse, stoppedBud
 import { billingVerifierRequestTranscript, bodySHA256, verifyBillingVerifierTranscript } from '../../SharingService/src/billing-verifier-protocol.ts';
 import { readBoundedBytes } from './nonce-ledger.mjs';
 import { containerEnvironment } from './runtime-config.mjs';
+import { authenticatedHTTPSFetch } from './https-ingress.mjs';
 export { BillingNonceLedger } from './nonce-ledger.mjs';
 export { ContainerProxy };
 const budgetKey = 'neko-billing-runtime-budget-v1';
@@ -15,11 +16,10 @@ const unavailable = () => Response.json({ error: { code: 'billing_verifier_unava
 const allowedPaths = new Set(['/internal/v1/apple-transactions/verify',
   '/internal/v1/apple-notifications/verify', '/internal/v1/apple-notifications/history',
   '/internal/v1/apple-subscriptions/status', '/internal/v1/apple-billing-recoveries/verify']);
-export class BillingVerificationService extends WorkerEntrypoint {
-  async fetch(request) {
+async function forwardAuthenticatedBillingRequest(request, env) {
     try {
       const url = new URL(request.url);
-      if (this.env.BILLING_VERIFIER_CONTAINER_ENABLED !== 'YES' || request.signal.aborted
+      if (env.BILLING_VERIFIER_CONTAINER_ENABLED !== 'YES' || request.signal.aborted
         || request.method !== 'POST' || url.search || !allowedPaths.has(url.pathname)
         || request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/json') return unavailable();
       const timestampText = request.headers.get('neko-billing-timestamp');
@@ -30,18 +30,28 @@ export class BillingVerificationService extends WorkerEntrypoint {
         || Math.abs(Math.floor(Date.now() / 1000) - timestamp) > 300
         || !/^[A-Za-z0-9_-]{22}$/u.test(nonce)) return unavailable();
       const body = await readBoundedBytes(request, url.pathname.endsWith('/apple-billing-recoveries/verify') ? 131072 : 65536);
-      if (!await verifyBillingVerifierTranscript(this.env.BILLING_VERIFIER_SHARED_SECRET,
+      if (!await verifyBillingVerifierTranscript(env.BILLING_VERIFIER_SHARED_SECRET,
         request.headers.get('neko-billing-signature') ?? '',
         billingVerifierRequestTranscript(timestamp, nonce, await bodySHA256(body)))) return unavailable();
       const forwarded = new Request(url.toString(), { method: 'POST', headers: request.headers,
         body, signal: request.signal });
       // Both binding isolation and the existing Node HMAC authentication apply.
-      return await getContainer(this.env.BILLING_CONTAINER, containerName).fetch(forwarded);
+      return await getContainer(env.BILLING_CONTAINER, containerName).fetch(forwarded);
     } catch { return unavailable(); }
+}
+export class BillingVerificationService extends WorkerEntrypoint {
+  async fetch(request) {
+    // Preserve the existing Sandbox binding. Production must authenticate at
+    // the HTTPS ingress, even if somebody configures a named binding to it.
+    if (this.env.BILLING_STORE_ENVIRONMENT !== 'Sandbox' || this.env.ENVIRONMENT === 'production'
+        || (this.env.BILLING_VERIFIER_HTTPS_ENABLED !== undefined
+          && this.env.BILLING_VERIFIER_HTTPS_ENABLED !== 'NO')) return unavailable();
+    return forwardAuthenticatedBillingRequest(request, this.env);
   }
 }
-// No public endpoint, even if a route is accidentally configured later.
-export default { fetch() { return new Response(null, { status: 404 }); } };
+export default { fetch(request, env) {
+  return authenticatedHTTPSFetch(request, env, allowedPaths, forwardAuthenticatedBillingRequest);
+} };
 export class BillingVerifierContainer extends Container {
   defaultPort = 8080;
   sleepAfter = '1m';
