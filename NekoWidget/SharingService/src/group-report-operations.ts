@@ -10,6 +10,13 @@ async function available(db:D1Database):Promise<boolean> {
 export async function runGroupReportOperations(env:Env):Promise<void> {
  if(!await available(env.DB))return;
  const db=env.DB;
+ // The first reminder is independent of the existing day-five obligation.
+ // Late cron catches up even if enforcement is OFF and the evidence expired.
+ await db.prepare(`INSERT INTO group_report_first_day_mail(id,report_id,available_at)
+  SELECT lower(hex(randomblob(16))),r.report_id,unixepoch() FROM group_report_records r
+  WHERE r.outcome='received' AND r.committed_at+86400<=unixepoch()
+  AND NOT EXISTS(SELECT 1 FROM group_report_first_day_mail q WHERE q.report_id=r.report_id)
+  ORDER BY r.committed_at,r.report_id LIMIT 50 ON CONFLICT(report_id) DO NOTHING`).run();
  // A late cron catches up. A unique obligation suppresses repeated reminders.
  await db.prepare(`INSERT INTO group_report_mail_outbox(id,report_id,kind,available_at)
   SELECT lower(hex(randomblob(16))),r.report_id,'undecided',unixepoch() FROM group_report_records r
@@ -89,26 +96,31 @@ export async function purgeGroupReportRecords(db:D1Database):Promise<void> {
  * concurrent drains; response-loss at the provider can still duplicate mail. */
 export async function drainGroupReportMail(env:GroupReportMailEnv&{DB:D1Database},send=sendGroupReportMail):Promise<void> {
  if(env.GROUP_REPORT_EMAIL_ENABLED!=='YES'||!await available(env.DB))return;
- const db=env.DB;
- await db.prepare(`UPDATE group_report_mail_outbox SET state='cancelled',lease_token=NULL,lease_until=NULL
+ const db=env.DB;let remaining=10;
+ // Fixed table names only; one shared bound across both queues.
+ for(const table of ['group_report_mail_outbox','group_report_first_day_mail'] as const){
+ await db.prepare(`UPDATE ${table} SET state='cancelled',lease_token=NULL,lease_until=NULL
   WHERE kind='undecided' AND state IN('pending','leased') AND (lease_until IS NULL OR lease_until<=unixepoch())
-  AND EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=group_report_mail_outbox.report_id AND r.outcome<>'received')`).run();
- const jobs=await db.prepare(`SELECT id FROM group_report_mail_outbox WHERE available_at<=unixepoch()
-  AND (state='pending' OR (state='leased' AND lease_until<=unixepoch())) ORDER BY available_at,id LIMIT 10`).all<{id:string}>();
+  AND EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=${table}.report_id AND r.outcome<>'received')`).run();
+ const jobs=await db.prepare(`SELECT id FROM ${table} WHERE available_at<=unixepoch()
+  AND (state='pending' OR (state='leased' AND lease_until<=unixepoch())) ORDER BY available_at,id LIMIT ?`).bind(remaining).all<{id:string}>();
+ remaining-=jobs.results.length;
  for(const job of jobs.results){
   const token=crypto.randomUUID();
-  const claimed=await db.prepare(`UPDATE group_report_mail_outbox SET state='leased',lease_token=?,lease_until=unixepoch()+300,attempts=attempts+1
+  const claimed=await db.prepare(`UPDATE ${table} SET state='leased',lease_token=?,lease_until=unixepoch()+300,attempts=attempts+1
    WHERE id=? AND available_at<=unixepoch() AND (state='pending' OR (state='leased' AND lease_until<=unixepoch()))
    RETURNING kind,attempts`).bind(token,job.id).first<{kind:'received'|'undecided';attempts:number}>();
   if(!claimed)continue;
   try{
    await send(env,claimed.kind);
-   await db.prepare(`UPDATE group_report_mail_outbox SET state='sent',sent_at=unixepoch(),lease_token=NULL,lease_until=NULL
+   await db.prepare(`UPDATE ${table} SET state='sent',sent_at=unixepoch(),lease_token=NULL,lease_until=NULL
     WHERE id=? AND state='leased' AND lease_token=?`).bind(job.id,token).run();
   }catch{
    // No provider error text, mailbox or report identifier is logged.
-   await db.prepare(`UPDATE group_report_mail_outbox SET state='pending',available_at=unixepoch()+?,lease_token=NULL,lease_until=NULL
+   await db.prepare(`UPDATE ${table} SET state='pending',available_at=unixepoch()+?,lease_token=NULL,lease_until=NULL
     WHERE id=? AND state='leased' AND lease_token=?`).bind(Math.min(3600,30*2**Math.min(claimed.attempts,7)),job.id,token).run();
   }
+ }
+  if(remaining===0)break;
  }
 }

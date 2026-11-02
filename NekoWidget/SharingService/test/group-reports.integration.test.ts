@@ -73,6 +73,12 @@ async function mailRows(id:string) {
   return (await db.prepare(`SELECT kind,state,attempts,available_at,lease_token,lease_until,sent_at
     FROM group_report_mail_outbox WHERE report_id=? ORDER BY kind`).bind(id).all()).results;
 }
+async function isolateReminderFixture(ids:string[]) {
+  // This file shares synthetic storage: older aged report fixtures are also
+  // legitimately eligible for catch-up. Scope sender assertions to this case.
+  for(const table of ['group_report_mail_outbox','group_report_first_day_mail'])
+    await db.prepare(`UPDATE ${table} SET state='sent' WHERE report_id NOT IN (${ids.map(()=>'?').join(',')})`).bind(...ids).run();
+}
 function mailSettings():GroupReportMailEnv&{DB:D1Database} {
   return {DB:db,GROUP_REPORT_EMAIL_ENABLED:'YES',GROUP_REPORT_EMAIL_FROM:'notices@example.com',GROUP_REPORT_EMAIL_TO:'operator@example.com'};
 }
@@ -305,6 +311,30 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
     expect(await mailRows(r.id)).toMatchObject([{state:'sent',attempts:1,lease_token:null,lease_until:null}]);
   });
 
+  it('enqueues the 24-hour reminder once, separately from day five, and cancels after a decision',async()=>{
+    const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);await complete(bob,w,r);
+    const firstDay=()=>db.prepare('SELECT state,attempts FROM group_report_first_day_mail WHERE report_id=?').bind(r.id).first();
+    await seedReportDeadline(r.id,6*86400+60);await runGroupReportOperations(reports);
+    expect(await firstDay()).toBeNull();
+    await seedReportDeadline(r.id,6*86400);await runGroupReportOperations(reports);await runGroupReportOperations(reports);
+    expect(await firstDay()).toEqual({state:'pending',attempts:0});
+    expect((await mailRows(r.id)).map(row=>row.kind)).toEqual(['received']);
+    await isolateReminderFixture([r.id]);
+    const sendMail=vi.fn(async()=>{});await drainGroupReportMail(mailSettings(),sendMail);
+    expect(sendMail.mock.calls).toHaveLength(2);expect(await firstDay()).toEqual({state:'sent',attempts:1});
+    await seedReportDeadline(r.id,2*86400);await runGroupReportOperations(reports);
+    expect((await mailRows(r.id)).map(row=>row.kind)).toEqual(['received','undecided']);
+    await drainGroupReportMail(mailSettings(),sendMail);expect(sendMail.mock.calls).toHaveLength(3);
+  });
+  it('catches up a first-day reminder with enforcement OFF and cancels it if decided before send',async()=>{
+    const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);await complete(bob,w,r);
+    await seedReportDeadline(r.id,-60);await runGroupReportOperations({...reports,GROUP_MODERATION_RUNTIME_ENABLED:'NO'});
+    expect(await db.prepare('SELECT outcome FROM group_report_records WHERE report_id=?').bind(r.id).first()).toEqual({outcome:'received'});
+    expect(await db.prepare('SELECT state FROM group_report_first_day_mail WHERE report_id=?').bind(r.id).first()).toEqual({state:'pending'});
+    await seedReportDeadline(r.id,-60,'no_action');await isolateReminderFixture([r.id]);const sendMail=vi.fn(async()=>{});
+    await drainGroupReportMail(mailSettings(),sendMail);expect(sendMail.mock.calls).toHaveLength(1);
+    expect(await db.prepare('SELECT state,attempts FROM group_report_first_day_mail WHERE report_id=?').bind(r.id).first()).toEqual({state:'cancelled',attempts:0});
+  });
   it('enqueues one undecided reminder at 48 hours, excludes decisions, and cancels a queued reminder after a decision',async()=>{
     const {owner,bob,w}=await family(),p=await photo(owner,w),q=await photo(owner,w);
     const waiting=await reserve(bob,w,p.id),decided=await reserve(bob,w,q.id);
@@ -323,7 +353,7 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
     // The normal immutable-update guard has been restored after each seed.
     await expect(db.prepare('UPDATE group_report_records SET evidence_expires_at=evidence_expires_at+1 WHERE report_id=?').bind(waiting.id).run())
       .rejects.toThrow(/report_record_immutable/);
-    await seedReportDeadline(waiting.id,172800,'no_action');
+    await seedReportDeadline(waiting.id,172800,'no_action');await isolateReminderFixture([waiting.id,decided.id]);
     const sendMail=vi.fn(async(_env:GroupReportMailEnv,_kind:'received'|'undecided')=>{});
     await drainGroupReportMail(mailSettings(),sendMail);
     expect(sendMail.mock.calls.map(args=>args[1])).toEqual(['received','received']);
