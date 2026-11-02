@@ -146,7 +146,8 @@ struct ManagedPreservationView: View {
             }
             if let error = coordinator.errorMessage {
                 Section { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText)
-                    .accessibilityIdentifier("preservation-error") }
+                    .accessibilityIdentifier("preservation-error")
+                    .announcesWhenShown(coordinator.errorMessage) }
             }
             if let status = coordinator.statusMessage {
                 Section { Text(status).foregroundStyle(.secondary) }
@@ -199,6 +200,7 @@ struct ManagedPreservationView: View {
             if let warning = coordinator.draftRecoveryWarning {
                 Section {
                     Text(warning).foregroundStyle(.red)
+                        .announcesWhenShown(coordinator.draftRecoveryWarning)
                     if coordinator.hasUnsecuredMemo {
                         Button("メモの保存をもう一度試す") { coordinator.retryPendingMemoStorage() }
                         if !coordinator.editedText.isEmpty {
@@ -773,6 +775,7 @@ struct ManagedPreservationView: View {
             if coordinator.pendingToolBackupDate != nil, let error = coordinator.errorMessage {
                 Text(error).foregroundStyle(.red)
                     .accessibilityIdentifier("preservation-tool-resume-error")
+                    .announcesWhenShown(coordinator.errorMessage)
             }
             if let progress = coordinator.toolBackupProgress {
                 Text(progress)
@@ -824,6 +827,7 @@ struct PreservationExportFailureText: View {
                 .accessibilityIdentifier("preservation-export-failure")
         } else if let error = exporter.error {
             Text(error).foregroundStyle(.red).accessibilityIdentifier("preservation-export-failure")
+                .announcesWhenShown(exporter.error)
         }
     }
 }

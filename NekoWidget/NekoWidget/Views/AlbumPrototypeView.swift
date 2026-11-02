@@ -473,7 +473,7 @@ struct AlbumPrototypeView: View {
                         } else if let caption {
                             Text(caption).font(.caption.weight(.bold)).tracking(2).opacity(0.9)
                         }
-                        Text(verbatim: title).font(.system(size: titleSize, weight: .bold, design: .serif))
+                        Text(verbatim: title).font(.system(titleSize >= 40 ? .largeTitle : .title, design: .serif).weight(.bold))
                         Text(names).font(.footnote).opacity(0.9)
                     }
                     Spacer()
@@ -847,7 +847,8 @@ struct MonthlyStoryView: View {
         .accessibilityIdentifier("monthly-story")
         .task(id: preparationKey) { await build(preparationKey) }
         .task(id: AdvanceKey(index: index, paused: paused, count: currentPageCount)) {
-            guard !paused, index + 1 < currentPageCount else { return }
+            // VoiceOver readers turn pages themselves; never move under them.
+            guard !paused, !UIAccessibility.isVoiceOverRunning, index + 1 < currentPageCount else { return }
             try? await Task.sleep(for: .seconds(Self.pageSeconds))
             guard !Task.isCancelled else { return }
             move(1)
@@ -1341,7 +1342,7 @@ private struct YearBookView: View {
                     .clipped()
                 Spacer(minLength: 20)
                 Text(verbatim: String(year))
-                    .font(.system(size: 40, weight: .light, design: .serif))
+                    .font(.system(.largeTitle, design: .serif).weight(.light))
                 Text(verbatim: "\(names)の 1 年")
                     .font(.footnote).tracking(2)
                     .foregroundStyle(ink.opacity(0.6))
@@ -1360,7 +1361,7 @@ private struct YearBookView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Spacer(minLength: 0)
                 Text(verbatim: cardTitle)
-                    .font(.system(size: 30, weight: .regular, design: .serif))
+                    .font(.system(.title, design: .serif))
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
                     ForEach(nine) { photo in
                         Color.clear.aspectRatio(1, contentMode: .fit)
@@ -1378,7 +1379,7 @@ private struct YearBookView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer()
                 Text(verbatim: "\(year)年の作品")
-                    .font(.system(size: 22, weight: .regular, design: .serif))
+                    .font(.system(.title2, design: .serif))
                 Text(verbatim: names)
                     .font(.footnote)
                     .foregroundStyle(ink.opacity(0.6))
@@ -1837,7 +1838,7 @@ struct MonthlyBookView: View {
                     .clipped()
                 Spacer(minLength: 20)
                 Text(verbatim: "\(letter.monthNumber)月")
-                    .font(.system(size: 40, weight: .light, design: .serif))
+                    .font(.system(.largeTitle, design: .serif).weight(.light))
                 Text(verbatim: "\(names)　\(letter.yearNumber)")
                     .font(.footnote).tracking(2)
                     .foregroundStyle(Self.ink.opacity(0.6))
@@ -1864,7 +1865,7 @@ struct MonthlyBookView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Spacer(minLength: 0)
                 Text(verbatim: "\(letter.monthNumber)月の\(photos.count)枚")
-                    .font(.system(size: 30, weight: .regular, design: .serif))
+                    .font(.system(.title, design: .serif))
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
                     ForEach(photos) { photo in
                         Color.clear.aspectRatio(1, contentMode: .fit)
@@ -1883,7 +1884,7 @@ struct MonthlyBookView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer()
                 Text(verbatim: "\(letter.monthNumber)月の作品")
-                    .font(.system(size: 22, weight: .regular, design: .serif))
+                    .font(.system(.title2, design: .serif))
                 Text(verbatim: names)
                     .font(.footnote)
                     .foregroundStyle(Self.ink.opacity(0.6))

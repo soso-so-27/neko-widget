@@ -439,6 +439,7 @@ struct GroupWindowMembersView: View {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("group-window-load-failure")
+                        .announcesWhenShown(model.loadFailureMessage)
                     Button("もう一度") { Task { await model.load() } }
                         .disabled(model.isWorking)
                         .accessibilityIdentifier("group-window-load-retry")
@@ -646,11 +647,13 @@ struct GroupWindowMembersView: View {
                     Label(message, systemImage: "wifi.exclamationmark")
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("group-window-load-failure")
+                        .announcesWhenShown(model.loadFailureMessage)
                 }
                 if let message = model.actionErrorMessage {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("group-window-action-error")
+                        .announcesWhenShown(model.actionErrorMessage)
                 }
                 if let message = model.actionCompletionMessage {
                     Label(message, systemImage: "checkmark.circle.fill")
@@ -721,7 +724,8 @@ struct GroupWindowMembersView: View {
                 }
                 .font(.caption.weight(.semibold))
                 .buttonStyle(.bordered)
-                .controlSize(.mini)
+                .controlSize(.small)
+                .frame(minWidth: 44, minHeight: 44)
                 .disabled(model.isWorking)
                 .accessibilityHidden(true)
                 .accessibilityIdentifier("group-window-remove-member")
@@ -912,7 +916,7 @@ struct GroupWindowRenameSheet: View {
                         .foregroundStyle(tooLong ? .red : .secondary)
                 }
                 if let message = model.actionErrorMessage {
-                    Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+                    Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red).announcesWhenShown(model.actionErrorMessage) }
                 }
             }
             .navigationTitle("名前を変える")

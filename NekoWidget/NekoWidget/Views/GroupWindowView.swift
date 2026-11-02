@@ -1715,7 +1715,7 @@ struct GroupWindowListSection: View {
                         } else {
                             Image(systemName: "plus")
                                 .font(.body.weight(.semibold))
-                                .frame(width: 44, height: 32)
+                                .frame(width: 44, height: 44)
                         }
                     }
                     .disabled(model.isWorking)
