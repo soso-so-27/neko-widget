@@ -16,12 +16,25 @@ LIKED_PHOTOS_VIEW = ROOT / "NekoWidget" / "NekoWidget" / "Views" / "LikedPhotosV
 LOG_VIEW = ROOT / "NekoWidget" / "NekoWidget" / "Views" / "LogView.swift"
 PHOTO_BOOK_EXPORTER = ROOT / "NekoWidget" / "NekoWidget" / "Services" / "PhotoBookPDFExporter.swift"
 JSON_EXPORTER = ROOT / "NekoWidget" / "NekoWidget" / "Services" / "JSONExporter.swift"
-PAGES = (
+BASE_PAGES = (
     SITE / "index.html",
     SITE / "privacy" / "index.html",
     SITE / "community" / "index.html",
     SITE / "support" / "index.html",
 )
+GUIDE_PAGE = SITE / "guide" / "index.html"
+GUIDE_PHRASES = (
+    "「猫を探す」を押します",
+    "1つのまどに届けられるのは、1人1日5枚まで",
+    "1つのまどにつき新しいものから500枚まで",
+    "招待されて入るのは無料です",
+    "月額980円です",
+    "解約しても、写真・まど・メモは消えません",
+)
+# Check the current four files unchanged until separately approved #716 adds
+# guide. Once present, all generic page checks include it, including full nav.
+# The runtime public-1.0 checker always requires all five (never optional).
+PAGES = BASE_PAGES + ((GUIDE_PAGE,) if GUIDE_PAGE.is_file() else ())
 
 
 class PageParser(html.parser.HTMLParser):
@@ -30,9 +43,14 @@ class PageParser(html.parser.HTMLParser):
         self.links: list[str] = []
         self.meta: dict[str, str] = {}
         self.text: list[str] = []
+        self.h1: list[str] = []
+        self.in_h1 = False
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
+        if tag == "h1":
+            self.in_h1 = True
+            self.h1.append("")
         if tag == "a":
             href = attributes.get("href")
             if href:
@@ -43,8 +61,14 @@ class PageParser(html.parser.HTMLParser):
             if name and content:
                 self.meta[name] = content
 
+    def handle_endtag(self, tag):
+        if tag == "h1":
+            self.in_h1 = False
+
     def handle_data(self, data):
         self.text.append(data)
+        if self.in_h1:
+            self.h1[-1] += data
 
 
 class PublicPolicySiteTests(unittest.TestCase):
@@ -53,6 +77,41 @@ class PublicPolicySiteTests(unittest.TestCase):
         parser.feed(path.read_text(encoding="utf-8"))
         parser.close()
         return parser
+
+    def assert_guide_contract(self, source):
+        parser = PageParser()
+        parser.feed(source)
+        parser.close()
+        text = "".join(parser.text)
+        self.assertEqual(parser.h1, ["ねこのまどの使い方"])
+        self.assertRegex(parser.meta.get("neko-policy-revision", ""), r"^\d{4}-\d{2}-\d{2}$")
+        year, month, day = map(int, parser.meta["neko-policy-revision"].split("-"))
+        self.assertIn(f"最終更新日：{year}年{month}月{day}日", text)
+        for phrase in GUIDE_PHRASES:
+            self.assertIn(phrase, text)
+        for href in parser.links:
+            scheme = urllib.parse.urlparse(href).scheme
+            if scheme:
+                self.assertEqual(scheme, "https")
+        for forbidden in ("todo", "tbd", "example.com", "example.invalid", "your-email", "replace-me", "gmail.com"):
+            self.assertNotIn(forbidden, source.lower())
+
+    def test_guide_contract_with_fixture_before_separate_publication(self):
+        source = ('<meta name="neko-policy-revision" content="2026-11-02">'
+                  '<h1>ねこのまどの使い方</h1><p>最終更新日：2026年11月2日</p>'
+                  + "".join(f"<p>{phrase}</p>" for phrase in GUIDE_PHRASES)
+                  + '<a href="https://nekonomado.com/guide/">使い方</a>')
+        self.assert_guide_contract(source)
+        for invalid in [*(source.replace(phrase, "") for phrase in GUIDE_PHRASES),
+                        source.replace("https://", "http://"), source + "contact@gmail.com",
+                        source + "your-email@example.invalid", source.replace("最終更新日：", ""),
+                        source.replace("<h1>ねこのまどの使い方</h1>", "<h1>wrong</h1>")]:
+            with self.assertRaises(AssertionError):
+                self.assert_guide_contract(invalid)
+
+    @unittest.skipUnless(GUIDE_PAGE.is_file(), "guide source awaits separately approved #716; fixture is checked")
+    def test_published_guide_source_contract(self):
+        self.assert_guide_contract(GUIDE_PAGE.read_text(encoding="utf-8"))
 
     def test_expected_pages_and_mobile_metadata_exist(self):
         for page in PAGES:
@@ -162,7 +221,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             "少人数の家族",
             "写真は家族へ",
         )
-        for page, required in zip(PAGES, required_by_page, strict=True):
+        for page, required in zip(BASE_PAGES, required_by_page, strict=True):
             text = "".join(self.parsed(page).text)
             for phrase in required:
                 self.assertIn(phrase, text, page)
