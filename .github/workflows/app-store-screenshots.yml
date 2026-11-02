@@ -410,7 +410,8 @@ jobs:
             ci/fixtures/cats/cat-orange-square.png \
             ci/fixtures/cats/cat-tuxedo-landscape.png \
             ci/fixtures/cats/cat-gray-portrait.png
-          xcrun simctl privacy "$IPAD_DEVICE" grant photos jp.nekowidget.app
+          # Exercise the visible Photos permission prompt in the public walk-through.
+          # test-without-building installs the app again; do not rely on a pre-grant.
       - name: Walk through the five public screens once
         timeout-minutes: 7
         working-directory: NekoWidget

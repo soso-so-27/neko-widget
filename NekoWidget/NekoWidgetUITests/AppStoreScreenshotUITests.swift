@@ -38,6 +38,18 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         capture("01-onboarding")
         guard tap("onboarding-purpose-start") else { return }
+        let photoPermission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        guard photoPermission.waitForExistence(timeout: 60) else {
+            capture("missing-photo-permission"); XCTFail("Normal Photos permission prompt missing"); return
+        }
+        capture("02-photo-permission")
+        let fullAccess = photoPermission.buttons.matching(NSPredicate(format: "label IN %@", [
+            "Allow Full Access", "Allow Access to All Photos", "フルアクセスを許可", "すべての写真へのアクセスを許可"
+        ])).firstMatch
+        guard fullAccess.exists, fullAccess.isHittable else {
+            capture("unreachable-photo-permission"); XCTFail("Full access action missing from Photos permission prompt"); return
+        }
+        fullAccess.tap()
         guard app.buttons["initial-scan-continue"].waitForExistence(timeout: 60) else {
             capture("scan-not-ready"); XCTFail("Normal scan screen missing"); return
         }
