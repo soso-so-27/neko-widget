@@ -1,7 +1,7 @@
 import { authenticateBillingSignedRequest } from './billing-auth';
 import { billingEffectiveEntitlementRuntimeEnabled,billingStoreEnvironmentAccepted,type Env } from './env';
 import { ApiError,jsonResponse } from './errors';
-import { groupMutationStatement,groupNonceStatements,type GroupActor } from './group-auth';
+import { groupMutationStatement,groupAuthorizationStatements,type GroupActor } from './group-auth';
 import { exactKeys,uuidField,type JsonRecord } from './validation';
 
 export interface GroupDeliveryPolicy {
@@ -75,7 +75,7 @@ export async function connectGroupBilling(request:Request,env:Env,actor:GroupAct
   // ON CONFLICT cannot silently attach a different person: the unique account
   // index and the immutable connection trigger preserve the binding.
   const check=crypto.randomUUID();
-  await env.DB.batch([...groupNonceStatements(env,actor),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor),
     env.DB.prepare('DELETE FROM billing_request_nonces WHERE billing_key_id=? AND expires_at<=?').bind(account.billingKeyId,account.now),
     env.DB.prepare('INSERT INTO billing_request_nonces VALUES (?,?,?,?)').bind(account.billingKeyId,account.nonce,account.now,account.now+601),
     env.DB.prepare(`INSERT INTO group_billing_connections

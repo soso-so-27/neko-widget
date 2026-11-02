@@ -36,10 +36,6 @@ async function load(env:Env,actor:GroupActor,windowId:string,id:string):Promise<
 function live(row:Report,now=Math.floor(Date.now()/1000)):void {
   if(row.state==='expired' || (row.committed_at===null?row.upload_expires_at<=now:(row.content_expires_at??0)<=now))fail('reservation_expired',410);
 }
-function nonce(env:Env,actor:GroupActor):D1PreparedStatement[] {
-  return [env.DB.prepare('DELETE FROM group_request_nonces WHERE device_id=? AND expires_at<?').bind(actor.deviceId,actor.now),
-    env.DB.prepare('INSERT INTO group_request_nonces VALUES (?,?,?)').bind(actor.deviceId,actor.nonce,actor.now+601)];
-}
 function checks(env:Env,actor:GroupActor,windowId:string,generation:number):D1PreparedStatement[] {
   const id=crypto.randomUUID();
   return [env.DB.prepare('INSERT INTO group_report_checks VALUES (?,?,?,?)').bind(id,windowId,actor.deviceId,generation),
@@ -52,7 +48,7 @@ async function replay(env:Env,actor:GroupActor,windowId:string,generation:number
   if(row.request_hash!==actor.requestHash)fail('idempotency_conflict');
   const receipt=JSON.parse(row.response_json) as ReturnType<typeof response>;
   const current=await load(env,actor,windowId,receipt.report.id);live(current);
-  await env.DB.batch([...checks(env,actor,windowId,generation),...nonce(env,actor)]);
+  await env.DB.batch([...checks(env,actor,windowId,generation)]);
   return jsonResponse(response(current));
 }
 async function reserve(env:Env,actor:GroupActor,windowId:string,generation:number,body:JsonRecord,numberAttempt=0):Promise<Response> {
@@ -83,7 +79,7 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
     if(previous.reporter_device_id!==actor.deviceId || previous.reason_code!==reason || previous.moderation_key_id!==key
       || previous.ciphertext_size!==size || previous.ciphertext_sha256!==hash)fail('already_reported');
     live(previous);previous.receipt_number=await groupReceiptNumber(env.DB,previous.id);const receipt=response(previous);
-    await env.DB.batch([...checks(env,actor,windowId,generation),...nonce(env,actor),groupMutationStatement(env,actor,operationId,receipt)]);
+    await env.DB.batch([...checks(env,actor,windowId,generation),groupMutationStatement(env,actor,operationId,receipt)]);
     return jsonResponse(receipt);
   }
   // The exact signed retry (or the same already-consented ciphertext) above
@@ -93,7 +89,7 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
   const id=randomBase64url(16),objectKey=`groups/reports/v3/${id}/${randomBase64url(24)}`;
   const row={id,receipt_number:newGroupReceiptNumber(),space_id:windowId,moment_id:momentId,state:'reserved',moderation_key_id:key,ciphertext_size:size,ciphertext_sha256:hash,
     upload_expires_at:actor.now+GROUP_REPORT_UPLOAD_SECONDS,committed_at:null,content_expires_at:null} as Report;
-  const receipt=response(row),statements=[...checks(env,actor,windowId,generation),...nonce(env,actor)];
+  const receipt=response(row),statements=[...checks(env,actor,windowId,generation)];
   if(previous && previous.state!=='expired')statements.push(
     env.DB.prepare("UPDATE group_reports SET state='expired',expired_at=? WHERE id=? AND state IN ('reserved','uploaded') AND upload_expires_at<=?")
       .bind(actor.now,previous.id,actor.now),
@@ -122,7 +118,7 @@ async function upload(env:Env,actor:GroupActor,windowId:string,generation:number
   const row=await load(env,actor,windowId,id);live(row);
   if(bytes.length!==row.ciphertext_size || await sha256Base64url(bytes)!==row.ciphertext_sha256)fail('ciphertext_descriptor_mismatch');
   if(!await currentModerationReportKey(env.DB,row.moderation_key_id))fail('moderation_key_required');
-  await env.DB.batch([...checks(env,actor,windowId,generation),...nonce(env,actor)]);
+  await env.DB.batch([...checks(env,actor,windowId,generation)]);
   const storage=bucket(env);
   if(row.state==='reserved') {
     const object=await storage.put(row.object_key,bytes.slice().buffer,{onlyIf:{etagDoesNotMatch:'*'},sha256:(await sha256(bytes)).slice().buffer,
@@ -148,7 +144,7 @@ async function commit(env:Env,actor:GroupActor,windowId:string,generation:number
   if(!matches(await bucket(env).head(row.object_key),row))fail('stored_object_unavailable',503);
   const now=Math.floor(Date.now()/1000);
   const receipt=response(row.state==='committed'?row:{...row,state:'committed',committed_at:now,content_expires_at:now+GROUP_REPORT_CONTENT_SECONDS});
-  const statements=[...checks(env,actor,windowId,generation),...nonce(env,actor)];
+  const statements=[...checks(env,actor,windowId,generation)];
   if(row.state!=='committed')statements.push(env.DB.prepare(`UPDATE group_reports SET state='committed',committed_at=?,content_expires_at=?
     WHERE id=? AND state='uploaded'`).bind(now,now+GROUP_REPORT_CONTENT_SECONDS,id));
   statements.push(groupMutationStatement(env,actor,operationId,receipt));
@@ -176,7 +172,7 @@ export async function groupReportAPI(request:Request,env:Env):Promise<Response> 
   const {actor,body:bytes}=await authenticateGroupRequest(request,env,isUpload?GROUP_REPORT_MAX_BYTES:16*1024,windowId);
   const gate=await loadRuntimeGate(env);
   if(env.REPORT_INGESTION_RUNTIME_ENABLED!=='YES' || !reportIngestionGateOpen(gate)) {
-    await env.DB.batch(nonce(env,actor));fail('report_ingestion_runtime_disabled',503);
+    fail('report_ingestion_runtime_disabled',503);
   }
   const generation=gate!.generation;
   bucket(env);
@@ -188,9 +184,7 @@ export async function groupReportAPI(request:Request,env:Env):Promise<Response> 
     const body=parseJsonBody(request,bytes);
     return action==='reserve'?await reserve(env,actor,windowId,generation,body):await commit(env,actor,windowId,generation,action.split('/')[0]!,body);
   } catch(error) {
-    // Failed authenticated requests cannot be replayed after eligibility or
-    // gates change. A transaction that already consumed this nonce is harmless.
-    await env.DB.prepare('INSERT OR IGNORE INTO group_request_nonces VALUES (?,?,?)').bind(actor.deviceId,actor.nonce,actor.now+601).run();
+    // Authentication has already consumed the nonce, including failures.
     throw error;
   }
 }

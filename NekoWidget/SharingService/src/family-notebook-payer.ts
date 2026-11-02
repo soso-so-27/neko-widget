@@ -1,4 +1,4 @@
-import { authenticateGroupRequest, groupId, groupNonceStatements, type GroupActor } from './group-auth';
+import { authenticateGroupRequest, groupId, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { billingEffectiveEntitlementRuntimeEnabled, billingStoreEnvironmentAccepted, type Env } from './env';
 import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
@@ -141,7 +141,7 @@ export async function familyNotebookPayer(request: Request, env: Env, familyValu
       requireEmptyBody(bytes);
       const row = await load(env, actor, familyId);
       const checkId = crypto.randomUUID();
-      const result = await env.DB.batch<FamilyRow>([...groupNonceStatements(env, actor),
+      const result = await env.DB.batch<FamilyRow>([...groupAuthorizationStatements(env, actor),
         env.DB.prepare('INSERT INTO family_notebook_access_checks VALUES (?,?,?,?,?)').bind(checkId, familyId, actor.personId, actor.deviceId, row.generation),
         env.DB.prepare('DELETE FROM family_notebook_access_checks WHERE id=?').bind(checkId),
         selectFamily(env, actor, familyId)]);
@@ -163,7 +163,7 @@ export async function familyNotebookPayer(request: Request, env: Env, familyValu
       }
       // A departed member can recover only their own receipt, with fresh
       // active-device authentication; no family metadata or role is returned.
-      await env.DB.batch(groupNonceStatements(env, actor));
+      await env.DB.batch(groupAuthorizationStatements(env, actor));
       return receiptResponse(operationId, existing);
     }
     await load(env, actor, familyId);
@@ -171,7 +171,7 @@ export async function familyNotebookPayer(request: Request, env: Env, familyValu
     if (operation === 'claim' && policy.environment === null) {
       throw new ApiError(503, 'billing_runtime_disabled', 'Membership verification is unavailable.');
     }
-    await env.DB.batch([...groupNonceStatements(env, actor),
+    await env.DB.batch([...groupAuthorizationStatements(env, actor),
       env.DB.prepare(`INSERT INTO family_notebook_payer_events
         (actor_device_id,operation_id,request_hash,actor_person_id,family_id,operation,
          expected_generation,resulting_generation,store_environment,accept_sandbox_in_production)

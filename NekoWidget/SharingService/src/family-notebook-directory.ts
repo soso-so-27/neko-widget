@@ -1,4 +1,4 @@
-import { authenticateGroupRequest, groupNonceStatements, type GroupActor } from './group-auth';
+import { authenticateGroupRequest, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { gate, safeFailure } from './family-notebook-payer';
 import { familyUUID } from './family-notebook-crypto';
 import { ApiError, jsonResponse } from './errors';
@@ -23,7 +23,7 @@ export async function familyNotebookDirectory(request: Request, env: Env): Promi
       .bind(family, actor.personId).first<{ generation: number }>();
     if (!membership) throw new ApiError(404, 'not_found', 'The family was not found.');
     const check = crypto.randomUUID();
-    const statements = [...groupNonceStatements(env, actor),
+    const statements = [...groupAuthorizationStatements(env, actor),
       env.DB.prepare('INSERT INTO family_notebook_access_checks VALUES (?,?,?,?,?)').bind(check, family, actor.personId, actor.deviceId, membership.generation),
       env.DB.prepare('DELETE FROM family_notebook_access_checks WHERE id=?').bind(check)];
     if (kind === 'members') {
@@ -55,7 +55,7 @@ export async function familyNotebookDirectory(request: Request, env: Env): Promi
 }
 
 async function ownFamilies(env: Env, actor: GroupActor): Promise<Response> {
-  const batch = await env.DB.batch<Record<string, unknown>>([...groupNonceStatements(env, actor),
+  const batch = await env.DB.batch<Record<string, unknown>>([...groupAuthorizationStatements(env, actor),
     env.DB.prepare('SELECT enabled FROM family_notebook_runtime_gate WHERE singleton=1'),
     env.DB.prepare(`SELECT f.id AS familyId,f.generation,(CASE WHEN f.payer_person_id=m.person_id THEN 'payer' ELSE 'member' END) AS role
       FROM family_notebook_members m JOIN family_notebook_spaces f ON f.id=m.family_id

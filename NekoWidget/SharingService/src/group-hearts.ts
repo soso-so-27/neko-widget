@@ -1,7 +1,7 @@
 import { base64urlDecode,randomBase64url,verifyEd25519 } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
-import { groupAuthorizationStatements,groupId,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
+import { groupAuthorizationStatements,groupId,groupMutationStatement,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
 import { groupFields,loadStoredGroupRoster } from './group-protocol';
 import { groupMediaChecks,groupMoment,groupPhotoMetadata,requireGroupDelivery } from './group-media';
 import { groupCursor,groupPage } from './group-reads';
@@ -25,7 +25,7 @@ export async function recordGroupHeart(env:Env,actor:GroupActor,windowId:string,
     participantId:access.participantId,deviceId:actor.deviceId,active:body.active,operationId,keyEpoch:epoch,rosterHash:roster.hash})))
     throw new ApiError(400,'invalid_signature','The heart signature could not be verified.');
   const response={operationId,momentId,reactorParticipantId:access.participantId,active:body.active,updatedAt:actor.now,serverNow:actor.now};
-  const statements=[...groupNonceStatements(env,actor,{windowId,expectedRevision:revision}),...groupMediaChecks(env,actor,momentId,'heart')];
+  const statements=[...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:revision}),...groupMediaChecks(env,actor,momentId,'heart')];
   // State, quota and notification are one serialized transition. A read before
   // the batch would double-charge concurrent identical hearts or miss a cancel.
   statements.push(env.DB.prepare(`INSERT INTO group_moment_hearts VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(moment_id,participant_id)
@@ -79,7 +79,7 @@ export async function listGroupHearts(env:Env,actor:GroupActor,windowId:string,m
   const metadata=(await groupPhotoMetadata(env,[row],actor.deviceId))[0];
   const all=(metadata?.hearts as {reactorParticipantId:string}[]??[]).filter(h=>h.reactorParticipantId>page.after)
     .sort((a,b)=>a.reactorParticipantId<b.reactorParticipantId?-1:1),items=all.slice(0,page.limit);
-  await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}),...groupMediaChecks(env,actor,momentId,'read')]);
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),...groupMediaChecks(env,actor,momentId,'read')]);
   return jsonResponse({items,next:all.length>page.limit?groupCursor(scope,items.at(-1)!.reactorParticipantId):null,serverNow:actor.now});
 }
 export async function setGroupBlock(env:Env,actor:GroupActor,windowId:string,participantId:string,body:JsonRecord):Promise<Response> {
@@ -90,7 +90,7 @@ export async function setGroupBlock(env:Env,actor:GroupActor,windowId:string,par
   const target=await env.DB.prepare('SELECT 1 AS present FROM group_members WHERE space_id=? AND participant_id=?').bind(windowId,groupId(participantId)).first();
   if(!target)throw new ApiError(404,'not_found','The participant was not found.');
   const response={operationId,participantId,active:body.active,serverNow:actor.now};
-  await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
     env.DB.prepare(`INSERT INTO group_participant_blocks VALUES (?,?,?,?,?) ON CONFLICT(space_id,blocker_id,blocked_id)
       DO UPDATE SET active=excluded.active,updated_at=excluded.updated_at`).bind(windowId,access.participantId,participantId,body.active?1:0,actor.now),
     groupMutationStatement(env,actor,operationId,response)]);

@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { expect,it,vi } from 'vitest';
 import vector from '../../ci/fixtures/group-http-v3.json';
-import { authenticateGroupRequest,groupNonceStatements } from '../src/group-auth';
+import { authenticateGroupRequest } from '../src/group-auth';
 import type { Env } from '../src/env';
 
 it('accepts the shared HTTP canonical vector without requiring deterministic signature generation',async()=>{
@@ -19,7 +19,6 @@ it('accepts the shared HTTP canonical vector without requiring deterministic sig
     const accepted=await authenticateGroupRequest(request(),settings);
     expect(accepted.actor.deviceId).toBe(vector.deviceId);
     expect(new TextDecoder().decode(accepted.body)).toBe(vector.request.bodyUTF8);
-    await db.batch(groupNonceStatements(settings,accepted.actor));
     await expect(authenticateGroupRequest(request(),settings)).rejects.toMatchObject({code:'replay'});
     const wrong=request();
     const altered=new Request(wrong.url,{method:wrong.method,headers:wrong.headers,body:'{"after":null,"limit":49}'});

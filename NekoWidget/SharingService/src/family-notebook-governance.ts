@@ -1,4 +1,4 @@
-import { authenticateGroupRequest, groupId, groupNonceStatements, type GroupActor } from './group-auth';
+import { authenticateGroupRequest, groupId, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { gate, safeFailure, familyStorePolicy } from './family-notebook-payer';
 import { familyUUID } from './family-notebook-crypto';
 import { ApiError, jsonResponse } from './errors';
@@ -47,7 +47,7 @@ export async function familyNotebookGovernance(request: Request, env: Env): Prom
       const state = await query(env, actor, family).first<State>();
       if (!state) throw new ApiError(404, 'not_found', 'The family was not found.');
       const checkId = crypto.randomUUID();
-      const batch = await env.DB.batch<State>([...groupNonceStatements(env, actor),
+      const batch = await env.DB.batch<State>([...groupAuthorizationStatements(env, actor),
         env.DB.prepare('INSERT INTO family_notebook_access_checks VALUES (?,?,?,?,?)').bind(checkId, family, actor.personId, actor.deviceId, state.generation),
         env.DB.prepare('DELETE FROM family_notebook_access_checks WHERE id=?').bind(checkId), query(env, actor, family)]);
       const current = batch.at(-1)?.results[0];
@@ -73,7 +73,7 @@ export async function familyNotebookGovernance(request: Request, env: Env): Prom
       if (prior.actor_person_id !== actor.personId || prior.family_id !== family || prior.action !== action || prior.request_hash !== actor.requestHash) {
         throw new ApiError(409, 'idempotency_conflict', 'This operation has different content.');
       }
-      await env.DB.batch(groupNonceStatements(env, actor)); return response(operationId, prior);
+      await env.DB.batch(groupAuthorizationStatements(env, actor)); return response(operationId, prior);
     }
     let target = action === 'remove' ? groupId(match[4]!) : action === 'nominate' ? groupId(stringField(body, 'personId')) : null;
     const nominationId = action === 'nominate' ? operationId : ['accept', 'cancel'].includes(action) ? uuidField(body, 'nominationId') : null;
@@ -86,7 +86,7 @@ export async function familyNotebookGovernance(request: Request, env: Env): Prom
       target = current.nominee_person_id;
       if (action === 'accept' && !policy.environment) throw new ApiError(503, 'family_notebook_unavailable', 'Plus could not be confirmed.');
     }
-    await env.DB.batch([...groupNonceStatements(env, actor),
+    await env.DB.batch([...groupAuthorizationStatements(env, actor),
       env.DB.prepare(`INSERT INTO family_notebook_governance_events
         (actor_device_id,operation_id,actor_person_id,family_id,request_hash,action,target_person_id,nomination_id,
           expected_generation,resulting_generation,store_environment,accept_sandbox_in_production) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)

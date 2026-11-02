@@ -2,7 +2,7 @@ import {groupPushRevocationStatements} from './group-push-revocation';
 import { base64urlDecode,randomBase64url } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
-import { groupMutationStatement,groupNonceStatements,storedGroupMutation,type GroupActor } from './group-auth';
+import { groupMutationStatement,groupAuthorizationStatements,storedGroupMutation,type GroupActor } from './group-auth';
 import { APNS_SUBSCRIPTION_TTL_SECONDS,decryptDeviceToken,encryptDeviceToken,parseProviderCredential,parseTokenKeyring,providerJWT,type APNsDrainSummary } from './push';
 import { apnsGateOpen,loadRuntimeGate } from './runtime-gate';
 import { exactKeys,stringField,uuidField,type JsonRecord } from './validation';
@@ -25,7 +25,6 @@ function gateCheck(env:Env,generation:number):D1PreparedStatement[] {
 export async function registerGroupJoinPush(env:Env,actor:GroupActor,windowId:string,body:JsonRecord,remove=false):Promise<Response> {
   try { return await changeGroupJoinPush(env,actor,windowId,body,remove); }
   catch(error) {
-    await env.DB.prepare('INSERT OR IGNORE INTO group_request_nonces VALUES (?,?,?)').bind(actor.deviceId,actor.nonce,actor.now+601).run();
     throw error;
   }
 }
@@ -44,7 +43,7 @@ async function changeGroupJoinPush(env:Env,actor:GroupActor,windowId:string,body
   if(!remove && (!enabled(env) || !apnsGateOpen(gate)))throw new ApiError(503,'group_push_disabled','Group notifications are unavailable.');
   const previous=await storedGroupMutation(env,actor,operationId);if(previous)return jsonResponse(previous);
   const receipt={operationId,windowId,notifications:!remove,serverNow:actor.now};
-  const statements=[...groupNonceStatements(env,actor)];
+  const statements=[...groupAuthorizationStatements(env,actor)];
   if(remove)statements.push(...groupPushRevocationStatements(env,windowId,{deviceId:actor.deviceId}));
   else {
     let credential,keyring,token:Uint8Array;

@@ -48,9 +48,13 @@ export async function authenticateGroupRequest(request: Request, env: Env,maximu
   const message = groupFields(["NW3.REQUEST","3",deviceId,timestamp,nonce,request.method,pathname,base64urlDecode(bodyHash,32)]);
   if (!await verifyEd25519(row.signingPublicKey,signature,message)) throw new ApiError(401,"invalid_authentication","Group authentication failed.");
   await enforceRateLimit(env,env.MEMBER_RATE_LIMITER,`group-device:${deviceId}`);
-  const previous = await env.DB.prepare("SELECT 1 AS present FROM group_request_nonces WHERE device_id=? AND nonce=?")
-    .bind(deviceId,nonce).first();
-  if (previous) throw new ApiError(401,"replay","Group authentication failed.");
+  // Claim after signature validation, before any handler reads or side effects.
+  // A rejected/rolled-back handler must not make these signed bytes reusable.
+  await env.DB.prepare("DELETE FROM group_request_nonces WHERE rowid IN (SELECT rowid FROM group_request_nonces WHERE device_id=? AND expires_at<? LIMIT 100)")
+    .bind(deviceId,now).run();
+  const claimed = await env.DB.prepare("INSERT INTO group_request_nonces VALUES (?,?,?) ON CONFLICT(device_id,nonce) DO NOTHING RETURNING nonce")
+    .bind(deviceId,nonce,now+601).first();
+  if (!claimed) throw new ApiError(401,"replay","Group authentication failed.");
   return {actor:{...row,nonce,now,requestHash},body};
 }
 export interface GroupScope { windowId: string; owner?: boolean; expectedRevision?: number }
@@ -59,12 +63,6 @@ export function groupAuthorizationStatements(env: Env, actor: GroupActor, scope?
   return [env.DB.prepare("INSERT INTO group_authorization_checks VALUES (?,?,?,?,?)")
     .bind(checkId,actor.deviceId,scope?.windowId ?? null,scope?.owner === true ? 1 : 0,scope?.expectedRevision ?? null),
     env.DB.prepare("DELETE FROM group_authorization_checks WHERE id=?").bind(checkId)];
-}
-export function groupNonceStatements(env: Env, actor: GroupActor, scope?: GroupScope): D1PreparedStatement[] {
-  return [...groupAuthorizationStatements(env,actor,scope),
-    env.DB.prepare("DELETE FROM group_request_nonces WHERE rowid IN (SELECT rowid FROM group_request_nonces WHERE device_id=? AND expires_at<? LIMIT 100)")
-    .bind(actor.deviceId,actor.now),
-    env.DB.prepare("INSERT INTO group_request_nonces VALUES (?,?,?)").bind(actor.deviceId,actor.nonce,actor.now+601)];
 }
 export async function requireGroupMember(env: Env, actor: GroupActor, windowId: string, owner = false): Promise<{participantId:string;revision:number;keyEpoch:number;rotationRequired:number}> {
   const row = await env.DB.prepare(`SELECT m.participant_id AS participantId,w.revision,w.key_epoch AS keyEpoch,w.rotation_required AS rotationRequired,m.role
@@ -82,7 +80,7 @@ export async function storedGroupMutation(env: Env, actor: GroupActor, operation
   if (!previous) return null;
   if (previous.request_hash !== actor.requestHash) throw new ApiError(409,"idempotency_conflict","The operation has different content.");
   const currentScope = scope ? {windowId:scope.windowId,owner:scope.owner === true} : undefined;
-  await env.DB.batch(groupNonceStatements(env,actor,currentScope));
+  await env.DB.batch(groupAuthorizationStatements(env,actor,currentScope));
   return JSON.parse(previous.response_json) as unknown;
 }
 export function groupMutationStatement(env: Env, actor: GroupActor, operationId: string, response: unknown): D1PreparedStatement {

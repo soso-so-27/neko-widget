@@ -16,8 +16,6 @@ export async function groupReportStatus(request:Request,env:Env):Promise<Respons
  const result=await env.DB.batch([
   env.DB.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM group_person_devices d JOIN group_people p ON p.id=d.person_id
    WHERE d.id=? AND d.person_id=? AND d.state='active' AND p.state='active') THEN 'true' ELSE 'denied' END)`).bind(actor.deviceId,actor.personId),
-  env.DB.prepare('DELETE FROM group_request_nonces WHERE device_id=? AND expires_at<?').bind(actor.deviceId,actor.now),
-  env.DB.prepare('INSERT INTO group_request_nonces VALUES (?,?,?)').bind(actor.deviceId,actor.nonce,actor.now+601),
   env.DB.prepare(`SELECT COALESCE(r.state,'expired') AS submissionState,k.committed_at AS receivedAt,k.evidence_expires_at AS evidenceExpiresAt,
    k.outcome,k.revision,d.reply_template AS replyTemplate,d.created_at AS repliedAt
    FROM group_report_records k LEFT JOIN group_reports r ON r.id=k.report_id
@@ -27,6 +25,6 @@ export async function groupReportStatus(request:Request,env:Env):Promise<Respons
    WHERE r.id=? AND r.space_id=? AND r.reporter_person_id=? AND r.reporter_device_id=? AND r.committed_at IS NULL`)
    .bind(match[2],match[1],actor.personId,actor.deviceId,match[2],match[1],actor.personId,actor.deviceId)
  ]);
- const row=result[3]!.results[0];if(!row)throw new ApiError(404,'report_not_found','The report was not found.');
+ const row=result.at(-1)!.results[0];if(!row)throw new ApiError(404,'report_not_found','The report was not found.');
  return jsonResponse({protocolVersion:3,report:{id:match[2],receiptNumber:await groupReceiptNumber(env.DB,match[2]!),...row}});
 }

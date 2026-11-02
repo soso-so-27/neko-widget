@@ -1,7 +1,7 @@
 import { base64urlDecode, randomBase64url } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
-import { groupId,groupAuthorizationStatements,groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,
+import { groupId,groupAuthorizationStatements,groupMutationStatement,requireGroupMember,storedGroupMutation,
   type GroupActor,type GroupScope } from "./group-auth";
 import { loadStoredGroupRoster,verifyGroupEnvelopes,verifyGroupRoster,
   type GroupKeyEnvelope,type SignedGroupRoster,type VerifiedGroupRoster } from "./group-protocol";
@@ -58,7 +58,7 @@ export async function createGroupWindow(env:Env,actor:GroupActor,body:JsonRecord
   // The first window already needs verified Plus, including Apple's active
   // introductory offer. Owned five and total ten are independent limits.
   const ownedLimit=5;
-  await env.DB.batch([...groupNonceStatements(env,actor),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor),
     env.DB.prepare("INSERT INTO group_windows(space_id,owner_person_id,mode,created_at,updated_at) VALUES (?,?,'preparing',?,?)")
       .bind(r.windowId,actor.personId,actor.now,actor.now),
     env.DB.prepare("INSERT INTO group_members VALUES (?,?,?,'owner','active',1,NULL,?)")
@@ -82,7 +82,7 @@ export async function listGroupWindows(env:Env,actor:GroupActor,body:JsonRecord)
       WHERE m.person_id=? AND m.state='active' AND d.device_id=? AND d.state='active' AND w.mode='active' AND w.space_id>?
       ORDER BY w.space_id LIMIT ?`).bind(actor.personId,actor.deviceId,page.after,page.limit+1)
     .all<{windowId:string;revision:number;rotationRequired:number}>();
-  const items=result.results.slice(0,page.limit),checks=groupNonceStatements(env,actor);
+  const items=result.results.slice(0,page.limit),checks=groupAuthorizationStatements(env,actor);
   for(const item of items) checks.push(...groupAuthorizationStatements(env,actor,
     {windowId:item.windowId,expectedRevision:item.revision}));
   await env.DB.batch(checks);
@@ -103,7 +103,7 @@ export async function getGroupWindow(env:Env,actor:GroupActor,windowId:string):P
     JOIN group_window_metadata m ON m.space_id=n.space_id AND m.encrypted_name=n.encrypted_name
       AND m.key_epoch=n.key_epoch AND m.roster_revision=n.roster_revision
     WHERE n.space_id=? AND n.roster_hash=?`).bind(windowId,roster.hash).first():null;
-  await env.DB.batch(groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}));
+  await env.DB.batch(groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}));
   const policy=(await groupDeliveryPolicies(env,[windowId])).get(windowId);
   return jsonResponse({window:{windowId,revision:access.revision,keyEpoch:access.keyEpoch,rotationRequired:access.rotationRequired===1,...metadata,...policy,
     ...(env.GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED==='YES'?{nameRevision:nameProof?.nameRevision??0,nameProof}: {})},
@@ -119,7 +119,7 @@ export async function createGroupInvitation(env:Env,actor:GroupActor,windowId:st
   if(prior!==null) return jsonResponse(prior);
   const proofPublicKey=binaryField(body,"proofPublicKey",32),invitationId=randomBase64url(16),expiresAt=actor.now+86400;
   const response={operationId,invitationId,expiresAt,revision,serverNow:actor.now};
-  await env.DB.batch([...groupNonceStatements(env,actor,scope),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),
     env.DB.prepare("INSERT INTO group_invitations VALUES (?,?,?,?,?,?,NULL)").bind(invitationId,windowId,proofPublicKey,actor.deviceId,actor.now,expiresAt),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response,201);
@@ -134,7 +134,7 @@ export async function revokeGroupInvitation(env:Env,actor:GroupActor,windowId:st
   const invitation=await env.DB.prepare("SELECT id FROM group_invitations WHERE id=? AND space_id=?").bind(invitationId,windowId).first();
   if(!invitation) throw new ApiError(404,"not_found","The invitation was not found.");
   const response={operationId,revision,state:"revoked",serverNow:actor.now};
-  await env.DB.batch([...groupNonceStatements(env,actor,scope),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),
     env.DB.prepare("UPDATE group_invitations SET revoked_at=COALESCE(revoked_at,?) WHERE id=? AND space_id=?").bind(actor.now,invitationId,windowId),
     env.DB.prepare("UPDATE group_join_requests SET state='cancelled' WHERE invitation_id=? AND state='pending'").bind(invitationId),
     groupMutationStatement(env,actor,operationId,response)]);
@@ -149,6 +149,6 @@ export async function groupInvitationStatus(env:Env,actor:GroupActor,windowId:st
   const row=await env.DB.prepare('SELECT proof_public_key AS proofPublicKey,expires_at AS expiresAt,revoked_at AS revokedAt FROM group_invitations WHERE id=? AND space_id=?')
     .bind(invitationId,windowId).first();
   if(!row)throw new ApiError(404,'not_found','The invitation was not found.');
-  await env.DB.batch(groupNonceStatements(env,actor,{windowId,owner:true,expectedRevision:access.revision}));
+  await env.DB.batch(groupAuthorizationStatements(env,actor,{windowId,owner:true,expectedRevision:access.revision}));
   return jsonResponse({...row,invitationId,serverNow:actor.now});
 }
