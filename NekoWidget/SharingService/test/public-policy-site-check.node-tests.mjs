@@ -21,6 +21,11 @@ const localOnly = Object.freeze({
   definition: publicPolicyProfiles["local-only"],
 });
 
+const publicOne = Object.freeze({
+  profile: "public-1.0", siteBase: "https://policy.example.net/neko-widget/",
+  definition: publicPolicyProfiles["public-1.0"],
+});
+
 function profileUrls(profileCase) {
   return profileCase.definition.pages.map(
     (page) => new URL(page.path, profileCase.siteBase).href,
@@ -614,4 +619,44 @@ test("fails closed when a page request exceeds its timeout", async () => {
     }),
     /timed out/u,
   );
+});
+
+// Synthetic pages: guide publication and the four existing navigation updates
+// are separately approved. No live request is made by these tests.
+test("public 1.0 requires five mutually linked pages including the guide", async () => {
+  const result = await check(publicOne);
+  assert.deepEqual(result.pages.map(page => page.name), ["overview", "privacy", "community", "support", "guide"]);
+  const relative = new Map(publicOne.definition.pages.map(page => [page.name, pageHtml(publicOne, page, {
+    links: publicOne.definition.pages.map(target => `${page.path ? "../" : "./"}${target.path}`),
+  })]));
+  assert.equal((await check(publicOne, relative)).pages.length, 5);
+  for (const page of publicOne.definition.pages) {
+    for (const missing of profileUrls(publicOne)) {
+      await assert.rejects(check(publicOne, new Map([[page.name, pageHtml(publicOne, page, {
+        links: profileUrls(publicOne).filter(url => url !== missing),
+      })]])), /does not link to every page/u);
+    }
+  }
+});
+
+test("public guide requires the exact title, revision, six phrases and shared forbidden copy", async () => {
+  const guide = publicOne.definition.pages.find(page => page.name === "guide");
+  assert.deepEqual(guide.requiredPhrases, ["「猫を探す」を押します", "1つのまどに届けられるのは、1人1日5枚まで",
+    "1つのまどにつき新しいものから500枚まで", "招待されて入るのは無料です", "月額980円です", "解約しても、写真・まど・メモは消えません"]);
+  assert.deepEqual(guide.forbiddenPhrases, publicOne.definition.pages[0].forbiddenPhrases);
+  for (const phrase of guide.requiredPhrases) {
+    await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, {
+      phrases: guide.requiredPhrases.filter(value => value !== phrase),
+    })]])), /guide is missing required policy content/u);
+  }
+  for (const phrase of guide.forbiddenPhrases) {
+    await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, { extraBody: phrase })]])),
+      /guide contains forbidden policy content/u);
+  }
+  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, { h1: "wrong" })]])), /unexpected h1/u);
+  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide).replace("<p>最終更新日：2026年8月24日</p>", "")]])), /missing the visible policy revision/u);
+  await assert.rejects(check(publicOne, new Map([["guide", new Response("missing", { status: 404 })]])), /guide returned HTTP 404/u);
+  await assert.rejects(check(publicOne, new Map([["guide", pageHtml(publicOne, guide, {
+    links: [...profileUrls(publicOne), "http://policy.example.net/unsafe"],
+  })]])), /non-HTTPS/u);
 });
