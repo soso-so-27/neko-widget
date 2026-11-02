@@ -78,6 +78,20 @@ class ProductionCandidateTests(unittest.TestCase):
             candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "build-for-testing"], synthetic=True)
         self.assertEqual(run.call_count, 1)
 
+    def test_testing_coverage_option_is_preserved_only_on_real_build(self):
+        from types import SimpleNamespace
+        result = SimpleNamespace(stdout=json.dumps([{"target": "NekoWidget", "buildSettings": {
+            **self.settings, "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "NEKO_HOST_APP"}}]))
+        for value in ("YES", "NO"):
+            with self.subTest(coverage=value), patch.object(candidate.subprocess, "run", return_value=result) as run:
+                candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "-enableCodeCoverage", value,
+                                                   "build-for-testing"], synthetic=True)
+            probe, build = [call.args[0] for call in run.call_args_list]
+            self.assertNotIn("-enableCodeCoverage", probe)
+            self.assertNotIn(value, probe)
+            self.assertEqual(build[build.index("-enableCodeCoverage") + 1], value)
+            self.assertIn("build-for-testing", build)
+
     def test_resolved_conditions_reject_debug_and_missing_target_boundary(self):
         from types import SimpleNamespace
         for target, conditions in [("NekoWidget", ""), ("NekoWidget", "DEBUG NEKO_HOST_APP"),

@@ -230,8 +230,10 @@ def run_build(contract, arguments, *, synthetic=False):
         probe = []
         items = iter(command)
         for item in items:
-            if item in ("-archivePath", "-resultBundlePath"):
-                next(items)  # Inspect settings without creating the archive's output paths.
+            if item in ("-archivePath", "-resultBundlePath", "-enableCodeCoverage"):
+                # Coverage is valid for the testing action, not -showBuildSettings.
+                # Keep it on the real build below; only the read-only probe omits it.
+                next(items)
             elif item not in ("build", "archive", "build-for-testing"):
                 probe.append(item)
         rows = json.loads(subprocess.run(probe + ["-showBuildSettings", "-json"], cwd=ROOT,
