@@ -388,7 +388,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertNotIn("policy_site_base=", disabled)
         media = gate.split("media-staging)", 1)[1].split(";;", 1)[0]
         self.assertIn('policy_revision="2026-11-02"', media)
-        self.assertIn('policy_profile="sharing-beta"', media)
+        self.assertIn('policy_profile="public-1.0"', media)
         self.assertIn(
             'policy_site_base="https://soso-so-27.github.io/neko-widget/"',
             media,
