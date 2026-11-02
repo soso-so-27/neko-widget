@@ -103,11 +103,11 @@ class SharingRuntimeSelfTestValidatorTests(unittest.TestCase):
         allowed = runpy.run_path(str(SCRIPT))["ASSERTION_IDS"]
         runner = (SCRIPT.parent.parent / "NekoWidget/Services/SharingRuntimeSelfTest.swift").read_text(encoding="utf-8")
         identifiers = re.findall(r'throw SharingRuntimeSelfTestRunner.recordAssertionFailure\("([A-Z0-9-]+)",', runner)
-        self.assertEqual(len(identifiers), 162)
-        self.assertEqual(len(set(identifiers)), 162)
+        self.assertEqual(len(identifiers), 165)
+        self.assertEqual(len(set(identifiers)), 165)
         boundaries = re.findall(r'operationID = "(RWP-OP-[0-9]+)"', runner)
-        self.assertEqual(len(boundaries), 27)
-        self.assertEqual(len(set(boundaries)), 27)
+        self.assertEqual(len(boundaries), 29)
+        self.assertEqual(len(set(boundaries)), 29)
         identifiers += boundaries
         # Keep the one-shot precision diagnosis readable after its confirmed fix.
         self.assertEqual(set(identifiers) | {"DUP-RS-007-PRECISION"}, set().union(*allowed.values()))

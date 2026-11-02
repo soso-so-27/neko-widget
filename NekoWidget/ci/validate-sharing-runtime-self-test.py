@@ -51,7 +51,8 @@ ASSERTION_IDS = {
         | {f"DUP-RS-{i:03}" for i in range(1, 17)}
         | {"DUP-RS-007-PRECISION", "DUP-RS-007-JPEG"},
     "retained-widget-publication": {f"RWP-{i:03}" for i in range(1, 11)}
-        | {f"RWP-OP-{i:03}" for i in range(1, 28)},
+        | {f"RWP-ACK-{i:03}" for i in range(1, 4)}
+        | {f"RWP-OP-{i:03}" for i in range(1, 30)},
     "managed-preservation-membership-boundary": {
         f"{prefix}-{i:03}" for prefix, count in (
             ("MPM", 51), ("MPM-USAGE", 6), ("MPM-DELETE", 12),
