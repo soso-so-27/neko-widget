@@ -297,14 +297,17 @@ struct MembershipOfferView: View {
             .accessibilityIdentifier("membership-offer-restore")
         if let cancellationHelpURL = Self.cancellationHelpURL {
             Link("解約のしかた", destination: cancellationHelpURL)
+                .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-cancel-help")
         }
         if let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") {
             Link("利用規約", destination: termsURL)
+                .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-terms")
         }
         if let privacyURL = AppPublicLinksConfiguration.current.privacyURL {
             Link("プライバシー", destination: privacyURL)
+                .frame(minHeight: 44)
                 .accessibilityIdentifier("membership-offer-privacy")
         }
     }
