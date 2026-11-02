@@ -106,7 +106,7 @@ def settings(contract, *, synthetic=False):
         if match:
             result[match[1]] = match[2].strip()
     result.update(values)
-    result.update({"OWNER_INTERNAL_REPORTS_DISABLED": "NO", "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "",
+    result.update({"OWNER_INTERNAL_REPORTS_DISABLED": "NO",
                    "SHARE_EXTENSION_INFOPLIST_FILE": "NekoWidgetShareExtension/Info.plist",
                    "PHOTO_LIBRARY_USAGE_DESCRIPTION": "猫の写真を端末内で解析し、アルバムとウィジェットに表示します。共有では選んだ1枚を最大2,048pxに縮小し、位置情報を除いて暗号化して届けます。原本を自動送信しません。"})
     for name in result:
@@ -240,7 +240,10 @@ def run_build(contract, arguments, *, synthetic=False):
             actual = row["buildSettings"]
             for key, value in expected.items():
                 require(actual.get(key, "") == value, "Resolved production setting differs: " + key)
-            require("DEBUG" not in actual.get("SWIFT_ACTIVE_COMPILATION_CONDITIONS", "").split(), "Debug public candidate rejected")
+            conditions = actual.get("SWIFT_ACTIVE_COMPILATION_CONDITIONS", "").split()
+            require("DEBUG" not in conditions, "Debug public candidate rejected")
+            required = {"NekoWidget": "NEKO_HOST_APP", "NekoWidgetShareExtension": "NEKO_SHARE_EXTENSION"}.get(row["target"])
+            require(required is None or required in conditions, "Target-specific compilation boundary missing: " + row["target"])
     subprocess.run(command, cwd=ROOT, check=True)
 
 

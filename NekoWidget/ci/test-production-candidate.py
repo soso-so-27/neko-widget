@@ -52,7 +52,8 @@ class ProductionCandidateTests(unittest.TestCase):
 
     def test_settings_probe_cannot_consume_archive_output_paths(self):
         from types import SimpleNamespace
-        result = SimpleNamespace(stdout=json.dumps([{"target": "NekoWidget", "buildSettings": self.settings}]))
+        result = SimpleNamespace(stdout=json.dumps([{"target": "NekoWidget", "buildSettings": {
+            **self.settings, "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "NEKO_HOST_APP"}}]))
         with patch.object(candidate.subprocess, "run", return_value=result) as run:
             candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "-archivePath", "candidate.xcarchive",
                                                "-resultBundlePath", "candidate.xcresult", "archive"], synthetic=True)
@@ -60,6 +61,18 @@ class ProductionCandidateTests(unittest.TestCase):
         self.assertNotIn("-archivePath", probe); self.assertNotIn("candidate.xcarchive", probe)
         self.assertNotIn("-resultBundlePath", probe); self.assertNotIn("candidate.xcresult", probe)
         self.assertIn("-archivePath", archive); self.assertIn("-resultBundlePath", archive)
+        self.assertFalse(any(item.startswith("SWIFT_ACTIVE_COMPILATION_CONDITIONS=") for item in archive))
+
+    def test_resolved_conditions_reject_debug_and_missing_target_boundary(self):
+        from types import SimpleNamespace
+        for target, conditions in [("NekoWidget", ""), ("NekoWidget", "DEBUG NEKO_HOST_APP"),
+                                   ("NekoWidgetShareExtension", "NEKO_HOST_APP")]:
+            rows = [{"target": "NekoWidget", "buildSettings": {**self.settings, "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "NEKO_HOST_APP"}},
+                    {"target": target, "buildSettings": {**self.settings, "SWIFT_ACTIVE_COMPILATION_CONDITIONS": conditions}}]
+            result = SimpleNamespace(stdout=json.dumps(rows))
+            with patch.object(candidate.subprocess, "run", return_value=result) as run, self.assertRaises(ValueError):
+                candidate.run_build(self.contract, ["-sdk", "iphonesimulator", "build"], synthetic=True)
+            self.assertEqual(run.call_count, 1, "Must fail before compilation")
 
     def test_reject_recipient_origin_and_incomplete_inputs(self):
         for key, value in [("SHARING_MODERATION_PUBLIC_KEY", "T5C7__1xlc4XmIDr6zTJqMtdhBjPnMD10O3vFK_bYWg"),
