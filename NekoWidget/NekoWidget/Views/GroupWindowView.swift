@@ -639,6 +639,22 @@ struct GroupWindowScreen: View {
     }
 
 
+    /// The red error line with its retry, kept out of the body chain so
+    /// the type checker stays fast.
+    private func screenMessage(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(.red)
+                .accessibilityIdentifier("group-window-screen-message")
+            Button("もう一度") { Task { await model.load() } }
+                .font(.footnote)
+                .disabled(model.isWorking)
+                .accessibilityIdentifier("group-window-screen-retry")
+        }
+        .padding(.horizontal, 16)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -654,17 +670,7 @@ struct GroupWindowScreen: View {
                     pausedCard(window)
                 }
                 if let message = model.message {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("group-window-screen-message")
-                        Button("もう一度") { Task { await model.load() } }
-                            .font(.footnote)
-                            .disabled(model.isWorking)
-                            .accessibilityIdentifier("group-window-screen-retry")
-                    }
-                    .padding(.horizontal, 16)
+                    screenMessage(message)
                 }
                 if let notice = model.receiveNotice {
                     Label(notice, systemImage: "hourglass")
