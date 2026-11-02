@@ -6,6 +6,7 @@ import copy
 import io
 import datetime as dt
 import importlib.util
+import itertools
 import json
 import os
 from pathlib import Path
@@ -1241,10 +1242,9 @@ final class UnrelatedUITests: XCTestCase {
             self.assertIn("run: bash NekoWidget/ci/" + runner + "\n", body)
             self.assertNotRegex(body, r"(?m)^    needs:")
             self.assertNotIn("continue-on-error", body)
-        self.assertIn("    if: github.event_name == 'workflow_dispatch' && inputs.extended_checks\n", jobs["plan"])
-        # Dispatch enables both independent normal jobs alongside extended jobs.
-        # Keep the five-runner boundary over the whole active workflow; omitting
-        # the normal jobs here would hide an existing dispatch overbooking bug.
+        self.assertIn("    needs: [quick-check, safety-check]\n", jobs["plan"])
+        self.assertIn("    if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks\n", jobs["plan"])
+        # Normal and extended Mac jobs are separate phases, including failures.
         normal_running = len(normal_jobs)
         for selected in scope.SCOPES:
             with self.subTest(scope=selected):
@@ -1284,7 +1284,7 @@ final class UnrelatedUITests: XCTestCase {
                         self.assertIn("needs.plan.outputs.smoke == 'true'", body)
                         continue
                     if identifier == "sharing-app-ui" and not has_app_ui:
-                        self.assertIn("if: needs.plan.outputs.app_ui == 'true'", body)
+                        self.assertIn("if: always() && needs.plan.result == 'success' && needs.plan.outputs.app_ui == 'true'", body)
                         continue
                     matrix = re.search(r"lane: \$\{\{ fromJSON\(needs.plan.outputs.(\w+)\) \}\}", body)
                     expansion = outputs[matrix[1]] if matrix else (None,)
@@ -1349,33 +1349,84 @@ final class UnrelatedUITests: XCTestCase {
                                      "Small scopes must not wait for build/smoke before runtime checks")
                 if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.TOOL_CANDIDATE_REFRESH_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.MEMBERSHIP_COPY_SCOPE, scope.PRESERVATION_USAGE_SCOPE, scope.MEMBERSHIP_TOOLS_SCOPE) or selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
-                self.assertLessEqual(maximum_running + normal_running, 5,
-                                     "extended dispatch also runs the two independent normal jobs")
+                self.assertLessEqual(max(maximum_running, normal_running), 5,
+                                     "normal jobs must finish before the extended phase")
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")
 
+    def test_extended_plan_waits_for_normal_results_without_hiding_evidence(self):
+        jobs = workflow_jobs()
+        plan = jobs["plan"]
+        self.assertIn("    needs: [quick-check, safety-check]\n", plan)
+        condition = re.search(r"^    if: (.+)$", plan, re.M)[1]
+        self.assertEqual(condition, "always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks")
+        terminal = ("success", "failure", "cancelled", "skipped")
+        states = terminal + ("queued", "in_progress")
+        for event, extended in (("push", False), ("pull_request", False),
+                                ("workflow_dispatch", False), ("workflow_dispatch", True)):
+            expression = condition.replace("always()", "True").replace("&&", "and")
+            expression = expression.replace("github.event_name", repr(event)).replace("inputs.extended_checks", repr(extended))
+            enabled = 0
+            for quick, safety in itertools.product(states, repeat=2):
+                ready = quick in terminal and safety in terminal
+                runs = ready and eval(expression, {"__builtins__": {}}, {})
+                self.assertEqual(runs, ready and event == "workflow_dispatch" and extended)
+                enabled += runs
+            self.assertEqual(enabled, 16 if event == "workflow_dispatch" and extended else 0)
+        # Explicit status checks prevent a failed normal ancestor from making
+        # independent extended evidence disappear. A failed plan still blocks it.
+        for identifier, output in (("build-without-signing", "build"),
+                                   ("simulator-smoke-test", "smoke"),
+                                   ("sharing-app-ui", "app_ui"),
+                                   ("sharing-runtime-matrix", "sharing")):
+            body = jobs[identifier]
+            condition = re.search(r"^    if: (.+)$", body, re.M)[1]
+            expected = "always() && needs.plan.result == 'success' && needs.plan.outputs." + output + " == 'true'"
+            if identifier == "sharing-runtime-matrix":
+                expected += " && !contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')"
+            self.assertEqual(condition, expected)
+            self.assertIn("    needs: plan\n", body)
+            for result, flag, deferred in itertools.product(terminal, ("true", "false"), (False, True)):
+                expression = condition.replace("always()", "True").replace("&&", "and").replace("!contains", "not contains")
+                expression = expression.replace("needs.plan.result", repr(result)).replace("needs.plan.outputs." + output, repr(flag))
+                expression = expression.replace("needs.plan.outputs.app_ui_lanes", repr(["app-ui-solo-1"] if deferred else []))
+                runs = eval(expression, {"__builtins__": {}}, {"contains": lambda values, value: value in values})
+                self.assertEqual(runs, result == "success" and flag == "true" and
+                                 (identifier != "sharing-runtime-matrix" or not deferred))
+
     def test_full_gallery_released_smoke_slot_never_overbooks(self):
-        # Exhaust all reachable completion subsets; duration, queue ordering,
-        # and success/failure of a completed sibling must not affect the cap.
+        # Exhaust all reachable terminal subsets, including the normal phase.
+        # Each terminal result releases capacity; failure never becomes success.
+        normal = {"quick-check", "safety-check"}
         initial = {"build", "smoke", "solo1", "solo2", "other"}
-        dependencies = {name: set() for name in initial}
-        dependencies.update(runtime={"build", "smoke"},
-                            gallery1={"smoke"}, gallery2={"smoke"})
-        jobs = tuple(dependencies)
-        observed = set()
-        for bits in range(1 << len(jobs)):
-            completed = {name for index, name in enumerate(jobs) if bits & (1 << index)}
-            if any(not dependencies[name] <= completed for name in completed):
-                continue
-            ready = {name for name in jobs if name not in completed
-                     and dependencies[name] <= completed}
-            galleries = ready & {"gallery1", "gallery2"}
-            running = len(ready - galleries) + min(1, len(galleries))
-            self.assertLessEqual(running, 5, completed)
-            observed.add(running)
-        self.assertIn(5, observed)
+        dependencies = {name: set() for name in normal}
+        dependencies["plan"] = normal
+        dependencies.update({name: {"plan"} for name in initial})
+        dependencies.update(runtime={"plan", "build", "smoke"},
+                            gallery1={"plan", "smoke"}, gallery2={"plan", "smoke"})
+
+        def reachable_running(dependencies):
+            jobs = tuple(dependencies)
+            observed = set()
+            for bits in range(1 << len(jobs)):
+                completed = {name for index, name in enumerate(jobs) if bits & (1 << index)}
+                if any(not dependencies[name] <= completed for name in completed):
+                    continue
+                ready = {name for name in jobs if name not in completed
+                         and dependencies[name] <= completed}
+                galleries = ready & {"gallery1", "gallery2"}
+                observed.add(len(ready - galleries - {"plan"}) + min(1, len(galleries)))
+            return observed
+
+        observed = reachable_running(dependencies)
+        self.assertEqual(max(observed), 5)
+        self.assertIn(2, observed)
+        for missing in ({"quick-check"}, {"safety-check"}, normal):
+            with self.subTest(missing=missing):
+                changed = dependencies | {"plan": normal - missing}
+                self.assertGreater(max(reachable_running(changed)), 5)
         self.assertNotIn("build", dependencies["gallery1"])
-        self.assertEqual(dependencies["runtime"], {"build", "smoke"})
+        self.assertEqual(dependencies["runtime"], {"plan", "build", "smoke"})
 
     def test_partial_rerun_keeps_passed_siblings_and_uses_only_latest_result(self):
         run = dict(id=42, head_sha="a" * 40, run_attempt=2)
