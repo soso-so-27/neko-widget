@@ -1219,6 +1219,7 @@ private struct GroupPhotoDetail: View {
     @State private var showsHideConfirmation = false
     @State private var reportTarget: GroupWindowLocalPhotoStore.Entry?
     @State private var showsBlockConfirmation = false
+    @State private var showsReportUnavailable = false
     @ObservedObject private var safety = GroupSafety.shared
 
     init(model: GroupWindowScreenModel, startID: String) {
@@ -1276,18 +1277,19 @@ private struct GroupPhotoDetail: View {
                             Button("\(GroupDisplayName.withSan(current.senderDisplayName))の写真を表示しない", systemImage: "eye.slash") {
                                 showsHideConfirmation = true
                             }
-                            if safety.service.isAvailable {
-                                if !safety.hasReported(current.id, in: model.windowID) {
-                                    Button("この写真を通報", systemImage: "exclamationmark.bubble") { reportTarget = current }
-                                        .accessibilityIdentifier("group-photo-report")
+                            // Reporting and blocking are always offered (App Review 1.2).
+                            // When the report service cannot be reached, reporting
+                            // hands over to the support contact instead of vanishing.
+                            if !safety.hasReported(current.id, in: model.windowID) {
+                                Button("この写真を通報", systemImage: "exclamationmark.bubble") {
+                                    if safety.service.isAvailable { reportTarget = current } else { showsReportUnavailable = true }
                                 }
-                                Button("\(GroupDisplayName.withSan(current.senderDisplayName))をブロック", systemImage: "hand.raised") {
-                                    showsBlockConfirmation = true
-                                }
-                                .accessibilityIdentifier("group-photo-block")
-                            } else if SharingAPIConfiguration.current.isOwnerInternalReportsDisabled {
-                                Text("この内部版では通報の受付を停止しています")
+                                .accessibilityIdentifier("group-photo-report")
                             }
+                            Button("\(GroupDisplayName.withSan(current.senderDisplayName))をブロック", systemImage: "hand.raised") {
+                                showsBlockConfirmation = true
+                            }
+                            .accessibilityIdentifier("group-photo-block")
                         }
                         Button("このiPhoneから消す", systemImage: "trash", role: .destructive) {
                             showsRemoveConfirmation = true
@@ -1330,6 +1332,14 @@ private struct GroupPhotoDetail: View {
                 Button("戻る", role: .cancel) {}
             } message: {
                 Text("この人から届いた写真が、このまどで見えなくなります。相手には知らせず、設定の「表示しないようにした人」から戻せます。")
+            }
+            .alert("いまは通報を受け付けられません", isPresented: $showsReportUnavailable) {
+                if let url = SharingAPIConfiguration.current.supportURL { Link("問い合わせる", destination: url) }
+                Button("閉じる", role: .cancel) {}
+            } message: {
+                Text(SharingAPIConfiguration.current.isOwnerInternalReportsDisabled
+                     ? "この内部版では通報の受付を停止しています。"
+                     : "通信を確かめて、もう一度お試しください。急ぐときは問い合わせから連絡してください。")
             }
             .modifier(GroupPhotoSafetyDialogs(windowID: model.windowID, current: current,
                                               reportTarget: $reportTarget,
@@ -1664,10 +1674,14 @@ struct GroupWindowCreateScreen: View {
 /// standards, said before the press, with the standards one tap away (1.2).
 struct GroupWindowStandardsAgreement: View {
     let action: String
+    /// 「家族の手帳」 says words as well as photos; a window says photos.
+    var isFamilyNotebook = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("「\(action)」を押すと、コミュニティ基準に同意したことになります。人を傷つける写真や、写っている人の同意がない写真は届けられません。")
+            Text(isFamilyNotebook
+                 ? "「\(action)」を押すと、コミュニティ基準に同意したことになります。人を傷つける言葉や写真、写っている人の同意がない写真は書けません。"
+                 : "「\(action)」を押すと、コミュニティ基準に同意したことになります。人を傷つける写真や、写っている人の同意がない写真は届けられません。")
             if let url = SharingAPIConfiguration.current.communityStandardsURL {
                 Link("コミュニティ基準を読む", destination: url)
             }
@@ -2420,11 +2434,13 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
         let service = safety.service
         let windowID = windowID
         Task {
-            let done: Void? = await safety.run(windowID: windowID) {
+            // The block takes effect on this iPhone first; the server is told
+            // next. A failed call shows its own message and the local block stays.
+            await afterBlock(current)
+            _ = await safety.run(windowID: windowID) {
                 try await service.setBlock(windowID: windowID, participantID: current.senderParticipantID,
                                            active: true, operationID: UUID())
             }
-            if done != nil { await afterBlock(current) }
         }
     }
 }
