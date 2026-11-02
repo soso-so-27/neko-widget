@@ -234,9 +234,11 @@ test("the daily monitor pins the current policy revisions and limited-beta bound
     new URL("../../../.github/workflows/sharing-staging-monitor.yml", import.meta.url),
     "utf8",
   );
-  assert.equal(workflow.match(/revision: "2026-08-30"/gu)?.length, 1);
-  assert.equal(workflow.match(/revision: "2026-08-26"/gu)?.length, 1);
-  assert.doesNotMatch(workflow, /revision: "2026-08-(?:24|25)"/u);
+  assert.equal(workflow.match(/- profile:/gu)?.length, 1);
+  assert.equal(workflow.match(/- profile: public-1\.0/gu)?.length, 1);
+  assert.equal(workflow.match(/revision: "2026-11-02"/gu)?.length, 1);
+  assert.equal(workflow.match(/site_base: https:\/\/soso-so-27\.github\.io\/neko-widget\/$/gmu)?.length, 1);
+  assert.doesNotMatch(workflow, /profile: (?:sharing-beta|local-only)|neko-widget\/app\/|revision: "2026-08-/u);
   assert.match(workflow, /node scripts\/check-staging-runtime\.mjs --expected limited-external-beta/u);
 });
 

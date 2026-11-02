@@ -21,12 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - profile: sharing-beta
+          - profile: public-1.0
             site_base: https://soso-so-27.github.io/neko-widget/
-            revision: "2026-08-30"
-          - profile: local-only
-            site_base: https://soso-so-27.github.io/neko-widget/app/
-            revision: "2026-08-26"
+            revision: "2026-11-02"
 
     steps:
       - name: Check out repository
