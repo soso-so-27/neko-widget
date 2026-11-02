@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,46 @@ class SharingRuntimeSelfTestValidatorTests(unittest.TestCase):
             )
         )
         self.assertEqual(runtime_cases, CASES)
+
+    def test_fixed_assertion_inventory_matches_literal_debug_instrumentation(self) -> None:
+        allowed = runpy.run_path(str(SCRIPT))["ASSERTION_IDS"]
+        runner = (SCRIPT.parent.parent / "NekoWidget/Services/SharingRuntimeSelfTest.swift").read_text(encoding="utf-8")
+        identifiers = re.findall(r'throw SharingRuntimeSelfTestRunner.recordAssertionFailure\("([A-Z0-9-]+)",', runner)
+        self.assertEqual(len(identifiers), 161)
+        self.assertEqual(len(set(identifiers)), 161)
+        self.assertEqual(set(identifiers), set().union(*allowed.values()))
+        self.assertEqual(set(allowed), {"disabled-upgrade-purge", "managed-preservation-membership-boundary", "retained-widget-publication"})
+
+    def test_fixed_failure_assertion_is_safely_copied_without_passing_case(self) -> None:
+        for identifier, assertion in (("disabled-upgrade-purge", "DUP-001"),
+                                      ("managed-preservation-membership-boundary", "MPM-SESSION-001"),
+                                      ("retained-widget-publication", "RWP-001"),
+                                      ("retained-widget-publication", "unclassified-operation-error")):
+            with self.subTest(identifier=identifier, assertion=assertion), tempfile.TemporaryDirectory() as directory:
+                value = report(); value["status"] = "failed"
+                row = next(item for item in value["cases"] if item["id"] == identifier)
+                row.update(status="failed", failedAssertionID=assertion)
+                source = Path(directory) / "source.json"; safe_copy = Path(directory) / "safe.json"
+                source.write_text(json.dumps(value), encoding="utf-8")
+                result = subprocess.run([sys.executable, str(SCRIPT), str(source), "--renderer-version", RENDERER,
+                                         "--safe-copy", str(safe_copy)], capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("did not pass", result.stderr)
+                self.assertEqual(json.loads(safe_copy.read_text(encoding="utf-8")), value)
+
+    def test_assertion_fields_reject_other_cases_success_and_unlisted_data(self) -> None:
+        for identifier, status, assertion in (("secure-file-attributes", "failed", "DUP-001"),
+                                               ("disabled-upgrade-purge", "passed", "DUP-001"),
+                                               ("disabled-upgrade-purge", "failed", "RWP-001"),
+                                               ("disabled-upgrade-purge", "failed", "DUP-999"),
+                                               ("disabled-upgrade-purge", "failed", "/private/photo/key"),
+                                               ("disabled-upgrade-purge", "failed", None)):
+            with self.subTest(identifier=identifier, status=status, assertion=assertion):
+                value = report()
+                next(item for item in value["cases"] if item["id"] == identifier).update(status=status, failedAssertionID=assertion)
+                result = self.validate(value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid fixed assertion", result.stderr)
 
     def test_missing_case_fails(self) -> None:
         value = report()
