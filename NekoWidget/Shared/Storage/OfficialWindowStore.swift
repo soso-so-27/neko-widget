@@ -26,8 +26,8 @@ enum OfficialWindowConfiguration {
                 .appendingPathComponent("catalog.json"))
         }
         if blackCatDailyEnabled {
-            return [PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
-                subtitle: "1日1枚、きょうの黒猫", endpoint: publicEndpoint("black-cats"))]
+            return [PublicWindowDefinition(id: "black-cats", displayName: "のわのまど",
+                subtitle: "1日1枚、きょうののわ", endpoint: publicEndpoint("black-cats"))]
         }
         // Public builds keep the shipped discovery and existing subscriptions.
         return [
@@ -50,8 +50,8 @@ enum OfficialWindowConfiguration {
                 .appendingPathComponent(id).appendingPathComponent("catalog.json"))
         }
         return [
-            PublicWindowDefinition(id: "black-cats", displayName: "黒猫のまど",
-                                   subtitle: "1日1枚、きょうの黒猫", endpoint: publicEndpoint("black-cats")),
+            PublicWindowDefinition(id: "black-cats", displayName: "のわのまど",
+                                   subtitle: "1日1枚、きょうののわ", endpoint: publicEndpoint("black-cats")),
             PublicWindowDefinition(id: OfficialWindowCatalog.sourceID,
                                    displayName: OfficialWindowCatalog.displayName,
                                    subtitle: "運営から届く猫の写真", endpoint: feedURL),

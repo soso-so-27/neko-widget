@@ -1146,7 +1146,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
         store = OfficialWindowStore(
             directory: FileManager.default.temporaryDirectory.appendingPathComponent("official-fixture-" + UUID().uuidString),
             definition: definition ?? (CommandLine.arguments.contains("--black-cat-daily") ? PublicWindowDefinition(
-                id: "black-cats", displayName: "黒猫のまど", subtitle: "1日1枚、きょうの黒猫",
+                id: "black-cats", displayName: "のわのまど", subtitle: "1日1枚、きょうののわ",
                 endpoint: unavailable ? nil : URL(string: "https://official.invalid/windows/black-cats/catalog.json")) : PublicWindowDefinition(
                 id: OfficialWindowCatalog.sourceID, displayName: OfficialWindowCatalog.displayName,
                 subtitle: "確認用の猫の写真",
@@ -1248,7 +1248,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let photo = OfficialCatPhoto(
             id: index == 0 ? "fixture-photo" : "fixture-photo-\(index)",
             catID: store.definition.catID ?? (isCatWindowFlow ? "generated-tabby-nap" : "fixture-cat"),
-            catName: store.windowID == "black-cats" ? "黒猫" : (isCatWindowFlow ? "キジ白" : (store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫")),
+            catName: store.windowID == "black-cats" ? "のわ" : (isCatWindowFlow ? "キジ白" : (store.windowID == OfficialWindowCatalog.sourceID ? "確認用の猫" : "おひるねの猫")),
             credit: store.windowID == "black-cats" ? "ねこのまど（AI で作った画像）" : (isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像"),
             caption: store.windowID == "black-cats" ? nil : "窓辺でひと休み。",
             photographedOn: store.windowID == "black-cats" ? nil : "2026-09-01",
