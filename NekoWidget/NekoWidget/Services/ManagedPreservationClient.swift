@@ -87,7 +87,10 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .authenticationRequired: "もう一度サインインしてください。"
         case .authenticationFailed: "サインインできませんでした。もう一度お試しください。"
         case .authenticationStepFailed(let step): "サインインできませんでした（\(step.rawValue)）。"
-        case .appleAuthorizationFailed(let code): "Appleでサインインできませんでした（Apple \(code)）。"
+        // 1001 is ASAuthorizationError.canceled. The number itself is never shown.
+        case .appleAuthorizationFailed(let code): code == 1001
+            ? "Appleでのサインインを途中でやめました。"
+            : "Appleでサインインできませんでした。もう一度お試しください。"
         case .pilotRegistrationPending(let reference): "内部テストの登録確認待ちです。登録番号：\(reference)"
         case .staleSession: "サインインの状況が変わりました。記録を読み込み直してください。"
         case .secureStorage: "サインインの情報を保存できませんでした。iPhoneのロックを解除してから、もう一度お試しください。"

@@ -395,8 +395,6 @@ struct GroupWindowMembersView: View {
     /// Builds the model for the one Plus screen ("このまどを続ける"). Nil hides
     /// the button and points to Settings instead.
     var plusOfferModel: (@MainActor () -> MembershipOfferModel)? = { .live() }
-    /// Starts creating this person's own window.
-    var onCreateOwnWindow: (() -> Void)? = nil
     /// After leaving: closes the window the members screen was opened from.
     var onLeft: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -514,7 +512,7 @@ struct GroupWindowMembersView: View {
             isPresented: $showsCloseConfirmation,
             titleVisibility: .visible
         ) {
-            Button("閉じる", role: .destructive) {
+            Button("まどを閉じる", role: .destructive) {
                 Task {
                     guard await model.close() else { return }
                     if let onLeft { onLeft() } else { dismiss() }
@@ -603,16 +601,9 @@ struct GroupWindowMembersView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-            } else if let onCreateOwnWindow {
-                Button {
-                    onCreateOwnWindow()
-                } label: {
-                    Text("自分でまどを作る")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("group-window-create-own")
             }
+            // A member of a paused window is told who can resume it, and
+            // nothing more: this screen does not sell a window of their own.
         }
     }
 
@@ -1596,8 +1587,7 @@ struct GroupWindowUIFixtureRoot: View {
         } else {
             GroupWindowMembersView(
                 model: membersModel,
-                plusOfferModel: { .preview() },
-                onCreateOwnWindow: {}
+                plusOfferModel: { .preview() }
             )
         }
     }

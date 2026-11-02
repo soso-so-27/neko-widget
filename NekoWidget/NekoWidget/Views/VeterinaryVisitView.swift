@@ -147,7 +147,7 @@ struct VeterinaryVisitsView: View {
 
     @ViewBuilder private var notices: some View {
         if let error { Section { Text(error); Button("もう一度読み込む") { Task { await reload() } } } }
-        if cleanupPending { Section { Text("使わなくなった写真のコピーが残っています。").font(.footnote); Button("コピーを消す") { Task { await reload() } } } }
+        if cleanupPending { Section { Text("使わなくなった写真のコピーが残っています。").font(.footnote); Button("もう一度消す") { Task { await reload() } } } }
     }
 
     /// The same notices, as one line above the memo.
@@ -157,7 +157,7 @@ struct VeterinaryVisitsView: View {
                 if let error { Text(error).font(.footnote).foregroundStyle(.secondary) }
                 if cleanupPending {
                     Text("使わなくなった写真のコピーが残っています。").font(.footnote).foregroundStyle(.secondary)
-                    Button("コピーを消す") { Task { await reload() } }.font(.footnote)
+                    Button("もう一度消す") { Task { await reload() } }.font(.footnote)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

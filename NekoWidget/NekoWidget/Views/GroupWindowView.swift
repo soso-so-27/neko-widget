@@ -1462,7 +1462,6 @@ private struct GroupPhotoPage: View {
 struct GroupWindowMembersScreen: View {
     @StateObject private var model: GroupWindowMembersModel
     private let onLeft: (() -> Void)?
-    @State private var createsOwnWindow = false
 
     init(client: any GroupWindowClient, windowID: String, onLeft: (() -> Void)? = nil) {
         _model = StateObject(wrappedValue: GroupWindowMembersModel(client: client, windowID: windowID))
@@ -1472,15 +1471,8 @@ struct GroupWindowMembersScreen: View {
     var body: some View {
         GroupWindowMembersView(
             model: model,
-            // A paused window's member can start a window of their own.
-            onCreateOwnWindow: GroupWindowClientProvider.ui == nil ? nil : { createsOwnWindow = true },
             onLeft: onLeft
         )
-        .navigationDestination(isPresented: $createsOwnWindow) {
-            if let client = GroupWindowClientProvider.ui {
-                GroupWindowCreateScreen(client: client)
-            }
-        }
     }
 }
 
