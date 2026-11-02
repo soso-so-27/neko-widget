@@ -21,7 +21,7 @@ import type { VerifiedBillingTransaction } from '../../SharingService/src/billin
 const bindings = env as unknown as { DB: D1Database; TEST_BILLING_MIGRATIONS: D1Migration[] };
 const db = bindings.DB;
 const audience = 'preservation.synthetic-test';
-const enabled: BillingAuthorityEnv & Pick<SharingEnv, 'BILLING_STORE_ENVIRONMENT'> = {
+const enabled: BillingAuthorityEnv = {
   DB: db, BILLING_STORE_ENVIRONMENT: 'Sandbox', PRESERVATION_BILLING_ENABLED: 'YES',
   PRESERVATION_LINK_AUDIENCE: audience, BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: 'YES',
   RETENTION_BILLING_REFRESH: { fetch: async () => new Response(null, { status: 204 }) } as unknown as Fetcher };
@@ -58,27 +58,29 @@ async function fixture() {
 }
 
 let transactionCounter = 0;
-async function entitlement(billingAccountId: string, appleStatus: 1 | 2 | 3 | 4 | 5, expiresOffset = 7 * 86_400_000, upgraded = false) {
-  const now = Date.now(); const originalTransactionId = `${now}${++transactionCounter}`;
+async function entitlement(billingAccountId: string, appleStatus: 1 | 2 | 3 | 4 | 5, expiresOffset = 7 * 86_400_000, upgraded = false,
+  environment: 'Sandbox' | 'Production' = 'Sandbox', lineageId?: string) {
+  const now = Date.now(); const originalTransactionId = lineageId ?? `${now}${++transactionCounter}`;
   const expiresAt = now + expiresOffset, purchasedAt = Math.min(now - 1000, expiresAt - 1000);
   const transaction: VerifiedBillingTransaction = { billingAccountId, originalTransactionId, transactionId: originalTransactionId,
-    productId: 'jp.synthetic.monthly', subscriptionGroupId: 'synthetic', bundleId: 'jp.synthetic.app', environment: 'Sandbox',
+    productId: 'jp.synthetic.monthly', subscriptionGroupId: 'synthetic', bundleId: 'jp.synthetic.app', environment,
     ownershipType: 'PURCHASED', transactionReason: 'PURCHASE', purchaseDateMs: purchasedAt, originalPurchaseDateMs: purchasedAt,
     expiresDateMs: expiresAt, signedDateMs: now,
     revocationDateMs: appleStatus === 5 ? now : null, revocationReason: null, isUpgraded: upgraded };
   await db.prepare(`INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id)
-    VALUES (?,?,'Sandbox','synthetic')`).bind(originalTransactionId, billingAccountId).run();
-  await requestBillingReconciliation(enabled as SharingEnv, originalTransactionId);
-  await runBillingSubscriptionReconciliation(enabled as SharingEnv, async () => ({
-    requestedTransactionId: originalTransactionId, environment: 'Sandbox', bundleId: 'jp.synthetic.app', fetchedAtMs: now,
+    VALUES (?,?,?,'synthetic')`).bind(originalTransactionId, billingAccountId, environment).run();
+  const authorityEnv = { ...enabled, BILLING_STORE_ENVIRONMENT: environment } as SharingEnv;
+  await requestBillingReconciliation(authorityEnv, originalTransactionId);
+  await runBillingSubscriptionReconciliation(authorityEnv, async () => ({
+    requestedTransactionId: originalTransactionId, environment, bundleId: 'jp.synthetic.app', fetchedAtMs: now,
     items: [{ status: appleStatus, originalTransactionId, transaction,
       renewal: { originalTransactionId, billingAccountId, productId: transaction.productId, autoRenewProductId: transaction.productId,
         autoRenewStatus: 1, isInBillingRetryPeriod: appleStatus === 3 || appleStatus === 4,
         gracePeriodExpiresDateMs: appleStatus === 4 ? now + 86_400_000 : null,
-        renewalDateMs: transaction.expiresDateMs, signedDateMs: now, environment: 'Sandbox' } }],
+        renewalDateMs: transaction.expiresDateMs, signedDateMs: now, environment } }],
   }));
-  expect(await db.prepare('SELECT original_transaction_id FROM billing_effective_entitlement_current WHERE original_transaction_id=?')
-    .bind(originalTransactionId).first()).not.toBeNull();
+  expect(await db.prepare('SELECT original_transaction_id FROM billing_effective_entitlement_current WHERE original_transaction_id=? AND environment=?')
+    .bind(originalTransactionId, environment).first()).not.toBeNull();
 }
 
 describe('private preservation billing authority', () => {
@@ -97,6 +99,52 @@ describe('private preservation billing authority', () => {
   beforeEach(async () => {
     await db.prepare(`UPDATE billing_runtime_gate SET generation=generation+1,updated_at=unixepoch(),
       effective_entitlement_enabled=1,subscription_reconciliation_enabled=1 WHERE singleton=1`).run();
+  });
+
+  it('does not use Sandbox facts when Production disallows Sandbox', async () => {
+    const f = await fixture(); await entitlement(f.billingAccountId, 1);
+    const production = { ...enabled, BILLING_STORE_ENVIRONMENT: 'Production', BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: 'NO' };
+    expect(await (await retention(f.billingAccountId, new BillingAuthority(createExecutionContext(), production))).json())
+      .toMatchObject({ status: 'unknown', endedAt: null });
+  });
+
+  it('requires explicit dual approval and rejects unknown or contradictory store policies', async () => {
+    const f = await fixture(); await entitlement(f.billingAccountId, 1);
+    for (const [store, dual, owner, expected] of [
+      ['Production', 'YES', 'NO', 'active'], ['Production', undefined, 'NO', 'unknown'],
+      ['Production', 'invalid', 'NO', 'unknown'], ['Production', 'YES', 'YES', 'unknown'],
+      ['Sandbox', 'YES', 'NO', 'unknown'], ['Unknown', 'NO', 'NO', 'unknown'],
+      [undefined, 'NO', 'NO', 'unknown'], ['Sandbox', 'NO', 'YES', 'active'],
+    ] as const) {
+      const policy: BillingAuthorityEnv = { ...enabled, BILLING_SANDBOX_OWNER_ONLY_REQUIRED: owner };
+      if (store === undefined) delete policy.BILLING_STORE_ENVIRONMENT;
+      else policy.BILLING_STORE_ENVIRONMENT = store;
+      if (dual === undefined) delete policy.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION;
+      else policy.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION = dual;
+      const worker = new BillingAuthority(createExecutionContext(), policy);
+      expect(await (await retention(f.billingAccountId, worker)).json()).toMatchObject({ status: expected, endedAt: null });
+    }
+  });
+
+  it('keeps valid Production rights across cancellation of the same Sandbox lineage', async () => {
+    const f = await fixture(); const id = `${Date.now()}${++transactionCounter}`;
+    await entitlement(f.billingAccountId, 1, 7 * 86_400_000, false, 'Production', id);
+    await entitlement(f.billingAccountId, 5, 7 * 86_400_000, false, 'Sandbox', id);
+    for (const dual of ['YES', 'NO']) {
+      const worker = makeWorker({ BILLING_STORE_ENVIRONMENT: 'Production', BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: dual });
+      expect(await (await retention(f.billingAccountId, worker)).json()).toMatchObject({ status: 'active', endedAt: null });
+    }
+  });
+
+  it('filters unaccepted lineages before the limit and does not infer an end from excluded facts', async () => {
+    const f = await fixture(); await entitlement(f.billingAccountId, 2, -86_400_000);
+    const worker = makeWorker({ BILLING_STORE_ENVIRONMENT: 'Production', BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: 'NO' });
+    expect(await (await retention(f.billingAccountId, worker)).json()).toMatchObject({ status: 'unknown', endedAt: null });
+    await db.batch(Array.from({ length: 101 }, (_, n) => db.prepare(`INSERT INTO billing_transaction_lineages
+      (original_transaction_id,billing_account_id,environment,subscription_group_id) VALUES (?,?,'Sandbox','synthetic')`)
+      .bind(`000${n}`, f.billingAccountId)));
+    await entitlement(f.billingAccountId, 2, -86_400_000, false, 'Production');
+    expect(await (await retention(f.billingAccountId, worker)).json()).toMatchObject({ status: 'expired', endedAt: expect.any(Number) });
   });
 
   it('uses the verified end date and the complete lineage set for retention, without changing paid access', async () => {

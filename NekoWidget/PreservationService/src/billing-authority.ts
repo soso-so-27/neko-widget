@@ -1,13 +1,14 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { authenticateBillingSignedRequest, consumeBillingNonce, type AuthenticatedBillingAccount } from '../../SharingService/src/billing-auth';
 import { effectiveBillingEntitlement } from '../../SharingService/src/billing-entitlement';
-import { billingEffectiveEntitlementRuntimeEnabled, type Env as SharingEnv } from '../../SharingService/src/env';
+import { billingEffectiveEntitlementRuntimeEnabled, billingStoreEnvironmentAccepted, type Env as SharingEnv } from '../../SharingService/src/env';
 import { ApiError } from '../../SharingService/src/errors';
 import { LINK_SIGNING_PATH, linkTranscript, validAudience, validateChallenge, validateProof } from './billing-link-protocol';
 import { readBoundedBody } from './bounded-body';
 import { ServiceError, sha256 } from './contracts';
 
-export interface BillingAuthorityEnv extends Pick<SharingEnv, 'DB' | 'BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED'> {
+export interface BillingAuthorityEnv extends Pick<SharingEnv, 'DB' | 'BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED'
+  | 'BILLING_STORE_ENVIRONMENT' | 'BILLING_ACCEPT_SANDBOX_IN_PRODUCTION' | 'BILLING_SANDBOX_OWNER_ONLY_REQUIRED'> {
   PRESERVATION_BILLING_ENABLED?: string;
   PRESERVATION_LINK_AUDIENCE?: string;
   RETENTION_BILLING_REFRESH?: Fetcher;
@@ -24,8 +25,8 @@ function object(value: unknown, fields: string[]): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-// These imported functions use only DB. No Sharing runtime routes or credentials
-// are exposed here; the binding must point at the existing billing database.
+// Authentication uses the existing billing DB; entitlement reads also require the
+// same explicit store policy as the billing gateway. No public routes are exposed.
 const billingEnv = (env: BillingAuthorityEnv): SharingEnv => env as SharingEnv;
 async function requireActiveKey(env: BillingAuthorityEnv, account: AuthenticatedBillingAccount, consumed = false): Promise<void> {
   const row = await env.DB.prepare(`SELECT k.id FROM billing_account_keys k
@@ -100,8 +101,11 @@ async function verifiedRetentionStatus(value: unknown, env: BillingAuthorityEnv)
     FROM billing_transaction_lineages l LEFT JOIN billing_effective_entitlement_current c
       ON c.original_transaction_id=l.original_transaction_id AND c.billing_account_id=l.billing_account_id
         AND c.environment=l.environment AND c.subscription_group_id=l.subscription_group_id
-    WHERE l.billing_account_id=? ORDER BY l.original_transaction_id LIMIT 101`)
-    .bind(input.billingAccountId).all<Fact>();
+    WHERE l.billing_account_id=?
+      AND ((l.environment='Production' AND ?=1) OR (l.environment='Sandbox' AND ?=1))
+    ORDER BY l.original_transaction_id LIMIT 101`)
+    .bind(input.billingAccountId, Number(billingStoreEnvironmentAccepted(billingEnv(env), 'Production')),
+      Number(billingStoreEnvironmentAccepted(billingEnv(env), 'Sandbox'))).all<Fact>();
   const now = Date.now();
   const unknown = { status: 'unknown' as const, endedAt: null };
   const positive = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) > 0;
