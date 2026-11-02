@@ -150,7 +150,7 @@ private struct CareSaveNotice: View {
         } else if store.pendingPhotoCleanup {
             VStack(spacing: 8) {
                 Text("使わなくなった写真のコピーが残っています。").font(.footnote)
-                Button("コピーを消す") { store.retrySave() }
+                Button("もう一度消す") { store.retrySave() }
             }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
         }
     }
