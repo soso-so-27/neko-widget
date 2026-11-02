@@ -447,6 +447,11 @@ struct HomeView: View {
                         }
                         detectedPhotosSection
                     } else {
+                        // An empty cat or 未分類 keeps the cat switch, so the
+                        // person can go back to all cats from here.
+                        if let headerAccessory, let readingPositionKey, readingPositionKey != "all" {
+                            headerAccessory
+                        }
                         emptyPhotoState
                     }
                 } else {
