@@ -419,10 +419,8 @@ private struct VeterinaryConsultationView: View {
             Button("削除", role: .destructive) { Task { await deleteVisit() } }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("この診察メモだけを削除します。") }
-        .confirmationDialog("診察メモから外しますか？", isPresented: Binding(get: { removingEntry != nil }, set: { if !$0 { removingEntry = nil } }), titleVisibility: .visible, presenting: removingEntry) { entry in
-            Button("外す", role: .destructive) { Task { await remove(entry) } }
-            Button("キャンセル", role: .cancel) {}
-        } message: { _ in Text("元の写真やメモは残ります。") }
+        .confirmationDialog("診察メモから外しますか？", isPresented: removingEntryPresented, titleVisibility: .visible,
+                            presenting: removingEntry, actions: removalActions, message: removalMessage)
         .appRecordEditing(retainWhileHidden: changes || busy || picking || chosen != nil || pendingSource != nil)
     }
     private func scheduleSave() {
@@ -466,6 +464,20 @@ private struct VeterinaryConsultationView: View {
             startedDay = formatter.date(from: day) ?? startedDay
         }
     }
+    // Kept out of the body chain so the type checker stays fast.
+    private var removingEntryPresented: Binding<Bool> {
+        Binding(get: { removingEntry != nil }, set: { if !$0 { removingEntry = nil } })
+    }
+
+    @ViewBuilder private func removalActions(_ entry: VeterinaryVisitEntry) -> some View {
+        Button("外す", role: .destructive) { Task { await remove(entry) } }
+        Button("キャンセル", role: .cancel) {}
+    }
+
+    private func removalMessage(_ entry: VeterinaryVisitEntry) -> some View {
+        Text("元の写真やメモは残ります。")
+    }
+
     private func remove(_ entry: VeterinaryVisitEntry) async {
         guard let visit, !busy else { return }
         busy = true; defer { busy = false }

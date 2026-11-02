@@ -538,15 +538,8 @@ struct GroupWindowMembersView: View {
         } message: {
             Text("抜けると、これから届く写真は見られません。")
         }
-        .confirmationDialog(
-            "\(rejectionTarget?.displayName ?? "")さんの参加を断りますか？",
-            isPresented: Binding(get: { rejectionTarget != nil }, set: { if !$0 { rejectionTarget = nil } }),
-            titleVisibility: .visible,
-            presenting: rejectionTarget
-        ) { request in
-            Button("断る", role: .destructive) { Task { await model.reject(request) } }
-            Button("戻る", role: .cancel) {}
-        }
+        .confirmationDialog(rejectionTitle, isPresented: rejectionPresented, titleVisibility: .visible,
+                            presenting: rejectionTarget, actions: rejectionActions)
     }
 
     /// The same links as the two-person window: privacy, the community
@@ -745,6 +738,16 @@ struct GroupWindowMembersView: View {
             showsRemoval = true
         }
         .accessibilityIdentifier("group-window-member")
+    }
+
+    // Kept out of the body chain so the type checker stays fast.
+    private var rejectionTitle: String { "\(rejectionTarget?.displayName ?? "")さんの参加を断りますか？" }
+    private var rejectionPresented: Binding<Bool> {
+        Binding(get: { rejectionTarget != nil }, set: { if !$0 { rejectionTarget = nil } })
+    }
+    @ViewBuilder private func rejectionActions(_ request: GroupJoinRequest) -> some View {
+        Button("断る", role: .destructive) { Task { await model.reject(request) } }
+        Button("戻る", role: .cancel) {}
     }
 
     private func requestRow(_ request: GroupJoinRequest, window: GroupWindow) -> some View {

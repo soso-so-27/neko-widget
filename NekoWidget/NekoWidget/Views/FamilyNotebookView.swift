@@ -733,10 +733,8 @@ struct FamilyNotebookView: View {
             .alert("家族の手帳", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
-            .confirmationDialog("\(decliningRequest?.displayName ?? "")さんを受け入れませんか？", isPresented: Binding(get: { decliningRequest != nil }, set: { if !$0 { decliningRequest = nil } }), titleVisibility: .visible, presenting: decliningRequest) { request in
-                Button("受け入れない", role: .destructive) { decide(request, approve: false) }
-                Button("戻る", role: .cancel) {}
-            }
+            .confirmationDialog(decliningTitle, isPresented: decliningPresented, titleVisibility: .visible,
+                                presenting: decliningRequest, actions: decliningActions)
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -826,6 +824,16 @@ struct FamilyNotebookView: View {
     }
 
     private var prototype: FamilyNotebookPrototypeSharing? { sharing.service as? FamilyNotebookPrototypeSharing }
+
+    // Kept out of the body chain so the type checker stays fast.
+    private var decliningTitle: String { "\(decliningRequest?.displayName ?? "")さんを受け入れませんか？" }
+    private var decliningPresented: Binding<Bool> {
+        Binding(get: { decliningRequest != nil }, set: { if !$0 { decliningRequest = nil } })
+    }
+    @ViewBuilder private func decliningActions(_ request: FamilyNotebookJoinRequest) -> some View {
+        Button("受け入れない", role: .destructive) { decide(request, approve: false) }
+        Button("戻る", role: .cancel) {}
+    }
 
     private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {
         guard let real = sharing.service as? ProductionFamilyNotebookSharingService else { return }
