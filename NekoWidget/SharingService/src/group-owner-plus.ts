@@ -1,5 +1,5 @@
 import { authenticateBillingSignedRequest } from './billing-auth';
-import { billingEffectiveEntitlementRuntimeEnabled,type Env } from './env';
+import { billingEffectiveEntitlementRuntimeEnabled,billingStoreEnvironmentAccepted,type Env } from './env';
 import { ApiError,jsonResponse } from './errors';
 import { groupMutationStatement,groupNonceStatements,type GroupActor } from './group-auth';
 import { exactKeys,uuidField,type JsonRecord } from './validation';
@@ -14,27 +14,39 @@ export interface GroupDeliveryPolicy {
 // An absent/misconfigured upper gate is NOT paid access.
 function storeEnvironment(env:Env):'Production'|'Sandbox'|null {
   if(!billingEffectiveEntitlementRuntimeEnabled(env))return null;
-  if(env.BILLING_STORE_ENVIRONMENT==='Production')return 'Production';
-  if(env.BILLING_STORE_ENVIRONMENT==='Sandbox' && ['local','staging'].includes(env.ENVIRONMENT))return 'Sandbox';
+  if(billingStoreEnvironmentAccepted(env,'Production'))return 'Production';
+  if(env.BILLING_STORE_ENVIRONMENT==='Sandbox' && ['local','staging'].includes(env.ENVIRONMENT)
+    && billingStoreEnvironmentAccepted(env,'Sandbox'))return 'Sandbox';
   return null;
 }
+function storePolicy(env:Env) {
+  const environment=storeEnvironment(env);
+  return {environment,acceptSandbox:environment==='Production' && billingStoreEnvironmentAccepted(env,'Sandbox') ? 1 : 0};
+}
 export function groupCreationPolicyStatements(env:Env,windowId:string,personId:string,operationId:string):D1PreparedStatement[] {
-  return [env.DB.prepare('INSERT INTO group_creation_policy_checks VALUES (?,?,?,?)').bind(operationId,windowId,personId,storeEnvironment(env)),
-    env.DB.prepare('DELETE FROM group_creation_policy_checks WHERE id=?').bind(operationId)];
+  const policy=storePolicy(env);
+  return [env.DB.prepare(`INSERT INTO group_creation_environment_checks
+      (id,space_id,owner_person_id,store_environment,accept_sandbox_in_production) VALUES (?,?,?,?,?)`)
+      .bind(operationId,windowId,personId,policy.environment,policy.acceptSandbox),
+    env.DB.prepare('DELETE FROM group_creation_environment_checks WHERE id=?').bind(operationId)];
 }
 export function groupDeliveryPolicyStatements(env:Env,windowId:string):D1PreparedStatement[] {
-  const id=crypto.randomUUID();
-  return [env.DB.prepare('INSERT INTO group_delivery_policy_checks VALUES (?,?,?)').bind(id,windowId,storeEnvironment(env)),
-    env.DB.prepare('DELETE FROM group_delivery_policy_checks WHERE id=?').bind(id)];
+  const id=crypto.randomUUID(),policy=storePolicy(env);
+  return [env.DB.prepare(`INSERT INTO group_delivery_environment_checks
+      (id,space_id,store_environment,accept_sandbox_in_production) VALUES (?,?,?,?)`)
+      .bind(id,windowId,policy.environment,policy.acceptSandbox),
+    env.DB.prepare('DELETE FROM group_delivery_environment_checks WHERE id=?').bind(id)];
 }
 export async function groupDeliveryPolicies(env:Env,windowIds:readonly string[]):Promise<Map<string,GroupDeliveryPolicy>> {
   if(windowIds.length===0)return new Map();
+  const policy=storePolicy(env);
   const rows=await env.DB.prepare(`SELECT w.space_id,w.owner_participant_id,
       (CASE WHEN EXISTS (
-        SELECT 1 FROM group_verified_plus_people p WHERE p.person_id=w.owner_person_id AND p.environment=?)
+        SELECT 1 FROM group_verified_plus_people p WHERE p.person_id=w.owner_person_id
+          AND (p.environment=? OR (?=1 AND p.environment='Sandbox')))
         THEN 'owner_plus' ELSE 'owner_plus_required' END) AS reason
       FROM group_window_owner_policy w WHERE w.space_id IN (${windowIds.map(()=>'?').join(',')})`)
-    .bind(storeEnvironment(env),...windowIds).all<{space_id:string;owner_participant_id:string;reason:GroupDeliveryPolicy['deliveryReason']}>();
+    .bind(policy.environment,policy.acceptSandbox,...windowIds).all<{space_id:string;owner_participant_id:string;reason:GroupDeliveryPolicy['deliveryReason']}>();
   return new Map(rows.results.map(r=>[r.space_id,{deliveryStatus:r.reason==='owner_plus_required'?'paused':'active',
     deliveryReason:r.reason,ownerParticipantId:r.owner_participant_id}]));
 }

@@ -81,6 +81,7 @@ const expectedMigrationNames = [
   "0060_group_purchased_plus.sql",
   "0061_group_admission_push.sql",
   "0062_billing_environment_ledger.sql",
+  "0063_group_environment_policy.sql",
 ];
 
 const databaseGateColumns = [

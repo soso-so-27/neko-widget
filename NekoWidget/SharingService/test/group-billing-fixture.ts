@@ -30,31 +30,32 @@ export async function connection(p:Person,b:Awaited<ReturnType<typeof billing>>,
 let sequence=220000000000000;
 // Exercise the existing verified-authority persistence/reconciliation boundary.
 // Apple JWS verification and real Family Sharing are NOT simulated as success.
-export async function authority(b:Awaited<ReturnType<typeof billing>>,ownershipType:'PURCHASED'|'FAMILY_SHARED'='PURCHASED',observedAt=Date.now()) {
+export async function authority(b:Awaited<ReturnType<typeof billing>>,ownershipType:'PURCHASED'|'FAMILY_SHARED'='PURCHASED',observedAt=Date.now(),environment:'Sandbox'|'Production'='Sandbox',originalTransactionId?:string) {
   await gates();
-  const now=observedAt,id=String(++sequence);
+  const scopedSettings={...settings,BILLING_STORE_ENVIRONMENT:environment};
+  const now=observedAt,id=originalTransactionId??String(++sequence);
   const transaction:VerifiedBillingTransaction={transactionId:id,originalTransactionId:id,billingAccountId:b.id,
-    productId:'jp.nekowidget.plus.monthly',subscriptionGroupId:'20999999',bundleId:'jp.nekowidget.app',environment:'Sandbox',ownershipType,
+    productId:'jp.nekowidget.plus.monthly',subscriptionGroupId:'20999999',bundleId:'jp.nekowidget.app',environment,ownershipType,
     transactionReason:'PURCHASE',purchaseDateMs:now-1000,originalPurchaseDateMs:now-1000,expiresDateMs:Date.now()+14*86400000,
     signedDateMs:now,revocationDateMs:null,revocationReason:null,isUpgraded:false};
-  await ingestVerifiedAppleBillingNotification(settings,{notificationUUID:crypto.randomUUID(),notificationType:'DID_RENEW',subtype:null,
-    signedDateMs:now,environment:'Sandbox',bundleId:transaction.bundleId,status:1,relevant:true,transaction,renewal:null},randomBase64url(32));
+  await ingestVerifiedAppleBillingNotification(scopedSettings,{notificationUUID:crypto.randomUUID(),notificationType:'DID_RENEW',subtype:null,
+    signedDateMs:now,environment,bundleId:transaction.bundleId,status:1,relevant:true,transaction,renewal:null},randomBase64url(32));
   async function refresh(overrides:Partial<VerifiedBillingTransaction>={},status:1|2|3|4|5=1,fetchedAt=Date.now()) {
     const t={...transaction,...overrides,signedDateMs:fetchedAt};
-    const value:VerifiedSubscriptionStatus={requestedTransactionId:id,environment:'Sandbox',bundleId:transaction.bundleId,fetchedAtMs:fetchedAt,items:[{
+    const value:VerifiedSubscriptionStatus={requestedTransactionId:id,environment,bundleId:transaction.bundleId,fetchedAtMs:fetchedAt,items:[{
       status,originalTransactionId:id,transaction:t,renewal:{originalTransactionId:id,billingAccountId:b.id,productId:t.productId,
         autoRenewProductId:t.productId,autoRenewStatus:status===5?0:1,isInBillingRetryPeriod:status===3||status===4,
-        gracePeriodExpiresDateMs:status===4?fetchedAt+300000:null,renewalDateMs:t.expiresDateMs,signedDateMs:fetchedAt,environment:'Sandbox'}}]};
-    await requestBillingReconciliation(settings,id);
+        gracePeriodExpiresDateMs:status===4?fetchedAt+300000:null,renewalDateMs:t.expiresDateMs,signedDateMs:fetchedAt,environment}}]};
+    await requestBillingReconciliation(scopedSettings,id);
     if(fetchedAt<Date.now()-36*3600000) {
       // Model a successfully verified authority which has since aged out. An
       // old transaction fetched TODAY would correctly be a fresh verification.
       // Keep the actual D1 lease/fences; only the supported completion clock is
       // set to the earlier verification time in this isolated local fixture.
-      await runBillingSubscriptionReconciliation(settings,async()=>value,Math.floor(Date.now()/1000),Math.floor(fetchedAt/1000));
-    } else await reconcileBillingTransactionNow(settings,b.id,id,async()=>value);
-    const current=await db.prepare('SELECT apple_status,transaction_id FROM billing_effective_entitlement_current WHERE original_transaction_id=?').bind(id).first();
-    const job=await db.prepare('SELECT * FROM billing_reconciliation_jobs WHERE original_transaction_id=?').bind(id).first();
+      await runBillingSubscriptionReconciliation(scopedSettings,async()=>value,Math.floor(Date.now()/1000),Math.floor(fetchedAt/1000));
+    } else await reconcileBillingTransactionNow(scopedSettings,b.id,id,async()=>value);
+    const current=await db.prepare('SELECT apple_status,transaction_id FROM billing_effective_entitlement_current WHERE environment=? AND original_transaction_id=?').bind(environment,id).first();
+    const job=await db.prepare('SELECT * FROM billing_reconciliation_jobs WHERE environment=? AND original_transaction_id=?').bind(environment,id).first();
     expect({current,jobError:job?.last_error_code}).toMatchObject({current:{apple_status:status,transaction_id:t.transactionId}});
   }
   await refresh({},1,now);return {transaction,refresh};
