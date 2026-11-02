@@ -1,7 +1,8 @@
 // Explicit public 1.0 overlay: xcodebuild -configuration Release
 // -xcconfig Config.Production.xcconfig. Ordinary Release remains disabled.
-// Supply reviewed deployment values in an approved overlay/CI environment.
-// Empty endpoints/recipient key intentionally fail closed; no staging fallback.
+// Production foundation hosts. DNS and service activation are separate steps.
+// The empty audience/recipient key keep this configuration non-releasable.
+// Never fall back to staging when a production service is not yet available.
 #include "Config.xcconfig"
 
 SHARING_RELEASE_MODE = production
@@ -22,18 +23,18 @@ MEMBERSHIP_ACCESS_ENFORCED = YES
 PLUS_MONTHLY_PRODUCT_ID = jp.nekowidget.plus.monthly
 PLUS_ANNUAL_PRODUCT_ID =
 
-SHARING_API_BASE_URL =
+SHARING_API_BASE_URL = https:/$()/api.nekonomado.com
 PLUS_BILLING_API_BASE_URL = $(SHARING_API_BASE_URL)
-MANAGED_PRESERVATION_ORIGIN =
+MANAGED_PRESERVATION_ORIGIN = https:/$()/preservation.nekonomado.com
 MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE =
 SHARING_MODERATION_KEY_ID = moderation-v2
 SHARING_MODERATION_PUBLIC_KEY =
-APP_PRIVACY_URL =
-APP_SUPPORT_URL =
+APP_PRIVACY_URL = https:/$()/nekonomado.com/privacy/
+APP_SUPPORT_URL = https:/$()/nekonomado.com/support/
 SHARING_PRIVACY_URL = $(APP_PRIVACY_URL)
 SHARING_SUPPORT_URL = $(APP_SUPPORT_URL)
-SHARING_COMMUNITY_STANDARDS_URL =
-OFFICIAL_WINDOW_FEED_URL =
+SHARING_COMMUNITY_STANDARDS_URL = https:/$()/nekonomado.com/community/
+OFFICIAL_WINDOW_FEED_URL = https:/$()/official.nekonomado.com/catalog.json
 APP_PRIVACY_MANIFEST_PATH = Production/PrivacyInfo.xcprivacy
 
 // Keep access to existing private CloudKit records. No new archive or upload.
