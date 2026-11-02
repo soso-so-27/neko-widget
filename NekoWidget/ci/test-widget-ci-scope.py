@@ -2048,7 +2048,13 @@ class InternalReportMetadataRepairTests(unittest.TestCase):
             run_attempt=1,status='completed',conclusion='failure',display_title=f'TestFlight build 250 @ {planner.INTERNAL_REPORT_METADATA_SOURCE}',
             created_at='2026-10-11T13:42:18Z',run_started_at='2026-10-11T13:42:18Z',updated_at='2026-10-11T13:52:26Z',
             repository={'full_name':'soso-so-27/neko-widget'},head_repository={'full_name':'soso-so-27/neko-widget'})
-        names=re.findall(r'^      - name: (.+)$',(ROOT/'.github/workflows/testflight.yml').read_text(encoding='utf-8'),re.M)
+        # Build 250 must use its actual 31-step declaration, independent of
+        # later production-release steps added to the current workflow.
+        workflow = subprocess.check_output(
+            ["git", "show", f"{planner.INTERNAL_REPORT_METADATA_FAILURE_HEAD}:.github/workflows/testflight.yml"],
+            cwd=ROOT, encoding="utf-8",
+        )
+        names=re.findall(r'^      - name: (.+)$',workflow,re.M)
         self.assertEqual(len(names),31)
         names = ['Set up job'] + names + ['Post Set up Node.js for public policy gate','Post Check out repository','Complete job']
         steps=[dict(name=name,status='completed',conclusion='failure' if name=='Generate build-bound moderation release metadata'
@@ -2344,7 +2350,11 @@ class InternalReportNativeBoundaryTests(unittest.TestCase):
         run,_,_,repository,now,_=self.correction_source_fixture()
         head="c"*40
         run.update(id=900,head_sha=head,status="completed",conclusion="success")
-        workflow=(ROOT/'.github/workflows/ios-build.yml').read_text(encoding='utf-8')
+        # The recovery graph is pinned to this historical Build39 source.
+        workflow = subprocess.check_output(
+            ["git", "show", f"{planner.INTERNAL_REPORT_CORRECTION_SOURCE}:.github/workflows/ios-build.yml"],
+            cwd=ROOT, encoding="utf-8",
+        )
         block=workflow.split('  build-without-signing:\n',1)[1].split('  simulator-smoke-test:\n',1)[0]
         excluded={'Verify packaged icons and capture first launch','Upload icon display evidence','Upload build result bundle'}
         names=[n for n in re.findall(r'^      - name: (.+)$',block,re.M) if n not in excluded]

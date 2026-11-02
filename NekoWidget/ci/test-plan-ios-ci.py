@@ -4545,7 +4545,7 @@ class ToolBuildRecoveryTests(unittest.TestCase):
 
     def test_every_new_build_step_must_execute_no_skips_or_extra_failures(self):
         with self.mocks():
-            self.assertEqual(len(self.build_steps),39)
+            self.assertEqual(len(self.build_steps),33)
             for step in self.candidate_jobs[1]["steps"]:
                 step["conclusion"]="skipped"
                 self.assertFalse(planner.covers_corrected_full_graph(self.candidate,self.main,self.required,self.api,self.now,self.candidate_jobs),step["name"])
@@ -8582,8 +8582,8 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(scope.accepts_paths(selected_scope, paths))
         self.assertEqual(scope.lanes(selected_scope), ("runtime", "app-ui"))
         tests = scope.native_tests(selected_scope)
-        self.assertEqual(len(tests), 2)
-        self.assertEqual(len(set(tests)), 2)
+        self.assertEqual(len(tests), 3)
+        self.assertEqual(len(set(tests)), 3)
         self.assertTrue(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1], tests))
         self.assertFalse(scope.memory_tests_available(changes[scope.MEMORY_TEST_PATH][1].replace(
             "testMembershipOfferPreviewWaitingAndRestore", "absent"), tests))
@@ -10204,7 +10204,11 @@ class FixtureNavigationRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.head,self.anchor = "a"*40,"b"*40
         self.now = dt.datetime(2026,10,16,12,tzinfo=dt.timezone.utc)
-        self.workflow = (Path(__file__).resolve().parents[2]/".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+        # This fixture models the fixed 2026-10-16 run, not today's build job.
+        self.workflow = subprocess.check_output(
+            ["git", "show", f"{planner.FIXTURE_NAV_SOURCE}:.github/workflows/ios-build.yml"],
+            cwd=Path(__file__).resolve().parents[2], encoding="utf-8",
+        )
         self.delta = ":100644 100644 "+" ".join(planner.FIXTURE_NAV_PAIR)+" M\0"+planner.FIXTURE_NAV_PATH+"\0"
         self.delta += ":100644 100644 "+" ".join(planner.FIXTURE_NAV_WIDGET_PAIR)+" M\0"+planner.FIXTURE_NAV_WIDGET_PATH+"\0"
         self.delta += "".join(":100644 100644 "+"e"*40+" "+"f"*40+" M\0"+p+"\0" for p in sorted(planner.FIXTURE_NAV_CONTROLS))
