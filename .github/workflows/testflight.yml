@@ -860,7 +860,7 @@ jobs:
               ;;
             media-staging)
               policy_revision="2026-11-02"
-              policy_profile="sharing-beta"
+              policy_profile="public-1.0"
               policy_site_base="https://soso-so-27.github.io/neko-widget/"
               ;;
             review-preview|pairing-only)
