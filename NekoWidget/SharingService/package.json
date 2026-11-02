@@ -30,7 +30,7 @@
     "check:moderation-operator-case-reference-binding": "node --test test/moderation-operator-case-reference-binding.node-tests.mjs",
     "check:moderation-operator-config": "node --test test/moderation-operator-config.node-tests.mjs",
     "check:moderation-operator-webauthn-dependency": "node --test test/moderation-operator-webauthn-dependency.node-tests.mjs",
-    "check:billing-environment-migration": "node --no-warnings --test test/billing-environment-migration.node-tests.mjs",
+    "check:billing-environment-migration": "node --no-warnings --test test/billing-environment-migration.node-tests.mjs test/family-environment-migration.node-tests.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",

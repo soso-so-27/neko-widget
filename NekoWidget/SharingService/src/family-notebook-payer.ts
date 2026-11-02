@@ -1,5 +1,5 @@
 import { authenticateGroupRequest, groupId, groupNonceStatements, type GroupActor } from './group-auth';
-import { billingEffectiveEntitlementRuntimeEnabled, type Env } from './env';
+import { billingEffectiveEntitlementRuntimeEnabled, billingStoreEnvironmentAccepted, type Env } from './env';
 import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
 import { exactKeys, integerField, uuidField } from './validation';
@@ -40,9 +40,14 @@ export interface FamilyNotebookPayerState {
 
 export function storeEnvironment(env: Env): 'Production' | 'Sandbox' | null {
   if (!billingEffectiveEntitlementRuntimeEnabled(env)) return null;
-  if (env.BILLING_STORE_ENVIRONMENT === 'Production') return 'Production';
-  if (env.BILLING_STORE_ENVIRONMENT === 'Sandbox' && ['local', 'staging'].includes(env.ENVIRONMENT)) return 'Sandbox';
+  if (billingStoreEnvironmentAccepted(env, 'Production')) return 'Production';
+  if (env.BILLING_STORE_ENVIRONMENT === 'Sandbox' && ['local', 'staging'].includes(env.ENVIRONMENT)
+    && billingStoreEnvironmentAccepted(env, 'Sandbox')) return 'Sandbox';
   return null;
+}
+export function familyStorePolicy(env: Env) {
+  const environment = storeEnvironment(env);
+  return { environment, acceptSandbox: environment === 'Production' && billingStoreEnvironmentAccepted(env, 'Sandbox') ? 1 : 0 };
 }
 export async function gate(env: Env): Promise<void> {
   if (env.FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED !== 'YES') {
@@ -81,14 +86,16 @@ export function safeFailure(error: unknown): never {
   throw new ApiError(503, 'family_notebook_unavailable', 'The family state could not be confirmed.');
 }
 function selectFamily(env: Env, actor: GroupActor, familyId: string): D1PreparedStatement {
-  const environment = storeEnvironment(env);
+  const policy = familyStorePolicy(env);
   return env.DB.prepare(`SELECT f.generation,f.payer_person_id,f.payer_absent_since_generation,
       f.nominated_person_id,m.admitted_generation,
-      EXISTS(SELECT 1 FROM group_verified_plus_people WHERE person_id=f.payer_person_id AND environment=?) AS payer_plus,
-      EXISTS(SELECT 1 FROM group_verified_plus_people WHERE person_id=m.person_id AND environment=?) AS member_plus
+      EXISTS(SELECT 1 FROM group_verified_plus_people WHERE person_id=f.payer_person_id
+        AND (environment=? OR (?=1 AND environment='Sandbox'))) AS payer_plus,
+      EXISTS(SELECT 1 FROM group_verified_plus_people WHERE person_id=m.person_id
+        AND (environment=? OR (?=1 AND environment='Sandbox'))) AS member_plus
     FROM family_notebook_spaces f JOIN family_notebook_members m ON m.family_id=f.id
     WHERE f.id=? AND f.state='active' AND m.person_id=? AND m.state='active'`)
-    .bind(environment, environment, familyId, actor.personId);
+    .bind(policy.environment, policy.acceptSandbox, policy.environment, policy.acceptSandbox, familyId, actor.personId);
 }
 async function load(env: Env, actor: GroupActor, familyId: string): Promise<FamilyRow> {
   const row = await selectFamily(env, actor, familyId).first<FamilyRow>();
@@ -160,16 +167,16 @@ export async function familyNotebookPayer(request: Request, env: Env, familyValu
       return receiptResponse(operationId, existing);
     }
     await load(env, actor, familyId);
-    const environment = storeEnvironment(env);
-    if (operation === 'claim' && environment === null) {
+    const policy = familyStorePolicy(env);
+    if (operation === 'claim' && policy.environment === null) {
       throw new ApiError(503, 'billing_runtime_disabled', 'Membership verification is unavailable.');
     }
     await env.DB.batch([...groupNonceStatements(env, actor),
       env.DB.prepare(`INSERT INTO family_notebook_payer_events
         (actor_device_id,operation_id,request_hash,actor_person_id,family_id,operation,
-         expected_generation,resulting_generation,store_environment)
-        VALUES (?,?,?,?,?,?,?,?,?)`).bind(actor.deviceId, operationId, actor.requestHash, actor.personId,
-        familyId, operation, generation, generation + 1, environment)]);
+         expected_generation,resulting_generation,store_environment,accept_sandbox_in_production)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(actor.deviceId, operationId, actor.requestHash, actor.personId,
+        familyId, operation, generation, generation + 1, policy.environment, policy.acceptSandbox)]);
     return receiptResponse(operationId, { actor_person_id: actor.personId, family_id: familyId,
       request_hash: actor.requestHash, operation, resulting_generation: generation + 1 });
   } catch (error) { return safeFailure(error); }
