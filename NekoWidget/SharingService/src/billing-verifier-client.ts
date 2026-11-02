@@ -104,6 +104,7 @@ export interface VerifierConfig {
   sharedSecret: string;
   bundleId: string;
   environment: "Sandbox" | "Production";
+  acceptSandboxInProduction?: boolean;
   subscriptionGroupId: string;
   productIds: ReadonlySet<string>;
 }
@@ -127,6 +128,10 @@ function requiredSetting(value: string | undefined): string {
 }
 
 export function loadVerifierConfig(env: Env): VerifierConfig {
+  const dual = env.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION ?? "NO";
+  if ((dual !== "NO" && dual !== "YES") || (dual === "YES" && (
+    env.BILLING_STORE_ENVIRONMENT !== "Production" || env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED === "YES"
+  ))) throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
   const transport = env.BILLING_VERIFIER_TRANSPORT ?? "https-access";
   const usesPrivateBinding = transport === "private-binding";
   if (
@@ -226,6 +231,7 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
     sharedSecret,
     bundleId,
     environment,
+    acceptSandboxInProduction: dual === "YES",
     subscriptionGroupId,
     productIds: new Set(annualProductId === undefined
       ? [monthlyProductId] : [monthlyProductId, annualProductId]),
@@ -466,6 +472,22 @@ function positiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null;
 }
 
+export function verifierEnvironmentAccepted(
+  config: VerifierConfig, environment: unknown,
+): environment is "Sandbox" | "Production" {
+  return (environment === "Sandbox" || environment === "Production")
+    && (environment === config.environment || (config.environment === "Production"
+      && config.acceptSandboxInProduction === true && environment === "Sandbox"));
+}
+
+/** Narrow a verified response or persisted job to exactly one environment. */
+export function verifierConfigForEnvironment(config: VerifierConfig, environment: unknown): VerifierConfig {
+  if (!verifierEnvironmentAccepted(config, environment)) {
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+  }
+  return { ...config, environment, acceptSandboxInProduction: false };
+}
+
 export function normalizeVerifiedBillingTransaction(
   raw: unknown,
   config: VerifierConfig,
@@ -496,7 +518,7 @@ export function normalizeVerifiedBillingTransaction(
     || typeof productId !== "string" || !config.productIds.has(productId)
     || subscriptionGroupId !== config.subscriptionGroupId
     || bundleId !== config.bundleId
-    || environment !== config.environment
+    || !verifierEnvironmentAccepted(config, environment)
     || (ownershipType !== "PURCHASED" && ownershipType !== "FAMILY_SHARED")
     || (transactionReason !== "PURCHASE" && transactionReason !== "RENEWAL")
     || purchaseDateMs === null
@@ -516,7 +538,7 @@ export function normalizeVerifiedBillingTransaction(
     productId,
     subscriptionGroupId: config.subscriptionGroupId,
     bundleId: config.bundleId,
-    environment: config.environment,
+    environment,
     ownershipType,
     transactionReason,
     purchaseDateMs,

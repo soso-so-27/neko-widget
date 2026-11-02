@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   fetchAppleSubscriptionStatusViaService,
+  fetchAppleNotificationHistoryPageViaService,
   verifyAppleNotificationViaService,
 } from "../src/billing-apple-client";
 import {
   BILLING_NOTIFICATION_VERIFIER_PATH,
+  BILLING_NOTIFICATION_HISTORY_PATH,
   BILLING_SUBSCRIPTION_STATUS_PATH,
   billingVerifierRequestTranscript,
   billingVerifierResponseTranscript,
@@ -201,5 +203,56 @@ describe("Worker Apple billing service clients", () => {
         mismatch,
       ),
     )).rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+  });
+});
+
+
+describe("dual-environment authenticated Apple responses", () => {
+  const dual = { ...testEnv, BILLING_STORE_ENVIRONMENT: "Production",
+    BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: "YES" };
+  const signedPayload = "header.payload.signature";
+  it("rechecks notification outer, transaction and renewal environment equality", async () => {
+    for (const environment of ["Production", "Sandbox"] as const) {
+      const response = { protocolVersion: 1, notificationUUID: "b113ede5-4eba-4e06-8a9d-3b21243041a7",
+        notificationType: "DID_RENEW", subtype: null, signedDateMs: Date.now(), environment,
+        bundleId: "jp.nekowidget.app", status: 1, relevant: true,
+        transaction: { ...transaction(), environment }, renewal: { ...renewal(), environment } };
+      const invoke = (value: unknown) => verifyAppleNotificationViaService(signedPayload, dual,
+        authenticatedFetch(BILLING_NOTIFICATION_VERIFIER_PATH, { protocolVersion: 1, signedPayload }, value));
+      expect((await invoke(response)).environment).toBe(environment);
+      const other = environment === "Production" ? "Sandbox" : "Production";
+      await expect(invoke({ ...response, transaction: { ...response.transaction, environment: other } }))
+        .rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+      await expect(invoke({ ...response, renewal: { ...response.renewal, environment: other } }))
+        .rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+    }
+  });
+  it("binds status and empty history pages to the persisted requested environment", async () => {
+    const originalTransactionId = "200000000000001";
+    for (const environment of ["Production", "Sandbox"] as const) {
+      const response = { protocolVersion: 1, requestedTransactionId: originalTransactionId, environment,
+        bundleId: "jp.nekowidget.app", fetchedAtMs: Date.now(), items: [{ status: 1,
+          originalTransactionId, transaction: { ...transaction(), environment }, renewal: { ...renewal(), environment } }] };
+      const invoke = (value: unknown) => fetchAppleSubscriptionStatusViaService(originalTransactionId, dual, environment,
+        authenticatedFetch(BILLING_SUBSCRIPTION_STATUS_PATH, { protocolVersion: 1, originalTransactionId, environment }, value));
+      expect((await invoke(response)).environment).toBe(environment);
+      await expect(invoke({ ...response, environment: environment === "Production" ? "Sandbox" : "Production" }))
+        .rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+      const request = { startDateMs: Date.now() - 60_000, endDateMs: Date.now(), paginationToken: null, storeEnvironment: environment };
+      const page = { protocolVersion: 1, requestedStartDateMs: request.startDateMs,
+        requestedEndDateMs: request.endDateMs, environment, bundleId: "jp.nekowidget.app",
+        hasMore: false, nextPaginationToken: null, records: [] };
+      const fetchPage = (value: unknown) => fetchAppleNotificationHistoryPageViaService(request, dual,
+        authenticatedFetch(BILLING_NOTIFICATION_HISTORY_PATH, { protocolVersion: 1, startDateMs: request.startDateMs,
+          endDateMs: request.endDateMs, paginationToken: null, environment }, value));
+      expect((await fetchPage(page)).environment).toBe(environment);
+      await expect(fetchPage({ ...page, environment: environment === "Production" ? "Sandbox" : "Production" }))
+        .rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+    }
+    const noFetch: typeof fetch = async () => { throw new Error("must not call unknown environment"); };
+    await expect(fetchAppleSubscriptionStatusViaService(originalTransactionId, dual, noFetch))
+      .rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+    await expect(fetchAppleNotificationHistoryPageViaService({ startDateMs: 1, endDateMs: 2, paginationToken: null }, dual, noFetch))
+      .rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
   });
 });

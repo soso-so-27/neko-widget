@@ -10,6 +10,7 @@ export interface VerificationServiceConfig {
   environment: Environment.SANDBOX | Environment.PRODUCTION;
   bundleId: string;
   appAppleId?: number;
+  acceptSandboxInProduction?: boolean;
   subscriptionGroupId: string;
   productIds: ReadonlySet<string>;
   notificationVerificationEnabled?: boolean;
@@ -164,7 +165,12 @@ export function loadVerificationConfig(env: NodeJS.ProcessEnv = process.env): Ve
     throw new Error("BILLING_APP_APPLE_ID must be omitted in Sandbox");
   }
 
+  const acceptSandboxInProduction = explicitSwitch(env, "BILLING_ACCEPT_SANDBOX_IN_PRODUCTION");
+  if (acceptSandboxInProduction && environment !== Environment.PRODUCTION) {
+    throw new Error("Dual-environment verification requires Production configuration");
+  }
   const config: VerificationServiceConfig = {
+    acceptSandboxInProduction,
     port,
     sharedSecret: decodeSharedSecret(required(env, "BILLING_VERIFIER_SHARED_SECRET")),
     rootCertificates: decodeRoots(required(env, "APPLE_ROOT_CERTIFICATES_BASE64_JSON")),

@@ -3,6 +3,7 @@ import {
   InvalidAppleNotificationHistoryError,
   callBillingVerifierService,
   loadVerifierConfig,
+  verifierConfigForEnvironment,
   normalizeVerifiedBillingTransaction,
   type VerifiedBillingTransaction,
   type VerifierConfig,
@@ -58,6 +59,7 @@ export interface VerifiedSubscriptionStatus {
 }
 
 export interface AppleNotificationHistoryPageRequest {
+  storeEnvironment?: "Sandbox" | "Production";
   startDateMs: number;
   endDateMs: number;
   paginationToken: string | null;
@@ -332,22 +334,30 @@ export async function verifyAppleNotificationViaService(
     env,
     fetchImpl,
   );
-  return notification(raw, loadVerifierConfig(env));
+  const config = loadVerifierConfig(env);
+  return notification(raw, verifierConfigForEnvironment(config, record(raw).environment));
 }
 
 export async function fetchAppleSubscriptionStatusViaService(
   originalTransactionId: string,
   env: Env,
+  storeEnvironmentOrFetch?: "Sandbox" | "Production" | typeof fetch,
   fetchImpl: typeof fetch = fetch,
 ): Promise<VerifiedSubscriptionStatus> {
   if (!transactionIdPattern.test(originalTransactionId)) return invalid();
+  if (typeof storeEnvironmentOrFetch === "function") fetchImpl = storeEnvironmentOrFetch;
+  const config = loadVerifierConfig(env);
+  if (config.acceptSandboxInProduction && typeof storeEnvironmentOrFetch !== "string") return invalid();
+  const selected = verifierConfigForEnvironment(config,
+    typeof storeEnvironmentOrFetch === "string" ? storeEnvironmentOrFetch : config.environment);
   const raw = await callBillingVerifierService(
     BILLING_SUBSCRIPTION_STATUS_PATH,
-    { protocolVersion: BILLING_VERIFIER_PROTOCOL_VERSION, originalTransactionId },
+    { protocolVersion: BILLING_VERIFIER_PROTOCOL_VERSION, originalTransactionId,
+      ...(config.acceptSandboxInProduction ? { environment: selected.environment } : {}) },
     env,
     fetchImpl,
   );
-  return subscriptionStatus(raw, loadVerifierConfig(env));
+  return subscriptionStatus(raw, selected);
 }
 
 export async function fetchAppleNotificationHistoryPageViaService(
@@ -365,6 +375,9 @@ export async function fetchAppleNotificationHistoryPageViaService(
   if (request.paginationToken !== null && !validHistoryCursor(request.paginationToken)) {
     throw new AppleNotificationHistoryCursorResetRequiredError();
   }
+  const config = loadVerifierConfig(env);
+  if (config.acceptSandboxInProduction && request.storeEnvironment === undefined) return invalid();
+  const selected = verifierConfigForEnvironment(config, request.storeEnvironment ?? config.environment);
   const raw = await callBillingVerifierService(
     BILLING_NOTIFICATION_HISTORY_PATH,
     {
@@ -372,9 +385,10 @@ export async function fetchAppleNotificationHistoryPageViaService(
       startDateMs: request.startDateMs,
       endDateMs: request.endDateMs,
       paginationToken: request.paginationToken,
+      ...(config.acceptSandboxInProduction ? { environment: selected.environment } : {}),
     },
     env,
     fetchImpl,
   );
-  return notificationHistoryPage(raw, request, loadVerifierConfig(env));
+  return notificationHistoryPage(raw, request, selected);
 }

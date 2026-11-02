@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { SignedDataVerifier } from "@apple/app-store-server-library";
+import { Environment, SignedDataVerifier } from "@apple/app-store-server-library";
 import {
   AppleTransactionVerifier,
   InvalidAppleTransactionError,
@@ -92,6 +92,7 @@ interface AccountRecoveryVerifier {
 }
 
 export interface BillingAppleServices {
+  sandboxServices?: Omit<BillingAppleServices, "sandboxServices"> & { transactionVerifier?: TransactionVerifier };
   notificationVerifier?: NotificationVerifier;
   notificationHistoryService?: NotificationHistoryService;
   subscriptionStatusService?: SubscriptionStatusService;
@@ -341,6 +342,41 @@ function sendSigned(
   response.end(body);
 }
 
+function appleServices(config: VerificationServiceConfig, transactionVerifier: TransactionVerifier,
+  suppliedServices: BillingAppleServices) {
+  let signedDataVerifier: SignedDataVerifier | undefined;
+  const sharedSignedDataVerifier = (): SignedDataVerifier => {
+    signedDataVerifier ??= new SignedDataVerifier(
+      config.rootCertificates,
+      true,
+      config.environment,
+      config.bundleId,
+      config.appAppleId,
+    );
+    return signedDataVerifier;
+  };
+  // Disabled capabilities must not initialize credentials, certificates, or
+  // network clients. This keeps each runtime switch an actual isolation
+  // boundary instead of merely rejecting after partial startup.
+  const notificationVerifier = suppliedServices.notificationVerifier
+    ?? (config.notificationVerificationEnabled === true
+      ? new AppleNotificationVerifier(config, sharedSignedDataVerifier()) : null);
+  const notificationHistoryService = suppliedServices.notificationHistoryService
+    ?? (config.notificationHistoryEnabled === true && config.serverAPI !== undefined
+      ? new AppleNotificationHistoryService(
+        config,
+        notificationVerifier ?? new AppleNotificationVerifier(config, sharedSignedDataVerifier()),
+      ) : null);
+  const subscriptionStatusService = suppliedServices.subscriptionStatusService
+    ?? (config.subscriptionStatusEnabled === true && config.serverAPI !== undefined
+      ? new AppleSubscriptionStatusService(config, sharedSignedDataVerifier()) : null);
+  const accountRecoveryVerifier = suppliedServices.accountRecoveryVerifier
+    ?? (config.accountRecoveryVerificationEnabled === true
+      ? new AppleAccountRecoveryVerifier(config, sharedSignedDataVerifier()) : null);
+  return { config, transactionVerifier, notificationVerifier, notificationHistoryService,
+    subscriptionStatusService, accountRecoveryVerifier };
+}
+
 export function createBillingVerificationServer(
   config: VerificationServiceConfig,
   dependencies: BillingVerifierRuntimeDependencies,
@@ -371,35 +407,42 @@ export function createBillingVerificationServer(
       dependencies.onFatalDependencyTimeout,
     );
   };
-  let signedDataVerifier: SignedDataVerifier | undefined;
-  const sharedSignedDataVerifier = (): SignedDataVerifier => {
-    signedDataVerifier ??= new SignedDataVerifier(
-      config.rootCertificates,
-      true,
-      config.environment,
-      config.bundleId,
-      config.appAppleId,
-    );
-    return signedDataVerifier;
-  };
-  // Disabled capabilities must not initialize credentials, certificates, or
-  // network clients. This keeps each runtime switch an actual isolation
-  // boundary instead of merely rejecting after partial startup.
-  const notificationVerifier = suppliedServices.notificationVerifier
-    ?? (config.notificationVerificationEnabled === true
-      ? new AppleNotificationVerifier(config, sharedSignedDataVerifier()) : null);
-  const notificationHistoryService = suppliedServices.notificationHistoryService
-    ?? (config.notificationHistoryEnabled === true && config.serverAPI !== undefined
-      ? new AppleNotificationHistoryService(
-        config,
-        notificationVerifier ?? new AppleNotificationVerifier(config, sharedSignedDataVerifier()),
-      ) : null);
-  const subscriptionStatusService = suppliedServices.subscriptionStatusService
-    ?? (config.subscriptionStatusEnabled === true && config.serverAPI !== undefined
-      ? new AppleSubscriptionStatusService(config, sharedSignedDataVerifier()) : null);
-  const accountRecoveryVerifier = suppliedServices.accountRecoveryVerifier
-    ?? (config.accountRecoveryVerificationEnabled === true
-      ? new AppleAccountRecoveryVerifier(config, sharedSignedDataVerifier()) : null);
+  const primary = appleServices(config, transactionVerifier, suppliedServices);
+  if (config.acceptSandboxInProduction && (config.environment !== Environment.PRODUCTION
+      || !Number.isSafeInteger(config.appAppleId) || config.appAppleId! <= 0)) {
+    throw new Error("Dual-environment verification requires a Production app identity");
+  }
+  const sandboxConfig: VerificationServiceConfig = { ...config, environment: Environment.SANDBOX };
+  delete sandboxConfig.appAppleId;
+  const sandbox = config.acceptSandboxInProduction === true
+    ? appleServices(sandboxConfig, suppliedServices.sandboxServices?.transactionVerifier
+      ?? new AppleTransactionVerifier(sandboxConfig), suppliedServices.sandboxServices ?? {}) : null;
+  // Attempt only fixed, independently validating verifiers. Never decode an
+  // unverified JWT to select a ledger or treat an upstream outage as Sandbox.
+  async function verifyBoth<T>(operation: (services: typeof primary) => Promise<T>,
+    invalid: (error: unknown) => boolean): Promise<T> {
+    try { return await operation(primary); }
+    catch (error) {
+      if (!sandbox || !invalid(error)) throw error;
+      return operation(sandbox);
+    }
+  }
+  function serviceForBody(body: Buffer) {
+    let value: unknown;
+    try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
+    catch { throw new RequestError(400); }
+    if (!value || Array.isArray(value) || typeof value !== "object") throw new RequestError(400);
+    const record = value as Record<string, unknown>;
+    const environment = record.environment;
+    // Only the authenticated Worker may supply this field, taken from a
+    // verified lineage or a fenced history claim. It never grants authority.
+    if (environment === undefined && sandbox) throw new RequestError(400);
+    const selected = environment === undefined || environment === config.environment ? primary
+      : environment === Environment.SANDBOX && sandbox ? sandbox : null;
+    if (!selected) throw new RequestError(400);
+    delete record.environment;
+    return { services: selected, body: Buffer.from(JSON.stringify(record)) };
+  }
   const server = createServer({
     headersTimeout: BILLING_VERIFIER_HEADERS_TIMEOUT_MS,
     requestTimeout: BILLING_VERIFIER_REQUEST_TIMEOUT_MS,
@@ -480,11 +523,12 @@ export function createBillingVerificationServer(
       if (request.url === VERIFY_PATH) {
         const signedTransactionInfo = parseTransactionBody(body);
         const verified = await runAppleOperation(
-          () => transactionVerifier.verify(signedTransactionInfo),
+          () => verifyBoth(services => services.transactionVerifier.verify(signedTransactionInfo),
+            error => error instanceof InvalidAppleTransactionError),
         );
         sendSigned(response, 200, verified, nonce, config.sharedSecret);
       } else if (request.url === VERIFY_NOTIFICATION_PATH) {
-        if (config.notificationVerificationEnabled !== true || notificationVerifier === null) {
+        if (config.notificationVerificationEnabled !== true || primary.notificationVerifier === null) {
           sendSigned(
             response,
             503,
@@ -498,11 +542,14 @@ export function createBillingVerificationServer(
         sendSigned(
           response,
           200,
-          await runAppleOperation(() => notificationVerifier.verify(signedPayload)),
+          await runAppleOperation(() => verifyBoth(services => services.notificationVerifier!.verify(signedPayload),
+            error => error instanceof InvalidAppleNotificationError)),
           nonce,
           config.sharedSecret,
         );
       } else if (request.url === NOTIFICATION_HISTORY_PATH) {
+        const selected = serviceForBody(body);
+        const { notificationHistoryService } = selected.services;
         if (config.notificationHistoryEnabled !== true || notificationHistoryService === null) {
           sendSigned(
             response,
@@ -513,7 +560,7 @@ export function createBillingVerificationServer(
           );
           return;
         }
-        const input = parseNotificationHistoryBody(body, config);
+        const input = parseNotificationHistoryBody(selected.body, selected.services.config);
         sendSigned(
           response,
           200,
@@ -522,6 +569,8 @@ export function createBillingVerificationServer(
           config.sharedSecret,
         );
       } else if (request.url === SUBSCRIPTION_STATUS_PATH) {
+        const selected = serviceForBody(body);
+        const { subscriptionStatusService } = selected.services;
         if (config.subscriptionStatusEnabled !== true || subscriptionStatusService === null) {
           sendSigned(
             response,
@@ -532,7 +581,7 @@ export function createBillingVerificationServer(
           );
           return;
         }
-        const originalTransactionId = parseStatusBody(body);
+        const originalTransactionId = parseStatusBody(selected.body);
         sendSigned(
           response,
           200,
@@ -541,14 +590,15 @@ export function createBillingVerificationServer(
           config.sharedSecret,
         );
       } else {
-        if (config.accountRecoveryVerificationEnabled !== true || accountRecoveryVerifier === null) {
+        if (config.accountRecoveryVerificationEnabled !== true || primary.accountRecoveryVerifier === null) {
           sendSigned(response, 503, { error: { code: "apple_account_recovery_verifier_disabled" } }, nonce, config.sharedSecret);
           return;
         }
         sendSigned(
           response,
           200,
-          await runAppleOperation(() => accountRecoveryVerifier.verify(parseRecoveryBody(body))),
+          await runAppleOperation(() => verifyBoth(services => services.accountRecoveryVerifier!.verify(parseRecoveryBody(body)),
+            error => error instanceof InvalidAppleTransactionError)),
           nonce,
           config.sharedSecret,
         );
