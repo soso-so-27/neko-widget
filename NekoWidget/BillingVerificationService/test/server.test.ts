@@ -1,3 +1,6 @@
+import { InvalidAppleTransactionError } from "../src/apple-transaction.js";
+import { InvalidAppleNotificationError } from "../src/apple-notification.js";
+import { VERIFY_PATH } from "../src/internal-auth.js";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
@@ -698,4 +701,80 @@ test("returns signed, actionable notification history recovery errors", async ()
       assert.equal(body.error.code, item.code);
     }, enabledConfig, services);
   }
+});
+
+test("dual environment verifies fixed identities and never turns an outage into Sandbox", async () => {
+  const production: VerificationServiceConfig = {...config, environment: Environment.PRODUCTION, appAppleId: 6801962436,
+    acceptSandboxInProduction: true};
+  let sandboxCalls = 0;
+  const sandboxServices = {transactionVerifier: {async verify() {sandboxCalls++; return transaction();}}};
+  for (const kind of ["valid", "invalid", "outage"] as const) {
+    const before = sandboxCalls;
+    await withServer(async () => {
+      if (kind === "invalid") throw new InvalidAppleTransactionError();
+      if (kind === "outage") throw new RetryableAppleVerificationError();
+      return {...transaction(), environment:"Production"};
+    }, async origin => {
+      const {response,nonce} = await signedInternalRequest(origin, VERIFY_PATH,
+        {protocolVersion:1,signedTransactionInfo:"header.payload.signature"});
+      assert.equal(response.status, kind === "outage" ? 503 : 200);
+      const value = await assertSignedResponse(response,nonce) as {environment?:string};
+      if (kind !== "outage") assert.equal(value.environment,kind === "valid"?"Production":"Sandbox");
+    },production,{sandboxServices});
+    assert.equal(sandboxCalls-before,kind === "invalid"?1:0);
+  }
+  await withServer(async()=>{throw new InvalidAppleTransactionError();},async origin=>{
+    const {response}=await signedInternalRequest(origin,VERIFY_PATH,{protocolVersion:1,signedTransactionInfo:"header.payload.signature"});
+    assert.equal(response.status,400);
+  },{...production,acceptSandboxInProduction:false},{sandboxServices});
+  assert.equal(sandboxCalls,1,"disabled production must not try Sandbox");
+});
+
+test("dual Server API calls require an explicit known environment on the authenticated request",async()=>{
+  const calls:string[]=[];
+  function services(environment:"Production"|"Sandbox") {
+    return {
+      transactionVerifier:{async verify(){return {...transaction(),environment};}},
+      subscriptionStatusService:{async get(requestedTransactionId:string){calls.push(`status:${environment}`);
+        return {protocolVersion:1 as const,requestedTransactionId,environment,bundleId:config.bundleId,fetchedAtMs:Date.now(),items:[]};}},
+      notificationHistoryService:{async get(input:{startDateMs:number;endDateMs:number}){calls.push(`history:${environment}`);
+        return {protocolVersion:1 as const,requestedStartDateMs:input.startDateMs,requestedEndDateMs:input.endDateMs,
+          environment,bundleId:config.bundleId,records:[],hasMore:false,nextPaginationToken:null};}},
+    };
+  }
+  const production: VerificationServiceConfig={...config,environment:Environment.PRODUCTION,appAppleId:6801962436,acceptSandboxInProduction:true,
+    subscriptionStatusEnabled:true,notificationHistoryEnabled:true};
+  await withServer(async()=>({...transaction(),environment:"Production"}),async origin=>{
+    for(const environment of ["Production","Sandbox"]) {
+      const status=await signedInternalRequest(origin,SUBSCRIPTION_STATUS_PATH,{protocolVersion:1,originalTransactionId:"200000000000001",environment});
+      assert.equal(status.response.status,200);
+      assert.equal((await assertSignedResponse(status.response,status.nonce) as {environment:string}).environment,environment);
+      const history=await signedInternalRequest(origin,NOTIFICATION_HISTORY_PATH,{protocolVersion:1,startDateMs:Date.now()-3600000,endDateMs:Date.now()-600000,paginationToken:null,environment});
+      assert.equal(history.response.status,200);
+      assert.equal((await assertSignedResponse(history.response,history.nonce) as {environment:string}).environment,environment);
+    }
+    for(const environment of [undefined,"Xcode","sandbox","https://untrusted.test"]) {
+      const result=await signedInternalRequest(origin,SUBSCRIPTION_STATUS_PATH,{protocolVersion:1,originalTransactionId:"200000000000001",...(environment?{environment}:{})});
+      assert.equal(result.response.status,400);
+    }
+  },production,{...services("Production"),sandboxServices:services("Sandbox")});
+  assert.deepEqual(calls,["status:Production","history:Production","status:Sandbox","history:Sandbox"]);
+});
+
+test("both notification environments traverse independently verifying services",async()=>{
+  let sandboxCalls=0;
+  const result=(environment:"Production"|"Sandbox")=>({protocolVersion:1 as const,notificationUUID:"b113ede5-4eba-4e06-8a9d-000000000001",
+    notificationType:"TEST",subtype:null,signedDateMs:Date.now(),environment,bundleId:config.bundleId,status:null,relevant:false,transaction:null,renewal:null});
+  for(const valid of [true,false]) {
+    await withServer(async()=>transaction(),async origin=>{
+      const {response,nonce}=await signedInternalRequest(origin,VERIFY_NOTIFICATION_PATH,{protocolVersion:1,signedPayload:"header.payload.signature"});
+      assert.equal(response.status,valid?200:400);
+      if(valid)assert.equal((await assertSignedResponse(response,nonce) as {environment:string}).environment,"Sandbox");
+    },{...config,environment:Environment.PRODUCTION,appAppleId:6801962436,acceptSandboxInProduction:true,notificationVerificationEnabled:true},
+    {notificationVerifier:{async verify(){throw new InvalidAppleNotificationError();}},sandboxServices:{
+      transactionVerifier:{async verify(){return transaction();}},
+      notificationVerifier:{async verify(){sandboxCalls++;if(!valid)throw new InvalidAppleNotificationError();return result("Sandbox");}},
+    }});
+  }
+  assert.equal(sandboxCalls,2);
 });

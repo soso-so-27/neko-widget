@@ -318,3 +318,31 @@ describe("Worker to Apple verifier client", () => {
     )).rejects.toMatchObject({ code: "billing_configuration_unavailable", status: 503 });
   });
 });
+
+
+describe("dual-environment Worker transaction contract", () => {
+  const dual = { ...testEnv, BILLING_STORE_ENVIRONMENT: "Production",
+    BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: "YES" };
+  it("accepts only authenticated normalized environments explicitly enabled by configuration", async () => {
+    for (const environment of ["Production", "Sandbox"] as const) {
+      expect((await verifyAppleTransactionViaService("header.payload.signature", dual,
+        verifierFetch(transaction({ environment })))).environment).toBe(environment);
+    }
+    for (const environment of ["Xcode", "sandbox", "https://attacker.invalid"]) {
+      await expect(verifyAppleTransactionViaService("header.payload.signature", dual,
+        verifierFetch({ ...transaction(), environment }))).rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+    }
+    await expect(verifyAppleTransactionViaService("header.payload.signature", dual,
+      verifierFetch(transaction(), { corruptSignature: true }))).rejects.toBeDefined();
+    await expect(verifyAppleTransactionViaService("header.payload.signature", { ...dual,
+      BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: "NO" }, verifierFetch(transaction())))
+      .rejects.toMatchObject({ code: "billing_verifier_invalid_response" });
+  });
+  it("never enables dual mode on owner-only or Sandbox configurations", () => {
+    for (const env of [{ ...dual, BILLING_SANDBOX_OWNER_ONLY_REQUIRED: "YES" },
+      { ...testEnv, BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: "YES" },
+      { ...dual, BILLING_ACCEPT_SANDBOX_IN_PRODUCTION: "yes" }]) {
+      expect(() => loadVerifierConfig(env)).toThrow();
+    }
+  });
+});

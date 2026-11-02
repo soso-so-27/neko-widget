@@ -173,3 +173,14 @@ test("maps only official retryable verification failures to retry", async () => 
     InvalidAppleNotificationError,
   );
 });
+
+test("rejects mixed signed outer, transaction and renewal environments in either direction",()=>{
+  for(const outer of [Environment.SANDBOX,Environment.PRODUCTION] as const) {
+    const selected: VerificationServiceConfig={...config,environment:outer,appAppleId:6801962436};
+    const outerPayload=notification({data:{...notification().data,environment:outer,appAppleId:6801962436}});
+    const other=outer===Environment.SANDBOX?Environment.PRODUCTION:Environment.SANDBOX;
+    assert.throws(()=>normalizeVerifiedNotification(outerPayload,transaction({environment:other}),renewal({environment:outer}),selected,now),InvalidAppleNotificationError);
+    assert.throws(()=>normalizeVerifiedNotification(outerPayload,transaction({environment:outer}),renewal({environment:other}),selected,now),InvalidAppleNotificationError);
+    assert.equal(normalizeVerifiedNotification(outerPayload,transaction({environment:outer}),renewal({environment:outer}),selected,now).environment,outer);
+  }
+});

@@ -139,3 +139,11 @@ test("keeps account recovery verification behind its own exact switch", () => {
   recovery.BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED = "yes";
   assert.throws(() => loadConfig(recovery), /must be YES or NO/u);
 });
+
+test("requires explicit Production-only opt-in to accept Sandbox as well",()=>{
+  assert.equal(loadConfig(environment()).acceptSandboxInProduction,false);
+  assert.throws(()=>loadConfig({...environment(),BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:"YES"}),/Production configuration/u);
+  assert.throws(()=>loadConfig({...environment(),BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:"yes"}),/YES or NO/u);
+  const value=loadConfig({...environment(),BILLING_STORE_ENVIRONMENT:"Production",BILLING_APP_APPLE_ID:"6801962436",BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:"YES"});
+  assert.equal(value.acceptSandboxInProduction,true);
+});
