@@ -2139,7 +2139,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("Text(entry.windowDisplayName)", widget)
         self.assertIn('detail: "このまどに届いた最新の一枚"', widget_configuration)
         self.assertIn('name: "このiPhoneの猫写真"', widget_configuration)
-        self.assertIn('detail: "このiPhoneで見つけた猫写真"', widget_configuration)
+        self.assertIn('detail: "くもりのまど。毎日1枚、猫を順番に"', widget_configuration)
         self.assertNotIn('name: "このiPhoneの写真"', widget_configuration)
         self.assertIn(
             'Label("写真", systemImage: "photo.on.rectangle.angled")',
