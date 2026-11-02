@@ -196,8 +196,14 @@ struct MembershipOfferView: View {
                     .font(.headline)
                     .accessibilityIdentifier("membership-offer-unavailable")
                 if !isWorking {
-                    Text("時間をおいて、もう一度開いてください。")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    if let onRefresh {
+                        Button("もう一度読み込む", action: onRefresh)
+                            .font(.footnote)
+                            .accessibilityIdentifier("membership-offer-reload")
+                    } else {
+                        Text("時間をおいて、もう一度開いてください。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
             }
         }

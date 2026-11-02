@@ -784,8 +784,16 @@ struct MonthlyStoryView: View {
                     .transition(.opacity)
                     .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
             } else if displayedPreparationKey == preparationKey {
-                ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
-                                       description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                ContentUnavailableView {
+                    Label("この作品は開けません", systemImage: "photo.stack")
+                } description: {
+                    Text("写真へのアクセスと表示する写真の設定を確認してください。")
+                } actions: {
+                    Button("設定を開く") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                     .foregroundStyle(.white)
             } else {
                 ProgressView().tint(.white)
@@ -1256,8 +1264,16 @@ private struct YearBookView: View {
                 .sensoryFeedback(.selection, trigger: index)
                 .onAppear { AlbumPrototype.markOpened(YearStoryView.periodIdentifier(year)) }
             } else {
-                ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
-                                       description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                ContentUnavailableView {
+                    Label("この作品は開けません", systemImage: "photo.stack")
+                } description: {
+                    Text("写真へのアクセスと表示する写真の設定を確認してください。")
+                } actions: {
+                    Button("設定を開く") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
             VStack(spacing: 0) {
                 HStack {
@@ -1475,8 +1491,16 @@ private struct YearStoryContentView: View {
                     .transition(.opacity)
                     .onAppear { AlbumPrototype.markOpened(YearStoryView.periodIdentifier(year)) }
             } else {
-                ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
-                                       description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                ContentUnavailableView {
+                    Label("この作品は開けません", systemImage: "photo.stack")
+                } description: {
+                    Text("写真へのアクセスと表示する写真の設定を確認してください。")
+                } actions: {
+                    Button("設定を開く") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                     .foregroundStyle(.white)
             }
             HStack(spacing: 0) {
@@ -1726,8 +1750,16 @@ struct MonthlyBookView: View {
                 .sensoryFeedback(.selection, trigger: index)
                 .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
             } else if isShown {
-                ContentUnavailableView("この作品は開けません", systemImage: "photo.stack",
-                                       description: Text("写真へのアクセスと表示する写真の設定を確認してください。"))
+                ContentUnavailableView {
+                    Label("この作品は開けません", systemImage: "photo.stack")
+                } description: {
+                    Text("写真へのアクセスと表示する写真の設定を確認してください。")
+                } actions: {
+                    Button("設定を開く") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             } else {
                 ProgressView()
             }
