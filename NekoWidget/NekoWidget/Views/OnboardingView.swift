@@ -467,7 +467,7 @@ private struct OnboardingScanPage: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("onboarding-partial-scan-error")
                     } else if scan.hasDeferredAssets, scan.hasFinalResult {
-                        Text("読み込めなかった\(scan.deferredAssets.formatted())枚は、設定の「写真の表示と整理」からもう一度探せます。")
+                        Text("読み込めなかった\(scan.deferredAssets.formatted())枚は、「ツール」右上の設定→「写真の表示と整理」からもう一度探せます。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
