@@ -78,6 +78,7 @@ export interface Env extends GroupReportMailEnv {
   BILLING_VERIFIER_SHARED_SECRET?: string;
   BILLING_BUNDLE_ID?: string;
   BILLING_STORE_ENVIRONMENT?: string;
+  BILLING_ACCEPT_SANDBOX_IN_PRODUCTION?: string;
   BILLING_SANDBOX_OWNER_ADMISSION?: string;
   // Forced by the named private Sandbox gateway; ordinary routes do not infer it.
   BILLING_SANDBOX_OWNER_ONLY_REQUIRED?: string;
@@ -174,4 +175,19 @@ export function billingWindowSponsorshipRuntimeEnabled(
 export function positiveIntegerSetting(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Accepted only after Apple verification; never accepts a caller-supplied environment. */
+export function billingStoreEnvironmentAccepted(
+  env: Env, environment: unknown,
+): environment is "Sandbox" | "Production" {
+  const dual = env.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION ?? "NO";
+  if ((dual !== "NO" && dual !== "YES") || (dual === "YES" && (
+    env.BILLING_STORE_ENVIRONMENT !== "Production" || env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED === "YES"
+  ))) return false;
+  if (environment !== "Sandbox" && environment !== "Production") return false;
+  return environment === env.BILLING_STORE_ENVIRONMENT
+    || (env.BILLING_STORE_ENVIRONMENT === "Production"
+      && env.BILLING_ACCEPT_SANDBOX_IN_PRODUCTION === "YES"
+      && env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED !== "YES" && environment === "Sandbox");
 }
