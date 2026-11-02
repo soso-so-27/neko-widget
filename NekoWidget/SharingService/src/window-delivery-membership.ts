@@ -1,5 +1,5 @@
 import { effectiveBillingEntitlement } from "./billing-entitlement";
-import { billingEffectiveEntitlementRuntimeEnabled, billingWindowSponsorshipRuntimeEnabled, type Env } from "./env";
+import { billingStoreEnvironmentAccepted, billingEffectiveEntitlementRuntimeEnabled, billingWindowSponsorshipRuntimeEnabled, type Env } from "./env";
 import { ApiError } from "./errors";
 
 /** Only new content acceptance uses this gate. It is not participant authorization. */
@@ -17,14 +17,16 @@ export function windowDeliverySupportGuard(env: Env, spaceID: string): { sql: st
     JOIN billing_window_sponsorships sponsorship ON sponsorship.window_lineage_id=space.lineage_id
     JOIN billing_effective_entitlement_current authority ON authority.billing_account_id=sponsorship.billing_account_id
     JOIN billing_runtime_gate gate ON gate.singleton=1
-    WHERE space.space_id=? AND space.state='active' AND sponsorship.state='active'
+    WHERE space.space_id=? AND authority.environment IN (?,?) AND space.state='active' AND sponsorship.state='active'
       AND gate.window_sponsorship_enabled=1 AND gate.effective_entitlement_enabled=1
       AND authority.materialized_grants_plus=1 AND authority.ownership_type='PURCHASED'
       AND authority.materialized_status IN ('active','gracePeriod')
       AND authority.revocation_date_ms IS NULL AND authority.revocation_reason IS NULL
       AND authority.is_upgraded=0 AND authority.access_until_ms>CAST(unixepoch('subsec')*1000 AS INTEGER)
       AND authority.authority_stale_at_ms>CAST(unixepoch('subsec')*1000 AS INTEGER)
-  )`, bindings: [spaceID] };
+  )`, bindings: [spaceID,
+    billingStoreEnvironmentAccepted(env, "Production") ? "Production" : "",
+    billingStoreEnvironmentAccepted(env, "Sandbox") ? "Sandbox" : ""] };
 }
 
 export async function requireWindowDeliverySupport(env: Env, spaceID: string): Promise<void> {

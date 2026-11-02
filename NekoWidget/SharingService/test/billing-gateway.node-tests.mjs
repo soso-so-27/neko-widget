@@ -214,7 +214,7 @@ test('retention observer preserves generations, leases, backoff and closed purch
   const { refreshRetentionBilling, RetentionBillingObserver, BillingGateway, default: publicWorker } = await import(
     'data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
   const sqlite = new DatabaseSync(':memory:');
-  for (const name of (await readdir(new URL('../migrations/', import.meta.url))).filter(n => /^00(?:0[1-9]|1[0-9]|2[0-5])_/.test(n)).sort()) {
+  for (const name of (await readdir(new URL('../migrations/', import.meta.url))).filter(n => /^\d{4}_[a-z0-9_]+\.sql$/.test(n)).sort()) {
     sqlite.exec(await readFile(new URL('../migrations/' + name, import.meta.url), 'utf8'));
   }
   const statement = (sql, args = []) => ({

@@ -13,7 +13,7 @@ import { effectiveBillingEntitlement } from "./billing-entitlement";
 import { windowSponsorshipConsentTranscript } from "./billing-protocol";
 import { sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
-import type { Env } from "./env";
+import { billingStoreEnvironmentAccepted, type Env } from "./env";
 import {
   enforceRateLimit,
   parseJsonBody,
@@ -261,9 +261,11 @@ export async function changeWindowSponsorship(
         "An active Plus subscription is required.",
       );
     entitlement = await env.DB.prepare(
-      `SELECT decision_id,request_generation,evaluated_at_ms FROM billing_effective_entitlement_current WHERE billing_account_id=? AND materialized_grants_plus=1 AND ownership_type='PURCHASED' AND materialized_status IN('active','gracePeriod') AND revocation_date_ms IS NULL AND revocation_reason IS NULL AND is_upgraded=0 AND access_until_ms>? AND authority_stale_at_ms>? ORDER BY MIN(access_until_ms,authority_stale_at_ms) DESC,original_transaction_id ASC LIMIT 1`,
+      `SELECT decision_id,request_generation,evaluated_at_ms FROM billing_effective_entitlement_current WHERE billing_account_id=? AND environment IN (?,?) AND materialized_grants_plus=1 AND ownership_type='PURCHASED' AND materialized_status IN('active','gracePeriod') AND revocation_date_ms IS NULL AND revocation_reason IS NULL AND is_upgraded=0 AND access_until_ms>? AND authority_stale_at_ms>? ORDER BY MIN(access_until_ms,authority_stale_at_ms) DESC,original_transaction_id ASC LIMIT 1`,
     )
-      .bind(account.billingAccountId, Date.now(), Date.now())
+      .bind(account.billingAccountId,
+        billingStoreEnvironmentAccepted(env, "Production") ? "Production" : "",
+        billingStoreEnvironmentAccepted(env, "Sandbox") ? "Sandbox" : "", Date.now(), Date.now())
       .first<EntRef>();
     if (entitlement === null)
       throw new ApiError(
@@ -546,12 +548,14 @@ export async function getWindowSponsorshipGrant(
      AND current.authority_stale_at_ms>? THEN MIN(current.access_until_ms,current.authority_stale_at_ms) END) AS access_until_ms
   FROM moment_spaces space
   LEFT JOIN billing_window_sponsorships sponsorship ON sponsorship.window_lineage_id=space.lineage_id
-  LEFT JOIN billing_effective_entitlement_current current ON current.billing_account_id=sponsorship.billing_account_id
+  LEFT JOIN billing_effective_entitlement_current current ON current.billing_account_id=sponsorship.billing_account_id AND current.environment IN (?,?)
  WHERE space.space_id=? AND space.state='active'
    AND NOT EXISTS(SELECT 1 FROM moment_blocks block WHERE block.space_id=space.space_id AND block.state='active')
  GROUP BY space.lineage_id,space.membership_revision,sponsorship.state,sponsorship.generation`,
   )
-    .bind(now, now, member.spaceId)
+    .bind(now, now,
+      billingStoreEnvironmentAccepted(env, "Production") ? "Production" : "",
+      billingStoreEnvironmentAccepted(env, "Sandbox") ? "Sandbox" : "", member.spaceId)
     .first<{
       window_lineage_id: string;
       membership_revision: number;

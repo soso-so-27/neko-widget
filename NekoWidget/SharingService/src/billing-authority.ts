@@ -19,7 +19,7 @@ import {
 } from "./billing-notification-reconciliation-cause";
 import { randomBase64url, sha256Base64url } from "./encoding";
 import { ApiError } from "./errors";
-import { billingSubscriptionReconciliationRuntimeEnabled, type Env } from "./env";
+import { billingStoreEnvironmentAccepted, billingSubscriptionReconciliationRuntimeEnabled, type Env } from "./env";
 import {
   enforceRateLimit,
   parseJsonBody,
@@ -606,7 +606,7 @@ export async function runBillingSubscriptionReconciliation(
   const jobs = await env.DB.prepare(
     `SELECT environment, original_transaction_id, request_generation, attempts
        FROM billing_reconciliation_jobs
-      WHERE not_before <= ?
+      WHERE environment IN (?, ?) AND not_before <= ?
         AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
         ${ownerAccount === null ? '' : `AND EXISTS (SELECT 1 FROM billing_transaction_lineages l
           WHERE l.environment = billing_reconciliation_jobs.environment
@@ -614,7 +614,9 @@ export async function runBillingSubscriptionReconciliation(
             AND l.billing_account_id = ?)`}
       ORDER BY not_before ASC, requested_at ASC, original_transaction_id ASC
       LIMIT ?`,
-  ).bind(now, now, ...(ownerAccount === null ? [] : [ownerAccount]), reconciliationLimit).all<ReconciliationJobRow>();
+  ).bind(billingStoreEnvironmentAccepted(env, "Production") ? "Production" : "",
+    billingStoreEnvironmentAccepted(env, "Sandbox") ? "Sandbox" : "",
+    now, now, ...(ownerAccount === null ? [] : [ownerAccount]), reconciliationLimit).all<ReconciliationJobRow>();
 
   for (const job of jobs.results) {
     await reconcileClaimedJob(env, job, ownerAccount, fetchStatus, now, completedAtOverride);
@@ -630,7 +632,8 @@ export async function reconcileBillingTransactionNow(
   now = Math.floor(Date.now() / 1_000),
   storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): Promise<void> {
-  if (!billingSubscriptionReconciliationRuntimeEnabled(env)) return;
+  if (!billingSubscriptionReconciliationRuntimeEnabled(env)
+    || !billingStoreEnvironmentAccepted(env, storeEnvironment)) return;
   if ((await loadGate(env))?.subscription_reconciliation_enabled !== 1) return;
   await requireOwnerSandboxAccount(env, billingAccountId);
   const job = await env.DB.prepare(

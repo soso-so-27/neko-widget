@@ -5,6 +5,7 @@ import { ApiError, errorResponse, jsonResponse } from "./errors";
 import type { Env } from "./env";
 import {
   billingSubscriptionReconciliationRuntimeEnabled,
+  billingStoreEnvironmentAccepted,
 } from "./env";
 import { readBody, rejectQuery } from "./http";
 import {
@@ -174,10 +175,12 @@ export async function refreshRetentionBilling(env: RetentionBillingEnv, billingA
         c.source_fetched_at_ms,c.authority_stale_at_ms,c.materialized_grants_plus FROM billing_transaction_lineages l
         LEFT JOIN billing_effective_entitlement_current c ON c.original_transaction_id=l.original_transaction_id
           AND c.billing_account_id=l.billing_account_id AND c.environment=l.environment AND c.subscription_group_id=l.subscription_group_id
-        WHERE l.billing_account_id=? ORDER BY c.source_fetched_at_ms,l.original_transaction_id LIMIT 9`).bind(billingAccountId)
+        WHERE l.billing_account_id=? AND l.environment IN (?, ?) ORDER BY c.source_fetched_at_ms,l.original_transaction_id LIMIT 9`).bind(billingAccountId,
+          billingStoreEnvironmentAccepted(env, "Production") ? "Production" : "",
+          billingStoreEnvironmentAccepted(env, "Sandbox") ? "Sandbox" : "")
         .all<{original_transaction_id:string;environment:string;subscription_group_id:string;source_fetched_at_ms:number|null;authority_stale_at_ms:number|null;materialized_grants_plus:number|null}>();
       const valid = (rows: Awaited<ReturnType<typeof read>>) => rows.results.length > 0 && rows.results.length <= 8
-        && rows.results.every(row => row.environment === env.BILLING_STORE_ENVIRONMENT
+        && rows.results.every(row => billingStoreEnvironmentAccepted(env, row.environment)
           && row.subscription_group_id === env.BILLING_SUBSCRIPTION_GROUP_ID);
       const rows = await read();
       if (!valid(rows)) {
