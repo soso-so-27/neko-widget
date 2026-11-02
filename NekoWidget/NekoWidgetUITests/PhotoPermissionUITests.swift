@@ -4263,8 +4263,10 @@ final class SoloMemoriesUITests: XCTestCase {
         app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "paging"
         app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] = "PhotoMonthJumpUITest.\(UUID().uuidString)"
+        app.launchEnvironment["NEKO_PHOTO_RESTORE_OBSERVATION"] = "1102p"
         app.launch()
         openPhotosTab(in: app)
+        guard capturePhotoRestorationObservation(app, phase: "initial-entry") else { return }
         let jump = app.buttons["photo-library-month-jump"]
         XCTAssertTrue(jump.waitForExistence(timeout: 10))
         reveal(jump, in: app)
@@ -4302,7 +4304,64 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("photo-grid-month-jump-beyond-first-batch")
         firstSeptemberPhoto.tap()
         XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
+        app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(firstSeptemberPhoto.waitForExistence(timeout: 5))
+        guard capturePhotoRestorationObservation(app, phase: "before-terminate", includeHierarchy: true) else { return }
         app.terminate()
+        // Keep the same isolated suite and restore without scrolling or a new jump.
+        app.launch()
+        openPhotosTab(in: app)
+        guard capturePhotoRestorationObservation(app, phase: "relaunch-entry", includeHierarchy: true) else { return }
+        let restoredPhoto = app.buttons[firstSeptemberPhotoIdentifier].firstMatch
+        let restored = XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: restoredPhoto
+        )], timeout: 10)
+        // Attach before asserting: an XCTest failure can terminate the method immediately.
+        let observationComplete = capturePhotoRestorationObservation(app, phase: "final", includeHierarchy: true)
+        XCTAssertEqual(restored, .completed, "Restart restores the same September row")
+        XCTAssertTrue(observationComplete)
+        XCTAssertEqual(app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count, 1)
+        capture("photo-grid-month-jump-restart")
+        app.terminate()
+    }
+
+    @MainActor
+    private func capturePhotoRestorationObservation(_ app: XCUIApplication, phase: String,
+                                                    includeHierarchy: Bool = false) -> Bool {
+        let probe = app.descendants(matching: .any).matching(identifier: "photo-restoration-observation").firstMatch
+        let payload = probe.exists ? (probe.value as? String ?? "") : ""
+        let lines = payload.components(separatedBy: "\n")
+        let header = lines.first ?? ""
+        let fields = header.components(separatedBy: " ")
+        let expectedSuite = app.launchEnvironment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] ?? "missing"
+        let countField = fields.first { $0.hasPrefix("count=") } ?? ""
+        let count = Int(countField.dropFirst("count=".count)) ?? -1
+        let sequence = lines.compactMap { line -> Int? in
+            guard line.contains("|") else { return nil }
+            return Int(line.prefix { $0 != "|" })
+        }
+        let complete = header.hasPrefix("PHOTO-OBS-1102p launch=")
+            && fields.contains("suite=\(expectedSuite)") && fields.contains("overflow=false")
+            && count > 0 && count <= 512 && sequence == Array(1...max(1, count))
+            && lines.last == "END-PHOTO-OBS-1102p"
+            && lines.contains { $0.contains("|boot resolved=suite ") }
+        let target = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-31"].firstMatch
+        let viewport = app.scrollViews["photo-library-all-scroll"].firstMatch
+        let targetExists = target.exists
+        let viewportExists = viewport.exists
+        let ui = "phase=\(phase) complete=\(complete) targetExists=\(targetExists) targetCount=\(app.buttons.matching(identifier: "photo-hub-photo-app-store-screenshot-fixture-page-31").count) hittable=\(targetExists && target.isHittable) frame=\(targetExists ? String(describing: target.frame) : "absent") viewport=\(viewportExists ? String(describing: viewport.frame) : "absent")"
+        let attachment = XCTAttachment(string: ui + "\n" + payload)
+        attachment.name = "photo-restoration-1102p-\(phase)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if includeHierarchy {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "photo-restoration-1102p-\(phase)-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+        if !complete { XCTFail("PHOTO-OBS-CAPTURE: missing, truncated, overflowed, or wrong-suite observation; no cause classification") }
+        return complete
     }
 
     @MainActor
@@ -5208,15 +5267,29 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     private func openPhotosTab(in app: XCUIApplication) {
-        assertAlbumsRoot(in: app)
-        // UIKit can omit SwiftUI's tab-item identifier after relaunch while
-        // preserving the visible, accessible tab label.
-        let identified = app.buttons["main-tab-photos"]
-        let photos = identified.exists ? identified : app.tabBars.buttons["写真"]
-        XCTAssertTrue(photos.waitForExistence(timeout: 10))
-        photos.tap()
-        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 10))
+        let photosRoot = app.navigationBars["写真"]
+        let albumsRoot = app.navigationBars["アルバム"]
+        let albumShelf = app.buttons["album-prototype-past"]
         let all = app.buttons["photos-section-all"]
+        // The app restores navigation.lastTab.v1 independently of the isolated
+        // reading-position suite. Both observed roots are valid entry states.
+        let entryReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (photosRoot.exists && all.exists) || (albumsRoot.exists && albumShelf.exists)
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [entryReady], timeout: 10), .completed,
+                       "Launch presents the restored photo root or the current album root")
+        if !photosRoot.exists {
+            XCTAssertTrue(albumsRoot.exists)
+            XCTAssertTrue(albumShelf.exists)
+            // UIKit can omit a tab identifier after relaunch but retain its label.
+            let identified = app.buttons["main-tab-photos"]
+            let photos = identified.exists ? identified : app.tabBars.buttons["写真"]
+            XCTAssertTrue(photos.waitForExistence(timeout: 10))
+            photos.tap()
+        }
+        XCTAssertFalse(app.segmentedControls["memories-section-picker"].exists)
+        XCTAssertFalse(app.buttons["memories-section-menu"].exists)
+        XCTAssertTrue(photosRoot.waitForExistence(timeout: 10))
         XCTAssertTrue(all.waitForExistence(timeout: 5))
         all.tap()
         XCTAssertFalse(app.buttons["photos-open-automatic-albums"].exists)

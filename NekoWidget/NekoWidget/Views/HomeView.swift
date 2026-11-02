@@ -1,13 +1,104 @@
 import SwiftUI
 import UIKit
 
+#if DEBUG
+/// One synthetic observation only. No persistence, scrolling, or SwiftUI state writes.
+@MainActor
+enum PhotoRestorationObservation {
+    static let enabled: Bool = {
+        let p = ProcessInfo.processInfo
+        return p.arguments.contains("--app-store-screenshot-fixture")
+            && p.environment["NEKO_UX_RECOVERY_CASE"] == "paging"
+            && p.environment["NEKO_PHOTO_RESTORE_OBSERVATION"] == "1102p"
+            && p.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"]?.hasPrefix("PhotoMonthJumpUITest.") == true
+    }()
+    static let launch = UUID().uuidString
+    private static var suite = "unresolved"
+    private static var events: [String] = []
+    private static var overflow = false
+    private static var roots = 0
+    private static var lastRead: [String: String] = [:]
+
+    static func row(_ value: Any?) -> String {
+        guard let value else { return "absent" }
+        guard let value = value as? String else { return "invalid-type" }
+        if value.isEmpty { return "list-top-sentinel" }
+        let prefix = "app-store-screenshot-fixture-page-"
+        if value.hasPrefix(prefix), let n = Int(value.dropFirst(prefix.count)), (1...50).contains(n) {
+            return "p\(n)"
+        }
+        return "other-id"
+    }
+    static func scope(_ value: String?) -> String {
+        guard let value else { return "nil" }
+        return ["all", "favorites", "notes"].contains(value) ? value : "other-scope"
+    }
+    static func raw(_ defaults: UserDefaults, _ section: String) -> String {
+        row(defaults.object(forKey: "photoLibrary.position.\(section).v1"))
+    }
+    static func record(_ value: String) {
+        guard enabled else { return }
+        guard events.count < 512 else { overflow = true; return }
+        events.append("\(events.count + 1)|\(Int(ProcessInfo.processInfo.systemUptime * 1000))|\(value)")
+    }
+    static func boot(suite: String, defaults: UserDefaults) {
+        guard enabled else { return }
+        self.suite = suite
+        record("boot resolved=suite all=\(raw(defaults, "all")) favorites=\(raw(defaults, "favorites")) notes=\(raw(defaults, "notes"))")
+    }
+    static func read(section: String, raw: String, pending: String, effective: String) {
+        guard enabled else { return }
+        let value = "read scope=\(scope(section)) raw=\(raw) pending=\(pending) effective=\(effective)"
+        guard lastRead[section] != value else { return }
+        lastRead[section] = value
+        record(value)
+    }
+    static func root() -> Int {
+        guard enabled else { return 0 }
+        roots += 1
+        return roots
+    }
+    static func snapshot(state: String) -> String {
+        "PHOTO-OBS-1102p launch=\(launch) suite=\(suite) count=\(events.count) overflow=\(overflow)\n"
+            + state + "\n" + PhotoLibraryReadingPosition.observationSnapshot + "\n"
+            + events.joined(separator: "\n") + "\nEND-PHOTO-OBS-1102p"
+    }
+}
+
+/// A read-only accessibility transport; no notifications or observed model are updated.
+struct PhotoRestorationObservationProbe: UIViewRepresentable {
+    let state: String
+    final class Probe: UIView {
+        var state = ""
+        override var accessibilityValue: String? {
+            get { PhotoRestorationObservation.snapshot(state: state) }
+            set { }
+        }
+    }
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = "photo-restoration-observation"
+        view.accessibilityLabel = "Synthetic photo restoration observation"
+        view.accessibilityTraits = .staticText
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+    func updateUIView(_ uiView: Probe, context: Context) { uiView.state = state }
+}
+#endif
+
 /// Only reading position is persisted here. No photo, note or cloud state is changed.
 @MainActor
 enum PhotoLibraryReadingPosition {
     static let defaults: UserDefaults = {
 #if DEBUG
         if let suite = ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"],
-           let defaults = UserDefaults(suiteName: suite) { return defaults }
+           let defaults = UserDefaults(suiteName: suite) {
+            PhotoRestorationObservation.boot(suite: suite, defaults: defaults)
+            return defaults
+        }
 #endif
         return .standard
     }()
@@ -46,23 +137,47 @@ enum PhotoLibraryReadingPosition {
 
     static func identifier(for section: String) -> String? {
         let identifier = unsaved[section] ?? defaults.string(forKey: "photoLibrary.position.\(section).v1")
+#if DEBUG
+        if PhotoRestorationObservation.enabled {
+            PhotoRestorationObservation.read(section: section,
+                raw: PhotoRestorationObservation.raw(defaults, section),
+                pending: PhotoRestorationObservation.row(unsaved[section]),
+                effective: PhotoRestorationObservation.row(identifier))
+        }
+#endif
         return identifier == listTop ? nil : identifier
     }
 
     /// While scrolling: memory only.
     static func remember(_ identifier: String, section: String) {
+#if DEBUG
+        if PhotoRestorationObservation.enabled {
+            PhotoRestorationObservation.record("remember scope=\(PhotoRestorationObservation.scope(section)) row=\(PhotoRestorationObservation.row(identifier))")
+        }
+#endif
         unsaved[section] = identifier
     }
 
     /// Writes what was read while scrolling. Called when the list disappears
     /// and when the app goes to the background.
     static func flush() {
+#if DEBUG
+        if PhotoRestorationObservation.enabled {
+            PhotoRestorationObservation.record("flush pending-all=\(PhotoRestorationObservation.row(unsaved["all"]))")
+        }
+#endif
         let pending = unsaved
         unsaved = [:]
         for (section, identifier) in pending { save(identifier == listTop ? nil : identifier, section: section) }
     }
 
     static func save(_ identifier: String?, section: String) {
+#if DEBUG
+        if PhotoRestorationObservation.enabled { PhotoRestorationObservation.record("save-request scope=\(PhotoRestorationObservation.scope(section)) row=\(PhotoRestorationObservation.row(identifier)) before=\(PhotoRestorationObservation.raw(defaults, section))") }
+        defer {
+            if PhotoRestorationObservation.enabled { PhotoRestorationObservation.record("save-return scope=\(PhotoRestorationObservation.scope(section)) after=\(PhotoRestorationObservation.raw(defaults, section))") }
+        }
+#endif
         unsaved[section] = nil
         let key = "photoLibrary.position.\(section).v1"
         guard defaults.string(forKey: key) != identifier else { return }
@@ -77,6 +192,11 @@ enum PhotoLibraryReadingPosition {
         NotificationCenter.default.post(name: returnToPhotoNotification, object: identifier,
                                         userInfo: ["section": section])
     }
+#if DEBUG
+    static var observationSnapshot: String {
+        "current active=\(PhotoRestorationObservation.scope(activeSection)) raw-all=\(PhotoRestorationObservation.raw(defaults, "all")) pending-all=\(PhotoRestorationObservation.row(unsaved["all"]))"
+    }
+#endif
 }
 
 extension View {
@@ -158,10 +278,20 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
                         PhotoLibraryReadingPosition.activeSection = section
                         configure(section: section)
                         let saved = PhotoLibraryReadingPosition.identifier(for: section).map(normalize)
+#if DEBUG
+                        if PhotoRestorationObservation.enabled {
+                            PhotoRestorationObservation.record("appear root=\(tracker.observationRoot) scope=\(PhotoRestorationObservation.scope(section)) search=\(isSearching) row=\(PhotoRestorationObservation.row(saved))")
+                        }
+#endif
                         PhotoLibraryReadingPosition.diagnose("appear \(section): \(saved ?? "nil")")
                         restore(saved, with: proxy)
                     }
                     .onDisappear {
+#if DEBUG
+                        if PhotoRestorationObservation.enabled {
+                            PhotoRestorationObservation.record("disappear root=\(tracker.observationRoot) generation=\(tracker.generation)")
+                        }
+#endif
                         tracker.isVisible = false
                         tracker.generation &+= 1
                         PhotoLibraryReadingPosition.flush()
@@ -213,12 +343,36 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
         tracker.userScrolled = false
         tracker.generation &+= 1
         let generation = tracker.generation
+#if DEBUG
+        if PhotoRestorationObservation.enabled {
+            PhotoRestorationObservation.record("restore root=\(tracker.observationRoot) generation=\(generation) scope=\(PhotoRestorationObservation.scope(section)) visible=\(tracker.isVisible) searching=\(tracker.isSearching) row=\(PhotoRestorationObservation.row(identifier)) first=\(PhotoRestorationObservation.row(firstRow))")
+        }
+#endif
         // 10/28: 306 saved the first row while the list sat at its top, and
         // every return pinned that row under the bar, hiding the theme row.
-        guard let identifier, identifier != firstRow else { return }
+        guard let identifier, identifier != firstRow else {
+#if DEBUG
+            if PhotoRestorationObservation.enabled {
+                PhotoRestorationObservation.record("restore-stop root=\(tracker.observationRoot) generation=\(generation) reason=nil-or-first")
+            }
+#endif
+            return
+        }
         DispatchQueue.main.async {
-            guard tracker.isVisible, generation == tracker.generation else { return }
+            guard tracker.isVisible, generation == tracker.generation else {
+#if DEBUG
+                if PhotoRestorationObservation.enabled {
+                    PhotoRestorationObservation.record("callback-cancel root=\(tracker.observationRoot) generation=\(generation) current=\(tracker.generation) visible=\(tracker.isVisible)")
+                }
+#endif
+                return
+            }
             proxy.scrollTo(identifier, anchor: .top)
+#if DEBUG
+            if PhotoRestorationObservation.enabled {
+                PhotoRestorationObservation.record("scrollTo-called root=\(tracker.observationRoot) generation=\(generation) row=\(PhotoRestorationObservation.row(identifier))")
+            }
+#endif
         }
     }
 }
@@ -227,6 +381,9 @@ private struct PhotoLibraryPositionRestoration: ViewModifier {
 /// rows coming and going while scrolling must not re-render the list.
 @MainActor
 final class PhotoLibraryRowTracker {
+#if DEBUG
+    let observationRoot = PhotoRestorationObservation.root()
+#endif
     var section: String?
     var isVisible = false
     var isSearching = false

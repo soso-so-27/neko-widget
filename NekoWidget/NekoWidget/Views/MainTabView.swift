@@ -921,6 +921,16 @@ struct MainTabView: View {
         .onChange(of: photoLibraryPositionKey, initial: true) { _, key in
             PhotoLibraryReadingPosition.activeSection = key
         }
+#if DEBUG
+        .background(alignment: .topLeading) {
+            if PhotoRestorationObservation.enabled {
+                PhotoRestorationObservationProbe(state:
+                    "state section=\(photoLibrarySelection.selection.rawValue) scope=\(PhotoRestorationObservation.scope(photoLibraryPositionKey)) filter=\(photoLibraryProfileIdentifier == nil ? "none" : "selected") path=\(photosPath.count) revision=\(photoLibraryRevision) count=\(photoLibraryCatPhotos.count) target31=\(photoLibraryCatPhotos.contains { $0.localIdentifier == "app-store-screenshot-fixture-page-31" })")
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+            }
+        }
+#endif
         .onChange(of: photoLibraryRegisteredIdentifiers) { _, identifiers in
             if let selected = photoLibraryProfileIdentifier,
                selected != "unassigned", !identifiers.contains(selected) {
