@@ -126,7 +126,7 @@ class PublicPolicySiteTests(unittest.TestCase):
                 'エンドツーエンド暗号化してから送ります',
                 '中身を読む鍵を持ちません',
                 '確認用の画像は7日で消えます',
-                '決定から1年残します',
+                '問題なし・解除と決めたものは決定から1年で消します',
                 '暗号化して最大35日保持',
                 '購読の終わりから12か月',
                 '知らせが届いてから少なくとも30日は待ちます',
@@ -140,14 +140,14 @@ class PublicPolicySiteTests(unittest.TestCase):
                 '受付番号が出る',
                 'その相手からの新しい写真を止められます',
                 '確認用の画像は7日で消し',
-                '対応を決めた記録は決定から1年残します',
+                '停止が続いている間は残し、問題なし・解除と決めたものは決定から1年で消します',
             ),
             (
                 '毎日の入れ替わりはPlusの機能',
                 'まどを作った人がPlusを使っている必要があります',
                 '招待された人は無料',
                 '1人1日5枚まで',
-                '届いてから最長90日・500枚まで',
+                '1つのまどにつき新しいものから500枚まで',
                 '写真アプリに保存してください',
                 'それまでの記録は消えません',
                 '鍵はiPhoneごとに作る',
@@ -180,7 +180,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             (
                 '長辺2,048px以下のJPEG',
                 '位置情報などの元情報は除きます',
-                '受け取ったiPhoneの中に最長90日・500枚まで残ります',
+                '受け取ったiPhoneの中に、1つのまどにつき新しいものから500枚まで残ります',
                 'すでに相手のiPhoneに届いた写真',
                 '相手が写真アプリに保存した写真',
                 '本サービスから消せません',
@@ -193,10 +193,11 @@ class PublicPolicySiteTests(unittest.TestCase):
                 'そのサービスとポリシーが適用されます',
                 'iOSまたは共有先が処理のためにデータのコピーを作成・保持する場合があります',
                 'まどを抜けたとき・まどを閉じたとき',
-                '新しい写真は届かなくなり、見る権限も止まります',
+                '新しい写真は届かなくなり、サーバーから新しく受け取る権限も止まります',
+                'すでにあなたのiPhoneに届いた写真は「前のまど」として残ります',
             ),
             (
-                '届いてから最長90日・500枚まで',
+                '1つのまどにつき新しいものから500枚まで',
                 'そのiPhoneの中に残ります',
                 '残したい写真は、写真アプリに保存してください',
                 '招待された人は無料',
@@ -221,6 +222,9 @@ class PublicPolicySiteTests(unittest.TestCase):
             self.assertNotIn("memory mark", text, page)
             self.assertNotIn("無料・期限付き", text, page)
             self.assertNotIn("まど内履歴", text, page)
+            # The local store keeps 500 per window with no time limit (1102a).
+            self.assertNotIn("90日", text, page)
+            self.assertNotIn("見る権限も止まります", text, page)
 
     def test_release_safety_facts_are_present(self):
         privacy = "".join(self.parsed(PAGES[1]).text)
@@ -232,8 +236,9 @@ class PublicPolicySiteTests(unittest.TestCase):
         for phrase in (
             "エンドツーエンド暗号化",
             "確認用の画像は7日で消えます",
-            "対応を決めた記録は、決定から1年残します",
+            "対応の記録は、停止が続いている間は残し、問題なし・解除と決めたものは決定から1年で消します",
             "受け取ったあとはその人の分が最長7日",
+            "あなたが通報したときの確認用の画像、あなたが「写真を書き出す」で共有先に渡したもの",
             "まだ受け取っていない人がいる間は最長30日",
             "通知用デバイストークン",
             "暗号化して最大35日保持",
@@ -252,7 +257,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertNotIn("写真ID、取得URL", privacy)
         for phrase in (
             '確認用の画像は7日で消し',
-            '対応を決めた記録は決定から1年残します',
+            '停止が続いている間は残し、問題なし・解除と決めたものは決定から1年で消します',
             'この相手をブロック',
             '運営者だけが開ける鍵で暗号化して送ります',
             '48時間以内',
@@ -262,7 +267,9 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertNotIn("7日の期限を超えて保持しません", community)
         for phrase in (
             'support@nekonomado.com',
-            '届いてから最長90日・500枚まで',
+            '1つのまどにつき新しいものから500枚まで',
+            '「わたしの Plus で再開する」を押すか、だれかがPlusを始めると戻ります',
+            '確かめられると自動で戻ります',
             '通報とブロックができます',
             'ブロックすると、その相手からの写真は届かなくなります',
             '通報すると受付番号が出る',
