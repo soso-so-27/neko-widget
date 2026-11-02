@@ -34,7 +34,9 @@ jobs:
     # Same-repository push already validates the PR head; forks use PR CI.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15
-    timeout-minutes: 20
+    # A successful cold run reached 19m49s before artifact upload/cleanup.
+    # Keep the 90s launch bound; this budget covers the complete job.
+    timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
