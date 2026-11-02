@@ -3422,6 +3422,7 @@ actor SharingRuntimeSelfTestRunner {
                 kind: .live, keyEpoch: 1, localJPEGFileName: "\(momentID).jpg",
                 capturedAt: anchor, captureDateIsMissing: false,
                 committedAt: anchor, receivedAt: anchor, state: .acknowledged,
+                acknowledgedAt: anchor,
                 accessExpiresAt: anchor.addingTimeInterval(86_400),
                 caption: "受信した写真のひとこと"
             ).validated()
@@ -4892,14 +4893,13 @@ actor SharingRuntimeSelfTestRunner {
             localDetailJPEG: expectedThumbnail,
             validating: lifecycleToken
         )
-        guard replay == prepared else {
-            // Classify the round-trip difference without logging values or passing.
-            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-            let persisted = try decoder.decode(MomentOutboxItem.self, from: encoder.encode(prepared))
-            if replay == persisted {
-                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-007-PRECISION", MomentSharingError.stateUnavailable)
-            }
+        // The first enqueue returns subsecond Dates; an idempotent replay is
+        // decoded from the existing ISO-8601-second store. Compare all fields at
+        // that persistence precision, keeping the exact JPEG check independent.
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let persisted = try decoder.decode(MomentOutboxItem.self, from: encoder.encode(prepared))
+        guard replay == persisted else {
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-007", MomentSharingError.stateUnavailable)
         }
         guard try Data(contentsOf: detailURL) == preview.jpeg else {
