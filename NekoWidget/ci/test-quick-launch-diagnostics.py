@@ -1,0 +1,161 @@
+import json
+from pathlib import Path
+import plistlib
+import shutil
+import stat
+import subprocess
+import tarfile
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import quick_launch_diagnostics as diagnostic
+import production_candidate as candidate
+
+ROOT = Path(__file__).resolve().parents[1]
+DEVICE = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+
+
+class QuickLaunchDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def app(self):
+        # Existing synthetic product fixture, never an installed data container.
+        fixture = candidate.module("test-production-candidate").ProductionCandidateTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        for relative, _, _ in candidate.TARGETS.values():
+            path = fixture.app / relative / "Info.plist"
+            info = plistlib.loads(path.read_bytes())
+            info["CFBundleSupportedPlatforms"] = ["iPhoneSimulator"]
+            path.write_bytes(plistlib.dumps(info))
+        executable = fixture.app / "NekoWidget"
+        executable.write_bytes(b"synthetic-mach-o-bytes\x00\x01\x02")
+        executable.chmod(0o755)
+        return fixture.app
+
+    def test_archive_preserves_executable_bytes_modes_and_all_products(self):
+        app = self.app()
+        output = self.root / "app.tar.gz"
+        diagnostic.archive_candidate(app, candidate.fixture(), output)
+        with tarfile.open(output) as archive:
+            name = "NekoWidget.app/NekoWidget"
+            self.assertEqual(archive.extractfile(name).read(), (app / "NekoWidget").read_bytes())
+            self.assertEqual(archive.getmember(name).mode, stat.S_IMODE((app / "NekoWidget").stat().st_mode))
+            for relative, _, _ in candidate.TARGETS.values():
+                name = "NekoWidget.app/" + ((relative + "/") if relative else "") + "Info.plist"
+                self.assertEqual(archive.extractfile(name).read(), (app / relative / "Info.plist").read_bytes())
+
+    def test_non_synthetic_and_device_products_cannot_be_retained(self):
+        app = self.app()
+        contract = candidate.fixture(); contract["synthetic"] = False
+        with self.assertRaises(ValueError): diagnostic.archive_candidate(app, contract, self.root / "bad.tar.gz")
+        info = plistlib.loads((app / "Info.plist").read_bytes())
+        info["CFBundleSupportedPlatforms"] = ["iPhoneOS"]
+        (app / "Info.plist").write_bytes(plistlib.dumps(info))
+        with self.assertRaises(ValueError): diagnostic.archive_candidate(app, candidate.fixture(), self.root / "bad.tar.gz")
+
+    def test_private_keys_receipts_and_runtime_containers_are_rejected(self):
+        app = self.app()
+        for name in ("AuthKey.p8", "private.pem", "embedded.mobileprovision", "_MASReceipt/receipt", "Documents/photo.heic", "Library/Keychains/keychain.db"):
+            path = app / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text("private-sentinel")
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                diagnostic.archive_candidate(app, candidate.fixture(), self.root / "bad.tar.gz")
+            path.unlink()
+            while path.parent != app:
+                path = path.parent; path.rmdir()
+        self.assertFalse((self.root / "bad.tar.gz").exists())
+
+    def test_simctl_snapshot_excludes_names_paths_and_other_devices(self):
+        raw = {"devices": {RUNTIME: [
+            {"udid": DEVICE, "name": "private-person-name", "state": "Booted", "isAvailable": True,
+             "dataPath": "/private/photos", "logPath": "/private/receipt"},
+            {"udid": "other-user-device", "name": "private-name", "state": "Booted"}]}}
+        with patch.object(diagnostic, "command", return_value=(json.dumps(raw), "ok")):
+            diagnostic.snapshot(self.root, DEVICE, "before-launch")
+        text = (self.root / "simctl-list-before-launch.json").read_text()
+        self.assertNotIn("private", text); self.assertNotIn("other-user", text)
+        self.assertEqual(json.loads(text)["devices"], [{"udid": DEVICE, "runtime": RUNTIME, "state": "Booted", "available": True}])
+
+    def test_springboard_log_is_classified_without_free_text_or_credentials(self):
+        message = 'jp.nekowidget.app launch failed FBSOpenApplicationServiceErrorDomain Code=1 /private/photo.heic https://secret.test/key?token=SECRET receipt=SECRET'
+        events = diagnostic.springboard_events([
+            {"processImagePath": "/System/Library/SpringBoard", "eventMessage": message,
+             "timestamp": "2026-11-02 01:00:00.000+0900", "messageType": "Error", "category": "SECRET"},
+            {"processImagePath": "/app/NekoWidget", "eventMessage": message},
+            {"processImagePath": "/System/SpringBoard", "eventMessage": "another.app SECRET"}])
+        self.assertEqual(len(events), 1)
+        text = json.dumps(events)
+        for value in ("SECRET", "/private", "https://", "receipt", "eventMessage"):
+            self.assertNotIn(value, text)
+        self.assertEqual(events[0]["errorCodes"], ["1"])
+        self.assertEqual(events[0]["errorDomains"], ["FBSOpenApplicationServiceErrorDomain"])
+
+    def test_minimal_collection_tolerates_hung_simulator_without_raw_logs(self):
+        app = self.app(); output = self.root / "failure"; snapshots = self.root / "snapshots"
+        with patch.object(diagnostic, "command", return_value=(None, "diagnostic-timeout")):
+            diagnostic.snapshot(snapshots, DEVICE, "before-launch")
+            diagnostic.snapshot(snapshots, DEVICE, "after-launch")
+            diagnostic.collect(output, snapshots, DEVICE, app, candidate.fixture(), 124)
+        self.assertEqual({p.name for p in output.iterdir()}, {"README.txt", "synthetic-simulator-app.tar.gz", "simctl-list-before-launch.json", "simctl-list-after-launch.json"})
+        self.assertIn("exit status: 124", (output / "README.txt").read_text())
+        self.assertIn("diagnostic-timeout", (output / "README.txt").read_text())
+        with self.assertRaises(ValueError): diagnostic.collect(self.root / "success", snapshots, DEVICE, app, candidate.fixture(), 0)
+
+    def test_only_known_simulator_process_names_and_numeric_states_are_retained(self):
+        rows = diagnostic.process_states(" 123 Ss /System/Library/SpringBoard\n 456 S /Users/private/Keychain\n789 S /path/com.apple.CoreSimulator.CoreSimulatorService\n")
+        self.assertEqual([r["process"] for r in rows], ["SpringBoard", "com.apple.CoreSimulator.CoreSimulatorService"])
+        self.assertNotIn("/", json.dumps(rows))
+
+    def test_real_shell_failure_path_preserves_status_retry_limit_and_cleanup_order(self):
+        script = (ROOT / "ci/run-quick-ios-checks.sh").read_text(encoding="utf-8")
+        setup = script.split("quick_launch_active=false", 1)[1].split('bounded 60 xcrun simctl boot "$device"', 1)[0]
+        setup = "quick_launch_active=false" + setup
+        launch = script.split("reboot_simulator() {", 1)[1].split('mkdir -p "$RUNNER_TEMP/ci-screenshots"', 1)[0]
+        launch = "reboot_simulator() {" + launch
+        bash = shutil.which("bash") if not Path("C:/Program Files/Git/bin/bash.exe").exists() else "C:/Program Files/Git/bin/bash.exe"
+        self.assertIsNotNone(bash)
+        for scenario, expected_status, expected_launches in (("error", 37, 1), ("timeout", 124, 2), ("recovered", 0, 2), ("alive-failed", 1, 1)):
+            with self.subTest(scenario=scenario):
+                directory = self.root / scenario; directory.mkdir()
+                preamble = r'''set -euo pipefail
+device=AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE
+bundle=jp.nekowidget.app
+app=NekoWidget.app
+RUNNER_TEMP="$PWD"
+python3() { echo "diagnostic $*" >> trace; if [[ "$*" == *" collect "* ]]; then return 42; fi; }
+sleep() { :; }
+xcrun() { echo "xcrun $*" >> trace; if [[ "$*" == *"launchctl list"* && "$scenario" != alive-failed ]]; then echo "1234 0 jp.nekowidget.app"; fi; }
+bounded() {
+  echo "bounded $*" >> trace
+  if [[ "$*" == *"simctl launch"* ]]; then
+    count=0; if [[ -f count ]]; then read -r count < count; fi
+    count=$((count+1)); echo "$count" > count
+    if [[ "$scenario" == error ]]; then return 37; fi
+    if [[ "$scenario" == timeout || ( "$scenario" == recovered && "$count" == 1 ) ]]; then return 124; fi
+    echo "jp.nekowidget.app: 1234"
+  elif [[ "$*" == *" collect "* ]]; then
+    python3 "$@"
+  fi
+}
+'''
+                path = directory / "case.sh"
+                path.write_text(preamble + f"\nscenario={scenario}\n" + setup + "\nquick_launch_active=true\n" + launch, encoding="utf-8", newline="\n")
+                result = subprocess.run([bash, "case.sh"], cwd=directory, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, expected_status, result.stderr)
+                trace = (directory / "trace").read_text()
+                self.assertEqual(trace.count("bounded 90 xcrun simctl launch"), expected_launches)
+                self.assertIn("xcrun simctl delete", trace)
+                if expected_status:
+                    self.assertIn(f"--exit-status {expected_status}", trace)
+                    self.assertLess(trace.index(" collect "), trace.index("xcrun simctl delete"))
+                else:
+                    self.assertNotIn(" collect ", trace)
+
+
+if __name__ == "__main__":
+    unittest.main()
