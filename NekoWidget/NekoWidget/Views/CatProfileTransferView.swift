@@ -143,7 +143,7 @@ struct CatProfileTransferView: View {
         .alert("プロフィールの引き継ぎ", isPresented: Binding(
             get: { notice != nil }, set: { if !$0 { notice = nil } }
         )) {
-            Button("OK", role: .cancel) { notice = nil }
+            Button("閉じる", role: .cancel) { notice = nil }
         } message: { Text(notice ?? "") }
     }
 

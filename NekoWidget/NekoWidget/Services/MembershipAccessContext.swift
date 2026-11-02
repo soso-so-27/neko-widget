@@ -132,9 +132,9 @@ struct MembershipAccessNotice: View {
             Text(title).font(.headline)
             switch decision {
             case .verificationRequired:
-                Text("写真やメモはそのままです。インターネットにつながってから、「購入を確認する」を押してください。")
+                Text("写真やメモはそのままです。インターネットにつながってから、「購入を復元」を押してください。")
                     .font(.subheadline).foregroundStyle(.secondary)
-                Button("購入を確認する") { showsRestore = true }
+                Button("購入を復元") { showsRestore = true }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("membership-access-restore")
             case .windowSupportRequired:
