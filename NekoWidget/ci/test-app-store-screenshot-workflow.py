@@ -85,7 +85,11 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
                           "-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration",
                           "-exportArchive", "-retry-tests-on-failure"):
             self.assertNotIn(forbidden, lane)
-        self.assertIn("-test-iterations 1", lane)
+        self.assertNotIn("-test-iterations", lane)
+        self.assertNotIn("-run-tests-until-failure", lane)
+        self.assertIn("-enableCodeCoverage NO", lane)
+        self.assertIn("SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile", lane)
+        self.assertIn("timeout-minutes: 25", lane)
         self.assertIn("if cases != [(expected, 'started'), (expected, 'passed')]", lane)
 
     def test_public_ipad_walkthrough_uses_normal_entries_without_purchase(self) -> None:

@@ -381,17 +381,19 @@ jobs:
               raise SystemExit('iPad is not an available destination; do not change device family or build.')
           PY
       - name: Build the public Release boundary once
+        timeout-minutes: 25
         working-directory: NekoWidget
         shell: bash
         run: |
           set -euo pipefail
           python3 ci/production_candidate.py fixture --synthetic --contract "$RUNNER_TEMP/ipad-contract.json"
           python3 ci/production_candidate.py build --synthetic --contract "$RUNNER_TEMP/ipad-contract.json" -- \
-            build-for-testing -sdk iphonesimulator \
+            build-for-testing -sdk iphonesimulator -enableCodeCoverage NO \
             -destination "platform=iOS Simulator,id=$IPAD_DEVICE" \
             -derivedDataPath "$RUNNER_TEMP/PublicIPadBuild" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            ONLY_ACTIVE_ARCH=YES 2>&1 | tee "$RUNNER_TEMP/ipad-public-build.log"
+            ONLY_ACTIVE_ARCH=YES SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
+            2>&1 | tee "$RUNNER_TEMP/ipad-public-build.log"
           app="$RUNNER_TEMP/PublicIPadBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
           python3 ci/production_candidate.py products --synthetic \
             --contract "$RUNNER_TEMP/ipad-contract.json" --path "$app"
@@ -410,6 +412,7 @@ jobs:
             ci/fixtures/cats/cat-gray-portrait.png
           xcrun simctl privacy "$IPAD_DEVICE" grant photos jp.nekowidget.app
       - name: Walk through the five public screens once
+        timeout-minutes: 7
         working-directory: NekoWidget
         shell: bash
         run: |
@@ -420,7 +423,7 @@ jobs:
             -destination "platform=iOS Simulator,id=$IPAD_DEVICE" \
             -resultBundlePath "$RUNNER_TEMP/PublicIPad.xcresult" \
             -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testReviewPublicIPadCompatibility \
-            -parallel-testing-enabled NO -test-iterations 1 -testLanguage ja -testRegion JP \
+            -parallel-testing-enabled NO -testLanguage ja -testRegion JP \
             2>&1 | tee "$RUNNER_TEMP/ipad-public-test.log"
           python3 - <<'PY'
           import os, re
