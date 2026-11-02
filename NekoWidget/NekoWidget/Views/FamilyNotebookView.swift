@@ -727,10 +727,10 @@ struct FamilyNotebookView: View {
                 MembershipOfferSheet(model: .live(), context: .continueFamily) { _ in showsPlusOffer = false }
             }
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(model.message ?? "") }
             .alert("家族の手帳", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
         }
         .task(id: scenePhase) {
@@ -1365,7 +1365,7 @@ struct FamilyNotebookJoinView: View {
             .navigationTitle("招待")
             .navigationBarTitleDisplayMode(.inline)
             .alert("招待", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
         }
         .task {
@@ -1433,7 +1433,7 @@ struct FamilyNotebookCatSelectionView: View {
             }
             .navigationTitle("一緒に書く猫を選ぶ")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) } }
-            .alert("共有できませんでした", isPresented: $failed) { Button("OK", role: .cancel) {} }
+            .alert("共有できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
                 message: { Text("少し待ってから、もう一度お試しください。") }
         }
     }

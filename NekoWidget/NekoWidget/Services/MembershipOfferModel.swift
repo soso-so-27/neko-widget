@@ -34,7 +34,7 @@ enum PlusOfferContext: Equatable, Sendable {
         case .onboarding: "Plusについて見る"
         case .widgetResume: "ウィジェットの写真を、毎日新しくする"
         case let .monthlySummary(month?) where (1...12).contains(month): "\(month)月の作品を見る"
-        case .monthlySummary: "月の作品・ムービーを見る"
+        case .monthlySummary: "作品とムービーを見る"
         case .newMemo: "メモを書く"
         case .createWindow: "まどを作る"
         case .continueWindow: "このまどを続ける"

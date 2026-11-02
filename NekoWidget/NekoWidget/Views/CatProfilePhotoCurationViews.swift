@@ -798,7 +798,7 @@ struct UnassignedCatPhotosView: View {
     let photos: [CatProfilePhotoPresentation]
     let profiles: [CatProfilePresentation]
     let actions: CatProfilesViewActions
-    var navigationTitle = "どの猫か決めていない写真"
+    var navigationTitle = "未分類の写真"
     /// A picker opened from one cat's page starts with that cat selected while
     /// preserving any other explicit profile assignments on the same photo.
     var preselectedProfileIdentifier: String? = nil
