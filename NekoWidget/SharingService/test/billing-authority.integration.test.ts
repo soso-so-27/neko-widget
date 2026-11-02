@@ -17,7 +17,7 @@ import { ApiError } from "../src/errors";
 import type { Env } from "../src/env";
 import { route } from "../src/index";
 
-const testEnv = env as unknown as Env;
+const testEnv = { ...env, BILLING_STORE_ENVIRONMENT: "Sandbox" } as unknown as Env;
 const nowMs = Date.now();
 
 interface GateRow {
@@ -647,7 +647,7 @@ describe.sequential("App Store billing authority", () => {
 
     if (legacyJob) {
       await testEnv.DB.prepare(
-        "INSERT INTO billing_reconciliation_jobs(original_transaction_id, requested_at, not_before, request_generation) VALUES (?, unixepoch(), unixepoch(), 6)",
+        "INSERT INTO billing_reconciliation_jobs(environment, original_transaction_id, requested_at, not_before, request_generation) VALUES ('Sandbox', ?, unixepoch(), unixepoch(), 6)",
       ).bind(value.originalTransactionId).run();
     }
     await requestBillingReconciliation(testEnv, value.originalTransactionId);
@@ -744,6 +744,71 @@ describe.sequential("App Store billing authority", () => {
     await reconcileBillingTransactionNow(immediateEnv, value.billingAccountId,
       value.originalTransactionId, async () => status(value), job!.not_before);
     expect(await effectiveBillingEntitlement(testEnv, value.billingAccountId)).toMatchObject({status: "active", grantsPlus: true});
+  });
+
+  it("isolates equal Apple identifiers, notifications, generations and revocation between environments", async () => {
+    await setAuthorityGates(true, true);
+    const account = crypto.randomUUID().toLowerCase();
+    await registerAccount(account);
+    const id = String(++immediateTransactionSequence);
+    const uuid = crypto.randomUUID().toLowerCase();
+    const production = transaction(account, {originalTransactionId:id, transactionId:id, environment:"Production"});
+    const sandbox = {...production, environment:"Sandbox" as const};
+    const values = {Production:production, Sandbox:sandbox};
+    for (const environment of ["Production", "Sandbox"] as const) {
+      await ingestAppleBillingNotification(notificationRequest(`header.same${environment}.signature`), testEnv,
+        async()=>notification(uuid, values[environment], {environment}));
+    }
+    expect(await testEnv.DB.prepare("SELECT environment,request_generation FROM billing_reconciliation_jobs WHERE original_transaction_id=? ORDER BY environment").bind(id).all())
+      .toMatchObject({results:[{environment:"Production",request_generation:1},{environment:"Sandbox",request_generation:1}]});
+    const calls: string[] = [];
+    const fetch = async (_id:string, _env:Env, environment?:"Production"|"Sandbox") => {
+      expect(_id).toBe(id);expect(environment).toBeDefined();calls.push(environment!);
+      return status(values[environment!]);
+    };
+    await reconcileBillingTransactionNow(immediateEnv, account, id, fetch, undefined, "Production");
+    const paidBefore = await testEnv.DB.prepare("SELECT * FROM billing_effective_entitlement_current WHERE environment='Production' AND original_transaction_id=?").bind(id).first();
+    await reconcileBillingTransactionNow(immediateEnv, account, id, fetch, undefined, "Sandbox");
+    const revoked = {...sandbox, signedDateMs:nowMs+1, revocationDateMs:nowMs+1};
+    await requestBillingReconciliation(testEnv,id,undefined,"Sandbox");
+    await reconcileBillingTransactionNow(immediateEnv,account,id,async(_id,_env,environment)=>{
+      expect(environment).toBe("Sandbox");return status(revoked,5);
+    },undefined,"Sandbox");
+    expect(await effectiveBillingEntitlement(testEnv,account)).toMatchObject({status:"active",grantsPlus:true});
+    expect(await testEnv.DB.prepare("SELECT * FROM billing_effective_entitlement_current WHERE environment='Production' AND original_transaction_id=?").bind(id).first()).toEqual(paidBefore);
+    expect(await testEnv.DB.prepare("SELECT materialized_status,request_generation FROM billing_effective_entitlement_current WHERE environment='Sandbox' AND original_transaction_id=?").bind(id).first())
+      .toEqual({materialized_status:"revoked",request_generation:2});
+    expect(calls).toEqual(["Production","Sandbox"]);
+    // A deleted terminal job must restart above its own current decision, independent of the other partition.
+    await requestBillingReconciliation(testEnv,id,undefined,"Sandbox");
+    expect(await testEnv.DB.prepare("SELECT environment,request_generation FROM billing_reconciliation_jobs WHERE original_transaction_id=? ORDER BY environment").bind(id).all())
+      .toMatchObject({results:[{environment:"Production",request_generation:1},{environment:"Sandbox",request_generation:3}]});
+    for(const environment of ["Production","Sandbox"] as const){
+      await ingestAppleBillingNotification(notificationRequest(`header.same${environment}.signature`),testEnv,
+        async()=>notification(uuid,values[environment],{environment}));
+    }
+    expect(await testEnv.DB.prepare("SELECT count(*) count FROM billing_apple_notification_reconciliation_causes WHERE notification_uuid=?").bind(uuid).first()).toEqual({count:2});
+    expect(await testEnv.DB.prepare("SELECT count(*) count FROM billing_transaction_events WHERE transaction_id=?").bind(id).first()).toEqual({count:2});
+  });
+
+  it("cannot fence a Production decision with the Sandbox job or consume its lease", async()=>{
+    await setAuthorityGates(true,true);
+    const account=crypto.randomUUID().toLowerCase();await registerAccount(account);
+    const id=String(++immediateTransactionSequence);
+    for(const environment of ["Production","Sandbox"] as const){
+      const value=transaction(account,{originalTransactionId:id,transactionId:id,environment});
+      await ingestAppleBillingNotification(notificationRequest(`header.fence${environment}.signature`),testEnv,
+        async()=>notification(crypto.randomUUID().toLowerCase(),value,{environment}));
+    }
+    await reconcileBillingTransactionNow(immediateEnv,account,id,async()=>{
+      // A verified response for the wrong store cannot authorize the requested store, even with equal IDs.
+      return status(transaction(account,{originalTransactionId:id,transactionId:id,environment:"Sandbox"}));
+    },undefined,"Production");
+    expect(await testEnv.DB.prepare("SELECT count(*) count FROM billing_effective_entitlement_current WHERE original_transaction_id=?").bind(id).first()).toEqual({count:0});
+    expect(await testEnv.DB.prepare("SELECT environment,attempts,last_error_code FROM billing_reconciliation_jobs WHERE original_transaction_id=? ORDER BY environment").bind(id).all()).toMatchObject({results:[
+      {environment:"Production",attempts:1,last_error_code:"billing_authority_lineage_mismatch"},
+      {environment:"Sandbox",attempts:0,last_error_code:null},
+    ]});
   });
 
 });

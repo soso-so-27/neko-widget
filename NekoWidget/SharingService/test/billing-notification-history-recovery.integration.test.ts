@@ -18,7 +18,7 @@ import {
 } from "../src/billing-verifier-client";
 import type { Env } from "../src/env";
 
-const testEnv = env as unknown as Env;
+const testEnv = { ...env, BILLING_STORE_ENVIRONMENT: "Sandbox" } as unknown as Env;
 const verifierSecret = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 const nextCursor = `nh1.integration.${"A".repeat(43)}`;
 

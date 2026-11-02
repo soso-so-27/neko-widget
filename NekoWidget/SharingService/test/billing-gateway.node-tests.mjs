@@ -256,7 +256,7 @@ test('retention observer preserves generations, leases, backoff and closed purch
   const request = () => new Request('https://private/internal/retention/refresh', { method: 'POST', body: JSON.stringify({ billingAccountId: account }) });
   const call = (overrides = {}, req = request()) => RetentionBillingObserver.prototype.fetch.call({ env: { ...env, ...overrides } }, req);
   try {
-    sqlite.prepare('INSERT INTO billing_reconciliation_jobs(original_transaction_id,requested_at,not_before,request_generation) VALUES(?,0,0,7)').run(lineage);
+    sqlite.prepare("INSERT INTO billing_reconciliation_jobs(environment,original_transaction_id,requested_at,not_before,request_generation) VALUES('Sandbox',?,0,0,7)").run(lineage);
     await refreshRetentionBilling(env, account, fetcher);
     assert.equal(calls, 1);
     assert.equal(sqlite.prepare('SELECT request_generation FROM billing_effective_entitlement_current').get().request_generation, 7);

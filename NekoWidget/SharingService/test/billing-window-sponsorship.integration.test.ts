@@ -13,7 +13,7 @@ import {
   windowSponsorshipConsentTranscript,
 } from "../src/billing-protocol";
 
-const testEnv = env as unknown as Env;
+const testEnv = { ...env, BILLING_STORE_ENVIRONMENT: "Sandbox" } as unknown as Env;
 function random(bytes: number) {
   const value = new Uint8Array(bytes);
   crypto.getRandomValues(value);

@@ -100,7 +100,7 @@ const recoverySelect = `
          claimed_gate_generation,
          last_error_code, started_at, completed_at, updated_at
     FROM billing_apple_notification_history_recovery
-   WHERE singleton = 1`;
+   WHERE environment = ?`;
 
 const opaqueCursorPattern = /^[\x21-\x7e]{1,4096}$/u;
 const bundleIdPattern = /^(?=.{3,255}$)(?=.*\.)[A-Za-z0-9.-]+$/u;
@@ -156,9 +156,10 @@ function mapRecoveryRow(row: RecoveryRow): AppleNotificationHistoryRecoveryState
 }
 
 export async function getAppleNotificationHistoryRecoveryState(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "BILLING_STORE_ENVIRONMENT">,
+  storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): Promise<AppleNotificationHistoryRecoveryState> {
-  const row = await env.DB.prepare(recoverySelect).first<RecoveryRow>();
+  const row = await env.DB.prepare(recoverySelect).bind(storeEnvironment).first<RecoveryRow>();
   if (row === null) throw new Error("missing Apple notification history recovery state");
   return mapRecoveryRow(row);
 }
@@ -198,7 +199,7 @@ export async function beginAppleNotificationHistoryRecovery(
             claimed_gate_generation = NULL,
             last_error_code = NULL, started_at = ?, completed_at = NULL,
             updated_at = unixepoch()
-      WHERE singleton = 1 AND generation = ?
+      WHERE environment = ? AND generation = ?
         AND state IN ('idle', 'completed', 'blocked')`,
   ).bind(
     input.storeEnvironment,
@@ -207,14 +208,16 @@ export async function beginAppleNotificationHistoryRecovery(
     input.frozenEndDateMs,
     now,
     now,
+    input.storeEnvironment,
     input.expectedGeneration,
   ).run();
   return result.meta.changes === 1;
 }
 
 export async function releaseExpiredAppleNotificationHistoryLease(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "BILLING_STORE_ENVIRONMENT">,
   now = Math.floor(Date.now() / 1_000),
+  storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): Promise<boolean> {
   safePositiveInteger(now, "now");
   const released = await env.DB.prepare(
@@ -223,26 +226,27 @@ export async function releaseExpiredAppleNotificationHistoryLease(
             lease_token = NULL, lease_expires_at = NULL,
             claimed_gate_generation = NULL,
             last_error_code = NULL, updated_at = unixepoch()
-      WHERE singleton = 1 AND state = 'leased'
+      WHERE environment = ? AND state = 'leased'
         AND (lease_expires_at <= ? OR lease_expires_at <= unixepoch())`,
-  ).bind(now, now).run();
+  ).bind(now, storeEnvironment, now).run();
   return released.meta.changes === 1;
 }
 
 export async function claimAppleNotificationHistoryRecovery(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "BILLING_STORE_ENVIRONMENT">,
   now = Math.floor(Date.now() / 1_000),
+  storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): Promise<AppleNotificationHistoryRecoveryClaim | null> {
   safePositiveInteger(now, "now");
   // A Worker can disappear after claiming and before releasing. Reopen only an
   // expired lease; the old token is cleared before a new claim is selected, so
   // any late response remains fenced from page/event/cursor commit.
-  await releaseExpiredAppleNotificationHistoryLease(env, now);
+  await releaseExpiredAppleNotificationHistoryLease(env, now, storeEnvironment);
   const candidate = await env.DB.prepare(
     `${recoverySelect}
        AND state IN ('ready', 'retry_wait')
        AND not_before <= ?`,
-  ).bind(now).first<RecoveryRow>();
+  ).bind(storeEnvironment, now).first<RecoveryRow>();
   if (
     candidate === null
     || candidate.store_environment === null
@@ -266,7 +270,7 @@ export async function claimAppleNotificationHistoryRecovery(
         SET state = 'leased', lease_token = ?, lease_expires_at = ?,
             claimed_gate_generation = ?,
             last_error_code = NULL, updated_at = unixepoch()
-      WHERE singleton = 1 AND generation = ?
+      WHERE environment = ? AND generation = ?
         AND state IN ('ready', 'retry_wait') AND not_before <= ?
         AND EXISTS (
           SELECT 1 FROM billing_runtime_gate AS gate
@@ -278,6 +282,7 @@ export async function claimAppleNotificationHistoryRecovery(
     leaseToken,
     leaseExpiresAt,
     gate.generation,
+    storeEnvironment,
     candidate.generation,
     now,
     gate.generation,
@@ -345,10 +350,11 @@ export async function commitAppleNotificationHistoryPage(
   const nextState = input.hasMore ? "ready" : "completed";
   const pageGuard = env.DB.prepare(
     `INSERT INTO billing_apple_notification_history_page_commits(
-       generation, page_index, gate_generation, lease_token, input_cursor_hash,
+       environment, generation, page_index, gate_generation, lease_token, input_cursor_hash,
        next_cursor_hash, has_more, record_count
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
+    claim.storeEnvironment,
     claim.generation,
     claim.nextPageIndex,
     claim.gateGeneration,
@@ -360,9 +366,10 @@ export async function commitAppleNotificationHistoryPage(
   );
   const recordReceipts = input.records.map((record, recordIndex) => env.DB.prepare(
     `INSERT INTO billing_apple_notification_history_page_records(
-       generation, page_index, record_index, notification_uuid, payload_hash
-     ) VALUES (?, ?, ?, ?, ?)`,
+       environment, generation, page_index, record_index, notification_uuid, payload_hash
+     ) VALUES (?, ?, ?, ?, ?, ?)`,
   ).bind(
+    claim.storeEnvironment,
     claim.generation,
     claim.nextPageIndex,
     recordIndex,
@@ -378,7 +385,7 @@ export async function commitAppleNotificationHistoryPage(
             lease_expires_at = NULL, claimed_gate_generation = NULL,
             last_error_code = NULL,
             completed_at = ?, updated_at = unixepoch()
-      WHERE singleton = 1 AND state = 'leased' AND generation = ?
+      WHERE environment = ? AND state = 'leased' AND generation = ?
         AND lease_token = ? AND claimed_gate_generation = ?
         AND lease_expires_at > ? AND lease_expires_at > unixepoch()
         AND EXISTS (
@@ -393,6 +400,7 @@ export async function commitAppleNotificationHistoryPage(
     input.records.length,
     completedAt,
     input.hasMore ? null : completedAt,
+    claim.storeEnvironment,
     claim.generation,
     claim.leaseToken,
     claim.gateGeneration,
@@ -401,9 +409,9 @@ export async function commitAppleNotificationHistoryPage(
   );
   const finalization = env.DB.prepare(
     `INSERT INTO billing_apple_notification_history_page_finalizations(
-       generation, page_index
-     ) VALUES (?, ?)`,
-  ).bind(claim.generation, claim.nextPageIndex);
+       environment, generation, page_index
+     ) VALUES (?, ?, ?)`,
+  ).bind(claim.storeEnvironment, claim.generation, claim.nextPageIndex);
   const results = await env.DB.batch([
     pageGuard,
     ...recordReceipts,
@@ -437,13 +445,14 @@ export async function retryAppleNotificationHistoryRecovery(
             lease_token = NULL, lease_expires_at = NULL,
             claimed_gate_generation = NULL,
             last_error_code = ?, updated_at = unixepoch()
-      WHERE singleton = 1 AND state = 'leased' AND generation = ?
+      WHERE environment = ? AND state = 'leased' AND generation = ?
         AND lease_token = ? AND lease_expires_at > ?
         AND lease_expires_at > unixepoch()`,
   ).bind(
     attempts,
     retryAt,
     errorCode,
+    claim.storeEnvironment,
     claim.generation,
     claim.leaseToken,
     failedAt,
@@ -458,10 +467,10 @@ export async function retryAppleNotificationHistoryRecovery(
             lease_token = NULL, lease_expires_at = NULL,
             claimed_gate_generation = NULL,
             last_error_code = NULL, updated_at = unixepoch()
-      WHERE singleton = 1 AND state = 'leased' AND generation = ?
+      WHERE environment = ? AND state = 'leased' AND generation = ?
         AND lease_token = ?
         AND (lease_expires_at <= ? OR lease_expires_at <= unixepoch())`,
-  ).bind(failedAt, claim.generation, claim.leaseToken, failedAt).run();
+  ).bind(failedAt, claim.storeEnvironment, claim.generation, claim.leaseToken, failedAt).run();
   return false;
 }
 
@@ -479,10 +488,10 @@ export async function blockAppleNotificationHistoryRecovery(
             lease_token = NULL, lease_expires_at = NULL,
             claimed_gate_generation = NULL,
             last_error_code = ?, updated_at = unixepoch()
-      WHERE singleton = 1 AND state = 'leased' AND generation = ?
+      WHERE environment = ? AND state = 'leased' AND generation = ?
         AND lease_token = ? AND lease_expires_at > ?
         AND lease_expires_at > unixepoch()`,
-  ).bind(errorCode, claim.generation, claim.leaseToken, blockedAt).run();
+  ).bind(errorCode, claim.storeEnvironment, claim.generation, claim.leaseToken, blockedAt).run();
   return result.meta.changes === 1;
 }
 
@@ -503,12 +512,13 @@ export async function resetAppleNotificationHistoryCursor(
             claimed_gate_generation = NULL,
             last_error_code = NULL, completed_at = NULL,
             updated_at = unixepoch()
-      WHERE singleton = 1 AND state = 'leased' AND generation = ?
+      WHERE environment = ? AND state = 'leased' AND generation = ?
         AND lease_token = ? AND lease_expires_at > ?
         AND lease_expires_at > unixepoch()
         AND cursor_reset_count < ?`,
   ).bind(
     resetAt,
+    claim.storeEnvironment,
     claim.generation,
     claim.leaseToken,
     resetAt,
@@ -523,11 +533,12 @@ export async function resetAppleNotificationHistoryCursor(
             claimed_gate_generation = NULL,
             last_error_code = 'apple_notification_history_cursor_reset_exhausted',
             updated_at = unixepoch()
-      WHERE singleton = 1 AND state = 'leased' AND generation = ?
+      WHERE environment = ? AND state = 'leased' AND generation = ?
         AND lease_token = ? AND lease_expires_at > ?
         AND lease_expires_at > unixepoch()
         AND cursor_reset_count >= ?`,
   ).bind(
+    claim.storeEnvironment,
     claim.generation,
     claim.leaseToken,
     resetAt,

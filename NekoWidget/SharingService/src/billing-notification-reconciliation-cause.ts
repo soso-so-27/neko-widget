@@ -10,10 +10,14 @@ const transactionIdPattern = /^\d{1,32}$/u;
  * repeatedly increment the reconciliation generation.
  */
 export function appleNotificationReconciliationCauseStatement(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "BILLING_STORE_ENVIRONMENT">,
   notificationUUID: string,
   originalTransactionId: string,
+  storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): D1PreparedStatement {
+  if (storeEnvironment !== "Sandbox" && storeEnvironment !== "Production") {
+    throw new TypeError("storeEnvironment is invalid");
+  }
   if (!notificationUUIDPattern.test(notificationUUID)) {
     throw new TypeError("notificationUUID is invalid");
   }
@@ -22,20 +26,22 @@ export function appleNotificationReconciliationCauseStatement(
   }
   return env.DB.prepare(
     `INSERT OR IGNORE INTO billing_apple_notification_reconciliation_causes(
-       notification_uuid, original_transaction_id
-     ) VALUES (?, ?)`,
-  ).bind(notificationUUID, originalTransactionId);
+       environment, notification_uuid, original_transaction_id
+     ) VALUES (?, ?, ?)`,
+  ).bind(storeEnvironment, notificationUUID, originalTransactionId);
 }
 
 export async function ensureAppleNotificationReconciliationCause(
-  env: Pick<Env, "DB">,
+  env: Pick<Env, "DB" | "BILLING_STORE_ENVIRONMENT">,
   notificationUUID: string,
   originalTransactionId: string,
+  storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): Promise<boolean> {
   const result = await appleNotificationReconciliationCauseStatement(
     env,
     notificationUUID,
     originalTransactionId,
+    storeEnvironment,
   ).run();
   // D1 may include the AFTER INSERT queue upsert in meta.changes. Zero still
   // unambiguously means the immutable notificationUUID cause already existed.

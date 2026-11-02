@@ -199,11 +199,11 @@ export async function refreshRetentionBilling(env: RetentionBillingEnv, billingA
         // Re-create only absent jobs for expired subscriptions. Existing retry
         // backoff, request generations and in-flight leases must never reset.
         await env.DB.prepare(`INSERT OR IGNORE INTO billing_reconciliation_jobs
-          (original_transaction_id,requested_at,not_before,request_generation)
-          SELECT ?,?,?,COALESCE((SELECT request_generation FROM billing_effective_entitlement_current
-            WHERE original_transaction_id=?),0)+1`)
-          .bind(row.original_transaction_id, seconds, seconds, row.original_transaction_id).run();
-        await reconcileBillingTransactionNow(env, billingAccountId, row.original_transaction_id, fetchStatus);
+          (environment,original_transaction_id,requested_at,not_before,request_generation)
+          SELECT ?,?,?,?,COALESCE((SELECT request_generation FROM billing_effective_entitlement_current
+            WHERE environment=? AND original_transaction_id=?),0)+1`)
+          .bind(row.environment, row.original_transaction_id, seconds, seconds, row.environment, row.original_transaction_id).run();
+        await reconcileBillingTransactionNow(env, billingAccountId, row.original_transaction_id, fetchStatus, undefined, row.environment);
       }
       // The shared reconciler intentionally returns normally on backoff, a held
       // lease, or an outage. Only fresh committed observations establish success.
