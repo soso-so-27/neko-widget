@@ -680,6 +680,7 @@ private struct VeterinaryReadView: View {
     @State private var exportError: String?
     /// Set while the confirmation before handing over is open.
     @State private var pendingExportIsPDF: Bool?
+    @State private var lastExportIsPDF = true
 
     private var catCareFields: [(String, String)] {
         CatCareSummary.veterinaryFields(
@@ -727,12 +728,14 @@ private struct VeterinaryReadView: View {
                 Button(pendingExportIsPDF == true ? "PDFを作って渡す" : "画像を作って渡す") {
                     let pdf = pendingExportIsPDF == true
                     pendingExportIsPDF = nil
+                    lastExportIsPDF = pdf
                     Task { await makeExport(pdf: pdf) }
                 }
             } message: {
                 Text("薬・アレルギー・体重などと選んだ写真が載るので、渡す相手を確かめてください。")
             }
             .alert("作れませんでした", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+                Button("もう一度作る") { Task { await makeExport(pdf: lastExportIsPDF) } }
                 Button("閉じる", role: .cancel) {}
             } message: { Text(exportError ?? "") }
             .sheet(item: $export, onDismiss: {

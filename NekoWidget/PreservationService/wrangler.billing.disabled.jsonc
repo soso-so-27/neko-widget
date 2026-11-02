@@ -10,7 +10,11 @@
   "vars": {
     "PRESERVATION_BILLING_ENABLED": "NO",
     "PRESERVATION_LINK_AUDIENCE": "neko-preservation-disabled-local",
-    "BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED": "NO"
+    "BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED": "NO",
+    // Match the gateway policy when activating; these templates stay disabled.
+    "BILLING_STORE_ENVIRONMENT": "Sandbox",
+    "BILLING_ACCEPT_SANDBOX_IN_PRODUCTION": "NO",
+    "BILLING_SANDBOX_OWNER_ONLY_REQUIRED": "NO"
   },
   // Activation must explicitly bind the existing Sharing billing database.
   // No migrations_dir: this worker never owns or migrates that database.

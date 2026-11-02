@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
 import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { fileURLToPath } from 'node:url';
@@ -347,4 +347,113 @@ test('retention observer preserves generations, leases, backoff and closed purch
     await assert.rejects(refreshRetentionBilling(env, account, fetcher), /temporarily unavailable/);
     assert.equal(calls, 5, 'ninth lineage is refused before contacting Apple');
   } finally { Date.now = originalNow; sqlite.close(); }
+});
+
+
+test('retention observer Production HTTPS transport and cancellation', { timeout: 10000 }, async (t) => {
+  const bundle = await build({
+    entryPoints: [fileURLToPath(new URL('../src/billing-gateway.ts', import.meta.url))],
+    bundle: true, write: false, format: 'esm', platform: 'neutral', target: 'es2022',
+    plugins: [{ name: 'node-entrypoint-adapter', setup(b) {
+      b.onResolve({ filter: /^cloudflare:workers$/ }, () => ({ path: 'workers', namespace: 'test' }));
+      b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export class WorkerEntrypoint {}' }));
+    } }],
+  });
+  const { refreshRetentionBilling, RetentionBillingObserver, BillingGateway, default: publicWorker } = await import(
+    'data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
+  const sqlite = new DatabaseSync(':memory:');
+  for (const name of (await readdir(new URL('../migrations/', import.meta.url))).filter(n => /^\d{4}_[a-z0-9_]+\.sql$/.test(n)).sort()) {
+    sqlite.exec(await readFile(new URL('../migrations/' + name, import.meta.url), 'utf8'));
+  }
+  const statement = (sql, args = []) => ({
+    bind(...values) { return statement(sql, values); },
+    async first() { return sqlite.prepare(sql).get(...args) ?? null; },
+    async all() { return { results: sqlite.prepare(sql).all(...args) }; },
+    async run() { return { meta: { changes: Number(sqlite.prepare(sql).run(...args).changes) } }; },
+  });
+  const DB = { prepare: statement, async batch(statements) {
+    sqlite.exec('BEGIN');
+    try { const results = []; for (const s of statements) results.push(await s.run()); sqlite.exec('COMMIT'); return results; }
+    catch (e) { sqlite.exec('ROLLBACK'); throw e; }
+  } };
+  sqlite.exec('UPDATE billing_runtime_gate SET generation=generation+1,subscription_reconciliation_enabled=1,effective_entitlement_enabled=1,updated_at=unixepoch()');
+
+  const secret = randomBytes(32).toString('base64url'), account = randomUUID(), lineage = '210000000045678';
+  let dbReads = 0, calls = 0;
+  const env = { DB: { ...DB, prepare(sql) { dbReads++; return DB.prepare(sql); } },
+    ENVIRONMENT: 'production', BILLING_STORE_ENVIRONMENT: 'Production', BILLING_SUBSCRIPTION_GROUP_ID: '20999999',
+    BILLING_BUNDLE_ID: 'jp.nekowidget.app', BILLING_MONTHLY_PRODUCT_ID: 'jp.nekowidget.plus.monthly',
+    PRESERVATION_RETENTION_REFRESH_ENABLED: 'YES', BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: 'YES',
+    BILLING_VERIFIER_TRANSPORT: 'https-access', BILLING_VERIFIER_ORIGIN: 'https://verifier.example.test',
+    BILLING_VERIFIER_SHARED_SECRET: secret, BILLING_VERIFIER_ACCESS_CLIENT_ID: 'synthetic-client.access',
+    BILLING_VERIFIER_ACCESS_CLIENT_SECRET: 'synthetic-secret' };
+  sqlite.prepare('INSERT INTO billing_accounts(id) VALUES(?)').run(account);
+  sqlite.prepare('INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id) VALUES(?,?,?,?)').run(lineage,account,'Production','20999999');
+  const request = signal => new Request('https://private/internal/retention/refresh', { method: 'POST', body: JSON.stringify({ billingAccountId: account }), signal });
+  const call = (overrides = {}, req = request()) => RetentionBillingObserver.prototype.fetch.call({ env: { ...env, ...overrides } }, req);
+  const originalFetch = globalThis.fetch;
+  const hmac = text => createHmac('sha256',Buffer.from(secret,'base64url')).update(text).digest('base64url');
+  const digest = text => createHash('sha256').update(text).digest('base64url');
+  globalThis.fetch = async (input, init) => {
+    calls++; const req = new Request(input,init), body = await req.text(), nonce = req.headers.get('Neko-Billing-Nonce');
+    assert.equal(req.url,'https://verifier.example.test/internal/v1/apple-subscriptions/status');
+    assert.equal(req.method,'POST'); assert.equal(req.redirect,'manual');
+    assert.equal(req.headers.get('CF-Access-Client-Id'),env.BILLING_VERIFIER_ACCESS_CLIENT_ID);
+    assert.equal(req.headers.get('CF-Access-Client-Secret'),env.BILLING_VERIFIER_ACCESS_CLIENT_SECRET);
+    assert.equal(req.headers.get('Neko-Billing-Signature'),hmac(['NWB1.VERIFIER.REQUEST',req.headers.get('Neko-Billing-Timestamp'),nonce,digest(body)].join('\n')));
+    assert.deepEqual(JSON.parse(body),{ protocolVersion:1, originalTransactionId:lineage });
+    const now=Date.now(), transaction={ protocolVersion:1,transactionId:lineage,originalTransactionId:lineage,billingAccountId:account,
+      productId:env.BILLING_MONTHLY_PRODUCT_ID,subscriptionGroupId:env.BILLING_SUBSCRIPTION_GROUP_ID,bundleId:env.BILLING_BUNDLE_ID,
+      environment:'Production',ownershipType:'PURCHASED',transactionReason:'PURCHASE',purchaseDateMs:now-10000,
+      originalPurchaseDateMs:now-10000,expiresDateMs:now+3600000,signedDateMs:now,revocationDateMs:null,revocationReason:null,isUpgraded:false };
+    const renewal={ originalTransactionId:lineage,billingAccountId:account,productId:transaction.productId,
+      autoRenewProductId:transaction.productId,autoRenewStatus:1,isInBillingRetryPeriod:false,gracePeriodExpiresDateMs:null,
+      renewalDateMs:transaction.expiresDateMs,signedDateMs:now,environment:'Production' };
+    const response=JSON.stringify({ protocolVersion:1,requestedTransactionId:lineage,environment:'Production',bundleId:env.BILLING_BUNDLE_ID,
+      fetchedAtMs:now,items:[{ status:1,originalTransactionId:lineage,transaction,renewal }] });
+    return new Response(response,{ headers:{ 'neko-billing-response-signature':hmac(['NWB1.VERIFIER.RESPONSE',nonce,'200',digest(response)].join('\n')) } });
+  };
+  try {
+    const first = await call(); assert.equal(first.status,204,JSON.stringify({ error: await first.text(), calls, dbReads, jobs:sqlite.prepare('SELECT * FROM billing_reconciliation_jobs').all() }));
+    assert.equal(calls,1); assert.equal(sqlite.prepare('SELECT materialized_status FROM billing_effective_entitlement_current').get().materialized_status,'active');
+    assert.equal((await call()).status,204); assert.equal(calls,1,'fresh cache');
+    for (const overrides of [{ ENVIRONMENT:'staging' },{ ENVIRONMENT:'unknown' },{ BILLING_STORE_ENVIRONMENT:'Sandbox' },
+      { BILLING_STORE_ENVIRONMENT:'unknown' },{ BILLING_VERIFIER_TRANSPORT:'private-binding' },
+      { BILLING_VERIFIER_SERVICE:{ fetch(){ throw new Error('private bypass'); } } },
+      { BILLING_VERIFIER_ACCESS_CLIENT_ID:undefined },{ BILLING_VERIFIER_ACCESS_CLIENT_SECRET:undefined },
+      { BILLING_VERIFIER_ORIGIN:'http://verifier.example.test' },{ BILLING_VERIFIER_SHARED_SECRET:'invalid' },
+      { BILLING_ACCEPT_SANDBOX_IN_PRODUCTION:'invalid' },{ BILLING_SANDBOX_OWNER_ONLY_REQUIRED:'YES' },
+      { PRESERVATION_RETENTION_REFRESH_ENABLED:'NO' },{ BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED:'NO' }]) {
+      const before=dbReads; assert.equal((await call(overrides)).status,503,JSON.stringify(overrides));
+      assert.equal(dbReads,before,'invalid config precedes DB even with fresh data'); assert.equal(calls,1);
+    }
+    assert.equal((await BillingGateway.prototype.fetch.call({env,ctx:{}},new Request('https://private/v1/billing/transactions',{method:'POST'}))).status,503);
+    assert.equal(publicWorker.fetch().status,404);
+    for (const req of [new Request('https://private/internal/retention/refresh'),new Request('https://private/internal/retention/refresh?x=1',{method:'POST'})]) assert.equal((await call({},req)).status,404);
+    assert.equal((await call({},new Request(request(),{body:'{}'}))).status,400);
+    sqlite.exec('UPDATE billing_runtime_gate SET generation=generation+1,effective_entitlement_enabled=0,updated_at=unixepoch()');
+    assert.equal((await call()).status,503); assert.equal(calls,1);
+    sqlite.exec('UPDATE billing_runtime_gate SET generation=generation+1,effective_entitlement_enabled=1,updated_at=unixepoch()');
+    const realNow=Date.now; Date.now=()=>realNow()+25*60*60*1000;
+    try {
+      for (const mode of ['deadline','caller','already-canceled']) {
+        sqlite.exec('UPDATE billing_reconciliation_jobs SET not_before=0');
+        let entered,outbound; const started=new Promise(resolve=>{entered=resolve;});
+        globalThis.fetch=async(input,init)=>{ calls++; outbound=new Request(input,init); entered(); return new Promise((_,reject)=>{
+          if(outbound.signal.aborted) return reject(outbound.signal.reason);
+          outbound.signal.addEventListener('abort',()=>reject(outbound.signal.reason),{once:true});
+        }); };
+        const cancel=new AbortController();
+        if(mode==='deadline') t.mock.timers.enable({apis:['setTimeout']});
+        if(mode==='already-canceled') cancel.abort();
+        const pending=call({},request(cancel.signal)); await started;
+        if(mode==='deadline'){ t.mock.timers.tick(29999); assert.equal(outbound.signal.aborted,false); t.mock.timers.tick(1); }
+        else cancel.abort();
+        assert.equal((await pending).status,503); assert.equal(outbound.signal.aborted,true);
+        const job=sqlite.prepare('SELECT lease_token,attempts FROM billing_reconciliation_jobs').get();
+        assert.equal(job.lease_token,null); assert.equal(job.attempts,['deadline','caller','already-canceled'].indexOf(mode)+1);
+        if(mode==='deadline') t.mock.timers.reset();
+      }
+    } finally {Date.now=realNow;}
+  } finally {globalThis.fetch=originalFetch;t.mock.timers.reset();sqlite.close();}
 });
