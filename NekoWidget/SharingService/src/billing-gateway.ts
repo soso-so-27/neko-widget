@@ -13,6 +13,7 @@ import {
   loadBillingRuntimeGate,
 } from "./runtime-gate";
 import { reconcileBillingTransactionNow, runBillingSubscriptionReconciliation, type AppleSubscriptionStatusFetcher } from "./billing-authority";
+import { loadVerifierConfig } from "./billing-verifier-client";
 import { fetchAppleSubscriptionStatusViaService } from "./billing-apple-client";
 import { LEGACY_CLEANUP_CRON } from "./scheduled";
 import { billingSandboxOwnerAdmission } from "./billing-sandbox-owner";
@@ -112,12 +113,20 @@ export class RetentionBillingObserver extends WorkerEntrypoint<RetentionBillingE
       return new Response(null, { status: 404 });
     }
     try {
-      if (!permitsEnvironment(this.env) || this.env.PRESERVATION_RETENTION_REFRESH_ENABLED !== 'YES'
-          || !billingSubscriptionReconciliationRuntimeEnabled(this.env)
-          || this.env.BILLING_VERIFIER_TRANSPORT !== 'private-binding'
-          || typeof this.env.BILLING_VERIFIER_SERVICE?.fetch !== 'function') {
+      const privateSandbox = permitsEnvironment(this.env)
+        && this.env.BILLING_VERIFIER_TRANSPORT === 'private-binding'
+        && typeof this.env.BILLING_VERIFIER_SERVICE?.fetch === 'function';
+      const productionHTTPS = this.env.ENVIRONMENT === 'production'
+        && this.env.BILLING_STORE_ENVIRONMENT === 'Production'
+        && this.env.BILLING_VERIFIER_TRANSPORT === 'https-access'
+        && this.env.BILLING_SANDBOX_OWNER_ONLY_REQUIRED !== 'YES';
+      if ((!privateSandbox && !productionHTTPS) || this.env.PRESERVATION_RETENTION_REFRESH_ENABLED !== 'YES'
+          || !billingSubscriptionReconciliationRuntimeEnabled(this.env)) {
         throw new ApiError(503, 'billing_retention_unavailable', 'Billing is temporarily unavailable.');
       }
+      // Fresh cached authority must not bypass the Production transport contract.
+      // The existing client rejects missing Access/HMAC settings and named-binding bypasses.
+      if (productionHTTPS) loadVerifierConfig(this.env);
       const input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await readBody(request, 1024)));
       if (!input || Array.isArray(input) || Object.keys(input).join(',') !== 'billingAccountId'
           || typeof input.billingAccountId !== 'string'
@@ -139,7 +148,10 @@ export class RetentionBillingObserver extends WorkerEntrypoint<RetentionBillingE
         const outbound = new Request(input, init);
         return verifier.fetch(new Request(outbound, { signal: deadline.signal }));
       } } as Fetcher } : this.env;
-      try { await refreshRetentionBilling(refreshEnv, input.billingAccountId); }
+      const boundedFetch: typeof fetch = (input, init) =>
+        fetch(new Request(new Request(input, init), { signal: deadline.signal }));
+      try { await refreshRetentionBilling(refreshEnv, input.billingAccountId,
+        (id, env, environment) => fetchAppleSubscriptionStatusViaService(id, env, environment, boundedFetch)); }
       finally { clearTimeout(timer); request.signal.removeEventListener('abort', canceled); }
       return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
     } catch (error) {
