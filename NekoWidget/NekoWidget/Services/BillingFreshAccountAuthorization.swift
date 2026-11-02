@@ -42,6 +42,7 @@ actor BillingFreshAccountAuthorizer {
         return try await scan(configuredProductIDs: configuredProductIDs)
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     /// The internal owner-only setup precedes enabling the storefront. Scan
     /// the fixed Sandbox product even when the ordinary purchase IDs are empty.
     func authorizeForSandboxOwnerPreparation()
@@ -59,6 +60,7 @@ actor BillingFreshAccountAuthorizer {
         return try await scan(configuredProductIDs: [expected])
     }
 
+#endif
     private func scan(configuredProductIDs: Set<String>)
         async throws -> BillingFreshAccountAuthorization {
 

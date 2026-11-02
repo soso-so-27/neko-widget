@@ -1530,12 +1530,15 @@ final class GroupWindowListModel: ObservableObject {
 
     init(client: any GroupWindowMediaClient) { self.client = client }
 
+#if DEBUG || INTERNAL_PRESENTATION
     /// Test builds only: how long the last list load took, to find where the wait is.
     @Published private(set) var lastLoadTiming: String?
     private var completedLoads = 0
     private var firstLoadSeconds: TimeInterval?
 
+#endif
     func load() async {
+#if DEBUG || INTERNAL_PRESENTATION
         let started = ProcessInfo.processInfo.systemUptime
         let trace = InternalBuildPresentationAvailability.isAvailable ? GroupListTrace() : nil
         var outcome = "完了"
@@ -1549,15 +1552,24 @@ final class GroupWindowListModel: ObservableObject {
                     + "\n" + trace.snapshot().text(total: seconds)
             }
         }
+#endif
         do {
+#if DEBUG || INTERNAL_PRESENTATION
             windows = try await GroupListMeasurement.$current.withValue(trace) { try await client.windows() }
+#else
+            windows = try await client.windows()
+#endif
             message = nil
             hasLoaded = true
         } catch is CancellationError {
+#if DEBUG || INTERNAL_PRESENTATION
             outcome = "中断"
+#endif
             // The screen went away mid-request: nothing to tell.
         } catch {
+#if DEBUG || INTERNAL_PRESENTATION
             outcome = "失敗"
+#endif
             message = GroupWindowPresentation.message(for: error)
             hasLoaded = true
         }
@@ -2336,6 +2348,7 @@ struct GroupReportsView: View {
                 }
                 .padding(.vertical, 2)
             }
+#if DEBUG || INTERNAL_PRESENTATION
             if let prototype = safety.service as? GroupReportingPrototype, !records.isEmpty {
                 Section {
                     DisclosureGroup("テスト用") {
@@ -2346,6 +2359,7 @@ struct GroupReportsView: View {
                     }
                 }
             }
+#endif
         }
         .navigationTitle("通報への返答")
         .navigationBarTitleDisplayMode(.inline)

@@ -21,6 +21,7 @@ enum BillingKeychainStore {
         try withLock { try loadUnlocked() }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     /// Explicit internal preparation only. Never registers an account, replaces
     /// retained credentials, or sends a key. SecItemAdd elects a single winner.
     @MainActor
@@ -68,6 +69,7 @@ enum BillingKeychainStore {
         )
     }
 
+#endif
 #if DEBUG
     /// In-memory boundary exercise for the native UI fixture. No Keychain or
     /// disk calls, StoreKit mocks, network clients, or production gate bypass.

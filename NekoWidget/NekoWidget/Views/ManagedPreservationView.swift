@@ -409,24 +409,36 @@ struct ManagedPreservationView: View {
                 Button("容量を再確認") { coordinator.refreshUsage() }
                     .accessibilityIdentifier("preservation-usage-retry")
             }
+#if DEBUG || INTERNAL_PRESENTATION
             if InternalBuildPresentationAvailability.isAvailable {
                 Picker("表示を試す（テスト用）", selection: $quotaTrial) {
                     ForEach(QuotaTrial.allCases) { Text($0.title).tag($0) }
                 }
                 .accessibilityIdentifier("preservation-quota-trial")
             }
+#endif
         } header: { Text("保存できる量") }
         footer: { Text("保存した写真のコピー・メモ・記録の量です。写真アプリの写真そのものは含みません。") }
     }
 
     private var shownProductQuota: ManagedPreservationUsage.ProductQuota? {
+#if DEBUG || INTERNAL_PRESENTATION
         Self.shownQuota(coordinator.usage?.productQuota, trial: quotaTrial)
+#else
+        Self.shownQuota(coordinator.usage?.productQuota)
+#endif
     }
 
     /// The service's product quota, or (test builds) the case being tried.
+#if DEBUG || INTERNAL_PRESENTATION
     static func shownQuota(_ real: ManagedPreservationUsage.ProductQuota?,
                            trial: QuotaTrial) -> ManagedPreservationUsage.ProductQuota? {
         if InternalBuildPresentationAvailability.isAvailable, let tried = trial.quota { return tried }
+        return shownQuota(real)
+    }
+#endif
+
+    static func shownQuota(_ real: ManagedPreservationUsage.ProductQuota?) -> ManagedPreservationUsage.ProductQuota? {
         guard let real, real.configurationStatus == "valid" else { return nil }
         return real
     }
@@ -475,6 +487,7 @@ struct ManagedPreservationView: View {
         return "\(what)を超えたため、新しく保存できません。保存したコピーを削除すると、また保存できます。保存した写真とメモは、これまでどおり見たり書き出したりできます。"
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     /// Test builds: each state of the quota on one iPhone, no requests or records.
     enum QuotaTrial: String, CaseIterable, Identifiable {
         case real, counting, plenty, nearlyFull, storageOver, recordsOver, bothOver, trial
@@ -525,6 +538,7 @@ struct ManagedPreservationView: View {
         }
     }
 
+#endif
     private var retentionSection: some View {
         Section {
             if let retention = coordinator.retention {
@@ -553,7 +567,9 @@ struct ManagedPreservationView: View {
         }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     @AppStorage(QuotaTrial.key) private var quotaTrial: QuotaTrial = .real
+#endif
 
     static func capacity(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .decimal)

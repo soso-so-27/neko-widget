@@ -1302,6 +1302,9 @@ jobs:
           if [[ "$DISTRIBUTION_PROFILE" == "owner-internal" ]]; then
             owner_build_args+=(OWNER_INTERNAL_REPORTS_DISABLED=YES GROUP_REPORTING_PRODUCTION_ENABLED=NO)
           fi
+          if [[ "$DISTRIBUTION_PROFILE" == "owner-internal" || "$RELEASE_SHARING_RELEASE_MODE" == "media-staging" ]]; then
+            owner_build_args+=(INTERNAL_PRESENTATION_CONDITION=INTERNAL_PRESENTATION)
+          fi
           xcodebuild "${owner_build_args[@]}" \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \

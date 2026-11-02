@@ -106,7 +106,8 @@ def settings(contract, *, synthetic=False):
         if match:
             result[match[1]] = match[2].strip()
     result.update(values)
-    result.update({"OWNER_INTERNAL_REPORTS_DISABLED": "NO",
+    result.update({"INTERNAL_PRESENTATION_CONDITION": "",
+                   "OWNER_INTERNAL_REPORTS_DISABLED": "NO",
                    "SHARE_EXTENSION_INFOPLIST_FILE": "NekoWidgetShareExtension/Info.plist",
                    "PHOTO_LIBRARY_USAGE_DESCRIPTION": "猫の写真を端末内で解析し、アルバムとウィジェットに表示します。共有では選んだ1枚を最大2,048pxに縮小し、位置情報を除いて暗号化して届けます。原本を自動送信しません。"})
     for name in result:
@@ -225,13 +226,13 @@ def run_build(contract, arguments, *, synthetic=False):
     # No shell interpolation and no -xcconfig precedence surprises.
     command = ["xcodebuild", "-project", "NekoWidget.xcodeproj", "-scheme", "NekoWidget", "-configuration", "Release"]
     command += arguments + [f"{k}={v}" for k, v in expected.items()]
-    if any(action in arguments for action in ("build", "archive")):
+    if any(action in arguments for action in ("build", "archive", "build-for-testing")):
         probe = []
         items = iter(command)
         for item in items:
             if item in ("-archivePath", "-resultBundlePath"):
                 next(items)  # Inspect settings without creating the archive's output paths.
-            elif item not in ("build", "archive"):
+            elif item not in ("build", "archive", "build-for-testing"):
                 probe.append(item)
         rows = json.loads(subprocess.run(probe + ["-showBuildSettings", "-json"], cwd=ROOT,
                                         check=True, capture_output=True, text=True).stdout)
@@ -242,6 +243,15 @@ def run_build(contract, arguments, *, synthetic=False):
                 require(actual.get(key, "") == value, "Resolved production setting differs: " + key)
             conditions = actual.get("SWIFT_ACTIVE_COMPILATION_CONDITIONS", "").split()
             require("DEBUG" not in conditions, "Debug public candidate rejected")
+            forbidden = {"DEBUG", "INTERNAL_PRESENTATION", "WIDGET_SCREENSHOT_FIXTURE"}
+            require(not forbidden.intersection(conditions), "Internal public candidate compilation condition rejected")
+            require(not actual.get("INTERNAL_PRESENTATION_CONDITION", "").strip(), "Internal build selector rejected")
+            # Xcode permits Swift -D defines through OTHER_SWIFT_FLAGS as well.
+            # Check split, attached, quoted and -Xfrontend forwarded spellings.
+            import shlex
+            flags = shlex.split(actual.get("OTHER_SWIFT_FLAGS", ""))
+            defines = {token[2:] if token.startswith("-D") else token for token in flags}
+            require(not forbidden.intersection(defines), "Internal public candidate Swift flag rejected")
             required = {"NekoWidget": "NEKO_HOST_APP", "NekoWidgetShareExtension": "NEKO_SHARE_EXTENSION"}.get(row["target"])
             require(required is None or required in conditions, "Target-specific compilation boundary missing: " + row["target"])
     subprocess.run(command, cwd=ROOT, check=True)

@@ -1348,12 +1348,22 @@ struct AppRecordSettingsView: View {
     @State private var confirmsPause = false
     @State private var confirmsRemote = false
     @State private var showsPlusOffer = false
+#if DEBUG || INTERNAL_PRESENTATION
     @AppStorage(ManagedPreservationView.QuotaTrial.key)
     private var quotaTrial: ManagedPreservationView.QuotaTrial = .real
+#endif
     init(configuration: ManagedPreservationConfiguration = .current, client: ManagedPreservationClient? = nil,
          persistence: AppRecordPersistence = .shared) {
         _authentication = StateObject(wrappedValue: ManagedPreservationCoordinator(configuration: configuration, client: client, purpose: .account))
         self.persistence = persistence
+    }
+
+    private var displayedQuota: ManagedPreservationUsage.ProductQuota? {
+#if DEBUG || INTERNAL_PRESENTATION
+        ManagedPreservationView.shownQuota(authentication.usage?.productQuota, trial: quotaTrial)
+#else
+        ManagedPreservationView.shownQuota(authentication.usage?.productQuota)
+#endif
     }
 
     private var hasPlusHere: Bool { purchases.entitlementState.permitsPersonalPlus }
@@ -1536,7 +1546,7 @@ struct AppRecordSettingsView: View {
                 Button("このiPhoneの記録を使う") { confirmsLocal = true }
                 Button("ほかのiPhoneの記録を使う") { confirmsRemote = true }
             }
-            if let quota = ManagedPreservationView.shownQuota(authentication.usage?.productQuota, trial: quotaTrial) {
+            if let quota = displayedQuota {
                 ProductQuotaSummary(quota: quota)
             }
             // Saving retries by itself; the button is only for a failure the person is looking at.

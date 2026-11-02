@@ -1,11 +1,13 @@
 import SwiftUI
 import UIKit
 
+#if DEBUG || INTERNAL_PRESENTATION
 private struct DetectionSettingsSaveRequest: Equatable {
     let confidenceThreshold: Double
     let minimumAreaRatio: Double
 }
 
+#endif
 /// The production settings sheet's presentation shell, also used by isolated UI fixtures.
 struct SettingsSheetHost<Content: View>: View {
     let onClose: () -> Void
@@ -78,7 +80,9 @@ struct SettingsView: View {
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
+#if DEBUG || INTERNAL_PRESENTATION
     @State private var albumNoticeBlocked = false
+#endif
     @State private var isPhotoSettingsSavePending = false
     @State private var settingsSaveTask: Task<Void, Never>?
     @State private var settingsSaveRevision = 0
@@ -86,9 +90,14 @@ struct SettingsView: View {
     @State private var isLifeReferenceSavePending = false
     @State private var lifeReferenceSaveTask: Task<Void, Never>?
     @State private var lifeReferenceSaveRevision = 0
+#if DEBUG || INTERNAL_PRESENTATION
     @State private var isSavingDetectionSettings = false
+#endif
+#if DEBUG || INTERNAL_PRESENTATION
     @State private var pendingDetectionSettingsSave: DetectionSettingsSaveRequest?
+#endif
     @State private var isRescanning = false
+#if DEBUG || INTERNAL_PRESENTATION
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
     @State private var showsMembershipPreview = false
@@ -96,6 +105,7 @@ struct SettingsView: View {
     @AppStorage(AlbumPrototype.slideshowKey) private var albumSlideshow = false
     @State private var cloudyWindowError: String?
 
+#endif
     private var canOpenMembershipOffer: Bool {
         PlusOfferAvailability.isConfigured
     }
@@ -259,6 +269,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-app-version")
             }
 
+#if DEBUG || INTERNAL_PRESENTATION
             // Test builds only. Public builds show none of this (InternalBuildPresentationAvailability).
             if BillingSandboxOwnerEnrollmentAvailability.isAvailable
                 || MembershipOfferPreviewAvailability.isAvailable
@@ -327,13 +338,16 @@ struct SettingsView: View {
                     Text("テスト用の版にだけ出ます。公開する版には出ません。")
                 }
             }
+#endif
         }
         .navigationTitle("設定")
+#if DEBUG || INTERNAL_PRESENTATION
         .sheet(isPresented: $showsMembershipPreview) {
             MembershipOfferSheet(model: .preview(), context: .settings) { _ in
                 showsMembershipPreview = false
             }
         }
+#endif
         .onChange(of: settings) { oldSettings, newSettings in
             // Each settings section saves independently. Merge incoming values
             // field by field so one completed save cannot erase a still-pending
@@ -351,10 +365,12 @@ struct SettingsView: View {
                 currentDraft.catLifeReference != oldSettings.catLifeReference
                     || isLifeReferenceSavePending
             ) && currentDraft.catLifeReference != newSettings.catLifeReference
+#if DEBUG || INTERNAL_PRESENTATION
             let preservesDetection = (
                 !detectionSettingsMatch(currentDraft, oldSettings)
                     || pendingDetectionSettingsSave != nil
             ) && !detectionSettingsMatch(currentDraft, newSettings)
+#endif
             var mergedDraft = newSettings
 
             if preservesRange {
@@ -364,15 +380,19 @@ struct SettingsView: View {
             if preservesLifeReference {
                 mergedDraft.catLifeReference = currentDraft.catLifeReference
             }
+#if DEBUG || INTERNAL_PRESENTATION
             if preservesDetection {
                 mergedDraft.confidenceThreshold = currentDraft.confidenceThreshold
                 mergedDraft.minimumAreaRatio = currentDraft.minimumAreaRatio
             }
+#endif
             draft = mergedDraft
+#if DEBUG || INTERNAL_PRESENTATION
             if let request = pendingDetectionSettingsSave,
                detectionSettingsMatch(request, newSettings) {
                 pendingDetectionSettingsSave = nil
             }
+#endif
         }
         .onChange(of: draft.catLifeReference) { _, newValue in
             scheduleLifeReferenceSave(newValue)
@@ -383,11 +403,13 @@ struct SettingsView: View {
         .onChange(of: draft.albumLimit) { _, _ in
             schedulePhotoSettingsSave()
         }
+#if DEBUG || INTERNAL_PRESENTATION
         .sheet(item: $exportedFile, onDismiss: cleanupVerificationExport) { file in
             ActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
         }
         .onDisappear(perform: cleanupVerificationExport)
+#endif
     }
 
     private var appVersion: String {
@@ -498,6 +520,7 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     private var advancedDiagnosticsView: some View {
         Form {
             Section {
@@ -658,6 +681,7 @@ struct SettingsView: View {
             && !detectionAccuracySample.items.isEmpty
     }
 
+#endif
     private var lifeReferenceKind: Binding<CatLifeReferenceKind?> {
         Binding(
             get: { draft.catLifeReference?.kind },
@@ -725,6 +749,7 @@ struct SettingsView: View {
         }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     private func detectionSettingsMatch(
         _ lhs: SettingsPresentation,
         _ rhs: SettingsPresentation
@@ -741,6 +766,7 @@ struct SettingsView: View {
             && abs(request.minimumAreaRatio - settings.minimumAreaRatio) < 0.000_001
     }
 
+#endif
     private func schedulePhotoSettingsSave() {
         settingsSaveRevision += 1
         let revision = settingsSaveRevision
@@ -780,6 +806,7 @@ struct SettingsView: View {
         }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     private var sampleSummary: String {
         if !detectionAccuracySample.snapshotIsFinal {
             return "全件スキャンの確定後に利用できます"
@@ -787,6 +814,7 @@ struct SettingsView: View {
         return "確定標本 \(detectionAccuracySample.items.count.formatted())枚"
     }
 
+#endif
     private var sourceSummary: String {
         switch photoSourceStatus {
         case .allLibrary:
@@ -798,6 +826,7 @@ struct SettingsView: View {
         }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     private var detectionAccuracySampleFooter: String {
         if !detectionAccuracySample.snapshotIsFinal {
             return "速報中や再スキャン待ちの標本は固定されません。全件の確定後に確認してください。"
@@ -812,8 +841,10 @@ struct SettingsView: View {
         TemporaryExportFileLifecycle.removeManagedFile(at: exportedFile?.url)
         exportedFile = nil
     }
+#endif
 }
 
+#if DEBUG || INTERNAL_PRESENTATION
 /// Static product-review surface for ADR-015. It deliberately owns no model,
 /// credential store, URLSession, or persistence. Shipping this view does not
 /// enable pairing, upload, APNs, or Widget synchronization.
@@ -1185,6 +1216,7 @@ private struct ActivityView: UIViewControllerRepresentable {
 // MARK: - Row shapes (design rules 10/21)
 
 /// A row that leaves the app: tinted, with an arrow out, so blue means "opens outside".
+#endif
 struct ExternalLinkRow: View {
     let title: String
     let systemImage: String

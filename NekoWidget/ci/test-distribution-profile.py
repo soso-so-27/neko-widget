@@ -188,7 +188,7 @@ class DistributionProfileTests(unittest.TestCase):
 
     def test_existing_pending_data_guards_remain_before_reads(self):
         source = (ROOT / 'NekoWidget/Services/GroupReportingProvider.swift').read_text(encoding='utf-8')
-        self.assertIn('guard selected || config.isOwnerInternalReportsDisabled else { return GroupReportingPrototype() }', source)
+        self.assertIn('guard selected || config.isOwnerInternalReportsDisabled else { return internalFallback() }', source)
         source = (ROOT / 'NekoWidget/Services/ProductionGroupReporting.swift').read_text(encoding='utf-8')
         self.assertIn('self.reportsDisabled = reportsDisabled || configuration.isOwnerInternalReportsDisabled', source)
         submission = source[source.index('func submitReport(draftID:'):source.index('func reconcile(', source.index('func submitReport(draftID:'))]

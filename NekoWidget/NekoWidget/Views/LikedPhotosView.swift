@@ -1744,12 +1744,16 @@ struct SavedMemoriesGalleryView: View {
 
     private enum CreationOutput: Equatable {
         case pdf
+#if DEBUG || INTERNAL_PRESENTATION
         case bookPreview
+#endif
 
         var maximumPhotoCount: Int {
             switch self {
             case .pdf: PhotoBookPolicy.maximumPhotosPerExport
+#if DEBUG || INTERNAL_PRESENTATION
             case .bookPreview: BookDemandValidationPolicy.requiredPhotoCount
+#endif
             }
         }
     }
@@ -1831,7 +1835,9 @@ struct SavedMemoriesGalleryView: View {
     @State private var photoBookExportDirectory: URL?
     @State private var photoBookErrorMessage: String?
     @State private var photoBookExportTask: Task<Void, Never>?
+#if DEBUG || INTERNAL_PRESENTATION
     @State private var bookDemandPreview: BookDemandPreviewSelection?
+#endif
 
     init(
         photos: [PhotoPresentation],
@@ -1911,7 +1917,7 @@ struct SavedMemoriesGalleryView: View {
             if isCurrentPhotoLibraryPage && hasPhotoAccess && !photos.isEmpty
                 && (InternalBuildPresentationAvailability.isAvailable || isSelectingForExport) {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isSelectingForExport ? "キャンセル" : "本のイメージ") {
+                    Button(selectionToggleTitle) {
                         toggleExportMode()
                     }
                     .disabled(isExportingPhotoBook)
@@ -1927,11 +1933,13 @@ struct SavedMemoriesGalleryView: View {
         .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
             LikedPhotoBookActivityView(activityItems: [export.url])
         }
+#if DEBUG || INTERNAL_PRESENTATION
         .sheet(item: $bookDemandPreview) { selection in
             NavigationStack {
                 BookDemandPreviewView(photos: selection.photos)
             }
         }
+#endif
         .alert(
             "PDFを作れませんでした",
             isPresented: Binding(
@@ -2061,19 +2069,31 @@ struct SavedMemoriesGalleryView: View {
         }
     }
 
+    private var creationTitle: String {
+#if DEBUG || INTERNAL_PRESENTATION
+        if creationOutput == .bookPreview { return "本のイメージ" }
+#endif
+        return "PDF"
+    }
+
+    private var creationGuide: String {
+#if DEBUG || INTERNAL_PRESENTATION
+        if creationOutput == .bookPreview { return bookDemandSelectionGuide }
+#endif
+        return "1〜30枚を選んで、PDFとして共有します。"
+    }
+
     private var exportActionBar: some View {
         VStack(spacing: 8) {
             HStack {
-                Text(creationOutput == .pdf ? "PDF" : "本のイメージ")
+                Text(creationTitle)
                     .font(.headline)
                 Spacer()
                 Text("\(selectedExportIdentifiers.count.formatted())枚を選択")
                     .font(.subheadline.weight(.semibold))
             }
 
-            Text(creationOutput == .pdf
-                 ? "1〜30枚を選んで、PDFとして共有します。"
-                 : bookDemandSelectionGuide)
+            Text(creationGuide)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2100,7 +2120,9 @@ struct SavedMemoriesGalleryView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(selectedExportIdentifiers.isEmpty && !isExportingPhotoBook)
                 .accessibilityIdentifier("photo-book-export")
-            } else {
+            }
+#if DEBUG || INTERNAL_PRESENTATION
+            if creationOutput == .bookPreview {
                 Button {
                     openBookDemandPreview()
                 } label: {
@@ -2115,6 +2137,7 @@ struct SavedMemoriesGalleryView: View {
                 .accessibilityIdentifier("book-demand-preview")
                 .accessibilityHint(bookDemandSelectionGuide)
             }
+#endif
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
@@ -2123,6 +2146,7 @@ struct SavedMemoriesGalleryView: View {
         .overlay(alignment: .top) { Divider() }
     }
 
+#if DEBUG || INTERNAL_PRESENTATION
     private var bookDemandSelectionGuide: String {
         let selectedCount = selectedExportIdentifiers.count
         let requiredCount = BookDemandValidationPolicy.requiredPhotoCount
@@ -2148,6 +2172,15 @@ struct SavedMemoriesGalleryView: View {
         bookDemandPreview = BookDemandPreviewSelection(photos: selectedPhotos)
     }
 
+#endif
+    private var selectionToggleTitle: String {
+#if DEBUG || INTERNAL_PRESENTATION
+        return isSelectingForExport ? "キャンセル" : "本のイメージ"
+#else
+        return "キャンセル"
+#endif
+    }
+
     private func toggleExportMode() {
         guard !isExportingPhotoBook else { return }
 
@@ -2158,9 +2191,13 @@ struct SavedMemoriesGalleryView: View {
             } else {
                 creationOutput = nil
             }
-        } else if InternalBuildPresentationAvailability.isAvailable {
+            return
+        }
+#if DEBUG || INTERNAL_PRESENTATION
+        if InternalBuildPresentationAvailability.isAvailable {
             beginCreation(.bookPreview)
         }
+#endif
     }
 
     private func beginCreation(_ output: CreationOutput) {
@@ -2219,6 +2256,7 @@ struct SavedMemoriesGalleryView: View {
     }
 }
 
+#if DEBUG || INTERNAL_PRESENTATION
 private struct BookDemandPreviewSelection: Identifiable {
     let id = UUID()
     let photos: [PhotoPresentation]
@@ -2410,6 +2448,7 @@ private struct BookDemandPreviewView: View {
     }
 }
 
+#endif
 private struct LikedPhotoBookExportFile: Identifiable {
     let id = UUID()
     let url: URL
