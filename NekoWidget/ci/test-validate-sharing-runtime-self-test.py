@@ -103,8 +103,12 @@ class SharingRuntimeSelfTestValidatorTests(unittest.TestCase):
         allowed = runpy.run_path(str(SCRIPT))["ASSERTION_IDS"]
         runner = (SCRIPT.parent.parent / "NekoWidget/Services/SharingRuntimeSelfTest.swift").read_text(encoding="utf-8")
         identifiers = re.findall(r'throw SharingRuntimeSelfTestRunner.recordAssertionFailure\("([A-Z0-9-]+)",', runner)
-        self.assertEqual(len(identifiers), 161)
-        self.assertEqual(len(set(identifiers)), 161)
+        self.assertEqual(len(identifiers), 163)
+        self.assertEqual(len(set(identifiers)), 163)
+        boundaries = re.findall(r'operationID = "(RWP-OP-[0-9]+)"', runner)
+        self.assertEqual(len(boundaries), 27)
+        self.assertEqual(len(set(boundaries)), 27)
+        identifiers += boundaries
         self.assertEqual(set(identifiers), set().union(*allowed.values()))
         self.assertEqual(set(allowed), {"disabled-upgrade-purge", "managed-preservation-membership-boundary", "retained-widget-publication"})
 

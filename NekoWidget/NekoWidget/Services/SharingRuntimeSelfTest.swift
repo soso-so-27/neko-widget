@@ -3403,129 +3403,161 @@ actor SharingRuntimeSelfTestRunner {
 
     /// Keep production cache/decoder checks independent of the retired relay.
     private static func testRetainedWidgetPublication() async throws {
-        try clearMomentSharingFixture()
-        defer { try? clearMomentSharingFixture() }
-        let lifecycleToken = try SharingLifecycleGate.issueToken()
-        let preview = try MomentCanonicalPreviewBuilder.build(
-            image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
-        )
-        let anchor = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
-        let momentID = "retained_widget_fixture"
-        let widgetPhoto = try MomentInboxItem(
-            id: momentID, senderParticipantID: "retained_widget_sender",
-            kind: .live, keyEpoch: 1, localJPEGFileName: "\(momentID).jpg",
-            capturedAt: anchor, captureDateIsMissing: false,
-            committedAt: anchor, receivedAt: anchor, state: .acknowledged,
-            accessExpiresAt: anchor.addingTimeInterval(86_400),
-            caption: "受信した写真のひとこと"
-        ).validated()
-        _ = try MomentSharingStateStore.publishReceivedJPEG(
-            widgetPhoto, jpeg: preview.jpeg, validating: lifecycleToken)
-        // Follow the retained synthetic receipt into the production cache.
-        // A reused JPEG must still refresh optional text, including its removal.
-        let widgetBuilder = WidgetCacheBuilder()
-        let widgetFreshUntil = widgetPhoto.receivedAt.addingTimeInterval(3_600)
-        let captionedWidget = try await widgetBuilder.buildFamilyWindow(
-            from: widgetPhoto, freshUntil: widgetFreshUntil,
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken
-        )
-        guard let widgetManifestURL = SharedContainer.familyWidgetManifestURL,
-              let widgetCacheURL = SharedContainer.familyWidgetCacheDirectoryURL,
-              let publishedPhoto = captionedWidget.item,
-              publishedPhoto.momentID == widgetPhoto.id,
-              publishedPhoto.caption == widgetPhoto.caption
-        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-001", MomentSharingError.stateUnavailable) }
-        try exportWidgetPortraitReviewIfRequested(
-            filenames: publishedPhoto.cacheFilenames,
-            cacheDirectory: widgetCacheURL
-        )
-        let widgetJPEGURL = widgetCacheURL.appendingPathComponent(publishedPhoto.cacheFilenames.small)
-        let firstWidgetBytes = try Data(contentsOf: widgetJPEGURL)
-        // Model an old app/extension handoff with no caption in the cache.
-        var oldWidget = captionedWidget
-        oldWidget.item?.caption = nil
-        try AtomicJSON.write(oldWidget, to: widgetManifestURL)
-        let repairedWidget = try await widgetBuilder.buildFamilyWindow(
-            from: widgetPhoto, freshUntil: widgetFreshUntil,
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken
-        )
-        guard repairedWidget.item == captionedWidget.item,
-              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
-        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-002", MomentSharingError.stateUnavailable) }
-        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
-            state.inbox[0].caption = nil
-        }
-        // Pass the older snapshot deliberately: publication must use current
-        // lifecycle-locked state, never the stale caller's caption.
-        let photoOnlyWidget = try await widgetBuilder.buildFamilyWindow(
-            from: widgetPhoto, freshUntil: widgetFreshUntil,
-            windowDisplayName: "受信テストのまど", validating: lifecycleToken
-        )
-        guard photoOnlyWidget.item?.caption == nil,
-              photoOnlyWidget.item?.sourceDigest == publishedPhoto.sourceDigest,
-              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
-        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-003", MomentSharingError.stateUnavailable) }
-        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
-            state.inbox[0].caption = widgetPhoto.caption
-        }
+        var operationID: StaticString = "RWP-OP-001"
+        do {
+            operationID = "RWP-OP-001"
+            try clearMomentSharingFixture()
+            defer { try? clearMomentSharingFixture() }
+            operationID = "RWP-OP-002"
+            let lifecycleToken = try SharingLifecycleGate.issueToken()
+            operationID = "RWP-OP-003"
+            let preview = try MomentCanonicalPreviewBuilder.build(
+                image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
+            )
+            let anchor = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+            let momentID = "retained_widget_fixture"
+            operationID = "RWP-OP-004"
+            let widgetPhoto = try MomentInboxItem(
+                id: momentID, senderParticipantID: "retained_widget_sender",
+                kind: .live, keyEpoch: 1, localJPEGFileName: "\(momentID).jpg",
+                capturedAt: anchor, captureDateIsMissing: false,
+                committedAt: anchor, receivedAt: anchor, state: .acknowledged,
+                accessExpiresAt: anchor.addingTimeInterval(86_400),
+                caption: "受信した写真のひとこと"
+            ).validated()
+            operationID = "RWP-OP-005"
+            _ = try MomentSharingStateStore.publishReceivedJPEG(
+                widgetPhoto, jpeg: preview.jpeg, validating: lifecycleToken)
+            // Follow the retained synthetic receipt into the production cache.
+            // A reused JPEG must still refresh optional text, including its removal.
+            let widgetBuilder = WidgetCacheBuilder()
+            let widgetFreshUntil = widgetPhoto.receivedAt.addingTimeInterval(3_600)
+            operationID = "RWP-OP-006"
+            let captionedWidget = try await widgetBuilder.buildFamilyWindow(
+                from: widgetPhoto, freshUntil: widgetFreshUntil,
+                windowDisplayName: "受信テストのまど", validating: lifecycleToken
+            )
+            guard let widgetManifestURL = SharedContainer.familyWidgetManifestURL,
+                  let widgetCacheURL = SharedContainer.familyWidgetCacheDirectoryURL,
+                  let publishedPhoto = captionedWidget.item,
+                  publishedPhoto.momentID == widgetPhoto.id,
+                  publishedPhoto.caption == widgetPhoto.caption
+            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-001", MomentSharingError.stateUnavailable) }
+            operationID = "RWP-OP-007"
+            try exportWidgetPortraitReviewIfRequested(
+                filenames: publishedPhoto.cacheFilenames,
+                cacheDirectory: widgetCacheURL
+            )
+            let widgetJPEGURL = widgetCacheURL.appendingPathComponent(publishedPhoto.cacheFilenames.small)
+            operationID = "RWP-OP-008"
+            let firstWidgetBytes = try Data(contentsOf: widgetJPEGURL)
+            // Model an old app/extension handoff with no caption in the cache.
+            var oldWidget = captionedWidget
+            oldWidget.item?.caption = nil
+            operationID = "RWP-OP-009"
+            try AtomicJSON.write(oldWidget, to: widgetManifestURL)
+            operationID = "RWP-OP-010"
+            let repairedWidget = try await widgetBuilder.buildFamilyWindow(
+                from: widgetPhoto, freshUntil: widgetFreshUntil,
+                windowDisplayName: "受信テストのまど", validating: lifecycleToken
+            )
+            operationID = "RWP-OP-011"
+            guard repairedWidget.item == captionedWidget.item,
+                  try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-002", MomentSharingError.stateUnavailable) }
+            operationID = "RWP-OP-012"
+            _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+                state.inbox[0].caption = nil
+            }
+            // Pass the older snapshot deliberately: publication must use current
+            // lifecycle-locked state, never the stale caller's caption.
+            operationID = "RWP-OP-013"
+            let photoOnlyWidget = try await widgetBuilder.buildFamilyWindow(
+                from: widgetPhoto, freshUntil: widgetFreshUntil,
+                windowDisplayName: "受信テストのまど", validating: lifecycleToken
+            )
+            operationID = "RWP-OP-014"
+            guard photoOnlyWidget.item?.caption == nil,
+                  photoOnlyWidget.item?.sourceDigest == publishedPhoto.sourceDigest,
+                  try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-003", MomentSharingError.stateUnavailable) }
+            operationID = "RWP-OP-015"
+            _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+                state.inbox[0].caption = widgetPhoto.caption
+            }
 
 
-        guard let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL else {
-            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-004", MomentSharingError.stateUnavailable)
-        }
-        let receivedURL = receivedDirectory.appendingPathComponent("\(momentID).jpg")
-        try MomentSharingStateStore.setSavedMemory(momentID: momentID, isSaved: true,
-            validating: lifecycleToken)
-        let beforeHide = try MomentSharingStateStore.load()
-        let widgetWindowID = PrivateWindowCatalogStore.activeEntry()?.localWindowID
-        let widgetSourceID = widgetWindowID.map { WidgetPhotoSource.familyWindowIDPrefix + $0 }
-            ?? WidgetPhotoSource.familyWindowID
-        for (revision, hidden, remainsHidden) in [(1, true, true), (0, false, true), (2, false, false)] {
-            _ = try MomentSharingStateStore.applyModeration(momentID: momentID,
-                status: .init(revision: revision, hidden: hidden), committedAt: anchor,
+            guard let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL else {
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-004", MomentSharingError.stateUnavailable)
+            }
+            let receivedURL = receivedDirectory.appendingPathComponent("\(momentID).jpg")
+            operationID = "RWP-OP-016"
+            try MomentSharingStateStore.setSavedMemory(momentID: momentID, isSaved: true,
                 validating: lifecycleToken)
-            let state = try MomentSharingStateStore.load()
-            guard state.isModerationHidden(momentID) == remainsHidden,
-                  state.inbox == beforeHide.inbox, state.savedMemories == beforeHide.savedMemories,
-                  try Data(contentsOf: receivedURL) == preview.jpeg,
-                  MomentSharingStateStore.isLocalSharedImageVisible(at: receivedURL) == !remainsHidden,
-                  MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: publishedPhoto.cacheFilenames.small,
-                    localWindowID: nil) == !remainsHidden
-            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-005", MomentSharingError.stateUnavailable) }
-            if remainsHidden {
-                guard WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil,
-                      WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
-                        photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil
-                else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-006", MomentSharingError.stateUnavailable) }
+            operationID = "RWP-OP-017"
+            let beforeHide = try MomentSharingStateStore.load()
+            let widgetWindowID = PrivateWindowCatalogStore.activeEntry()?.localWindowID
+            let widgetSourceID = widgetWindowID.map { WidgetPhotoSource.familyWindowIDPrefix + $0 }
+                ?? WidgetPhotoSource.familyWindowID
+            for (revision, hidden, remainsHidden) in [(1, true, true), (0, false, true), (2, false, false)] {
+                operationID = "RWP-OP-018"
+                _ = try MomentSharingStateStore.applyModeration(momentID: momentID,
+                    status: .init(revision: revision, hidden: hidden), committedAt: anchor,
+                    validating: lifecycleToken)
+                operationID = "RWP-OP-019"
+                let state = try MomentSharingStateStore.load()
+                operationID = "RWP-OP-020"
+                guard state.isModerationHidden(momentID) == remainsHidden,
+                      state.inbox == beforeHide.inbox, state.savedMemories == beforeHide.savedMemories,
+                      try Data(contentsOf: receivedURL) == preview.jpeg,
+                      MomentSharingStateStore.isLocalSharedImageVisible(at: receivedURL) == !remainsHidden,
+                      MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: publishedPhoto.cacheFilenames.small,
+                        localWindowID: nil) == !remainsHidden
+                else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-005", MomentSharingError.stateUnavailable) }
+                if remainsHidden {
+                    guard WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil,
+                          WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
+                            photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil
+                    else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-006", MomentSharingError.stateUnavailable) }
+                }
+                operationID = "RWP-OP-021"
+                let publication = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
+                    freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
+                guard (publication.item == nil) == remainsHidden,
+                      (WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil) == remainsHidden,
+                      (WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
+                        photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil) == remainsHidden
+                else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-007", MomentSharingError.stateUnavailable) }
+                if remainsHidden {
+                    do {
+                        operationID = "RWP-OP-022"
+                        _ = try MomentSharingStateStore.photoLibraryCopyPayload(momentID: momentID,
+                            validating: lifecycleToken)
+                        throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-008", DailySharingError.stateUnavailable)
+                    } catch MomentSharingError.stateUnavailable {}
+                }
             }
-            let publication = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
+            operationID = "RWP-OP-023"
+            _ = try MomentSharingStateStore.queuePaw(momentID: momentID, now: .now, validating: lifecycleToken)
+            operationID = "RWP-OP-024"
+            try MomentSharingStateStore.deleteInbox(momentID: momentID, validating: lifecycleToken)
+            operationID = "RWP-OP-025"
+            _ = try MomentSharingStateStore.applyModeration(momentID: momentID,
+                status: .init(revision: 3, hidden: false), committedAt: anchor, validating: lifecycleToken)
+            operationID = "RWP-OP-026"
+            let deleted = try MomentSharingStateStore.load()
+            guard deleted.inbox.count == 1, deleted.inbox[0].state == .revoked,
+                  deleted.inbox[0].localJPEGFileName == nil, deleted.inbox[0].caption == nil,
+                  deleted.savedMemories.isEmpty, deleted.pawOutbox.isEmpty,
+                  !FileManager.default.fileExists(atPath: receivedURL.path)
+            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-009", MomentSharingError.stateUnavailable) }
+            operationID = "RWP-OP-027"
+            let removed = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
                 freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
-            guard (publication.item == nil) == remainsHidden,
-                  (WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil) == remainsHidden,
-                  (WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
-                    photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil) == remainsHidden
-            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-007", MomentSharingError.stateUnavailable) }
-            if remainsHidden {
-                do {
-                    _ = try MomentSharingStateStore.photoLibraryCopyPayload(momentID: momentID,
-                        validating: lifecycleToken)
-                    throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-008", DailySharingError.stateUnavailable)
-                } catch MomentSharingError.stateUnavailable {}
-            }
+            guard removed.item == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-010", MomentSharingError.stateUnavailable) }
+        } catch {
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure(operationID, error)
         }
-        _ = try MomentSharingStateStore.queuePaw(momentID: momentID, now: .now, validating: lifecycleToken)
-        try MomentSharingStateStore.deleteInbox(momentID: momentID, validating: lifecycleToken)
-        _ = try MomentSharingStateStore.applyModeration(momentID: momentID,
-            status: .init(revision: 3, hidden: false), committedAt: anchor, validating: lifecycleToken)
-        let deleted = try MomentSharingStateStore.load()
-        guard deleted.inbox.count == 1, deleted.inbox[0].state == .revoked,
-              deleted.inbox[0].localJPEGFileName == nil, deleted.inbox[0].caption == nil,
-              deleted.savedMemories.isEmpty, deleted.pawOutbox.isEmpty,
-              !FileManager.default.fileExists(atPath: receivedURL.path)
-        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-009", MomentSharingError.stateUnavailable) }
-        let removed = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
-            freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
-        guard removed.item == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-010", MomentSharingError.stateUnavailable) }
     }
 
     /// The disposable Simulator may opt into one repository-owned portrait for
@@ -4860,8 +4892,18 @@ actor SharingRuntimeSelfTestRunner {
             localDetailJPEG: expectedThumbnail,
             validating: lifecycleToken
         )
-        guard replay == prepared, try Data(contentsOf: detailURL) == preview.jpeg else {
+        guard replay == prepared else {
+            // Classify the round-trip difference without logging values or passing.
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let persisted = try decoder.decode(MomentOutboxItem.self, from: encoder.encode(prepared))
+            if replay == persisted {
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-007-PRECISION", MomentSharingError.stateUnavailable)
+            }
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-007", MomentSharingError.stateUnavailable)
+        }
+        guard try Data(contentsOf: detailURL) == preview.jpeg else {
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-007-JPEG", MomentSharingError.stateUnavailable)
         }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailReferencesValidated)
         guard MomentSharingStateStore.readLocalThumbnail(for: prepared) == expectedThumbnail
@@ -7557,7 +7599,12 @@ actor SharingRuntimeSelfTestRunner {
         defer { try? unauthorized.cleanup() }
         let unauthorizedUI = ManagedPreservationCoordinator(configuration: unauthorized.configuration, client: unauthorized.client, purpose: .account)
         unauthorizedUI.start(); try await settle(unauthorizedUI)
-        guard !unauthorizedUI.isSignedIn, unauthorizedUI.membership == nil,
+        // An observation-only 401 preserves an in-flight save batch's session.
+        let observationSessionRemainsValid = try await unauthorized.client.hasSession()
+        guard observationSessionRemainsValid, unauthorizedUI.isSignedIn, unauthorizedUI.membership == nil,
+              unauthorizedUI.membershipMessage == ManagedPreservationError.unavailable.errorDescription,
+              unauthorizedUI.errorMessage == nil,
+              try unauthorized.store.load() == unauthorized.session,
               unauthorizedUI.records.isEmpty, unauthorizedUI.usage == nil,
               await unauthorized.server.endpointCounts() == ["GET /v1/membership": 1] else {
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-010", ManagedPreservationError.authenticationRequired)
