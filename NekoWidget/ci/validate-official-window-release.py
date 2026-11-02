@@ -42,6 +42,14 @@ def validate_archive(app: dict, widget: dict, mode: str, expected_url: str) -> N
             raise ValueError(f"{label} archive official window feed does not match the selected URL")
 
 
+def validate_production(app: dict, widget: dict, expected: dict, *, synthetic=False) -> None:
+    from production_candidate import match_info, public_url
+    public_url(expected["OFFICIAL_WINDOW_FEED_URL"], synthetic=synthetic)
+    for info in (app, widget):
+        match_info(info, {"SharingReleaseMode": "SHARING_RELEASE_MODE",
+                         "OfficialWindowFeedURL": "OFFICIAL_WINDOW_FEED_URL"}, expected)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)

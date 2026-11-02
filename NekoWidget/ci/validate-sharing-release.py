@@ -833,6 +833,31 @@ def validate_expected_mode(
             )
 
 
+def validate_production(app: dict, share: dict, widget: dict, expected: dict) -> None:
+    """Public route: all three processed products, exact reviewed recipient and URLs."""
+    from production_candidate import match_info, require
+    for info in (app, share, widget):
+        match_info(info, {"SharingReleaseMode": "SHARING_RELEASE_MODE",
+                         "SharingFeatureEnabled": "SHARING_FEATURE_ENABLED",
+                         "SharingMediaEnabled": "SHARING_MEDIA_ENABLED",
+                         "OwnerInternalReportsDisabled": "OWNER_INTERNAL_REPORTS_DISABLED"}, expected)
+        require(info.get("SharingInternalEncryptedReportEnabled") is False
+                and info.get("SharingInternalEncryptedReportScope") == "", "Public product contains internal reporting")
+    match_info(app, {"SharingModerationKeyID": "SHARING_MODERATION_KEY_ID",
+                     "SharingModerationPublicKey": "SHARING_MODERATION_PUBLIC_KEY",
+                     "SharingAPIBaseURL": "SHARING_API_BASE_URL",
+                     "SharingPrivacyURL": "SHARING_PRIVACY_URL",
+                     "SharingSupportURL": "SHARING_SUPPORT_URL",
+                     "SharingCommunityStandardsURL": "SHARING_COMMUNITY_STANDARDS_URL",
+                     "GroupReportingProductionEnabled": "GROUP_REPORTING_PRODUCTION_ENABLED"}, expected)
+    failures = []
+    validate_share_extension_boundary(app, share, failures)
+    require(not failures, "; ".join(failures))
+    activation = share.get("NSExtension", {}).get("NSExtensionAttributes", {}).get("NSExtensionActivationRule")
+    require(activation == {"NSExtensionActivationSupportsImageWithMaxCount": 1}, "Public share extension must accept one image only")
+    require(all(term in app.get("NSPhotoLibraryUsageDescription", "") for term in PHOTO_DESCRIPTION_TERMS), "Public photo disclosure is incomplete")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--info-plist", type=Path, required=True)

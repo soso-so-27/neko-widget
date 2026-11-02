@@ -128,6 +128,14 @@ def verify_export_options(options: dict, expected: dict[str, str]) -> None:
         raise ValueError("Export internal-testing restriction does not match the release settings.")
 
 
+def validate_production(app: dict, widget: dict, expected: dict) -> None:
+    from production_candidate import match_info
+    match_info(app, {info: build for build, info in INFO_KEYS.items()}, expected)
+    for info in (app, widget):
+        match_info(info, {"SharingReleaseMode": "SHARING_RELEASE_MODE", "MembershipAccessEnforced": "MEMBERSHIP_ACCESS_ENFORCED"}, expected)
+    match_info(app, {"PersonalArchiveEnabled": "PERSONAL_ARCHIVE_ENABLED", "PersonalArchiveReadOnly": "PERSONAL_ARCHIVE_READ_ONLY"}, expected)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--requested", choices=("true", "false"), required=True)

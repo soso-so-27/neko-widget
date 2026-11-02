@@ -192,7 +192,19 @@ const LOCAL_ONLY_PAGES = Object.freeze([
   }),
 ]);
 
+const PUBLIC_1_0_PAGES = Object.freeze([
+  { name: "overview", path: "", h1: "撮りためた猫の写真に、毎日会える", visibleRevision: false,
+    requiredPhrases: ["アルバムとホーム画面のウィジェットに出すアプリ", "公開フィード、検索、フォロー、匿名の出会いはありません", "広告もありません"] },
+  { name: "privacy", path: "privacy/", h1: "プライバシーポリシー", visibleRevision: true,
+    requiredPhrases: ["1つのまどは6人まで", "エンドツーエンド暗号化してから送ります", "中身を読む鍵を持ちません", "確認用の画像は7日で消えます", "暗号化して最大35日保持", "購読の終わりから12か月", "知らせが届いてから少なくとも30日は待ちます"] },
+  { name: "community", path: "community/", h1: "コミュニティ基準", visibleRevision: true,
+    requiredPhrases: ["1つのまどは6人まで", "入れるのは招待された人だけ", "運営者だけが開ける鍵で暗号化して送ります", "受付番号が出る", "その相手からの新しい写真を止められます", "確認用の画像は7日で消し"] },
+  { name: "support", path: "support/", h1: "サポート", visibleRevision: true,
+    requiredPhrases: ["毎日の入れ替わりはPlusの機能", "まどを作った人がPlusを使っている必要があります", "招待された人は無料", "1人1日5枚まで", "500枚まで", "写真アプリに保存してください", "それまでの記録は消えません", "緊急通報先ではありません"] },
+].map(page => Object.freeze({ ...page, forbiddenPhrases: [SHARING_BETA_BOUNDARY_PHRASE, "完全ローカル版", "新規の暗号化通報受付は停止"] })));
+
 const PROFILE_DEFINITIONS = Object.freeze({
+  "public-1.0": Object.freeze({ pages: PUBLIC_1_0_PAGES, forbiddenBaseSuffix: "/app/", requiredSharingBetaLink: false }),
   "sharing-beta": Object.freeze({
     pages: SHARING_BETA_PAGES,
     requiredBaseSuffix: undefined,
@@ -636,7 +648,7 @@ export async function checkPublicPolicySite({
 }) {
   const profileDefinition = PROFILE_DEFINITIONS[profile];
   if (profileDefinition === undefined) {
-    throw new Error("policy profile must be 'sharing-beta' or 'local-only'");
+    throw new Error("policy profile must be 'sharing-beta', 'local-only' or 'public-1.0'");
   }
   const normalizedBase = normalizePublicHttpsSiteBase(siteBase);
   if (typeof expectedRevision !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(expectedRevision)) {

@@ -49,6 +49,15 @@ def verify_export(options: dict, expected: str) -> None:
         raise ValueError("Group export must remain TestFlight internal testing only.")
 
 
+def validate_production(app: dict, share: dict, expected: dict) -> None:
+    from production_candidate import match_info, require
+    match_info(app, {"SharingReleaseMode": "SHARING_RELEASE_MODE", "GroupWindowsEnabled": "GROUP_WINDOWS_ENABLED",
+                     "SharingAPIBaseURL": "SHARING_API_BASE_URL", "FamilyNotebookProductionEnabled": "FAMILY_NOTEBOOK_PRODUCTION_ENABLED"}, expected)
+    match_info(share, {"SharingReleaseMode": "SHARING_RELEASE_MODE", "GroupWindowsEnabled": "GROUP_WINDOWS_ENABLED",
+                       "GroupShareAPIBaseURL": "SHARING_API_BASE_URL"}, expected)
+    require(app.get("GroupShareExtensionEnabled") == share.get("GroupShareExtensionEnabled") == "YES", "Public Group Share must match the host")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--requested", choices=("true", "false"), required=True)

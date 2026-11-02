@@ -1392,7 +1392,7 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn(
             "- name: Upload encrypted signed app and symbols\n"
-            "        if: ${{ inputs.retain_signed_artifacts }}",
+            "        if: ${{ inputs.retain_signed_artifacts && inputs.distribution_profile != 'app-store-candidate' }}",
             release_workflow,
         )
         self.assertIn(

@@ -6,6 +6,7 @@ from pathlib import Path
 
 OWNER = "owner-internal"
 REVIEWED = "existing-reviewed"
+PUBLIC = "app-store-candidate"
 OFF_KEY = "OwnerInternalReportsDisabled"
 OWNER_SCHEMA = "jp.nekowidget.moderation-release-metadata.v4"
 ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
@@ -15,10 +16,12 @@ PLISTS = ("Info.plist", "PlugIns/NekoWidgetShareExtension.appex/Info.plist",
 
 
 def validate(profile, mode, internal_reports):
-    if profile not in (OWNER, REVIEWED) or type(internal_reports) is not bool:
+    if profile not in (OWNER, REVIEWED, PUBLIC) or type(internal_reports) is not bool:
         raise ValueError("An explicit known distribution profile and boolean report input are required.")
     if profile == OWNER and (mode != "media-staging" or internal_reports):
         raise ValueError("Owner internal requires media-staging and real reports OFF.")
+    if (profile == PUBLIC) != (mode == "production") or (profile == PUBLIC and internal_reports):
+        raise ValueError("Production requires the explicit App Store candidate profile and no internal reporting.")
 
 
 def verify_readiness(policy, *, profile, mode, internal_reports):
@@ -103,6 +106,8 @@ def main():
     parser.add_argument("--verify-export", type=Path)
     args = parser.parse_args()
     validate(args.profile, args.mode, args.internal_reports == "true")
+    if args.profile == PUBLIC and any((args.app, args.ipa, args.prepare_export, args.verify_export)):
+        raise ValueError("Public artifacts require the complete production_candidate.py contract validator.")
     if args.profile == OWNER:
         if args.app:
             verify_app(args.app)

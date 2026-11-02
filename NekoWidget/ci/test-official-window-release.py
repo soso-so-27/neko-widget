@@ -132,7 +132,7 @@ class OfficialWindowReleaseTests(unittest.TestCase):
         self.assertIn('default: ""', definition)
         self.assertIn("required: false", definition)
         self.assertIn("type: string", definition)
-        self.assertEqual(text.count("${{ inputs.official_window_feed_url }}"), 1)
+        self.assertEqual(text.count("${{ inputs.official_window_feed_url }}"), 2)
         step = text.split("- name: Validate official window feed input", 1)[1].split("\n      - name:", 1)[0]
         environment, shell = step.split("        run: |", 1)
         self.assertIn("SELECTED_OFFICIAL_WINDOW_FEED_URL: ${{ inputs.official_window_feed_url }}", environment)
