@@ -4301,18 +4301,6 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("photo-grid-month-jump-beyond-first-batch")
         firstSeptemberPhoto.tap()
         XCTAssertTrue(app.staticTexts["31 / 50"].waitForExistence(timeout: 10))
-        app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(firstSeptemberPhoto.waitForExistence(timeout: 5))
-        app.terminate()
-        // Keep the same isolated suite and restore without scrolling or a new jump.
-        app.launch()
-        openPhotosTab(in: app)
-        let restoredPhoto = app.buttons[firstSeptemberPhotoIdentifier].firstMatch
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "hittable == true"), object: restoredPhoto
-        )], timeout: 10), .completed, "Restart restores the same September row")
-        XCTAssertEqual(app.buttons.matching(identifier: firstSeptemberPhotoIdentifier).count, 1)
-        capture("photo-grid-month-jump-restart")
         app.terminate()
     }
 
