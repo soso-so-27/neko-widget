@@ -1,3 +1,4 @@
+import {groupPushRevocationStatements} from './group-push-revocation';
 import { base64urlDecode, verifyEd25519 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
@@ -91,8 +92,7 @@ export async function transitionGroupMembership(env:Env,actor:GroupActor,windowI
     statements.push(env.DB.prepare("UPDATE group_members SET state='removed',left_revision=? WHERE participant_id=?").bind(r.revision,targetId),
       env.DB.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=? WHERE space_id=? AND participant_id=? AND state='active'")
         .bind(r.revision,windowId,targetId),
-      env.DB.prepare("UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce='',token_digest='' WHERE space_id=? AND device_id IN (SELECT device_id FROM group_window_devices WHERE space_id=? AND participant_id=?)")
-        .bind(windowId,windowId,targetId));
+      ...groupPushRevocationStatements(env,windowId,{participantId:targetId}));
   } else if(kind==='removeDevice') {
     const member=expected.find(m=>m.devices.some(d=>d.id===targetId));
     if(!member) fail('not_found',404);
@@ -100,8 +100,7 @@ export async function transitionGroupMembership(env:Env,actor:GroupActor,windowI
     member.devices=member.devices.filter(d=>d.id!==targetId);
     statements.push(env.DB.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=? WHERE space_id=? AND device_id=?")
       .bind(r.revision,windowId,targetId),
-      env.DB.prepare("UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce='',token_digest='' WHERE space_id=? AND device_id=?")
-        .bind(windowId,targetId));
+      ...groupPushRevocationStatements(env,windowId,{deviceId:targetId}));
   } else if(targetId!==windowId) fail('invalid_request',400);
   if(membershipShape(expected)!==membershipShape(r.members)) fail('invalid_roster',400);
   const envelopes=groupEnvelopes(body); await verifyGroupEnvelopes(envelopes,next);
@@ -135,8 +134,7 @@ export async function leaveGroupWindow(env:Env,actor:GroupActor,windowId:string,
     env.DB.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=? WHERE space_id=? AND participant_id=? AND state='active'")
       .bind(revision+1,windowId,member.participantId),
     // Keep the generation tombstone so an old queued delivery cannot revive.
-    env.DB.prepare("UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce='',token_digest='' WHERE space_id=? AND device_id IN (SELECT device_id FROM group_window_devices WHERE space_id=? AND participant_id=?)")
-      .bind(windowId,windowId,member.participantId),
+    ...groupPushRevocationStatements(env,windowId,{participantId:member.participantId}),
     env.DB.prepare("UPDATE group_windows SET rotation_required=1,updated_at=? WHERE space_id=?").bind(actor.now,windowId),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response);

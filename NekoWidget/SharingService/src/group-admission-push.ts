@@ -1,3 +1,4 @@
+import {groupPushRevocationStatements} from './group-push-revocation';
 import { base64urlDecode,randomBase64url } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
@@ -44,8 +45,7 @@ async function changeGroupJoinPush(env:Env,actor:GroupActor,windowId:string,body
   const previous=await storedGroupMutation(env,actor,operationId);if(previous)return jsonResponse(previous);
   const receipt={operationId,windowId,notifications:!remove,serverNow:actor.now};
   const statements=[...groupNonceStatements(env,actor)];
-  if(remove)statements.push(env.DB.prepare(`UPDATE group_join_push_subscriptions SET expires_at=0,generation=generation+1,
-    token_ciphertext='',token_nonce='' WHERE space_id=? AND device_id=?`).bind(windowId,actor.deviceId));
+  if(remove)statements.push(...groupPushRevocationStatements(env,windowId,{deviceId:actor.deviceId}));
   else {
     let credential,keyring,token:Uint8Array;
     try {

@@ -1,8 +1,9 @@
+import {groupCloseTranscript} from '../src/group-management';
 import { describe,expect,it } from 'vitest';
 import { plusOwner } from './group-billing-fixture';
 import { randomBase64url } from '../src/encoding';
 import { drainGroupAdmissionNotifications } from '../src/group-admission-push';
-import { apply,call,create,db,invitation,ok,person,send,signed,testEnv,transition,type Person } from './group-fixture';
+import { apply,call,create,db,invitation,ok,person,send,sign,signed,testEnv,transition,type Person } from './group-fixture';
 import type { Env } from '../src/env';
 async function setup() {
   const owner=await plusOwner(),guest=await person(),w=await create(owner),invite=await invitation(owner,w);
@@ -61,6 +62,25 @@ describe('group invitation admission notifications',()=>{
     };
     try {expect((await drainGroupAdmissionNotifications(settings,undefined,noNetwork,{beforeSend:change})).skipped).toBe(1);}
     finally {if(reason==='gate')await db.prepare('UPDATE personal_staging_runtime_gate SET apns_enabled=1,generation=generation+1 WHERE singleton=1').run();}
+  });
+  it('clears pending admission token and digest when that device turns notifications off',async()=>{
+    const {guest,w,register,settings}=await setup();ok(await register(guest));
+    ok(await send(await signed(guest,`/v3/group-windows/${w.windowId}/join-push-subscription/remove`,{operationId:crypto.randomUUID()}),{...settings,GROUP_APNS_RUNTIME_ENABLED:'NO'}));
+    expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at,generation FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,guest.deviceId).first())
+      .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2});
+  });
+  it('closes both token registries without touching another window or reviving a close retry',async()=>{
+    const {owner,guest,w,register,settings}=await setup();ok(await register(owner,'push-subscription'));ok(await register(guest));
+    const other=await setup();ok(await other.register(other.owner,'push-subscription'));ok(await other.register(other.guest));
+    const read=(table:string,windowId:string)=>db.prepare(`SELECT * FROM ${table} WHERE space_id=? ORDER BY device_id`).bind(windowId).all();
+    const tables=['group_push_subscriptions','group_join_push_subscriptions'],before=await Promise.all(tables.map(t=>read(t,other.w.windowId)));
+    const operationId=crypto.randomUUID(),body={operationId,expectedRevision:w.roster.revision,keyEpoch:w.roster.keyEpoch,
+      ownerSignature:await sign(owner.signing.privateKey,groupCloseTranscript({windowId:w.windowId,revision:w.roster.revision,keyEpoch:w.roster.keyEpoch,rosterHash:w.hash,operationId}))};
+    for(let retry=0;retry<2;retry++)ok(await send(await signed(owner,`/v3/group-windows/${w.windowId}/close`,body),{...settings,GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED:'YES'}));
+    for(let i=0;i<tables.length;i++){
+      expect((await read(tables[i]!,w.windowId)).results).toMatchObject([{token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2}]);
+      expect((await read(tables[i]!,other.w.windowId)).results).toEqual(before[i]!.results);
+    }
   });
   it('runtime OFF sends nothing and preserves requests',async()=>{
     const {owner,w,join,settings,register}=await setup();ok(await register(owner,'push-subscription'));
