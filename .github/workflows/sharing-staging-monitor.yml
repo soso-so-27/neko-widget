@@ -23,7 +23,7 @@ jobs:
         include:
           - profile: public-1.0
             site_base: https://soso-so-27.github.io/neko-widget/
-            revision: "2026-11-02"
+            revision: "2026-11-03"
 
     steps:
       - name: Check out repository
