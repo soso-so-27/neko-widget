@@ -660,6 +660,7 @@ struct FamilyNotebookView: View {
     @State private var showsName = false
     @State private var showsCats = false
     @State private var hasSavedCopies = false
+    @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
 
     private var prototypeInvitationAction: (@MainActor () -> Void)? {
@@ -732,6 +733,10 @@ struct FamilyNotebookView: View {
             .alert("家族の手帳", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
+            .confirmationDialog("\(decliningRequest?.displayName ?? "")さんを受け入れませんか？", isPresented: Binding(get: { decliningRequest != nil }, set: { if !$0 { decliningRequest = nil } }), titleVisibility: .visible, presenting: decliningRequest) { request in
+                Button("受け入れない", role: .destructive) { decide(request, approve: false) }
+                Button("戻る", role: .cancel) {}
+            }
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -785,7 +790,7 @@ struct FamilyNotebookView: View {
                                 Text(request.displayName)
                                 HStack {
                                     Button("受け入れる") { decide(request, approve: true) }
-                                    Button("受け入れない", role: .destructive) { decide(request, approve: false) }
+                                    Button("受け入れない", role: .destructive) { decliningRequest = request }
                                 }.buttonStyle(.bordered).disabled(sharing.isWorking)
                             }
                         }

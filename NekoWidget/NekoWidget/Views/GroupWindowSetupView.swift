@@ -405,6 +405,7 @@ struct GroupWindowMembersView: View {
     @State private var showsPlusOffer = false
     @State private var showsRename = false
     @State private var showsCloseConfirmation = false
+    @State private var rejectionTarget: GroupJoinRequest?
     /// Admissions already shown once, so 「〇〇さんが参加しました」 is said once
     /// and not every time the screen opens. Written only when leaving.
     @AppStorage("group.admissionsSeen.v1") private var seenAdmissions = ""
@@ -536,6 +537,15 @@ struct GroupWindowMembersView: View {
             Button("戻る", role: .cancel) {}
         } message: {
             Text("抜けると、これから届く写真は見られません。")
+        }
+        .confirmationDialog(
+            "\(rejectionTarget?.displayName ?? "")さんの参加を断りますか？",
+            isPresented: Binding(get: { rejectionTarget != nil }, set: { if !$0 { rejectionTarget = nil } }),
+            titleVisibility: .visible,
+            presenting: rejectionTarget
+        ) { request in
+            Button("断る", role: .destructive) { Task { await model.reject(request) } }
+            Button("戻る", role: .cancel) {}
         }
     }
 
@@ -755,7 +765,7 @@ struct GroupWindowMembersView: View {
                     Text("知らない人なら断れます。")
                         .font(.caption).foregroundStyle(.secondary)
                     Button {
-                        Task { await model.reject(request) }
+                        rejectionTarget = request
                     } label: {
                         Text("断る").frame(minWidth: 64, minHeight: 44)
                     }
