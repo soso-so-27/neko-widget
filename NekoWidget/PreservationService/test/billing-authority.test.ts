@@ -21,7 +21,8 @@ import type { VerifiedBillingTransaction } from '../../SharingService/src/billin
 const bindings = env as unknown as { DB: D1Database; TEST_BILLING_MIGRATIONS: D1Migration[] };
 const db = bindings.DB;
 const audience = 'preservation.synthetic-test';
-const enabled: BillingAuthorityEnv = { DB: db, PRESERVATION_BILLING_ENABLED: 'YES',
+const enabled: BillingAuthorityEnv & Pick<SharingEnv, 'BILLING_STORE_ENVIRONMENT'> = {
+  DB: db, BILLING_STORE_ENVIRONMENT: 'Sandbox', PRESERVATION_BILLING_ENABLED: 'YES',
   PRESERVATION_LINK_AUDIENCE: audience, BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: 'YES',
   RETENTION_BILLING_REFRESH: { fetch: async () => new Response(null, { status: 204 }) } as unknown as Fetcher };
 const makeWorker = (overrides: Partial<BillingAuthorityEnv> = {}) => new BillingAuthority(createExecutionContext(), { ...enabled, ...overrides });
@@ -83,9 +84,16 @@ async function entitlement(billingAccountId: string, appleStatus: 1 | 2 | 3 | 4 
 describe('private preservation billing authority', () => {
   const retention = (id: string, worker = makeWorker()) => worker.fetch(request('verified-retention-status', { billingAccountId: id }));
   beforeAll(async () => {
-    expect(bindings.TEST_BILLING_MIGRATIONS).toHaveLength(3);
+    expect(bindings.TEST_BILLING_MIGRATIONS.map(migration => migration.name)).toEqual(expect.arrayContaining([
+      '0001_pairing.sql', '0019_billing_foundation.sql', '0021_billing_effective_entitlement.sql',
+      '0025_billing_apple_notification_history_recovery.sql', '0062_billing_environment_ledger.sql',
+    ]));
     await applyD1Migrations(db, bindings.TEST_BILLING_MIGRATIONS, 'test_billing_migrations');
-  });
+    const lineageColumns = await db.prepare('PRAGMA table_info(billing_transaction_lineages)')
+      .all<{ name: string; pk: number }>();
+    expect(lineageColumns.results.filter(column => column.pk > 0).sort((a, b) => a.pk - b.pk)
+      .map(column => column.name)).toEqual(['environment', 'original_transaction_id']);
+  }, 60_000); // Full FK-closed schema preparation; individual test/assertion budgets are unchanged.
   beforeEach(async () => {
     await db.prepare(`UPDATE billing_runtime_gate SET generation=generation+1,updated_at=unixepoch(),
       effective_entitlement_enabled=1,subscription_reconciliation_enabled=1 WHERE singleton=1`).run();

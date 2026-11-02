@@ -5,7 +5,7 @@ PRAGMA defer_foreign_keys = ON;
 
 CREATE TABLE billing_environment_migration_guard (safe INTEGER NOT NULL CHECK (safe = 1));
 
-INSERT INTO billing_environment_migration_guard SELECT CASE WHEN EXISTS (SELECT 1 FROM billing_runtime_gate WHERE singleton = 1 AND account_bootstrap_enabled = 0 AND transaction_ingestion_enabled = 0 AND apple_notification_ingestion_enabled = 0 AND subscription_reconciliation_enabled = 0 AND effective_entitlement_enabled = 0 AND account_recovery_enabled = 0 AND window_sponsorship_enabled = 0 AND apple_notification_history_recovery_enabled = 0 AND NOT EXISTS (SELECT 1 FROM billing_reconciliation_jobs WHERE lease_token IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM billing_apple_notification_history_recovery WHERE state = 'leased')) THEN 1 ELSE 0 END;
+INSERT INTO billing_environment_migration_guard SELECT (CASE WHEN EXISTS (SELECT 1 FROM billing_runtime_gate WHERE singleton = 1 AND account_bootstrap_enabled = 0 AND transaction_ingestion_enabled = 0 AND apple_notification_ingestion_enabled = 0 AND subscription_reconciliation_enabled = 0 AND effective_entitlement_enabled = 0 AND account_recovery_enabled = 0 AND window_sponsorship_enabled = 0 AND apple_notification_history_recovery_enabled = 0 AND NOT EXISTS (SELECT 1 FROM billing_reconciliation_jobs WHERE lease_token IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM billing_apple_notification_history_recovery WHERE state = 'leased')) THEN 1 ELSE 0 END);
 
 CREATE TABLE billing_apple_notification_history_page_commits_legacy_0061 AS SELECT * FROM billing_apple_notification_history_page_commits;
 
