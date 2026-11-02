@@ -96,16 +96,24 @@ export async function purgeGroupReportRecords(db:D1Database):Promise<void> {
  * concurrent drains; response-loss at the provider can still duplicate mail. */
 export async function drainGroupReportMail(env:GroupReportMailEnv&{DB:D1Database},send=sendGroupReportMail):Promise<void> {
  if(env.GROUP_REPORT_EMAIL_ENABLED!=='YES'||!await available(env.DB))return;
- const db=env.DB;let remaining=10;
- // Fixed table names only; one shared bound across both queues.
+ const db=env.DB;
+ // Cancel obsolete obligations in both queues before selecting a fair batch.
  for(const table of ['group_report_mail_outbox','group_report_first_day_mail'] as const){
  await db.prepare(`UPDATE ${table} SET state='cancelled',lease_token=NULL,lease_until=NULL
   WHERE kind='undecided' AND state IN('pending','leased') AND (lease_until IS NULL OR lease_until<=unixepoch())
   AND EXISTS(SELECT 1 FROM group_report_records r WHERE r.report_id=${table}.report_id AND r.outcome<>'received')`).run();
- const jobs=await db.prepare(`SELECT id FROM ${table} WHERE available_at<=unixepoch()
-  AND (state='pending' OR (state='leased' AND lease_until<=unixepoch())) ORDER BY available_at,id LIMIT ?`).bind(remaining).all<{id:string}>();
- remaining-=jobs.results.length;
+ }
+ // One oldest-first batch prevents a full receipt queue from starving the
+ // 24-hour reminder. Table names are fixed literals, never request input.
+ const jobs=await db.prepare(`SELECT id,queue FROM (
+  SELECT id,0 AS queue,available_at FROM group_report_mail_outbox WHERE available_at<=unixepoch()
+   AND (state='pending' OR (state='leased' AND lease_until<=unixepoch()))
+  UNION ALL
+  SELECT id,1 AS queue,available_at FROM group_report_first_day_mail WHERE available_at<=unixepoch()
+   AND (state='pending' OR (state='leased' AND lease_until<=unixepoch()))
+ ) ORDER BY available_at,id,queue LIMIT 10`).all<{id:string;queue:0|1}>();
  for(const job of jobs.results){
+  const table=job.queue===1?'group_report_first_day_mail':'group_report_mail_outbox';
   const token=crypto.randomUUID();
   const claimed=await db.prepare(`UPDATE ${table} SET state='leased',lease_token=?,lease_until=unixepoch()+300,attempts=attempts+1
    WHERE id=? AND available_at<=unixepoch() AND (state='pending' OR (state='leased' AND lease_until<=unixepoch()))
@@ -120,7 +128,5 @@ export async function drainGroupReportMail(env:GroupReportMailEnv&{DB:D1Database
    await db.prepare(`UPDATE ${table} SET state='pending',available_at=unixepoch()+?,lease_token=NULL,lease_until=NULL
     WHERE id=? AND state='leased' AND lease_token=?`).bind(Math.min(3600,30*2**Math.min(claimed.attempts,7)),job.id,token).run();
   }
- }
-  if(remaining===0)break;
  }
 }

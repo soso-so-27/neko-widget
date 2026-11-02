@@ -311,6 +311,17 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
     expect(await mailRows(r.id)).toMatchObject([{state:'sent',attempts:1,lease_token:null,lease_until:null}]);
   });
 
+  it('does not starve an older first-day reminder behind ten receipt mails',async()=>{
+    const ids:string[]=[];
+    for(let i=0;i<10;i++){
+      const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);await complete(bob,w,r);ids.push(r.id);
+    }
+    const id=ids[0]!;await seedReportDeadline(id,6*86400);await runGroupReportOperations(reports);await isolateReminderFixture(ids);
+    await db.prepare('UPDATE group_report_first_day_mail SET available_at=unixepoch()-120 WHERE report_id=?').bind(id).run();
+    const sendMail=vi.fn(async()=>{});await drainGroupReportMail(mailSettings(),sendMail);
+    expect(sendMail.mock.calls.length).toBe(10);
+    expect(await db.prepare('SELECT state FROM group_report_first_day_mail WHERE report_id=?').bind(id).first()).toEqual({state:'sent'});
+  },20000);
   it('enqueues the 24-hour reminder once, separately from day five, and cancels after a decision',async()=>{
     const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);await complete(bob,w,r);
     const firstDay=()=>db.prepare('SELECT state,attempts FROM group_report_first_day_mail WHERE report_id=?').bind(r.id).first();
