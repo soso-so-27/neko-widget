@@ -113,7 +113,8 @@ struct NekoWidgetView: View {
                                     .accessibilityHidden(true)
                             }
                         } else if let photo = entry.officialPhoto {
-                            // Same type, colour and inset as a window's name, so
+                            // Same type, colour, inset and alignment as a window's
+                            // name (left in Small, centred in Medium and Large), so
                             // an official and a private Widget side by side line up.
                             Text(photo.catName)
                                 .font(.caption2)
@@ -121,10 +122,11 @@ struct NekoWidgetView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .foregroundStyle(.white.opacity(0.92))
+                                .multilineTextAlignment(footerTextLineAlignment)
                                 .padding(.bottom, footerTextBottomInset)
                                 .padding(.horizontal, footerInset)
                                 .padding(.bottom, footerInset)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(maxWidth: .infinity, alignment: footerTextAlignment)
                                 .background { footerBand(fadeHeight: 16) }
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
