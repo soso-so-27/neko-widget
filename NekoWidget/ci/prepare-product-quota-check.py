@@ -9,6 +9,16 @@ method = source[start:source.index('\n    }', start) + 6]
 checks = Path('NekoWidget/Services/SharingRuntimeSelfTest.swift').read_text(encoding='utf-8')
 start = checks.index('    static func testManagedPreservationUsageBoundary()')
 check = checks[start:checks.index('\n    }', start) + 6]
-Path(sys.argv[1]).write_text('import Foundation\n' + model
+# The extracted case has no runtime report/TaskLocal capture. Preserve the
+# recorder's absent-capture behavior and exact Error while retaining every
+# source assertion unchanged in the standalone compiler check.
+recorder = """
+private enum SharingRuntimeSelfTestRunner {
+    static func recordAssertionFailure(_ identifier: StaticString, _ error: Error) -> Error {
+        return error
+    }
+}
+"""
+Path(sys.argv[1]).write_text('import Foundation\n' + recorder + model
     + '\nextension UsageTransportFixture {\n' + method + '\n}\n'
     + '\nextension ProductQuotaVerifier {\n' + check + '\n}\n', encoding='utf-8')

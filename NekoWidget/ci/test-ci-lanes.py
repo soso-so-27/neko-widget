@@ -1225,7 +1225,7 @@ final class UnrelatedUITests: XCTestCase {
     def test_actual_workflow_keeps_app_ui_in_first_five_without_losing_evidence(self):
         jobs = workflow_jobs()
         normal_jobs = {
-            "quick-check": ("Build, unit tests, and launch", "run-quick-ios-checks.sh", 20),
+            "quick-check": ("Build, unit tests, and launch", "run-quick-ios-checks.sh", 25),
             "safety-check": ("Privacy, saved data, and sharing checks", "run-cheap-safety-checks.sh", 15),
         }
         self.assertEqual(set(jobs), set(normal_jobs) | {

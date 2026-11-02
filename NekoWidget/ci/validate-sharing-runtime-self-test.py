@@ -45,6 +45,22 @@ REQUIRED_CASES = {
 }
 
 
+# Exact finite inventories, mirrored against literal DEBUG assertions by tests.
+ASSERTION_IDS = {
+    "disabled-upgrade-purge": {f"DUP-{i:03}" for i in range(1, 18)}
+        | {f"DUP-RS-{i:03}" for i in range(1, 17)}
+        | {"DUP-RS-007-PRECISION", "DUP-RS-007-JPEG"},
+    "retained-widget-publication": {f"RWP-{i:03}" for i in range(1, 11)}
+        | {f"RWP-OP-{i:03}" for i in range(1, 28)},
+    "managed-preservation-membership-boundary": {
+        f"{prefix}-{i:03}" for prefix, count in (
+            ("MPM", 51), ("MPM-USAGE", 6), ("MPM-DELETE", 12),
+            ("MPM-SIGNIN", 9), ("MPM-SESSION", 29), ("MPM-ACCOUNT", 11)
+        ) for i in range(1, count + 1)
+    },
+}
+
+
 def fail(message: str) -> None:
     raise ValueError(message)
 
@@ -85,7 +101,9 @@ def main() -> int:
         for item in cases:
             # Keep the artifact deliberately free of paths, PhotoKit local IDs,
             # image bytes, invite codes, keys, and arbitrary diagnostic text.
-            if not isinstance(item, dict) or set(item) != {"id", "status"}:
+            if not isinstance(item, dict) or set(item) not in (
+                {"id", "status"}, {"id", "status", "failedAssertionID"}
+            ):
                 fail("runtime self-test case has an unexpected schema")
             identifier = item["id"]
             status = item["status"]
@@ -95,6 +113,12 @@ def main() -> int:
                 fail(f"runtime self-test case is duplicated: {identifier}")
             if status not in {"passed", "failed"}:
                 fail(f"runtime self-test case has an invalid status: {identifier}")
+            if "failedAssertionID" in item:
+                assertion = item["failedAssertionID"]
+                allowed = ASSERTION_IDS.get(identifier, set())
+                if (status != "failed" or not allowed or not isinstance(assertion, str)
+                        or assertion not in allowed | {"unclassified-operation-error"}):
+                    fail("runtime self-test contains an invalid fixed assertion identifier")
             by_id[identifier] = status
         missing = REQUIRED_CASES - by_id.keys()
         if missing:
