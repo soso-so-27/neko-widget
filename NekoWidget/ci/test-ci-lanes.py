@@ -73,7 +73,7 @@ class LaneTests(unittest.TestCase):
 
     def test_photo_library_root_return_lifecycle_contracts(self):
         result = subprocess.run(
-            [sys.executable, str(CI / "test-photo-library-reading-controls.py")],
+            [sys.executable, "-X", "utf8", str(CI / "test-photo-library-reading-controls.py")],
             cwd=CI.parents[1], capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -157,10 +157,10 @@ class LaneTests(unittest.TestCase):
             ('guard hasPhotoAccess else', 'guard true else'),
             ('if savedStateReadFailed', 'if false'),
             ('if unavailableSavedPhotoCount > 0', 'if unavailableSavedPhotoCount > 999'),
-            ('写真へのアクセスを許可してください', '写真はありません'),
-            ('保存状態は確認できません', '保存済みです'),
+            ('写真へのアクセスが必要です', '写真はありません'),
+            ('一部を読み込めませんでした', '保存済みです'),
             (r'表示できない写真\(unavailableSavedPhotoCount.formatted())枚', 'すべて表示できます'),
-            (r'return "お気に入り、\(photos.count.formatted())枚"', 'return "お気に入り"'),
+            (r'return "お気に入り、\(visiblePhotos.count.formatted())枚"', 'return "お気に入り"'),
         )
         for old, new in replacements:
             with self.subTest(old=old):
@@ -177,7 +177,7 @@ class LaneTests(unittest.TestCase):
             gallery.replace(helper, helper + "\n" + helper, 1),
             gallery.replace(helper, "#if DEBUG\n" + helper + "\n#endif", 1),
             gallery.replace(".accessibilityValue(galleryAccessibilityValue)",
-                            r'.accessibilityValue("お気に入り、\(photos.count.formatted())枚")', 1),
+                            r'.accessibilityValue("お気に入り、\(visiblePhotos.count.formatted())枚")', 1),
         )):
             with self.subTest(case=index):
                 self.assertFalse(accepts(source.replace(gallery, changed, 1)))
@@ -1223,6 +1223,29 @@ final class UnrelatedUITests: XCTestCase {
 
     def test_actual_workflow_keeps_app_ui_in_first_five_without_losing_evidence(self):
         jobs = workflow_jobs()
+        normal_jobs = {
+            "quick-check": ("Build, unit tests, and launch", "run-quick-ios-checks.sh", 20),
+            "safety-check": ("Privacy, saved data, and sharing checks", "run-cheap-safety-checks.sh", 15),
+        }
+        self.assertEqual(set(jobs), set(normal_jobs) | {
+            "plan", "build-without-signing", "simulator-smoke-test", "sharing-app-ui",
+            "sharing-runtime-matrix", "sharing-runtime-deferred", "sharing-gallery-early",
+        })
+        normal_condition = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository"
+        for identifier, (name, runner, timeout) in normal_jobs.items():
+            body = jobs[identifier]
+            self.assertIn("    name: " + name + "\n", body)
+            self.assertIn("    if: " + normal_condition + "\n", body)
+            self.assertIn("    runs-on: macos-15\n", body)
+            self.assertIn("    timeout-minutes: " + str(timeout) + "\n", body)
+            self.assertIn("run: bash NekoWidget/ci/" + runner + "\n", body)
+            self.assertNotRegex(body, r"(?m)^    needs:")
+            self.assertNotIn("continue-on-error", body)
+        self.assertIn("    if: github.event_name == 'workflow_dispatch' && inputs.extended_checks\n", jobs["plan"])
+        # Dispatch enables both independent normal jobs alongside extended jobs.
+        # Keep the five-runner boundary over the whole active workflow; omitting
+        # the normal jobs here would hide an existing dispatch overbooking bug.
+        normal_running = len(normal_jobs)
         for selected in scope.SCOPES:
             with self.subTest(scope=selected):
                 remaining = scope.matrix_lanes(selected)
@@ -1240,7 +1263,7 @@ final class UnrelatedUITests: XCTestCase {
                 early_running = 0
                 names = []
                 for identifier, body in jobs.items():
-                    if "    runs-on: macos-15\n" not in body:
+                    if identifier in normal_jobs or "    runs-on: macos-15\n" not in body:
                         continue
                     if identifier == "sharing-runtime-matrix":
                         self.assertIn("!contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')", body)
@@ -1326,6 +1349,8 @@ final class UnrelatedUITests: XCTestCase {
                                      "Small scopes must not wait for build/smoke before runtime checks")
                 if selected in (scope.TOOL_CAT_AUTOFILL_SCOPE, scope.TOOL_CANDIDATE_REFRESH_SCOPE, scope.VET_SAVED_CAT_SCOPE, scope.MEMBERSHIP_COPY_SCOPE, scope.PRESERVATION_USAGE_SCOPE, scope.MEMBERSHIP_TOOLS_SCOPE) or selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE, scope.REVIEWED_APP_SCOPE, scope.LOST_CAT_PHOTO_SCOPE, scope.LOST_CAT_UX_SCOPE, scope.EVACUATION_SCOPE, scope.CARE_HANDOFF_SCOPE, scope.TOOLS_HUB_SCOPE, scope.WINDOW_HUB_SCOPE, scope.ARCHIVE_PICKER_SCOPE, scope.REVIEWED_MEMORY_SCOPE, scope.REVIEWED_MEMORY_FAMILY_SCOPE, scope.REVIEWED_CAT_NOTE_SCOPE, scope.REVIEWED_PHOTO_ACTIONS_SCOPE, scope.REVIEWED_FAMILY_EXPORT_SCOPE, scope.FAMILY_WINDOW_UI_SCOPE, scope.REVIEWED_MEMBERSHIP_OFFER_SCOPE, scope.REVIEWED_DELIVERY_MEMBERSHIP_SCOPE, scope.REVIEWED_WINDOW_SUPPORT_SCOPE, scope.REVIEWED_RECORD_PORTABILITY_SCOPE, scope.REVIEWED_MANAGED_PRESERVATION_SCOPE):
                     self.assertEqual(remaining, ("runtime",))
+                self.assertLessEqual(maximum_running + normal_running, 5,
+                                     "extended dispatch also runs the two independent normal jobs")
         with self.assertRaises(ValueError):
             scope.matrix_lanes("unknown")
 
