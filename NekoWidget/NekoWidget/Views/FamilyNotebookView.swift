@@ -660,6 +660,7 @@ struct FamilyNotebookView: View {
     @State private var showsName = false
     @State private var showsCats = false
     @State private var hasSavedCopies = false
+    @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
 
     private var prototypeInvitationAction: (@MainActor () -> Void)? {
@@ -727,11 +728,13 @@ struct FamilyNotebookView: View {
                 MembershipOfferSheet(model: .live(), context: .continueFamily) { _ in showsPlusOffer = false }
             }
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(model.message ?? "") }
             .alert("家族の手帳", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
+            .confirmationDialog(decliningTitle, isPresented: decliningPresented, titleVisibility: .visible,
+                                presenting: decliningRequest, actions: decliningActions)
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -785,7 +788,7 @@ struct FamilyNotebookView: View {
                                 Text(request.displayName)
                                 HStack {
                                     Button("受け入れる") { decide(request, approve: true) }
-                                    Button("受け入れない", role: .destructive) { decide(request, approve: false) }
+                                    Button("受け入れない", role: .destructive) { decliningRequest = request }
                                 }.buttonStyle(.bordered).disabled(sharing.isWorking)
                             }
                         }
@@ -821,6 +824,16 @@ struct FamilyNotebookView: View {
     }
 
     private var prototype: FamilyNotebookPrototypeSharing? { sharing.service as? FamilyNotebookPrototypeSharing }
+
+    // Kept out of the body chain so the type checker stays fast.
+    private var decliningTitle: String { "\(decliningRequest?.displayName ?? "")さんを受け入れませんか？" }
+    private var decliningPresented: Binding<Bool> {
+        Binding(get: { decliningRequest != nil }, set: { if !$0 { decliningRequest = nil } })
+    }
+    @ViewBuilder private func decliningActions(_ request: FamilyNotebookJoinRequest) -> some View {
+        Button("受け入れない", role: .destructive) { decide(request, approve: false) }
+        Button("戻る", role: .cancel) {}
+    }
 
     private func decide(_ request: FamilyNotebookJoinRequest, approve: Bool) {
         guard let real = sharing.service as? ProductionFamilyNotebookSharingService else { return }
@@ -1365,7 +1378,7 @@ struct FamilyNotebookJoinView: View {
             .navigationTitle("招待")
             .navigationBarTitleDisplayMode(.inline)
             .alert("招待", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
         }
         .task {
@@ -1433,7 +1446,7 @@ struct FamilyNotebookCatSelectionView: View {
             }
             .navigationTitle("一緒に書く猫を選ぶ")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) } }
-            .alert("共有できませんでした", isPresented: $failed) { Button("OK", role: .cancel) {} }
+            .alert("共有できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
                 message: { Text("少し待ってから、もう一度お試しください。") }
         }
     }

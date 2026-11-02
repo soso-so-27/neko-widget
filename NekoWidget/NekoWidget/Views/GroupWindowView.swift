@@ -1034,7 +1034,7 @@ struct GroupLibraryDeliverySheet: View {
                     }
                     .accessibilityIdentifier("group-library-delivery-failed")
                 } else if windows.isEmpty {
-                    ContentUnavailableView("まどがまだありません", systemImage: "window.vertical.closed",
+                    ContentUnavailableView("まだまどがありません", systemImage: "window.vertical.closed",
                         description: Text("まどタブで作るか、招待リンクから参加できます。"))
                 } else {
                     List(windows) { window in
@@ -2245,7 +2245,7 @@ struct GroupReportSheet: View {
                 }
             }
             .alert("通報", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(safety.failure?.message ?? "") }
         }
         .interactiveDismissDisabled(safety.isWorking)
@@ -2396,7 +2396,7 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
                 Text("このまどで、お互いの写真が届かなくなります。相手には知らせません。")
             }
             .alert("まど", isPresented: failureShown) {
-                Button("OK", role: .cancel) {}
+                Button("閉じる", role: .cancel) {}
             } message: { Text(safety.failure?.message ?? "") }
     }
 

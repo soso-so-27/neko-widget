@@ -1,5 +1,5 @@
 import { authenticateGroupRequest, groupId, groupNonceStatements, type GroupActor } from './group-auth';
-import { gate, safeFailure, storeEnvironment } from './family-notebook-payer';
+import { gate, safeFailure, familyStorePolicy } from './family-notebook-payer';
 import { familyUUID } from './family-notebook-crypto';
 import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
@@ -16,14 +16,16 @@ interface Receipt {
   target_person_id: string | null; nomination_id: string | null; resulting_generation: number;
 }
 function query(env: Env, actor: GroupActor, family: string): D1PreparedStatement {
+  const policy = familyStorePolicy(env);
   return env.DB.prepare(`SELECT f.generation,f.payer_person_id,f.nominated_person_id,h.nomination_id,h.nominee_person_id,
     EXISTS(SELECT 1 FROM family_notebook_members n JOIN group_people p ON p.id=n.person_id AND p.state='active'
       WHERE n.family_id=f.id AND n.person_id=h.nominee_person_id AND n.state='active') AS nominee_active,
-    EXISTS(SELECT 1 FROM group_verified_plus_people WHERE person_id=m.person_id AND environment=?) AS member_plus
+    EXISTS(SELECT 1 FROM group_verified_plus_people WHERE person_id=m.person_id
+      AND (environment=? OR (?=1 AND environment='Sandbox'))) AS member_plus
     FROM family_notebook_spaces f JOIN family_notebook_members m ON m.family_id=f.id
     LEFT JOIN family_notebook_handover_current h ON h.family_id=f.id
     WHERE f.id=? AND f.state='active' AND m.person_id=? AND m.state='active'`)
-    .bind(storeEnvironment(env), family, actor.personId);
+    .bind(policy.environment, policy.acceptSandbox, family, actor.personId);
 }
 function response(operationId: string, receipt: Receipt): Response {
   return jsonResponse({ schemaVersion: 1, familyId: receipt.family_id, operationId, action: receipt.action,
@@ -75,19 +77,20 @@ export async function familyNotebookGovernance(request: Request, env: Env): Prom
     }
     let target = action === 'remove' ? groupId(match[4]!) : action === 'nominate' ? groupId(stringField(body, 'personId')) : null;
     const nominationId = action === 'nominate' ? operationId : ['accept', 'cancel'].includes(action) ? uuidField(body, 'nominationId') : null;
+    const policy = familyStorePolicy(env);
     if (action === 'accept' || action === 'cancel') {
       const current = await query(env, actor, family).first<State>();
       if (!current || current.nomination_id !== nominationId || current.nominee_person_id !== current.nominated_person_id) {
         throw new ApiError(409, 'family_notebook_nomination_changed', 'Reload the current nomination.');
       }
       target = current.nominee_person_id;
-      if (action === 'accept' && !storeEnvironment(env)) throw new ApiError(503, 'family_notebook_unavailable', 'Plus could not be confirmed.');
+      if (action === 'accept' && !policy.environment) throw new ApiError(503, 'family_notebook_unavailable', 'Plus could not be confirmed.');
     }
     await env.DB.batch([...groupNonceStatements(env, actor),
       env.DB.prepare(`INSERT INTO family_notebook_governance_events
         (actor_device_id,operation_id,actor_person_id,family_id,request_hash,action,target_person_id,nomination_id,
-          expected_generation,resulting_generation,store_environment) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-        .bind(actor.deviceId, operationId, actor.personId, family, actor.requestHash, action, target, nominationId, generation, generation + 1, storeEnvironment(env))]);
+          expected_generation,resulting_generation,store_environment,accept_sandbox_in_production) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(actor.deviceId, operationId, actor.personId, family, actor.requestHash, action, target, nominationId, generation, generation + 1, policy.environment, policy.acceptSandbox)]);
     return response(operationId, { actor_person_id: actor.personId, family_id: family, request_hash: actor.requestHash, action,
       target_person_id: target, nomination_id: nominationId, resulting_generation: generation + 1 });
   } catch (error) { safeFailure(error); }

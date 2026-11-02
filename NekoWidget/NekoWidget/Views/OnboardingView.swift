@@ -178,7 +178,7 @@ private struct OnboardingScanErrorPage: View {
         .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 12) {
-                Button("もう一度試す", systemImage: "arrow.clockwise", action: retry)
+                Button("もう一度探す", systemImage: "arrow.clockwise", action: retry)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .accessibilityIdentifier("onboarding-scan-retry")

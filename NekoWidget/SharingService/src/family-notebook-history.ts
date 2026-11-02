@@ -2,7 +2,7 @@ import { authenticateGroupRequest, groupNonceStatements, type GroupActor } from 
 import { base64urlDecode, verifyEd25519 } from './encoding';
 import { groupDeviceAuthorization } from './group-protocol';
 import { familyUUID, verifyFamilyRoster, verifyFamilyEnvelope, verifyFamilyOperation, type VerifiedFamilyCryptoRoster } from './family-notebook-crypto';
-import { gate, safeFailure, storeEnvironment } from './family-notebook-payer';
+import { gate, safeFailure, familyStorePolicy } from './family-notebook-payer';
 import { ApiError, jsonResponse } from './errors';
 import { parseJsonBody, requireEmptyBody } from './http';
 import { asObject, binaryField, exactKeys, integerField, uuidField } from './validation';
@@ -28,10 +28,12 @@ async function state(env: Env, actor: GroupActor, family: string): Promise<State
 }
 function checks(env: Env, actor: GroupActor, family: string, generation: number, epoch: number | null,
   mode: 'read' | 'ready' | Action): D1PreparedStatement[] {
-  const id = crypto.randomUUID();
-  return [env.DB.prepare('INSERT INTO family_notebook_crypto_checks VALUES (?,?,?,?,?,?,?,?)')
-    .bind(id, family, actor.personId, actor.deviceId, generation, epoch, mode, storeEnvironment(env)),
-    env.DB.prepare('DELETE FROM family_notebook_crypto_checks WHERE id=?').bind(id)];
+  const id = crypto.randomUUID(), policy = familyStorePolicy(env);
+  return [env.DB.prepare(`INSERT INTO family_notebook_crypto_environment_checks
+    (id,family_id,person_id,device_id,generation,epoch,mode,store_environment,accept_sandbox_in_production)
+    VALUES (?,?,?,?,?,?,?,?,?)`)
+    .bind(id, family, actor.personId, actor.deviceId, generation, epoch, mode, policy.environment, policy.acceptSandbox),
+    env.DB.prepare('DELETE FROM family_notebook_crypto_environment_checks WHERE id=?').bind(id)];
 }
 async function roster(env: Env, family: string, epoch: number): Promise<VerifiedFamilyCryptoRoster> {
   const row = await env.DB.prepare('SELECT packet,roster_hash FROM family_notebook_crypto_rosters WHERE family_id=? AND epoch=?')

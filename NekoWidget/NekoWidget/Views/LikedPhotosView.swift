@@ -1989,7 +1989,7 @@ struct SavedMemoriesGalleryView: View {
                 description: Text("上の切り替えで、ほかのお気に入りを見られます。"))
         } else {
             ContentUnavailableView("まだありません", systemImage: "bookmark",
-                description: Text("写真で「お気に入りに追加」を押すと、ここに並びます"))
+                description: Text("写真で「お気に入り」を押すと、ここに並びます"))
                 .accessibilityIdentifier("saved-memories-empty")
         }
     }

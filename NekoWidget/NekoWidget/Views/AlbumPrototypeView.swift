@@ -599,7 +599,7 @@ struct PastWorksView: View {
                     }
                 }
                 if !movies.isEmpty {
-                    Text("ムービー")
+                    Text("季節のムービー")
                         .font(.system(.title3, design: .serif).weight(.bold))
                         .accessibilityAddTraits(.isHeader)
                     LazyVGrid(columns: columns, spacing: 8) {

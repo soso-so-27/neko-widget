@@ -467,7 +467,7 @@ struct SeasonalMovieView: View {
             Text("元の写真や動画は消えません。")
         }
         .alert("これ以上は外せません", isPresented: $showsMinimumSceneAlert) {
-            Button("OK", role: .cancel) {}
+            Button("閉じる", role: .cancel) {}
         } message: {
             Text("季節のムービーには8場面以上必要です。")
         }
@@ -478,7 +478,7 @@ struct SeasonalMovieView: View {
                 set: { if !$0 { sceneEditErrorMessage = nil } }
             )
         ) {
-            Button("OK", role: .cancel) { sceneEditErrorMessage = nil }
+            Button("閉じる", role: .cancel) { sceneEditErrorMessage = nil }
         } message: {
             Text(sceneEditErrorMessage ?? "もう一度お試しください。")
         }
@@ -489,12 +489,12 @@ struct SeasonalMovieView: View {
                 set: { if !$0 { exportErrorMessage = nil } }
             )
         ) {
-            Button("OK", role: .cancel) { exportErrorMessage = nil }
+            Button("閉じる", role: .cancel) { exportErrorMessage = nil }
         } message: {
             Text(exportErrorMessage ?? "もう一度お試しください。")
         }
         .alert("動画を保存・共有できませんでした", isPresented: $showsShareFailure) {
-            Button("OK", role: .cancel) {}
+            Button("閉じる", role: .cancel) {}
         } message: {
             Text("もう一度「動画を保存・共有」からお試しください。")
         }

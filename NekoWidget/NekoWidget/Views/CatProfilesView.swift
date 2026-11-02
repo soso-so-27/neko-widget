@@ -247,7 +247,7 @@ struct CatProfilesView: View {
                 Button {
                     organizationDestination = .unassigned
                 } label: {
-                    Label("どの猫か決めていない写真", systemImage: "photo.on.rectangle")
+                    Label("未分類の写真", systemImage: "photo.on.rectangle")
                 }
                 .accessibilityIdentifier("cat-profiles-unassigned")
             }

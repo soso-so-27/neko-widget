@@ -1860,6 +1860,7 @@ final class SoloMemoriesUITests: XCTestCase {
         let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vet-remove-")).firstMatch
         for _ in 0..<8 where !remove.isHittable { app.swipeDown(velocity: .slow) }
         XCTAssertTrue(remove.isHittable); remove.tap()
+        XCTAssertTrue(app.buttons["外す"].waitForExistence(timeout: 5)); app.buttons["外す"].tap()
         XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
         capture("vet-record-removed-source-kept")
         let pick = app.buttons["vet-pick-records"]; revealVetElement(pick, app: app); pick.tap()
@@ -3118,7 +3119,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons["photo-memory-note-close"].tap()
         app.buttons["membership-unknown"].tap()
         app.buttons["membership-new"].tap()
-        XCTAssertTrue(app.buttons["購入を確認する"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["購入を復元"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["plus-offer-entry-new-memo"].exists)
         XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists,
                        "An unknown purchase state must not offer a new purchase")
@@ -3179,7 +3180,7 @@ final class SoloMemoriesUITests: XCTestCase {
         app.buttons[hana].tap()
         XCTAssertTrue(app.textFields["care-cat-name"].waitForExistence(timeout: 5),
             "Unknown membership must not block a new care memo")
-        XCTAssertFalse(app.buttons["購入を確認する"].exists)
+        XCTAssertFalse(app.buttons["購入を復元"].exists)
         XCTAssertFalse(app.staticTexts["membership-offer-heading"].exists)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -3919,8 +3920,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["cat-profiles-unassigned"].waitForExistence(timeout: 5))
         capture("cat-list-menu")
         app.buttons["cat-profiles-unassigned"].tap()
-        XCTAssertTrue(app.navigationBars["どの猫か決めていない写真"].waitForExistence(timeout: 5))
-        app.navigationBars["どの猫か決めていない写真"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["未分類の写真"].waitForExistence(timeout: 5))
+        app.navigationBars["未分類の写真"].buttons.element(boundBy: 0).tap()
         app.buttons["cat-profiles-more"].tap()
         XCTAssertTrue(app.buttons["cat-profiles-about"].waitForExistence(timeout: 5))
         // 前に外した写真 has no entry since 10/31.
