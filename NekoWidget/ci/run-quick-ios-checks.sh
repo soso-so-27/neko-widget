@@ -32,12 +32,10 @@ internal_boundary_sources=(
   NekoWidget/Views/ManagedPreservationView.swift
   NekoWidget/Views/SettingsView.swift
 )
-for condition in public internal debug; do
-  defines=()
-  if [[ "$condition" == internal ]]; then defines=(-D INTERNAL_PRESENTATION); fi
-  if [[ "$condition" == debug ]]; then defines=(-D DEBUG); fi
-  xcrun swiftc -frontend -parse "${defines[@]}" "${internal_boundary_sources[@]}"
-done
+# macOS ships bash 3.2: expanding an empty array under nounset fails there.
+xcrun swiftc -frontend -parse "${internal_boundary_sources[@]}"
+xcrun swiftc -frontend -parse -D INTERNAL_PRESENTATION "${internal_boundary_sources[@]}"
+xcrun swiftc -frontend -parse -D DEBUG "${internal_boundary_sources[@]}"
 
 owner_build_settings=(
   INTERNAL_PRESENTATION_CONDITION=INTERNAL_PRESENTATION
