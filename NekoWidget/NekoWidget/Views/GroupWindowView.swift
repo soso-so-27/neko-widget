@@ -654,11 +654,17 @@ struct GroupWindowScreen: View {
                     pausedCard(window)
                 }
                 if let message = model.message {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .padding(.horizontal, 16)
-                        .accessibilityIdentifier("group-window-screen-message")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("group-window-screen-message")
+                        Button("もう一度") { Task { await model.load() } }
+                            .font(.footnote)
+                            .disabled(model.isWorking)
+                            .accessibilityIdentifier("group-window-screen-retry")
+                    }
+                    .padding(.horizontal, 16)
                 }
                 if let notice = model.receiveNotice {
                     Label(notice, systemImage: "hourglass")

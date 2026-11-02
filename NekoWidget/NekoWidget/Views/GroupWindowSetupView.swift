@@ -438,6 +438,9 @@ struct GroupWindowMembersView: View {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("group-window-load-failure")
+                    Button("もう一度") { Task { await model.load() } }
+                        .disabled(model.isWorking)
+                        .accessibilityIdentifier("group-window-load-retry")
                 }
             } else {
                 Section {
