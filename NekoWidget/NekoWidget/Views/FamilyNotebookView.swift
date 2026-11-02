@@ -795,16 +795,26 @@ struct FamilyNotebookView: View {
                     }
                 }
             }
-            if !model.recentFromFamily.isEmpty {
+            if !visibleRecentFromFamily.isEmpty {
                 Section("最近の書き込み") {
-                    ForEach(model.recentFromFamily) { operation in
+                    ForEach(visibleRecentFromFamily) { operation in
                         LabeledContent {
                             Text(operation.editedAt.formatted(.dateTime.month(.defaultDigits).day()))
                         } label: {
                             Text(model.place(of: operation))
                             Text(operation.author.displayName)
                         }
+                        .contextMenu {
+                            // Hiding is local to this iPhone; nobody is told.
+                            Button("この書き込みを表示しない", systemImage: "eye.slash") { hide(operation) }
+                        }
                     }
+                }
+            }
+            if let url = SharingAPIConfiguration.current.supportURL {
+                Section {
+                    Link("困ったことがあれば、問い合わせる", destination: url)
+                        .accessibilityIdentifier("family-notebook-support")
                 }
             }
             if !model.isReal { Section {
@@ -824,6 +834,19 @@ struct FamilyNotebookView: View {
     }
 
     private var prototype: FamilyNotebookPrototypeSharing? { sharing.service as? FamilyNotebookPrototypeSharing }
+
+    /// Entries this iPhone chose not to show. Kept here only; the family and
+    /// the server never learn about it.
+    @AppStorage("family.hiddenOperations.v1") private var hiddenOperationIDs = ""
+    private var visibleRecentFromFamily: [FamilyNotebookOperation] {
+        let hidden = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        return model.recentFromFamily.filter { !hidden.contains(String(describing: $0.id)) }
+    }
+    private func hide(_ operation: FamilyNotebookOperation) {
+        var hidden = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        hidden.insert(String(describing: operation.id))
+        hiddenOperationIDs = hidden.sorted().joined(separator: ",")
+    }
 
     // Kept out of the body chain so the type checker stays fast.
     private var decliningTitle: String { "\(decliningRequest?.displayName ?? "")さんを受け入れませんか？" }
@@ -1368,6 +1391,7 @@ struct FamilyNotebookJoinView: View {
                     .disabled(sharing.isWorking || preview == nil || (sharing.service.sendsInvitations && (try? GroupWire.name(displayName)) == nil))
                     .accessibilityIdentifier("family-notebook-join")
                     Text("参加は無料です。").font(.footnote).foregroundStyle(.secondary)
+                    GroupWindowStandardsAgreement(action: "参加する", isFamilyNotebook: true)
                 }
                 if result == nil {
                     Button("今はやめておく") { dismiss() }
@@ -1403,6 +1427,7 @@ struct FamilyNotebookNameView: View {
                     guard let valid = try? GroupWire.name(name) else { return }
                     GroupDisplayName.remember(valid); confirmed()
                 }.disabled((try? GroupWire.name(name)) == nil)
+                GroupWindowStandardsAgreement(action: "この名前で家族を作る", isFamilyNotebook: true)
             }
             .navigationTitle("家族で使う名前")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() } } }
