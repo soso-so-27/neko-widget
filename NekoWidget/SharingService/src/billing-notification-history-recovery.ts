@@ -27,6 +27,8 @@ import {
 } from "./env";
 import { ApiError } from "./errors";
 import { loadBillingRuntimeGate } from "./runtime-gate";
+import { ownerOnlyBillingRequired, ownerSandboxBillingAccount,
+  recheckOwnerSandboxAdmission } from "./billing-sandbox-owner";
 
 const stableHistoryLagSeconds = 10 * 60;
 const maximumFrozenWindowMs = 24 * 60 * 60 * 1_000;
@@ -158,15 +160,28 @@ export async function runAppleNotificationHistoryRecovery(
       endDateMs: claim.frozenEndDateMs,
       paginationToken: claim.paginationCursor,
     }, env);
-    for (const record of page.records) {
+    // A signed history page can contain other purchasers of the same app.
+    // Only this recovery path may advance past them; the owner-only webhook
+    // and transaction admission still reject a different purchaser.
+    let records = page.records;
+    if (ownerOnlyBillingRequired(env)) {
+      const owner = await ownerSandboxBillingAccount(env);
+      if (owner === null) throw new ApiError(503, "billing_owner_admission_unavailable",
+        "Billing is temporarily unavailable.");
+      records = page.records.filter(({ notification }) => notification.relevant
+        && notification.transaction !== null
+        && notification.transaction.billingAccountId === owner);
+    }
+    for (const record of records) {
       await ingestRecord(env, record);
     }
+    recheckOwnerSandboxAdmission(env);
     // All normalized records and their one-time reconciliation causes are now
     // durable. The fenced page/state batch is the final cursor checkpoint.
     await commitAppleNotificationHistoryPage(env, claim, {
       hasMore: page.hasMore,
       nextPaginationCursor: page.nextPaginationToken,
-      records: page.records.map((record) => ({
+      records: records.map((record) => ({
         notificationUUID: record.notification.notificationUUID,
         payloadHash: record.payloadHash,
       })),
