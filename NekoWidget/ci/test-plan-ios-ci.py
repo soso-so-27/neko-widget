@@ -10005,7 +10005,7 @@ class PlanTests(unittest.TestCase):
                 self.assertIn("    if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true'", body)
             else:
                 self.assertIn("    needs: plan\n", body)
-                self.assertIn("    if: needs.plan.outputs." + output + " == 'true'", body)
+                self.assertIn("    if: always() && needs.plan.result == 'success' && needs.plan.outputs." + output + " == 'true'", body)
             self.assertNotIn("continue-on-error:", body)
         # Parallel runtime success cannot stand in for a failed/skipped Release.
         for result in ("failure", "skipped", "cancelled"):

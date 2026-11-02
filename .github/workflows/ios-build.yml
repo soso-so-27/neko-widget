@@ -85,8 +85,10 @@ jobs:
 
   plan:
     name: Select iOS checks and verify reusable evidence
-    # Same-repository branches already have push CI. Forks need PR CI.
-    if: github.event_name == 'workflow_dispatch' && inputs.extended_checks
+    # Finish the two normal Mac jobs before admitting the extended Mac lanes.
+    # Their failure must remain visible without suppressing independent evidence.
+    needs: [quick-check, safety-check]
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -142,7 +144,7 @@ jobs:
   build-without-signing:
     name: ${{ needs.plan.outputs.build_name }}
     needs: plan
-    if: needs.plan.outputs.build == 'true'
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -954,7 +956,7 @@ jobs:
     # This runner builds and signs its own Simulator products. Release build
     # remains a separate required job in the same-SHA evidence policy.
     needs: plan
-    if: needs.plan.outputs.smoke == 'true'
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.smoke == 'true'
     runs-on: macos-15
     # Cold setup varied from 9 to 13 minutes before the same 15-minute UI
     # suite. Preserve time for the following photo/Widget validation and
@@ -993,7 +995,7 @@ jobs:
     # Three isolated UI runners share the initial five slots with build/smoke.
     # Runtime/Gallery starts after those two sibling slots are released.
     needs: plan
-    if: needs.plan.outputs.app_ui == 'true'
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.app_ui == 'true'
     runs-on: macos-15
     strategy:
       fail-fast: false
@@ -1035,7 +1037,7 @@ jobs:
     # Small scopes still start all independent checks immediately. Only the
     # three-UI-shard graph needs to wait for build/smoke to free two slots.
     needs: plan
-    if: needs.plan.outputs.sharing == 'true' && !contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.sharing == 'true' && !contains(needs.plan.outputs.app_ui_lanes, 'app-ui-solo-1')
     runs-on: macos-15
     strategy:
       fail-fast: false
