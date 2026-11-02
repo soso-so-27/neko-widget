@@ -5219,20 +5219,29 @@ final class SoloMemoriesUITests: XCTestCase {
 
     @MainActor
     private func openPhotosTab(in app: XCUIApplication) {
-        // The shipping album entry is AlbumPrototypeView. Its year shelf is
-        // present with photo access even when there is no latest monthly work.
-        XCTAssertTrue(app.navigationBars["アルバム"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["album-prototype-past"].waitForExistence(timeout: 10))
+        let photosRoot = app.navigationBars["写真"]
+        let albumsRoot = app.navigationBars["アルバム"]
+        let albumShelf = app.buttons["album-prototype-past"]
+        let all = app.buttons["photos-section-all"]
+        // The app restores navigation.lastTab.v1 independently of the isolated
+        // reading-position suite. Both observed roots are valid entry states.
+        let entryReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (photosRoot.exists && all.exists) || (albumsRoot.exists && albumShelf.exists)
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [entryReady], timeout: 10), .completed,
+                       "Launch presents the restored photo root or the current album root")
+        if !photosRoot.exists {
+            XCTAssertTrue(albumsRoot.exists)
+            XCTAssertTrue(albumShelf.exists)
+            // UIKit can omit a tab identifier after relaunch but retain its label.
+            let identified = app.buttons["main-tab-photos"]
+            let photos = identified.exists ? identified : app.tabBars.buttons["写真"]
+            XCTAssertTrue(photos.waitForExistence(timeout: 10))
+            photos.tap()
+        }
         XCTAssertFalse(app.segmentedControls["memories-section-picker"].exists)
         XCTAssertFalse(app.buttons["memories-section-menu"].exists)
-        // UIKit can omit SwiftUI's tab-item identifier after relaunch while
-        // preserving the visible, accessible tab label.
-        let identified = app.buttons["main-tab-photos"]
-        let photos = identified.exists ? identified : app.tabBars.buttons["写真"]
-        XCTAssertTrue(photos.waitForExistence(timeout: 10))
-        photos.tap()
-        XCTAssertTrue(app.navigationBars["写真"].waitForExistence(timeout: 10))
-        let all = app.buttons["photos-section-all"]
+        XCTAssertTrue(photosRoot.waitForExistence(timeout: 10))
         XCTAssertTrue(all.waitForExistence(timeout: 5))
         all.tap()
         XCTAssertFalse(app.buttons["photos-open-automatic-albums"].exists)
