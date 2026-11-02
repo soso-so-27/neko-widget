@@ -18,7 +18,7 @@ import {
 import { base64urlEncode } from "../src/encoding";
 import type { Env } from "../src/env";
 
-const testEnv = env as unknown as Env;
+const testEnv = { ...env, BILLING_STORE_ENVIRONMENT: "Sandbox" } as unknown as Env;
 
 function randomBase64url(bytes: number): string {
   const value = new Uint8Array(bytes);
@@ -556,7 +556,7 @@ describe.sequential("Apple notification history durable recovery state", () => {
       now,
     )).toBe(true);
     await expect(testEnv.DB.prepare(
-      "DELETE FROM billing_apple_notification_history_recovery WHERE singleton = 1",
+      "DELETE FROM billing_apple_notification_history_recovery WHERE environment = 'Sandbox'",
     ).run()).rejects.toThrow();
   });
 });

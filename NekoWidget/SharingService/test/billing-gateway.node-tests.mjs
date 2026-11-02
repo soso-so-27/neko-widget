@@ -214,7 +214,7 @@ test('retention observer preserves generations, leases, backoff and closed purch
   const { refreshRetentionBilling, RetentionBillingObserver, BillingGateway, default: publicWorker } = await import(
     'data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
   const sqlite = new DatabaseSync(':memory:');
-  for (const name of (await readdir(new URL('../migrations/', import.meta.url))).filter(n => /^00(?:0[1-9]|1[0-9]|2[0-5])_/.test(n)).sort()) {
+  for (const name of (await readdir(new URL('../migrations/', import.meta.url))).filter(n => /^\d{4}_[a-z0-9_]+\.sql$/.test(n)).sort()) {
     sqlite.exec(await readFile(new URL('../migrations/' + name, import.meta.url), 'utf8'));
   }
   const statement = (sql, args = []) => ({
@@ -256,7 +256,7 @@ test('retention observer preserves generations, leases, backoff and closed purch
   const request = () => new Request('https://private/internal/retention/refresh', { method: 'POST', body: JSON.stringify({ billingAccountId: account }) });
   const call = (overrides = {}, req = request()) => RetentionBillingObserver.prototype.fetch.call({ env: { ...env, ...overrides } }, req);
   try {
-    sqlite.prepare('INSERT INTO billing_reconciliation_jobs(original_transaction_id,requested_at,not_before,request_generation) VALUES(?,0,0,7)').run(lineage);
+    sqlite.prepare("INSERT INTO billing_reconciliation_jobs(environment,original_transaction_id,requested_at,not_before,request_generation) VALUES('Sandbox',?,0,0,7)").run(lineage);
     await refreshRetentionBilling(env, account, fetcher);
     assert.equal(calls, 1);
     assert.equal(sqlite.prepare('SELECT request_generation FROM billing_effective_entitlement_current').get().request_generation, 7);

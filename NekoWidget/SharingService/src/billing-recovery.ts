@@ -17,7 +17,7 @@ interface State { generation: number; billing_key_id: string }
 interface CurrentLineage { billing_account_id: string; environment: string; subscription_group_id: string }
 
 type RecoveryVerifier = (input: Parameters<typeof verifyAppleAccountRecoveryViaService>[0], env: Env) => Promise<VerifiedAccountRecoveryEvidence>;
-type StatusFetcher = (originalTransactionId: string, env: Env) => Promise<VerifiedSubscriptionStatus>;
+type StatusFetcher = (originalTransactionId: string, env: Env, storeEnvironment?: "Sandbox" | "Production") => Promise<VerifiedSubscriptionStatus>;
 
 const jwsPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
 const transactionPattern = /^\d{1,32}$/u;
@@ -85,15 +85,15 @@ export async function recoverBillingAccount(
     if (replay.request_hash !== requestHash) throw new ApiError(409, "billing_recovery_conflict", "The billing request ID was already used.");
     return jsonResponse({ protocolVersion: 1, clientRequestId, billingAccountId: replay.billing_account_id, billingKeyId: replay.new_billing_key_id, recoveredAt: replay.recovered_at });
   }
+  const evidence = await verify({ signedAppTransactionInfo, signedTransactionInfo,
+    deviceVerificationId, expectedAppTransactionId, expectedTransactionId, expectedOriginalTransactionId, billingAccountId }, env);
   const lineage = await env.DB.prepare(
     `SELECT billing_account_id, environment, subscription_group_id
-       FROM billing_transaction_lineages WHERE original_transaction_id = ?`,
-  ).bind(expectedOriginalTransactionId).first<CurrentLineage>();
+       FROM billing_transaction_lineages WHERE environment = ? AND original_transaction_id = ?`,
+  ).bind(evidence.transaction.environment, expectedOriginalTransactionId).first<CurrentLineage>();
   if (lineage === null || lineage.billing_account_id !== billingAccountId) {
     throw new ApiError(409, "billing_recovery_lineage_mismatch", "The recovery evidence is invalid.");
   }
-  const evidence = await verify({ signedAppTransactionInfo, signedTransactionInfo,
-    deviceVerificationId, expectedAppTransactionId, expectedTransactionId, expectedOriginalTransactionId, billingAccountId }, env);
   if (evidence.transaction.environment !== lineage.environment
     || evidence.transaction.subscriptionGroupId !== lineage.subscription_group_id
     || evidence.transaction.transactionId !== expectedTransactionId
@@ -107,7 +107,7 @@ export async function recoverBillingAccount(
   }
   // Never trust the client-labelled "current" transaction. Query Apple's
   // subscription authority immediately before rotating the key.
-  const authority = await fetchStatus(expectedOriginalTransactionId, env);
+  const authority = await fetchStatus(expectedOriginalTransactionId, env, evidence.transaction.environment);
   const matches = authority.items.filter((item) => item.originalTransactionId === expectedOriginalTransactionId);
   // Reuse the entitlement authority's fail-restrictive ordering. If Apple
   // returns conflicting facts at the exact same signed time, Family Shared,
@@ -116,7 +116,11 @@ export async function recoverBillingAccount(
   const item = selectAuthoritativeStatusItem(matches);
   const now = Date.now();
   const accessUntil = item.status === 4 ? item.renewal.gracePeriodExpiresDateMs : item.transaction.expiresDateMs;
-  if ((item.status !== 1 && item.status !== 4)
+  if (authority.environment !== evidence.transaction.environment
+    || item.transaction.environment !== evidence.transaction.environment
+    || item.renewal.environment !== evidence.transaction.environment
+    || item.transaction.subscriptionGroupId !== lineage.subscription_group_id
+    || (item.status !== 1 && item.status !== 4)
     || item.transaction.transactionId !== expectedTransactionId
     || item.transaction.billingAccountId !== billingAccountId
     || item.transaction.ownershipType !== "PURCHASED"
@@ -138,11 +142,11 @@ export async function recoverBillingAccount(
   try {
     await env.DB.prepare(
       `INSERT INTO billing_account_recovery_requests(
-         client_request_id, request_hash, billing_account_id, expected_generation,
+         environment, client_request_id, request_hash, billing_account_id, expected_generation,
          expected_transaction_id, expected_original_transaction_id, app_transaction_id_hash,
          replaced_billing_key_id, new_billing_key_id, new_signing_public_key, recovered_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(clientRequestId, requestHash, billingAccountId, state.generation,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(evidence.transaction.environment, clientRequestId, requestHash, billingAccountId, state.generation,
       expectedTransactionId, expectedOriginalTransactionId, evidence.appTransactionIdHash,
       state.billing_key_id, newKeyId, signingPublicKey, recoveredAt).run();
   } catch {

@@ -178,7 +178,7 @@ const safeStatusSQL = `SELECT gate.generation AS billing_gate_generation,
        recovery.last_error_code
   FROM billing_runtime_gate AS gate
  CROSS JOIN billing_apple_notification_history_recovery AS recovery
- WHERE gate.singleton = 1 AND recovery.singleton = 1`;
+ WHERE gate.singleton = 1 AND recovery.environment = 'Sandbox'`;
 
 export function historyEmergencyOffSQL(manifestInput) {
   const manifest = validateHistoryStagingControlManifest(manifestInput);

@@ -36,7 +36,7 @@ interface BillingAccountFixture {
   keys: KeyPair;
 }
 
-const testEnv = env as unknown as Env;
+const testEnv = { ...env, BILLING_STORE_ENVIRONMENT: "Sandbox" } as unknown as Env;
 
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.length);
@@ -652,7 +652,8 @@ describe.sequential("disabled Plus billing foundation", () => {
     const enabledEnv = {...testEnv, BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES"} as Env;
     let statusCalls = 0;
     const response = await recordBillingTransaction(
-      await transactionRequest(account, "header.immediate.signature"), enabledEnv, verifier(value), async (id) => {
+      await transactionRequest(account, "header.immediate.signature"), enabledEnv, verifier(value), async (id, _env, storeEnvironment) => {
+        expect(storeEnvironment).toBe(value.environment);
         statusCalls += 1;
         expect(id).toBe(value.originalTransactionId);
         return subscriptionStatus(value);

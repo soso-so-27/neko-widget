@@ -19,7 +19,7 @@ import {
 } from "./billing-notification-reconciliation-cause";
 import { randomBase64url, sha256Base64url } from "./encoding";
 import { ApiError } from "./errors";
-import { billingSubscriptionReconciliationRuntimeEnabled, type Env } from "./env";
+import { billingStoreEnvironmentAccepted, billingSubscriptionReconciliationRuntimeEnabled, type Env } from "./env";
 import {
   enforceRateLimit,
   parseJsonBody,
@@ -45,6 +45,7 @@ interface NotificationReplayRow {
 }
 
 interface ReconciliationJobRow {
+  environment: "Sandbox" | "Production";
   original_transaction_id: string;
   request_generation: number;
   attempts: number;
@@ -64,6 +65,7 @@ export type AppleNotificationVerifier = (
 export type AppleSubscriptionStatusFetcher = (
   originalTransactionId: string,
   env: Env,
+  storeEnvironment?: "Sandbox" | "Production",
 ) => Promise<VerifiedSubscriptionStatus>;
 
 async function loadGate(env: Env): Promise<BillingAuthorityGateRow | null> {
@@ -81,11 +83,12 @@ async function loadGate(env: Env): Promise<BillingAuthorityGateRow | null> {
 async function notificationReplay(
   env: Env,
   notificationUUID: string,
+  storeEnvironment: "Sandbox" | "Production",
 ): Promise<NotificationReplayRow | null> {
   return env.DB.prepare(
     `SELECT payload_hash, relevance, original_transaction_id
-       FROM billing_apple_notification_events WHERE notification_uuid = ?`,
-  ).bind(notificationUUID).first<NotificationReplayRow>();
+       FROM billing_apple_notification_events WHERE environment = ? AND notification_uuid = ?`,
+  ).bind(storeEnvironment, notificationUUID).first<NotificationReplayRow>();
 }
 
 async function resumeNotificationReplay(
@@ -106,6 +109,7 @@ async function resumeNotificationReplay(
       env,
       value.notificationUUID,
       existing.original_transaction_id,
+      value.environment,
     );
     return;
   }
@@ -126,6 +130,7 @@ async function resumeNotificationReplay(
         env,
         value.notificationUUID,
         existing.original_transaction_id,
+        value.environment,
       );
     } catch (error) {
       if (!(error instanceof ApiError)
@@ -180,7 +185,7 @@ export async function ingestVerifiedAppleBillingNotification(
     if (!value.relevant || value.transaction === null) return;
     await requireOwnerSandboxAccount(env, value.transaction.billingAccountId);
   }
-  const existing = await notificationReplay(env, value.notificationUUID);
+  const existing = await notificationReplay(env, value.notificationUUID, value.environment);
   if (existing !== null) {
     await resumeNotificationReplay(env, existing, payloadHash, value);
     return;
@@ -201,7 +206,7 @@ export async function ingestVerifiedAppleBillingNotification(
   try {
     await storeNotification(env, value, payloadHash, relevance);
   } catch {
-    const raced = await notificationReplay(env, value.notificationUUID);
+    const raced = await notificationReplay(env, value.notificationUUID, value.environment);
     if (raced === null) {
       throw new ApiError(
         503,
@@ -217,6 +222,7 @@ export async function ingestVerifiedAppleBillingNotification(
       env,
       value.notificationUUID,
       value.transaction.originalTransactionId,
+      value.environment,
     );
   }
 }
@@ -294,6 +300,9 @@ async function recordAuthorityObservations(
   evaluatedAtMs: number,
   completedAt: number,
 ): Promise<boolean> {
+  if (status.environment !== lineage.environment) {
+    throw new ApiError(409, "billing_authority_lineage_mismatch", "The App Store subscription status is invalid.");
+  }
   const matching = status.items.filter((item) =>
     item.originalTransactionId === originalTransactionId
     && item.transaction.billingAccountId === lineage.billing_account_id
@@ -365,7 +374,7 @@ async function recordAuthorityObservations(
   const decisionId = randomBase64url(16);
   const fenceSQL = `EXISTS (
     SELECT 1 FROM billing_reconciliation_jobs
-     WHERE original_transaction_id = ? AND request_generation = ? AND lease_token = ?
+     WHERE environment = ? AND original_transaction_id = ? AND request_generation = ? AND lease_token = ?
        AND lease_expires_at > ?
   ) AND EXISTS (
     SELECT 1 FROM billing_runtime_gate
@@ -406,6 +415,7 @@ async function recordAuthorityObservations(
     decision.accessUntilMs,
     decision.authorityStaleAtMs,
     evaluatedAtMs,
+    job.environment,
     originalTransactionId,
     job.request_generation,
     leaseToken,
@@ -423,7 +433,7 @@ async function recordAuthorityObservations(
      )
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch()
       WHERE ${fenceSQL}
-     ON CONFLICT(original_transaction_id) DO UPDATE SET
+     ON CONFLICT(environment, original_transaction_id) DO UPDATE SET
        decision_id = excluded.decision_id,
        observation_fingerprint = excluded.observation_fingerprint,
        ownership_type = excluded.ownership_type,
@@ -471,6 +481,7 @@ async function recordAuthorityObservations(
     decision.accessUntilMs,
     decision.authorityStaleAtMs,
     evaluatedAtMs,
+    job.environment,
     originalTransactionId,
     job.request_generation,
     leaseToken,
@@ -499,10 +510,11 @@ async function releaseSuccessfulLease(
           SET attempts = 0, not_before = ?, lease_token = NULL,
               lease_expires_at = NULL, last_error_code = NULL,
               updated_at = unixepoch()
-        WHERE original_transaction_id = ? AND lease_token = ?
+        WHERE environment = ? AND original_transaction_id = ? AND lease_token = ?
           AND request_generation = ? AND lease_expires_at > ?`,
     ).bind(
       now + periodicReconciliationSeconds,
+      job.environment,
       job.original_transaction_id,
       leaseToken,
       job.request_generation,
@@ -510,19 +522,20 @@ async function releaseSuccessfulLease(
     ).run()
     : await env.DB.prepare(
       `DELETE FROM billing_reconciliation_jobs
-        WHERE original_transaction_id = ? AND lease_token = ?
+        WHERE environment = ? AND original_transaction_id = ? AND lease_token = ?
           AND request_generation = ? AND lease_expires_at > ?`,
-    ).bind(job.original_transaction_id, leaseToken, job.request_generation, now).run();
+    ).bind(job.environment, job.original_transaction_id, leaseToken, job.request_generation, now).run();
   if (completed.meta.changes === 0) {
     await env.DB.prepare(
       `UPDATE billing_reconciliation_jobs
           SET attempts = 0, not_before = ?, lease_token = NULL,
               lease_expires_at = NULL, last_error_code = NULL,
               updated_at = unixepoch()
-        WHERE original_transaction_id = ? AND lease_token = ?
+        WHERE environment = ? AND original_transaction_id = ? AND lease_token = ?
           AND (request_generation <> ? OR lease_expires_at <= ?)`,
     ).bind(
       now,
+      job.environment,
       job.original_transaction_id,
       leaseToken,
       job.request_generation,
@@ -546,12 +559,13 @@ async function releaseFailedLease(
         SET attempts = ?, not_before = ?, lease_token = NULL,
             lease_expires_at = NULL, last_error_code = ?,
             updated_at = unixepoch()
-      WHERE original_transaction_id = ? AND lease_token = ?
+      WHERE environment = ? AND original_transaction_id = ? AND lease_token = ?
         AND request_generation = ? AND lease_expires_at > ?`,
   ).bind(
     attempts,
     now + delay,
     errorCode,
+    job.environment,
     job.original_transaction_id,
     leaseToken,
     job.request_generation,
@@ -566,10 +580,11 @@ async function releaseFailedLease(
           SET attempts = 0, not_before = ?, lease_token = NULL,
               lease_expires_at = NULL, last_error_code = NULL,
               updated_at = unixepoch()
-        WHERE original_transaction_id = ? AND lease_token = ?
+        WHERE environment = ? AND original_transaction_id = ? AND lease_token = ?
           AND (request_generation <> ? OR lease_expires_at <= ?)`,
     ).bind(
       now,
+      job.environment,
       job.original_transaction_id,
       leaseToken,
       job.request_generation,
@@ -589,15 +604,19 @@ export async function runBillingSubscriptionReconciliation(
   const gate = await loadGate(env);
   if (gate?.subscription_reconciliation_enabled !== 1) return;
   const jobs = await env.DB.prepare(
-    `SELECT original_transaction_id, request_generation, attempts
+    `SELECT environment, original_transaction_id, request_generation, attempts
        FROM billing_reconciliation_jobs
-      WHERE not_before <= ?
+      WHERE environment IN (?, ?) AND not_before <= ?
         AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
-        ${ownerAccount === null ? '' : `AND original_transaction_id IN
-          (SELECT original_transaction_id FROM billing_transaction_lineages WHERE billing_account_id=?)`}
+        ${ownerAccount === null ? '' : `AND EXISTS (SELECT 1 FROM billing_transaction_lineages l
+          WHERE l.environment = billing_reconciliation_jobs.environment
+            AND l.original_transaction_id = billing_reconciliation_jobs.original_transaction_id
+            AND l.billing_account_id = ?)`}
       ORDER BY not_before ASC, requested_at ASC, original_transaction_id ASC
       LIMIT ?`,
-  ).bind(now, now, ...(ownerAccount === null ? [] : [ownerAccount]), reconciliationLimit).all<ReconciliationJobRow>();
+  ).bind(billingStoreEnvironmentAccepted(env, "Production") ? "Production" : "",
+    billingStoreEnvironmentAccepted(env, "Sandbox") ? "Sandbox" : "",
+    now, now, ...(ownerAccount === null ? [] : [ownerAccount]), reconciliationLimit).all<ReconciliationJobRow>();
 
   for (const job of jobs.results) {
     await reconcileClaimedJob(env, job, ownerAccount, fetchStatus, now, completedAtOverride);
@@ -611,19 +630,21 @@ export async function reconcileBillingTransactionNow(
   originalTransactionId: string,
   fetchStatus: AppleSubscriptionStatusFetcher = fetchAppleSubscriptionStatusViaService,
   now = Math.floor(Date.now() / 1_000),
+  storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): Promise<void> {
-  if (!billingSubscriptionReconciliationRuntimeEnabled(env)) return;
+  if (!billingSubscriptionReconciliationRuntimeEnabled(env)
+    || !billingStoreEnvironmentAccepted(env, storeEnvironment)) return;
   if ((await loadGate(env))?.subscription_reconciliation_enabled !== 1) return;
   await requireOwnerSandboxAccount(env, billingAccountId);
   const job = await env.DB.prepare(
-    `SELECT j.original_transaction_id, j.request_generation, j.attempts
+    `SELECT j.environment, j.original_transaction_id, j.request_generation, j.attempts
        FROM billing_reconciliation_jobs j
        JOIN billing_transaction_lineages l
-         ON l.original_transaction_id = j.original_transaction_id
-      WHERE j.original_transaction_id = ? AND l.billing_account_id = ?
+         ON l.environment = j.environment AND l.original_transaction_id = j.original_transaction_id
+      WHERE j.environment = ? AND j.original_transaction_id = ? AND l.billing_account_id = ?
         AND j.not_before <= ?
         AND (j.lease_expires_at IS NULL OR j.lease_expires_at <= ?)`,
-  ).bind(originalTransactionId, billingAccountId, now, now).first<ReconciliationJobRow>();
+  ).bind(storeEnvironment, originalTransactionId, billingAccountId, now, now).first<ReconciliationJobRow>();
   if (job === null) return;
   await reconcileClaimedJob(env, job, billingAccountId, fetchStatus, now, undefined, true);
 }
@@ -642,12 +663,13 @@ async function reconcileClaimedJob(
   const claimed = await env.DB.prepare(
     `UPDATE billing_reconciliation_jobs
         SET lease_token = ?, lease_expires_at = ?, updated_at = unixepoch()
-      WHERE original_transaction_id = ? AND request_generation = ?
+      WHERE environment = ? AND original_transaction_id = ? AND request_generation = ?
         AND not_before <= ?
         AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
   ).bind(
     leaseToken,
     now + leaseSeconds,
+    job.environment,
     job.original_transaction_id,
     job.request_generation,
     now,
@@ -658,8 +680,8 @@ async function reconcileClaimedJob(
   try {
     const lineage = await env.DB.prepare(
       `SELECT billing_account_id, environment, subscription_group_id
-         FROM billing_transaction_lineages WHERE original_transaction_id = ?`,
-    ).bind(job.original_transaction_id).first<LineageRow>();
+         FROM billing_transaction_lineages WHERE environment = ? AND original_transaction_id = ?`,
+    ).bind(job.environment, job.original_transaction_id).first<LineageRow>();
     if (lineage === null) {
       throw new ApiError(409, "billing_lineage_missing", "Billing is temporarily unavailable.");
     }
@@ -668,7 +690,7 @@ async function reconcileClaimedJob(
       || (await loadGate(env))?.subscription_reconciliation_enabled !== 1) {
       throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
     }
-    const status = await fetchStatus(job.original_transaction_id, env);
+    const status = await fetchStatus(job.original_transaction_id, env, job.environment);
     await requireOwnerSandboxAccount(env, lineage.billing_account_id);
     if ((requireStaticGate && !billingSubscriptionReconciliationRuntimeEnabled(env))
       || (await loadGate(env))?.subscription_reconciliation_enabled !== 1) {

@@ -239,7 +239,7 @@ async function provisionalEntitlement(
        SELECT product_id, expires_date_ms, signed_date_ms, event_fingerprint,
               ownership_type, revocation_date_ms, revocation_reason, is_upgraded,
               ROW_NUMBER() OVER (
-                PARTITION BY transaction_id
+                PARTITION BY environment, transaction_id
                 ORDER BY signed_date_ms DESC, received_at DESC, event_fingerprint DESC
               ) AS event_rank
          FROM billing_transaction_events
@@ -329,8 +329,8 @@ export async function storeVerifiedTransaction(
   }
   const lineage = await env.DB.prepare(
     `SELECT billing_account_id, environment, subscription_group_id
-       FROM billing_transaction_lineages WHERE original_transaction_id = ?`,
-  ).bind(value.originalTransactionId).first<LineageRow>();
+       FROM billing_transaction_lineages WHERE environment = ? AND original_transaction_id = ?`,
+  ).bind(value.environment, value.originalTransactionId).first<LineageRow>();
   if (lineage !== null && (
     lineage.billing_account_id !== value.billingAccountId
     || lineage.environment !== value.environment
@@ -436,11 +436,11 @@ export async function recordBillingTransaction(
     verified,
     { kind: "app", submitter: account },
   );
-  await requestBillingReconciliation(env, verified.originalTransactionId);
+  await requestBillingReconciliation(env, verified.originalTransactionId, undefined, verified.environment);
   // Keep the acknowledgement provisional. Only the authoritative status GET
   // may grant access, but it must not normally have to wait for the next Cron.
   await reconcileBillingTransactionNow(
-    env, account.billingAccountId, verified.originalTransactionId, fetchStatus,
+    env, account.billingAccountId, verified.originalTransactionId, fetchStatus, undefined, verified.environment,
   );
   return jsonResponse(await transactionResponse(env, verified, event));
 }

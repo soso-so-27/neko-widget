@@ -92,10 +92,10 @@ describe("billing account recovery migration", () => {
     const newKey = random(16); const hash = random(32); const publicKey = random(32);
     await testEnv.DB.prepare(
       `INSERT INTO billing_account_recovery_requests(
-        client_request_id,request_hash,billing_account_id,expected_generation,
+        environment,client_request_id,request_hash,billing_account_id,expected_generation,
         expected_transaction_id,expected_original_transaction_id,app_transaction_id_hash,
         replaced_billing_key_id,new_billing_key_id,new_signing_public_key
-      ) VALUES(?,?,?,0,?,?,?,?,?,?)`,
+      ) VALUES('Sandbox',?,?,?,0,?,?,?,?,?,?)`,
     ).bind(crypto.randomUUID().toLowerCase(), random(32), value.account,
       value.original, value.original, hash, value.oldKey, newKey, publicKey).run();
     const keys = await testEnv.DB.prepare(
@@ -113,10 +113,10 @@ describe("billing account recovery migration", () => {
     const value = await seed(); const hash = random(32);
     const insert = (key: string, publicKey: string) => testEnv.DB.prepare(
       `INSERT INTO billing_account_recovery_requests(
-        client_request_id,request_hash,billing_account_id,expected_generation,
+        environment,client_request_id,request_hash,billing_account_id,expected_generation,
         expected_transaction_id,expected_original_transaction_id,app_transaction_id_hash,
         replaced_billing_key_id,new_billing_key_id,new_signing_public_key
-      ) VALUES(?,?,?,0,?,?,?,?,?,?)`,
+      ) VALUES('Sandbox',?,?,?,0,?,?,?,?,?,?)`,
     ).bind(crypto.randomUUID().toLowerCase(), random(32), value.account,
       value.original, value.original, hash, value.oldKey, key, publicKey).run();
     const winner = random(16); await insert(winner, random(32));
@@ -287,10 +287,10 @@ describe("billing account recovery migration", () => {
     ).bind(collidingKey, fixture.account, random(32)).run();
     await expect(testEnv.DB.prepare(
       `INSERT INTO billing_account_recovery_requests(
-        client_request_id,request_hash,billing_account_id,expected_generation,
+        environment,client_request_id,request_hash,billing_account_id,expected_generation,
         expected_transaction_id,expected_original_transaction_id,app_transaction_id_hash,
         replaced_billing_key_id,new_billing_key_id,new_signing_public_key
-      ) VALUES(?,?,?,0,?,?,?,?,?,?)`,
+      ) VALUES('Sandbox',?,?,?,0,?,?,?,?,?,?)`,
     ).bind(crypto.randomUUID().toLowerCase(), random(32), fixture.account,
       fixture.original, fixture.original, random(32), fixture.oldKey,
       collidingKey, random(32)).run()).rejects.toThrow();

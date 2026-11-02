@@ -20,6 +20,7 @@ import {
   AppleNotificationHistoryDisabledError,
   InvalidAppleNotificationHistoryError,
   loadVerifierConfig,
+  verifierConfigForEnvironment,
 } from "./billing-verifier-client";
 import {
   billingAppleNotificationHistoryRecoveryRuntimeEnabled,
@@ -77,11 +78,12 @@ function requiresOperator(error: unknown): boolean {
 async function ensureFrozenWindow(
   env: Env,
   now: number,
+  storeEnvironment: "Sandbox" | "Production",
 ): Promise<void> {
-  const state = await getAppleNotificationHistoryRecoveryState(env);
+  const state = await getAppleNotificationHistoryRecoveryState(env, storeEnvironment);
   if (state.state !== "idle" && state.state !== "completed") return;
 
-  const config = loadVerifierConfig(env);
+  const config = verifierConfigForEnvironment(loadVerifierConfig(env), storeEnvironment);
   if (
     state.state === "completed"
     && (state.storeEnvironment !== config.environment
@@ -112,6 +114,8 @@ async function ensureFrozenWindow(
 
 /**
  * Recover at most one immutable Notification History page per five-minute run.
+ * Dual mode alternates fixed environments by five-minute time bucket (each
+ * environment every ten minutes); it does not double the existing page budget.
  * Record/event/cause writes finish before the signed cursor can advance; any
  * interruption therefore replays the same page through idempotent ledgers.
  */
@@ -127,8 +131,12 @@ export async function runAppleNotificationHistoryRecovery(
   const gate = await loadBillingRuntimeGate(env);
   if (gate?.appleNotificationHistoryRecoveryEnabled !== true) return;
 
+  let storeEnvironment: "Sandbox" | "Production";
   try {
-    await ensureFrozenWindow(env, now);
+    const config = loadVerifierConfig(env);
+    storeEnvironment = config.acceptSandboxInProduction
+      ? (Math.floor(now / 300) % 2 === 0 ? "Production" : "Sandbox") : config.environment;
+    await ensureFrozenWindow(env, now, storeEnvironment);
   } catch {
     // Missing or malformed verifier configuration must not create a partially
     // identified recovery generation. The public health/config attestations
@@ -136,13 +144,14 @@ export async function runAppleNotificationHistoryRecovery(
     return;
   }
 
-  const claim = await claimAppleNotificationHistoryRecovery(env, now);
+  const claim = await claimAppleNotificationHistoryRecovery(env, now, storeEnvironment);
   if (claim === null) return;
   const completedAt = completedAtOverride
     ?? Math.max(now, Math.floor(Date.now() / 1_000));
 
   try {
-    const config = loadVerifierConfig(env);
+    const configured = loadVerifierConfig(env);
+    const config = verifierConfigForEnvironment(configured, storeEnvironment);
     if (
       claim.storeEnvironment !== config.environment
       || claim.bundleId !== config.bundleId
@@ -156,10 +165,16 @@ export async function runAppleNotificationHistoryRecovery(
       return;
     }
     const page = await fetchPage({
+      ...(configured.acceptSandboxInProduction ? { storeEnvironment: claim.storeEnvironment } : {}),
       startDateMs: claim.frozenStartDateMs,
       endDateMs: claim.frozenEndDateMs,
       paginationToken: claim.paginationCursor,
     }, env);
+    if (page.environment !== claim.storeEnvironment || page.bundleId !== claim.bundleId
+      || page.requestedStartDateMs !== claim.frozenStartDateMs
+      || page.requestedEndDateMs !== claim.frozenEndDateMs) {
+      throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+    }
     // A signed history page can contain other purchasers of the same app.
     // Only this recovery path may advance past them; the owner-only webhook
     // and transaction admission still reject a different purchaser.

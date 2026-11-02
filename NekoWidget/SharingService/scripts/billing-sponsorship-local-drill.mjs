@@ -80,6 +80,7 @@ const expectedMigrationNames = [
   "0059_group_photo_jst_day.sql",
   "0060_group_purchased_plus.sql",
   "0061_group_admission_push.sql",
+  "0062_billing_environment_ledger.sql",
 ];
 
 const databaseGateColumns = [
@@ -265,9 +266,9 @@ function seedReviewedFixture(database) {
   database
     .prepare(
       `INSERT INTO billing_reconciliation_jobs(
-      original_transaction_id,requested_at,not_before,request_generation,attempts,
+      environment,original_transaction_id,requested_at,not_before,request_generation,attempts,
       lease_token,lease_expires_at,updated_at
-    ) VALUES(?,?,?,1,0,?,?,?)`,
+    ) VALUES('Sandbox',?,?,?,1,0,?,?,?)`,
     )
     .run(
       fixture.originalTransactionId,

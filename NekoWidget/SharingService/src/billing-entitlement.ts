@@ -1,5 +1,5 @@
 import type { VerifiedSubscriptionStatusItem } from "./billing-apple-client";
-import type { Env } from "./env";
+import { billingStoreEnvironmentAccepted, type Env } from "./env";
 
 export const BILLING_AUTHORITY_FRESHNESS_MS = 36 * 60 * 60 * 1_000;
 
@@ -23,6 +23,7 @@ export interface EffectiveBillingEntitlement {
 }
 
 interface CurrentEntitlementRow {
+  environment: "Production" | "Sandbox";
   original_transaction_id: string;
   ownership_type: "PURCHASED" | "FAMILY_SHARED";
   apple_status: 1 | 2 | 3 | 4 | 5;
@@ -188,7 +189,7 @@ export async function effectiveBillingEntitlement(
   evaluatedAtMs = Date.now(),
 ): Promise<EffectiveBillingEntitlement> {
   const rows = await env.DB.prepare(
-    `SELECT original_transaction_id, ownership_type, apple_status, product_id,
+    `SELECT environment, original_transaction_id, ownership_type, apple_status, product_id,
             expires_date_ms, revocation_date_ms, revocation_reason, is_upgraded,
             grace_period_expires_date_ms, authority_stale_at_ms, evaluated_at_ms
        FROM billing_effective_entitlement_current
@@ -197,7 +198,8 @@ export async function effectiveBillingEntitlement(
   ).bind(billingAccountId).all<CurrentEntitlementRow>();
   if (rows.results.length === 0) return noAuthority(evaluatedAtMs);
 
-  const evaluated = rows.results.map((row) => evaluateFacts(row, evaluatedAtMs));
+  const evaluated = rows.results.filter(row => billingStoreEnvironmentAccepted(env, row.environment))
+    .map((row) => evaluateFacts(row, evaluatedAtMs));
   const granting = evaluated.filter((item) => item.grantsPlus).sort((left, right) => {
     const leftLimit = Math.min(left.accessUntilMs!, left.authorityStaleAtMs);
     const rightLimit = Math.min(right.accessUntilMs!, right.authorityStaleAtMs);
