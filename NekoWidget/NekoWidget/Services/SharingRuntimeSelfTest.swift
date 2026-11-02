@@ -3417,20 +3417,42 @@ actor SharingRuntimeSelfTestRunner {
             let anchor = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
             let momentID = "retained_widget_fixture"
             operationID = "RWP-OP-004"
-            let widgetPhoto = try MomentInboxItem(
+            let receivedPhoto = try MomentInboxItem(
                 id: momentID, senderParticipantID: "retained_widget_sender",
                 kind: .live, keyEpoch: 1, localJPEGFileName: "\(momentID).jpg",
                 capturedAt: anchor, captureDateIsMissing: false,
-                committedAt: anchor, receivedAt: anchor, state: .acknowledged,
-                acknowledgedAt: anchor,
+                committedAt: anchor, receivedAt: anchor, state: .available,
                 accessExpiresAt: anchor.addingTimeInterval(86_400),
                 caption: "受信した写真のひとこと"
             ).validated()
             operationID = "RWP-OP-005"
-            _ = try MomentSharingStateStore.publishReceivedJPEG(
-                widgetPhoto, jpeg: preview.jpeg, validating: lifecycleToken)
+            let publishedReceivedPhoto = try MomentSharingStateStore.publishReceivedJPEG(
+                receivedPhoto, jpeg: preview.jpeg, validating: lifecycleToken)
             // Follow the retained synthetic receipt into the production cache.
             // A reused JPEG must still refresh optional text, including its removal.
+            guard publishedReceivedPhoto == receivedPhoto else {
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-ACK-001", MomentSharingError.stateUnavailable)
+            }
+            // Follow the retained inbox acknowledgement transition, after the
+            // available JPEG has been published through its guarded entry point.
+            operationID = "RWP-OP-028"
+            _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+                guard let index = state.inbox.firstIndex(where: { $0.id == momentID }),
+                      state.inbox[index] == receivedPhoto else {
+                    throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-ACK-002", MomentSharingError.stateUnavailable)
+                }
+                state.inbox[index].state = .acknowledged
+                state.inbox[index].acknowledgedAt = anchor
+            }
+            operationID = "RWP-OP-029"
+            let acknowledgedState = try MomentSharingStateStore.load()
+            var expectedAcknowledgedPhoto = receivedPhoto
+            expectedAcknowledgedPhoto.state = .acknowledged
+            expectedAcknowledgedPhoto.acknowledgedAt = anchor
+            guard let widgetPhoto = acknowledgedState.inbox.first(where: { $0.id == momentID }),
+                  widgetPhoto == expectedAcknowledgedPhoto else {
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-ACK-003", MomentSharingError.stateUnavailable)
+            }
             let widgetBuilder = WidgetCacheBuilder()
             let widgetFreshUntil = widgetPhoto.receivedAt.addingTimeInterval(3_600)
             operationID = "RWP-OP-006"
