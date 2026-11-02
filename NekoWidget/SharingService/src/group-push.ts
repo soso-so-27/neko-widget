@@ -40,7 +40,7 @@ async function changeGroupPush(env:Env,actor:GroupActor,windowId:string,body:Jso
   const receipt={operationId,windowId,notifications:!remove,serverNow:actor.now};
   const statements=[...groupNonceStatements(env,actor,{windowId})];
   if(remove)statements.push(env.DB.prepare(`UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,
-    token_ciphertext='',token_nonce='' WHERE space_id=? AND device_id=?`).bind(windowId,actor.deviceId));
+    token_ciphertext='',token_nonce='',token_digest='' WHERE space_id=? AND device_id=?`).bind(windowId,actor.deviceId));
   else {
     let credential,keyring,token:Uint8Array;
     try {
