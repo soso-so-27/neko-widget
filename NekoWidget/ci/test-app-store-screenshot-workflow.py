@@ -97,11 +97,12 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "func testReviewPublicPresentation()", 1)[0]
         for entry in ("onboarding-purpose-start", "initial-scan-continue", "main-tab-photos",
                       "main-tab-windows", "tools-settings-button", "settings-membership-offer",
-                      "membership-offer-close"):
+                      "ipad-public-plus-entry-observation", "07-plus-entry-unavailable-synthetic-url"):
             self.assertIn(entry, method)
         for forbidden in ("--app-store-screenshot-fixture", "--review-public-presentation",
                           'app.launchEnvironment[', 'tap("membership-offer-purchase"',
-                          'tap("membership-offer-restore"', 'tap("settings-membership-restore"'):
+                          'tap("membership-offer-restore"', 'tap("settings-membership-restore"',
+                          'plus.tap()', 'tap("settings-membership-preview"', 'membership-offer-close'):
             self.assertNotIn(forbidden, method)
 
     def test_capture_build_is_explicitly_local_only(self) -> None:
