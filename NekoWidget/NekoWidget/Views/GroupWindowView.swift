@@ -647,9 +647,11 @@ struct GroupWindowScreen: View {
                 .font(.footnote)
                 .foregroundStyle(.red)
                 .accessibilityIdentifier("group-window-screen-message")
-            Button("もう一度") { Task { await model.load() } }
+            // sync() re-reads the window and its photos; a failed delivery
+            // keeps its own 「もう一度届ける」 bar.
+            Button("もう一度") { Task { await model.sync() } }
                 .font(.footnote)
-                .disabled(model.isWorking)
+                .disabled(model.isSyncing)
                 .accessibilityIdentifier("group-window-screen-retry")
         }
         .padding(.horizontal, 16)

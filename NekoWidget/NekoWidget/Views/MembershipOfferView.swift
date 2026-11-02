@@ -196,7 +196,9 @@ struct MembershipOfferView: View {
                     .font(.headline)
                     .accessibilityIdentifier("membership-offer-unavailable")
                 if !isWorking {
-                    if let onRefresh {
+                    // refresh() is a no-op unless the model can refresh; only
+                    // then is a reload button honest.
+                    if let onRefresh, canRefresh {
                         Button("もう一度読み込む", action: onRefresh)
                             .font(.footnote)
                             .accessibilityIdentifier("membership-offer-reload")
