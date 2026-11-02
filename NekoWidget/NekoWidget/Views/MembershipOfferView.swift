@@ -246,6 +246,7 @@ struct MembershipOfferView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("membership-offer-message")
+                    .announcesWhenShown(message)
             }
 
             if let onRefresh, canRefresh {

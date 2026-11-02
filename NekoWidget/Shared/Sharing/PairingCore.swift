@@ -415,26 +415,8 @@ struct PairingInvitationCode: Equatable, Sendable {
         "\(PairingProtocol.invitationPrefix).\(invitationID).\(enrollmentSecret.base64URLEncodedString())"
     }
 
-    /// The raw enrollment secret is intentionally placed in the fragment. URL
-    /// fragments are not sent in an HTTP request, though the chosen messaging
-    /// service and anyone with the link can still see it.
-    var invitationURL: URL? {
-        URL(string: "nekowidget://pair/invite?id=\(invitationID)#\(enrollmentSecret.base64URLEncodedString())")
-    }
-
-    static func parse(url: URL) throws -> Self {
-        guard url.scheme == "nekowidget",
-              url.host == "pair",
-              url.path == "/invite",
-              let invitationID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                .queryItems?.first(where: { $0.name == "id" })?.value,
-              let fragment = url.fragment,
-              let secret = Data(base64URLString: fragment)
-        else {
-            throw PairingError.invalidInvitationCode
-        }
-        return try Self(invitationID: invitationID, enrollmentSecret: secret)
-    }
+    // The former nekowidget://pair/invite URL is gone: a custom scheme can be
+    // claimed by any app, and invitations travel as https universal links.
 
     private static func isSafeOpaqueIdentifier(_ value: String) -> Bool {
         guard (8...128).contains(value.utf8.count) else { return false }
@@ -478,23 +460,7 @@ struct PairingDeviceRecoveryCode: Equatable, Sendable {
         "\(PairingProtocol.deviceRecoveryPrefix).\(recoveryID).\(proofSecret.base64URLEncodedString())"
     }
 
-    var recoveryURL: URL? {
-        URL(
-            string: "nekowidget://pair/recover?id=\(recoveryID)#\(proofSecret.base64URLEncodedString())"
-        )
-    }
-
-    static func parse(url: URL) throws -> Self {
-        guard url.scheme == "nekowidget",
-              url.host == "pair",
-              url.path == "/recover",
-              let recoveryID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                .queryItems?.first(where: { $0.name == "id" })?.value,
-              let fragment = url.fragment,
-              let secret = Data(base64URLString: fragment)
-        else { throw PairingError.invalidDeviceRecoveryCode }
-        return try Self(recoveryID: recoveryID, proofSecret: secret)
-    }
+    // The former nekowidget://pair/recover URL is gone for the same reason.
 }
 
 struct PairingDeviceRecoveryIdentity: Codable, Equatable, Sendable {
