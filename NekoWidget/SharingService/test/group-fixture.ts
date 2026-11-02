@@ -72,11 +72,11 @@ export async function packet(owner:Person,roster:GroupRoster) {
   }
   return {packet:signed,envelopes,encryptedName:cipher(),encryptedMemberNames:Object.fromEntries(roster.members.map(m=>[m.participantId,cipher()])),hash};
 }
-export async function create(owner:Person,status=201,errorCode='owned_window_limit') {
+export async function create(owner:Person,status=201,errorCode='owned_window_limit',settings:Env=testEnv) {
   const windowId=randomBase64url(16),roster:GroupRoster={windowId,revision:1,keyEpoch:1,previousHash:base64urlEncode(new Uint8Array(32)),
     ownerPersonId:owner.id,members:[await member(owner,windowId,'owner')]};
   const data=await packet(owner,roster),{hash,...wire}=data,operationId=crypto.randomUUID();
-  const response=await call(owner,'/v3/group-windows',{operationId,...wire});
+  const response=await send(await signed(owner,'/v3/group-windows',{operationId,...wire}),settings);
   if(status===201) ok(response,201);
   else expect({status:response.status,code:response.data.error?.code}).toEqual({status,code:errorCode});
   return {windowId,roster,hash};
