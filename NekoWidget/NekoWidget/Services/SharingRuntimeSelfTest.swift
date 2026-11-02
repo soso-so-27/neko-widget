@@ -561,7 +561,7 @@ struct PreservationNativeFixture: Sendable {
 
 
 /// DEBUG-only, generated-data runtime gate used by simulator smoke CI. The
-/// report deliberately contains only fixed case identifiers and pass/fail
+/// report deliberately contains only fixed case/assertion identifiers and pass/fail
 /// values—never paths, PhotoKit identifiers, keys, invite codes, or bytes.
 actor SharingRuntimeSelfTestRunner {
     static let shared = SharingRuntimeSelfTestRunner()
@@ -577,6 +577,27 @@ actor SharingRuntimeSelfTestRunner {
     private struct CaseResult: Codable {
         let id: String
         let status: String
+        var failedAssertionID: String? = nil
+    }
+
+    /// Only fixed assertion identifiers enter the existing synthetic report.
+    /// The original Error is returned unchanged, preserving typed catch paths.
+    private final class AssertionCapture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var first: String?
+        func record(_ identifier: StaticString) {
+            lock.lock(); defer { lock.unlock() }
+            if first == nil { first = String(describing: identifier) }
+        }
+        func firstFailure() -> String? {
+            lock.lock(); defer { lock.unlock() }
+            return first
+        }
+    }
+    @TaskLocal private static var assertionCapture: AssertionCapture?
+    private static func recordAssertionFailure(_ identifier: StaticString, _ error: Error) -> Error {
+        assertionCapture?.record(identifier)
+        return error
     }
 
     private struct Report: Codable {
@@ -823,13 +844,17 @@ actor SharingRuntimeSelfTestRunner {
         _ body: () async throws -> Void
     ) async -> CaseResult {
         Self.writeProgress(caseID: id, phase: "started")
+        let capture = ["disabled-upgrade-purge", "managed-preservation-membership-boundary",
+                       "retained-widget-publication"].contains(id) ? AssertionCapture() : nil
         do {
-            try await body()
+            try await Self.$assertionCapture.withValue(capture) { try await body() }
             Self.writeProgress(caseID: id, phase: "passed")
             return CaseResult(id: id, status: "passed")
         } catch {
             Self.writeProgress(caseID: id, phase: "failed")
-            return CaseResult(id: id, status: "failed")
+            return CaseResult(id: id, status: "failed", failedAssertionID: capture.map {
+                $0.firstFailure() ?? "unclassified-operation-error"
+            })
         }
     }
 
@@ -2000,7 +2025,7 @@ actor SharingRuntimeSelfTestRunner {
         guard unpaired.phase == .unpaired,
               let root = SharedContainer.containerURL,
               let personalWidgetDirectory = SharedContainer.widgetCacheDirectoryURL
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-001", MomentSharingError.stateUnavailable) }
 
         let personalSentinels = [
             root.appendingPathComponent(
@@ -2134,12 +2159,12 @@ actor SharingRuntimeSelfTestRunner {
             validating: lifecycleToken
         )
         guard let familyWidgetManifestURL = SharedContainer.familyWidgetManifestURL else {
-            throw MomentSharingError.stateUnavailable
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-002", MomentSharingError.stateUnavailable)
         }
         guard let windowNameSyncURL = SharedContainer.privateWindowNameSyncStateURL,
               let familyWidgetHistoryURL = SharedContainer.familyWidgetCacheHistoryURL,
               let familyWidgetCacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-003", MomentSharingError.stateUnavailable) }
         try SharingSecureFile.write(
             Data("stale-family-widget".utf8),
             to: familyWidgetManifestURL
@@ -2183,7 +2208,7 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard !unavailablePairingOnlyConfiguration.isAvailable,
               !unavailablePairingOnlyConfiguration.requiresLocalSharingPurge
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-004", MomentSharingError.stateUnavailable) }
         guard (try PairingStateStore.load())?.phase == .paired,
               try PairingKeychainStore.load(
                   account: credential.account,
@@ -2195,7 +2220,7 @@ actor SharingRuntimeSelfTestRunner {
               ) == orphanCredential,
               FileManager.default.fileExists(atPath: familyWidgetManifestURL.path),
               FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path)
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-005", MomentSharingError.stateUnavailable) }
 
         let reviewPreviewConfiguration = SharingAPIConfiguration(
             isEnabled: false,
@@ -2212,7 +2237,7 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard !reviewPreviewConfiguration.isAvailable,
               !reviewPreviewConfiguration.requiresLocalSharingPurge
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-006", MomentSharingError.stateUnavailable) }
         guard (try PairingStateStore.load())?.phase == .paired,
               try PairingKeychainStore.load(
                   account: credential.account,
@@ -2220,7 +2245,7 @@ actor SharingRuntimeSelfTestRunner {
               ) == credential,
               FileManager.default.fileExists(atPath: familyWidgetManifestURL.path),
               FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path)
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-007", MomentSharingError.stateUnavailable) }
 
         let base = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
         let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
@@ -2238,7 +2263,7 @@ actor SharingRuntimeSelfTestRunner {
             now: base
         )
         guard let admission = catalog.destinations.first else {
-            throw MomentSharingError.stateUnavailable
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-008", MomentSharingError.stateUnavailable)
         }
         let pendingCapture = try MomentShareHandoffStore.stageCapture(
             admissionID: admission.id,
@@ -2252,7 +2277,7 @@ actor SharingRuntimeSelfTestRunner {
         )
 
         guard let roomKey = credential.roomKey else {
-            throw MomentSharingError.stateUnavailable
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-009", MomentSharingError.stateUnavailable)
         }
         let prepared = try MomentCrypto.prepare(
             canonicalJPEG: preview.jpeg,
@@ -2278,7 +2303,7 @@ actor SharingRuntimeSelfTestRunner {
             now: base
         )
         guard let ciphertextDirectory = SharedContainer.momentSharingCiphertextDirectoryURL
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-010", MomentSharingError.stateUnavailable) }
         let ciphertextURL = ciphertextDirectory.appendingPathComponent(
             outboxItem.ciphertextFileName,
             isDirectory: false
@@ -2304,9 +2329,9 @@ actor SharingRuntimeSelfTestRunner {
             validating: lifecycleToken
         )
         guard let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-011", MomentSharingError.stateUnavailable) }
         guard let receivedFileName = receivedItem.localJPEGFileName else {
-            throw MomentSharingError.stateUnavailable
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-012", MomentSharingError.stateUnavailable)
         }
         let receivedURL = receivedDirectory.appendingPathComponent(
             receivedFileName,
@@ -2371,7 +2396,7 @@ actor SharingRuntimeSelfTestRunner {
               personalSentinels.allSatisfy({
                   (try? Data(contentsOf: $0)) == personalSentinelData
               })
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-013", MomentSharingError.stateUnavailable) }
 
         // Model a killed cleanup after its fail-closed marker became durable.
         try SharingLifecycleGate.withExclusive {
@@ -2394,7 +2419,7 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard disabledConfiguration.isAvailable,
               disabledConfiguration.requiresLocalSharingPurge
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-014", MomentSharingError.stateUnavailable) }
         _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
 
         guard let reset = try PairingStateStore.load(),
@@ -2424,14 +2449,14 @@ actor SharingRuntimeSelfTestRunner {
               personalSentinels.allSatisfy({
                   (try? Data(contentsOf: $0)) == personalSentinelData
               })
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-015", MomentSharingError.stateUnavailable) }
         for removedCredential in [credential, orphanCredential] {
             do {
                 _ = try PairingKeychainStore.load(
                     account: removedCredential.account,
                     installationMarker: paired.installationMarker
                 )
-                throw MomentSharingError.stateUnavailable
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-016", MomentSharingError.stateUnavailable)
             } catch PairingError.malformedCredential {
                 // Expected: no bound or orphan room capability survives.
             }
@@ -2443,7 +2468,7 @@ actor SharingRuntimeSelfTestRunner {
               personalSentinels.allSatisfy({
                   (try? Data(contentsOf: $0)) == personalSentinelData
               })
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-017", MomentSharingError.stateUnavailable) }
     }
 
     /// A report-only transition must be enforced by the shared store itself.
@@ -3409,7 +3434,7 @@ actor SharingRuntimeSelfTestRunner {
               let publishedPhoto = captionedWidget.item,
               publishedPhoto.momentID == widgetPhoto.id,
               publishedPhoto.caption == widgetPhoto.caption
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-001", MomentSharingError.stateUnavailable) }
         try exportWidgetPortraitReviewIfRequested(
             filenames: publishedPhoto.cacheFilenames,
             cacheDirectory: widgetCacheURL
@@ -3426,7 +3451,7 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard repairedWidget.item == captionedWidget.item,
               try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-002", MomentSharingError.stateUnavailable) }
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
             state.inbox[0].caption = nil
         }
@@ -3439,14 +3464,14 @@ actor SharingRuntimeSelfTestRunner {
         guard photoOnlyWidget.item?.caption == nil,
               photoOnlyWidget.item?.sourceDigest == publishedPhoto.sourceDigest,
               try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-003", MomentSharingError.stateUnavailable) }
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
             state.inbox[0].caption = widgetPhoto.caption
         }
 
 
         guard let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL else {
-            throw MomentSharingError.stateUnavailable
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-004", MomentSharingError.stateUnavailable)
         }
         let receivedURL = receivedDirectory.appendingPathComponent("\(momentID).jpg")
         try MomentSharingStateStore.setSavedMemory(momentID: momentID, isSaved: true,
@@ -3466,12 +3491,12 @@ actor SharingRuntimeSelfTestRunner {
                   MomentSharingStateStore.isLocalSharedImageVisible(at: receivedURL) == !remainsHidden,
                   MomentSharingStateStore.isFamilyWidgetCacheVisible(filename: publishedPhoto.cacheFilenames.small,
                     localWindowID: nil) == !remainsHidden
-            else { throw MomentSharingError.stateUnavailable }
+            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-005", MomentSharingError.stateUnavailable) }
             if remainsHidden {
                 guard WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil,
                       WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
                         photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil
-                else { throw MomentSharingError.stateUnavailable }
+                else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-006", MomentSharingError.stateUnavailable) }
             }
             let publication = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
                 freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
@@ -3479,12 +3504,12 @@ actor SharingRuntimeSelfTestRunner {
                   (WidgetManifestReader.familyItem(for: .small, localWindowID: widgetWindowID) == nil) == remainsHidden,
                   (WidgetCacheImageLoader.image(cacheFilename: publishedPhoto.cacheFilenames.small,
                     photoSourceIdentifier: widgetSourceID, maximumPixelSize: 400) == nil) == remainsHidden
-            else { throw MomentSharingError.stateUnavailable }
+            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-007", MomentSharingError.stateUnavailable) }
             if remainsHidden {
                 do {
                     _ = try MomentSharingStateStore.photoLibraryCopyPayload(momentID: momentID,
                         validating: lifecycleToken)
-                    throw DailySharingError.stateUnavailable
+                    throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-008", DailySharingError.stateUnavailable)
                 } catch MomentSharingError.stateUnavailable {}
             }
         }
@@ -3497,10 +3522,10 @@ actor SharingRuntimeSelfTestRunner {
               deleted.inbox[0].localJPEGFileName == nil, deleted.inbox[0].caption == nil,
               deleted.savedMemories.isEmpty, deleted.pawOutbox.isEmpty,
               !FileManager.default.fileExists(atPath: receivedURL.path)
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-009", MomentSharingError.stateUnavailable) }
         let removed = try await widgetBuilder.buildFamilyWindow(from: widgetPhoto,
             freshUntil: widgetFreshUntil, windowDisplayName: "受信テストのまど", validating: lifecycleToken)
-        guard removed.item == nil else { throw MomentSharingError.stateUnavailable }
+        guard removed.item == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("RWP-010", MomentSharingError.stateUnavailable) }
     }
 
     /// The disposable Simulator may opt into one repository-owned portrait for
@@ -4780,7 +4805,7 @@ actor SharingRuntimeSelfTestRunner {
            let thumbnailImage = CGImageSourceCreateImageAtIndex(thumbnailSource, 0, nil),
            max(thumbnailImage.width, thumbnailImage.height) == 512,
            expectedThumbnail.count <= MomentOutboxItem.maximumLocalThumbnailBytes
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-001", MomentSharingError.stateUnavailable) }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailValidated)
         let payload = try MomentCrypto.prepare(
             canonicalJPEG: preview.jpeg, capturedAt: nil,
@@ -4794,7 +4819,7 @@ actor SharingRuntimeSelfTestRunner {
             localThumbnailJPEG: expectedThumbnail, localCaption: "生成した写真の控え",
             localDetailJPEG: preview.jpeg, validating: lifecycleToken)
         guard prepared.phase == .prepared, prepared.localCaption == "生成した写真の控え"
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-002", MomentSharingError.stateUnavailable) }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .outboxLoaded)
         guard prepared.localThumbnailFileName
                 == MomentOutboxItem.localThumbnailFileName(for: prepared.id),
@@ -4802,7 +4827,7 @@ actor SharingRuntimeSelfTestRunner {
               detail.fileName == MomentOutboxItem.localDetailFileName(for: prepared.id),
               detail.sha256 == PairingCrypto.sha256(preview.jpeg),
               let detailDirectory = SharedContainer.momentSharingSentThumbnailDirectoryURL
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-003", MomentSharingError.stateUnavailable) }
         let detailURL = detailDirectory.appendingPathComponent(detail.fileName)
         guard try Data(contentsOf: detailURL) == preview.jpeg,
               preview.jpeg != expectedThumbnail,
@@ -4811,15 +4836,15 @@ actor SharingRuntimeSelfTestRunner {
                 itemID: prepared.id, expectedSpaceID: prepared.context.spaceID,
                 validating: lifecycleToken
               ) == nil
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-004", MomentSharingError.stateUnavailable) }
         let durableJSON = try JSONEncoder().encode(prepared)
         guard var legacyJSON = try JSONSerialization.jsonObject(with: durableJSON) as? [String: Any],
               legacyJSON["localDetailJPEG"] == nil
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-005", MomentSharingError.stateUnavailable) }
         legacyJSON.removeValue(forKey: "localDetail")
         guard try JSONDecoder().decode(MomentOutboxItem.self,
             from: JSONSerialization.data(withJSONObject: legacyJSON)).localDetail == nil
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-006", MomentSharingError.stateUnavailable) }
         // Reconciliation retains this exact photo, even if a stale caller
         // supplies different optional presentation bytes on an idempotent retry.
         let replay = try MomentSharingStateStore.enqueue(
@@ -4836,11 +4861,11 @@ actor SharingRuntimeSelfTestRunner {
             validating: lifecycleToken
         )
         guard replay == prepared, try Data(contentsOf: detailURL) == preview.jpeg else {
-            throw MomentSharingError.stateUnavailable
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-007", MomentSharingError.stateUnavailable)
         }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailReferencesValidated)
         guard MomentSharingStateStore.readLocalThumbnail(for: prepared) == expectedThumbnail
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-008", MomentSharingError.stateUnavailable) }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .handoffThumbnailReadable)
 
         // Apply the persisted acceptance fields and ciphertext cleanup used by
@@ -4848,7 +4873,7 @@ actor SharingRuntimeSelfTestRunner {
         let committedAt = Date().addingTimeInterval(1)
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
             guard let index = state.outbox.firstIndex(where: { $0.id == prepared.id })
-            else { throw MomentSharingError.stateUnavailable }
+            else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-009", MomentSharingError.stateUnavailable) }
             state.outbox[index].phase = .committed
             state.outbox[index].serverMomentID = "moment_sent_preview_fixture"
             state.outbox[index].commitStartedAt = committedAt
@@ -4863,7 +4888,7 @@ actor SharingRuntimeSelfTestRunner {
             $0.id == prepared.id
         }), committed.phase == .committed,
         MomentSharingStateStore.readLocalThumbnail(for: committed) == expectedThumbnail
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-010", MomentSharingError.stateUnavailable) }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .committedThumbnailReadable)
         guard let resolved = try MomentSharingStateStore.localDetailURL(
             itemID: committed.id, expectedSpaceID: committed.context.spaceID,
@@ -4872,12 +4897,12 @@ actor SharingRuntimeSelfTestRunner {
         try MomentSharingStateStore.localDetailURL(
             itemID: committed.id, expectedSpaceID: "another_space",
             validating: lifecycleToken
-        ) == nil else { throw MomentSharingError.stateUnavailable }
+        ) == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-011", MomentSharingError.stateUnavailable) }
         try SharingSecureFile.write(expectedThumbnail, to: resolved)
         guard try MomentSharingStateStore.localDetailURL(
             itemID: committed.id, expectedSpaceID: committed.context.spaceID,
             validating: lifecycleToken
-        ) == nil else { throw MomentSharingError.stateUnavailable }
+        ) == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-012", MomentSharingError.stateUnavailable) }
         try SharingSecureFile.write(preview.jpeg, to: resolved)
         // Rechecking the same current record may recover after the file is
         // readable again; it must still resolve and validate the original JPEG.
@@ -4885,26 +4910,26 @@ actor SharingRuntimeSelfTestRunner {
             itemID: committed.id, expectedSpaceID: committed.context.spaceID,
             validating: lifecycleToken
         ), recovered == resolved, try Data(contentsOf: recovered) == preview.jpeg
-        else { throw MomentSharingError.stateUnavailable }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-013", MomentSharingError.stateUnavailable) }
         let expiry = committed.createdAt.addingTimeInterval(30 * 24 * 60 * 60 + 1)
         // A late status update keeps the ledger, not the full-detail photo.
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
             guard let index = state.outbox.firstIndex(where: { $0.id == committed.id }) else {
-                throw MomentSharingError.stateUnavailable
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-014", MomentSharingError.stateUnavailable)
             }
             state.outbox[index].updatedAt = expiry
         }
         guard try MomentSharingStateStore.localDetailURL(
             itemID: committed.id, expectedSpaceID: committed.context.spaceID,
             validating: lifecycleToken, now: expiry
-        ) == nil else { throw MomentSharingError.stateUnavailable }
+        ) == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-015", MomentSharingError.stateUnavailable) }
         try MomentSharingStateStore.pruneLocalHistory(now: expiry)
         guard !FileManager.default.fileExists(atPath: resolved.path),
               let retained = try MomentSharingStateStore.load().outbox.first(where: { $0.id == committed.id }),
               retained.localDetail == nil,
               retained.localThumbnailFileName == committed.localThumbnailFileName
         else {
-            throw MomentSharingError.stateUnavailable
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("DUP-RS-016", MomentSharingError.stateUnavailable)
         }
         try verifySentDetailDeletion(jpeg: preview.jpeg, lifecycleToken: lifecycleToken)
     }
@@ -7103,7 +7128,7 @@ actor SharingRuntimeSelfTestRunner {
             var exchanges = 0
             func respond(_ request: URLRequest) throws -> (Data, URLResponse) {
                 guard let url = request.url, request.httpMethod == "POST" else {
-                    throw ManagedPreservationError.invalidResponse
+                    throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-001", ManagedPreservationError.invalidResponse)
                 }
                 let body: [String: Any]
                 let status: Int
@@ -7116,7 +7141,7 @@ actor SharingRuntimeSelfTestRunner {
                     body = ["error": ["code": "PILOT_REGISTRATION_PENDING",
                                       "registrationReference": "1b639e35-dd44-46a7-a888-94b33c15b803"]]
                     status = 403
-                } else { throw ManagedPreservationError.invalidResponse }
+                } else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-002", ManagedPreservationError.invalidResponse) }
                 return (try JSONSerialization.data(withJSONObject: body),
                         HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
                                         headerFields: ["Content-Type": "application/json"])!)
@@ -7132,36 +7157,36 @@ actor SharingRuntimeSelfTestRunner {
         do {
             try await client.finishSignIn(state: "wrong-state", identityToken: Data("synthetic-token".utf8),
                                           authorizationCode: Data("synthetic-code".utf8), appleUserID: "synthetic-apple-user")
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-003", ManagedPreservationError.invalidResponse)
         } catch ManagedPreservationError.authenticationStepFailed(.state) { }
         guard await requests.exchanges == 0, try await !client.hasSession() else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-004", ManagedPreservationError.invalidResponse)
         }
         let challenge = try await client.prepareSignIn()
         do {
             try await client.finishSignIn(state: challenge.state, identityToken: Data("synthetic-token".utf8),
                                           authorizationCode: Data("synthetic-code".utf8), appleUserID: "synthetic-apple-user")
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-005", ManagedPreservationError.invalidResponse)
         } catch ManagedPreservationError.pilotRegistrationPending { }
         guard await requests.exchanges == 1, try await !client.hasSession() else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-006", ManagedPreservationError.invalidResponse)
         }
         let coordinator = ManagedPreservationCoordinator(configuration: configuration, client: client)
         func settle() async throws {
             let deadline = Date().addingTimeInterval(5)
             while coordinator.isBusy && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-            guard !coordinator.isBusy else { throw ManagedPreservationError.interrupted }
+            guard !coordinator.isBusy else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-007", ManagedPreservationError.interrupted) }
         }
         coordinator.prepareSignIn(); try await settle()
         coordinator.completeSignIn(.failure(ASAuthorizationError(.failed))); try await settle()
         guard coordinator.errorMessage == ManagedPreservationError.appleAuthorizationFailed(1004).errorDescription else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-008", ManagedPreservationError.invalidResponse)
         }
         coordinator.prepareSignIn(); try await settle()
         coordinator.completeSignIn(.failure(ASAuthorizationError(.canceled))); try await settle()
         guard coordinator.errorMessage == nil, coordinator.statusMessage != nil,
               !coordinator.isSignedIn, await requests.exchanges == 1 else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-009", ManagedPreservationError.invalidResponse)
         }
         coordinator.stop()
     }
@@ -7171,7 +7196,7 @@ actor SharingRuntimeSelfTestRunner {
         func wait(_ condition: () async -> Bool) async throws {
             let deadline = ContinuousClock.now + .seconds(3)
             while !(await condition()) {
-                guard ContinuousClock.now < deadline else { throw ManagedPreservationError.interrupted }
+                guard ContinuousClock.now < deadline else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-001", ManagedPreservationError.interrupted) }
                 try await Task.sleep(for: .milliseconds(5))
             }
         }
@@ -7182,10 +7207,10 @@ actor SharingRuntimeSelfTestRunner {
         let first = try PreservationDeviceSessionFixture.make()
         defer { first.cleanup() }
         let client = first.client()
-        guard try await client.hasSession() else { throw ManagedPreservationError.invalidResponse }
+        guard try await client.hasSession() else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-002", ManagedPreservationError.invalidResponse) }
         first.clock.advance(901) // Actual source lifetime is 15 minutes, not a one-hour fixture.
         guard try await !client.hasSession(), try first.store.load() == first.initial else {
-            throw ManagedPreservationError.secureStorage
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-003", ManagedPreservationError.secureStorage)
         }
         var binding = AppRecordPersistence.Binding(version: 1, origin: first.store.origin,
             owner: first.initial.ownerId, consent: AppRecordPersistence.consentVersion, enabled: true)
@@ -7196,7 +7221,7 @@ actor SharingRuntimeSelfTestRunner {
         guard await first.server.renewals == 0,
               AppRecordPersistence.needsAuthenticatedWork(binding, fingerprint: "changed", requested: false),
               AppRecordPersistence.needsAuthenticatedWork(binding, fingerprint: "unchanged", requested: true) else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-004", ManagedPreservationError.invalidResponse)
         }
         let other = first.client()
         async let a = client.prepareSession(expectedOwner: first.initial.ownerId)
@@ -7206,11 +7231,11 @@ actor SharingRuntimeSelfTestRunner {
               await first.server.renewals == 1, let renewed = try first.store.load(),
               renewed.token != first.initial.token, renewed.devicePrivateKey == first.initial.devicePrivateKey,
               renewed.deviceGrant?.appleUserID == first.initial.deviceGrant?.appleUserID else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-005", ManagedPreservationError.invalidResponse)
         }
         let restarted = first.client()
         _ = try await restarted.prepareSession(expectedOwner: first.initial.ownerId)
-        guard await first.server.renewals == 1 else { throw ManagedPreservationError.invalidResponse }
+        guard await first.server.renewals == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-006", ManagedPreservationError.invalidResponse) }
 
         // A long restore renews only at a complete page boundary. The 210s
         // margin covers a bounded page plus one owner-rate-window wait.
@@ -7220,24 +7245,24 @@ actor SharingRuntimeSelfTestRunner {
         restore.clock.advance(700) // 200s left: ordinary prepareSession would keep this token.
         let nextRestore = try await restoreClient.prepareRestoreBoundary(replacing: originalRestore)
         guard await restore.server.renewals == 1, nextRestore.ownerID == originalRestore.ownerID else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-007", ManagedPreservationError.invalidResponse)
         }
         var oldRejected = false
         do { try await restoreClient.requireSessionCheckpoint(originalRestore) } catch { oldRejected = true }
-        guard oldRejected else { throw ManagedPreservationError.staleSession }
+        guard oldRejected else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-008", ManagedPreservationError.staleSession) }
         try await restoreClient.requireSessionCheckpoint(nextRestore)
         restore.clock.advance(1601) // The same grant also renews after actual access expiry.
         let afterExpiry = try await restoreClient.prepareRestoreBoundary(replacing: nextRestore)
         try await restoreClient.requireSessionCheckpoint(afterExpiry)
         guard await restore.server.renewals == 2, let prior = try restore.store.load() else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-009", ManagedPreservationError.invalidResponse)
         }
         let external = ManagedPreservationSessionStore.Credential(token: String(repeating: "z", count: 43),
             ownerId: prior.ownerId, expiresAt: restore.clock.now().addingTimeInterval(900))
-        guard try restore.store.save(external, replacing: prior) else { throw ManagedPreservationError.secureStorage }
+        guard try restore.store.save(external, replacing: prior) else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-010", ManagedPreservationError.secureStorage) }
         var replacementRejected = false
         do { _ = try await restoreClient.prepareRestoreBoundary(replacing: afterExpiry) } catch { replacementRejected = true }
-        guard replacementRejected, await restore.server.renewals == 2 else { throw ManagedPreservationError.staleSession }
+        guard replacementRejected, await restore.server.renewals == 2 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-011", ManagedPreservationError.staleSession) }
 
         // Run the complete production restore, not only its renewal helper.
         // Each complete synthetic page advances 700s; actual wall-clock sleep
@@ -7258,7 +7283,7 @@ actor SharingRuntimeSelfTestRunner {
                 path: file.path, part: 0, count: 1, sha256: file.sha256, payload: payload.base64EncodedString()))
         }
         for part in index.nodes ?? [] { documents[UUID(uuidString: part.snapshotId)!] = document(part) }
-        guard let rootDocument = documents[rootID] else { throw ToolBackupError.invalid }
+        guard let rootDocument = documents[rootID] else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-012", ToolBackupError.invalid) }
         await long.server.configureRestore(documents)
         let longClient = long.client()
         let oldLong = try await longClient.captureSessionCheckpoint()
@@ -7270,7 +7295,7 @@ actor SharingRuntimeSelfTestRunner {
         guard oldLongRejected, await long.server.restorePages >= 3, await long.server.renewals >= 2,
               restored.saved.owner == long.initial.ownerId, restored.saved.index.files == index.files,
               try ToolBackupFiles.read(ToolBackupFiles.restoredSource(rootID, owner: long.initial.ownerId)
-                .appendingPathComponent(files[0].path), maximum: 10) == payload else { throw ToolBackupError.invalid }
+                .appendingPathComponent(files[0].path), maximum: 10) == payload else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-013", ToolBackupError.invalid) }
 
         for outcome in [PreservationDeviceSessionFixtureServer.Outcome.lostResponse, .unavailable, .wrongOwner] {
             let f = try PreservationDeviceSessionFixture.make(); defer { f.cleanup() }
@@ -7278,18 +7303,18 @@ actor SharingRuntimeSelfTestRunner {
             var rejected = false
             do { _ = try await f.client().prepareSession(expectedOwner: f.initial.ownerId) } catch { rejected = true }
             guard rejected, await f.server.renewals == 1, try f.store.load() == f.initial else {
-                throw ManagedPreservationError.secureStorage
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-014", ManagedPreservationError.secureStorage)
             }
             await f.server.configure(.success)
             _ = try await f.client().prepareSession(expectedOwner: f.initial.ownerId)
-            guard await f.server.renewals == 2 else { throw ManagedPreservationError.invalidResponse }
+            guard await f.server.renewals == 2 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-015", ManagedPreservationError.invalidResponse) }
         }
         let osFailure = try PreservationDeviceSessionFixture.make(); defer { osFailure.cleanup() }
         osFailure.clock.advance(901); await osFailure.os.configure(fails: true)
         var stopped = false
         do { _ = try await osFailure.client().prepareSession() } catch { stopped = true }
         guard stopped, try osFailure.store.load() == osFailure.initial, await osFailure.server.renewals == 0 else {
-            throw ManagedPreservationError.secureStorage
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-016", ManagedPreservationError.secureStorage)
         }
         for state in [ManagedPreservationClient.AppleCredentialState.revoked, .notFound, .transferred] {
             let f = try PreservationDeviceSessionFixture.make(); defer { f.cleanup() }
@@ -7297,7 +7322,7 @@ actor SharingRuntimeSelfTestRunner {
             var rejected = false
             do { _ = try await f.client().prepareSession() } catch { rejected = true }
             guard rejected, try f.store.load() == nil, await f.server.renewals == 0 else {
-                throw ManagedPreservationError.secureStorage
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-017", ManagedPreservationError.secureStorage)
             }
         }
         let revoked = try PreservationDeviceSessionFixture.make(); defer { revoked.cleanup() }
@@ -7305,7 +7330,7 @@ actor SharingRuntimeSelfTestRunner {
         var rejected = false
         do { _ = try await revoked.client().prepareSession() } catch { rejected = true }
         guard rejected, try revoked.store.load() == nil, await revoked.server.renewals == 1 else {
-            throw ManagedPreservationError.secureStorage
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-018", ManagedPreservationError.secureStorage)
         }
         // A renewal already in flight cannot publish after logout, a newer
         // login, deletion receipt, or caller cancellation.
@@ -7316,7 +7341,7 @@ actor SharingRuntimeSelfTestRunner {
             try await wait { await f.server.entered() }
             let newer = replacement(f)
             if race == 0 { try await c.signOut() }
-            if race == 1 { guard try f.store.save(newer, replacing: f.initial) else { throw ManagedPreservationError.secureStorage } }
+            if race == 1 { guard try f.store.save(newer, replacing: f.initial) else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-019", ManagedPreservationError.secureStorage) } }
             if race == 2 {
                 try f.store.saveDeletionReceipt(.init(ownerId: f.initial.ownerId,
                     token: String(repeating: "d", count: 43), state: .unconfirmed), replacing: nil)
@@ -7325,10 +7350,10 @@ actor SharingRuntimeSelfTestRunner {
             await f.server.release()
             var failed = false
             do { _ = try await work.value } catch { failed = true }
-            guard failed else { throw ManagedPreservationError.invalidResponse }
-            if race == 0 { guard try f.store.load() == nil, await f.server.revocations == 1 else { throw ManagedPreservationError.secureStorage } }
-            if race == 1 { guard try f.store.load() == newer else { throw ManagedPreservationError.secureStorage } }
-            if race >= 2 { guard try f.store.load() == f.initial else { throw ManagedPreservationError.secureStorage } }
+            guard failed else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-020", ManagedPreservationError.invalidResponse) }
+            if race == 0 { guard try f.store.load() == nil, await f.server.revocations == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-021", ManagedPreservationError.secureStorage) } }
+            if race == 1 { guard try f.store.load() == newer else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-022", ManagedPreservationError.secureStorage) } }
+            if race >= 2 { guard try f.store.load() == f.initial else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-023", ManagedPreservationError.secureStorage) } }
         }
         // An ordinary access 401 preserves its renewal key; a late old 401
         // cannot expire or clear a newly published login.
@@ -7338,12 +7363,12 @@ actor SharingRuntimeSelfTestRunner {
             let read = Task { try await c.membership() }
             try await wait { await f.server.entered() }
             let newer = replacement(f)
-            if replace { guard try f.store.save(newer, replacing: f.initial) else { throw ManagedPreservationError.secureStorage } }
+            if replace { guard try f.store.save(newer, replacing: f.initial) else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-024", ManagedPreservationError.secureStorage) } }
             await f.server.release()
             do { _ = try await read.value } catch { }
-            guard let current = try f.store.load() else { throw ManagedPreservationError.secureStorage }
-            if replace { guard current == newer else { throw ManagedPreservationError.secureStorage } }
-            else { guard current.devicePrivateKey == f.initial.devicePrivateKey, current.expiresAt < f.clock.now() else { throw ManagedPreservationError.secureStorage } }
+            guard let current = try f.store.load() else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-025", ManagedPreservationError.secureStorage) }
+            if replace { guard current == newer else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-026", ManagedPreservationError.secureStorage) } }
+            else { guard current.devicePrivateKey == f.initial.devicePrivateKey, current.expiresAt < f.clock.now() else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-027", ManagedPreservationError.secureStorage) } }
         }
         // A subjectless OS notification must not delete a newer authorized
         // credential while an older subject's state callback was suspended.
@@ -7353,11 +7378,11 @@ actor SharingRuntimeSelfTestRunner {
         let notice = Task { try await notifiedClient.appleAuthorizationDidChange() }
         try await wait { await notification.os.entered() }
         let newer = replacement(notification)
-        guard try notification.store.save(newer, replacing: notification.initial) else { throw ManagedPreservationError.secureStorage }
+        guard try notification.store.save(newer, replacing: notification.initial) else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-028", ManagedPreservationError.secureStorage) }
         await notification.os.release()
         do { _ = try await notice.value } catch { }
         guard try notification.store.load() == newer, await notification.server.revocations == 0 else {
-            throw ManagedPreservationError.secureStorage
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SESSION-029", ManagedPreservationError.secureStorage)
         }
     }
 
@@ -7376,7 +7401,7 @@ actor SharingRuntimeSelfTestRunner {
             return try JSONDecoder().decode(ManagedPreservationUsage.self, from: data).validated()
         }
         let legacy = try read(["saved": 2, "pending": 0, "creationLimitReached": false])
-        guard legacy.records.maximumRecords == nil else { throw ManagedPreservationError.invalidResponse }
+        guard legacy.records.maximumRecords == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-USAGE-001", ManagedPreservationError.invalidResponse) }
         let policy: [String: Any] = ["version": 2, "byteUnit": "decimal", "recordUnit": "visible-records-v1",
             "plus": ["limitBytes": 3_000_000_000, "maximumRecords": 3000, "includesAppleFamily": false],
             "trial": ["limitBytes": 250_000_000, "maximumRecords": 3000, "durationDays": 14],
@@ -7388,25 +7413,25 @@ actor SharingRuntimeSelfTestRunner {
             _ = try read(["saved": 2, "pending": 0, "creationLimitReached": false], productQuota:
                 ["policy": unsupported, "configurationStatus": "valid", "accountingStatus": "not_available", "enforcementStatus": "not_enabled"])
         } catch { rejectedFamilyFlag = true }
-        guard rejectedFamilyFlag else { throw ManagedPreservationError.invalidResponse }
+        guard rejectedFamilyFlag else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-USAGE-002", ManagedPreservationError.invalidResponse) }
         let pending: [String: Any] = ["policy": policy, "configurationStatus": "valid",
             "accountingStatus": "not_available", "enforcementStatus": "not_enabled", "usage": NSNull()]
         let records: [String: Any] = ["saved": 6000, "pending": 0, "maximumRecords": 200000, "creationLimitReached": false]
         let product = try read(records, productQuota: pending)
         guard product.productQuota?.policy?.plus.maximumRecords == 3000,
               product.productQuota?.usage == nil, product.records.saved == 6000,
-              legacy.productQuota == nil else { throw ManagedPreservationError.invalidResponse }
+              legacy.productQuota == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-USAGE-003", ManagedPreservationError.invalidResponse) }
         // A future ready response requires its own accounting validation first.
         for field in ["accountingStatus", "enforcementStatus", "configurationStatus"] {
             var invalid = pending; invalid[field] = "ready"
             var rejected = false
             do { _ = try read(records, productQuota: invalid) } catch { rejected = true }
-            guard rejected else { throw ManagedPreservationError.invalidResponse }
+            guard rejected else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-USAGE-004", ManagedPreservationError.invalidResponse) }
         }
         var invalidSettings = pending; invalidSettings["policy"] = NSNull(); invalidSettings["configurationStatus"] = "invalid"
         _ = try read(records, productQuota: invalidSettings)
         let reserved = try read(["saved": 0, "pending": 1, "maximumRecords": 1, "creationLimitReached": true])
-        guard reserved.records.maximumRecords == 1 else { throw ManagedPreservationError.invalidResponse }
+        guard reserved.records.maximumRecords == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-USAGE-005", ManagedPreservationError.invalidResponse) }
         // A later reduction may put existing records above the configured limit.
         _ = try read(["saved": 2, "pending": 0, "maximumRecords": 1, "creationLimitReached": true])
         let invalidRecords: [[String: Any]] = [
@@ -7420,7 +7445,7 @@ actor SharingRuntimeSelfTestRunner {
         for records in invalidRecords {
             var rejected = false
             do { _ = try read(records) } catch { rejected = true }
-            guard rejected else { throw ManagedPreservationError.invalidResponse }
+            guard rejected else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-USAGE-006", ManagedPreservationError.invalidResponse) }
         }
     }
 
@@ -7429,7 +7454,7 @@ actor SharingRuntimeSelfTestRunner {
         func wait(_ condition: () async -> Bool) async throws {
             let deadline = ContinuousClock.now + .seconds(3)
             while !(await condition()) {
-                guard ContinuousClock.now < deadline else { throw ManagedPreservationError.interrupted }
+                guard ContinuousClock.now < deadline else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-001", ManagedPreservationError.interrupted) }
                 try await Task.sleep(for: .milliseconds(5))
             }
         }
@@ -7445,7 +7470,7 @@ actor SharingRuntimeSelfTestRunner {
         archiveUI.start(); try await settle(archiveUI)
         guard archiveUI.errorMessage == ManagedPreservationError.conflict.errorDescription,
               await archive.server.endpointCounts() == ["GET /v1/records": 1] else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-002", ManagedPreservationError.invalidResponse)
         }
         archiveUI.stop()
 
@@ -7456,14 +7481,14 @@ actor SharingRuntimeSelfTestRunner {
         guard accountUI.isSignedIn, accountUI.membership?.canSave == true, accountUI.errorMessage == nil,
               accountUI.records.isEmpty, accountUI.usage == nil,
               await account.server.endpointCounts() == ["GET /v1/membership": 1] else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-003", ManagedPreservationError.invalidResponse)
         }
         accountUI.refresh(); try await settle(accountUI)
         guard accountUI.isSignedIn, accountUI.membership?.canSave == true, accountUI.errorMessage == nil,
               accountUI.records.isEmpty, accountUI.selected == nil, accountUI.usage == nil,
               accountUI.pendingMemoDrafts.isEmpty, accountUI.pendingToolDeletions.isEmpty,
               await account.server.endpointCounts() == ["GET /v1/membership": 2] else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-004", ManagedPreservationError.invalidResponse)
         }
         accountUI.stop()
 
@@ -7485,14 +7510,14 @@ actor SharingRuntimeSelfTestRunner {
                 expiresAt: fixture.session.expiresAt)
             guard try fixture.store.save(replacement, replacing: fixture.session) else {
                 await fixture.server.releaseMembershipResponse()
-                throw ManagedPreservationError.secureStorage
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-005", ManagedPreservationError.secureStorage)
             }
             await fixture.server.releaseMembershipResponse(); try await settle(coordinator)
             guard !coordinator.isSignedIn, coordinator.membership == nil, coordinator.records.isEmpty,
                   coordinator.selected == nil, coordinator.usage == nil,
                   try fixture.store.load() == replacement,
                   await fixture.server.endpointCounts() == ["GET /v1/membership": 1] else {
-                throw ManagedPreservationError.staleSession
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-006", ManagedPreservationError.staleSession)
             }
             coordinator.stop()
         }
@@ -7510,11 +7535,11 @@ actor SharingRuntimeSelfTestRunner {
         stoppedUI.start(); try await wait { await stopped.server.membershipResponseIsHeld() }
         stoppedUI.stop()
         guard stoppedUI.membership == nil, stoppedUI.records.isEmpty, stoppedUI.usage == nil,
-              !stoppedUI.isBusy, !stoppedUI.membershipLoading else { throw ManagedPreservationError.invalidResponse }
+              !stoppedUI.isBusy, !stoppedUI.membershipLoading else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-007", ManagedPreservationError.invalidResponse) }
         stoppedUI.start(); try await settle(stoppedUI)
         guard stoppedUI.membership?.canSave == true, stoppedUI.errorMessage == nil else {
             await stopped.server.releaseMembershipResponse()
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-008", ManagedPreservationError.invalidResponse)
         }
         await stopped.server.releaseMembershipResponse()
         try await wait { await stopped.server.membershipResponseCount() == 2 }
@@ -7524,7 +7549,7 @@ actor SharingRuntimeSelfTestRunner {
         guard stoppedUI.isSignedIn, stoppedUI.membership?.canSave == true, stoppedUI.errorMessage == nil,
               stoppedUI.records.isEmpty, stoppedUI.usage == nil,
               await stopped.server.endpointCounts() == ["GET /v1/membership": 2] else {
-            throw ManagedPreservationError.staleSession
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-009", ManagedPreservationError.staleSession)
         }
         stoppedUI.stop()
 
@@ -7535,7 +7560,7 @@ actor SharingRuntimeSelfTestRunner {
         guard !unauthorizedUI.isSignedIn, unauthorizedUI.membership == nil,
               unauthorizedUI.records.isEmpty, unauthorizedUI.usage == nil,
               await unauthorized.server.endpointCounts() == ["GET /v1/membership": 1] else {
-            throw ManagedPreservationError.authenticationRequired
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-010", ManagedPreservationError.authenticationRequired)
         }
         unauthorizedUI.stop()
 
@@ -7548,7 +7573,7 @@ actor SharingRuntimeSelfTestRunner {
         guard deletionUI.accountDeletionState == .requestedElsewhere, !deletionUI.isSignedIn,
               deletionUI.membership == nil, deletionUI.records.isEmpty, deletionUI.usage == nil,
               await deleting.server.endpointCounts() == beforeDeletion else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-ACCOUNT-011", ManagedPreservationError.invalidResponse)
         }
         deletionUI.stop()
     }
@@ -7564,14 +7589,14 @@ actor SharingRuntimeSelfTestRunner {
               BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link"),
               !BillingProtocolV1.isSupportedSignedRequest(method: "GET", pathname: "/v1/preservation/membership-link"),
               !BillingProtocolV1.isSupportedSignedRequest(method: "POST", pathname: "/v1/preservation/membership-link/other")
-        else { throw ManagedPreservationError.invalidResponse }
+        else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-001", ManagedPreservationError.invalidResponse) }
         for scenario in [PreservationFixtureScenario.wrongOwner, .wrongAudience, .wrongPath, .tamperedBody, .expired,
                          .changedKey, .changedSession, .missingKey, .wrongInstallation] {
             let f = try PreservationNativeFixture.make(scenario); defer { try? f.cleanup() }
             var rejected = false
             do { _ = try await f.client.linkMembership(consent: true) } catch { rejected = true }
             let counts = await f.server.counts()
-            guard rejected, counts.completes == 0, counts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+            guard rejected, counts.completes == 0, counts.saves == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-002", ManagedPreservationError.invalidResponse) }
         }
         for scenario in [PreservationFixtureScenario.changedKeyAfterLink, .changedSessionAfterLink,
                          .changedKeyDuringStatus, .changedSessionDuringStatus] {
@@ -7579,34 +7604,34 @@ actor SharingRuntimeSelfTestRunner {
             var rejected = false
             do { _ = try await f.client.linkMembership(consent: true) } catch { rejected = true }
             let counts = await f.server.counts()
-            guard rejected, counts.completes == 1, counts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+            guard rejected, counts.completes == 1, counts.saves == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-003", ManagedPreservationError.invalidResponse) }
         }
         let f = try PreservationNativeFixture.make(.firstFailure); defer { try? f.cleanup() }
-        do { _ = try await f.client.linkMembership(consent: false); throw ManagedPreservationError.invalidResponse }
+        do { _ = try await f.client.linkMembership(consent: false); throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-004", ManagedPreservationError.invalidResponse) }
         catch ManagedPreservationError.membershipLinkConsent { }
         let untouched = await f.server.counts()
-        guard untouched.issues == 0 else { throw ManagedPreservationError.invalidResponse }
+        guard untouched.issues == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-005", ManagedPreservationError.invalidResponse) }
         var failed = false
         do { _ = try await f.client.linkMembership(consent: true) } catch { failed = true }
         let afterFailure = try await f.client.membership()
-        guard failed, !afterFailure.linked else { throw ManagedPreservationError.invalidResponse }
+        guard failed, !afterFailure.linked else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-006", ManagedPreservationError.invalidResponse) }
         let unlinkedRetention = try await f.client.retention()
         guard unlinkedRetention.status == .unlinked, unlinkedRetention.dueAt == nil,
-              !unlinkedRetention.paused else { throw ManagedPreservationError.invalidResponse }
+              !unlinkedRetention.paused else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-007", ManagedPreservationError.invalidResponse) }
         let result = try await f.client.linkMembership(consent: true)
         let counts = await f.server.counts()
         guard result.linked, result.status == .expired, !result.canSave, counts.issues == 2, counts.completes == 2,
-              counts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+              counts.saves == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-008", ManagedPreservationError.invalidResponse) }
         let page = try await f.client.list()
-        guard page.items.count == 1 else { throw ManagedPreservationError.invalidResponse }
+        guard page.items.count == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-009", ManagedPreservationError.invalidResponse) }
         _ = try await f.client.detail(PreservationFixtureServer.recordID)
         let usage = try await f.client.usage()
         guard usage.storage.usedBytes == 1_048_576, usage.storage.availableBytes == 4_998_951_424,
-              usage.records.saved == 1, usage.records.maximumRecords == 200 else { throw ManagedPreservationError.invalidResponse }
+              usage.records.saved == 1, usage.records.maximumRecords == 200 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-010", ManagedPreservationError.invalidResponse) }
         let retention = try await f.client.retention()
         guard retention.status == .expired, retention.dueAt != nil,
               retention.finalNoticeDeliveredAt == nil else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-011", ManagedPreservationError.invalidResponse)
         }
         for (scenario, expected) in [(PreservationFixtureScenario.malformedRetention, ManagedPreservationError.invalidResponse),
                                      (.changedSessionDuringRetention, .staleSession),
@@ -7615,7 +7640,7 @@ actor SharingRuntimeSelfTestRunner {
             var rejected = false
             do { _ = try await fixture.client.retention() }
             catch let error as ManagedPreservationError where error == expected { rejected = true }
-            guard rejected else { throw ManagedPreservationError.invalidResponse }
+            guard rejected else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-012", ManagedPreservationError.invalidResponse) }
         }
         for (scenario, expected) in [(PreservationFixtureScenario.malformedUsage, ManagedPreservationError.accountingUnavailable),
                                      (.changedSessionDuringUsage, .staleSession),
@@ -7624,11 +7649,11 @@ actor SharingRuntimeSelfTestRunner {
             var rejected = false
             do { _ = try await fixture.client.usage() }
             catch let error as ManagedPreservationError where error == expected { rejected = true }
-            guard rejected else { throw ManagedPreservationError.invalidResponse }
+            guard rejected else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-013", ManagedPreservationError.invalidResponse) }
         }
         let contact = try await f.client.noticeContact()
         guard contact.email == "owner@example.com", contact.source == "apple" else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-014", ManagedPreservationError.invalidResponse)
         }
         for (scenario, expected) in [(PreservationFixtureScenario.malformedNoticeContact, ManagedPreservationError.invalidResponse),
                                      (.changedSessionDuringNoticeContact, .staleSession)] {
@@ -7636,14 +7661,14 @@ actor SharingRuntimeSelfTestRunner {
             var rejected = false
             do { _ = try await fixture.client.noticeContact() }
             catch let error as ManagedPreservationError where error == expected { rejected = true }
-            guard rejected else { throw ManagedPreservationError.invalidResponse }
+            guard rejected else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-015", ManagedPreservationError.invalidResponse) }
         }
         let lost = try PreservationNativeFixture.make(.lostResult); defer { try? lost.cleanup() }
         do { _ = try await lost.client.linkMembership(consent: true) } catch { }
         let afterLostResult = try await lost.client.membership()
-        guard afterLostResult.linked else { throw ManagedPreservationError.invalidResponse }
+        guard afterLostResult.linked else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-016", ManagedPreservationError.invalidResponse) }
         let lostCounts = await lost.server.counts()
-        guard lostCounts.completes == 1, lostCounts.saves == 0 else { throw ManagedPreservationError.invalidResponse }
+        guard lostCounts.completes == 1, lostCounts.saves == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-017", ManagedPreservationError.invalidResponse) }
 
         // Linking must invalidate an already displayed "unlinked" carry-out
         // snapshot instead of leaving a known-false status on the screen.
@@ -7652,16 +7677,16 @@ actor SharingRuntimeSelfTestRunner {
         func settleLink() async throws {
             let deadline = Date().addingTimeInterval(5)
             while (linkingUI.isBusy || linkingUI.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-            guard !linkingUI.isBusy, !linkingUI.membershipLoading else { throw ManagedPreservationError.interrupted }
+            guard !linkingUI.isBusy, !linkingUI.membershipLoading else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-018", ManagedPreservationError.interrupted) }
         }
         linkingUI.start(); try await settleLink()
         linkingUI.checkRetention(); try await settleLink()
-        guard linkingUI.retention?.status == .unlinked else { throw ManagedPreservationError.invalidResponse }
+        guard linkingUI.retention?.status == .unlinked else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-019", ManagedPreservationError.invalidResponse) }
         linkingUI.connectMembership(consent: true)
-        guard linkingUI.retention == nil else { throw ManagedPreservationError.invalidResponse }
+        guard linkingUI.retention == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-020", ManagedPreservationError.invalidResponse) }
         try await settleLink()
         guard linkingUI.membership?.linked == true, linkingUI.retention == nil else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-021", ManagedPreservationError.invalidResponse)
         }
         linkingUI.stop()
 
@@ -7675,19 +7700,19 @@ actor SharingRuntimeSelfTestRunner {
         func settle() async throws {
             let deadline = Date().addingTimeInterval(5)
             while (coordinator.isBusy || coordinator.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-            guard !coordinator.isBusy, !coordinator.membershipLoading else { throw ManagedPreservationError.interrupted }
+            guard !coordinator.isBusy, !coordinator.membershipLoading else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-022", ManagedPreservationError.interrupted) }
         }
         coordinator.start(); try await settle()
-        guard coordinator.membership?.canSave == true else { throw ManagedPreservationError.invalidResponse }
+        guard coordinator.membership?.canSave == true else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-023", ManagedPreservationError.invalidResponse) }
         let automaticCounts = await rejected.server.counts()
         guard automaticCounts.issues == 0, automaticCounts.completes == 0, automaticCounts.saves == 0 else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-024", ManagedPreservationError.invalidResponse)
         }
         coordinator.consentToNewSave = true
         coordinator.saveSelectedCopy(); try await settle()
         guard coordinator.membership == nil, !coordinator.draftWasSaved, coordinator.records.count == 1,
               coordinator.errorMessage == ManagedPreservationError.membershipRequired.errorDescription else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-025", ManagedPreservationError.invalidResponse)
         }
         coordinator.stop()
 
@@ -7698,15 +7723,15 @@ actor SharingRuntimeSelfTestRunner {
         let replacement = ManagedPreservationSessionStore.Credential(token: String(repeating: "c", count: 43),
             ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
         guard try rebinding.store.save(replacement, replacing: rebinding.session) else {
-            throw ManagedPreservationError.secureStorage
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-026", ManagedPreservationError.secureStorage)
         }
         var refusedStale = false
         do { _ = try await rebinding.client.hasSession() }
         catch let error as ManagedPreservationError where error == .staleSession { refusedStale = true }
-        guard refusedStale else { throw ManagedPreservationError.invalidResponse }
+        guard refusedStale else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-027", ManagedPreservationError.invalidResponse) }
         try await rebinding.client.reloadSessionFromSecureStorage()
         guard try await rebinding.client.sessionOwnerID() == replacement.ownerId,
-              await rebinding.server.counts().saves == 0 else { throw ManagedPreservationError.invalidResponse }
+              await rebinding.server.counts().saves == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-028", ManagedPreservationError.invalidResponse) }
 
         let outage = try PreservationNativeFixture.make(.unavailableMembership); defer { try? outage.cleanup() }
         let outageUI = ManagedPreservationCoordinator(configuration: outage.configuration, client: outage.client)
@@ -7717,7 +7742,7 @@ actor SharingRuntimeSelfTestRunner {
         }
         guard outageUI.records.count == 1, outageUI.errorMessage == nil, outageUI.membership == nil,
               outageUI.membershipMessage != nil, !outageUI.membershipLoading,
-              await outage.server.counts().saves == 0 else { throw ManagedPreservationError.invalidResponse }
+              await outage.server.counts().saves == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-029", ManagedPreservationError.invalidResponse) }
         outageUI.stop()
 
         for (scenario, code) in [(PreservationFixtureScenario.requestRejected, "S01"), (.saveTimedOut, "S02")] {
@@ -7730,19 +7755,19 @@ actor SharingRuntimeSelfTestRunner {
                 while (copyUI.isBusy || copyUI.membershipLoading) && Date() < deadline {
                     try await Task.sleep(nanoseconds: 10_000_000)
                 }
-                guard !copyUI.isBusy, !copyUI.membershipLoading else { throw ManagedPreservationError.interrupted }
+                guard !copyUI.isBusy, !copyUI.membershipLoading else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-030", ManagedPreservationError.interrupted) }
             }
             copyUI.start(); try await settleFailure()
-            guard copyUI.membership?.canSave == true else { throw ManagedPreservationError.invalidResponse }
+            guard copyUI.membership?.canSave == true else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-031", ManagedPreservationError.invalidResponse) }
             copyUI.consentToNewSave = true
             copyUI.saveSelectedCopy(); try await settleFailure()
             guard copyUI.saveFailureCode == code,
                   copyUI.copyState == (scenario == .requestRejected ? .failed : .needsConfirmation),
-                  await fixture.server.counts().saves == 1 else { throw ManagedPreservationError.invalidResponse }
+                  await fixture.server.counts().saves == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-032", ManagedPreservationError.invalidResponse) }
             if scenario == .saveTimedOut {
                 copyUI.confirmCopyResult(); try await settleFailure()
                 guard copyUI.copyState == .failed, copyUI.saveFailureCode == code,
-                      copyUI.errorMessage == nil else { throw ManagedPreservationError.invalidResponse }
+                      copyUI.errorMessage == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-033", ManagedPreservationError.invalidResponse) }
             }
             copyUI.stop()
         }
@@ -7758,31 +7783,31 @@ actor SharingRuntimeSelfTestRunner {
             func settleCopy() async throws {
                 let deadline = Date().addingTimeInterval(5)
                 while (copyUI.isBusy || copyUI.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-                guard !copyUI.isBusy, !copyUI.membershipLoading else { throw ManagedPreservationError.interrupted }
+                guard !copyUI.isBusy, !copyUI.membershipLoading else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-034", ManagedPreservationError.interrupted) }
             }
             copyUI.start(); try await settleCopy()
             copyUI.consentToNewSave = true
             copyUI.saveSelectedCopy(); try await settleCopy()
-            guard copyUI.copyState == .needsConfirmation else { throw ManagedPreservationError.invalidResponse }
+            guard copyUI.copyState == .needsConfirmation else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-035", ManagedPreservationError.invalidResponse) }
             copyUI.saveSelectedCopy(); try await settleCopy()
-            guard await fixture.server.counts().saves == 1 else { throw ManagedPreservationError.invalidResponse }
+            guard await fixture.server.counts().saves == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-036", ManagedPreservationError.invalidResponse) }
             let other = ManagedPreservationSessionStore.Credential(token: String(repeating: "c", count: 43),
                 ownerId: UUID().uuidString.lowercased(), expiresAt: Date().addingTimeInterval(600))
-            guard try fixture.store.save(other, replacing: fixture.session) else { throw ManagedPreservationError.staleSession }
+            guard try fixture.store.save(other, replacing: fixture.session) else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-037", ManagedPreservationError.staleSession) }
             // Compare-and-replace uses the persisted wire value, whose Date is
             // millisecond-normalized. The pre-encoding Date() is not that value.
             guard let persistedOther = try fixture.store.load(),
                   persistedOther.token == other.token, persistedOther.ownerId == other.ownerId else {
-                throw ManagedPreservationError.secureStorage
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-038", ManagedPreservationError.secureStorage)
             }
             copyUI.start(); try await settleCopy()
-            guard copyUI.copyState == .deviceOnly, copyUI.records.isEmpty else { throw ManagedPreservationError.staleSession }
-            guard try fixture.store.save(fixture.session, replacing: persistedOther) else { throw ManagedPreservationError.staleSession }
+            guard copyUI.copyState == .deviceOnly, copyUI.records.isEmpty else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-039", ManagedPreservationError.staleSession) }
+            guard try fixture.store.save(fixture.session, replacing: persistedOther) else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-040", ManagedPreservationError.staleSession) }
             copyUI.start(); try await settleCopy()
-            guard copyUI.copyState == .needsConfirmation else { throw ManagedPreservationError.invalidResponse }
+            guard copyUI.copyState == .needsConfirmation else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-041", ManagedPreservationError.invalidResponse) }
             copyUI.confirmCopyResult(); try await settleCopy()
             guard copyUI.copyState == (scenario == .copyResultLost ? .stored : .failed),
-                  await fixture.server.counts().saves == 1 else { throw ManagedPreservationError.invalidResponse }
+                  await fixture.server.counts().saves == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-042", ManagedPreservationError.invalidResponse) }
             copyUI.stop()
         }
 
@@ -7796,7 +7821,7 @@ actor SharingRuntimeSelfTestRunner {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         guard invalidUI.isSignedIn, invalidUI.records.count == 1, invalidUI.usage == nil,
-              invalidUI.usageMessage != nil else { throw ManagedPreservationError.invalidResponse }
+              invalidUI.usageMessage != nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-043", ManagedPreservationError.invalidResponse) }
         invalidUI.stop()
 
         // A session swap while fetching usage must erase the prior owner's
@@ -7810,7 +7835,7 @@ actor SharingRuntimeSelfTestRunner {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         guard !switchedUI.isSignedIn, switchedUI.records.isEmpty, switchedUI.usage == nil else {
-            throw ManagedPreservationError.staleSession
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-044", ManagedPreservationError.staleSession)
         }
         switchedUI.stop()
 
@@ -7821,22 +7846,22 @@ actor SharingRuntimeSelfTestRunner {
         func settleLocal() async throws {
             let deadline = Date().addingTimeInterval(5)
             while (localUI.isBusy || localUI.membershipLoading) && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
-            guard !localUI.isBusy, !localUI.membershipLoading else { throw ManagedPreservationError.interrupted }
+            guard !localUI.isBusy, !localUI.membershipLoading else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-045", ManagedPreservationError.interrupted) }
         }
         localUI.start(); try await settleLocal()
-        guard let record = localUI.records.first else { throw ManagedPreservationError.invalidResponse }
+        guard let record = localUI.records.first else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-046", ManagedPreservationError.invalidResponse) }
         localUI.open(record); try await settleLocal()
         localUI.editedText = String(repeating: "a", count: 262_145)
         localUI.retainUnsentEdit()
-        guard localUI.hasUnsecuredMemo, localUI.draftRecoveryWarning != nil else { throw ManagedPreservationError.invalidResponse }
+        guard localUI.hasUnsecuredMemo, localUI.draftRecoveryWarning != nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-047", ManagedPreservationError.invalidResponse) }
         localUI.closeDetail()
-        guard localUI.selected != nil else { throw ManagedPreservationError.invalidResponse }
+        guard localUI.selected != nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-048", ManagedPreservationError.invalidResponse) }
         localUI.stop(); localUI.start(); try await settleLocal()
-        guard localUI.hasUnsecuredMemo, localUI.pendingMemoDrafts.count == 1 else { throw ManagedPreservationError.invalidResponse }
+        guard localUI.hasUnsecuredMemo, localUI.pendingMemoDrafts.count == 1 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-049", ManagedPreservationError.invalidResponse) }
         localUI.signOut(); try await settleLocal()
-        guard localUI.hasUnsecuredMemo, localUI.pendingMemoDrafts.isEmpty else { throw ManagedPreservationError.staleSession }
+        guard localUI.hasUnsecuredMemo, localUI.pendingMemoDrafts.isEmpty else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-050", ManagedPreservationError.staleSession) }
         localUI.discardUnsecuredMemos()
-        guard !localUI.hasUnsecuredMemo, await local.server.counts().saves == 0 else { throw ManagedPreservationError.invalidResponse }
+        guard !localUI.hasUnsecuredMemo, await local.server.counts().saves == 0 else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-051", ManagedPreservationError.invalidResponse) }
     }
 
     @MainActor
@@ -7846,42 +7871,42 @@ actor SharingRuntimeSelfTestRunner {
             withUnsafeCurrentTask { $0?.cancel() }
             try await cancelled.client.requestAccountDeletion()
         }
-        do { try await attempt.value; throw ManagedPreservationError.invalidResponse }
+        do { try await attempt.value; throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-001", ManagedPreservationError.invalidResponse) }
         catch is CancellationError { }
-        guard try cancelled.store.deletionReceipt() == nil else { throw ManagedPreservationError.invalidResponse }
+        guard try cancelled.store.deletionReceipt() == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-002", ManagedPreservationError.invalidResponse) }
         for scenario in [PreservationFixtureScenario.deletionDisabled, .deletionUnauthorized] {
             let f = try PreservationNativeFixture.make(scenario); defer { try? f.cleanup() }
-            do { try await f.client.requestAccountDeletion(); throw ManagedPreservationError.invalidResponse }
+            do { try await f.client.requestAccountDeletion(); throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-003", ManagedPreservationError.invalidResponse) }
             catch ManagedPreservationError.deletionNotAccepted { }
             guard try f.store.deletionReceipt() == nil, try f.store.load() == f.session else {
-                throw ManagedPreservationError.invalidResponse
+                throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-004", ManagedPreservationError.invalidResponse)
             }
         }
         let lost = try PreservationNativeFixture.make(.deletionResultLost); defer { try? lost.cleanup() }
-        do { try await lost.client.requestAccountDeletion(); throw ManagedPreservationError.invalidResponse }
+        do { try await lost.client.requestAccountDeletion(); throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-005", ManagedPreservationError.invalidResponse) }
         catch ManagedPreservationError.unavailable { }
         guard let receipt = try lost.store.deletionReceipt(), receipt.state == .unconfirmed else {
-            throw ManagedPreservationError.invalidResponse
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-006", ManagedPreservationError.invalidResponse)
         }
         _ = try lost.store.clear(ifMatching: lost.session)
         let resumed = ManagedPreservationClient(configuration: lost.configuration,
             requestOverride: { request, maximum in try await lost.server.request(request, maximum: maximum) })
         guard try await resumed.checkAccountDeletion() == .processing,
-              try await resumed.checkAccountDeletion() == .completed else { throw ManagedPreservationError.invalidResponse }
+              try await resumed.checkAccountDeletion() == .completed else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-007", ManagedPreservationError.invalidResponse) }
         let other = try PreservationNativeFixture.make(.deletionElsewhere); defer { try? other.cleanup() }
         try await other.client.requestAccountDeletion()
         guard try other.store.deletionReceipt()?.state == .requestedElsewhere,
-              try other.store.load() == nil else { throw ManagedPreservationError.invalidResponse }
+              try other.store.load() == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-008", ManagedPreservationError.invalidResponse) }
         try await other.client.dismissCompletedDeletion()
-        guard try other.store.deletionReceipt() == nil else { throw ManagedPreservationError.invalidResponse }
+        guard try other.store.deletionReceipt() == nil else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-009", ManagedPreservationError.invalidResponse) }
         let interrupted = try PreservationNativeFixture.make(.deletionElsewhereLost); defer { try? interrupted.cleanup() }
-        do { try await interrupted.client.requestAccountDeletion(); throw ManagedPreservationError.invalidResponse }
+        do { try await interrupted.client.requestAccountDeletion(); throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-010", ManagedPreservationError.invalidResponse) }
         catch ManagedPreservationError.unavailable { }
-        guard try interrupted.store.deletionReceipt()?.state == .resolvingPending else { throw ManagedPreservationError.invalidResponse }
+        guard try interrupted.store.deletionReceipt()?.state == .resolvingPending else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-011", ManagedPreservationError.invalidResponse) }
         _ = try interrupted.store.clear(ifMatching: interrupted.session)
         let again = ManagedPreservationClient(configuration: interrupted.configuration,
             requestOverride: { request, maximum in try await interrupted.server.request(request, maximum: maximum) })
-        guard try await again.checkAccountDeletion() == .requestedElsewhere else { throw ManagedPreservationError.invalidResponse }
+        guard try await again.checkAccountDeletion() == .requestedElsewhere else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-DELETE-012", ManagedPreservationError.invalidResponse) }
         try await again.dismissCompletedDeletion()
     }
 
