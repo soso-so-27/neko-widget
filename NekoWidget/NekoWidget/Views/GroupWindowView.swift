@@ -651,6 +651,7 @@ struct GroupWindowScreen: View {
             // keeps its own 「もう一度届ける」 bar.
             Button("もう一度") { Task { await model.sync() } }
                 .font(.footnote)
+                .frame(minHeight: 44)
                 .disabled(model.isSyncing)
                 .accessibilityIdentifier("group-window-screen-retry")
         }
