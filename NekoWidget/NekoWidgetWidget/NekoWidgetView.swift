@@ -113,12 +113,15 @@ struct NekoWidgetView: View {
                                     .accessibilityHidden(true)
                             }
                         } else if let photo = entry.officialPhoto {
+                            // Same type, colour and inset as a window's name, so
+                            // an official and a private Widget side by side line up.
                             Text(photo.catName)
-                                .font(.caption.weight(.medium))
+                                .font(.caption2)
                                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                                 .lineLimit(1)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 14)
+                                .truncationMode(.tail)
+                                .foregroundStyle(.white.opacity(0.92))
+                                .padding(.horizontal, 12)
                                 .padding(.top, 20)
                                 .padding(.bottom, 12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -174,24 +177,19 @@ struct NekoWidgetView: View {
     /// One quiet footer for shared photos. Its background covers the full
     /// width and fades into the image, without adding separate text panels.
     /// The heart sits bottom-left and the bookmark bottom-right, where the
-    /// personal Widget keeps its own bookmark.
+    /// personal Widget keeps its own bookmark. A Small Widget has no bookmark,
+    /// so its name sits bottom-left like the official window's and the heart
+    /// takes the free right side; the name then never shifts with the heart.
     private var familyPhotoFooter: some View {
         HStack(alignment: .bottom, spacing: 6) {
-            familyHeartShortcut
-
-            VStack(spacing: 4) {
-                if let caption = familyCaption {
-                    familyCaptionPreview(caption)
-                }
-                familySourceLabel
+            if family == .systemSmall {
+                familyFooterText
+                familyHeartShortcut
+            } else {
+                familyHeartShortcut
+                familyFooterText
+                familyMemoryShortcut
             }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
-            // Only the text is decorative. Hiding or disabling the entire
-            // footer would also hide the controls from touch and VoiceOver.
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-
-            familyMemoryShortcut
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
@@ -214,6 +212,29 @@ struct NekoWidgetView: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
+    }
+
+    private var familyFooterText: some View {
+        VStack(alignment: footerTextAlignment.horizontal, spacing: 4) {
+            if let caption = familyCaption {
+                familyCaptionPreview(caption)
+            }
+            familySourceLabel
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: footerTextAlignment)
+        // Only the text is decorative. Hiding or disabling the entire
+        // footer would also hide the controls from touch and VoiceOver.
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// Small: left, beside the photo edge. Larger: centred between the controls.
+    private var footerTextAlignment: Alignment {
+        family == .systemSmall ? .leading : .center
+    }
+
+    private var footerTextLineAlignment: TextAlignment {
+        family == .systemSmall ? .leading : .center
     }
 
     @ViewBuilder
@@ -359,11 +380,11 @@ struct NekoWidgetView: View {
             .font(.caption)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .foregroundStyle(.white)
-            .multilineTextAlignment(.center)
+            .multilineTextAlignment(footerTextLineAlignment)
             .lineLimit(family == .systemLarge ? 2 : 1)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: footerTextAlignment)
     }
 
     @ViewBuilder
@@ -479,8 +500,8 @@ struct NekoWidgetView: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .foregroundStyle(.white.opacity(0.92))
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(footerTextLineAlignment)
+            .frame(maxWidth: .infinity, alignment: footerTextAlignment)
     }
 
     private var actionButtonSpacing: CGFloat {
