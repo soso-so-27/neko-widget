@@ -409,6 +409,14 @@ struct HomeView: View {
             ? PhotoLibraryReadingPosition.identifier(for: readingPositionKey ?? "all") : nil)
     }
 
+    private var widgetPlacementHint: String {
+        if #available(iOS 18.0, *) {
+            "長押し →「編集」→「ウィジェットを追加」"
+        } else {
+            "長押し →「＋」→ ねこのまど"
+        }
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
@@ -528,7 +536,8 @@ struct HomeView: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ホーム画面にウィジェットを置く").font(.headline)
-                    Text("長押し → ＋ → ねこのまど").font(.subheadline).foregroundStyle(.secondary)
+                    // The same first two steps the placement guide shows for this iOS.
+                    Text(widgetPlacementHint).font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
