@@ -24,8 +24,10 @@ BEGIN SELECT RAISE(ABORT,'group_billing_connection_recovery_denied'); END;
 CREATE TRIGGER group_billing_recovery_use_retained BEFORE DELETE ON group_billing_recovery_uses
 BEGIN SELECT RAISE(ABORT,'group_billing_connection_recovery_denied'); END;
 
--- The command and both signature nonces share one D1 batch. The caller deletes
--- the command in that batch; no person/device history is retained here.
+-- The command, billing nonce and group authorization recheck share one batch.
+-- The group nonce was already claimed before the handler and stays consumed
+-- on failure. The caller deletes this command in the batch; no person/device
+-- history is retained here.
 CREATE TABLE group_billing_recovery_commands (
     id TEXT PRIMARY KEY,
     person_id TEXT NOT NULL,
