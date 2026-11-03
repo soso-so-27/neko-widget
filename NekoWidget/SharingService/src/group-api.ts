@@ -41,6 +41,7 @@ export async function groupAPI(request:Request,env:Env):Promise<Response> {
       ['group_join_requests.invitation_id',409,'request_not_pending'],
       ['group_owner_plus_required',403,'owner_plus_required'],['group_window_paused',403,'window_paused'],
       ['group_billing_connection_invalid',401,'invalid_billing_authentication'],
+      ['group_billing_connection_recovery_denied',409,'billing_connection_conflict'],
       ['group_billing_connections.',409,'billing_connection_conflict'],['billing_request_nonces.',401,'replayed_billing_request'],
       ['group_photo_daily_limit',409,'daily_limit'],['group_heart_daily_limit',409,'daily_limit'],
       ['group_stale_epoch_or_membership',409,'stale_epoch'],['group_reservation_expired_or_stale',409,'reservation_expired'],

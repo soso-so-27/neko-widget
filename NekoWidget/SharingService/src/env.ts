@@ -1,6 +1,7 @@
 import type {GroupReportMailEnv} from './group-report-mail';
 
 export interface Env extends GroupReportMailEnv {
+  BILLING_TRANSACTION_RETENTION_REQUIRED?: string;
   DB: D1Database;
   MEDIA?: R2Bucket;
   MODERATION_MEDIA?: R2Bucket;

@@ -1,3 +1,5 @@
+import { requireBillingAccountNotErasing } from './billing-retention-executor';
+import { requireBillingRetentionSnapshot } from './billing-retention-journal';
 import { sha256 } from "./encoding";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { route } from "./index";
@@ -183,6 +185,7 @@ function sandboxReactivationWindowOpen(env: RetentionBillingEnv, billingAccountI
 
 export async function refreshRetentionBilling(env: RetentionBillingEnv, billingAccountId: string,
   fetchStatus: AppleSubscriptionStatusFetcher = fetchAppleSubscriptionStatusViaService): Promise<void> {
+      await requireBillingAccountNotErasing(env,billingAccountId);
       const read = () => env.DB.prepare(`SELECT l.original_transaction_id,l.environment,l.subscription_group_id,
         c.source_fetched_at_ms,c.authority_stale_at_ms,c.materialized_grants_plus FROM billing_transaction_lineages l
         LEFT JOIN billing_effective_entitlement_current c ON c.original_transaction_id=l.original_transaction_id
@@ -238,7 +241,7 @@ export default {
     try { billingSandboxOwnerAdmission(env); } catch { return; }
     // History recovery has no owner admission and remains forbidden in this pilot.
     if (billingSubscriptionReconciliationRuntimeEnabled(env)) {
-      ctx.waitUntil(runBillingSubscriptionReconciliation({ ...env, BILLING_SANDBOX_OWNER_ONLY_REQUIRED: 'YES' }));
+      ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runBillingSubscriptionReconciliation({ ...env, BILLING_SANDBOX_OWNER_ONLY_REQUIRED: 'YES' })));
     }
     // This worker never runs legacy sharing, family-record, photo or APNs jobs.
   },
