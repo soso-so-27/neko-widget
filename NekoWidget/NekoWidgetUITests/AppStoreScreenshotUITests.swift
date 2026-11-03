@@ -525,6 +525,28 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 「この子のこと」 written in, with the family entry at the top right.
+    @MainActor
+    func testCaptureVersion1CatCareScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments
+            + ["--app-store-screenshot-fixture", "--review-public-presentation", "--app-store-screenshot-cat-care"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), app.debugDescription)
+        let care = app.buttons["tools-care-open"]
+        XCTAssertTrue(care.waitForExistence(timeout: 10), app.debugDescription)
+        care.tap()
+        let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(profile.waitForExistence(timeout: 10), app.debugDescription)
+        profile.tap()
+        XCTAssertTrue(app.staticTexts["この子のこと"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
+        sleep(1)
+        captureScreenshot(named: "09-cat-care")
+        app.terminate()
+    }
+
     /// App Store candidates for the window screens: the まど tab and one
     /// みんなのまど, on the in-memory screen fixture (no relay, key or account).
     @MainActor

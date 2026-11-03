@@ -229,6 +229,38 @@ enum AppStoreScreenshotFixture {
         return (catalog, photo, data)
     }
 
+    /// `--app-store-screenshot-cat-care` (with the tool-profiles case): ミケ's
+    /// 「この子のこと」 written in, so the shot shows a filled page and the
+    /// family entry at the top right. Only this simulator's fixture data.
+    static func seedCatCareIfRequested() {
+        guard CommandLine.arguments.contains(launchArgument),
+              CommandLine.arguments.contains("--app-store-screenshot-cat-care"),
+              let profileID = UUID(uuidString: "11111111-1111-4111-8111-111111111111"),
+              let record = CatCareStore.shared.ensureRecord(profileID: profileID, name: "ミケ"),
+              record.temperament == nil else { return }
+        CatCareStore.shared.update { state in
+            guard let index = state.cats.firstIndex(where: { $0.catID == record.catID }) else { return }
+            let now = Date()
+            let by = state.deviceID
+            func stamp<Value>(_ value: Value) -> CatCareStamped<Value> { .init(value: value, editedAt: now, editedBy: by) }
+            state.cats[index].sex = stamp(.female)
+            state.cats[index].neutered = stamp(.yes)
+            state.cats[index].indoorOnly = stamp(.yes)
+            state.cats[index].birthday = stamp(CatCareDay(year: 2021, month: 5, day: 3))
+            state.cats[index].coat = stamp("三毛")
+            state.cats[index].temperament = stamp("抱っこは少し苦手。名前を呼ぶと来ます。")
+            state.cats[index].litter = stamp("朝と夜に片づける")
+            state.cats[index].meals = [
+                CatCareMeal(time: "7:00", food: "ドライフード", amount: "25g", order: 0, editedAt: now, editedBy: by),
+                CatCareMeal(time: "19:00", food: "ウェットフード", amount: "1袋", order: 1, editedAt: now, editedBy: by),
+            ]
+            if let day = CatCareDay(year: 2026, month: 10, day: 12) {
+                state.cats[index].weights = [CatCareWeight(measuredOn: day, grams: 4_200, editedAt: now, editedBy: by)]
+            }
+            state.household.vet = stamp(CatCareVet(name: "みどり動物病院"))
+        }
+    }
+
     private static func makeCatIllustration(variant: Int,
                                             palette custom: (UIColor, UIColor, UIColor, UIColor)? = nil,
                                             muzzle: UIColor? = nil) -> UIImage {
@@ -538,6 +570,7 @@ struct AppStoreScreenshotFixtureRootView: View {
         .preferredColorScheme(CommandLine.arguments.contains("--tools-hub-dark") ? .dark
                               : CommandLine.arguments.contains("--tools-hub-light") ? .light : nil)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
+        .task { AppStoreScreenshotFixture.seedCatCareIfRequested() }
         .onReceive(NotificationCenter.default.publisher(for: PhotoLibraryReadingPosition.diagnosticNotification)) { _ in
             guard widgetRecoveryCase == "paging",
                   ProcessInfo.processInfo.environment["NEKO_PHOTO_UI_PREFERENCES_SUITE"] != nil else { return }
