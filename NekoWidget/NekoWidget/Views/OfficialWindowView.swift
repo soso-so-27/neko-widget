@@ -330,19 +330,24 @@ struct OfficialWindowEntryCard: View {
         } else if preview.isLoading {
             ProgressView().accessibilityLabel("写真を読み込んでいます")
         } else {
+            // The 76pt row thumbnail has no room for the status line: the
+            // icon alone, and VoiceOver still reads the status.
+            let compact = presentation == .row
             VStack(spacing: 12) {
                 if refreshFailed || preview.failed {
                     Image(systemName: "photo.badge.exclamationmark")
-                        .font(.largeTitle).foregroundStyle(.secondary)
+                        .font(compact ? .title2 : .largeTitle).foregroundStyle(.secondary)
                 } else {
                     Image("ToolCat-hide").resizable().scaledToFit()
-                        .frame(width: 58, height: 58).accessibilityHidden(true)
+                        .frame(width: compact ? 44 : 58, height: compact ? 44 : 58).accessibilityHidden(true)
                 }
-                Text(status.title)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                if !compact {
+                    Text(status.title)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
             }
-            .padding(12)
+            .padding(compact ? 0 : 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }

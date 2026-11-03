@@ -555,13 +555,19 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど"), app.debugDescription)
         let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
         XCTAssertTrue(room.waitForExistence(timeout: 20), app.debugDescription)
-        captureScreenshot(named: "06-windows-tab")
         room.tap()
         XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15), app.debugDescription)
         // Let the fixture's photos draw before the capture.
         _ = app.images.firstMatch.waitForExistence(timeout: 10)
         sleep(2)
         captureScreenshot(named: "07-group-window")
+        // Back on the tab, the card shows the newest photo this iPhone received.
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.waitForExistence(timeout: 5), app.debugDescription)
+        back.tap()
+        XCTAssertTrue(room.waitForExistence(timeout: 10), app.debugDescription)
+        sleep(2)
+        captureScreenshot(named: "06-windows-tab")
         app.terminate()
     }
 
