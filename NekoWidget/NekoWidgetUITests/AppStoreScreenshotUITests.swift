@@ -540,10 +540,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
         XCTAssertTrue(profile.waitForExistence(timeout: 10), app.debugDescription)
         profile.tap()
-        XCTAssertTrue(app.staticTexts["この子のこと"].waitForExistence(timeout: 10), app.debugDescription)
+        // 「預けるとき」 opens first; its link leads to 「この子のこと」.
+        let catCare = app.buttons["care-open-cat-care"]
+        XCTAssertTrue(catCare.waitForExistence(timeout: 10), app.debugDescription)
+        catCare.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
         sleep(1)
         captureScreenshot(named: "09-cat-care")
+        // The next capture starts on Albums, the tab this one leaves selected.
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"), app.debugDescription)
         app.terminate()
     }
 

@@ -232,9 +232,12 @@ enum AppStoreScreenshotFixture {
     /// `--app-store-screenshot-cat-care` (with the tool-profiles case): ミケ's
     /// 「この子のこと」 written in, so the shot shows a filled page and the
     /// family entry at the top right. Only this simulator's fixture data.
+    static var showsProductionFamilyEntry: Bool {
+        CommandLine.arguments.contains(launchArgument) && CommandLine.arguments.contains("--app-store-screenshot-cat-care")
+    }
+
     static func seedCatCareIfRequested() {
-        guard CommandLine.arguments.contains(launchArgument),
-              CommandLine.arguments.contains("--app-store-screenshot-cat-care"),
+        guard showsProductionFamilyEntry,
               let profileID = UUID(uuidString: "11111111-1111-4111-8111-111111111111"),
               let record = CatCareStore.shared.ensureRecord(profileID: profileID, name: "ミケ"),
               record.temperament == nil else { return }
