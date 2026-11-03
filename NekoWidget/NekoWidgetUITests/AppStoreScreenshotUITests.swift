@@ -548,9 +548,11 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
         XCTAssertTrue(profile.waitForExistence(timeout: 10), app.debugDescription)
         profile.tap()
-        // 「預けるとき」 opens first; its link leads to 「この子のこと」.
+        // 「預けるとき」 opens first; its link to 「この子のこと」 is further down
+        // the list, which makes the row only once it scrolls near.
+        XCTAssertTrue(app.descendants(matching: .any)["care-cat-care-fields"].firstMatch.waitForExistence(timeout: 10),
+                      app.debugDescription)
         let catCare = app.descendants(matching: .any)["care-open-cat-care"].firstMatch
-        XCTAssertTrue(catCare.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(scrollUpUntilHittable(catCare, application: app), app.debugDescription)
         catCare.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
