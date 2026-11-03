@@ -440,11 +440,14 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     /// Stops showing this person's photos here. They are not told.
-    func hideSender(of entry: GroupWindowLocalPhotoStore.Entry) async {
-        await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID)
+    func hideSender(of entry: GroupWindowLocalPhotoStore.Entry, blocked: Bool = false) async {
+        await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: blocked)
         entries = await store.entries(windowID: windowID)
         if !isFormer { await updateHomeScreenPhoto() }
-        actionMessage = "\(GroupDisplayName.withSan(entry.senderDisplayName))の写真を表示しないようにしました。設定の「表示しないようにした人」から戻せます。"
+        let name = GroupDisplayName.withSan(entry.senderDisplayName)
+        actionMessage = blocked
+            ? "\(name)をブロックしました。設定の「表示しない・ブロックした人」から戻せます。"
+            : "\(name)の写真を表示しないようにしました。設定の「表示しない・ブロックした人」から戻せます。"
     }
 
     /// For a window this iPhone left: deletes every kept photo.
@@ -1334,7 +1337,7 @@ private struct GroupPhotoDetail: View {
                 }
                 Button("戻る", role: .cancel) {}
             } message: {
-                Text("この人から届いた写真が、このまどで見えなくなります。相手には知らせず、設定の「表示しないようにした人」から戻せます。")
+                Text("この人から届いた写真が、このまどで見えなくなります。相手には知らせず、設定の「表示しない・ブロックした人」から戻せます。")
             }
             .alert("いまは通報を受け付けられません", isPresented: $showsReportUnavailable) {
                 if let url = SharingAPIConfiguration.current.supportURL { Link("問い合わせる", destination: url) }
@@ -1347,7 +1350,7 @@ private struct GroupPhotoDetail: View {
             .modifier(GroupPhotoSafetyDialogs(windowID: model.windowID, current: current,
                                               reportTarget: $reportTarget,
                                               showsBlockConfirmation: $showsBlockConfirmation) { blocked in
-                await model.hideSender(of: blocked)
+                await model.hideSender(of: blocked, blocked: true)
                 if model.entries.isEmpty { dismiss() } else if let first = model.entries.first { selection = first.id }
             })
             .confirmationDialog("この写真を、このiPhoneから消しますか？",
@@ -2033,6 +2036,7 @@ private struct KnownWindowCard: View {
 struct GroupHiddenMembersView: View {
     @State private var windows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @State private var loaded = false
+    @ObservedObject private var safety = GroupSafety.shared
 
     private struct Row: Identifiable {
         let window: GroupWindowLocalPhotoStore.KnownWindow
@@ -2050,32 +2054,47 @@ struct GroupHiddenMembersView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(GroupDisplayName.withSan(item.member.name))")
-                        Text(item.window.name).font(.caption).foregroundStyle(.secondary)
+                        Text(item.member.blocked == true ? item.window.name + "・ブロック中" : item.window.name)
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("表示する") {
-                        Task {
-                            await GroupWindowLocalPhotoStore.shared.unhide(memberID: item.member.id, windowID: item.window.id)
-                            windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
-                        }
+                    Button(item.member.blocked == true ? "ブロックを解除" : "表示する") {
+                        Task { await restore(item) }
                     }
                     .buttonStyle(.bordered)
+                    .disabled(safety.isWorking)
                 }
                 .frame(minHeight: 44)
             }
         }
         .overlay {
             if loaded && hidden.isEmpty {
-                ContentUnavailableView("表示しないようにした人はいません", systemImage: "eye.slash",
-                    description: Text("まどの写真の「…」から、その人の写真を表示しないようにできます。"))
+                ContentUnavailableView("表示しない・ブロックした人はいません", systemImage: "eye.slash",
+                    description: Text("まどの写真の「…」から、その人の写真を表示しないようにしたり、ブロックしたりできます。"))
             }
         }
-        .navigationTitle("表示しないようにした人")
+        .alert("まど", isPresented: Binding(get: { safety.failure != nil }, set: { if !$0 { safety.failure = nil } })) {
+            Button("閉じる", role: .cancel) {}
+        } message: { Text(safety.failure?.message ?? "") }
+        .navigationTitle("表示しない・ブロックした人")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
             loaded = true
         }
+    }
+
+    private func restore(_ item: Row) async {
+        if item.member.blocked == true {
+            let service = safety.service
+            let lifted = await safety.run(windowID: item.window.id) {
+                try await service.setBlock(windowID: item.window.id, participantID: item.member.id,
+                                           active: false, operationID: UUID())
+            }
+            guard lifted != nil else { return }
+        }
+        await GroupWindowLocalPhotoStore.shared.unhide(memberID: item.member.id, windowID: item.window.id)
+        windows = await GroupWindowLocalPhotoStore.shared.knownWindows()
     }
 }
 
