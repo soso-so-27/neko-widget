@@ -1,5 +1,8 @@
 import {advanceIdentityDeletion,deletionRequired,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
+import { requestBillingTransactionDeletion, billingTransactionDeletionStatus, scheduleBillingTransactionRetention } from './billing-retention-api';
+import { requireBillingRetentionSnapshot } from './billing-retention-journal';
+import { runBillingTransactionDeletion } from './billing-retention-executor';
 import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {runGroupReportOperations,drainGroupReportMail} from './group-report-operations';
 import {
@@ -153,6 +156,7 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
   // are open. Absent/NO retains the previous unreachable public surface.
   if ((pathname === '/v3/family-notebooks' || pathname.startsWith('/v3/family-notebooks/'))
       && env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED === 'YES') {
+    await requireBillingRetentionSnapshot(env);
     return familyNotebookAPI(request, env);
   }
 
@@ -164,6 +168,7 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
     if (env.GROUP_RUNTIME_ENABLED !== 'YES' || !momentRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate())) {
       throw new ApiError(503, 'group_runtime_disabled', 'Group windows are unavailable.');
     }
+    await requireBillingRetentionSnapshot(env);
     return groupAPI(request, env);
   }
 
@@ -174,6 +179,7 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
     }
     const match = pathname.match(/^\/v2\/family-records(?:\/([^/]+)(\/photo)?)?$/u);
     if (!match) throw new ApiError(404, "not_found", "Record not found.");
+    await requireBillingRetentionSnapshot(env);
     return familyRecords(request, env, match[1], match[2] !== undefined);
   }
 
@@ -261,6 +267,10 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
       "billing_runtime_disabled",
       "Billing is temporarily unavailable.",
     );
+  if(!pathname.startsWith('/v1/billing/transaction-deletion-requests/')) await requireBillingRetentionSnapshot(env);
+  if(request.method==='POST' && pathname==='/v1/billing/transaction-deletion-requests') return requestBillingTransactionDeletion(request,env);
+  const deletionStatus=pathname.match(/^\/v1\/billing\/transaction-deletion-requests\/([^/]+)\/status$/u);
+  if(request.method==='GET' && deletionStatus) return billingTransactionDeletionStatus(request,env,deletionStatus[1]!);
   if (request.method === "POST" && pathname === "/v1/billing/accounts") {
     return createBillingAccount(request, env);
   }
@@ -644,6 +654,10 @@ export default {
     }
   },
   async scheduled(controller, env, ctx): Promise<void> {
+    // Independent cleanup keeps its existing deadline even when billing recovery is unavailable.
+    if(env.BILLING_TRANSACTION_RETENTION_REQUIRED==='YES') ctx.waitUntil(runBillingTransactionDeletion(env).then(async()=>{
+      if(controller.cron===LEGACY_CLEANUP_CRON) await scheduleBillingTransactionRetention(env);
+    }));
     if (controller.cron === MOMENT_CLEANUP_CRON) {
       // Independent promises: an operations/mail failure must never postpone
       // the ordinary seven-day evidence cleanup.
@@ -661,10 +675,10 @@ export default {
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
       if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {
-        ctx.waitUntil(runAppleNotificationHistoryRecovery(env));
+        ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runAppleNotificationHistoryRecovery(env)));
       }
       if (billingSubscriptionReconciliationRuntimeEnabled(env)) {
-        ctx.waitUntil(runBillingSubscriptionReconciliation(env));
+        ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runBillingSubscriptionReconciliation(env)));
       }
     }
   },

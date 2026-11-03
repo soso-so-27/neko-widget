@@ -1,3 +1,4 @@
+import { billingRetentionFence, retentionDigest } from './billing-retention-executor';
 import { fetchAppleSubscriptionStatusViaService, type VerifiedSubscriptionStatus } from "./billing-apple-client";
 import { selectAuthoritativeStatusItem } from "./billing-entitlement";
 import { billingAccountRecoveryTranscript } from "./billing-protocol";
@@ -80,6 +81,10 @@ export async function recoverBillingAccount(
   const requestHash = await sha256Base64url(transcript);
   // Reject a different account before Apple/Container work or key rotation.
   await requireOwnerSandboxAccount(env, billingAccountId);
+  const retention=await billingRetentionFence(env,billingAccountId);
+  if(retention && (retention.state==='deleting' || retention.receipt_recorded!==1)) {
+    throw new ApiError(409,'billing_deletion_in_progress','Billing deletion is in progress.');
+  }
   const replay = await existing(env, clientRequestId);
   if (replay !== null) {
     if (replay.request_hash !== requestHash) throw new ApiError(409, "billing_recovery_conflict", "The billing request ID was already used.");
@@ -87,10 +92,14 @@ export async function recoverBillingAccount(
   }
   const evidence = await verify({ signedAppTransactionInfo, signedTransactionInfo,
     deviceVerificationId, expectedAppTransactionId, expectedTransactionId, expectedOriginalTransactionId, billingAccountId }, env);
-  const lineage = await env.DB.prepare(
+  let lineage = await env.DB.prepare(
     `SELECT billing_account_id, environment, subscription_group_id
        FROM billing_transaction_lineages WHERE environment = ? AND original_transaction_id = ?`,
   ).bind(evidence.transaction.environment, expectedOriginalTransactionId).first<CurrentLineage>();
+  if(lineage===null && retention && ['closed','active'].includes(retention.state)) {
+    lineage={billing_account_id:billingAccountId,environment:evidence.transaction.environment,
+      subscription_group_id:evidence.transaction.subscriptionGroupId};
+  }
   if (lineage === null || lineage.billing_account_id !== billingAccountId) {
     throw new ApiError(409, "billing_recovery_lineage_mismatch", "The recovery evidence is invalid.");
   }
@@ -116,7 +125,8 @@ export async function recoverBillingAccount(
   const item = selectAuthoritativeStatusItem(matches);
   const now = Date.now();
   const accessUntil = item.status === 4 ? item.renewal.gracePeriodExpiresDateMs : item.transaction.expiresDateMs;
-  if (authority.environment !== evidence.transaction.environment
+  if ((retention && (!Number.isSafeInteger(authority.fetchedAtMs) || authority.fetchedAtMs>now || now-authority.fetchedAtMs>60_000))
+    || authority.environment !== evidence.transaction.environment
     || item.transaction.environment !== evidence.transaction.environment
     || item.renewal.environment !== evidence.transaction.environment
     || item.transaction.subscriptionGroupId !== lineage.subscription_group_id
@@ -140,7 +150,7 @@ export async function recoverBillingAccount(
   await requireOwnerSandboxAccount(env, billingAccountId);
   const newKeyId = randomBase64url(16);
   try {
-    await env.DB.prepare(
+    const rotate=env.DB.prepare(
       `INSERT INTO billing_account_recovery_requests(
          environment, client_request_id, request_hash, billing_account_id, expected_generation,
          expected_transaction_id, expected_original_transaction_id, app_transaction_id_hash,
@@ -148,7 +158,30 @@ export async function recoverBillingAccount(
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(evidence.transaction.environment, clientRequestId, requestHash, billingAccountId, state.generation,
       expectedTransactionId, expectedOriginalTransactionId, evidence.appTransactionIdHash,
-      state.billing_key_id, newKeyId, signingPublicKey, recoveredAt).run();
+      state.billing_key_id, newKeyId, signingPublicKey, recoveredAt);
+    if(retention) {
+      const lineageHash=await retentionDigest(evidence.transaction.environment+':'+expectedOriginalTransactionId);
+      const transactionHash=await retentionDigest(evidence.transaction.environment+':'+expectedTransactionId);
+      // The whole transition is atomic. No caller observes a partially reopened account.
+      const result=await env.DB.batch([
+        env.DB.prepare(`UPDATE billing_retention_fences SET state='active',recovery_environment=?,
+          recovery_lineage_hash=?,recovery_transaction_hash=?,recovery_request_id=?
+          WHERE billing_account_id=? AND sequence=? AND state IN('closed','active')
+          AND EXISTS(SELECT 1 FROM billing_retention_requests WHERE sequence=? AND state='completed' AND receipt_recorded=1)`)
+          .bind(evidence.transaction.environment,lineageHash,transactionHash,clientRequestId,billingAccountId,retention.sequence,retention.sequence),
+        env.DB.prepare(`INSERT OR IGNORE INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id)
+          SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM billing_retention_fences WHERE billing_account_id=? AND sequence=? AND state='active' AND recovery_request_id=?)`)
+          .bind(expectedOriginalTransactionId,billingAccountId,evidence.transaction.environment,lineage.subscription_group_id,
+            billingAccountId,retention.sequence,clientRequestId),
+        env.DB.prepare(`INSERT OR IGNORE INTO billing_retention_recoveries(billing_account_id,sequence,environment,lineage_hash,transaction_hash,request_id)
+          VALUES(?,?,?,?,?,?)`).bind(billingAccountId,retention.sequence,evidence.transaction.environment,lineageHash,transactionHash,clientRequestId),
+        rotate,
+        env.DB.prepare(`INSERT OR IGNORE INTO billing_reconciliation_jobs(environment,original_transaction_id,requested_at,not_before,request_generation)
+          VALUES(?,?,?,?,COALESCE((SELECT request_generation+1 FROM billing_effective_entitlement_current WHERE environment=? AND original_transaction_id=?),1))`)
+          .bind(evidence.transaction.environment,expectedOriginalTransactionId,recoveredAt,recoveredAt,evidence.transaction.environment,expectedOriginalTransactionId),
+      ]);
+      if(result[0]?.meta.changes!==1) throw new Error('retention recovery fence changed');
+    } else await rotate.run();
   } catch {
     const raced = await existing(env, clientRequestId);
     if (raced !== null && raced.request_hash === requestHash) {

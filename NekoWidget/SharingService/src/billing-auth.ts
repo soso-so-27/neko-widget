@@ -1,3 +1,4 @@
+import { requireBillingAccountNotErasing } from './billing-retention-executor';
 import { base64urlDecode, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError } from "./errors";
 import type { Env } from "./env";
@@ -80,6 +81,7 @@ export async function authenticateBillingSignedRequest(
     throw new ApiError(401, "invalid_billing_authentication", "Billing authentication failed.");
   }
   await requireOwnerSandboxAccount(env, billingAccountId);
+  if(new URL(request.url).pathname!=='/v1/billing/transaction-deletion-requests') await requireBillingAccountNotErasing(env,billingAccountId);
   return { billingAccountId, billingKeyId, nonce, now };
 }
 
