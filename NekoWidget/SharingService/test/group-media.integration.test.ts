@@ -187,11 +187,16 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     expect((await db.prepare('SELECT COUNT(*) n FROM group_moment_deliveries WHERE moment_id IN (?,?)').bind(p.id,mine.id).first<{n:number}>())?.n).toBe(0);
   });
   it('serializes simultaneous hearts as one per person with one quota charge, and cancel remains usable while paused',async()=>{
+    const prior=await db.prepare('SELECT effective_at FROM daily_quota_day_policy').first<{effective_at:number}>();
+    try {
+    await db.prepare('UPDATE daily_quota_day_policy SET effective_at=0').run();
     const {owner,bob,w}=await family(),p=await delivered(owner,w),path=`/v3/group-windows/${w.windowId}/moments/${p.id}/hearts`;
     const first=await heart(bob,w,p.id),second=await heart(bob,w,p.id);
     const results=await Promise.all([call(bob,path,first),call(bob,path,second)]);for(const r of results)ok(r);
     const pid=w.roster.members[1]!.participantId;
     expect((await db.prepare('SELECT used FROM group_heart_usage WHERE space_id=? AND participant_id=?').bind(w.windowId,pid).first<{used:number}>())?.used).toBe(1);
+    expect((await db.prepare('SELECT day_key FROM group_heart_usage WHERE space_id=? AND participant_id=?').bind(w.windowId,pid).first())?.day_key)
+      .toBe(Math.floor((Date.now()/1000+32400)/86400));
     expect((await db.prepare("SELECT COUNT(*) n FROM group_notification_events WHERE moment_id=? AND kind='heart'").bind(p.id).first<{n:number}>())?.n).toBe(1);
     await pauseOwner(owner);
     ok(await call(bob,path,await heart(bob,w,p.id,false)));
@@ -200,6 +205,7 @@ describe('group encrypted relay and creator Plus commit boundary (runtime stays 
     expect((await db.prepare('SELECT used FROM group_heart_usage WHERE space_id=? AND participant_id=?').bind(w.windowId,pid).first<{used:number}>())?.used).toBe(2);
     expect((await call(bob,path,{...await heart(bob,w,p.id),reactorSignature:randomBase64url(64)})).status).toBe(400);
     const request=await signed(bob,path,await heart(bob,w,p.id));expect((await send(request,{...testEnv,REACTION_RUNTIME_ENABLED:'NO'})).status).toBe(503);
+    }finally{await db.prepare('UPDATE daily_quota_day_policy SET effective_at=?').bind(prior!.effective_at).run();}
   });
   it('commits concurrent retries once and enforces five photos per person per day',async()=>{
     const owner=await plusOwner(),w=await create(owner),p=await reserve(owner,w);ok(p.result,201);ok(await upload(owner,w,p));

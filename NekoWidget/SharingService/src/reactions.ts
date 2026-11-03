@@ -1,3 +1,4 @@
+import { dailyQuotaDay } from './daily-quota-day';
 import {
   activityStatement,
   authenticateSignedRequest,
@@ -324,7 +325,7 @@ async function persistDuplicateResponse(
     ...reaction,
     id: randomBase64url(16),
     created_at: member.now,
-    quota_day_key: Math.floor(member.now / 86_400),
+    quota_day_key: await dailyQuotaDay(env, member.now),
   };
   try {
     await env.DB.batch([
@@ -426,7 +427,7 @@ export async function recordPawReaction(
     );
   }
 
-  const dayKey = Math.floor(member.now / 86_400);
+  const dayKey = await dailyQuotaDay(env, member.now);
   if ((await currentDailyUsage(env, context.participant_id, dayKey)) >= REACTION_DAILY_QUOTA) {
     return consumeAndThrow(
       env,

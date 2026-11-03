@@ -1,3 +1,4 @@
+import { dailyQuotaDay } from './daily-quota-day';
 import type { Env } from './env';
 import { runGroupReportCleanup } from './group-report-cleanup';
 import { cleanupExpiredGroupAdmissionPush } from './group-admission-push';
@@ -43,7 +44,7 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
       WHERE m.state='expired' AND m.expired_at<=? AND q.state='completed' ORDER BY m.expired_at,m.id LIMIT ?)`)
       .bind(now-RECEIPT_SECONDS,BATCH),
     env.DB.prepare('DELETE FROM group_notification_events WHERE id IN (SELECT id FROM group_notification_events WHERE expires_at<=? LIMIT 100)').bind(now),
-    env.DB.prepare('DELETE FROM group_heart_usage WHERE rowid IN (SELECT rowid FROM group_heart_usage WHERE day_key<? LIMIT 100)').bind(Math.floor(now/86400)-2),
+    env.DB.prepare('DELETE FROM group_heart_usage WHERE rowid IN (SELECT rowid FROM group_heart_usage WHERE day_key<? LIMIT 100)').bind(await dailyQuotaDay(env,now)-2),
     env.DB.prepare('DELETE FROM group_request_nonces WHERE rowid IN (SELECT rowid FROM group_request_nonces WHERE expires_at<=? LIMIT 1000)').bind(now),
     env.DB.prepare('DELETE FROM group_mutations WHERE rowid IN (SELECT rowid FROM group_mutations WHERE expires_at<=? LIMIT 100)').bind(now),
     env.DB.prepare(`DELETE FROM group_object_deletions WHERE moment_id IN (SELECT q.moment_id FROM group_object_deletions q

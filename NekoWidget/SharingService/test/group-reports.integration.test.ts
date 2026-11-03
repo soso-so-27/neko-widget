@@ -162,11 +162,17 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
     expect((await db.prepare('SELECT COUNT(*) n FROM group_report_tombstones WHERE report_id=?').bind(id).first<{n:number}>())?.n).toBe(1);
   });
   it('charges attempts across group windows by person and does not charge retries',async()=>{
+    const prior=await db.prepare('SELECT effective_at FROM daily_quota_day_policy').first<{effective_at:number}>();
+    try {
+    await db.prepare('UPDATE daily_quota_day_policy SET effective_at=0').run();
     const {owner,bob,w}=await family(),p=await photo(owner,w),q=await photo(owner,w);
-    await db.prepare('INSERT INTO group_report_daily_usage VALUES (?,?,9)').bind(bob.id,Math.floor(Date.now()/86400000)).run();
+    await db.prepare('INSERT INTO group_report_daily_usage VALUES (?,?,9)').bind(bob.id,Math.floor((Date.now()/1000+32400)/86400)).run();
     const r=await reserve(bob,w,p.id);accepted(r.result);
     accepted(await reportCall(bob,`${root(w)}/reserve`,r.body));
     expect((await reserve(bob,w,q.id)).result.data.error.code).toBe('report_daily_quota_exceeded');
+    expect((await db.prepare('SELECT attempts FROM group_report_daily_usage WHERE person_id=? AND day_key=?')
+      .bind(bob.id,Math.floor((Date.now()/1000+32400)/86400)).first())?.attempts).toBe(10);
+    }finally{await db.prepare('UPDATE daily_quota_day_policy SET effective_at=?').bind(prior!.effective_at).run();}
   });
   it('rechecks the gate generation after asynchronous object access before accepting a commit',async()=>{
     const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);accepted(r.result);

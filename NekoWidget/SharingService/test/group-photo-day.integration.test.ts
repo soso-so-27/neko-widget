@@ -2,6 +2,8 @@ import {describe,expect,it} from 'vitest';
 import {plusOwner} from './group-billing-fixture';
 import {create,db} from './group-fixture';
 import {randomBase64url} from '../src/encoding';
+import {env} from 'cloudflare:workers';
+import {applyD1Migrations,reset,type D1Migration} from 'cloudflare:test';
 
 async function fixture() {
   const owner=await plusOwner(),window=await create(owner);
@@ -23,7 +25,7 @@ async function fixture() {
       db.prepare("UPDATE group_moments SET state='committed',committed_at=? WHERE id=?").bind(time,id),
     ]);
   }
-  return {boundary,reserve,commit};
+  return {boundary,reserve,commit,window};
 }
 
 describe('group photo product day: next JST midnight cutover',()=>{
@@ -43,13 +45,17 @@ describe('group photo product day: next JST midnight cutover',()=>{
     await expect(f.reserve(f.boundary+9*3600)).rejects.toThrow('group_photo_daily_limit');
     await f.reserve(f.boundary+86400);
   });
-  it('counts live pre-midnight reservations on the new day without double-charging their commit',async()=>{
+  it('commits pre-midnight reservations against their saved day without consuming the new day',async()=>{
     const f=await fixture(),pending=[];
-    for(let i=0;i<4;i++)pending.push(await f.reserve(f.boundary-10));
-    pending.push(await f.reserve(f.boundary));
+    for(let i=0;i<5;i++)pending.push(await f.reserve(f.boundary-10));
+    const next=[];
+    for(let i=0;i<5;i++)next.push(await f.reserve(f.boundary));
     await expect(f.reserve(f.boundary)).rejects.toThrow('group_photo_daily_limit');
     for(const id of pending)await f.commit(id,f.boundary+1);
+    for(const id of next)await f.commit(id,f.boundary+2);
     await expect(f.reserve(f.boundary+2)).rejects.toThrow('group_photo_daily_limit');
+    const rows=await db.prepare('SELECT day_key,COUNT(*) n FROM group_moment_quota_days q JOIN group_moments m ON m.id=q.moment_id WHERE m.space_id=? GROUP BY day_key ORDER BY day_key').bind(f.window.windowId).all<{day_key:number;n:number}>();
+    expect(rows.results.map(r=>r.n)).toEqual([5,5]);
     // Idempotent same-state updates cannot consume a second slot.
     await db.prepare("UPDATE group_moments SET state='committed' WHERE id=?").bind(pending[0]).run();
     for(let i=0;i<5;i++)await f.reserve(f.boundary+86400);
@@ -65,4 +71,23 @@ describe('group photo product day: next JST midnight cutover',()=>{
     expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(5);
     expect(results.filter(r=>r.status==='rejected')).toHaveLength(1);
   });
+  it('migrates old committed and carried reservations without creating five extra slots',async()=>{
+    const migrations=(env as unknown as {TEST_MIGRATIONS:D1Migration[]}).TEST_MIGRATIONS;
+    await reset();await applyD1Migrations(db,migrations.filter(m=>!m.name.startsWith('0071')));
+    await db.prepare('UPDATE personal_staging_runtime_gate SET generation=generation+1,media_enabled=1,apns_enabled=1,report_ingestion_enabled=1,updated_at=unixepoch() WHERE singleton=1 AND generation=0').run();
+    const f=await fixture(),now=Math.floor(Date.now()/1000),today=Math.floor((now+32400)/86400),start=today*86400-32400;
+    await db.prepare('UPDATE group_photo_day_policy SET effective_at=0').run();
+    for(let i=0;i<3;i++)await f.commit(await f.reserve(start-10,now+1800),now);
+    const pending=[await f.reserve(start-10,now+1800),await f.reserve(start-10,now+1800)];
+    await expect(f.reserve(now)).rejects.toThrow('group_photo_daily_limit');
+    const before=(await db.prepare('SELECT * FROM group_moments ORDER BY id').all()).results;
+    await applyD1Migrations(db,migrations.filter(m=>m.name.startsWith('0071')));
+    expect((await db.prepare('SELECT * FROM group_moments ORDER BY id').all()).results).toEqual(before);
+    expect((await db.prepare('SELECT day_key,COUNT(*) n FROM group_moment_quota_days GROUP BY day_key').all()).results).toEqual([{day_key:today,n:5}]);
+    await expect(f.reserve(now)).rejects.toThrow('group_photo_daily_limit');
+    for(const id of pending)await f.commit(id,now);
+    await expect(f.reserve(now)).rejects.toThrow('group_photo_daily_limit');
+    for(let i=0;i<5;i++)await f.reserve(start+86400);
+    expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+  },20000); // Rebuild the real pre-0071 schema before testing its upgrade.
 });
