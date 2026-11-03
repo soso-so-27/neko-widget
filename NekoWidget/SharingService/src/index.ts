@@ -1,3 +1,4 @@
+import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
 import { requestBillingTransactionDeletion, billingTransactionDeletionStatus, scheduleBillingTransactionRetention } from './billing-retention-api';
 import { requireBillingRetentionSnapshot } from './billing-retention-journal';
 import { runBillingTransactionDeletion } from './billing-retention-executor';
@@ -656,6 +657,7 @@ export default {
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
+      ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
       ctx.waitUntil(drainGroupReportMail(env));

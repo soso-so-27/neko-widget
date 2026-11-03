@@ -1,3 +1,4 @@
+import { cleanupDissolvedFamilyRosters } from '../src/family-notebook-roster-cleanup';
 import { describe, expect, it } from 'vitest';
 import { route } from '../src/index';
 import { familyInvitationProof } from '../src/family-notebook-admission';
@@ -209,5 +210,66 @@ describe('family encrypted history transaction boundary', () => {
     expect(ok(await invoke(b, `${path}/1`)).envelopes).toHaveLength(2);
     const env = beforeCommit(async () => { await db.prepare("UPDATE group_person_devices SET state='revoked',revoked_at=unixepoch() WHERE id=?").bind(a.deviceId).run(); });
     expect((await invoke(b, path, body(await envelope(b, b, r2, r), 2, 2), env)).data.error.code).toBe('family_notebook_crypto_stale');
+  });
+
+  it('checks the deletion boundary of a dissolved family with another member’s history', async () => {
+    const a = await plusOwner(), b = await person(), f = await create(a), {m,r} = await initialize(a,f);
+    await admit(a,b,f);
+    const mb = await register(b,f,2,1), next = await packet(a,f,[m,mb],r);
+    ok(await invoke(a,`${root}/${f}/crypto/rosters`,body(next.packet,2,1)));
+    const op = await operation(b,next), path=`${root}/${f}/crypto/operations`;
+    ok(await invoke(b,path,body(op,2,2,op.operationId)));
+    const envp=await envelope(a,b,next,r);
+    ok(await invoke(a,`${root}/${f}/crypto/keys`,body(envp,2,2)));
+    const copy=ok(await invoke(b,path+'/0')).operations;
+    const read=async (table:string)=> (await db.prepare(`SELECT * FROM ${table} WHERE family_id=? ORDER BY rowid`).bind(f).all()).results;
+    const tables=['family_notebook_crypto_envelopes','family_notebook_crypto_heads','family_notebook_crypto_rosters'];
+    const before=await Promise.all(tables.map(read));
+    expect(before.map(rows=>rows.length)).toEqual([1,1,2]);
+    const history=await read('family_notebook_crypto_operations');
+    expect(copy).toEqual([{sequence:1,packet:op}]);
+    ok(await invoke(a,`${root}/${f}/dissolve`,{operationId:crypto.randomUUID(),expectedGeneration:2}));
+    expect((await invoke(b,path+'/0')).status).toBe(404);
+    expect(await read('family_notebook_crypto_operations')).toEqual(history);
+    const purge=(family:string)=>db.batch(tables.map(t=>db.prepare(`DELETE FROM ${t} WHERE family_id=? AND EXISTS(SELECT 1 FROM family_notebook_spaces WHERE id=? AND state='closed')`).bind(family,family)));
+    await expect(purge(f)).rejects.toThrow(/FOREIGN KEY/i);
+    expect(await Promise.all(tables.map(read))).toEqual(before);
+    expect(await read('family_notebook_crypto_operations')).toEqual(history);
+    expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+    const empty=await create(a);await initialize(a,empty);
+    ok(await invoke(a,`${root}/${empty}/dissolve`,{operationId:crypto.randomUUID(),expectedGeneration:1}));
+    const neighborOwner=await plusOwner(), neighborMember=await person(), neighbor=await create(neighborOwner);
+    const {r:neighborRoster}=await initialize(neighborOwner,neighbor);
+    const neighborOp=await operation(neighborOwner,neighborRoster);
+    ok(await invoke(neighborOwner,`${root}/${neighbor}/crypto/operations`,body(neighborOp,1,1,neighborOp.operationId)));
+    await admit(neighborOwner,neighborMember,neighbor);
+    ok(await invoke(neighborMember,`${root}/${neighbor}/leave`,{operationId:crypto.randomUUID(),expectedGeneration:2}));
+
+    const allTables=[...tables,'family_notebook_crypto_operations','family_notebook_crypto_devices'];
+    const snapshot=(id:string)=>Promise.all(allTables.map(async t=>
+      (await db.prepare(`SELECT * FROM ${t} WHERE family_id=? ORDER BY rowid`).bind(id).all()).results));
+    const preserved=await snapshot(f), nearby=await snapshot(neighbor);
+    const dissolvedAt=await db.prepare("SELECT recorded_at FROM family_notebook_governance_events WHERE family_id=? AND action='dissolve'").bind(f).first<number>('recorded_at');
+    expect(typeof dissolvedAt).toBe('number');
+    const deadline=dissolvedAt!+30*86400;
+    await db.prepare('UPDATE family_notebook_runtime_gate SET enabled=0,generation=generation+1 WHERE singleton=1').run();
+    await cleanupDissolvedFamilyRosters({DB:db},deadline-1);
+    expect(await snapshot(f)).toEqual(preserved);
+    expect((await snapshot(empty)).every(rows=>!rows.length)).toBe(true);
+
+    // Fail on the last table; none of the preceding history or epoch deletes may commit.
+    await db.prepare("CREATE TRIGGER test_reject_cert_delete BEFORE DELETE ON family_notebook_crypto_devices BEGIN SELECT RAISE(ABORT,'synthetic interruption'); END").run();
+    try {
+      await expect(cleanupDissolvedFamilyRosters({DB:db},deadline)).rejects.toThrow(/synthetic interruption/);
+      expect(await snapshot(f)).toEqual(preserved);
+    } finally {
+      await db.prepare('DROP TRIGGER test_reject_cert_delete').run();
+    }
+    await cleanupDissolvedFamilyRosters({DB:db},deadline);
+    await cleanupDissolvedFamilyRosters({DB:db},deadline+86400);
+    expect((await snapshot(f)).every(rows=>!rows.length)).toBe(true);
+    expect(await snapshot(neighbor)).toEqual(nearby);
+    expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+    expect(copy).toEqual([{sequence:1,packet:op}]);
   });
 });
