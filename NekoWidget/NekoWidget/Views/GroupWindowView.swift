@@ -1580,14 +1580,23 @@ final class GroupWindowListModel: ObservableObject {
 
     /// The creator's own name goes with the window (#470), so the others see
     /// it instead of a local word such as 「自分」.
+    /// The same draft keeps its operation across retries, so a lost response
+    /// does not make a second window.
+    private var createOperation: (draft: String, id: UUID)?
+
     func create(name: String, ownerName: String) async -> GroupWindow? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let owner = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !owner.isEmpty, !isWorking else { return nil }
         isWorking = true
         defer { isWorking = false }
+        let draft = trimmed + "\u{1F}" + owner
+        let operationID: UUID
+        if let createOperation, createOperation.draft == draft { operationID = createOperation.id }
+        else { operationID = UUID(); createOperation = (draft, operationID) }
         do {
-            let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: UUID())
+            let window = try await client.createWindow(name: trimmed, ownerDisplayName: owner, operationID: operationID)
+            createOperation = nil
             GroupDisplayName.remember(owner)
             // Keep the created window on an invitation-network failure; retrying must not create another window.
             do { _ = try await client.createInvitation(windowID: window.id, operation: GroupOperation(expectedRevision: window.revision)) }

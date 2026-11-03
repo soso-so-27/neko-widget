@@ -708,7 +708,17 @@ extension ProductionGroupWindowClient {
                 deviceSignature: identity.signingKey.signature(for: transcript))
             body = try GroupWire.encode(payload)
         }
-        let reply = try GroupWire.decode(GroupAPIModel.JoinReply.self, await mutation(operationID: operationID, intent: intent, path: path, body: body))
+        let reply: GroupAPIModel.JoinReply
+        do { reply = try GroupWire.decode(GroupAPIModel.JoinReply.self, await mutation(operationID: operationID, intent: intent, path: path, body: body)) }
+        catch GroupClientError.invitationExpired {
+            // The challenge inside a stored body lasts five minutes. A request
+            // built offline must not be resent forever as that same expired
+            // body: drop it, so the next try (the link itself may still be
+            // valid) starts from a fresh challenge.
+            try? secrets.remove("op:" + operationID.uuidString.lowercased())
+            attempts.removeValue(forKey: invitationID); try? save(attempts, "join-attempts")
+            throw GroupClientError.invitationExpired
+        }
         guard reply.windowID == capability.windowID, reply.invitationID == invitationID, reply.personID == identity.personID,
               reply.candidateDeviceID == (try identity.deviceID) else { throw GroupClientError.invalidResponse }
         let result = GroupJoinRequest(id: reply.requestID, invitationID: invitationID, personID: identity.personID, candidateDeviceID: try identity.deviceID,
@@ -1236,11 +1246,13 @@ extension ProductionGroupWindowClient {
         var hearts: [GroupHeart] = []
         for heart in row.hearts {
             let (roster, _) = try await historicalMaterial(windowID: current.id, epoch: heart.keyEpoch, revision: heart.rosterRevision, hash: heart.rosterHash)
+            // A heart that does not verify is dropped on its own; the photo and
+            // the other hearts still show. Network failures still propagate.
             guard let reactor = roster.device(id: heart.reactorDeviceID), reactor.member.participantID == heart.reactorParticipantID,
-                  try Curve25519.Signing.PublicKey(rawRepresentation: reactor.device.signingPublicKey).isValidSignature(heart.reactorSignature,
+                  (try? Curve25519.Signing.PublicKey(rawRepresentation: reactor.device.signingPublicKey).isValidSignature(heart.reactorSignature,
                     for: heartBytes(windowID: current.id, photoID: row.id, participantID: heart.reactorParticipantID, deviceID: heart.reactorDeviceID,
-                      active: heart.active, operationID: heart.operationID, epoch: heart.keyEpoch, rosterHash: heart.rosterHash))
-            else { throw GroupProtocolError.invalidSignature }
+                      active: heart.active, operationID: heart.operationID, epoch: heart.keyEpoch, rosterHash: heart.rosterHash))) == true
+            else { continue }
             hearts.append(.init(participantID: heart.reactorParticipantID,
                 displayName: current.members.first(where: { $0.id == heart.reactorParticipantID })?.displayName ?? "以前のメンバー",
                 active: heart.active, updatedAt: Date(timeIntervalSince1970: TimeInterval(heart.updatedAt))))
@@ -1256,8 +1268,14 @@ extension ProductionGroupWindowClient {
         let rows = try await page(GroupAPIModel.PhotoRow.self, path: "/v3/group-windows/\(windowID)/moments/list")
         var result: [GroupPhoto] = []
         for row in rows {
+            // One malformed row must not hide the whole window. Errors that
+            // mean the relay could not be read still propagate.
+            let photo: GroupPhoto
+            do { photo = try await displayPhoto(row, current: current) }
+            catch GroupClientError.invalidResponse { continue }
+            catch GroupProtocolError.invalidSignature { continue }
             photoMetadata[windowID + ":" + row.id] = row
-            result.append(try await displayPhoto(row, current: current))
+            result.append(photo)
         }
         return result
     }
