@@ -46,7 +46,24 @@ async function request(f, route, { method = 'GET', beforeRead = () => {}, corrup
 }
 const jpegRoute = digest => `/windows/black-cats/${digest}.jpg`;
 
-test('ten images loop for years with a new one-day catalog and exact AI credit', async t => {
+test('a catalog obtained before JST midnight includes a downloadable next-day photo', async t => {
+  const f = await fixture(t);
+  let now = START + DAY - 60_000;
+  t.mock.method(Date, 'now', () => now);
+  const catalog = await (await request(f, '/windows/black-cats/catalog.json')).response.json();
+  const next = catalog.photos.find(photo => Date.parse(photo.publishedAt) === START + DAY);
+  assert(next, 'Tomorrow must be present before midnight');
+  assert.equal(Date.parse(catalog.validUntil), START + 2 * DAY);
+  const preload = await request(f, jpegRoute(next.sha256));
+  assert.equal(preload.response.status, 200);
+  assert.equal(hash(Buffer.from(await preload.response.arrayBuffer())), next.sha256);
+  const visible = at => catalog.photos.filter(photo => Date.parse(photo.publishedAt) <= at && at < Date.parse(photo.expiresAt));
+  assert.equal(visible(now)[0].sha256, f.hashes[0]);
+  now = START + DAY;
+  assert.equal(visible(now)[0].sha256, f.hashes[1], 'Cached catalog switches without another request');
+});
+
+test('ten images loop for years with a two-day catalog and exact AI credit', async t => {
   const f = await fixture(t); let now = START - 1;
   t.mock.method(Date, 'now', () => now);
   assert.equal((await request(f, '/windows/black-cats/catalog.json')).response.status, 503);
@@ -55,12 +72,13 @@ test('ten images loop for years with a new one-day catalog and exact AI credit',
     const { response } = await request(f, '/windows/black-cats/catalog.json');
     assert.equal(response.status, 200);
     const catalog = await response.json(), photo = catalog.photos[0];
-    assert.equal(catalog.photos.length, 1); assert.equal(photo.sha256, f.hashes[day % 10]);
+    assert.equal(catalog.photos.length, 2); assert.equal(photo.sha256, f.hashes[day % 10]);
     assert.equal(photo.credit, BLACK_CAT_CREDIT); assert.equal(Date.parse(catalog.generatedAt), now);
     assert.equal(Date.parse(photo.publishedAt), now); assert.equal(Date.parse(photo.expiresAt), now + DAY);
-    assert.equal(Date.parse(catalog.validUntil), now + DAY);
-    assert.deepEqual([...activeFiles(catalog, now, 'black-cats')], [photo.imageFilename]);
-    assert.throws(() => activeFiles(catalog, now + DAY, 'black-cats'));
+    assert.equal(Date.parse(catalog.validUntil), now + 2 * DAY);
+    assert.deepEqual([...activeFiles(catalog, now, 'black-cats')], catalog.photos.map(row => row.imageFilename));
+    assert.deepEqual([...activeFiles(catalog, now + DAY, 'black-cats')], [catalog.photos[1].imageFilename]);
+    assert.throws(() => activeFiles(catalog, now + 2 * DAY, 'black-cats'));
     const image = await request(f, jpegRoute(photo.sha256));
     assert.equal(image.response.status, 200); assert.equal(hash(Buffer.from(await image.response.arrayBuffer())), photo.sha256);
   }
@@ -70,11 +88,11 @@ test('ten images loop for years with a new one-day catalog and exact AI credit',
   assert.equal(typeof prepared.default.fetch, 'function');
 });
 
-test('non-current, future, internal and malformed paths never read JPEG bytes, including HEAD', async t => {
+test('unlisted, internal and malformed paths never read JPEG bytes, including HEAD', async t => {
   const f = await fixture(t); let now = START;
   t.mock.method(Date, 'now', () => now);
   for (const method of ['GET', 'HEAD']) {
-    for (const route of [jpegRoute(f.hashes[1]), '/__program/index.json', '/__program/images/' + f.hashes[0] + '.jpg',
+    for (const route of [jpegRoute(f.hashes[2]), '/__program/index.json', '/__program/images/' + f.hashes[0] + '.jpg',
       '/loop-config.json', '/schedule-review.json', '/catalog.json', '/windows/weekly-theme/catalog.json',
       '/windows/black-cats/catalog.json?future=1', '/windows/black-cats/%2e%2e%2f__program/index.json']) {
       const result = await request(f, route, { method });
@@ -89,13 +107,24 @@ test('non-current, future, internal and malformed paths never read JPEG bytes, i
   assert.equal((await request(f, '/windows/black-cats/catalog.json', { method: 'POST' })).response.status, 405);
 });
 
+test('changed bundles require a later timestamp and legacy loop indexes remain readable', async t => {
+  const f = await fixture(t);
+  const legacy = structuredClone(f.index); delete legacy.updatedAt;
+  assert.deepEqual(blackCatDay(validateBlackCatLoop(legacy), START), blackCatDay(f.index, START));
+  const config = { ...f.config, action: 'reset', startDate: '2026-12-02', previousBundle: f.output };
+  const output = path.join(f.root, 'same-time');
+  await assert.rejects(prepareBlackCatLoop({ input: f.input, output, config, publicationApproved: true }, START - DAY),
+    /later preparation time/);
+  await assert.rejects(access(output));
+});
+
 test('I/O crossing midnight fails closed and corrupted image bytes fail hash verification', async t => {
   const f = await fixture(t); let now = START + DAY - 1;
   t.mock.method(Date, 'now', () => now);
   const before = await (await request(f, '/windows/black-cats/catalog.json')).response.json();
   const crossed = await request(f, jpegRoute(f.hashes[0]), { beforeRead: pathname => { if (pathname.endsWith('.jpg')) now++; } });
   assert.equal(crossed.response.status, 503);
-  assert.equal(Date.parse(before.validUntil), now);
+  assert.equal(Date.parse(before.validUntil), now + DAY);
   assert.equal((await request(f, jpegRoute(f.hashes[1]), { corruptImage: true })).response.status, 503);
   assert.equal((await request(f, jpegRoute(f.hashes[1]))).response.status, 200);
 });
@@ -114,7 +143,7 @@ test('append during later cycles preserves position and appends before wrapping 
     const output = path.join(f.root, 'append-' + startDay);
     await prepareBlackCatLoop({ input: f.input, output, config, publicationApproved: true }, start - 1);
     const index = await json(path.join(output, 'assets/__program/index.json'));
-    for (let i = 0; i < startDay; i++) assert.deepEqual(blackCatDay(index, START + i * DAY), blackCatDay(f.index, START + i * DAY));
+    for (let i = 0; i < startDay; i++) assert.deepEqual(blackCatDay(index, START + i * DAY).catalog.photos[0], blackCatDay(f.index, START + i * DAY).catalog.photos[0]);
     // Day 24 continues with 005; day 30 follows 010 with newly appended 011.
     const firstPosition = startDay === 24 ? 4 : 10;
     for (let i = 0; i < 30; i++) {
@@ -130,7 +159,9 @@ test('reset changes only at the configured midnight and starts at first explicit
   const output = path.join(f.root, 'reset');
   await prepareBlackCatLoop({ input: f.input, output, config, publicationApproved: true }, resetAt - 1);
   const index = await json(path.join(output, 'assets/__program/index.json'));
-  assert.deepEqual(blackCatDay(index, resetAt - 1), blackCatDay(f.index, resetAt - 1));
+  assert.deepEqual(blackCatDay(index, resetAt - 1).catalog.photos[0], blackCatDay(f.index, resetAt - 1).catalog.photos[0]);
+  assert(blackCatDay(index, resetAt - 1).catalog.generatedAt > blackCatDay(f.index, resetAt - 1).catalog.generatedAt);
+  assert.equal(blackCatDay(index, resetAt - 1).catalog.photos[1].sha256, f.hashes[9]);
   assert.equal(blackCatDay(index, resetAt).catalog.photos[0].sha256, f.hashes[9]);
   assert.equal(blackCatDay(index, resetAt + 10 * DAY).catalog.photos[0].sha256, f.hashes[9]);
 });

@@ -50,17 +50,18 @@ test('read-only check matches approved day, version and forbidden GET/HEAD route
   f.setTime(START + DAY + 3600000);
   const result = await checkBlackCatLoop(f.options);
   assert.equal(result.status, 'ok'); assert.equal(result.notify, false);
-  assert.equal(result.validUntil, '2026-12-02T15:00:00Z'); assert.equal(result.photoID, 'black-20261202');
+  assert.equal(result.validUntil, '2026-12-03T15:00:00Z'); assert.equal(result.photoID, 'black-20261202');
   assert.equal(f.versions.length, 2); assert(f.versions.every(value => value === path.join(f.bundle, 'wrangler.jsonc')));
   for (const route of ['/__program/index.json', '/loop-config.json', '/catalog.json', '/windows/black-cats/catalog.json?future=1']) {
     for (const method of ['GET', 'HEAD']) assert(f.requests.some(([url, verb]) => url === PREVIEW_ORIGIN + route && verb === method));
   }
   const index = await json(path.join(f.bundle, 'assets/__program/index.json'));
   const nextURL = PREVIEW_ORIGIN + '/windows/black-cats/' + index.epochs[0].order[2] + '.jpg';
+  const outsideURL = PREVIEW_ORIGIN + '/windows/black-cats/' + index.epochs[0].order[0] + '.jpg';
   const nonCurrent = f.requests.filter(([url]) => url.startsWith(PREVIEW_ORIGIN + '/windows/black-cats/')
     && url.endsWith('.jpg') && !url.endsWith(result.sha256 + '.jpg'));
-  assert.deepEqual(nonCurrent, [[nextURL, 'GET'], [nextURL, 'HEAD']], 'Only tomorrow, not all 59 non-current images');
-  assert.equal(f.requests.length, 20, 'Fixed forbidden routes plus one representative stay bounded');
+  assert.deepEqual(nonCurrent, [[nextURL, 'GET'], [outsideURL, 'GET'], [outsideURL, 'HEAD']], 'Preload tomorrow, then check one outside the allowlist');
+  assert.equal(f.requests.length, 21, 'Fixed forbidden routes plus one representative stay bounded');
   assert.deepEqual(await readFile(f.current), before);
   assert.deepEqual((await readdir(f.runtime)).sort(), ['current.json', 'last-check.json']);
   assert.equal((await checkBlackCatLoop(f.options)).notify, false);
@@ -115,7 +116,7 @@ test('wrong catalog day/deadline, JPEG bytes and exposed private route fail sepa
       const response = await f.fetcher(url, options);
       if (url === PREVIEW_ORIGIN + '/windows/black-cats/catalog.json') {
         const catalog = await response.json();
-        if (field === 'validUntil') catalog.validUntil = '2026-12-02T15:00:00Z';
+        if (field === 'validUntil') catalog.validUntil = '2026-12-03T15:00:00Z';
         else catalog.photos[0][field] = field === 'credit' ? 'Unknown credit' : '2026-11-29T15:00:00Z';
         return Response.json(catalog);
       }
