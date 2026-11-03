@@ -18,14 +18,23 @@ export function loopPosition(epoch, at) {
   return days % epoch.order.length;
 }
 
+export function validBlackCatCaption(value) {
+  return typeof value === 'string' && value.trim() === value && value.length > 0
+    && [...value].length <= 100 && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029\ud800-\udfff]/u.test(value);
+}
+
+export const isBlackCatLoop = index => index?.schemaVersion === 3 || index?.schemaVersion === 4;
+
 export function validateBlackCatLoop(index) {
-  require(exact(index, ['schemaVersion', 'credit', 'images', 'epochs', ...(Object.hasOwn(index ?? {}, 'updatedAt') ? ['updatedAt'] : [])]) && index.schemaVersion === 3
+  require(exact(index, ['schemaVersion', 'credit', 'images', 'epochs', ...(Object.hasOwn(index ?? {}, 'updatedAt') ? ['updatedAt'] : [])]) && isBlackCatLoop(index)
     && index.credit === BLACK_CAT_CREDIT && Array.isArray(index.images) && index.images.length >= 1 && index.images.length <= 600
     && Array.isArray(index.epochs) && index.epochs.length >= 1 && index.epochs.length <= 64);
   const hashes = new Set();
   if (index.updatedAt !== undefined) require(Number.isFinite(instant(index.updatedAt)));
   for (const image of index.images) {
-    require(exact(image, ['sha256', 'width', 'height']) && HASH.test(image.sha256) && !hashes.has(image.sha256)
+    const hasCaption = index.schemaVersion === 4 && Object.hasOwn(image ?? {}, 'caption');
+    require(exact(image, ['sha256', 'width', 'height', ...(hasCaption ? ['caption'] : [])])
+      && (!hasCaption || validBlackCatCaption(image.caption)) && HASH.test(image.sha256) && !hashes.has(image.sha256)
       && Number.isInteger(image.width) && image.width >= 1 && image.width <= 2048
       && Number.isInteger(image.height) && image.height >= 1 && image.height <= 2048);
     hashes.add(image.sha256);
