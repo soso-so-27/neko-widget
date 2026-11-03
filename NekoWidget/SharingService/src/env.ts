@@ -16,6 +16,7 @@ export interface Env extends GroupReportMailEnv {
   /// available when this is disabled.
   MOMENT_RUNTIME_ENABLED?: string;
   GROUP_RUNTIME_ENABLED?: string;
+  GROUP_IDENTITY_ERASURE_ENABLED?: string;
   /// New group reports stay closed until the group-aware owner review path is
   /// ready. This never enables the legacy report gate or media traffic.
   GROUP_REPORT_RUNTIME_ENABLED?: string;

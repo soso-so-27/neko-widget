@@ -89,6 +89,10 @@ const expectedMigrationNames = [
   "0069_group_closed_roster_cleanup.sql",
   "0070_group_billing_recovery_connection.sql",
   "0071_jst_daily_quota_reservation_day.sql",
+  "0072_group_identity_erasure_credentials.sql",
+  "0073_group_deleted_delivery_reports.sql",
+  "0074_group_identity_report_erasure.sql",
+  "0075_group_identity_deletion_checkpoint.sql",
 ];
 
 const databaseGateColumns = [

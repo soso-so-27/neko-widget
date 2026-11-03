@@ -42,4 +42,7 @@ export async function runGroupReportCleanup(env:Env,now=Math.floor(Date.now()/10
     env.DB.prepare(`DELETE FROM group_report_object_deletions WHERE report_id IN (SELECT q.report_id FROM group_report_object_deletions q
       WHERE q.state='completed' AND q.available_at<=? AND NOT EXISTS (SELECT 1 FROM group_reports r WHERE r.id=q.report_id) LIMIT 50)`).bind(now-172800),
   ]);
+  if(await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='group_deleted_deliveries'").first()) {
+    await env.DB.prepare('DELETE FROM group_deleted_deliveries WHERE rowid IN (SELECT rowid FROM group_deleted_deliveries WHERE expires_at<=? ORDER BY expires_at LIMIT 100)').bind(now).run();
+  }
 }

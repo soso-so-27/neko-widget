@@ -1,3 +1,4 @@
+import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
 import { requestBillingTransactionDeletion, billingTransactionDeletionStatus, scheduleBillingTransactionRetention } from './billing-retention-api';
 import { requireBillingRetentionSnapshot } from './billing-retention-journal';
@@ -131,6 +132,17 @@ export async function route(
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
+  if(pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks'))env=scopeIdentityCheck(env);
+  if(isIdentityDeletionPath(pathname)){
+    try {return await identityDeletionAPI(request,env,ctx);}
+    catch(error){if(error instanceof ApiError)throw error;throw new ApiError(503,'deletion_recovery_required','Group data is temporarily unavailable.');}
+  }
+  if(pathname.startsWith('/v3/group-'))
+    return protectedGroupRead(env,()=>dispatch(request,env,ctx));
+  return dispatch(request,env,ctx);
+}
+async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<Response>{
+  const url=new URL(request.url),pathname=url.pathname;
   let runtimeGatePromise: ReturnType<typeof loadRuntimeGate> | undefined;
   let billingRuntimeGatePromise:
     | ReturnType<typeof loadBillingRuntimeGate>
@@ -149,7 +161,11 @@ export async function route(
   if ((pathname === '/v3/family-notebooks' || pathname.startsWith('/v3/family-notebooks/'))
       && env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED === 'YES') {
     await requireBillingRetentionSnapshot(env);
-    return familyNotebookAPI(request, env);
+    // Neither closed switch may consult family data. Preserve the separate
+    // billing guard above, then guard every reachable family data handler.
+    if(env.FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED!=='YES')
+      throw new ApiError(503,'family_notebook_disabled','Family notebooks are unavailable.');
+    return protectedGroupRead(env,()=>familyNotebookAPI(request, env));
   }
 
   if (pathname === '/v3/group-identities' || pathname.startsWith('/v3/group-identities/')
@@ -653,16 +669,20 @@ export default {
     if (controller.cron === MOMENT_CLEANUP_CRON) {
       // Independent promises: an operations/mail failure must never postpone
       // the ordinary seven-day evidence cleanup.
-      ctx.waitUntil(runGroupReportOperations(env));
+      ctx.waitUntil(advanceIdentityDeletion(env));
+      ctx.waitUntil(protectedGroupRead(env,()=>runGroupReportOperations(env)));
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
       ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
-      ctx.waitUntil(drainGroupReportMail(env));
+      if(deletionRequired(env))ctx.waitUntil(env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance LIMIT 1').first()
+        .then(pending=>pending?advanceIdentityDeletion(env):undefined));
+      ctx.waitUntil(env.GROUP_REPORT_EMAIL_ENABLED==='YES'
+        ? protectedGroupRead(env,()=>drainGroupReportMail(env)) : drainGroupReportMail(env));
       ctx.waitUntil(drainNotificationOutbox(env));
-      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)]));
+      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
       if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {
