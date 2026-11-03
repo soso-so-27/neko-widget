@@ -98,15 +98,15 @@ async function fixture(withSecondReporter=false) {
     anotherReport:(actor=reporter,momentId?:string)=>submittedReport(owner,actor,w,momentId)};
 }
 const count=async(table:string)=>(await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{n:number}>())!.n;
-async function ageCommittedRecord(reportId:string) {
+async function ageCommittedRecord(reportId:string,age=604801) {
   // Only synthetic test DB time travel. Restore the exact production trigger;
   // the operation under test still runs against the real SQL wall clock.
   const trigger=await db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='group_report_record_update'").first<{sql:string}>();
   expect(trigger?.sql).toBeTruthy();
   await db.prepare('DROP TRIGGER group_report_record_update').run();
   try {
-    await db.prepare('UPDATE group_report_records SET committed_at=unixepoch()-604801,evidence_expires_at=unixepoch()-1 WHERE report_id=?')
-      .bind(reportId).run();
+    await db.prepare('UPDATE group_report_records SET committed_at=unixepoch()-?,evidence_expires_at=unixepoch()-?+604800 WHERE report_id=?')
+      .bind(age,age,reportId).run();
   } finally {await db.prepare(trigger!.sql).run();}
 }
 async function ageTerminalRecord(reportId:string) {
@@ -357,6 +357,78 @@ describe('group report stage-one durable operations',()=>{
     // The human matching number is neither a bearer credential nor a lookup URL.
     expect((await send(new Request('https://group.invalid'+f.report.path,{headers:{'X-Receipt-Number':f.report.receiptNumber}}),settings)).status).toBe(401);
     expect((await f.status(f.reporter,`/v3/group-windows/${f.w.windowId}/reports/${f.report.receiptNumber}/status`)).status).toBe(404);
+  });
+
+  it('purges received records at thirty days with runtime OFF, preserving unrelated reports and photos',async()=>{
+    const f=await fixture(),c=(await f.queue())[0]!;await f.read(c.caseReference);
+    const other=await f.anotherReport();
+    const otherBefore=await db.prepare('SELECT * FROM group_report_records WHERE report_id=?').bind(other.id).first();
+    const photosBefore=(await db.prepare('SELECT * FROM group_moments ORDER BY id').all()).results;
+    const off={...settings,GROUP_MODERATION_RUNTIME_ENABLED:'NO',REPORT_INGESTION_RUNTIME_ENABLED:'NO',GROUP_REPORT_RUNTIME_ENABLED:'NO'};
+    await ageCommittedRecord(f.report.id,86400);await runGroupReportOperations(off);
+    expect(await db.prepare('SELECT report_id FROM group_report_first_day_mail WHERE report_id=?').bind(f.report.id).first()).not.toBeNull();
+    await disposeRawEvidence(f.report.id);
+    await ageCommittedRecord(f.report.id,30*86400-60);await runGroupReportOperations(off);
+    expect((await f.status()).data.report.outcome).toBe('received');
+    await expect(db.prepare('INSERT INTO group_report_purge_tickets(report_id,revision) VALUES(?,0)').bind(f.report.id).run()).rejects.toThrow();
+    await ageCommittedRecord(f.report.id,30*86400);await runGroupReportOperations(off);
+    for(const table of ['group_report_records','group_report_numbers','group_report_events','group_report_mail_outbox','group_report_first_day_mail','group_moderation_cases','group_report_purge_tickets'])
+      expect(await db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE report_id=?`).bind(f.report.id).first()).toEqual({n:0});
+    expect((await f.status()).status).toBe(404);
+    expect(await db.prepare('SELECT * FROM group_report_records WHERE report_id=?').bind(other.id).first()).toEqual(otherBefore);
+    expect((await db.prepare('SELECT * FROM group_moments ORDER BY id').all()).results).toEqual(photosBefore);
+    expect(await db.prepare('SELECT * FROM group_moderation_challenges WHERE case_reference=?').bind(c.caseReference).first()).toBeNull();
+    await runGroupReportOperations(off);
+    expect(await db.prepare('PRAGMA foreign_key_check').all()).toMatchObject({results:[]});
+  });
+
+  it('rechecks a received candidate stopped after selection and invalidates its earlier ticket',async()=>{
+    const f=await fixture(),c=(await f.queue())[0]!,receipt=await f.read(c.caseReference);
+    const stop=await f.issue(`/operator/group/v1/cases/${c.caseReference}/photo/${receipt}`);
+    await ageCommittedRecord(f.report.id,30*86400);
+    await db.prepare('INSERT INTO group_report_purge_tickets(report_id,revision) VALUES(?,0)').bind(f.report.id).run();
+    expect(await db.prepare('SELECT report_id FROM group_report_purge_allowed WHERE report_id=?').bind(f.report.id).first()).not.toBeNull();
+    let stopped=false;
+    const racingDB=new Proxy(db,{get(target,name){
+      if(name==='prepare')return (sql:string)=>{
+        const statement=target.prepare(sql);
+        if(!sql.startsWith('SELECT report_id FROM group_report_retention_due'))return statement;
+        return new Proxy(statement,{get(prepared,method){
+          if(method==='all')return async()=>{
+            const candidates=await prepared.all();
+            expect((await f.prove(stop)).status).toBe(200);stopped=true;
+            return candidates;
+          };
+          const value=Reflect.get(prepared,method);return typeof value==='function'?value.bind(prepared):value;
+        }});
+      };
+      const value=Reflect.get(target,name);return typeof value==='function'?value.bind(target):value;
+    }});
+    await expect(purgeGroupReportRecords(racingDB)).rejects.toThrow();
+    expect(stopped).toBe(true);
+    expect(await db.prepare('SELECT report_id FROM group_report_purge_allowed WHERE report_id=?').bind(f.report.id).first()).toBeNull();
+    await expect(db.prepare('DELETE FROM group_report_records WHERE report_id=?').bind(f.report.id).run()).rejects.toThrow();
+    await purgeGroupReportRecords(db);
+    expect((await f.status()).data.report).toMatchObject({outcome:'photo',revision:1});
+    expect(await activeRestrictions(f.report.id)).toHaveLength(1);
+  });
+
+  it('rolls back an interrupted received purge and resumes without partial proof deletion',async()=>{
+    const f=await fixture(),c=(await f.queue())[0]!;await f.read(c.caseReference);
+    await ageCommittedRecord(f.report.id,30*86400);await disposeRawEvidence(f.report.id);
+    const tables=['group_report_records','group_report_numbers','group_report_mail_outbox','group_moderation_cases',
+      'group_moderation_challenges','group_moderation_consumptions','group_moderation_read_events','group_moderation_receipts','group_operator_counter_floors'];
+    const counts=async()=>Promise.all(tables.map(count));
+    const before=await counts();
+    await db.prepare("CREATE TRIGGER test_interrupt_report_purge BEFORE DELETE ON group_report_records BEGIN SELECT RAISE(ABORT,'synthetic_interrupt'); END").run();
+    try {
+      await expect(purgeGroupReportRecords(db)).rejects.toThrow('synthetic_interrupt');
+      expect(await counts()).toEqual(before);
+    } finally {await db.prepare('DROP TRIGGER test_interrupt_report_purge').run();}
+    await purgeGroupReportRecords(db);
+    expect((await f.status()).status).toBe(404);
+    expect(await db.prepare('SELECT * FROM group_moderation_challenges WHERE case_reference=?').bind(c.caseReference).first()).toBeNull();
+    expect(await db.prepare('PRAGMA foreign_key_check').all()).toMatchObject({results:[]});
   });
 
   for(const terminal of ['no_action','release'] as const)it(`retains ${terminal} until one year, then purges its proofs without lowering the credential counter`,async()=>{

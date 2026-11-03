@@ -47,16 +47,15 @@ export async function runGroupReportOperations(env:Env):Promise<void> {
 /** All deletions belong to one transaction, while a DB-validated ticket remains
  * visible. An old ticket cannot authorize purging a later re-stopped case. */
 export async function purgeGroupReportRecords(db:D1Database):Promise<void> {
- const rows=await db.prepare(`SELECT report_id FROM group_report_records WHERE retention_until<=unixepoch()
-  ORDER BY retention_until,report_id LIMIT 20`).all<{report_id:string}>();
+ const rows=await db.prepare(`SELECT report_id FROM group_report_retention_due
+  ORDER BY due_at,report_id LIMIT 20`).all<{report_id:string}>();
  for(const {report_id:id} of rows.results){
   const caseQuery='SELECT case_reference FROM group_moderation_cases WHERE report_id=?';
   const challenges=`SELECT id FROM group_moderation_challenges WHERE case_reference IN (${caseQuery})`;
   await db.batch([
    db.prepare('DELETE FROM group_report_purge_tickets WHERE report_id=?').bind(id),
    db.prepare(`INSERT INTO group_report_purge_tickets(report_id,revision)
-    SELECT report_id,revision FROM group_report_records WHERE report_id=? AND retention_until<=unixepoch()
-    AND outcome IN('release','no_action')`).bind(id),
+    SELECT report_id,revision FROM group_report_retention_due WHERE report_id=?`).bind(id),
    // Abort the whole batch if a concurrent stop made this candidate ineligible.
    db.prepare("SELECT json(CASE WHEN EXISTS(SELECT 1 FROM group_report_purge_allowed WHERE report_id=?) THEN 'true' ELSE 'denied' END)").bind(id),
    db.prepare('DELETE FROM group_report_events WHERE report_id=?').bind(id),
@@ -82,7 +81,7 @@ export async function purgeGroupReportRecords(db:D1Database):Promise<void> {
   WHERE NOT EXISTS(SELECT 1 FROM group_reports WHERE id=n.report_id)
    AND NOT EXISTS(SELECT 1 FROM group_report_records WHERE report_id=n.report_id) LIMIT 50)`).run();
  // Queue-auth proofs do not belong to a decision. Drop them after two days;
- // case-bound proofs follow that case's one-year/active-stop policy above.
+ // Case-bound proofs follow the undecided 30-day/terminal year/active-stop policy.
  const queues=await db.prepare(`SELECT id FROM group_moderation_challenges WHERE case_reference IS NULL
   AND expires_at+172800<=unixepoch() ORDER BY expires_at LIMIT 50`).all<{id:string}>();
  for(const row of queues.results)await db.batch([
