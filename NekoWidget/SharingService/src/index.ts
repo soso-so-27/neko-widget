@@ -653,8 +653,15 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
   throw new ApiError(404, "not_found", "The endpoint was not found.");
 }
 
+function productionIntakeClosed(env: Env): boolean {
+  return env.ENVIRONMENT === "production" && env.INTAKE_ENABLED !== "YES";
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
+    if (productionIntakeClosed(env)) {
+      return new Response(null, { status: 503, headers: { "Cache-Control": "no-store" } });
+    }
     try {
       return await route(request, env, ctx);
     } catch (error) {
@@ -662,6 +669,7 @@ export default {
     }
   },
   async scheduled(controller, env, ctx): Promise<void> {
+    if (productionIntakeClosed(env)) return;
     // Independent cleanup keeps its existing deadline even when billing recovery is unavailable.
     if(env.BILLING_TRANSACTION_RETENTION_REQUIRED==='YES') ctx.waitUntil(runBillingTransactionDeletion(env).then(async()=>{
       if(controller.cron===LEGACY_CLEANUP_CRON) await scheduleBillingTransactionRetention(env);
