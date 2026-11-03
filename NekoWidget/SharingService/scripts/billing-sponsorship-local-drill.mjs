@@ -83,6 +83,7 @@ const expectedMigrationNames = [
   "0062_billing_environment_ledger.sql",
   "0063_group_environment_policy.sql",
   "0064_family_environment_policy.sql",
+  "0065_group_first_day_reminder.sql",
 ];
 
 const databaseGateColumns = [
