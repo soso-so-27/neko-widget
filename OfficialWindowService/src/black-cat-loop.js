@@ -1,6 +1,7 @@
 import worker from './index.js';
 import { instant } from './scheduled.js';
 
+export const BLACK_CAT_NAME = 'のわ';
 export const BLACK_CAT_CREDIT = 'ねこのまど（AI で作った画像）';
 export const LOOP_IMAGES_PATH = '/__program/images/';
 const DAY = 86400000, HASH = /^[a-f0-9]{64}$/;
@@ -63,7 +64,7 @@ export function blackCatDay(index, now) {
     require(image);
     const date = stamp(at + 9 * 3600000).slice(0, 10);
     return {
-      id: 'black-' + date.replaceAll('-', ''), catID: 'generated-black-cat', catName: '黒猫', credit: index.credit,
+      id: 'black-' + date.replaceAll('-', ''), catID: 'generated-black-cat', catName: BLACK_CAT_NAME, credit: index.credit,
       publishedAt: stamp(at), expiresAt: stamp(at + DAY), imageFilename: selected + '.jpg', ...image,
     };
   });

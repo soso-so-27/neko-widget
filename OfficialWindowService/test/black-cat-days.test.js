@@ -63,7 +63,7 @@ test('60 reviewed JPEGs create 60 contiguous days with seven-day history and no 
       assert.equal(photo.id, 'black-' + localDate.replaceAll('-', ''));
       assert.equal(photo.publishedAt, utc(start + day * DAY));
       assert.equal(photo.expiresAt, utc(Math.min(through, start + (day + 7) * DAY)));
-      assert.equal(photo.catID, 'generated-black-cat'); assert.equal(photo.catName, '黒猫');
+      assert.equal(photo.catID, 'generated-black-cat'); assert.equal(photo.catName, 'のわ');
       assert.equal(photo.credit, f.options.credit); assert.equal(photo.width, 1); assert.equal(photo.height, 1);
       assert.equal(Object.hasOwn(photo, 'caption'), false); assert.equal(Object.hasOwn(photo, 'photographedOn'), false);
       assert.equal(catalogBytes.includes(Buffer.from(f.input)), false);

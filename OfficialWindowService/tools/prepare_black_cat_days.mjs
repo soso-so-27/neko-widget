@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { activeFiles } from '../src/index.js';
 import { PROGRAM_PATH, validateProgram } from '../src/program.js';
-import { BLACK_CAT_CREDIT, LOOP_IMAGES_PATH, validateBlackCatLoop, loopPosition, blackCatDay } from '../src/black-cat-loop.js';
+import { BLACK_CAT_NAME, BLACK_CAT_CREDIT, LOOP_IMAGES_PATH, validateBlackCatLoop, loopPosition, blackCatDay } from '../src/black-cat-loop.js';
 import { validatePublisherJPEG } from './prepare_maintenance.mjs';
 import { directory, file, newOutput, hash, stamp, expectedConfig, service } from './schedule_bundle.mjs';
 
@@ -83,7 +83,7 @@ export async function prepareBlackCatDays(options) {
     assert(!hashes.has(sha256), 'Duplicate JPEG bytes are not permitted on different days');
     hashes.add(sha256);
     const date = stamp(midnight + i * DAY).slice(0, 10), published = start + i * DAY;
-    const photo = { id: 'black-' + date.replaceAll('-', ''), catID: 'generated-black-cat', catName: '黒猫', credit,
+    const photo = { id: 'black-' + date.replaceAll('-', ''), catID: 'generated-black-cat', catName: BLACK_CAT_NAME, credit,
       publishedAt: stamp(published), expiresAt: stamp(Math.min(through, published + 7 * DAY)),
       imageFilename: sha256 + '.jpg', sha256, ...size };
     images.push({ filename, date, photo, bytes });

@@ -72,6 +72,9 @@ test('ten images loop for years with a two-day catalog and exact AI credit', asy
     const { response } = await request(f, '/windows/black-cats/catalog.json');
     assert.equal(response.status, 200);
     const catalog = await response.json(), photo = catalog.photos[0];
+    assert.deepEqual(catalog.photos.map(row => [row.catID, row.catName]), [
+      ['generated-black-cat', 'のわ'], ['generated-black-cat', 'のわ'],
+    ]);
     assert.equal(catalog.photos.length, 2); assert.equal(photo.sha256, f.hashes[day % 10]);
     assert.equal(photo.credit, BLACK_CAT_CREDIT); assert.equal(Date.parse(catalog.generatedAt), now);
     assert.equal(Date.parse(photo.publishedAt), now); assert.equal(Date.parse(photo.expiresAt), now + DAY);
