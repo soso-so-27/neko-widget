@@ -545,6 +545,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(catCare.waitForExistence(timeout: 10), app.debugDescription)
         catCare.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
+        // Open 「暮らし」 so the shot shows what was written (接し方・ごはん・トイレ).
+        let living = app.buttons["cat-care-part-living"]
+        XCTAssertTrue(living.waitForExistence(timeout: 10), app.debugDescription)
+        living.tap()
+        XCTAssertTrue(app.staticTexts["抱っこは少し苦手。名前を呼ぶと来ます。"].waitForExistence(timeout: 10)
+                      || app.textViews["抱っこは少し苦手。名前を呼ぶと来ます。"].exists
+                      || app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@",
+                          "抱っこは少し苦手。名前を呼ぶと来ます。", "抱っこは少し苦手。名前を呼ぶと来ます。")).firstMatch.exists,
+                      app.debugDescription)
         sleep(1)
         captureScreenshot(named: "09-cat-care")
         // The next capture starts on Albums, the tab this one leaves selected.

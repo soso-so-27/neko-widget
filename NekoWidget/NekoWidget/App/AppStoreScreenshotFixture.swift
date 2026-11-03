@@ -253,6 +253,7 @@ enum AppStoreScreenshotFixture {
             state.cats[index].coat = stamp("三毛")
             state.cats[index].temperament = stamp("抱っこは少し苦手。名前を呼ぶと来ます。")
             state.cats[index].litter = stamp("朝と夜に片づける")
+            state.cats[index].water = stamp("いつでも新しい水を2か所に")
             state.cats[index].meals = [
                 CatCareMeal(time: "7:00", food: "ドライフード", amount: "25g", order: 0, editedAt: now, editedBy: by),
                 CatCareMeal(time: "19:00", food: "ウェットフード", amount: "1袋", order: 1, editedAt: now, editedBy: by),
