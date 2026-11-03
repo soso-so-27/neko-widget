@@ -11,6 +11,7 @@ export interface Env extends GroupReportMailEnv {
   BILLING_RATE_LIMITER?: RateLimit;
   BILLING_APPLE_NOTIFICATION_RATE_LIMITER?: RateLimit;
   ENVIRONMENT: string;
+  INTAKE_ENABLED?: string;
   /// Exact, server-side operational switch for normal v2 moment traffic.
   /// Report ingestion is controlled separately; blocks and cleanup remain
   /// available when this is disabled.
