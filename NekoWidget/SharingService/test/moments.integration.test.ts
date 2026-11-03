@@ -2397,6 +2397,29 @@ describe("bounded paw reactions", () => {
     return { protocolVersion: 2, clientRequestId, kind: "paw" };
   }
 
+  it('uses the activated JST policy in photo, report and reaction handlers while SQL rejects old UTC writes', async () => {
+    const prior=await testEnv.DB.prepare('SELECT effective_at FROM daily_quota_day_policy').first<{effective_at:number}>();
+    try {
+    await testEnv.DB.prepare('UPDATE daily_quota_day_policy SET effective_at=0').run();
+    const space=await seedActiveSpace(),p=await reportedMoment(space),day=Math.floor((Date.now()/1000+32400)/86400);
+    const reaction=await signedFetch(`/v2/moments/${p.reservation.moment.id}/reactions`,'POST',space.invitee,pawBody());
+    expect(reaction.status).toBe(201);
+    for(const [table,id] of [['moments',p.reservation.moment.id],['moment_reports',p.report.id]] as const)
+      expect((await testEnv.DB.prepare(`SELECT quota_day_key FROM ${table} WHERE id=?`).bind(id).first())?.quota_day_key).toBe(day);
+    expect((await testEnv.DB.prepare('SELECT quota_day_key FROM moment_reactions WHERE moment_id=?').bind(p.reservation.moment.id).first())?.quota_day_key).toBe(day);
+    // A synthetic timestamp in the interval where UTC and JST differ proves
+    // the database rejects an old Worker's UTC key, independently of JS time.
+    const stamp=Math.floor(Date.now()/86400000)*86400+18*3600;
+    for(const [table,id] of [['moments',p.reservation.moment.id],['moment_reports',p.report.id],['moment_reactions',null]] as const){
+      const row=await testEnv.DB.prepare(`SELECT * FROM ${table} WHERE ${id?'id':'moment_id'}=?`).bind(id??p.reservation.moment.id).first<Record<string,string|number|null>>();
+      const invalid={...row!,id:randomValue(16),created_at:stamp,quota_day_key:Math.floor(stamp/86400)};
+      const keys=Object.keys(invalid);
+      await expect(testEnv.DB.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`)
+        .bind(...keys.map(k=>invalid[k as keyof typeof invalid])).run()).rejects.toThrow('day key is invalid');
+    }
+    } finally {await testEnv.DB.prepare('UPDATE daily_quota_day_policy SET effective_at=?').bind(prior!.effective_at).run();}
+  });
+
   it("records one paw, preserves exact idempotency, and exposes a separate sender-only feed", async () => {
     const space = await seedActiveSpace();
     const published = await publish(space.owner);

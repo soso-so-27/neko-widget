@@ -1,3 +1,4 @@
+import { dailyQuotaDay } from './daily-quota-day';
 import {
   activityStatement,
   authenticateSignedRequest,
@@ -941,7 +942,7 @@ export async function reserveMoment(request: Request, env: Env): Promise<Respons
     : 1;
   const dayKey = retryingExpiredDraft && prior !== null
     ? prior.quota_day_key
-    : Math.floor(member.now / 86_400);
+    : await dailyQuotaDay(env, member.now);
   const usage = await env.DB.prepare(
     `SELECT reserved_count + committed_count AS used
        FROM moment_daily_usage WHERE participant_id = ? AND day_key = ?`,
@@ -2528,7 +2529,7 @@ export async function reserveMomentReport(request: Request, env: Env): Promise<R
   } catch (error) {
     return consumeReportAndThrow(env, member, context, error);
   }
-  const quotaDayKey = Math.floor(member.now / 86_400);
+  const quotaDayKey = await dailyQuotaDay(env, member.now);
   const reportUsage = await env.DB.prepare(
     `SELECT attempt_count FROM moment_report_daily_usage
       WHERE participant_id = ? AND day_key = ?`,
@@ -3401,7 +3402,7 @@ export async function runMomentCleanup(
            WHERE day_key < ?
            ORDER BY day_key ASC, participant_id ASC LIMIT ?
         )`,
-    ).bind(Math.floor(now / 86_400) - 90, cleanupRowLimit),
+    ).bind(await dailyQuotaDay(env, now) - 90, cleanupRowLimit),
     env.DB.prepare(
       `DELETE FROM moment_reaction_daily_usage
         WHERE rowid IN (
@@ -3410,7 +3411,7 @@ export async function runMomentCleanup(
            ORDER BY day_key ASC, participant_id ASC LIMIT ?
         )`,
     ).bind(
-      Math.floor(now / 86_400) - REACTION_USAGE_RETENTION_DAYS,
+      await dailyQuotaDay(env, now) - REACTION_USAGE_RETENTION_DAYS,
       cleanupRowLimit,
     ),
   ]);
