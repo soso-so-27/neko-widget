@@ -1,3 +1,4 @@
+import { dailyQuotaDay } from './daily-quota-day';
 import type { Env } from './env';
 import { GROUP_REPORT_OBJECT_KEY } from './group-reports';
 
@@ -37,7 +38,7 @@ export async function runGroupReportCleanup(env:Env,now=Math.floor(Date.now()/10
       JOIN group_report_object_deletions q ON q.report_id=r.id AND q.object_key=r.object_key
       WHERE r.state='expired' AND r.expired_at<=? AND q.state='completed' LIMIT 50)`).bind(now-172800),
     env.DB.prepare('DELETE FROM group_report_access WHERE rowid IN (SELECT rowid FROM group_report_access WHERE expires_at<=? LIMIT 100)').bind(now),
-    env.DB.prepare('DELETE FROM group_report_daily_usage WHERE rowid IN (SELECT rowid FROM group_report_daily_usage WHERE day_key<? LIMIT 100)').bind(Math.floor(now/86400)-2),
+    env.DB.prepare('DELETE FROM group_report_daily_usage WHERE rowid IN (SELECT rowid FROM group_report_daily_usage WHERE day_key<? LIMIT 100)').bind(await dailyQuotaDay(env,now)-2),
     env.DB.prepare(`DELETE FROM group_report_object_deletions WHERE report_id IN (SELECT q.report_id FROM group_report_object_deletions q
       WHERE q.state='completed' AND q.available_at<=? AND NOT EXISTS (SELECT 1 FROM group_reports r WHERE r.id=q.report_id) LIMIT 50)`).bind(now-172800),
   ]);

@@ -1,3 +1,4 @@
+import { dailyQuotaDay } from '../src/daily-quota-day';
 import { env } from "cloudflare:workers";
 import { applyD1Migrations, reset, type D1Migration } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -168,7 +169,7 @@ async function seedReport() {
       VALUES(?,?,?,?,?,'live',1,'committed',?,32,?,1,1,?,1,0,1,?,?,?,?,?,?)`).bind(moment,crypto.randomUUID(),lineage,owner,ownerDevice,`moments/${moment}`,sha(),now,sha(),now,now+3600,now,now,now+604800),
     db.prepare("INSERT INTO moment_deliveries(moment_id,recipient_participant_id,state,created_at,access_expires_at) VALUES(?,?,'pending',?,?)").bind(moment,receiver,now,now+604800),
     db.prepare(`INSERT INTO moment_reports(id,moment_id,space_id,lineage_id,reporter_participant_id,reporter_device_id,accused_participant_id,reason_code,moderation_key_id,state,object_key,ciphertext_size,ciphertext_sha256,reporter_consent_version,reporter_consented_at,quota_day_key,reserve_request_hash,dedupe_key,created_at,upload_expires_at)
-      VALUES(?,?,?,?,?,?,?,'privacy','moderation-v1','reserved',?,32,?,1,?,1,?,?,?,?)`).bind(report,moment,lineage,lineage,receiver,receiverDevice,owner,`reports/${report}`,sha(),now,sha(),sha(),now,now+3600),
+      VALUES(?,?,?,?,?,?,?,'privacy','moderation-v1','reserved',?,32,?,1,?,?,?,?,?,?)`).bind(report,moment,lineage,lineage,receiver,receiverDevice,owner,`reports/${report}`,sha(),now,await dailyQuotaDay({DB:db},now),sha(),sha(),now,now+3600),
     db.prepare("UPDATE moment_reports SET state='uploaded',uploaded_at=? WHERE id=?").bind(now,report),
     db.prepare("INSERT INTO moment_report_commit_events(id,report_id,reporter_participant_id,committed_at,content_expires_at) VALUES(?,?,?,?,?)").bind(crypto.randomUUID(),report,receiver,now,now+604800),
     db.prepare("INSERT INTO moderation_operator_versioned_case_references(report_id,case_reference_hmac,case_reference_hmac_key_version,derivation_protocol_version,derivation_domain) VALUES(?,?,1,1,'NW.MODERATION-OPERATOR.CASE-REFERENCE')").bind(report,reference),

@@ -1,3 +1,4 @@
+import { dailyQuotaDay } from './daily-quota-day';
 import { base64urlDecode,randomBase64url,verifyEd25519 } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
@@ -36,7 +37,7 @@ export async function recordGroupHeart(env:Env,actor:GroupActor,windowId:string,
   if(body.active)statements.push(env.DB.prepare(`INSERT INTO group_heart_usage
     SELECT ?,?,?,1 FROM group_moment_hearts WHERE moment_id=? AND participant_id=? AND operation_id=? AND active=1
     ON CONFLICT(space_id,participant_id,day_key) DO UPDATE SET used=used+1`)
-    .bind(windowId,access.participantId,Math.floor(actor.now/86400),momentId,access.participantId,operationId));
+    .bind(windowId,access.participantId,await dailyQuotaDay(env,actor.now),momentId,access.participantId,operationId));
   if(body.active && access.participantId!==row.sender_participant_id) {
     const eventId=randomBase64url(16);
     statements.push(env.DB.prepare(`INSERT INTO group_notification_events
