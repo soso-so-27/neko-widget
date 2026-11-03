@@ -172,6 +172,13 @@ actor GroupWindowLocalPhotoStore {
     private func writeDirectory(_ windows: [KnownWindow]) {
         guard let root, let url = directoryURL() else { return }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Up to 500 photos a window, and this iPhone's keys never leave it: a
+        // backup copy could not be continued, and would only weigh. Photos
+        // worth keeping go to the Photos app, as the guide says.
+        var folder = root
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? folder.setResourceValues(values)
         guard let data = try? JSONEncoder().encode(Directory(windows: windows)) else { return }
         try? write(data, to: url)
     }

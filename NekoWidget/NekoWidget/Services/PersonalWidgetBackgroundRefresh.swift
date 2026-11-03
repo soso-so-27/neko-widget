@@ -49,7 +49,11 @@ enum PersonalWidgetBackgroundRefresh {
             do {
                 let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
                 guard status == .authorized || status == .limited else {
-                    try PersonalRediscoveryStore.shared.invalidate(now: .now)
+                    // Access was taken away while the app stayed closed: the
+                    // cached JPEGs go too, not only the right to show them.
+                    let revision = try PersonalRediscoveryStore.shared.updateEligibility(
+                        photoIDs: [], scopeIdentifier: "invalidated", isAuthorized: false, now: .now)
+                    try? await WidgetCacheBuilder().clearPersonal(expectedRevision: revision)
                     WidgetCenter.shared.reloadAllTimelines()
                     task.setTaskCompleted(success: true)
                     return
