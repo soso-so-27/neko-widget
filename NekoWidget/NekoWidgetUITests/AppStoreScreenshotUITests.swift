@@ -512,6 +512,28 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// App Store candidates for the window screens: the まど tab and one
+    /// みんなのまど, on the in-memory screen fixture (no relay, key or account).
+    @MainActor
+    func testReviewAppStoreWindowScreens() {
+        executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments
+            + ["--app-store-screenshot-fixture", "--group-window-screens-fixture"]
+        app.launch()
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど"), app.debugDescription)
+        let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
+        XCTAssertTrue(room.waitForExistence(timeout: 20), app.debugDescription)
+        captureScreenshot(named: "06-windows-tab")
+        room.tap()
+        XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15), app.debugDescription)
+        // Let the fixture's photos draw before the capture.
+        _ = app.images.firstMatch.waitForExistence(timeout: 10)
+        sleep(2)
+        captureScreenshot(named: "07-group-window")
+        app.terminate()
+    }
+
     private var japaneseLaunchArguments: [String] {
         [
             "-AppleLanguages", "(ja)",
