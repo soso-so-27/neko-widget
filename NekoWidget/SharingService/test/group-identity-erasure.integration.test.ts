@@ -1,4 +1,4 @@
-import {describe,expect,it} from 'vitest';
+import {beforeAll,describe,expect,it} from 'vitest';
 import {base64urlDecode,randomBase64url,sha256Base64url} from '../src/encoding';
 import {groupCaptionTranscript} from '../src/group-captions';
 import {cleanupDissolvedFamilyRosters} from '../src/family-notebook-roster-cleanup';
@@ -9,6 +9,10 @@ import {eraseGroupIdentityCredentials,eraseGroupIdentityData,listIdentityErasure
 import {acceptIdentityFence} from '../src/group-identity-fence';
 import {plusOwner} from './group-billing-fixture';
 import {apply,call,create,db,invitation,key,ok,person,send,sign,signed,testEnv,transition,type Person} from './group-fixture';
+
+// These component tests create real person fences. Provision their independent
+// journal first, exactly as required before a fence is written.
+beforeAll(async()=>{await testEnv.MEDIA!.put('group-identity-deletions/v1/control',JSON.stringify({sequence:0,requestId:''}),{onlyIf:{etagDoesNotMatch:'*'}});});
 
 async function fence(p:Person){
   const claim={personId:p.id,requestId:crypto.randomUUID(),acceptedAt:Math.floor(Date.now()/1000)};

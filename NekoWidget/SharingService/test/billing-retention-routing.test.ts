@@ -22,11 +22,19 @@ it('billing journal failure cannot postpone existing seven-day, family, or relay
   const context={waitUntil(p:Promise<unknown>){promises.push(p.catch(error=>error));},passThroughOnException(){}} as ExecutionContext;
   try {
     await worker.scheduled({cron:scheduled.MOMENT_CLEANUP_CRON,scheduledTime:Date.now(),noRetry(){}} as ScheduledController,
-      {...env,ENVIRONMENT:'local',BILLING_TRANSACTION_RETENTION_REQUIRED:'YES',MEDIA:undefined} as unknown as Env,context);
+      {...env,ENVIRONMENT:'local',BILLING_TRANSACTION_RETENTION_REQUIRED:'YES'} as unknown as Env,context);
     const results=await Promise.all(promises);
     expect(results[0]).toMatchObject({code:'billing_retention_unavailable'});
     expect(moment).toHaveBeenCalledTimes(1);expect(familyCleanup).toHaveBeenCalledTimes(1);
     expect(relayCleanup).toHaveBeenCalledTimes(1);expect(reports).toHaveBeenCalledTimes(1);
+    // In contrast, losing the common bucket also removes the independent
+    // identity fence. No outbox work may read old reporting data in that case.
+    promises.length=0;
+    await worker.scheduled({cron:scheduled.MOMENT_CLEANUP_CRON,scheduledTime:Date.now(),noRetry(){}} as ScheduledController,
+      {...env,ENVIRONMENT:'local',BILLING_TRANSACTION_RETENTION_REQUIRED:'YES',MEDIA:undefined} as unknown as Env,context);
+    expect(await Promise.all(promises)).toContainEqual(expect.objectContaining({code:'deletion_recovery_required'}));
+    expect(moment).toHaveBeenCalledTimes(2);expect(familyCleanup).toHaveBeenCalledTimes(2);
+    expect(relayCleanup).toHaveBeenCalledTimes(2);expect(reports).toHaveBeenCalledTimes(1);
   } finally {vi.restoreAllMocks();}
 });
 
