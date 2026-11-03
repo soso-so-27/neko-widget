@@ -1513,3 +1513,85 @@ enum GroupAdmissionProofVerifier {
         else { throw GroupProtocolError.invalidSignature }
     }
 }
+
+/// 「まどのデータと ID を削除」(A1). Kept on this iPhone before it is sent, and
+/// kept after the group keys are gone, so its state can still be asked.
+struct GroupIdentityDeletion: Codable, Sendable, Equatable {
+    let operationID: UUID
+    let receipt: String
+    var acceptedAt: Date?
+    var completedAt: Date?
+}
+
+@available(iOS 17.0, macOS 14.0, *)
+extension ProductionGroupWindowClient {
+    private static let deletionAccount = "identity-deletion"
+    private static let deletionPath = "/v3/group-identities/deletion-requests"
+    private struct DeletionInput: Encodable { let operationID: String; let receipt: String }
+    private struct DeletionReply: Decodable {
+        let protocolVersion: Int; let requestID: String; let state: String; let acceptedAt: Int; let completedAt: Int?
+    }
+
+    func identityDeletion() throws -> GroupIdentityDeletion? {
+        try load(GroupIdentityDeletion.self, Self.deletionAccount)
+    }
+
+    /// The windows this iPhone holds keys for, so the app can take them off the Widget.
+    func localWindowIDs() throws -> [String] {
+        try secrets.accounts(prefix: "window:").map { String($0.dropFirst("window:".count)) }
+    }
+
+    /// The same operation and receipt until the relay accepts it: a lost reply
+    /// is answered by the receipt, never by a second request. Once accepted,
+    /// this iPhone's window and family keys no longer work and are removed;
+    /// the deletion record stays. Received photos are not touched here.
+    func requestIdentityDeletion() async throws -> GroupIdentityDeletion {
+        var record: GroupIdentityDeletion
+        if let saved = try identityDeletion(), saved.completedAt == nil { record = saved }
+        else {
+            try? secrets.remove(Self.deletionAccount)
+            record = .init(operationID: UUID(),
+                           receipt: GroupWire.base64(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }))
+            try save(record, Self.deletionAccount, createOnly: true)
+        }
+        if record.acceptedAt == nil {
+            do {
+                let input = DeletionInput(operationID: record.operationID.uuidString.lowercased(), receipt: record.receipt)
+                try apply(GroupWire.decode(DeletionReply.self, await signed(Self.deletionPath, input)), to: &record)
+            } catch {
+                guard let answered = try? await identityDeletionStatus(), answered.acceptedAt != nil else { throw error }
+                record = answered
+            }
+        }
+        try removeGroupKeys()
+        return record
+    }
+
+    /// Asks with the receipt alone; no device key is needed or sent.
+    func identityDeletionStatus() async throws -> GroupIdentityDeletion? {
+        guard var record = try identityDeletion() else { return nil }
+        var request = try GroupHTTPRequest.make(endpoint: endpoint,
+            path: Self.deletionPath + "/" + record.operationID.uuidString.lowercased() + "/status", body: nil, identity: nil)
+        request.setValue("Bearer " + record.receipt, forHTTPHeaderField: "Authorization")
+        let reply = try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 4096))
+        try apply(GroupWire.decode(DeletionReply.self, reply), to: &record)
+        return record
+    }
+
+    private func apply(_ reply: DeletionReply, to record: inout GroupIdentityDeletion) throws {
+        guard reply.protocolVersion == 3, reply.requestID == record.operationID.uuidString.lowercased(),
+              ["processing", "completed"].contains(reply.state),
+              (reply.state == "completed") == (reply.completedAt != nil) else { throw GroupClientError.invalidResponse }
+        record.acceptedAt = Date(timeIntervalSince1970: TimeInterval(reply.acceptedAt))
+        record.completedAt = reply.completedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        try save(record, Self.deletionAccount)
+    }
+
+    private func removeGroupKeys() throws {
+        for account in try secrets.accounts(prefix: "") where account != Self.deletionAccount {
+            try secrets.remove(account)
+        }
+        verifiedWindows = [:]; verifiedListEntries = [:]; historicalRosters = [:]
+        photoMetadata = [:]; closedWindows = []; registrationTask = nil
+    }
+}
