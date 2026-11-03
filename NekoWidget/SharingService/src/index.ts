@@ -147,6 +147,7 @@ export async function route(
   // are open. Absent/NO retains the previous unreachable public surface.
   if ((pathname === '/v3/family-notebooks' || pathname.startsWith('/v3/family-notebooks/'))
       && env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED === 'YES') {
+    await requireBillingRetentionSnapshot(env);
     return familyNotebookAPI(request, env);
   }
 
@@ -158,6 +159,7 @@ export async function route(
     if (env.GROUP_RUNTIME_ENABLED !== 'YES' || !momentRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate())) {
       throw new ApiError(503, 'group_runtime_disabled', 'Group windows are unavailable.');
     }
+    await requireBillingRetentionSnapshot(env);
     return groupAPI(request, env);
   }
 
@@ -168,6 +170,7 @@ export async function route(
     }
     const match = pathname.match(/^\/v2\/family-records(?:\/([^/]+)(\/photo)?)?$/u);
     if (!match) throw new ApiError(404, "not_found", "Record not found.");
+    await requireBillingRetentionSnapshot(env);
     return familyRecords(request, env, match[1], match[2] !== undefined);
   }
 

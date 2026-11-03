@@ -29,3 +29,13 @@ it('billing journal failure cannot postpone existing seven-day, family, or relay
     expect(relayCleanup).toHaveBeenCalledTimes(1);expect(reports).toHaveBeenCalledTimes(1);
   } finally {vi.restoreAllMocks();}
 });
+
+it('restored active rights cannot bypass the independent snapshot fence via group or family early returns',async()=>{
+  const e={...env,ENVIRONMENT:'local',BILLING_TRANSACTION_RETENTION_REQUIRED:'YES',
+    GROUP_RUNTIME_ENABLED:'YES',MOMENT_RUNTIME_ENABLED:'YES',FAMILY_RECORD_RUNTIME_ENABLED:'YES',FAMILY_NOTEBOOK_API_RUNTIME_ENABLED:'YES'} as unknown as Env;
+  await e.MEDIA!.put('__billing_retention/v1/control',JSON.stringify({version:1,deployment:'local',sequence:1}));
+  expect(await e.DB.prepare('SELECT applied_sequence FROM billing_retention_checkpoint WHERE singleton=1').first()).toEqual({applied_sequence:0});
+  for(const path of ['/v3/group-identities','/v3/group-windows','/v3/family-notebooks','/v2/family-records']) {
+    await expect(route(new Request('https://example.test'+path),e)).rejects.toMatchObject({code:'billing_retention_recovery_required'});
+  }
+});
