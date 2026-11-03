@@ -43,12 +43,14 @@ from pathlib import Path
 raw_directory = Path(sys.argv[1]).resolve()
 output_directory = Path(sys.argv[2]).resolve()
 
+# XCTest attachment name, ordered App Store filename.
 targets = [
-    "01-local-cat-widget",
-    "02-local-photo-window",
-    "03-organized-memories",
-    "04-liked-photos",
-    "05-on-device-photo-privacy",
+    ("01-local-cat-widget", "01-local-cat-widget"),
+    ("07-group-window", "02-group-window"),
+    ("03-organized-memories", "03-organized-memories"),
+    ("02-local-photo-window", "04-photos"),
+    ("04-liked-photos", "05-liked-photos"),
+    ("06-windows-tab", "06-windows-tab"),
 ]
 accepted_portrait_sizes = {
     (1260, 2736),
@@ -244,7 +246,7 @@ def strip_jpeg_app1(path):
 
 report = {
     "schemaVersion": 1,
-    "releaseBoundary": "local-only-disabled",
+    "releaseBoundary": "version1-offline-debug",
     "fixture": {
         "kind": "code-generated-vector-cat-illustration",
         "externalSourceImages": 0,
@@ -256,7 +258,7 @@ report = {
     "userReviewRequiredBeforeUpload": True,
 }
 
-for target in targets:
+for target, output_name in targets:
     source = find_source(target)
     if source is None:
         available = "\n".join(str(path.relative_to(raw_directory)) for path in png_files)
@@ -265,7 +267,7 @@ for target in targets:
             f"{available or '(none)'}"
         )
 
-    destination = output_directory / f"{target}.jpg"
+    destination = output_directory / f"{output_name}.jpg"
     conversion = subprocess.run(
         [
             "/usr/bin/sips",
@@ -314,7 +316,7 @@ for target in targets:
     encoding="utf-8",
 )
 
-print("Exported five metadata-free App Store JPEGs:")
+print("Exported six metadata-free App Store JPEGs:")
 for item in report["screenshots"]:
     print(
         f"- {item['file']}: {item['width']}x{item['height']} "

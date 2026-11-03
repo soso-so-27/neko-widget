@@ -406,12 +406,18 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
-    private func captureFixtureProductScreens() {
+    func testCaptureVersion1ProductScreens() {
+        captureFixtureProductScreens(publicPresentation: true)
+    }
+
+    @MainActor
+    private func captureFixtureProductScreens(publicPresentation: Bool = false) {
         let app = XCUIApplication()
         app.launchArguments += japaneseLaunchArguments
         app.launchArguments.append("--app-store-screenshot-fixture")
         // The month that just finished arrived as a work on the shelf.
         app.launchArguments.append("--app-store-screenshot-album")
+        if publicPresentation { app.launchArguments.append("--review-public-presentation") }
         app.launch()
 
         guard app.navigationBars["アルバム"].waitForExistence(timeout: 20),
@@ -478,26 +484,33 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         let selectSavedPhotos = app.buttons["saved-memories-selection-toggle"]
-        guard selectSavedPhotos.waitForExistence(timeout: 10), waitForHittable(selectSavedPhotos) else {
-            fail("The favorite-photo selection action was not reachable.", application: app)
-            return
+        if publicPresentation {
+            // 1.0 favorites are for browsing: no selection, PDF or book entry.
+            XCTAssertFalse(selectSavedPhotos.exists, app.debugDescription)
+        } else {
+            guard selectSavedPhotos.waitForExistence(timeout: 10), waitForHittable(selectSavedPhotos) else {
+                fail("The favorite-photo selection action was not reachable.", application: app)
+                return
+            }
         }
         XCTAssertFalse(app.buttons["photo-book-export"].exists)
         captureScreenshot(named: "04-liked-photos")
-        selectSavedPhotos.tap()
-        // The PDF chooser is gone (10/31); test builds go straight to 本のイメージ.
-        guard app.buttons["book-demand-preview"].waitForExistence(timeout: 10) else {
-            fail("The book preview selection did not open from favorites.", application: app)
-            return
-        }
-        XCTAssertFalse(app.buttons["book-demand-preview"].isEnabled)
-        XCTAssertFalse(app.buttons["photo-book-export"].exists)
-        XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
-        captureScreenshot(named: "review-favorites-selection")
-        selectSavedPhotos.tap()
-        guard app.navigationBars["写真"].waitForExistence(timeout: 10) else {
-            fail("Canceling selection did not restore favorites browsing.", application: app)
-            return
+        if !publicPresentation {
+            selectSavedPhotos.tap()
+            // The PDF chooser is gone (10/31); test builds go straight to 本のイメージ.
+            guard app.buttons["book-demand-preview"].waitForExistence(timeout: 10) else {
+                fail("The book preview selection did not open from favorites.", application: app)
+                return
+            }
+            XCTAssertFalse(app.buttons["book-demand-preview"].isEnabled)
+            XCTAssertFalse(app.buttons["photo-book-export"].exists)
+            XCTAssertTrue(app.staticTexts["0枚を選択"].exists)
+            captureScreenshot(named: "review-favorites-selection")
+            selectSavedPhotos.tap()
+            guard app.navigationBars["写真"].waitForExistence(timeout: 10) else {
+                fail("Canceling selection did not restore favorites browsing.", application: app)
+                return
+            }
         }
         app.buttons["photos-section-all"].tap()
         guard app.descendants(matching: .any)["photo-hub-detected-grid"].waitForExistence(timeout: 15),
@@ -516,21 +529,45 @@ final class AppStoreScreenshotUITests: XCTestCase {
     /// みんなのまど, on the in-memory screen fixture (no relay, key or account).
     @MainActor
     func testReviewAppStoreWindowScreens() {
+        captureWindowScreens(publicPresentation: false)
+    }
+
+    @MainActor
+    func testCaptureVersion1WindowScreens() {
+        captureWindowScreens(publicPresentation: true)
+    }
+
+    @MainActor
+    private func captureWindowScreens(publicPresentation: Bool) {
         executionTimeAllowance = 240
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments
             + ["--app-store-screenshot-fixture", "--group-window-screens-fixture"]
+        if publicPresentation { app.launchArguments.append("--review-public-presentation") }
         app.launch()
+        if publicPresentation {
+            let tabs = app.tabBars.buttons
+            XCTAssertEqual(tabs.count, 4, app.debugDescription)
+            for label in ["写真", "まど", "アルバム", "ツール"] {
+                XCTAssertTrue(tabs[label].exists, "Missing tab: " + label)
+            }
+        }
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど"), app.debugDescription)
         let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
         XCTAssertTrue(room.waitForExistence(timeout: 20), app.debugDescription)
-        captureScreenshot(named: "06-windows-tab")
         room.tap()
         XCTAssertTrue(app.buttons["group-window-open-members"].waitForExistence(timeout: 15), app.debugDescription)
         // Let the fixture's photos draw before the capture.
         _ = app.images.firstMatch.waitForExistence(timeout: 10)
         sleep(2)
         captureScreenshot(named: "07-group-window")
+        // Back on the tab, the card shows the newest photo this iPhone received.
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.waitForExistence(timeout: 5), app.debugDescription)
+        back.tap()
+        XCTAssertTrue(room.waitForExistence(timeout: 10), app.debugDescription)
+        sleep(2)
+        captureScreenshot(named: "06-windows-tab")
         app.terminate()
     }
 

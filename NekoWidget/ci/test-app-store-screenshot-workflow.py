@@ -112,7 +112,13 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
 
     def test_capture_build_is_explicitly_local_only(self) -> None:
         required = {
-            "SHARING_RELEASE_MODE=disabled",
+            "SHARING_RELEASE_MODE=production",
+            "GROUP_WINDOWS_ENABLED=YES",
+            "OFFICIAL_WINDOW_FEED_URL=",
+            "MANAGED_PRESERVATION_ORIGIN=",
+            "PLUS_BILLING_API_BASE_URL=",
+            "PLUS_BILLING_CLIENT_ENABLED=NO",
+            "PLUS_STOREFRONT_ENABLED=NO",
             "SHARING_FEATURE_ENABLED=NO",
             "SHARING_MEDIA_ENABLED=NO",
             "SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=NO",
@@ -123,9 +129,11 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "SHARING_MODERATION_PUBLIC_KEY=",
             "SHARE_EXTENSION_INFOPLIST_FILE=NekoWidgetShareExtension/Info.Disabled.plist",
         }
+        default_lane = self.workflow.split("  capture-review", 1)[0]
+        flags = {line.strip().rstrip(chr(92)).strip() for line in default_lane.splitlines()}
         for value in required:
-            self.assertIn(value, self.workflow)
-        self.assertIn("releaseBoundary\": \"local-only-disabled", self.exporter)
+            self.assertIn(value, flags)
+        self.assertIn("releaseBoundary\": \"version1-offline-debug", self.exporter)
 
     def test_generated_photo_preheating_never_fetches_photokit_assets(self) -> None:
         preheating = self.photo_image.split("private static func assets(withLocalIdentifiers", 1)[1].split(
@@ -205,10 +213,13 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("failure-xcresulttool-export.log", self.workflow)
         self.assertIn("timeout-minutes: 40", self.workflow)
         capture_step = self.workflow.split(
-            "- name: Capture erased-Simulator product screens",
+            "- name: Prepare the erased Simulator and build the offline capture app",
             1,
         )[1].split("- name:", 1)[0]
         self.assertIn("timeout-minutes: 25", capture_step)
+        tests = self.workflow.split("- name: Capture the three UI tests", 1)[1].split("- name:", 1)[0]
+        self.assertIn("timeout-minutes: 12", tests)
+        self.assertIn("test-without-building -xctestrun", tests)
         failure_upload = self.workflow.split(
             "- name: Upload capture diagnostics on failure",
             1,
@@ -340,20 +351,25 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertLess(decode, visibility)
         self.assertLess(visibility, returned)
 
-    def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
+    def test_ui_test_and_exporter_agree_on_six_ordered_names(self) -> None:
         names = [
             "01-local-cat-widget",
-            "02-local-photo-window",
+            "07-group-window",
             "03-organized-memories",
+            "02-local-photo-window",
             "04-liked-photos",
-            "05-on-device-photo-privacy",
+            "06-windows-tab",
         ]
         for name in names:
             captures = self.ui_test.count(f'captureScreenshot(named: "{name}"')
             captures += self.widget_ui_test.count(f'captureScreenshot(named: "{name}"')
             self.assertEqual(captures, 1)
-            self.assertEqual(self.exporter.count(f'"{name}"'), 1)
-        self.assertIn("写真や動画を、勝手にiPhoneの外へ送りません", self.ui_test)
+            self.assertIn(f'("{name}",', self.exporter)
+        selectors = self.workflow.split("  capture-review", 1)[0]
+        for method in ("testCaptureVersion1ProductScreens", "testCaptureVersion1WindowScreens"):
+            self.assertIn("AppStoreScreenshotUITests/" + method, selectors)
+        self.assertNotIn("05-on-device-photo-privacy", self.exporter)
+        self.assertNotIn("AppStoreScreenshotUITests/testCaptureJapaneseLocalOnlyProductScreens", selectors)
         self.assertIn("--app-store-screenshot-fixture", self.ui_test)
         self.assertIn("app.wait(for: .runningForeground", self.widget_ui_test)
         self.assertIn(
