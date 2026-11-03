@@ -487,15 +487,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         if publicPresentation {
             // 1.0 favorites are for browsing: no selection, PDF or book entry.
             XCTAssertFalse(selectSavedPhotos.exists, app.debugDescription)
-            XCTAssertFalse(app.buttons["photo-book-export"].exists)
-            captureScreenshot(named: "04-liked-photos")
         } else {
             guard selectSavedPhotos.waitForExistence(timeout: 10), waitForHittable(selectSavedPhotos) else {
                 fail("The favorite-photo selection action was not reachable.", application: app)
                 return
             }
-            XCTAssertFalse(app.buttons["photo-book-export"].exists)
-            captureScreenshot(named: "04-liked-photos")
+        }
+        XCTAssertFalse(app.buttons["photo-book-export"].exists)
+        captureScreenshot(named: "04-liked-photos")
+        if !publicPresentation {
             selectSavedPhotos.tap()
             // The PDF chooser is gone (10/31); test builds go straight to 本のイメージ.
             guard app.buttons["book-demand-preview"].waitForExistence(timeout: 10) else {
