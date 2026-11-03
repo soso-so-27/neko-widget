@@ -31,7 +31,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Capture erased-Simulator product screens
+      - name: Prepare the erased Simulator and build the offline capture app
         timeout-minutes: 25
         working-directory: NekoWidget
         shell: bash
@@ -135,15 +135,6 @@ jobs:
             "$simulator_name" "$simulator_runtime" "$simulator_udid" \
             | tee "$artifact_directory/selected-simulator.txt"
 
-          cleanup() {
-            local status=$?
-            trap - EXIT
-            xcrun simctl shutdown "$simulator_udid" || true
-            xcrun simctl erase "$simulator_udid" || true
-            exit "$status"
-          }
-          trap cleanup EXIT
-
           # Erasure before and after capture is the account/photo isolation
           # boundary. No media is imported; fixture pixels are drawn by DEBUG
           # code and are excluded from Release archives.
@@ -223,11 +214,21 @@ jobs:
               if info.get(key):
                   raise SystemExit(f"Capture build unexpectedly configured {key}")
           PY
+      - name: Capture the three UI tests on the prepared Simulator
+        timeout-minutes: 12
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          artifact_directory="$RUNNER_TEMP/neko-app-store-screenshots"
+          derived_data_directory="$RUNNER_TEMP/NekoAppStoreScreenshotDerivedData"
+          result_bundle="$artifact_directory/AppStoreScreenshots.xcresult"
+          IFS=$'\t' read -r simulator_udid simulator_name simulator_runtime < "$artifact_directory/selected-simulator.tsv"
+          test_run=$(find "$derived_data_directory/Build/Products" -maxdepth 1 -name '*.xctestrun' -print)
+          [[ -n "$test_run" && $(printf '%s\n' "$test_run" | wc -l | tr -d ' ') == 1 ]]
           set +e
-          xcodebuild test-without-building \
-            -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Debug \
+          xcodebuild test-without-building -xctestrun "$test_run" \
             -destination "platform=iOS Simulator,id=$simulator_udid" \
-            -derivedDataPath "$derived_data_directory" \
             -resultBundlePath "$result_bundle" \
             -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureVersion1ProductScreens \
             -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureVersion1WindowScreens \
@@ -240,6 +241,18 @@ jobs:
           set -e
           printf '%s\n' "$test_status" > "$artifact_directory/test-exit-code.txt"
           exit "$test_status"
+
+      - name: Erase the capture simulator after testing
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          record="$RUNNER_TEMP/neko-app-store-screenshots/selected-simulator.tsv"
+          if [[ -s "$record" ]]; then
+            IFS=$'\t' read -r simulator_udid simulator_name simulator_runtime < "$record"
+            xcrun simctl shutdown "$simulator_udid" || true
+            xcrun simctl erase "$simulator_udid"
+          fi
 
       - name: Export accepted-size JPEGs without metadata
         working-directory: NekoWidget

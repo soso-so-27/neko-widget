@@ -213,10 +213,13 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("failure-xcresulttool-export.log", self.workflow)
         self.assertIn("timeout-minutes: 40", self.workflow)
         capture_step = self.workflow.split(
-            "- name: Capture erased-Simulator product screens",
+            "- name: Prepare the erased Simulator and build the offline capture app",
             1,
         )[1].split("- name:", 1)[0]
         self.assertIn("timeout-minutes: 25", capture_step)
+        tests = self.workflow.split("- name: Capture the three UI tests", 1)[1].split("- name:", 1)[0]
+        self.assertIn("timeout-minutes: 12", tests)
+        self.assertIn("test-without-building -xctestrun", tests)
         failure_upload = self.workflow.split(
             "- name: Upload capture diagnostics on failure",
             1,
