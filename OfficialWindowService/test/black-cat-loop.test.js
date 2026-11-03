@@ -16,7 +16,7 @@ const DAY = 86400000, START = Date.parse('2026-11-30T15:00:00Z');
 const json = async file => JSON.parse(await readFile(file, 'utf8'));
 const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AP7//2Q==', 'base64');
 const run = promisify(execFile);
-async function fixture(t, count = 10) {
+async function fixture(t, count = 10, preparedAt = START - DAY) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'neko-loop-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const input = path.join(root, 'input'); await mkdir(input);
@@ -28,7 +28,7 @@ async function fixture(t, count = 10) {
   }
   const config = { schemaVersion: 1, action: 'create', startDate: '2026-12-01', credit: BLACK_CAT_CREDIT, order };
   const output = path.join(root, 'first');
-  await prepareBlackCatLoop({ input, output, config, publicationApproved: true }, START - DAY);
+  await prepareBlackCatLoop({ input, output, config, publicationApproved: true }, preparedAt);
   return { root, input, output, config, hashes, index: await json(path.join(output, 'assets/__program/index.json')) };
 }
 async function request(f, route, { method = 'GET', beforeRead = () => {}, corruptImage = false } = {}) {
@@ -229,4 +229,41 @@ test('single config CLI is explicit and public assets omit input names and local
   assert(!raw.includes(f.input)); assert(!raw.includes('001.jpg'));
   const review = await json(path.join(output, 'schedule-review.json'));
   assert.equal(review.nextDays[0].filename, '001.jpg'); assert.equal(review.nextDays[10].filename, '001.jpg');
+});
+
+test('caption-only refresh serves hash-matched text across midnight and preserves the old schedule', async t => {
+  const f = await fixture(t, 2, Math.min(START - DAY, Date.now() - 60000)), now = START + DAY / 2;
+  const output = path.join(f.root, 'updated'), table = path.join(f.root, 'captions.json');
+  const caption = '🐈'.repeat(100), rows = [{ sha256: f.hashes[1], caption }, { sha256: f.hashes[0], caption: '' }];
+  await writeFile(table, JSON.stringify({ schemaVersion: 1, images: [...rows, rows[0]] }));
+  const tool = fileURLToPath(new URL('../tools/prepare_black_cat_days.mjs', import.meta.url));
+  await run(process.execPath, [tool, '--refresh-from', f.output, '--input', f.input, '--output', output,
+    '--captions', table, '--publication-approved']);
+  const index = validateProgram(await json(path.join(output, 'assets/__program/index.json')));
+  assert.equal(index.schemaVersion, 4); assert.deepEqual(index.epochs, f.index.epochs);
+  const review = await json(path.join(output, 'schedule-review.json'));
+  assert.equal(review.order[1].caption, caption);
+  // Evaluate at a publication day after both the bundle timestamp and the schedule start.
+  const day = START + Math.max(0, Math.ceil((Date.parse(index.updatedAt) - START) / (2 * DAY))) * 2 * DAY;
+  let current = day + DAY - 1000; t.mock.method(Date, 'now', () => current);
+  const get = async () => {
+    const { response } = await request({ output }, '/windows/black-cats/catalog.json');
+    assert.equal(response.status, 200); return (await response.json()).photos;
+  };
+  const before = await get();
+  assert.equal(before[0].sha256, f.hashes[0]); assert(!Object.hasOwn(before[0], 'caption'));
+  assert.equal(before[1].sha256, f.hashes[1]); assert.equal(before[1].caption, caption);
+  current += 1000; assert.deepEqual((await get())[0], before[1]);
+  const options = { input: f.input, output: path.join(f.root, 'invalid'), config: f.config,
+    refreshFrom: f.output, publicationApproved: true };
+  for (const images of [
+    [...rows, { sha256: f.hashes[1], caption: 'different' }],
+    [{ sha256: f.hashes[0], caption: '猫'.repeat(101) }], [{ sha256: f.hashes[0], caption: 'a\nb' }],
+    [{ sha256: '0'.repeat(64), caption: 'outside' }],
+  ]) {
+    await assert.rejects(prepareBlackCatLoop({ ...options, captionTable: { schemaVersion: 1, images } }, now));
+    await assert.rejects(access(options.output));
+  }
+  const legacy = { ...index, schemaVersion: 3 };
+  assert.throws(() => validateProgram(legacy), 'legacy schema cannot silently acquire a caption');
 });

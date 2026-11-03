@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { activeFiles } from '../src/index.js';
 import { PROGRAM_PATH, validateProgram } from '../src/program.js';
-import { BLACK_CAT_NAME, BLACK_CAT_CREDIT, LOOP_IMAGES_PATH, validateBlackCatLoop, loopPosition, blackCatDay } from '../src/black-cat-loop.js';
+import { BLACK_CAT_NAME, BLACK_CAT_CREDIT, LOOP_IMAGES_PATH, validateBlackCatLoop, validBlackCatCaption, loopPosition, blackCatDay } from '../src/black-cat-loop.js';
 import { validatePublisherJPEG } from './prepare_maintenance.mjs';
 import { directory, file, newOutput, hash, stamp, expectedConfig, service } from './schedule_bundle.mjs';
 
@@ -58,9 +58,32 @@ function dimensions(bytes) {
   throw new Error('JPEG frame is missing');
 }
 
+// A supplied table is the complete reviewed text for this pool. Missing or
+// empty entries intentionally have no public caption. Do not publish filenames.
+function reviewedCaptions(table) {
+  const captions = new Map();
+  if (table === undefined) return captions;
+  assert(table && typeof table === 'object' && !Array.isArray(table)
+    && Object.keys(table).length === 2 && table.schemaVersion === 1
+    && Array.isArray(table.images) && table.images.length <= 600, 'Invalid caption table');
+  for (const row of table.images) {
+    assert(row && typeof row === 'object' && !Array.isArray(row)
+      && Object.keys(row).every(k => k === 'sha256' || k === 'caption')
+      && typeof row.sha256 === 'string' && /^[a-f0-9]{64}$/.test(row.sha256), 'Invalid caption image hash');
+    const text = Object.hasOwn(row, 'caption') ? row.caption : '';
+    assert(text === '' || validBlackCatCaption(text), 'Caption must be one line of up to 100 characters');
+    assert(!captions.has(row.sha256) || captions.get(row.sha256) === text, 'Conflicting captions for one image');
+    captions.set(row.sha256, text);
+  }
+  return captions;
+}
+function requireKnownHashes(captions, hashes) {
+  for (const digest of captions.keys()) assert(hashes.has(digest), 'Caption hash outside approved image pool');
+}
+
 export async function prepareBlackCatDays(options) {
   assert(options && typeof options === 'object' && !Array.isArray(options)
-    && Object.keys(options).length === fields.length && fields.every(name => Object.hasOwn(options, name)),
+    && Object.keys(options).every(k => fields.includes(k) || k === 'captionTable') && fields.every(name => Object.hasOwn(options, name)),
   'Explicit input, output, startDate, credit and publicationApproved are required');
   const { input, output, startDate, credit, publicationApproved } = options;
   assert(publicationApproved === true, 'Explicit public publication approval is required');
@@ -74,7 +97,7 @@ export async function prepareBlackCatDays(options) {
   assert(names.length >= 1 && names.length <= 60, 'Use 1 to 60 reviewed publisher JPEGs, one image per day');
   const through = start + names.length * DAY;
   assert(/^\d{4}-\d{2}-\d{2}T/.test(stamp(start)) && /^\d{4}-\d{2}-\d{2}T/.test(stamp(through)), 'Schedule must stay within four-digit calendar years');
-  const images = [], hashes = new Set();
+  const images = [], hashes = new Set(), captions = reviewedCaptions(options.captionTable);
   for (const [i, filename] of names.entries()) {
     assert(/\.(?:jpg|jpeg)$/i.test(filename) && !/[\u0000-\u001f\u007f-\u009f]/u.test(filename),
       'Input folder may contain only reviewed publisher JPEGs; remove unknown files');
@@ -86,8 +109,10 @@ export async function prepareBlackCatDays(options) {
     const photo = { id: 'black-' + date.replaceAll('-', ''), catID: 'generated-black-cat', catName: BLACK_CAT_NAME, credit,
       publishedAt: stamp(published), expiresAt: stamp(Math.min(through, published + 7 * DAY)),
       imageFilename: sha256 + '.jpg', sha256, ...size };
+    if (captions.get(sha256)) photo.caption = captions.get(sha256);
     images.push({ filename, date, photo, bytes });
   }
+  requireKnownHashes(captions, hashes);
   const index = { schemaVersion: 2, startsAt: stamp(start), through: stamp(through), editions: [] }, catalogs = [];
   for (const [i] of images.entries()) {
     const startsAt = stamp(start + i * DAY), endsAt = stamp(start + (i + 1) * DAY);
@@ -105,7 +130,7 @@ export async function prepareBlackCatDays(options) {
   const review = { schemaVersion: 1, kind: 'black-cat-days', startDate, hourJST: 0, credit, publicationApproved,
     startsAt: index.startsAt, through: index.through, dayCount: images.length,
     days: images.map((image, i) => ({ date: image.date, filename: image.filename, editionID: index.editions[i].id,
-      publishedAt: image.photo.publishedAt, expiresAt: image.photo.expiresAt, sha256: image.photo.sha256 })) };
+      publishedAt: image.photo.publishedAt, expiresAt: image.photo.expiresAt, sha256: image.photo.sha256, ...(image.photo.caption ? { caption: image.photo.caption } : {}) })) };
   const config = await expectedConfig(); config.main = './program.js';
   const sources = new Map();
   for (const name of ['index.js', 'program.js', 'scheduled.js', 'black-cat-loop.js']) sources.set(name, await file(path.join(service, 'src', name)));
@@ -136,7 +161,9 @@ export async function prepareBlackCatDays(options) {
 export async function prepareBlackCatLoop(options, now = Date.now()) {
   const exact = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
     && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-  assert(exact(options, ['input', 'output', 'config', 'publicationApproved']) && options.publicationApproved === true,
+  const refresh = Object.hasOwn(options, 'refreshFrom');
+  assert(exact(options, ['input', 'output', 'config', 'publicationApproved',
+    ...(Object.hasOwn(options, 'captionTable') ? ['captionTable'] : []), ...(refresh ? ['refreshFrom'] : [])]) && options.publicationApproved === true,
     'Explicit input, output, loop config and publication approval are required');
   const { input, output, config } = options;
   const creates = config?.action === 'create';
@@ -149,10 +176,11 @@ export async function prepareBlackCatLoop(options, now = Date.now()) {
   'Order must explicitly name 1 to 60 unique JPEG files');
   const { start } = startTime(config.startDate);
   assert(Number.isFinite(now), 'A valid preparation time is required');
-  if (!creates) assert(start > now, 'Append/reset must be prepared and deployed before their future JST midnight');
+  if (refresh) assert(options.captionTable !== undefined, 'Refreshing requires a reviewed caption table');
+  if (!creates && !refresh) assert(start > now, 'Append/reset must be prepared and deployed before their future JST midnight');
   const source = await localDirectory(input);
   localAbsolute(output); await localDirectory(path.dirname(output));
-  const previousRoot = creates ? null : await localDirectory(config.previousBundle);
+  const previousRoot = refresh ? await localDirectory(options.refreshFrom) : creates ? null : await localDirectory(config.previousBundle);
   const target = await newOutput(output, [source, ...(previousRoot ? [previousRoot] : [])]);
   assert.deepEqual((await readdir(source)).sort(), [...config.order].sort(), 'Input folder must match config order exactly');
   const pool = new Map(), images = [], order = [];
@@ -170,7 +198,12 @@ export async function prepareBlackCatLoop(options, now = Date.now()) {
     assert(previous.updatedAt === undefined || Math.floor(now / 1000) * 1000 > Date.parse(previous.updatedAt),
       'A changed bundle must have a later preparation time than the previous bundle');
     epochs = structuredClone(previous.epochs);
-    assert(start > Date.parse(epochs.at(-1).startsAt), 'New action must follow every existing scheduled action');
+    if (refresh) {
+      const previousInput = JSON.parse((await file(path.join(previousRoot, 'loop-config.json'))).toString('utf8'));
+      assert.deepEqual(config, previousInput, 'Caption refresh must preserve the reviewed schedule');
+      assert.equal(start, Date.parse(epochs.at(-1).startsAt));
+      assert.equal(config.action, epochs.at(-1).action);
+    } else assert(start > Date.parse(epochs.at(-1).startsAt), 'New action must follow every existing scheduled action');
     const folder = await localDirectory(path.join(previousRoot, 'assets' + LOOP_IMAGES_PATH));
     assert.deepEqual((await readdir(folder)).sort(), previous.images.map(image => image.sha256 + '.jpg').sort(),
       'Previous pool contains unknown or missing images');
@@ -190,14 +223,29 @@ export async function prepareBlackCatLoop(options, now = Date.now()) {
     if (!pool.has(digest)) { images.push({ sha256: digest, ...size }); pool.set(digest, bytes); }
   }
   let cycle = start;
-  if (config.action === 'append') {
+  if (refresh) {
+    assert.deepEqual(order, epochs.at(-1).order, 'Caption refresh must preserve the approved image order');
+  } else if (config.action === 'append') {
     const previous = epochs.at(-1);
     assert(order.length > previous.order.length && previous.order.every((digest, i) => order[i] === digest),
       'Append must preserve all prior images and their order, and add only at the end');
     cycle = start - (loopPosition(previous, start - DAY) + 1) * DAY;
   }
-  epochs.push({ action: config.action, startsAt: stamp(start), cycleStartsAt: stamp(cycle), order });
-  const index = validateBlackCatLoop({ schemaVersion: 3, credit: BLACK_CAT_CREDIT,
+  if (!refresh) epochs.push({ action: config.action, startsAt: stamp(start), cycleStartsAt: stamp(cycle), order });
+  if (options.captionTable !== undefined) {
+    const captions = reviewedCaptions(options.captionTable);
+    requireKnownHashes(captions, pool);
+    for (const image of images) {
+      const caption = captions.get(image.sha256);
+      if (caption) image.caption = caption;
+      else delete image.caption;
+    }
+  }
+  for (const row of reviewed) {
+    const image = images.find(i => i.sha256 === row.sha256);
+    if (image.caption) row.caption = image.caption;
+  }
+  const index = validateBlackCatLoop({ schemaVersion: images.some(image => image.caption) ? 4 : 3, credit: BLACK_CAT_CREDIT,
     updatedAt: stamp(Math.floor(now / 1000) * 1000), images, epochs });
   const indexBytes = encoded(index);
   assert(indexBytes.length <= 256 * 1024, 'Loop config exceeds the Worker reader limit');
@@ -207,7 +255,8 @@ export async function prepareBlackCatLoop(options, now = Date.now()) {
     nextDays: Array.from({ length: order.length * 2 }, (_, i) => {
       const photo = blackCatDay(index, start + i * DAY).catalog.photos[0];
       return { date: stamp(start + i * DAY + 9 * HOUR).slice(0, 10), sha256: photo.sha256,
-        filename: reviewed.find(row => row.sha256 === photo.sha256).filename };
+        filename: reviewed.find(row => row.sha256 === photo.sha256).filename,
+        ...(photo.caption ? { caption: photo.caption } : {}) };
     }) };
   const sources = new Map();
   for (const name of ['index.js', 'program.js', 'scheduled.js', 'black-cat-loop.js']) {
@@ -232,20 +281,34 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const { values } = parseArgs({ options: { input: { type: 'string' }, output: { type: 'string' },
       'start-date': { type: 'string' }, credit: { type: 'string' },
-      'publication-approved': { type: 'boolean' }, 'loop-config': { type: 'string' } } });
-    if (values['loop-config']) {
+      'publication-approved': { type: 'boolean' }, 'loop-config': { type: 'string' },
+      captions: { type: 'string' }, 'refresh-from': { type: 'string' } } });
+    const captionInput = {};
+    if (values.captions) {
+      const source = localAbsolute(values.captions);
+      await localDirectory(path.dirname(source));
+      captionInput.captionTable = JSON.parse((await file(source, 512 * 1024)).toString('utf8'));
+    }
+    if (values['refresh-from']) {
+      assert(!values['loop-config'] && values.input && values.output && values['publication-approved']
+        && values.captions && !values['start-date'] && !values.credit, 'Use a reviewed table and the previous bundle for caption refresh');
+      const refreshFrom = await localDirectory(values['refresh-from']);
+      const config = JSON.parse((await file(path.join(refreshFrom, 'loop-config.json'))).toString('utf8'));
+      console.log(JSON.stringify(await prepareBlackCatLoop({ input: values.input, output: values.output,
+        config, refreshFrom, ...captionInput, publicationApproved: true }), null, 2));
+    } else if (values['loop-config']) {
       assert(values.input && values.output && values['publication-approved'] && !values['start-date'] && !values.credit,
         'Loop start date, credit and order must come from --loop-config only');
       const configPath = localAbsolute(values['loop-config']); await localDirectory(path.dirname(configPath));
       const config = JSON.parse((await file(configPath)).toString('utf8'));
       console.log(JSON.stringify(await prepareBlackCatLoop({ input: values.input, output: values.output,
-        config, publicationApproved: values['publication-approved'] }), null, 2));
+        config, ...captionInput, publicationApproved: values['publication-approved'] }), null, 2));
     } else {
     assert(values.input && values.output && values['start-date']
       && values.credit && values['publication-approved'],
     'Use --input <reviewed-JPEG-folder> --output <new-local-folder> --start-date YYYY-MM-DD --credit <approved-credit> --publication-approved');
     console.log(JSON.stringify(await prepareBlackCatDays({ input: values.input, output: values.output,
-      startDate: values['start-date'], credit: values.credit,
+      ...captionInput, startDate: values['start-date'], credit: values.credit,
       publicationApproved: values['publication-approved'] }), null, 2));
     }
     console.log('Local candidate only. Review schedule-review.json and the images before owner-approved deployment.');

@@ -70,6 +70,7 @@ async function approvedBundle(bundle) {
   for (const row of review.order) {
     const image = index.images.find(value => value.sha256 === row.sha256);
     assert.equal(row.width, image.width); assert.equal(row.height, image.height);
+    assert.equal(row.caption, image.caption);
   }
   return { root, index };
 }

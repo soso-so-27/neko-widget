@@ -181,3 +181,13 @@ test('CLI requires every decision and creates a local candidate only with all ex
   assert.match(stdout, /Local candidate only/);
   assert.equal((await read(path.join(f.output, 'schedule-review.json'))).hourJST, 0);
 });
+
+test('finite editions carry the reviewed caption by hash, including historical entries', async () => {
+  const f = await fixture(2);
+  const captionTable = { schemaVersion: 1, images: [{ sha256: f.files[0].sha256, caption: '合成試験の一言' }] };
+  await prepareBlackCatDays({ ...f.options, captionTable });
+  const { photos } = await read(path.join(editionFolder(f.output, 1), 'catalog.json'));
+  assert.deepEqual(photos.map(p => [p.sha256, p.caption]), [
+    [f.files[1].sha256, undefined], [f.files[0].sha256, '合成試験の一言'],
+  ]);
+});
