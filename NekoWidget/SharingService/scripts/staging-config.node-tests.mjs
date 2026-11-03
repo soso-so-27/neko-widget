@@ -338,6 +338,7 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0065_group_first_day_reminder.sql", 3],
     ["0067_group_received_report_retention.sql", 6],
     ["0068_billing_transaction_retention.sql", 76],
+    ["0069_group_closed_roster_cleanup.sql", 1],
   ]);
   const migrationNames = (await readdir(join(projectDirectory, "migrations")))
     .filter((name) => name.endsWith(".sql"))

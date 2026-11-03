@@ -167,6 +167,8 @@ export async function prepareBlackCatLoop(options, now = Date.now()) {
     const previousConfig = JSON.parse((await file(path.join(previousRoot, 'wrangler.jsonc'))).toString('utf8'));
     assert.deepEqual(previousConfig, deployment, 'Previous bundle uses another deployment configuration');
     const previous = validateBlackCatLoop(JSON.parse((await file(path.join(previousRoot, 'assets' + PROGRAM_PATH), 256 * 1024)).toString('utf8')));
+    assert(previous.updatedAt === undefined || Math.floor(now / 1000) * 1000 > Date.parse(previous.updatedAt),
+      'A changed bundle must have a later preparation time than the previous bundle');
     epochs = structuredClone(previous.epochs);
     assert(start > Date.parse(epochs.at(-1).startsAt), 'New action must follow every existing scheduled action');
     const folder = await localDirectory(path.join(previousRoot, 'assets' + LOOP_IMAGES_PATH));
@@ -195,7 +197,8 @@ export async function prepareBlackCatLoop(options, now = Date.now()) {
     cycle = start - (loopPosition(previous, start - DAY) + 1) * DAY;
   }
   epochs.push({ action: config.action, startsAt: stamp(start), cycleStartsAt: stamp(cycle), order });
-  const index = validateBlackCatLoop({ schemaVersion: 3, credit: BLACK_CAT_CREDIT, images, epochs });
+  const index = validateBlackCatLoop({ schemaVersion: 3, credit: BLACK_CAT_CREDIT,
+    updatedAt: stamp(Math.floor(now / 1000) * 1000), images, epochs });
   const indexBytes = encoded(index);
   assert(indexBytes.length <= 256 * 1024, 'Loop config exceeds the Worker reader limit');
   const review = { schemaVersion: 1, kind: 'black-cat-loop', action: config.action,

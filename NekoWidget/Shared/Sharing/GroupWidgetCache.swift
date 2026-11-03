@@ -113,10 +113,15 @@ enum GroupWidgetCache {
         } else {
             catalog.entries.append(entry)
         }
+        let dropped = catalog.entries.dropFirst(maximumWindows).compactMap(\.imageFileName)
         catalog.entries = Array(catalog.entries.prefix(maximumWindows))
         try write(JSONEncoder().encode(catalog), to: directory.appendingPathComponent("catalog.json"))
         if let old = previous?.imageFileName, old != imageFileName {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(old))
+        }
+        // A window pushed off the list takes its image with it.
+        for name in dropped where name != imageFileName {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }
 

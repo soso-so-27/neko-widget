@@ -47,7 +47,11 @@ node tools/prepare_black_cat_days.mjs --loop-config "C:\black-cat\loop-config.js
 2. `previousBundle` が現在配備中の候補と一致し、切り替え日がまだ未来であることを確認します。古い候補から準備したりロールバックすると、順序を戻す原因になります。
 3. 所有者が候補と対象を確認した後、既存のstaging手順で生成物のソース・設定・assetを一緒に配備します。
 
-Workerはサーバー時刻で今日の1枚のcatalogを作ります。catalogと画像の表示期限は次のJST0時です。同じJPEGが次の周回に出ても、写真IDと掲載日はその日用になります。今日以外のJPEG・内部設定への直接GET/HEADを拒否し、画像の読み込み中に0時を跨いだ場合も応答を止めます。端末が圏外でも昨日の期限を延ばしません。
+Workerはサーバー時刻で今日と翌日の2枚をcatalogへ入れ、翌日のJPEGも先読み可能にします。catalogの期限は翌々日のJST0時（生成から最大48時間）、各写真の表示期限はその日の終わりです。同じJPEGが次の周回に出ても、写真IDと掲載日はその日用になります。2枚の一覧外のJPEG・内部設定への直接GET/HEADを拒否し、画像の読み込み中に0時を跨いだ場合も応答を止めます。表示選択はApp側でpublishedAt以下の時刻になってから行い、昨日の写真の期限は延ばしません。
+
+新しい準備版は内部indexのupdatedAtに秒精度の準備時刻を記録します。catalogのgeneratedAtは当日0時とupdatedAtの遅い方です。前日に追加・リセット候補を更新して翌日の先読み画像が変わった場合も、同時刻の別catalogとして拒否されないようにします。前回版と同じか古い準備時刻は拒否します。既存のupdatedAtなしindexも読めますが、新しい配備候補はこのツールで再生成してください。
+
+App側にも、未来24時間内のcatalog検証、先読み用の画像取得・保存、翌日のtimeline entryが必要です。表示用availablePhotosの条件を早める変更ではありません。旧Appと配信の同時互換はこの変更だけでは成立しないため、App側対応を含む版の確認後に別途配備します。
 
 loopの内部形式は `schemaVersion: 3`。最大64設定・画像pool最大600枚・1周最大60枚で、上限を超えたら停止し、黙って古い設定を捨てません。日数による配信終了ではありません。
 
@@ -55,7 +59,7 @@ loopの内部形式は `schemaVersion: 3`。最大64設定・画像pool最大600
 
 ループ配備後は `tools/check_black_cat_loop.mjs --current <current.json絶対パス> --receipt <同じruntime内のlast-check.json絶対パス>` を使います。currentは `schemaVersion: 2`、`mode: "loop"`、`currentBundle`、`workerVersion` を保持します。配備したソースと同じ版のcheckoutで実行してください。
 
-当日のcatalog/JPEG・JST期限・内部/非当日経路・記録したWorker版を照合し、最小のlast-checkだけ保存します。pendingがあれば止まり、配備や期限延長は行いません。同じ正常状態と同じ失敗は繰り返し通知しません。既存の有限予定用監視は互換ではないため、配備後の確認と正本pointerの切替に合わせて呼び出し先も変更します。監視の時刻や通知先は変更する必要がありません。
+当日と翌日のcatalog/JPEG・JST期限・内部/一覧外経路・記録したWorker版を照合し、最小のlast-checkだけ保存します。pendingがあれば止まり、配備や期限延長は行いません。同じ正常状態と同じ失敗は繰り返し通知しません。既存の有限予定用監視は互換ではないため、配備後の確認と正本pointerの切替に合わせて呼び出し先も変更します。監視の時刻や通知先は変更する必要がありません。
 
 ## 互換用の有限日程
 

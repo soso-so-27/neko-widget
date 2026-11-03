@@ -90,6 +90,8 @@ private struct Fixture {
 private enum CloudyWindowVerifier {
     static func main() throws {
         try dailyReveal()
+        try staleDisplayReveal()
+        try cacheReleaseKeepsSelection()
         try widgetSelectionWithoutSwitch()
         try rotationAndSmallPools()
         try catScopesAndExpiry()
@@ -310,6 +312,52 @@ private enum CloudyWindowVerifier {
         try f.store.configure(enabled: true, strength: .light)
         try check(f.store.timeline(scopeID: first.scopeID, now: tomorrow)[0].selection.id == next[0].selection.id,
                   "on/off does not reroll today's photograph")
+    }
+
+    private static func staleDisplayReveal() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        let issued = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)
+        // Tomorrow's cloudy photo is still on screen two days later because
+        // iOS skipped the midnight reload.
+        let shown = issued[1].selection
+        let later = issued[1].date.addingTimeInterval(day + 3_600)
+        try check(!f.store.reveal(selectionID: issued[0].selection.id, scopeID: shown.scopeID,
+            photoID: issued[0].photo.photoID, now: later), "an older display cannot clear anything")
+        try check(f.store.reveal(selectionID: shown.id, scopeID: shown.scopeID, photoID: shown.photoID, now: later),
+                  "tapping the photo on a display iOS never refreshed clears that photo")
+        let today = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: later)
+        try check(!today[0].isCloudy && today[0].selection.id == shown.id && today[0].photo.photoID == shown.photoID,
+                  "the cleared photo becomes today's instead of a different one")
+        try check(today[1].isCloudy && today[1].photo.photoID != shown.photoID, "tomorrow is a new cloudy photo")
+        try check(!f.store.reveal(selectionID: shown.id, scopeID: shown.scopeID, photoID: shown.photoID,
+            now: today[1].date.addingTimeInterval(1)), "a cleared photo cannot be carried into the next day")
+    }
+
+    private static func cacheReleaseKeepsSelection() throws {
+        let f = try Fixture(count: 6)
+        defer { f.cleanup() }
+        let shown = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: baseline)[0]
+        try check(f.store.reveal(selectionID: shown.selection.id, scopeID: shown.selection.scopeID,
+            photoID: shown.photo.photoID, now: baseline), "reveal before removal")
+        try f.store.synchronizeInstalledSources([])
+        try check(f.store.imageURL(filename: shown.photo.clear.small) == nil, "removal still releases derived cache")
+        try f.store.synchronizeInstalledSources([CloudyWindowStore.personalScope])
+        // The fixture baseline is 23:59 JST, so stay inside that minute.
+        let again = baseline.addingTimeInterval(10)
+        let plan = try f.store.preparation(now: again)!
+        try check(plan.candidates.contains { $0.item.localIdentifier == shown.photo.photoID }
+                  && plan.protectedPhotoIDs.contains(shown.photo.photoID), "today's photo is rendered again")
+        try check(f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: again).isEmpty,
+                  "no other photo is shown while today's is being rendered")
+        let image = try Data(contentsOf: f.directory.appendingPathComponent("widget-cache")
+            .appendingPathComponent(f.candidates[0].item.cacheFilename))
+        let photo = f.prepared.first { $0.photoID == shown.photo.photoID }!
+        try f.store.publish(photo, files: Dictionary(uniqueKeysWithValues: photo.filenames.map { ($0, image) }),
+            authorityRevision: plan.authorityRevision, configurationRevision: plan.configuration.revision, now: again)
+        let back = try f.store.timeline(scopeID: CloudyWindowStore.personalScope, now: again.addingTimeInterval(10))
+        try check(back[0].selection.id == shown.selection.id && !back[0].isCloudy,
+                  "re-adding the Widget keeps the same cleared photo")
     }
 
     private static func rotationAndSmallPools() throws {

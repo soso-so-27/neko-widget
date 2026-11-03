@@ -502,10 +502,24 @@ struct CloudyWindowStore: Sendable {
             let selection = state.selections[index]
             guard selectionValidUntil.map({ selection.day < $0 }) ?? true else { return false }
             let today = Self.calendar.startOfDay(for: now)
-            let frozen = !allowsSelection && state.selections.filter { value in
+            let latestIssued = state.selections.filter { value in
                 value.scopeID == scopeID && value.day <= now
                     && (selectionValidUntil.map { value.day < $0 } ?? true)
             }.max(by: { $0.day < $1.day })?.id == selectionID
+            let frozen = !allowsSelection && latestIssued
+            if selection.day < today, allowsSelection, latestIssued, selection.revealedAt == nil,
+               selectionValidUntil.map({ today < $0 }) ?? true,
+               !state.selections.contains(where: { $0.scopeID == scopeID && $0.day == today }) {
+                // iOS skipped the midnight reload, so this cloudy photo is the
+                // one on screen. Clearing it makes it today's photo instead of
+                // swapping in a different one the tap never showed.
+                state.selections[index].day = today
+                state.selections[index].albumPeriod = nil
+                state.selections[index].revealedAt = now
+                state.seenPhotoIDs.insert(photoID)
+                try write(state)
+                return true
+            }
             guard selection.day == today || frozen else { return false }
             if selection.revealedAt == nil {
                 state.selections[index].revealedAt = now
@@ -667,7 +681,12 @@ struct CloudyWindowStore: Sendable {
             .values.compactMap { $0.max(by: { $0.day < $1.day })?.id })
         let today = Self.calendar.startOfDay(for: now)
         let keptSelections = state.selections.filter { selection in
+            // A released derived cache is rendered again for the kept
+            // selection, so re-adding the Widget shows the same photo in the
+            // same state. A photo that left the library is dropped.
             let unavailableToday = selection.day >= today && !available.contains(selection.photoID)
+                && !(authority?.eligiblePhotoIDs.contains(selection.photoID) == true
+                     && state.metadata[selection.photoID] != nil)
             let invalidScope =
                 (selection.scopeID != Self.personalScope && profileID(selection.scopeID, in: state) == nil)
                 || (selection.scopeID != Self.personalScope && state.metadata[selection.photoID]?.profileIDs.contains(

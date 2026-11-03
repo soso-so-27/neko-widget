@@ -86,6 +86,7 @@ const expectedMigrationNames = [
   "0065_group_first_day_reminder.sql",
   "0067_group_received_report_retention.sql",
   "0068_billing_transaction_retention.sql",
+  "0069_group_closed_roster_cleanup.sql",
 ];
 
 const databaseGateColumns = [
