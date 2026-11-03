@@ -68,19 +68,34 @@ export async function connectGroupBilling(request:Request,env:Env,actor:GroupAct
   if(prior && prior.request_hash!==actor.requestHash)throw new ApiError(409,'idempotency_conflict','The operation has different content.');
   const existing=await env.DB.prepare('SELECT person_id,billing_account_id FROM group_billing_connections WHERE person_id=? OR billing_account_id=?')
     .bind(actor.personId,accountId).all<{person_id:string;billing_account_id:string}>();
-  if(existing.results.some(r=>r.person_id!==actor.personId || r.billing_account_id!==accountId))
+  if(existing.results.some(r=>r.person_id===actor.personId && r.billing_account_id!==accountId))
+    throw new ApiError(409,'billing_connection_conflict','This membership is already connected to another identity.');
+  const current=existing.results.find(r=>r.billing_account_id===accountId);
+  const recovery=await env.DB.prepare(`SELECT s.generation,
+      EXISTS(SELECT 1 FROM group_billing_recovery_uses u WHERE u.billing_key_id=r.new_billing_key_id) AS consumed
+    FROM billing_account_recovery_requests r
+    JOIN billing_account_key_state s ON s.billing_account_id=r.billing_account_id
+    JOIN billing_account_keys k ON k.id=r.new_billing_key_id AND k.billing_account_id=r.billing_account_id
+    WHERE r.billing_account_id=? AND r.new_billing_key_id=? AND k.state='active'
+      AND r.expected_generation+1=s.generation`)
+    .bind(accountId,account.billingKeyId).first<{generation:number;consumed:number}>();
+  const move=current?.person_id!==actor.personId && recovery?.consumed===0;
+  if((current && current.person_id!==actor.personId && !move) || (!current && recovery?.consumed===1))
     throw new ApiError(409,'billing_connection_conflict','This membership is already connected to another identity.');
   const response=prior?JSON.parse(prior.response_json) as unknown:{operationId,personId:actor.personId,state:'connected',serverNow:actor.now};
-  // Consume BOTH nonces and recheck BOTH active keys in the same transaction.
-  // ON CONFLICT cannot silently attach a different person: the unique account
-  // index and the immutable connection trigger preserve the binding.
+  // Preserve the already-claimed group nonce; consume the billing nonce and
+  // recheck BOTH active keys in the same transaction.
+  // A move additionally consumes exactly this recovered active key/generation.
+  // SQL repeats the proof check and rolls the complete move back on any race.
   const check=crypto.randomUUID();
   await env.DB.batch([...groupAuthorizationStatements(env,actor),
     env.DB.prepare('DELETE FROM billing_request_nonces WHERE billing_key_id=? AND expires_at<=?').bind(account.billingKeyId,account.now),
     env.DB.prepare('INSERT INTO billing_request_nonces VALUES (?,?,?,?)').bind(account.billingKeyId,account.nonce,account.now,account.now+601),
-    env.DB.prepare(`INSERT INTO group_billing_connections
+    ...(move ? [env.DB.prepare('INSERT INTO group_billing_recovery_commands VALUES (?,?,?,?,?,?,?)')
+      .bind(check,actor.personId,actor.deviceId,accountId,account.billingKeyId,recovery!.generation,actor.now),
+      env.DB.prepare('DELETE FROM group_billing_recovery_commands WHERE id=?').bind(check)] : [env.DB.prepare(`INSERT INTO group_billing_connections
       SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM billing_account_keys WHERE id=? AND billing_account_id=? AND state='active')
-      ON CONFLICT(person_id) DO NOTHING`).bind(actor.personId,accountId,actor.deviceId,account.billingKeyId,actor.now,account.billingKeyId,accountId),
+      ON CONFLICT(person_id) DO NOTHING`).bind(actor.personId,accountId,actor.deviceId,account.billingKeyId,actor.now,account.billingKeyId,accountId)]),
     env.DB.prepare(`INSERT INTO group_billing_connection_checks VALUES (?,?,?,?)`).bind(check,actor.personId,accountId,account.billingKeyId),
     env.DB.prepare('DELETE FROM group_billing_connection_checks WHERE id=?').bind(check),
     ...(prior?[]:[groupMutationStatement(env,actor,operationId,response)])]);
