@@ -1,5 +1,6 @@
 #if DEBUG
 import CoreGraphics
+import CryptoKit
 import Foundation
 import SwiftUI
 import UIKit
@@ -188,7 +189,49 @@ enum AppStoreScreenshotFixture {
 
     /// Draws an original, code-defined cat illustration. It has no source
     /// image, EXIF, GPS, face, text, logo, or third-party asset lineage.
-    private static func makeCatIllustration(variant: Int) -> UIImage {
+    /// `--app-store-screenshot-nowa`: のわのまど received on this iPhone, with a
+    /// code-drawn black cat and a daily line. A temporary store; the refresh
+    /// and preview never leave the device.
+    static let nowaLaunchArgument = "--app-store-screenshot-nowa"
+    static let nowaWindow: PublicWindowPresentationSource? = {
+        guard CommandLine.arguments.contains(launchArgument),
+              CommandLine.arguments.contains(nowaLaunchArgument) else { return nil }
+        let store = OfficialWindowStore(
+            directory: FileManager.default.temporaryDirectory.appendingPathComponent("app-store-nowa-" + UUID().uuidString),
+            definition: .blackCatsFixture)
+        guard let seeded = try? seedNowa(in: store) else { return nil }
+        return PublicWindowPresentationSource(store: store, refresh: {},
+            preview: { OfficialWindowPreview(catalog: seeded.catalog, photo: seeded.photo, imageData: seeded.data) })
+    }()
+
+    private static func seedNowa(in store: OfficialWindowStore) throws
+        -> (catalog: OfficialWindowCatalog, photo: OfficialCatPhoto, data: Data) {
+        let image = makeCatIllustration(variant: 0, palette: (
+            UIColor(red: 0.96, green: 0.86, blue: 0.68, alpha: 1), UIColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1),
+            UIColor(red: 0.93, green: 0.89, blue: 0.82, alpha: 1), UIColor(red: 0.47, green: 0.60, blue: 0.72, alpha: 1)),
+            muzzle: UIColor(red: 0.22, green: 0.22, blue: 0.25, alpha: 1))
+        guard let data = image.jpegData(compressionQuality: 0.88), let cgImage = image.cgImage else {
+            throw OfficialWindowError.invalidImage
+        }
+        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let now = Date()
+        let today = OfficialWindowCatalog.nextBlackCatCutover(after: now).addingTimeInterval(-86_400)
+        let photo = OfficialCatPhoto(id: "app-store-nowa", catID: "nowa", catName: "のわ",
+            credit: "ねこのまど（AI で作った画像）", caption: "のわはきょう、窓辺でひなたぼっこ。",
+            photographedOn: nil, publishedAt: today, expiresAt: today.addingTimeInterval(86_400),
+            imageFilename: hash + ".jpg", sha256: hash, width: cgImage.width, height: cgImage.height)
+        let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: true,
+            generatedAt: now.addingTimeInterval(-60), validUntil: today.addingTimeInterval(86_400), photos: [photo])
+        try store.setSubscribed(true)
+        let request = store.snapshot()
+        try store.accept(catalog, for: request)
+        try store.saveImage(data, photo: photo, for: request)
+        return (catalog, photo, data)
+    }
+
+    private static func makeCatIllustration(variant: Int,
+                                            palette custom: (UIColor, UIColor, UIColor, UIColor)? = nil,
+                                            muzzle: UIColor? = nil) -> UIImage {
         let canvas = CGSize(width: 1_200, height: 1_200)
         let format = UIGraphicsImageRendererFormat()
         format.opaque = true
@@ -200,7 +243,7 @@ enum AppStoreScreenshotFixture {
             (#colorLiteral(red: 0.875, green: 0.741, blue: 0.827, alpha: 1), #colorLiteral(red: 0.510, green: 0.361, blue: 0.451, alpha: 1), #colorLiteral(red: 0.949, green: 0.890, blue: 0.800, alpha: 1), #colorLiteral(red: 0.376, green: 0.525, blue: 0.690, alpha: 1)),
             (#colorLiteral(red: 0.729, green: 0.851, blue: 0.753, alpha: 1), #colorLiteral(red: 0.369, green: 0.302, blue: 0.239, alpha: 1), #colorLiteral(red: 0.941, green: 0.855, blue: 0.659, alpha: 1), #colorLiteral(red: 0.659, green: 0.412, blue: 0.286, alpha: 1)),
         ]
-        let palette = palettes[variant % palettes.count]
+        let palette = custom ?? palettes[variant % palettes.count]
 
         return UIGraphicsImageRenderer(size: canvas, format: format).image { renderer in
             let context = renderer.cgContext
@@ -262,7 +305,7 @@ enum AppStoreScreenshotFixture {
             palette.1.setFill()
             UIBezierPath(ovalIn: CGRect(x: 315, y: 365, width: 570, height: 520)).fill()
 
-            palette.2.withAlphaComponent(0.90).setFill()
+            (muzzle ?? palette.2.withAlphaComponent(0.90)).setFill()
             UIBezierPath(ovalIn: CGRect(x: 430, y: 590, width: 340, height: 250)).fill()
 
             let eyeColor = UIColor(red: 0.89, green: 0.75, blue: 0.30, alpha: 1)

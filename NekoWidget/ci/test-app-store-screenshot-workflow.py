@@ -351,7 +351,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertLess(decode, visibility)
         self.assertLess(visibility, returned)
 
-    def test_ui_test_and_exporter_agree_on_six_ordered_names(self) -> None:
+    def test_ui_test_and_exporter_agree_on_seven_ordered_names(self) -> None:
         names = [
             "01-local-cat-widget",
             "07-group-window",
@@ -359,6 +359,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "02-local-photo-window",
             "04-liked-photos",
             "06-windows-tab",
+            "08-nowa-window",
         ]
         for name in names:
             captures = self.ui_test.count(f'captureScreenshot(named: "{name}"')

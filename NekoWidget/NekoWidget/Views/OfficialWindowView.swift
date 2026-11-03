@@ -1135,6 +1135,14 @@ private struct OfficialPhotoImage: View {
 }
 
 #if DEBUG
+extension PublicWindowDefinition {
+    /// のわのまど for offline fixtures. The endpoint only marks the window as
+    /// configured: `.invalid` never resolves, and fixtures replace the network.
+    static let blackCatsFixture = PublicWindowDefinition(
+        id: "black-cats", displayName: "のわのまど", subtitle: "1日1枚、きょうののわ",
+        endpoint: URL(string: "https://official.invalid/windows/black-cats/catalog.json"))
+}
+
 /// Offline fixture uses the shipping store and screens, with only the public
 /// network boundary replaced. No Photos permission, real account or feed.
 @MainActor
