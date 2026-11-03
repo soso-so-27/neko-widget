@@ -274,7 +274,7 @@ jobs:
 
   capture-review:
     name: Capture changed screens
-    if: inputs.review_test != '' && inputs.review_test != 'testReviewPublicIPadCompatibility'
+    if: inputs.review_test != '' && inputs.review_test != 'testReviewPublicIPadCompatibility' && inputs.review_test != 'probePublicIPadSettings'
     runs-on: macos-15
     timeout-minutes: 25
     env:
@@ -410,7 +410,8 @@ jobs:
             ci/fixtures/cats/cat-orange-square.png \
             ci/fixtures/cats/cat-tuxedo-landscape.png \
             ci/fixtures/cats/cat-gray-portrait.png
-          xcrun simctl privacy "$IPAD_DEVICE" grant photos jp.nekowidget.app
+          # Exercise the visible Photos permission prompt in the public walk-through.
+          # test-without-building installs the app again; do not rely on a pre-grant.
       - name: Walk through the five public screens once
         timeout-minutes: 7
         working-directory: NekoWidget
@@ -464,3 +465,27 @@ jobs:
             xcrun simctl shutdown "$IPAD_DEVICE" || true
             xcrun simctl delete "$IPAD_DEVICE" || true
           fi
+
+  probe-public-ipad:
+    name: Read public Simulator build settings only (no compilation or UI)
+    if: inputs.review_test == 'probePublicIPadSettings'
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Compare settings probe with and without the coverage argument
+        working-directory: NekoWidget
+        run: python3 ci/probe-public-ipad-settings.py
+      - name: Preserve the direct probe output
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: public-ipad-settings-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/ipad-settings-probe.txt
+          retention-days: 7
+          if-no-files-found: warn

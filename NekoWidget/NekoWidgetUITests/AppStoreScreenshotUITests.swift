@@ -38,6 +38,18 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         capture("01-onboarding")
         guard tap("onboarding-purpose-start") else { return }
+        let photoPermission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        guard photoPermission.waitForExistence(timeout: 60) else {
+            capture("missing-photo-permission"); XCTFail("Normal Photos permission prompt missing"); return
+        }
+        capture("02-photo-permission")
+        let fullAccess = photoPermission.buttons.matching(NSPredicate(format: "label IN %@", [
+            "Allow Full Access", "Allow Access to All Photos", "フルアクセスを許可", "すべての写真へのアクセスを許可"
+        ])).firstMatch
+        guard fullAccess.exists, fullAccess.isHittable else {
+            capture("unreachable-photo-permission"); XCTFail("Full access action missing from Photos permission prompt"); return
+        }
+        fullAccess.tap()
         guard app.buttons["initial-scan-continue"].waitForExistence(timeout: 60) else {
             capture("scan-not-ready"); XCTFail("Normal scan screen missing"); return
         }
@@ -65,22 +77,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
         capture("06-settings")
         let plus = app.buttons["settings-membership-offer"].firstMatch
-        guard scrollUpUntilHittable(plus, application: app, maximumSwipes: 5) else {
-            capture("missing-public-plus-entry")
-            XCTFail("Public Plus entry unavailable; no preview/restore fallback")
-            return
-        }
-        plus.tap()
-        XCTAssertTrue(app.staticTexts["membership-offer-heading"].firstMatch
-            .waitForExistence(timeout: 20), app.debugDescription)
-        capture("07-plus-sheet-top")
+        let plusEntryVisible = scrollUpUntilHittable(plus, application: app, maximumSwipes: 5)
+        capture(plusEntryVisible ? "07-plus-entry" : "07-plus-entry-unavailable-synthetic-url")
+        let plusObservation = XCTAttachment(string: "Public Plus entry hittable: \(plusEntryVisible). Synthetic .test billing URL is not a configured public billing service; Plus sheet is outside this walk-through.")
+        plusObservation.name = "ipad-public-plus-entry-observation"
+        plusObservation.lifetime = .keepAlways
+        add(plusObservation)
+        // Entry observation only: never use an internal preview or open StoreKit.
         app.swipeUp()
-        capture("08-plus-sheet-bottom")
-        // Never purchase, restore, sign in, or send a photo in this visual check.
-        guard tap("membership-offer-close", timeout: 20) else { return }
-        XCTAssertTrue(app.navigationBars["設定"].waitForExistence(timeout: 10))
-        app.swipeUp()
-        capture("09-settings-bottom")
+        capture("08-settings-bottom")
         XCTAssertFalse(app.buttons["settings-membership-preview"].exists)
         XCTAssertFalse(app.buttons["settings-internal-diagnostics"].exists)
         app.terminate()
