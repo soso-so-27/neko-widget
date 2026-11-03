@@ -351,7 +351,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertLess(decode, visibility)
         self.assertLess(visibility, returned)
 
-    def test_ui_test_and_exporter_agree_on_seven_ordered_names(self) -> None:
+    def test_ui_test_and_exporter_agree_on_eight_ordered_names(self) -> None:
         names = [
             "01-local-cat-widget",
             "07-group-window",
@@ -360,6 +360,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "04-liked-photos",
             "06-windows-tab",
             "08-nowa-window",
+            "09-cat-care",
         ]
         for name in names:
             captures = self.ui_test.count(f'captureScreenshot(named: "{name}"')
@@ -367,7 +368,8 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.assertEqual(captures, 1)
             self.assertIn(f'("{name}",', self.exporter)
         selectors = self.workflow.split("  capture-review", 1)[0]
-        for method in ("testCaptureVersion1ProductScreens", "testCaptureVersion1WindowScreens"):
+        for method in ("testCaptureVersion1ProductScreens", "testCaptureVersion1WindowScreens",
+                       "testCaptureVersion1CatCareScreen"):
             self.assertIn("AppStoreScreenshotUITests/" + method, selectors)
         self.assertNotIn("05-on-device-photo-privacy", self.exporter)
         self.assertNotIn("AppStoreScreenshotUITests/testCaptureJapaneseLocalOnlyProductScreens", selectors)

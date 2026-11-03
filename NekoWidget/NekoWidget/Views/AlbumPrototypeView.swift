@@ -9,7 +9,12 @@ extension Version1 {
     /// 家族の手帳: internal builds try it on the prototype; a public build shows
     /// it only once the real sharing is on (FamilyNotebookProductionEnabled).
     @MainActor static var familyNotebook: Bool {
-        InternalBuildPresentationAvailability.isAvailable || FamilyNotebookServiceFactory.productionRequested
+#if DEBUG
+        // The App Store shot shows the entry as the production build has it
+        // (Config.Production.xcconfig turns the real sharing on).
+        if AppStoreScreenshotFixture.showsProductionFamilyEntry { return true }
+#endif
+        return InternalBuildPresentationAvailability.isAvailable || FamilyNotebookServiceFactory.productionRequested
     }
 }
 

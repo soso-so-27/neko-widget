@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       review_test:
-        description: "対象のtestReviewメソッド。空欄は1.0のApp Store用7枚"
+        description: "対象のtestReviewメソッド。空欄は1.0のApp Store用8枚"
         type: string
         default: ""
 
@@ -232,6 +232,7 @@ jobs:
             -resultBundlePath "$result_bundle" \
             -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureVersion1ProductScreens \
             -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureVersion1WindowScreens \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureVersion1CatCareScreen \
             -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore \
             -parallel-testing-enabled NO \
             -testLanguage ja \

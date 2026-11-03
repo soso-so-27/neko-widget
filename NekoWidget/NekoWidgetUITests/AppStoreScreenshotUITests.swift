@@ -525,6 +525,50 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.terminate()
     }
 
+    /// 「この子のこと」 written in, with the family entry at the top right.
+    @MainActor
+    func testCaptureVersion1CatCareScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = japaneseLaunchArguments
+            + ["--app-store-screenshot-fixture", "--review-public-presentation", "--app-store-screenshot-cat-care"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
+        app.launch()
+        // The next capture starts on Albums: leave that tab selected even when
+        // this test stops early.
+        addTeardownBlock {
+            MainActor.assumeIsolated {
+                _ = self.tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム")
+                app.terminate()
+            }
+        }
+        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), app.debugDescription)
+        let care = app.buttons["tools-care-open"]
+        XCTAssertTrue(care.waitForExistence(timeout: 10), app.debugDescription)
+        care.tap()
+        let profile = app.buttons["tool-profile-11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(profile.waitForExistence(timeout: 10), app.debugDescription)
+        profile.tap()
+        // 「預けるとき」 opens first; its link to 「この子のこと」 is further down
+        // the list, which makes the row only once it scrolls near.
+        XCTAssertTrue(app.descendants(matching: .any)["care-cat-care-fields"].firstMatch.waitForExistence(timeout: 10),
+                      app.debugDescription)
+        let catCare = app.descendants(matching: .any)["care-open-cat-care"].firstMatch
+        XCTAssertTrue(scrollUpUntilHittable(catCare, application: app), app.debugDescription)
+        catCare.tap()
+        XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
+        // Open 「暮らし」 so the shot shows what was written (接し方・ごはん・トイレ).
+        let living = app.buttons["cat-care-part-living"]
+        XCTAssertTrue(living.waitForExistence(timeout: 10), app.debugDescription)
+        living.tap()
+        XCTAssertTrue(app.staticTexts["抱っこは少し苦手。名前を呼ぶと来ます。"].waitForExistence(timeout: 10)
+                      || app.textViews["抱っこは少し苦手。名前を呼ぶと来ます。"].exists
+                      || app.descendants(matching: .any).matching(NSPredicate(format: "value == %@ OR label == %@",
+                          "抱っこは少し苦手。名前を呼ぶと来ます。", "抱っこは少し苦手。名前を呼ぶと来ます。")).firstMatch.exists,
+                      app.debugDescription)
+        sleep(1)
+        captureScreenshot(named: "09-cat-care")
+    }
+
     /// App Store candidates for the window screens: the まど tab and one
     /// みんなのまど, on the in-memory screen fixture (no relay, key or account).
     @MainActor

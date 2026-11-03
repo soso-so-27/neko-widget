@@ -52,6 +52,7 @@ targets = [
     ("04-liked-photos", "05-liked-photos"),
     ("06-windows-tab", "06-windows-tab"),
     ("08-nowa-window", "07-nowa-window"),
+    ("09-cat-care", "08-cat-care"),
 ]
 accepted_portrait_sizes = {
     (1260, 2736),
@@ -317,7 +318,7 @@ for target, output_name in targets:
     encoding="utf-8",
 )
 
-print("Exported seven metadata-free App Store JPEGs:")
+print("Exported eight metadata-free App Store JPEGs:")
 for item in report["screenshots"]:
     print(
         f"- {item['file']}: {item['width']}x{item['height']} "
