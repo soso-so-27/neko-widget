@@ -219,6 +219,23 @@ struct SettingsView: View {
                 PlusSettingsSection()
             }
 
+            if GroupWindowClientProvider.ui != nil {
+                Section {
+                    NavigationLink { GroupHiddenMembersView() } label: {
+                        Label("表示しない・ブロックした人", systemImage: "eye.slash")
+                    }
+                    .accessibilityIdentifier("settings-group-hidden-members")
+                    if let client = GroupWindowClientProvider.production {
+                        NavigationLink { GroupIdentityDeletionView(client: client) } label: {
+                            Label("まどのデータと ID を削除", systemImage: "person.crop.circle.badge.xmark")
+                        }
+                        .accessibilityIdentifier("settings-group-identity-deletion")
+                    }
+                } header: {
+                    Text("まど")
+                }
+            }
+
             // 保存 (10/31): 自動保存 first, then moving to a new iPhone, right here.
             Section {
                 if ManagedPreservationConfiguration.current.isEnabled {
@@ -254,12 +271,6 @@ struct SettingsView: View {
                     Link(destination: url) {
                         ExternalLinkRow("コミュニティ基準", systemImage: "checkmark.shield")
                     }
-                }
-                if GroupWindowClientProvider.ui != nil {
-                    NavigationLink { GroupHiddenMembersView() } label: {
-                        Label("表示しない・ブロックした人", systemImage: "eye.slash")
-                    }
-                    .accessibilityIdentifier("settings-group-hidden-members")
                 }
             } header: {
                 Text("サポート")

@@ -2113,6 +2113,85 @@ struct GroupHiddenMembersView: View {
     }
 }
 
+/// 設定「まどのデータと ID を削除」(A1): one state, one sentence, one button.
+struct GroupIdentityDeletionView: View {
+    let client: ProductionGroupWindowClient
+    @State private var record: GroupIdentityDeletion?
+    @State private var loaded = false
+    @State private var working = false
+    @State private var failure: String?
+    @State private var confirms = false
+
+    var body: some View {
+        List {
+            Section {
+                if let record, record.completedAt != nil {
+                    Label("削除しました", systemImage: "checkmark.circle")
+                    Text("この iPhone に届いた写真は「前のまど」に残ります。").foregroundStyle(.secondary)
+                } else if let record, record.acceptedAt != nil {
+                    Label("削除しています", systemImage: "hourglass")
+                    Text("終わるまで少しかかることがあります。").foregroundStyle(.secondary)
+                    Button("確かめる") { Task { await refresh() } }
+                        .frame(minHeight: 44)
+                        .disabled(working)
+                } else {
+                    Text("参加しているまどと家族の手帳から抜け、あなたが届けた写真・ひとこと・ハートと、まどの ID をサーバーから消します。")
+                    Button("まどのデータと ID を削除", role: .destructive) { confirms = true }
+                        .frame(minHeight: 44)
+                        .disabled(working || !loaded)
+                        .accessibilityIdentifier("group-identity-delete")
+                }
+                if let failure {
+                    Text(failure).foregroundStyle(.red)
+                        .announcesWhenShown(failure)
+                }
+            } footer: {
+                if let url = AppPublicLinksConfiguration.current.privacyURL {
+                    Link("残る記録について（プライバシーポリシー）", destination: url)
+                }
+            }
+        }
+        .confirmationDialog("まどのデータと ID を削除しますか？", isPresented: $confirms, titleVisibility: .visible) {
+            Button("削除する", role: .destructive) { Task { await delete() } }
+            Button("戻る", role: .cancel) {}
+        } message: {
+            Text("あなたが作ったまども閉じます。メンバーの iPhone に届いた写真は残ります。")
+        }
+        .navigationTitle("まどのデータと ID")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            record = try? await client.identityDeletion()
+            loaded = true
+            if record?.acceptedAt != nil, record?.completedAt == nil { await refresh() }
+        }
+    }
+
+    private func delete() async {
+        working = true
+        defer { working = false }
+        failure = nil
+        let windowIDs = (try? await client.localWindowIDs()) ?? []
+        do {
+            record = try await client.requestIdentityDeletion()
+            for windowID in windowIDs { try? GroupWidgetCache.remove(windowID: windowID) }
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        } catch {
+            failure = GroupWindowPresentation.message(for: error)
+        }
+    }
+
+    private func refresh() async {
+        working = true
+        defer { working = false }
+        do {
+            if let latest = try await client.identityDeletionStatus() { record = latest }
+            failure = nil
+        } catch {
+            failure = GroupWindowPresentation.message(for: error)
+        }
+    }
+}
+
 #if DEBUG
 // MARK: - Screen fixture (simulator screenshots only)
 
