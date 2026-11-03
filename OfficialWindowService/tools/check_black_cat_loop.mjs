@@ -111,16 +111,17 @@ export async function verifyBlackCatLoop(current, { fetcher = fetch, versionRead
   });
   const photo = selected.catalog.photos[0];
   await checked('image', async () => {
-    const response = await request(ROUTE + photo.imageFilename); assert.equal(response.status, 200);
-    assert.equal(response.headers.get('content-type'), 'image/jpeg');
-    const bytes = await responseBytes(response, 4 * 1024 * 1024);
-    assert.equal(hash(bytes), photo.sha256); validatePublisherJPEG(bytes, photo.width, photo.height);
+    for (const image of new Map(selected.catalog.photos.map(row => [row.imageFilename, row])).values()) {
+      const response = await request(ROUTE + image.imageFilename); assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'image/jpeg');
+      const bytes = await responseBytes(response, 4 * 1024 * 1024);
+      assert.equal(hash(bytes), image.sha256); validatePublisherJPEG(bytes, image.width, image.height);
+    }
   });
-  // One non-current JPEG exercises the shared deny rule. Prefer tomorrow's
-  // selection; checking every stored image would add no route coverage.
-  const nextPhoto = blackCatDay(index, selected.end)?.catalog.photos[0];
-  const nonCurrent = nextPhoto?.sha256 !== photo.sha256 && nextPhoto
-    ? nextPhoto : index.images.find(row => row.sha256 !== photo.sha256);
+  // Tomorrow is now deliberately preloadable; a photo outside the two-day
+  // allowlist must still be rejected without scanning every stored image.
+  const allowed = new Set(selected.catalog.photos.map(row => row.sha256));
+  const nonCurrent = index.images.find(row => !allowed.has(row.sha256));
   const denied = ['/catalog.json', '/windows/weekly-theme/catalog.json', '/loop-config.json', '/schedule-review.json',
     '/__program/index.json', '/__program/images/' + photo.imageFilename, ROUTE + 'catalog.json?future=1',
     ROUTE + '%2e%2e%2f__program/index.json',

@@ -53,11 +53,17 @@ test('a paused catalog remains readable but all old pictures stop', async () => 
   assert.equal((await (await fetch('/catalog.json', env)).json()).enabled, false);
   assert.equal((await fetch(`/${filename}`, env)).status, 404);
 });
-test('expired or future photos cannot be fetched directly', async () => {
+test('expired photos stop while approved next-day photos can be preloaded', async () => {
   const expired = catalog(); expired.photos[0].expiresAt = utc(now);
   assert.equal((await fetch(`/${filename}`, environment(expired))).status, 404);
   const future = catalog(); future.generatedAt = utc(now + 120_000); future.photos[0].publishedAt = future.generatedAt;
-  assert.equal((await fetch(`/${filename}`, environment(future))).status, 404);
+  assert.equal((await fetch(`/${filename}`, environment(future))).status, 200);
+  future.photos[0].publishedAt = utc(Date.parse(future.generatedAt) + 86400_000);
+  future.photos[0].expiresAt = utc(Date.parse(future.photos[0].publishedAt) + 3600_000);
+  assert.equal((await fetch(`/${filename}`, environment(future))).status, 200);
+  future.photos[0].publishedAt = utc(Date.parse(future.generatedAt) + 86400_000 + 1000);
+  future.photos[0].expiresAt = utc(Date.parse(future.photos[0].publishedAt) + 3600_000);
+  assert.equal((await fetch(`/${filename}`, environment(future))).status, 503);
 });
 test('stale, invalid and conflicting catalog data fail without serving images', async t => {
   t.mock.method(Date, 'now', () => now);

@@ -45,10 +45,12 @@ export function activeFiles(catalog, now = Date.now(), expectedChannel = 'offici
         || !/^\d{4}-\d{2}-\d{2}$/.test(photo.photographedOn)
         || !Number.isFinite(time(`${photo.photographedOn}T00:00:00Z`)))) invalid();
     const published = time(photo.publishedAt), expires = time(photo.expiresAt);
-    if (!Number.isFinite(published) || !Number.isFinite(expires) || published > generated
+    if (!Number.isFinite(published) || !Number.isFinite(expires) || published > generated + 24 * 3600_000
         || expires <= published || expires - published > 14 * 86400_000) invalid();
     ids.add(photo.id);
-    if (published <= now && now < expires) files.add(photo.imageFilename);
+    // Approved next-day bytes may be cached before publication. Display still
+    // requires publishedAt <= now on the client; later reservations stay private.
+    if (now < expires) files.add(photo.imageFilename);
   }
   return files;
 }
