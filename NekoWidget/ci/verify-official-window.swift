@@ -128,7 +128,7 @@ struct OfficialWindowChecks {
         check(catalog(enabled: false, photos: []).availablePhotos(at: now).isEmpty, "Paused photo visible")
         rejects("paused catalog with photos") { try catalog(enabled: false).validate(at: now) }
         rejects("duplicate photo ID") { try catalog(photos: [photo, photo]).validate(at: now) }
-        rejects("future publication") { try catalog(now.addingTimeInterval(-1)).validate(at: now) }
+        rejects("publication more than 24 hours after its edition") { try catalog(now.addingTimeInterval(-86_401)).validate(at: now) }
         rejects("expired edition") { try active.validate(at: active.validUntil) }
         check(!OfficialWindowCatalog.isIdentifier("../private-photo"), "Traversal ID accepted")
         check(!OfficialWindowCatalog.isIdentifier("family-window:foo"), "Private namespace accepted")
@@ -177,6 +177,7 @@ struct OfficialWindowChecks {
         try await verifyCatWindow(catalog: active, photo: photo, image: image,
                                   root: root.appendingPathComponent("cat-window"), endpoint: endpoint)
         try await verifyProgramme(root: root, endpoint: endpoint, photo: photo)
+        try await verifyNextDayPrefetch(image: image, root: root, endpoint: endpoint)
         print("Official window: \(assertions) catalog, routing, image, expiry, preview and subscription assertions passed")
     }
 
@@ -633,6 +634,83 @@ struct OfficialWindowChecks {
         rejects("old cycle cannot replace the current daily edition") { try loopStore.accept(firstCycle, for: request) }
         check(nextCycle.widgetPhotos(at: nextCycle.validUntil, blackCatDailyEnabled: true).isEmpty,
               "Repeating delivery weakened the midnight Widget deadline")
+    }
+
+    /// のわ: the feed lists tomorrow's photo before 00:00 JST. The device holds
+    /// its image, never shows it early, and drops it when it is withdrawn.
+    static func verifyNextDayPrefetch(image: Data, root: URL, endpoint: URL) async throws {
+        let bytes = NSMutableData()
+        let context = CGContext(data: nil, width: 64, height: 48, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 64, height: 48))
+        let destination = CGImageDestinationCreateWithData(bytes, "public.jpeg" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        check(CGImageDestinationFinalize(destination), "Could not encode the next-day JPEG")
+        let nextImage = bytes as Data
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3600)!
+        let now = Date(), day = calendar.startOfDay(for: now), tomorrow = day.addingTimeInterval(86400)
+        func daily(_ id: String, _ start: Date, _ data: Data) -> OfficialCatPhoto {
+            let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            return OfficialCatPhoto(id: id, catID: "generated-black-cat", catName: "のわ",
+                credit: "ねこのまど（AI で作った画像）", caption: "のわはきょう、まどべでひなたぼっこ。",
+                photographedOn: nil, publishedAt: start, expiresAt: start.addingTimeInterval(86400),
+                imageFilename: hash + ".jpg", sha256: hash, width: 64, height: 48)
+        }
+        let today = daily("nowa-today", day, image), next = daily("nowa-tomorrow", tomorrow, nextImage)
+        check(today.imageFilename != next.imageFilename, "Next-day fixture reused today's image")
+        let feed = OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: true,
+            generatedAt: day, validUntil: day.addingTimeInterval(2 * 86400), photos: [today, next])
+        try feed.validate(at: now, expectedChannelID: "black-cats")
+        check(feed.availablePhotos(at: now) == [today], "Tomorrow's photo was shown before 00:00 JST")
+        check(feed.nextPublication(after: now) == next, "Tomorrow's photo was not chosen for prefetch")
+        check(feed.upcomingWidgetPhoto(after: now, blackCatDailyEnabled: true).map { $0.at == tomorrow && $0.photo == next } == true,
+              "Widget did not plan the 00:00 JST switch")
+        check(feed.upcomingWidgetPhoto(after: now, blackCatDailyEnabled: false) == nil, "Next-day plan escaped the 1.0 gate")
+        check(feed.widgetPhotos(at: tomorrow, blackCatDailyEnabled: true) == [next], "00:00 JST kept yesterday's photo")
+        check(feed.retainedPhotos(at: tomorrow) == [next], "Yesterday's image was kept after its day")
+        let tooEarly = daily("nowa-too-early", day.addingTimeInterval(86400 + 1), nextImage)
+        rejects("photo listed more than 24 hours ahead") {
+            try OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: true, generatedAt: day,
+                validUntil: day.addingTimeInterval(2 * 86400), photos: [today, tooEarly])
+                .validate(at: now, expectedChannelID: "black-cats")
+        }
+
+        let store = OfficialWindowStore(directory: root.appendingPathComponent("black-cat-prefetch"),
+            definition: .init(id: "black-cats", displayName: "のわのまど", subtitle: "1日1枚、きょうののわ",
+                endpoint: endpoint.deletingLastPathComponent().appendingPathComponent("windows/black-cats/catalog.json")))
+        let feedURL = store.endpoint!
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        func serve(_ catalog: OfficialWindowCatalog) throws {
+            PreviewURLProtocol.configure([
+                feedURL.absoluteString: .init(data: try encoder.encode(catalog)),
+                today.imageFilename: .init(data: image, type: "image/jpeg"),
+                next.imageFilename: .init(data: nextImage, type: "image/jpeg")
+            ])
+        }
+        let loader = OfficialWindowClient(previewEndpoint: endpoint, protocolClasses: [PreviewURLProtocol.self])
+        try store.setSubscribed(true)
+        try serve(feed)
+        try await loader.refresh(store: store)
+        check(store.snapshot().photos == [today], "Prefetch changed what the window shows today")
+        check(store.imageURL(for: today) != nil && store.imageURL(for: next) != nil
+              && store.imageURL(filename: next.imageFilename) != nil, "Tomorrow's image was not held for the Widget")
+        check(Set(PreviewURLProtocol.requests()) == ["catalog.json", today.imageFilename, next.imageFilename],
+              "Prefetch fetched an unexpected URL")
+        try serve(feed)
+        try await loader.refresh(store: store)
+        check(PreviewURLProtocol.requests() == ["catalog.json"], "Held images were downloaded again")
+        let withdrawn = OfficialWindowCatalog(schemaVersion: 1, channelID: "black-cats", enabled: true,
+            generatedAt: day.addingTimeInterval(1), validUntil: feed.validUntil, photos: [today])
+        try serve(withdrawn)
+        try await loader.refresh(store: store)
+        check(store.imageURL(for: next) == nil && !FileManager.default.fileExists(
+              atPath: store.directory!.appendingPathComponent(next.imageFilename).path),
+              "Withdrawn next-day image stayed on disk")
+        try store.setSubscribed(false)
+        check(store.imageURL(for: today) == nil, "Stopped feed kept prefetched media")
     }
 
     static func verifyPreview(catalog: OfficialWindowCatalog, photo: OfficialCatPhoto, image: Data,

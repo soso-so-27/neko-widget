@@ -102,6 +102,12 @@ struct OfficialWindowState: Codable, Sendable {
               (try? catalog.validate(at: Date(), expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
         return catalog.availablePhotos(at: Date())
     }
+    /// Today's photos plus the next day's prefetched photo. Never a display list.
+    var retainedPhotos: [OfficialCatPhoto] {
+        guard isSubscribed, let catalog,
+              (try? catalog.validate(at: Date(), expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
+        return catalog.retainedPhotos(at: Date())
+    }
     func widgetPhotos(at date: Date) -> [OfficialCatPhoto] {
         guard isSubscribed, let catalog,
               (try? catalog.validate(at: date, expectedChannelID: windowID, expectedCatID: expectedCatID)) != nil else { return [] }
@@ -191,7 +197,9 @@ struct OfficialWindowStore: Sendable {
     func imageURL(for photo: OfficialCatPhoto) -> URL? {
         try? locked { root -> URL? in
             let state = try read(root)
-            guard state.photos.contains(photo) else { return nil }
+            // A Widget may render the 00:00 entry ahead of time, so the
+            // prefetched next-day image is readable; lists still use photos.
+            guard state.retainedPhotos.contains(photo) else { return nil }
             let url = root.appendingPathComponent(photo.imageFilename)
             return FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
@@ -200,7 +208,7 @@ struct OfficialWindowStore: Sendable {
     func imageURL(filename: String) -> URL? {
         try? locked { root -> URL? in
             let state = try read(root)
-            guard state.photos.contains(where: { $0.imageFilename == filename }) else { return nil }
+            guard state.retainedPhotos.contains(where: { $0.imageFilename == filename }) else { return nil }
             let url = root.appendingPathComponent(filename)
             return FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
@@ -219,7 +227,7 @@ struct OfficialWindowStore: Sendable {
             state.catalog = catalog
             state.checkedAt = Date()
             try AtomicJSON.write(state, to: root.appendingPathComponent("state.json"))
-            try purgeImages(in: root, keeping: Set(state.photos.map(\.imageFilename)))
+            try purgeImages(in: root, keeping: Set(state.retainedPhotos.map(\.imageFilename)))
         }
     }
 
@@ -230,7 +238,7 @@ struct OfficialWindowStore: Sendable {
             guard state.isSubscribed, state.subscriptionID == request.subscriptionID,
                   state.windowID == windowID, request.windowID == windowID,
                   state.endpoint == endpoint, request.endpoint == endpoint,
-                  state.photos.contains(photo) else { throw OfficialWindowError.subscriptionChanged }
+                  state.retainedPhotos.contains(photo) else { throw OfficialWindowError.subscriptionChanged }
             let url = root.appendingPathComponent(photo.imageFilename)
             try data.write(to: url, options: .atomic)
             try? FileManager.default.setAttributes(
@@ -518,6 +526,16 @@ actor OfficialWindowClient {
             let url = endpoint.deletingLastPathComponent().appendingPathComponent(photo.imageFilename)
             let image = try await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg")
             try store.saveImage(image, photo: photo, for: request)
+        }
+        // Hold the next day's photo now, so the Widget can switch at 00:00 JST
+        // without a network refresh. A failure here retries on the next refresh.
+        if let upcoming = catalog.nextPublication(after: Date()),
+           store.imageURL(for: upcoming) == nil {
+            try Task.checkCancellation()
+            let url = endpoint.deletingLastPathComponent().appendingPathComponent(upcoming.imageFilename)
+            if let image = try? await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg") {
+                try? store.saveImage(image, photo: upcoming, for: request)
+            }
         }
     }
 
