@@ -162,6 +162,19 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                                       photoSourceIdentifier: source.id,
                                       windowDisplayName: store.displayName))
             }
+            // のわ: the next day's photo is already on disk, so 00:00 JST
+            // switches to it without waiting for iOS to refresh the network.
+            if let catalog = state.catalog,
+               let upcoming = catalog.upcomingWidgetPhoto(after: date) {
+                let next = officialEntry(now: upcoming.at, variant: variant, sourceID: source.id)
+                if let photo = next.officialPhoto, photo == upcoming.photo {
+                    entries.removeAll { $0.date >= upcoming.at }
+                    entries.append(next)
+                    entries.append(.empty(at: catalog.widgetDeadline(for: photo), imageVariant: variant,
+                                          photoSourceIdentifier: source.id,
+                                          windowDisplayName: store.displayName))
+                }
+            }
             var refresh = date.addingTimeInterval(60 * 60)
             if windowID == "black-cats", Version1.isOn {
                 refresh = min(refresh, OfficialWindowCatalog.nextBlackCatCutover(after: date))

@@ -83,6 +83,9 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
     static let sourceID = "official-cats"
     static let displayName = "どこかの猫"
     static let maximumLifetime: TimeInterval = 48 * 60 * 60
+    /// The feed lists the next day's photo up to 24 hours ahead so the device
+    /// can hold it before 00:00 JST. It is still shown only from publishedAt.
+    static let prefetchWindow: TimeInterval = 24 * 60 * 60
     let schemaVersion: Int
     let channelID: String
     let enabled: Bool
@@ -95,6 +98,33 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
         return photos.filter { $0.isAvailable(at: date) }.sorted {
             $0.publishedAt == $1.publishedAt ? $0.id < $1.id : $0.publishedAt > $1.publishedAt
         }
+    }
+
+    /// Photos the device may keep on disk: published or due within the next
+    /// 24 hours, and not yet expired. Display still uses availablePhotos.
+    func retainedPhotos(at date: Date) -> [OfficialCatPhoto] {
+        guard enabled, date < validUntil, generatedAt <= date.addingTimeInterval(300) else { return [] }
+        return photos.filter {
+            $0.publishedAt <= date.addingTimeInterval(Self.prefetchWindow) && date < $0.expiresAt
+        }
+    }
+
+    /// The earliest photo due within the next 24 hours, for prefetching.
+    func nextPublication(after date: Date) -> OfficialCatPhoto? {
+        retainedPhotos(at: date).filter { $0.publishedAt > date }
+            .min { ($0.publishedAt, $0.id) < ($1.publishedAt, $1.id) }
+    }
+
+    /// The photo the black-cat Widget switches to at the next 00:00 JST, when
+    /// this catalog already lists it. Nil for every other window.
+    func upcomingWidgetPhoto(after date: Date,
+                             blackCatDailyEnabled: Bool = Version1.isOn) -> (at: Date, photo: OfficialCatPhoto)? {
+        guard channelID == "black-cats", blackCatDailyEnabled else { return nil }
+        let cutover = Self.nextBlackCatCutover(after: date)
+        guard cutover < validUntil,
+              let photo = widgetPhotos(at: cutover, blackCatDailyEnabled: true).first,
+              photo.publishedAt > date else { return nil }
+        return (cutover, photo)
     }
 
     /// The internal black-cat window changes at 00:00 JST.
@@ -138,7 +168,8 @@ struct OfficialWindowCatalog: Codable, Equatable, Sendable {
                   Self.isText(photo.catName, limit: 30), Self.isText(photo.credit, limit: 80),
                   photo.caption.map({ Self.isText($0, limit: 100, allowsNewlines: true) }) ?? true,
                   photo.photographedOn.map(Self.isCalendarDate) ?? true,
-                  photo.publishedAt <= generatedAt, photo.expiresAt > photo.publishedAt,
+                  photo.publishedAt <= generatedAt.addingTimeInterval(Self.prefetchWindow),
+                  photo.expiresAt > photo.publishedAt,
                   photo.expiresAt.timeIntervalSince(photo.publishedAt) <= 14 * 24 * 60 * 60,
                   (1...2048).contains(photo.width), (1...2048).contains(photo.height),
                   Self.isSHA256(photo.sha256), photo.imageFilename == photo.sha256 + ".jpg"

@@ -221,7 +221,8 @@ struct OfficialWindowEntryCard: View {
     private var photoDeadlines: [Date] {
         let catalog = state.isSubscribed ? state.catalog : preview.content?.catalog
         return ([Date.now] + [catalog?.validUntil].compactMap { $0 }
-                + (catalog?.photos.map(\.expiresAt) ?? [])).sorted()
+                + (catalog?.photos.flatMap { [$0.publishedAt, $0.expiresAt] } ?? [])
+                    .filter { $0 > Date.now }).sorted()
     }
 
     var body: some View {
@@ -410,7 +411,8 @@ struct OfficialWindowView: View {
     private var currentCatalog: OfficialWindowCatalog? { state.isSubscribed ? state.catalog : preview.content?.catalog }
     private var nextPhotoDeadline: Date? {
         guard let catalog = currentCatalog, catalog.enabled, catalog.validUntil > displayDate else { return nil }
-        return ([catalog.validUntil] + catalog.photos.map(\.expiresAt)).filter { $0 > displayDate }.min()
+        return ([catalog.validUntil] + catalog.photos.flatMap { [$0.publishedAt, $0.expiresAt] })
+            .filter { $0 > displayDate }.min()
     }
     private var photos: [OfficialCatPhoto] {
         if store.windowID == "black-cats", Version1.isOn {
