@@ -41,12 +41,39 @@ async function snapshot<T>(env:Env,key:string,make:()=>Promise<T>) {
  const stored=await record<T>(env,key);if(stored===null)throw bad();return stored;
 }
 export const deletionRequired=(env:Env)=>env.GROUP_IDENTITY_ERASURE_ENABLED==='YES';
+// The admission switch may be turned off. A provisioned journal can never
+// be turned off this way: it also protects previous erasures after a restore.
+const requestProbes=new WeakMap<Env,{probe?:Promise<boolean>}>();
+export function scopeIdentityCheck(env:Env):Env{
+ // Only the result of this request's provisioning lookup is reusable. The
+ // journal sequence and each D1 checkpoint are always read for each guard.
+ const scoped:Env={...env};
+ requestProbes.set(scoped,{});return scoped;
+}
+export function identityJournalActive(env:Env):Promise<boolean>{
+ const entry=requestProbes.get(env);if(!entry)return detectJournal(env);
+ return entry.probe??=detectJournal(env);
+}
+async function detectJournal(env:Env):Promise<boolean>{
+ if(deletionRequired(env))return true;
+ try{
+   if(env.MEDIA){
+     if(await env.MEDIA.head(prefix+'control'))return true;
+     if((await env.MEDIA.list({prefix,limit:1})).objects.length)throw bad();
+   }
+   if(!await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='group_identity_deletion_checkpoint'").first())return false;
+   const current=await cursor(env);
+   if(!env.MEDIA || current.sequence!==0 || current.requestId!=='' ||
+      await env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance LIMIT 1').first())throw bad();
+   return false;
+ }catch{throw bad();}
+}
 export async function protectedGroupRead<T>(env:Env,action:()=>Promise<T>):Promise<T> {
- return deletionRequired(env)?checkedDeletionRead(env.DB,media(env),action):action();
+ return await identityJournalActive(env)?checkedDeletionRead(env.DB,media(env),action):action();
 }
 export async function requireCurrentIdentity(env:Env,person:string) {
- if(!deletionRequired(env))return;
- await protectedGroupRead(env,async()=>{
+ if(!await identityJournalActive(env))return;
+ await checkedDeletionRead(env.DB,media(env),async()=>{
    if(await personIsFenced(media(env),person))throw new ApiError(401,'invalid_authentication','Group authentication failed.');
  });
 }
@@ -113,7 +140,7 @@ async function publishSealed(env:Env,work:Work,control:Awaited<ReturnType<typeof
 // All steps are retryable. Cron and authenticated status checks can resume
 // immediately; no report retention timer forms part of this state machine.
 export async function advanceIdentityDeletion(env:Env) {
- if(!deletionRequired(env))return;
+ if(!await identityJournalActive(env))return;
  const control=await tip(env),applied=await cursor(env),bucket=media(env);
  if(same(control,applied)) {
    if(control.sequence){
@@ -183,7 +210,8 @@ export async function advanceIdentityDeletion(env:Env) {
  await finalize(env,work);
 }
 export async function identityDeletionAPI(request:Request,env:Env,ctx?:ExecutionContext):Promise<Response>{
- if(!deletionRequired(env))throw missing();
+ if(request.method==='POST' && !deletionRequired(env))throw missing();
+ if(!await identityJournalActive(env))throw missing();
  const url=new URL(request.url);rejectQuery(url);
  const nudge=()=>{if(ctx)ctx.waitUntil(advanceIdentityDeletion(env));};
  if(request.method==='GET' && url.pathname.startsWith(path+'/') && url.pathname.endsWith('/status')){

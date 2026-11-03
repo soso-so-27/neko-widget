@@ -1,4 +1,4 @@
-import {advanceIdentityDeletion,deletionRequired,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
+import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
 import { requestBillingTransactionDeletion, billingTransactionDeletionStatus, scheduleBillingTransactionRetention } from './billing-retention-api';
 import { requireBillingRetentionSnapshot } from './billing-retention-journal';
@@ -132,11 +132,12 @@ export async function route(
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
+  if(pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks'))env=scopeIdentityCheck(env);
   if(isIdentityDeletionPath(pathname)){
     try {return await identityDeletionAPI(request,env,ctx);}
     catch(error){if(error instanceof ApiError)throw error;throw new ApiError(503,'deletion_recovery_required','Group data is temporarily unavailable.');}
   }
-  if(deletionRequired(env) && (pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks')))
+  if(pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks'))
     return protectedGroupRead(env,()=>dispatch(request,env,ctx));
   return dispatch(request,env,ctx);
 }

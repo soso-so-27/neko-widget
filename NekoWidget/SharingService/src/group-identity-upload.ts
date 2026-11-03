@@ -1,3 +1,4 @@
+import {identityJournalActive} from './group-identity-service';
 import {ApiError} from './errors';
 import type {Env} from './env';
 
@@ -6,7 +7,7 @@ import type {Env} from './env';
 // old ETag, even if the request terminates before its final D1 check.
 export async function putGroupUpload(env:Env,bucket:R2Bucket,key:string,data:Uint8Array,opts:R2PutOptions,
   authorize:()=>Promise<void>):Promise<R2Object|null> {
-  if(env.GROUP_IDENTITY_ERASURE_ENABLED!=='YES')
+  if(!await identityJournalActive(env))
     return bucket.put(key,data,{...opts,onlyIf:{etagDoesNotMatch:'*'}});
   let observed=await bucket.head(key);
   if(!observed){

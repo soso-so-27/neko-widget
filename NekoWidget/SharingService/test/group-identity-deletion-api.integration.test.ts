@@ -47,7 +47,11 @@ describe('authenticated A1 erasure lifecycle',()=>{
    expect((await status(id,randomBase64url(32))).status).toBe(404);
    expect((await status(id,receipt)).data).toMatchObject({state:'processing',acceptedAt:result.data.acceptedAt});
    // The receipt, not a still-valid identity key, recovers the lost 202.
-   await advanceIdentityDeletion(env);
+   const paused={...env,GROUP_IDENTITY_ERASURE_ENABLED:'NO'};
+   expect((await send(await signed(b,new URL(url).pathname,{operationId:crypto.randomUUID(),receipt:randomBase64url(32)}),paused)).status).toBe(404);
+   await advanceIdentityDeletion(paused);
+   const pausedStatus=()=>send(new Request(url+'/'+id+'/status',{headers:{Authorization:'Bearer '+receipt}}),paused);
+   expect((await pausedStatus()).data).toMatchObject({state:'completed'});
    const done=await status(id,receipt);
    expect(done.status).toBe(200);expect(done.data).toMatchObject({state:'completed',requestId:id,acceptedAt:result.data.acceptedAt});
    expect(done.data.completedAt-result.data.acceptedAt).toBeLessThan(60);
@@ -62,7 +66,10 @@ describe('authenticated A1 erasure lifecycle',()=>{
    expect((await send(await request(),env)).status).toBe(401);
    await db.prepare("UPDATE group_identity_deletion_checkpoint SET sequence=0,request_id=''").run();
    expect((await status(id,receipt)).status).toBe(503);
-   expect((await send(await signed(b,'/v3/group-windows/list',{}),env)).status).toBe(503);
+   expect((await send(await signed(b,'/v3/group-windows/list',{after:null,limit:10}),env)).status).toBe(503);
    await expect(advanceIdentityDeletion(env)).rejects.toMatchObject({status:503});
+   // Pausing NEW requests must not remove a previously published fence.
+   expect((await send(await signed(b,'/v3/group-windows/list',{after:null,limit:10}),paused)).status).toBe(503);
+   expect((await send(new Request(url+'/'+id+'/status',{headers:{Authorization:'Bearer '+receipt}}),paused)).status).toBe(503);
  });
 });
