@@ -88,7 +88,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             return
         }
 
-        searchField.tap()
+        focusForTyping(searchField, in: springboard)
         searchField.typeText("ねこのまど")
 
         guard let widgetSearchResult = waitForWidgetGalleryResult(
@@ -225,7 +225,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             )
             return
         }
-        searchField.tap()
+        focusForTyping(searchField, in: springboard)
         searchField.typeText("ねこのまど")
 
         guard let widgetSearchResult = findFixtureGalleryResult(in: springboard) else {
@@ -554,6 +554,16 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         } while Date() < deadline
 
         return nil
+    }
+
+    /// The Widget gallery can show its search field before it accepts typing.
+    /// Tap again until the field holds keyboard focus, so typeText has a target.
+    @MainActor
+    private func focusForTyping(_ field: XCUIElement, in application: XCUIApplication) {
+        for _ in 0..<3 where (field.value(forKey: "hasKeyboardFocus") as? Bool) != true {
+            field.tap()
+            _ = application.keyboards.firstMatch.waitForExistence(timeout: 3)
+        }
     }
 
     @MainActor
