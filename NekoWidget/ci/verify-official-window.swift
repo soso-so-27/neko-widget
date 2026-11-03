@@ -216,7 +216,7 @@ struct OfficialWindowChecks {
               "Production bypassed the validated base feed configuration")
         check(OfficialWindowConfiguration.definition(for: "official-cats")?.displayName == OfficialWindowCatalog.displayName,
               "Legacy subscription definition was lost")
-        check(productionDefinitions[0].displayName == "黒猫のまど", "Black-cat window unavailable")
+        check(productionDefinitions[0].displayName == "のわのまど", "Black-cat window unavailable")
         check(productionDefinitions[0].catID == nil,
               "Mixed public feeds gained a cat constraint")
         check(OfficialWindowConfiguration.definition(for: "nap-cats")?.displayName == "おひるね"
@@ -608,7 +608,7 @@ struct OfficialWindowChecks {
         // the current day, even though both photos have the same content hash.
         func loopCatalog(_ start: Date, _ id: String) -> OfficialWindowCatalog {
             let end = start.addingTimeInterval(86400)
-            let item = OfficialCatPhoto(id: id, catID: photo.catID, catName: "黒猫",
+            let item = OfficialCatPhoto(id: id, catID: photo.catID, catName: "のわ",
                 credit: "ねこのまど（AI で作った画像）", caption: nil, photographedOn: nil,
                 publishedAt: start, expiresAt: end, imageFilename: photo.imageFilename,
                 sha256: photo.sha256, width: photo.width, height: photo.height)
@@ -620,7 +620,7 @@ struct OfficialWindowChecks {
         try firstCycle.validate(at: firstCycle.generatedAt, expectedChannelID: "black-cats")
         try nextCycle.validate(at: now, expectedChannelID: "black-cats")
         let loopStore = OfficialWindowStore(directory: root.appendingPathComponent("black-cat-loop"),
-            definition: .init(id: "black-cats", displayName: "黒猫のまど", subtitle: "今日の1枚",
+            definition: .init(id: "black-cats", displayName: "のわのまど", subtitle: "今日の1枚",
                 endpoint: endpoint.deletingLastPathComponent().appendingPathComponent("windows/black-cats/catalog.json")))
         try loopStore.setSubscribed(true)
         let request = loopStore.snapshot()
