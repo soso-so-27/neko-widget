@@ -6,6 +6,7 @@ import { readPersonIdentityFence } from './group-identity-fence';
 import { GROUP_REPORT_OBJECT_KEY } from './group-reports';
 
 export interface IdentityReportFence { requestId:string; acceptedAt:number }
+export interface SealedReportFence extends IdentityReportFence {nonce:string}
 interface Candidate {report_id:string;record_revision:number;case_revision:number;record_outcome:string;case_outcome:string}
 type Entry=[string,number,number,string,string];
 export interface Manifest {requestId:string;acceptedAt:number;subjectDigest:string;entries:Entry[]}
@@ -105,29 +106,58 @@ async function drainObjects(env:Env,f:IdentityReportFence,allowed:ReadonlyMap<st
    }
  }
 }
-export async function runIdentityReportErasure(env:Env,f:IdentityReportFence,personId:string):Promise<void> {
- const store=await verified(env,f,personId);
- const m=await read(store,f,await subjectDigest(f,personId));if(!m)throw unavailable();
+// Original authenticated acceptance only. A new random nonce and every
+// eligible D1 deletion are committed together. No preceding SQLite snapshot
+// can ever contain this nonce without also containing its deletion decisions.
+export async function sealIdentityReportAcceptance(env:Env,f:SealedReportFence,personId:string,requestHash:string,m:Manifest):Promise<void> {
+ validate(m,f,await subjectDigest(f,personId));
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(f.nonce)
+   || !/^[A-Za-z0-9_-]{43}$/.test(requestHash))throw unavailable();
  const allowed=new Map(m.entries.map(e=>[e[0],e]));
- await drainObjects(env,f,allowed);
+ const statements=[
+   env.DB.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM group_identity_deletion_acceptance
+     WHERE request_id=? AND subject_id=? AND nonce=? AND request_hash=? AND accepted_at=?) THEN 'true' ELSE 'denied' END)`)
+     .bind(f.requestId,personId,f.nonce,requestHash,f.acceptedAt),
+   env.DB.prepare('INSERT INTO group_identity_report_seals(request_id,nonce) VALUES (?,?)').bind(f.requestId,f.nonce),
+ ];
+ const batchRows:{id:string;recordRevision:number;caseRevision:number;recordOutcome:string;caseOutcome:string}[]=[];
  for await(const r of candidates(env,f,personId)) {
    const entry=allowed.get(await digest(f,r.report_id));
-   if(!entry)continue;
-   // A later terminal decision is still eligible. A regressed revision or
-   // two outcomes for one revision cannot establish current authority.
-   if(r.record_revision<entry[1] || r.case_revision<entry[2]
-     || (r.record_revision===entry[1] && r.record_outcome!==entry[3])
-     || (r.case_revision===entry[2] && r.case_outcome!==entry[4]))throw unavailable();
-   await env.DB.prepare('INSERT INTO group_identity_report_erase_commands VALUES (?,?,?,?,?,?,?,?)')
-    .bind(r.report_id,personId,f.requestId,f.acceptedAt,r.record_revision,r.case_revision,r.record_outcome,r.case_outcome).run();
+   if(entry)batchRows.push({id:r.report_id,recordRevision:entry[1],caseRevision:entry[2],recordOutcome:entry[3],caseOutcome:entry[4]});
  }
- await drainObjects(env,f,allowed);
+ for(let i=0;i<batchRows.length;i+=100){
+   // The source view rechecks actual stop/terminal status *inside* the nonce
+   // transaction. A newly stopped report is left intact. No later executor
+   // reclassifies even if the case is released, or an older snapshot resurfaces.
+   statements.push(env.DB.prepare(`INSERT INTO group_identity_report_erase_commands
+    SELECT r.report_id,r.person_id,?,?,r.record_revision,r.case_revision,r.record_outcome,r.case_outcome
+    FROM json_each(?) j JOIN group_identity_report_candidates r ON r.report_id=json_extract(j.value,'$.id')
+    WHERE r.person_id=? AND r.created_at<=?
+    AND (r.record_revision>json_extract(j.value,'$.recordRevision') OR
+      (r.record_revision=json_extract(j.value,'$.recordRevision') AND r.record_outcome=json_extract(j.value,'$.recordOutcome')))
+    AND (r.case_revision>json_extract(j.value,'$.caseRevision') OR
+      (r.case_revision=json_extract(j.value,'$.caseRevision') AND r.case_outcome=json_extract(j.value,'$.caseOutcome')))`)
+    .bind(f.requestId,f.acceptedAt,JSON.stringify(batchRows.slice(i,i+100)),personId,f.acceptedAt));
+ }
+ await env.DB.batch(statements);
+}
+export async function runIdentityReportErasure(env:Env,f:SealedReportFence,personId:string):Promise<void> {
+ const store=await verified(env,f,personId);
+ const sealed=await env.DB.prepare(`SELECT 1 FROM group_identity_report_seals s JOIN group_identity_deletion_acceptance a
+   ON a.request_id=s.request_id AND a.nonce=s.nonce
+   WHERE a.request_id=? AND a.accepted_at=? AND a.subject_id=? AND a.nonce=?`).bind(f.requestId,f.acceptedAt,personId,f.nonce).first();
+ if(!sealed)throw unavailable();
+ const m=await read(store,f,await subjectDigest(f,personId));if(!m)throw unavailable();
+ await drainObjects(env,f,new Map(m.entries.map(e=>[e[0],e])));
 }
 // Caller has already checkpointed all erasure work and committed completion.
 // An older checkpoint must stop at the global restore barrier.
-export async function clearIdentityReportErasure(env:Env,f:IdentityReportFence,personId:string):Promise<void> {
+export async function clearIdentityReportErasure(env:Env,f:SealedReportFence,personId:string):Promise<void> {
  const store=await verified(env,f,personId);
+ if(!await env.DB.prepare('SELECT 1 FROM group_identity_deletion_checkpoint WHERE singleton=1 AND sequence>0 AND request_id=?')
+   .bind(f.requestId).first())throw unavailable();
  if(await env.DB.prepare('SELECT 1 FROM group_identity_report_object_work WHERE request_id=? LIMIT 1').bind(f.requestId).first())throw unavailable();
  await store.delete(key(f));
  if(await store.head(key(f)))throw unavailable();
+ await env.DB.prepare('DELETE FROM group_identity_report_seals WHERE request_id=? AND nonce=?').bind(f.requestId,f.nonce).run();
 }

@@ -28,12 +28,24 @@ CREATE TABLE group_identity_report_object_work (
  request_id TEXT NOT NULL,report_id TEXT NOT NULL,object_key TEXT NOT NULL,
  PRIMARY KEY(request_id,report_id,object_key)
 ) STRICT;
+-- Written atomically with the original D1 erasure, after the independent
+-- work slot fixes this nonce. The earlier freeze anchor alone cannot resume
+-- a destructive scan. Cleared once the global checkpoint reflects completion.
+CREATE TABLE group_identity_report_seals (
+ request_id TEXT PRIMARY KEY,nonce TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE TRIGGER group_identity_report_seal_no_update BEFORE UPDATE ON group_identity_report_seals
+BEGIN SELECT RAISE(ABORT,'immutable_report_seal'); END;
 -- A transient authorization scoped to one verified fence and one report.
 CREATE TABLE group_identity_report_erase_commands (
  report_id TEXT PRIMARY KEY,person_id TEXT NOT NULL,request_id TEXT NOT NULL,
  accepted_at INTEGER NOT NULL,record_revision INTEGER NOT NULL,case_revision INTEGER NOT NULL,record_outcome TEXT NOT NULL,case_outcome TEXT NOT NULL
 ) STRICT;
 CREATE TRIGGER group_identity_report_erase_guard BEFORE INSERT ON group_identity_report_erase_commands BEGIN
+ SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_identity_report_seals s
+ JOIN group_identity_deletion_acceptance a ON a.request_id=s.request_id AND a.nonce=s.nonce
+ WHERE s.request_id=NEW.request_id AND a.subject_id=NEW.person_id AND a.accepted_at=NEW.accepted_at)
+ THEN RAISE(ABORT,'identity_report_seal_missing') END);
  SELECT (CASE WHEN NOT EXISTS(SELECT 1 FROM group_identity_report_candidates
  WHERE person_id=NEW.person_id AND report_id=NEW.report_id AND created_at<=NEW.accepted_at
  AND record_revision=NEW.record_revision AND case_revision=NEW.case_revision

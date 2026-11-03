@@ -2,7 +2,7 @@ import {expect,it} from 'vitest';
 import {db,testEnv} from './group-fixture';
 import {randomBase64url} from '../src/encoding';
 import {acceptIdentityFence} from '../src/group-identity-fence';
-import {captureIdentityReportErasure,runIdentityReportErasure,clearIdentityReportErasure,prepareReportManifest,installReportManifest} from '../src/group-identity-report-erasure';
+import {captureIdentityReportErasure,runIdentityReportErasure,clearIdentityReportErasure,prepareReportManifest,installReportManifest,sealIdentityReportAcceptance} from '../src/group-identity-report-erasure';
 
 it('erases only the fixed, still eligible report set and recovers an interrupted moderation object removal',async()=>{
  const now=Math.floor(Date.now()/1000),space=randomBase64url(16);
@@ -32,7 +32,7 @@ it('erases only the fixed, still eligible report set and recovers an interrupted
     sql("UPDATE group_reports SET state='committed',committed_at=?,content_expires_at=? WHERE id=?",now,now+604800,id)]);
    await testEnv.MODERATION_MEDIA!.put(object,'evidence');return {m,id,object};
  }
- const ordinary=await report(a),stopped=await report(a),laterStopped=await report(a),unknown=await report(a),other=await report(b);
+ const ordinary=await report(a),second=await report(a),stopped=await report(a),laterStopped=await report(a),unknown=await report(a),other=await report(b);
  async function stop(x:typeof ordinary,ch:string){
    const ref=ch.repeat(64);
    await db.batch([sql("INSERT INTO group_moderation_cases VALUES (?,?,1,0,'received',?)",ref,x.id,now),
@@ -47,7 +47,7 @@ it('erases only the fixed, still eligible report set and recovers an interrupted
  const auth={requestId:crypto.randomUUID(),acceptedAt:now};
  const snapshot=await prepareReportManifest(testEnv,auth,a);
  await expect(installReportManifest(testEnv,auth,a,snapshot)).rejects.toThrow();
- const f=await acceptIdentityFence(testEnv.MEDIA!,a,auth.requestId,randomBase64url(32),randomBase64url(32),now);
+ const f={...await acceptIdentityFence(testEnv.MEDIA!,a,auth.requestId,randomBase64url(32),randomBase64url(32),now),nonce:crypto.randomUUID()};
  await expect(runIdentityReportErasure(testEnv,f,a)).rejects.toThrow();
  await expect(captureIdentityReportErasure(testEnv,f,b)).rejects.toThrow();
  const wrongSubject=await prepareReportManifest(testEnv,f,b);
@@ -56,7 +56,7 @@ it('erases only the fixed, still eligible report set and recovers an interrupted
  await expect(installReportManifest(testEnv,f,a,{...snapshot,entries:[]})).rejects.toThrow();
  const manifest=await (await testEnv.MEDIA!.get('group-identity-deletions/v1/report-allowlists/'+f.requestId))!.text();
  for(const id of [ordinary.id,stopped.id,unknown.id,other.id,a,b,r])expect(manifest).not.toContain(id);
- expect(JSON.parse(manifest).entries).toHaveLength(2);
+ expect(JSON.parse(manifest).entries).toHaveLength(3);
  // A populated terminal case exercises the retained audit FKs and counter
  // floor guards. These are local D1 fixtures, not operator authentication.
  const ref='3'.repeat(64),cred='4'.repeat(64),readId=crypto.randomUUID(),decisionId=crypto.randomUUID(),receipt=crypto.randomUUID();
@@ -80,6 +80,23 @@ it('erases only the fixed, still eligible report set and recovers an interrupted
  expect(await sql('SELECT 1 FROM group_identity_report_candidates WHERE person_id=? AND report_id=?',a,unknown.id).first()).not.toBeNull();
  await captureIdentityReportErasure(testEnv,f,a);
  await stop(laterStopped,'2');
+ // Stop and source decisions are taken with the first receipt nonce. A crash
+ // in the atomic D1 transaction restores the complete record and no nonce.
+ await sql('INSERT INTO group_identity_deletion_acceptance(request_id,subject_id,nonce,request_hash,accepted_at) VALUES (?,?,?,?,?)',
+   f.requestId,a,f.nonce,f.requestHash,f.acceptedAt).run();
+ await db.prepare("CREATE TRIGGER synthetic_fail_seal BEFORE DELETE ON group_report_numbers WHEN OLD.report_id='"+ordinary.id+"' BEGIN SELECT RAISE(ABORT,'injected'); END").run();
+ await expect(sealIdentityReportAcceptance(testEnv,f,a,f.requestHash,snapshot)).rejects.toThrow(/injected/);
+ expect(await sql('SELECT 1 FROM group_identity_report_seals WHERE request_id=?',f.requestId).first()).toBeNull();
+ expect(await sql('SELECT nonce FROM group_identity_deletion_acceptance WHERE request_id=?',f.requestId).first('nonce')).toBe(f.nonce);
+ await expect(runIdentityReportErasure(testEnv,f,a)).rejects.toThrow();
+ expect(await sql('SELECT outcome FROM group_report_records WHERE report_id=?',ordinary.id).first('outcome')).toBe('no_action');
+ await db.prepare('DROP TRIGGER synthetic_fail_seal').run();
+ await sealIdentityReportAcceptance(testEnv,f,a,f.requestHash,snapshot);
+ await expect(sealIdentityReportAcceptance(testEnv,f,a,f.requestHash,snapshot)).rejects.toThrow(/UNIQUE/);
+ // The older pre-acceptance checkpoint cannot produce this nonce. An
+ // independently published work item with a mismatch may not authorize any R2 deletion.
+ await expect(runIdentityReportErasure(testEnv,{...f,nonce:crypto.randomUUID()},a)).rejects.toThrow();
+ expect(await testEnv.MODERATION_MEDIA!.head(ordinary.object)).not.toBeNull();
  const broken=new Proxy(testEnv.MODERATION_MEDIA!,{get(t,k){if(k==='delete')return async()=>{throw new Error('R2 unavailable');};
    const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v;}});
  await expect(runIdentityReportErasure({...testEnv,MODERATION_MEDIA:broken},f,a)).rejects.toThrow('R2 unavailable');
@@ -92,6 +109,8 @@ it('erases only the fixed, still eligible report set and recovers an interrupted
  await sql('DELETE FROM group_identity_report_object_work WHERE request_id=? AND report_id=?',f.requestId,other.id).run();
  await runIdentityReportErasure(testEnv,f,a);await runIdentityReportErasure(testEnv,f,a);
  expect(await testEnv.MODERATION_MEDIA!.head(ordinary.object)).toBeNull();
+ expect(await testEnv.MODERATION_MEDIA!.head(second.object)).toBeNull();
+ expect(await sql('SELECT 1 FROM group_report_records WHERE report_id=?',second.id).first()).toBeNull();
  for(const table of ['group_moderation_challenges','group_moderation_decisions','group_moderation_cases'])
    expect(await sql('SELECT 1 FROM '+table+' WHERE case_reference=?',ref).first()).toBeNull();
  expect(await sql('SELECT 1 FROM group_report_events WHERE report_id=?',ordinary.id).first()).toBeNull();
@@ -102,6 +121,9 @@ it('erases only the fixed, still eligible report set and recovers an interrupted
  for(const x of [stopped,laterStopped,unknown,other])expect(await sql('SELECT 1 FROM group_report_records WHERE report_id=?',x.id).first()).not.toBeNull();
  for(const x of [stopped,laterStopped,other])expect(await testEnv.MODERATION_MEDIA!.head(x.object)).not.toBeNull();
  expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+ await expect(clearIdentityReportErasure(testEnv,f,a)).rejects.toThrow();
+ await sql('UPDATE group_identity_deletion_checkpoint SET sequence=1,request_id=? WHERE singleton=1',f.requestId).run();
  await clearIdentityReportErasure(testEnv,f,a);
+ expect(await sql('SELECT 1 FROM group_identity_report_seals WHERE request_id=?',f.requestId).first()).toBeNull();
  await expect(runIdentityReportErasure(testEnv,f,a)).rejects.toThrow();
 });

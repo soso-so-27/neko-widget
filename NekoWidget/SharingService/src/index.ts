@@ -132,7 +132,10 @@ export async function route(
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
-  if(isIdentityDeletionPath(pathname))return identityDeletionAPI(request,env,ctx);
+  if(isIdentityDeletionPath(pathname)){
+    try {return await identityDeletionAPI(request,env,ctx);}
+    catch(error){if(error instanceof ApiError)throw error;throw new ApiError(503,'deletion_recovery_required','Group data is temporarily unavailable.');}
+  }
   if(deletionRequired(env) && (pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks')))
     return protectedGroupRead(env,()=>dispatch(request,env,ctx));
   return dispatch(request,env,ctx);
@@ -669,6 +672,8 @@ export default {
       ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
+      if(deletionRequired(env))ctx.waitUntil(env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance LIMIT 1').first()
+        .then(pending=>pending?advanceIdentityDeletion(env):undefined));
       ctx.waitUntil(protectedGroupRead(env,()=>drainGroupReportMail(env)));
       ctx.waitUntil(drainNotificationOutbox(env));
       if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));

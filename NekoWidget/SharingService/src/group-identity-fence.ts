@@ -47,6 +47,13 @@ export async function prepareIdentityClaim(store:R2Bucket,personId:string,id:str
   }
   return proposed;
 }
+export async function matchesAuthenticatedClaim(claim:Claim,personId:string,id:string,at:number){
+ const digest=/^[A-Za-z0-9_-]{43}$/;
+ return claim && Object.keys(claim).sort().join(',')==='acceptedAt,personDigest,receiptDigest,requestHash,requestId'
+   && claim.personDigest===await hash('person',personId) && claim.requestId===id && claim.acceptedAt===at
+   && typeof claim.receiptDigest==='string' && digest.test(claim.receiptDigest)
+   && typeof claim.requestHash==='string' && digest.test(claim.requestHash);
+}
 export async function persistIdentityClaim(store:R2Bucket,claim:Claim){
   const saved=await first(store,prefix+'requests/'+claim.requestId,claim);
   return first(store,prefix+'people/'+claim.personDigest,saved);

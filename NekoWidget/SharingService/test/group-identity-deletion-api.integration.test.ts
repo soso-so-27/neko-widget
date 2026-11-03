@@ -66,4 +66,3 @@ describe('authenticated A1 erasure lifecycle',()=>{
    await expect(advanceIdentityDeletion(env)).rejects.toMatchObject({status:503});
  });
 });
-

@@ -4,11 +4,11 @@ import {authenticateGroupRequest} from './group-auth';
 import {exactKeys} from './validation';
 import {parseJsonBody,readBody,rejectQuery} from './http';
 import {base64urlDecode} from './encoding';
-import {prepareIdentityClaim,persistIdentityClaim,type Claim,lookupIdentityFence,personIsFenced} from './group-identity-fence';
+import {prepareIdentityClaim,matchesAuthenticatedClaim,persistIdentityClaim,type Claim,lookupIdentityFence,personIsFenced} from './group-identity-fence';
 import {checkedDeletionRead} from './group-identity-read-barrier';
 import {captureDeletedDeliveries,deletedDeliveryStatements,type DeliveryMarker} from './group-deleted-delivery';
 import {eraseGroupIdentityData,prepareIdentityErasurePhotos} from './group-identity-erasure';
-import {prepareReportManifest,installReportManifest,runIdentityReportErasure,clearIdentityReportErasure} from './group-identity-report-erasure';
+import {prepareReportManifest,installReportManifest,sealIdentityReportAcceptance,runIdentityReportErasure,clearIdentityReportErasure} from './group-identity-report-erasure';
 
 const prefix='group-identity-deletions/v1/';
 const path='/v3/group-identities/deletion-requests';
@@ -54,7 +54,16 @@ export const isIdentityDeletionPath=(p:string)=>p===path||p.startsWith(path+'/')
 async function receiptResult(env:Env,id:string,receipt:string) {
  const state=await lookupIdentityFence(media(env),id,receipt);
  const done=await record<{completedAt:number;sequence:number}>(env,prefix+'completed/'+id);
- if(!done)return state;
+ if(!done){
+   const control=await tip(env);if(control.requestId!==id)throw bad();
+   const work=await record<Work|End>(env,workKey(control.sequence));
+   if(!work||work.requestId!==id)throw bad();
+   if('completedAt' in work){
+     if(!same(await cursor(env),work))throw bad();
+     await finishReceipt(env,work);return {...state,state:'completed' as const,completedAt:work.completedAt};
+   }
+   await requireReportSeal(env,work);return state;
+ }
  if(!Number.isSafeInteger(done.completedAt)||done.completedAt<state.acceptedAt||!Number.isSafeInteger(done.sequence)||done.sequence<1)throw bad();
  const applied=await cursor(env);if(applied.sequence<done.sequence || (applied.sequence===done.sequence&&applied.requestId!==id))throw bad();
  return {...state,state:'completed' as const,completedAt:done.completedAt};
@@ -64,14 +73,18 @@ function validateWork(w:Work,n:number) {
  !Number.isSafeInteger(w.acceptedAt)||w.acceptedAt<=0||!uuid.test(w.nonce))throw bad();
 }
 async function source(env:Env,w:Work) {
- const row=await env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance WHERE request_id=? AND subject_id=? AND nonce=? AND accepted_at=?')
- .bind(w.requestId,w.personId,w.nonce,w.acceptedAt).first();
- if(!row)throw bad(); // Never recapture from a restored snapshot that predates acceptance.
+ const row=await env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance WHERE request_id=? AND subject_id=? AND nonce=? AND accepted_at=? AND request_hash=?')
+ .bind(w.requestId,w.personId,w.nonce,w.acceptedAt,w.claim.requestHash).first();
+ if(!row || !await matchesAuthenticatedClaim(w.claim,w.personId,w.requestId,w.acceptedAt))throw bad(); // Never recapture from a restored snapshot that predates acceptance.
 }
 interface End {sequence:number;requestId:string;completedAt:number}
 async function finishReceipt(env:Env,e:End){
  if(!Number.isSafeInteger(e.completedAt)||e.completedAt<=0||!uuid.test(e.requestId))throw bad();
  await snapshot(env,prefix+'completed/'+e.requestId,async()=>({sequence:e.sequence,completedAt:e.completedAt}));
+}
+async function requireReportSeal(env:Env,w:Work){
+ const row=await env.DB.prepare('SELECT 1 FROM group_identity_report_seals WHERE request_id=? AND nonce=?').bind(w.requestId,w.nonce).first();
+ if(!row)throw bad();
 }
 async function finalize(env:Env,w:Work){
  const bucket=media(env),k=workKey(w.sequence);
@@ -87,6 +100,16 @@ async function finalize(env:Env,w:Work){
  if(!await bucket.put(k,JSON.stringify(end),{onlyIf:{etagMatches:current.etag}}))throw bad();
  await finishReceipt(env,end);
 }
+const intentKey=(nonce:string)=>prefix+'preparing/'+nonce;
+async function publishSealed(env:Env,work:Work,control:Awaited<ReturnType<typeof tip>>){
+ validateWork(work,control.sequence+1);await source(env,work);await requireReportSeal(env,work);
+ const bucket=media(env),slot=await snapshot(env,workKey(work.sequence),async()=>work);
+ if(slot.nonce!==work.nonce||slot.requestId!==work.requestId)throw bad();
+ await persistIdentityClaim(bucket,work.claim);
+ if(!await bucket.put(prefix+'control',JSON.stringify({sequence:work.sequence,requestId:work.requestId}),{onlyIf:{etagMatches:control.etag}})
+    && !same(await tip(env),work))throw bad();
+ await bucket.delete(intentKey(work.nonce));
+}
 // All steps are retryable. Cron and authenticated status checks can resume
 // immediately; no report retention timer forms part of this state machine.
 export async function advanceIdentityDeletion(env:Env) {
@@ -99,42 +122,61 @@ export async function advanceIdentityDeletion(env:Env) {
      if('completedAt' in previous) await finishReceipt(env,previous);
      else {validateWork(previous,control.sequence);if(previous.requestId!==control.requestId)throw bad();await finalize(env,previous);}
    }
-   // Recover a crash between reserving the next journal slot and publishing it.
-   const next=await record<Work>(env,workKey(control.sequence+1));
+   // A pre-seal crash never occupies the global slot or publishes a
+   // processing receipt. Once its atomic seal exists, cron can publish it
+   // from the original manifest without making a new deletion decision.
+   let next=await record<Work>(env,workKey(control.sequence+1));
    if(!next){
-     // Only abandoned preparations: there is no accepted work in this slot.
-     // Bind exact nonce and recheck the slot before removing any stale proof.
-     const old=await env.DB.prepare('SELECT request_id,nonce FROM group_identity_deletion_acceptance WHERE accepted_at<unixepoch()-600 LIMIT 50').all<{request_id:string;nonce:string}>();
-     for(const a of old.results) {
-       if(await bucket.head(workKey(control.sequence+1)))break;
-       await env.DB.prepare('DELETE FROM group_identity_deletion_acceptance WHERE request_id=? AND nonce=? AND accepted_at<unixepoch()-600').bind(a.request_id,a.nonce).run();
-     }
-     return;
+     const pending=await env.DB.prepare(`SELECT a.nonce FROM group_identity_deletion_acceptance a
+       JOIN group_identity_report_seals s ON s.request_id=a.request_id AND s.nonce=a.nonce LIMIT 1`).first<{nonce:string}>();
+     if(pending){next=await record<Work>(env,intentKey(pending.nonce));if(!next)throw bad();}
    }
-   validateWork(next,control.sequence+1);await source(env,next);await persistIdentityClaim(bucket,next.claim);
-   if(!await bucket.put(prefix+'control',JSON.stringify({sequence:next.sequence,requestId:next.requestId}),{onlyIf:{etagMatches:control.etag}}))throw bad();
-   return advanceIdentityDeletion(env);
+   if(next){await publishSealed(env,next,control);return advanceIdentityDeletion(env);}
+   const expired=await env.DB.prepare(`DELETE FROM group_identity_deletion_acceptance
+     WHERE accepted_at<unixepoch()-600 AND NOT EXISTS(SELECT 1 FROM group_identity_report_seals s
+       WHERE s.request_id=group_identity_deletion_acceptance.request_id AND s.nonce=group_identity_deletion_acceptance.nonce)
+     RETURNING nonce`).all<{nonce:string}>();
+   for(const a of expired.results)await bucket.delete(intentKey(a.nonce));
+   // Covers a restore which removed an abandoned preparation row. Only one
+   // preparing request is admitted. Never remove a live or sealed request.
+   const loose=await bucket.list({prefix:prefix+'preparing/',limit:32});
+   for(const obj of loose.objects)if(obj.uploaded.getTime()<Date.now()-600_000){
+     const nonce=obj.key.slice((prefix+'preparing/').length);
+     if(uuid.test(nonce)&&!await env.DB.prepare('SELECT 1 FROM group_identity_deletion_acceptance WHERE nonce=?').bind(nonce).first())
+       await bucket.delete(obj.key);
+   }
+   return;
  }
  if(control.sequence!==applied.sequence+1 || await record(env,prefix+'completed/'+control.requestId))throw bad();
  const work=await record<Work>(env,workKey(control.sequence));if(!work || work.requestId!==control.requestId)throw bad();
  validateWork(work,control.sequence);await source(env,work);
- await installReportManifest(env,work,work.personId,work.reports);
- 
- if(Math.floor(Date.now()/1000)<work.acceptedAt+86400){
-   const markers=work.markers;
-   const statements=deletedDeliveryStatements(env.DB,markers,work.sequence,work.acceptedAt);
-   for(let i=0;i<statements.length;i+=50)await env.DB.batch(statements.slice(i,i+50));
+ const progress=await env.DB.prepare('SELECT data_erased,head_cursor FROM group_identity_deletion_acceptance WHERE request_id=? AND nonce=?')
+   .bind(work.requestId,work.nonce).first<{data_erased:number;head_cursor:number}>();if(!progress)throw bad();
+ if(!progress.data_erased) {
+   if(Math.floor(Date.now()/1000)<work.acceptedAt+86400){
+     const statements=deletedDeliveryStatements(env.DB,work.markers,work.sequence,work.acceptedAt);
+     for(let i=0;i<statements.length;i+=50)await env.DB.batch(statements.slice(i,i+50));
+   }
+   await installReportManifest(env,work,work.personId,work.reports);
+   await runIdentityReportErasure(env,work,work.personId);
+   const sliceEnds=Date.now()+15_000;
+   for(let n=0;;n++){
+     if(!(await eraseGroupIdentityData(env,work)).morePhotos)break;
+     if(n>=7||Date.now()>=sliceEnds)return;
+   }
+   await env.DB.prepare('UPDATE group_identity_deletion_acceptance SET data_erased=1 WHERE request_id=? AND nonce=?')
+     .bind(work.requestId,work.nonce).run();
  }
- await runIdentityReportErasure(env,work,work.personId);
- const sliceEnds=Date.now()+15_000;
- for(let n=0;;n++){
-   if(!(await eraseGroupIdentityData(env,work)).morePhotos)break;
-   if(n>=7||Date.now()>=sliceEnds)return; // next existing 5-minute tick (or status poll)
- }
- for(let i=0;i<work.photos.length;i+=8){
-   const objects=work.photos.slice(i,i+8).flatMap(p=>[p.objectKey,p.objectKey+'.caption']);
+ // Persist progress: a large collection must not re-read the same first page
+ // on every cron invocation if the runtime's subrequest budget is exhausted.
+ const end=Math.min(work.photos.length,progress.head_cursor+16);
+ for(let i=progress.head_cursor;i<end;i+=8){
+   const objects=work.photos.slice(i,Math.min(end,i+8)).flatMap(p=>[p.objectKey,p.objectKey+'.caption']);
    if((await Promise.all(objects.map(k=>bucket.head(k)))).some(Boolean))throw bad();
  }
+ await env.DB.prepare('UPDATE group_identity_deletion_acceptance SET head_cursor=MAX(head_cursor,?) WHERE request_id=? AND nonce=?')
+   .bind(end,work.requestId,work.nonce).run();
+ if(end<work.photos.length)return;
  await env.DB.prepare('UPDATE group_identity_deletion_checkpoint SET sequence=?,request_id=? WHERE singleton=1 AND sequence=? AND request_id=?')
     .bind(work.sequence,work.requestId,applied.sequence,applied.requestId).run();
  if(!same(await cursor(env),work))throw bad();
@@ -161,11 +203,11 @@ export async function identityDeletionAPI(request:Request,env:Env,ctx?:Execution
  const control=await tip(env),applied=await cursor(env);
  const prior=await media(env).head(prefix+'requests/'+id);
  if(prior){
-   const status=await receiptResult(env,id,receipt);nudge();return jsonResponse(status,202);
+   const status=await receiptResult(env,id,receipt);nudge();return jsonResponse({protocolVersion:3,requestId:id,state:'processing',acceptedAt:status.acceptedAt,completedAt:null},202);
  }
  if(!same(control,applied))throw bad();
  const nonce=crypto.randomUUID();
- await env.DB.prepare('INSERT INTO group_identity_deletion_acceptance VALUES (?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING')
+ await env.DB.prepare('INSERT INTO group_identity_deletion_acceptance(request_id,subject_id,nonce,request_hash,accepted_at) VALUES (?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING')
  .bind(id,actor.personId,nonce,actor.requestHash,claim.acceptedAt).run();
  const anchor=await env.DB.prepare('SELECT nonce,accepted_at FROM group_identity_deletion_acceptance WHERE request_id=? AND subject_id=? AND request_hash=?')
  .bind(id,actor.personId,actor.requestHash).first<{nonce:string;accepted_at:number}>();
@@ -178,15 +220,17 @@ export async function identityDeletionAPI(request:Request,env:Env,ctx?:Execution
  ]));
  const work:Work={requestId:id,personId:actor.personId,acceptedAt:claim.acceptedAt,sequence:control.sequence+1,nonce:proof,claim,markers,reports,photos};
  if(Date.now()/1000-claim.acceptedAt>=300 || JSON.stringify(work).length>15*1024*1024)throw bad();
- const slot=await snapshot(env,workKey(work.sequence),async()=>work);
- if(slot.requestId!==id||slot.nonce!==proof || slot.claim.requestHash!==actor.requestHash){
-   await env.DB.prepare('DELETE FROM group_identity_deletion_acceptance WHERE request_id=? AND nonce=?').bind(id,nonce).run();throw bad();
+ // The R2 intent is per nonce; a failed pre-acceptance request cannot
+ // permanently occupy the globally ordered journal or revoke someone's key.
+ const winner=await media(env).put(intentKey(proof),JSON.stringify(work),{onlyIf:{etagDoesNotMatch:'*'}});
+ if(winner){
+   await sealIdentityReportAcceptance(env,work,work.personId,work.claim.requestHash,work.reports);
+ }else{
+   // Never replay the erasure transaction from a restored pre-stop snapshot.
+   await requireReportSeal(env,work);
  }
- await persistIdentityClaim(media(env),slot.claim);
- if(!await media(env).put(prefix+'control',JSON.stringify({sequence:work.sequence,requestId:id}),{onlyIf:{etagMatches:control.etag}})){
-  if(!same(await tip(env),work))throw bad();
- }
+ const frozen=await record<Work>(env,intentKey(proof));if(!frozen||frozen.claim.requestHash!==actor.requestHash)throw bad();
+ await publishSealed(env,frozen,control);
  nudge();
  return jsonResponse({protocolVersion:3,requestId:id,state:'processing',acceptedAt:claim.acceptedAt,completedAt:null},202);
 }
-
