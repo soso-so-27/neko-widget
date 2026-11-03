@@ -1,5 +1,7 @@
 """Offline adversarial contract tests; macOS CI checks the actual generated products."""
 import copy
+import base64
+import hashlib
 import json
 from pathlib import Path
 import plistlib
@@ -39,6 +41,34 @@ class ProductionCandidateTests(unittest.TestCase):
 
     def test_complete_three_product_contract(self):
         self.verify()
+
+    def test_public_candidate_requires_recipient_before_any_build(self):
+        contract = copy.deepcopy(self.contract)
+        contract["synthetic"] = False
+        for name in candidate.URL_KEYS:
+            contract["values"][name] = contract["values"][name].replace(".candidate.test", ".nekonomado.com")
+        # Structural fixture only: no deployed key or endpoint is contacted.
+        raw = bytes(range(2, 34))
+        contract["values"]["SHARING_MODERATION_PUBLIC_KEY"] = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        contract["recipientSHA256"] = hashlib.sha256(raw).hexdigest()
+        self.assertTrue(candidate.settings(contract)["SHARING_MODERATION_PUBLIC_KEY"])
+        for empty in ("", "   ", None):
+            broken = copy.deepcopy(contract)
+            broken["values"]["SHARING_MODERATION_PUBLIC_KEY"] = empty
+            with self.subTest(empty=empty), patch.object(candidate.subprocess, "run") as run:
+                with self.assertRaisesRegex(ValueError, "requires SHARING_MODERATION_PUBLIC_KEY"):
+                    candidate.run_build(broken, ["-sdk", "iphoneos", "archive"])
+                run.assert_not_called()
+        # The supported Simulator fixture remains separate and non-distributable.
+        self.assertEqual(candidate.settings(self.contract, synthetic=True)["SHARING_MODERATION_PUBLIC_KEY"], candidate.SYNTHETIC_KEY)
+
+    def test_generated_public_host_cannot_lose_the_recipient_key(self):
+        path = self.app / "Info.plist"
+        info = plistlib.loads(path.read_bytes())
+        info["SharingModerationPublicKey"] = ""
+        path.write_bytes(plistlib.dumps(info))
+        with self.assertRaisesRegex(ValueError, "SharingModerationPublicKey"):
+            self.verify()
 
     def test_synthetic_never_a_signed_candidate(self):
         with self.assertRaises(ValueError):
