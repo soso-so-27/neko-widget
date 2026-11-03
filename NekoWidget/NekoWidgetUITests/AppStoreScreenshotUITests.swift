@@ -406,12 +406,18 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
-    private func captureFixtureProductScreens() {
+    func testCaptureVersion1ProductScreens() {
+        captureFixtureProductScreens(publicPresentation: true)
+    }
+
+    @MainActor
+    private func captureFixtureProductScreens(publicPresentation: Bool = false) {
         let app = XCUIApplication()
         app.launchArguments += japaneseLaunchArguments
         app.launchArguments.append("--app-store-screenshot-fixture")
         // The month that just finished arrived as a work on the shelf.
         app.launchArguments.append("--app-store-screenshot-album")
+        if publicPresentation { app.launchArguments.append("--review-public-presentation") }
         app.launch()
 
         guard app.navigationBars["アルバム"].waitForExistence(timeout: 20),
@@ -516,11 +522,29 @@ final class AppStoreScreenshotUITests: XCTestCase {
     /// みんなのまど, on the in-memory screen fixture (no relay, key or account).
     @MainActor
     func testReviewAppStoreWindowScreens() {
+        captureWindowScreens(publicPresentation: false)
+    }
+
+    @MainActor
+    func testCaptureVersion1WindowScreens() {
+        captureWindowScreens(publicPresentation: true)
+    }
+
+    @MainActor
+    private func captureWindowScreens(publicPresentation: Bool) {
         executionTimeAllowance = 240
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments
             + ["--app-store-screenshot-fixture", "--group-window-screens-fixture"]
+        if publicPresentation { app.launchArguments.append("--review-public-presentation") }
         app.launch()
+        if publicPresentation {
+            let tabs = app.tabBars.buttons
+            XCTAssertEqual(tabs.count, 4, app.debugDescription)
+            for label in ["写真", "まど", "アルバム", "ツール"] {
+                XCTAssertTrue(tabs[label].exists, "Missing tab: " + label)
+            }
+        }
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど"), app.debugDescription)
         let room = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "実家のまど")).firstMatch
         XCTAssertTrue(room.waitForExistence(timeout: 20), app.debugDescription)
