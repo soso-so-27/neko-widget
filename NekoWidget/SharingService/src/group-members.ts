@@ -2,7 +2,7 @@ import {groupPushRevocationStatements} from './group-push-revocation';
 import { base64urlDecode, verifyEd25519 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
-import { groupId, groupMutationStatement, groupNonceStatements, requireGroupMember, storedGroupMutation, type GroupActor } from "./group-auth";
+import { groupId, groupMutationStatement, groupAuthorizationStatements, requireGroupMember, storedGroupMutation, type GroupActor } from "./group-auth";
 import { groupInvitation, groupJoinRequest, groupStoredJoinBody } from "./group-joins";
 import { groupFields, loadStoredGroupRoster, verifyGroupEnvelopes, verifyGroupRoster,
   type GroupRosterMember, type SignedGroupRoster } from "./group-protocol";
@@ -112,7 +112,7 @@ export async function transitionGroupMembership(env:Env,actor:GroupActor,windowI
       .bind(encryptedName,r.keyEpoch,r.revision,windowId));
   const response={operationId,windowId,revision:r.revision,keyEpoch:r.keyEpoch,rotationRequired:false,
     ...(kind==='admit'?{requestState:'approved',participantId:admittedParticipantId}:{}),serverNow:actor.now};
-  await env.DB.batch([...groupNonceStatements(env,actor,scope),...statements,groupMutationStatement(env,actor,operationId,response)]);
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),...statements,groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response);
 }
 
@@ -129,7 +129,7 @@ export async function leaveGroupWindow(env:Env,actor:GroupActor,windowId:string,
   const transcript=groupFields(['NW3.LEAVE',windowId,member.participantId,String(revision),operationId]);
   if(!await verifyEd25519(actor.signingPublicKey,binaryField(body,'selfSignature',64),transcript)) fail('invalid_proof',401);
   const response={operationId,windowId,revision,state:'left',rotationRequired:true,serverNow:actor.now};
-  await env.DB.batch([...groupNonceStatements(env,actor,{windowId,expectedRevision:revision}),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:revision}),
     env.DB.prepare("UPDATE group_members SET state='left',left_revision=? WHERE participant_id=?").bind(revision+1,member.participantId),
     env.DB.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=? WHERE space_id=? AND participant_id=? AND state='active'")
       .bind(revision+1,windowId,member.participantId),

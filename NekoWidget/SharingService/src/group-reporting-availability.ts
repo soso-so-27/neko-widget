@@ -14,8 +14,6 @@ export async function groupReportingAvailability(request:Request,env:Env):Promis
   await env.DB.batch([
     env.DB.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM group_person_devices d JOIN group_people p ON p.id=d.person_id
       WHERE d.id=? AND d.person_id=? AND d.state='active' AND p.state='active') THEN 'true' ELSE 'denied' END)`).bind(actor.deviceId,actor.personId),
-    env.DB.prepare('DELETE FROM group_request_nonces WHERE device_id=? AND expires_at<?').bind(actor.deviceId,actor.now),
-    env.DB.prepare('INSERT INTO group_request_nonces VALUES (?,?,?)').bind(actor.deviceId,actor.nonce,actor.now+601)
   ]);
   const enabled=env.GROUP_REPORT_RUNTIME_ENABLED==='YES'&&env.GROUP_MODERATION_RUNTIME_ENABLED==='YES'
     &&env.REPORT_INGESTION_RUNTIME_ENABLED==='YES'&&!!env.MODERATION_MEDIA

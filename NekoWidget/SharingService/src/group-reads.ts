@@ -1,7 +1,7 @@
 import { base64urlDecode, base64urlEncode } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
-import { groupNonceStatements,requireGroupMember,type GroupActor } from './group-auth';
+import { groupAuthorizationStatements,requireGroupMember,type GroupActor } from './group-auth';
 import { groupStoredJoinBody,groupAdmissionPause,type GroupJoinRow } from './group-joins';
 import { loadStoredGroupRoster } from './group-protocol';
 import { exactKeys,integerField,type JsonRecord } from './validation';
@@ -29,7 +29,7 @@ export async function listGroupMembers(env:Env,actor:GroupActor,windowId:string,
     display_name_ciphertext AS encryptedDisplayName FROM group_members WHERE space_id=? AND participant_id>? ORDER BY participant_id LIMIT ?`)
     .bind(windowId,page.after,page.limit+1).all<{id:string}>();
   const items=result.results.slice(0,page.limit);
-  await env.DB.batch(groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}));
+  await env.DB.batch(groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}));
   return jsonResponse({items,next:result.results.length>page.limit?groupCursor(scope,items.at(-1)!.id):null,
     roster:head.packet,revision:access.revision,serverNow:actor.now});
 }
@@ -48,7 +48,7 @@ export async function listGroupJoinRequests(env:Env,actor:GroupActor,windowId:st
     admissionProof:row.proof_json?JSON.parse(row.proof_json):null,
     encryptedDisplayName:groupStoredJoinBody(row).encryptedDisplayName,personAuthorization:groupStoredJoinBody(row).personAuthorization,
     signingPublicKey:row.signing_public_key,hpkePublicKey:row.hpke_public_key,identityPublicKey:row.identity_public_key}));
-  await env.DB.batch(groupNonceStatements(env,actor,{windowId,owner:true,expectedRevision:access.revision}));
+  await env.DB.batch(groupAuthorizationStatements(env,actor,{windowId,owner:true,expectedRevision:access.revision}));
   return jsonResponse({items,next:result.results.length>page.limit?groupCursor(scope,items.at(-1)!.id):null,
     revision:access.revision,serverNow:actor.now});
 }
@@ -63,7 +63,7 @@ export async function getGroupKey(env:Env,actor:GroupActor,windowId:string,epoch
     .bind(windowId,epoch,actor.deviceId).first<{space_id:string;epoch:number;device_id:string;roster_hash:string;
       encapsulated_key:string;sealed_key:string;signer_device_id:string;signature:string;packet_json:string}>();
   if(!row) throw new ApiError(403,'epoch_not_authorized','This device is not authorized for that key epoch.');
-  await env.DB.batch(groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}));
+  await env.DB.batch(groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}));
   return jsonResponse({roster:JSON.parse(row.packet_json) as unknown,envelopeForThisDevice:{windowId:row.space_id,keyEpoch:row.epoch,
     rosterHash:row.roster_hash,deviceId:row.device_id,encapsulatedKey:row.encapsulated_key,ciphertext:row.sealed_key,
     signerDeviceId:row.signer_device_id,signature:row.signature},serverNow:actor.now});
@@ -75,7 +75,7 @@ export async function listGroupRosters(env:Env,actor:GroupActor,windowId:string,
   const rows=await env.DB.prepare('SELECT revision,packet_json FROM group_roster_packets WHERE space_id=? AND revision>? AND revision<=? ORDER BY revision LIMIT ?')
     .bind(windowId,after,access.revision,limit+1).all<{revision:number;packet_json:string}>();
   const items=rows.results.slice(0,limit);
-  await env.DB.batch(groupNonceStatements(env,actor,{windowId,expectedRevision:access.revision}));
+  await env.DB.batch(groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}));
   return jsonResponse({items:items.map(r=>JSON.parse(r.packet_json) as unknown),nextRevision:rows.results.length>limit?items.at(-1)!.revision:null,
     revision:access.revision,serverNow:actor.now});
 }

@@ -1,7 +1,7 @@
 import { base64urlDecode, randomBase64url, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
-import { groupId, groupMutationStatement, groupNonceStatements, requireGroupMember, storedGroupMutation, type GroupActor } from "./group-auth";
+import { groupId, groupMutationStatement, groupAuthorizationStatements, requireGroupMember, storedGroupMutation, type GroupActor } from "./group-auth";
 import { groupDeviceKeyHash } from "./group-identities";
 import { groupDeviceAuthorization, groupFields, type GroupRosterDevice } from "./group-protocol";
 import { groupCipher, groupExpected } from "./group-windows";
@@ -55,7 +55,7 @@ export async function createGroupJoinChallenge(env:Env,actor:GroupActor,windowId
   const challengeId=crypto.randomUUID(),challenge=randomBase64url(32),expiresAt=Math.min(actor.now+300,invitation.expires_at);
   const head=await loadStoredGroupRoster(env.DB,windowId);
   const ownerDevices=head.packet.roster.members.find(m=>m.role==='owner')!.devices;
-  await env.DB.batch([...groupNonceStatements(env,actor),env.DB.prepare("INSERT INTO group_challenges VALUES (?,'join',?,?,?,?,NULL)")
+  await env.DB.batch([...groupAuthorizationStatements(env,actor),env.DB.prepare("INSERT INTO group_challenges VALUES (?,'join',?,?,?,?,NULL)")
     .bind(challengeId,invitation.id,await groupDeviceKeyHash(actor.signingPublicKey,actor.hpkePublicKey),challenge,expiresAt)]);
   return jsonResponse({challengeId,challenge,expiresAt,ownerPersonId:invitation.owner_person_id,
     ownerIdentityPublicKey:invitation.ownerIdentityPublicKey,ownerDevices,serverNow:actor.now},201);
@@ -85,7 +85,7 @@ export async function createGroupJoinRequest(env:Env,actor:GroupActor,windowId:s
   if(member) throw new ApiError(409,"already_member","This device already participates in this window.");
   const requestId=randomBase64url(16),response={operationId,requestId,windowId,invitationId:invitation.id,personId:actor.personId,
     candidateDeviceId:actor.deviceId,state:"pending",expiresAt:invitation.expires_at,serverNow:actor.now};
-  await env.DB.batch([...groupNonceStatements(env,actor),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor),
     env.DB.prepare("UPDATE group_challenges SET consumed_at=? WHERE id=?").bind(actor.now,challengeId),
     env.DB.prepare("INSERT INTO group_join_requests VALUES (?,?,?,?,?,?,'pending',?,NULL)")
       .bind(requestId,windowId,invitation.id,actor.personId,actor.deviceId,JSON.stringify(body),invitation.expires_at),
@@ -104,7 +104,7 @@ export async function getGroupJoinStatus(env:Env,actor:GroupActor,windowId:strin
   exactKeys(body,["requestId"]);
   const row=await groupJoinRequest(env,windowId,stringField(body,"requestId"));
   if(row.candidate_device_id!==actor.deviceId || row.person_id!==actor.personId) throw new ApiError(404,"not_found","The join request was not found.");
-  await env.DB.batch(groupNonceStatements(env,actor));
+  await env.DB.batch(groupAuthorizationStatements(env,actor));
   const active=await groupAdmissionPause(env,windowId);
   return jsonResponse({requestId:row.id,windowId,state:row.state==='pending' && row.expires_at<=actor.now?'expired':row.state,
     admissionPaused:row.state==='pending'&&row.expires_at>actor.now&&active!==null&&!active.has(row.person_id),
@@ -122,7 +122,7 @@ export async function resolveGroupJoinRequest(env:Env,actor:GroupActor,windowId:
     throw new ApiError(404,"not_found","The join request was not found.");
   if(row.state!=='pending') throw new ApiError(409,"request_not_pending","The join request is already resolved.");
   const response={operationId,requestId,requestState:state,revision:scope?.expectedRevision ?? null,serverNow:actor.now};
-  await env.DB.batch([...groupNonceStatements(env,actor,scope),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),
     env.DB.prepare("UPDATE group_join_requests SET state=? WHERE id=?").bind(state,requestId),
     groupMutationStatement(env,actor,operationId,response)]);
   return jsonResponse(response);

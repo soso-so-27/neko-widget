@@ -2,7 +2,7 @@ import {groupPushRevocationStatements} from './group-push-revocation';
 import { base64urlDecode,randomBase64url } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
-import { groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
+import { groupMutationStatement,groupAuthorizationStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
 import { APNS_SUBSCRIPTION_TTL_SECONDS,decryptDeviceToken,encryptDeviceToken,parseProviderCredential,parseTokenKeyring,providerJWT,type APNsDrainSummary } from './push';
 import { apnsGateOpen,loadRuntimeGate } from './runtime-gate';
 import { exactKeys,stringField,uuidField,type JsonRecord } from './validation';
@@ -25,7 +25,6 @@ function gateCheck(env:Env,generation:number):D1PreparedStatement[] {
 export async function registerGroupPush(env:Env,actor:GroupActor,windowId:string,body:JsonRecord,remove=false):Promise<Response> {
   try { return await changeGroupPush(env,actor,windowId,body,remove); }
   catch(error) {
-    await env.DB.prepare('INSERT OR IGNORE INTO group_request_nonces VALUES (?,?,?)').bind(actor.deviceId,actor.nonce,actor.now+601).run();
     throw error;
   }
 }
@@ -39,7 +38,7 @@ async function changeGroupPush(env:Env,actor:GroupActor,windowId:string,body:Jso
   if(!remove && (!enabled(env) || !apnsGateOpen(gate)))throw new ApiError(503,'group_push_disabled','Group notifications are unavailable.');
   const previous=await storedGroupMutation(env,actor,operationId,{windowId});if(previous)return jsonResponse(previous);
   const receipt={operationId,windowId,notifications:!remove,serverNow:actor.now};
-  const statements=[...groupNonceStatements(env,actor,{windowId})];
+  const statements=[...groupAuthorizationStatements(env,actor,{windowId})];
   if(remove)statements.push(...groupPushRevocationStatements(env,windowId,{deviceId:actor.deviceId}));
   else {
     let credential,keyring,token:Uint8Array;

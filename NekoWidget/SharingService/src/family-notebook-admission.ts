@@ -1,4 +1,4 @@
-import { authenticateGroupRequest, groupId, groupNonceStatements, type GroupActor } from './group-auth';
+import { authenticateGroupRequest, groupId, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { base64urlDecode, verifyEd25519 } from './encoding';
 import { groupFields } from './group-protocol';
 import { gate, safeFailure, familyStorePolicy } from './family-notebook-payer';
@@ -81,7 +81,7 @@ export async function familyNotebookAdmission(request: Request, env: Env): Promi
     if (operation === 'preview') {
       const invitation = await proveInvitation(env, actor, familyId, invitationId!, 'preview', operationId, binaryField(body, 'proofSignature', 64));
       const check = crypto.randomUUID();
-      const batch = await env.DB.batch<Invitation>([...groupNonceStatements(env, actor),
+      const batch = await env.DB.batch<Invitation>([...groupAuthorizationStatements(env, actor),
         env.DB.prepare('INSERT INTO family_notebook_invitation_checks VALUES (?,?,?,?)').bind(check, familyId, invitationId, invitation.generation),
         env.DB.prepare('DELETE FROM family_notebook_invitation_checks WHERE id=?').bind(check), invitationQuery(env, familyId, invitationId!)]);
       const current = batch.at(-1)?.results[0];
@@ -100,7 +100,7 @@ export async function familyNotebookAdmission(request: Request, env: Env): Promi
       }
       // Only one's own historical receipt. It never restores membership or
       // grants access to a used invitation or to another person's notebook.
-      await env.DB.batch(groupNonceStatements(env, actor));
+      await env.DB.batch(groupAuthorizationStatements(env, actor));
       return receipt(operationId, prior);
     }
     const policy = familyStorePolicy(env);
@@ -118,7 +118,7 @@ export async function familyNotebookAdmission(request: Request, env: Env): Promi
       throw new ApiError(503, 'family_notebook_unavailable', 'Family configuration is unavailable.');
     }
     const resultingGeneration = generation + (operation === 'create' || operation === 'approve' ? 1 : 0);
-    await env.DB.batch([...groupNonceStatements(env, actor),
+    await env.DB.batch([...groupAuthorizationStatements(env, actor),
       env.DB.prepare(`INSERT INTO family_notebook_admission_events
         (actor_device_id,operation_id,actor_person_id,request_hash,family_id,operation,expected_generation,
           resulting_generation,invitation_id,join_id,proof_public_key,ciphertext,store_environment,maximum_members,accept_sandbox_in_production)

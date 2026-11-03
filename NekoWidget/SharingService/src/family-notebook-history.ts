@@ -1,4 +1,4 @@
-import { authenticateGroupRequest, groupNonceStatements, type GroupActor } from './group-auth';
+import { authenticateGroupRequest, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { base64urlDecode, verifyEd25519 } from './encoding';
 import { groupDeviceAuthorization } from './group-protocol';
 import { familyUUID, verifyFamilyRoster, verifyFamilyEnvelope, verifyFamilyOperation, type VerifiedFamilyCryptoRoster } from './family-notebook-crypto';
@@ -69,12 +69,12 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
       if (previous.actor_person_id !== actor.personId || previous.family_id !== family || previous.action !== action || previous.request_hash !== actor.requestHash) {
         throw new ApiError(409, 'idempotency_conflict', 'This operation has different content.');
       }
-      await env.DB.batch(groupNonceStatements(env, actor));
+      await env.DB.batch(groupAuthorizationStatements(env, actor));
       return jsonResponse(JSON.parse(previous.result));
     }
     const current = await state(env, actor, family);
     if (generation !== current.generation || epoch !== current.epoch) unavailable();
-    const statements: D1PreparedStatement[] = [...groupNonceStatements(env, actor), ...checks(env, actor, family, generation, epoch, action)];
+    const statements: D1PreparedStatement[] = [...groupAuthorizationStatements(env, actor), ...checks(env, actor, family, generation, epoch, action)];
     const payload = asObject(body.payload);
     let appliedEpoch = epoch;
     if (action === 'device') {
@@ -130,7 +130,7 @@ export async function familyNotebookHistory(request: Request, env: Env): Promise
 
 async function read(env: Env, actor: GroupActor, family: string, route: string, number?: number): Promise<Response> {
   const current = await state(env, actor, family);
-  const statements = [...groupNonceStatements(env, actor), ...checks(env, actor, family, current.generation, current.epoch, 'read')];
+  const statements = [...groupAuthorizationStatements(env, actor), ...checks(env, actor, family, current.generation, current.epoch, 'read')];
   const base = { schemaVersion: 1, familyId: family, generation: current.generation, currentEpoch: current.epoch };
   if (route === 'state' && number === undefined) {
     statements.push(env.DB.prepare(`SELECT c.person_id,c.device_id,c.identity_public_key,c.signing_public_key,c.hpke_public_key,c.person_authorization

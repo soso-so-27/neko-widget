@@ -2,7 +2,7 @@ import {groupPushRevocationStatements} from './group-push-revocation';
 import { base64urlDecode,sha256Base64url,verifyEd25519 } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
-import { groupMutationStatement,groupNonceStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
+import { groupMutationStatement,groupAuthorizationStatements,requireGroupMember,storedGroupMutation,type GroupActor } from './group-auth';
 import { groupFields,loadStoredGroupRoster } from './group-protocol';
 import { groupCipher,groupExpected } from './group-windows';
 import { binaryField,exactKeys,integerField,uuidField,type JsonRecord } from './validation';
@@ -28,7 +28,7 @@ export async function manageGroupWindow(env:Env,actor:GroupActor,windowId:string
     if(access.revision!==revision || access.keyEpoch!==keyEpoch)throw new ApiError(409,'stale_revision','Read the current window before making changes.');
     const signature=binaryField(body,'ownerSignature',64),scope={windowId,owner:true,expectedRevision:revision};
     const input={windowId,revision,keyEpoch,rosterHash:roster.hash,operationId};
-    const statements=[...groupNonceStatements(env,actor,scope)];
+    const statements=[...groupAuthorizationStatements(env,actor,scope)];
     let receipt:Record<string,unknown>;
     if(close) {
       if(!await verifyEd25519(actor.signingPublicKey,signature,groupCloseTranscript(input)))throw new ApiError(400,'invalid_proof','The owner proof is invalid.');
@@ -66,7 +66,6 @@ export async function manageGroupWindow(env:Env,actor:GroupActor,windowId:string
     }
     return jsonResponse(receipt);
   } catch(error) {
-    await env.DB.prepare('INSERT OR IGNORE INTO group_request_nonces VALUES (?,?,?)').bind(actor.deviceId,actor.nonce,actor.now+601).run();
     throw error;
   }
 }
