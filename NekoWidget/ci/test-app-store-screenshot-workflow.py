@@ -99,12 +99,15 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         for entry in ("onboarding-purpose-start", "initial-scan-continue", "main-tab-photos",
                       "main-tab-windows", "tools-settings-button", "settings-membership-offer",
                       "ipad-public-plus-entry-observation", "07-plus-entry-unavailable-synthetic-url",
-                      "Allow Full Access", "com.apple.springboard", "02-photo-permission"):
+                      "Allow Full Access", "com.apple.springboard", "02-photo-permission",
+                      "group-window-unavailable", "みんなのまどを読み込めません",
+                      "05-windows-unavailable-synthetic-url"):
             self.assertIn(entry, method)
         for forbidden in ("--app-store-screenshot-fixture", "--review-public-presentation",
                           'app.launchEnvironment[', 'tap("membership-offer-purchase"',
                           'tap("membership-offer-restore"', 'tap("settings-membership-restore"',
-                          'plus.tap()', 'tap("settings-membership-preview"', 'membership-offer-close'):
+                          'plus.tap()', 'tap("settings-membership-preview"', 'membership-offer-close',
+                          '"group-window-list"'):
             self.assertNotIn(forbidden, method)
 
     def test_capture_build_is_explicitly_local_only(self) -> None:

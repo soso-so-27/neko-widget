@@ -67,9 +67,14 @@ final class AppStoreScreenshotUITests: XCTestCase {
         guard tapTab(application: app, identifier: "main-tab-windows", fallbackLabel: "まど") else {
             capture("missing-windows"); XCTFail("Windows tab missing"); return
         }
-        XCTAssertTrue(app.descendants(matching: .any)["group-window-list"].firstMatch
-            .waitForExistence(timeout: 15), app.debugDescription)
-        capture("05-windows")
+        // This lane uses reserved .candidate.test URLs. Public URL validation
+        // must reject them; reaching the unavailable screen is the contract.
+        XCTAssertTrue(app.navigationBars["まど"].waitForExistence(timeout: 15))
+        let unavailable = app.staticTexts.matching(identifier: "group-window-unavailable")
+            .matching(NSPredicate(format: "label == %@", "みんなのまどを読み込めません")).firstMatch
+        let unavailableVisible = unavailable.waitForExistence(timeout: 15)
+        capture("05-windows-unavailable-synthetic-url")
+        XCTAssertTrue(unavailableVisible, app.debugDescription)
         guard tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール") else {
             capture("missing-tools"); XCTFail("Tools tab missing"); return
         }
