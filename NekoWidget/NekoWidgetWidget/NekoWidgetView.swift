@@ -41,17 +41,10 @@ struct NekoWidgetView: View {
     let entry: NekoWidgetEntry
 
     var body: some View {
-        Group {
-            if let selection = entry.cloudyWindowSelection, selection.revealedAt == nil {
-                Button(intent: RevealCloudyWindowIntent(selection: selection)) { photoContent }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(selection.albumPeriod == nil
-                        ? "きょうのまどのくもりを晴らす" : "作品が届きました。くもりを晴らす")
-                    .accessibilityIdentifier("cloudy-window-reveal")
-            } else {
-                photoContent.widgetURL(entry.photoURL)
-            }
-        }
+        // Only the capsule reveals a cloudy window (11/3: a stray tap used to
+        // clear it). Elsewhere a tap opens the app; the URL is nil while
+        // cloudy, so the photo itself is never opened before the reveal.
+        photoContent.widgetURL(entry.photoURL)
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
@@ -103,14 +96,21 @@ struct NekoWidgetView: View {
                         if let selection = entry.cloudyWindowSelection {
                             if selection.revealedAt == nil {
                                 // Says what you get, not the verb: 「晴らす」 alone was unclear.
-                                Label(selection.albumPeriod == nil ? "タップで きょうの 1 枚" : "作品が届きました",
-                                      systemImage: "hand.tap.fill")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 12).padding(.vertical, 7)
-                                    .background(.black.opacity(0.35), in: Capsule())
-                                    .padding(12)
-                                    .accessibilityHidden(true)
+                                Button(intent: RevealCloudyWindowIntent(selection: selection)) {
+                                    Label(selection.albumPeriod == nil ? "タップで きょうの 1 枚" : "作品が届きました",
+                                          systemImage: "hand.tap.fill")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 12).padding(.vertical, 7)
+                                        .background(.black.opacity(0.35), in: Capsule())
+                                        .frame(minHeight: 44)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .padding(12)
+                                .accessibilityLabel(selection.albumPeriod == nil
+                                    ? "きょうのまどのくもりを晴らす" : "作品が届きました。くもりを晴らす")
+                                .accessibilityIdentifier("cloudy-window-reveal")
                             }
                         } else if let photo = entry.officialPhoto {
                             // Same type, colour, inset and alignment as a window's

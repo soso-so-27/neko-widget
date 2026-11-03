@@ -19,7 +19,9 @@ enum CloudyWindowStrength: String, Codable, CaseIterable, Sendable {
 }
 
 struct CloudyWindowConfiguration: Codable, Equatable, Sendable {
-    var enabled = false
+    /// 11/3: 「このiPhoneの猫写真」 is cloudy from the first install, like the
+    /// per-cat windows. A persisted older state keeps whatever it saved.
+    var enabled = true
     /// 10/24: the owner preferred こいめ on a real iPhone.
     var strength: CloudyWindowStrength = .strong
     var revision = UUID().uuidString
@@ -155,7 +157,9 @@ struct CloudyWindowStore: Sendable {
     }
 
     func configuration() -> CloudyWindowConfiguration {
-        guard internalPresentation else { return .init() }
+        // Outside Version1 the cloudy window does not exist, whatever the
+        // stored or default value says.
+        guard internalPresentation else { return .init(enabled: false) }
         return (try? authorityStore.withAuthoritySnapshot { _ in try read().configuration }) ?? .init()
     }
 
