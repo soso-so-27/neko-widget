@@ -14,6 +14,7 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
   // Deploying code with gate OFF must not require this migration to be live.
   const schema=await env.DB.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='group_moments'").first();
   if(!schema)return;
+  const rosterCleanup=await env.DB.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='view' AND name='group_closed_roster_cleanup_due'").first();
   const expired=await env.DB.prepare(`SELECT id FROM group_moments WHERE ${due} ORDER BY created_at,id LIMIT ?`)
     .bind(now,BATCH).all<{id:string}>();
   for(const row of expired.results)await env.DB.batch([
@@ -39,10 +40,25 @@ export async function runGroupRelayCleanup(env:Env,now=Math.floor(Date.now()/100
       }
     }
   }
+  const finalMoments=await env.DB.prepare(`SELECT m.id,m.space_id FROM group_moments m JOIN group_object_deletions q ON q.moment_id=m.id
+    WHERE m.state='expired' AND m.expired_at<=? AND q.state='completed' ORDER BY m.expired_at,m.id LIMIT ?`)
+    .bind(now-RECEIPT_SECONDS,BATCH).all<{id:string;space_id:string}>();
+  const previouslyEmpty=rosterCleanup?await env.DB.prepare('SELECT space_id FROM group_closed_roster_cleanup_due ORDER BY space_id LIMIT ?')
+    .bind(BATCH).all<{space_id:string}>():{results:[]};
+  // Always include every window whose last moment this batch might remove,
+  // even with a backlog of already-empty windows. Bound both sets to BATCH.
+  const rosterWindows=[...new Set([...finalMoments.results,...previouslyEmpty.results].map(row=>row.space_id))];
+  const placeholders=(n:number)=>Array(n).fill('?').join(',');
   await env.DB.batch([
-    env.DB.prepare(`DELETE FROM group_moments WHERE id IN (SELECT m.id FROM group_moments m JOIN group_object_deletions q ON q.moment_id=m.id
-      WHERE m.state='expired' AND m.expired_at<=? AND q.state='completed' ORDER BY m.expired_at,m.id LIMIT ?)`)
-      .bind(now-RECEIPT_SECONDS,BATCH),
+    ...(finalMoments.results.length?[env.DB.prepare(`DELETE FROM group_moments WHERE id IN (${placeholders(finalMoments.results.length)})
+      AND state='expired' AND expired_at<=? AND EXISTS(SELECT 1 FROM group_object_deletions q WHERE q.moment_id=group_moments.id AND q.state='completed')`)
+      .bind(...finalMoments.results.map(row=>row.id),now-RECEIPT_SECONDS)]:[]),
+    // Recheck closed and moments=0 inside this same transaction. No runtime
+    // gate applies; envelopes and packets are removed before their roster FK.
+    ...(rosterCleanup&&rosterWindows.length?['group_key_envelopes','group_roster_packets','group_rosters'].map(table=>
+      env.DB.prepare(`DELETE FROM ${table} WHERE space_id IN
+        (SELECT space_id FROM group_closed_roster_cleanup_due WHERE space_id IN (${placeholders(rosterWindows.length)}))`)
+        .bind(...rosterWindows)):[]),
     env.DB.prepare('DELETE FROM group_notification_events WHERE id IN (SELECT id FROM group_notification_events WHERE expires_at<=? LIMIT 100)').bind(now),
     env.DB.prepare('DELETE FROM group_heart_usage WHERE rowid IN (SELECT rowid FROM group_heart_usage WHERE day_key<? LIMIT 100)').bind(await dailyQuotaDay(env,now)-2),
     env.DB.prepare('DELETE FROM group_request_nonces WHERE rowid IN (SELECT rowid FROM group_request_nonces WHERE expires_at<=? LIMIT 1000)').bind(now),

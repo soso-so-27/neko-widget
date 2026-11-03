@@ -615,6 +615,7 @@ struct OfficialWindowView: View {
                          ? "運営が選んだ猫の写真が届きます。"
                          : "この猫の写真が届くまどです。")
                     if store.windowID == "black-cats" {
+                        Text("のわは、ねこのまどの黒猫です。街のどこかにいるのわが、毎日1枚届きます。")
                         Text("毎日0時（日本時間）に新しい1枚に変わります。")
                     }
                 }

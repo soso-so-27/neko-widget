@@ -45,6 +45,8 @@ actor GroupWindowLocalPhotoStore {
     struct HiddenMember: Codable, Equatable, Sendable, Identifiable {
         let id: String
         let name: String
+        /// Also blocked on the relay (photos stop both ways), not only hidden here.
+        var blocked: Bool? = nil
     }
 
     private struct Directory: Codable {
@@ -140,12 +142,17 @@ actor GroupWindowLocalPhotoStore {
     }
 
     /// Stops showing one person's photos in a window, on this iPhone only.
-    func hide(memberID: String, name: String, windowID: String) {
+    /// A block records that too, so the list can offer to lift it.
+    func hide(memberID: String, name: String, windowID: String, blocked: Bool = false) {
         var windows = knownWindows()
         guard let index = windows.firstIndex(where: { $0.id == windowID }) else { return }
         var hidden = windows[index].hiddenMembers ?? []
-        guard !hidden.contains(where: { $0.id == memberID }) else { return }
-        hidden.append(HiddenMember(id: memberID, name: name))
+        if let existing = hidden.firstIndex(where: { $0.id == memberID }) {
+            guard blocked, hidden[existing].blocked != true else { return }
+            hidden[existing].blocked = true
+        } else {
+            hidden.append(HiddenMember(id: memberID, name: name, blocked: blocked ? true : nil))
+        }
         windows[index].hiddenMembers = hidden
         writeDirectory(windows)
     }
@@ -172,6 +179,13 @@ actor GroupWindowLocalPhotoStore {
     private func writeDirectory(_ windows: [KnownWindow]) {
         guard let root, let url = directoryURL() else { return }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Up to 500 photos a window, and this iPhone's keys never leave it: a
+        // backup copy could not be continued, and would only weigh. Photos
+        // worth keeping go to the Photos app, as the guide says.
+        var folder = root
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? folder.setResourceValues(values)
         guard let data = try? JSONEncoder().encode(Directory(windows: windows)) else { return }
         try? write(data, to: url)
     }

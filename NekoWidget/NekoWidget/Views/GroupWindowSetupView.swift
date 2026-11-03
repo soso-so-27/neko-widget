@@ -309,6 +309,9 @@ final class GroupWindowMembersModel: ObservableObject {
     func leave() async -> Bool {
         await perform("leave", reloadsAfterSuccess: false) { operation in
             try await client.leave(windowID: windowID, operation: operation)
+            // Right after the leave itself, not only when the screen closes:
+            // the Widget must not keep a window this iPhone has left.
+            try? GroupWidgetCache.remove(windowID: windowID)
         }
         return actionErrorMessage == nil
     }

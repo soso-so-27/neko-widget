@@ -1121,7 +1121,7 @@ struct FamilyNotebookMemberView: View {
     private func title(_ action: Action) -> String {
         switch action {
         case .dissolve: "家族の共有をやめる"
-        case .leave: "家族から抜ける"
+        case .leave: "家族の手帳から抜ける"
         case .remove: "家族から外す"
         }
     }

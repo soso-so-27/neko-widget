@@ -322,6 +322,31 @@ describe('group report stage-one durable operations',()=>{
     expect((await f.status(f.reporter,other.path)).status).toBe(404);
   });
 
+  it('keeps a stopped case, decision and unexpired seven-day evidence when closed roster cleanup runs',async()=>{
+    const f=await fixture(),c=(await f.queue()).find(row=>row.receiptNumber===f.report.receiptNumber)!;
+    const receipt=await f.read(c.caseReference);
+    expect((await f.prove(await f.issue(`/operator/group/v1/cases/${c.caseReference}/photo/${receipt}`))).status).toBe(200);
+    const before=await db.prepare('SELECT * FROM group_report_records WHERE report_id=?').bind(f.report.id).first();
+    const decisions=(await db.prepare('SELECT * FROM group_moderation_decisions WHERE case_reference=?').bind(c.caseReference).all()).results;
+    const restrictions=await activeRestrictions(f.report.id);
+    const evidence=(await db.prepare('SELECT object_key,content_expires_at FROM group_reports WHERE id=?').bind(f.report.id).first<{object_key:string;content_expires_at:number}>())!;
+    const bytes=await (await testEnv.MODERATION_MEDIA!.get(evidence.object_key))!.arrayBuffer();
+    // Synthetic historical relay deadline: the report was submitted later,
+    // so its independent seven-day evidence window is still open today.
+    const now=Math.floor(Date.now()/1000),old=now-172801;
+    await db.prepare("UPDATE group_windows SET mode='closed' WHERE space_id=?").bind(f.w.windowId).run();
+    await db.prepare("UPDATE group_moments SET state='expired',expired_at=?,cleanup_at=? WHERE id=?").bind(old,old,f.report.momentId).run();
+    await db.prepare("INSERT INTO group_object_deletions SELECT id,object_key,0,?,'pending' FROM group_moments WHERE id=?").bind(old,f.report.momentId).run();
+    await runGroupRelayCleanup({...settings,GROUP_RUNTIME_ENABLED:'NO',GROUP_MODERATION_RUNTIME_ENABLED:'NO'},now);
+    expect(await db.prepare('SELECT id FROM group_moments WHERE id=?').bind(f.report.momentId).first()).toBeNull();
+    for(const table of ['group_key_envelopes','group_roster_packets','group_rosters'])
+      expect((await db.prepare(`SELECT COUNT(*) n FROM ${table} WHERE space_id=?`).bind(f.w.windowId).first<{n:number}>())!.n).toBe(0);
+    expect(await db.prepare('SELECT * FROM group_report_records WHERE report_id=?').bind(f.report.id).first()).toEqual(before);
+    expect((await db.prepare('SELECT * FROM group_moderation_decisions WHERE case_reference=?').bind(c.caseReference).all()).results).toEqual(decisions);
+    expect(await activeRestrictions(f.report.id)).toEqual(restrictions);
+    expect(await db.prepare('SELECT object_key,content_expires_at FROM group_reports WHERE id=?').bind(f.report.id).first()).toEqual(evidence);
+    expect(new Uint8Array(await (await testEnv.MODERATION_MEDIA!.get(evidence.object_key))!.arrayBuffer())).toEqual(new Uint8Array(bytes));
+  });
   it('records a deadline photo stop even after the original photo and relay metadata are gone',async()=>{
     const f=await fixture();
     const moment=await db.prepare('SELECT cleanup_at FROM group_moments WHERE id=?').bind(f.report.momentId).first<{cleanup_at:number}>();
