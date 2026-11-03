@@ -1246,13 +1246,13 @@ extension ProductionGroupWindowClient {
         var hearts: [GroupHeart] = []
         for heart in row.hearts {
             let (roster, _) = try await historicalMaterial(windowID: current.id, epoch: heart.keyEpoch, revision: heart.rosterRevision, hash: heart.rosterHash)
-            // A heart that does not verify is dropped on its own; the photo and
-            // the other hearts still show. Network failures still propagate.
+            // setHeart relies on this throw to refetch validated metadata;
+            // the list in photos() skips such a row on its own.
             guard let reactor = roster.device(id: heart.reactorDeviceID), reactor.member.participantID == heart.reactorParticipantID,
-                  (try? Curve25519.Signing.PublicKey(rawRepresentation: reactor.device.signingPublicKey).isValidSignature(heart.reactorSignature,
+                  try Curve25519.Signing.PublicKey(rawRepresentation: reactor.device.signingPublicKey).isValidSignature(heart.reactorSignature,
                     for: heartBytes(windowID: current.id, photoID: row.id, participantID: heart.reactorParticipantID, deviceID: heart.reactorDeviceID,
-                      active: heart.active, operationID: heart.operationID, epoch: heart.keyEpoch, rosterHash: heart.rosterHash))) == true
-            else { continue }
+                      active: heart.active, operationID: heart.operationID, epoch: heart.keyEpoch, rosterHash: heart.rosterHash))
+            else { throw GroupProtocolError.invalidSignature }
             hearts.append(.init(participantID: heart.reactorParticipantID,
                 displayName: current.members.first(where: { $0.id == heart.reactorParticipantID })?.displayName ?? "以前のメンバー",
                 active: heart.active, updatedAt: Date(timeIntervalSince1970: TimeInterval(heart.updatedAt))))
