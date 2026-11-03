@@ -18,10 +18,11 @@ export function loopPosition(epoch, at) {
 }
 
 export function validateBlackCatLoop(index) {
-  require(exact(index, ['schemaVersion', 'credit', 'images', 'epochs']) && index.schemaVersion === 3
+  require(exact(index, ['schemaVersion', 'credit', 'images', 'epochs', ...(Object.hasOwn(index ?? {}, 'updatedAt') ? ['updatedAt'] : [])]) && index.schemaVersion === 3
     && index.credit === BLACK_CAT_CREDIT && Array.isArray(index.images) && index.images.length >= 1 && index.images.length <= 600
     && Array.isArray(index.epochs) && index.epochs.length >= 1 && index.epochs.length <= 64);
   const hashes = new Set();
+  if (index.updatedAt !== undefined) require(Number.isFinite(instant(index.updatedAt)));
   for (const image of index.images) {
     require(exact(image, ['sha256', 'width', 'height']) && HASH.test(image.sha256) && !hashes.has(image.sha256)
       && Number.isInteger(image.width) && image.width >= 1 && image.width <= 2048
@@ -55,15 +56,20 @@ export function blackCatDay(index, now) {
   const epoch = index.epochs.findLast(value => instant(value.startsAt) <= now);
   if (!epoch) return null;
   const start = dayStart(now), end = start + DAY;
-  const selected = epoch.order[loopPosition(epoch, now)];
-  const image = index.images.find(value => value.sha256 === selected);
-  require(image);
-  const date = stamp(start + 9 * 3600000).slice(0, 10);
-  return { start, end, epoch, catalog: { schemaVersion: 1, channelID: 'black-cats', enabled: true,
-    generatedAt: stamp(start), validUntil: stamp(end), photos: [{
+  const photos = [start, end].map(at => {
+    const dayEpoch = index.epochs.findLast(value => instant(value.startsAt) <= at);
+    const selected = dayEpoch.order[loopPosition(dayEpoch, at)];
+    const image = index.images.find(value => value.sha256 === selected);
+    require(image);
+    const date = stamp(at + 9 * 3600000).slice(0, 10);
+    return {
       id: 'black-' + date.replaceAll('-', ''), catID: 'generated-black-cat', catName: '黒猫', credit: index.credit,
-      publishedAt: stamp(start), expiresAt: stamp(end), imageFilename: selected + '.jpg', ...image,
-    }] } };
+      publishedAt: stamp(at), expiresAt: stamp(at + DAY), imageFilename: selected + '.jpg', ...image,
+    };
+  });
+  return { start, end, epoch, catalog: { schemaVersion: 1, channelID: 'black-cats', enabled: true,
+    generatedAt: stamp(Math.max(start, index.updatedAt === undefined ? start : instant(index.updatedAt))),
+    validUntil: stamp(end + DAY), photos } };
 }
 
 const response = (status, head) => new Response(head ? null : status === 404 ? 'Not found' : 'Feed temporarily unavailable', {
@@ -76,13 +82,15 @@ export async function serveBlackCatLoop(request, env, index) {
   if (url.search || !route) return response(404, head);
   const selected = blackCatDay(index, Date.now());
   if (!selected) return response(503, head);
-  const filename = selected.catalog.photos[0].imageFilename;
-  // Block non-current JPEGs before touching their bytes, including HEAD.
-  if (route[1] !== 'catalog.json' && route[1] !== filename) return response(404, head);
+  if (instant(selected.catalog.generatedAt) > Date.now()) return response(503, head);
+  const filenames = new Set(selected.catalog.photos.map(photo => photo.imageFilename));
+  // Only today and the explicitly listed next day are eligible for preloading.
+  if (route[1] !== 'catalog.json' && !filenames.has(route[1])) return response(404, head);
   const binding = { async fetch(input) {
     const requested = new URL(input.url);
     if (requested.pathname === '/windows/black-cats/catalog.json') return new Response(JSON.stringify(selected.catalog));
-    if (requested.pathname !== '/windows/black-cats/' + filename) return new Response(null, { status: 404 });
+    const filename = requested.pathname.slice('/windows/black-cats/'.length);
+    if (!filenames.has(filename)) return new Response(null, { status: 404 });
     return env.OFFICIAL_ASSETS.fetch(new Request(new URL(LOOP_IMAGES_PATH + filename, url), { redirect: 'manual' }));
   } };
   // Reuse the existing bounded reader and image digest validation. It also

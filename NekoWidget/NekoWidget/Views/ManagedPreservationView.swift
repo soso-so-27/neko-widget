@@ -218,7 +218,7 @@ struct ManagedPreservationView: View {
                             Button("サインアウト", role: .destructive) { coordinator.signOut() }
                         } message: { Text("保存した記録は残ります。このiPhoneでの自動保存は止まり、サインインし直すと続きます。") }
                     if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
-                        Button("保存用のアカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
+                        Button("アカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
                             .disabled(coordinator.hasUnsecuredMemo)
                             .accessibilityIdentifier("preservation-account-delete")
                     }

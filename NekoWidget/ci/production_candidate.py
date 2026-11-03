@@ -92,6 +92,7 @@ def settings(contract, *, synthetic=False):
     require(re.fullmatch(r"[A-Za-z0-9_-]{8,128}", values["MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE"]) is not None
             and "staging" not in values["MANAGED_PRESERVATION_MEMBERSHIP_AUDIENCE"].lower(), "Production audience required")
     key = values["SHARING_MODERATION_PUBLIC_KEY"]
+    require(isinstance(key, str) and bool(key.strip()), "App Store candidate requires SHARING_MODERATION_PUBLIC_KEY")
     require(re.fullmatch(r"[A-Za-z0-9_-]{43}", key) is not None, "Canonical recipient key required")
     raw = base64.urlsafe_b64decode(key + "=")
     require(base64.urlsafe_b64encode(raw).decode().rstrip("=") == key

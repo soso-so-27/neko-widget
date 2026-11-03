@@ -77,7 +77,7 @@ node tools/prepare_bundle.mjs --assets C:/official-window-review/official-001 --
 - Aだけ止める場合、Aを `--channel-id window-a --paused` で再生成し、現在のBとlegacy出力も含めて新しいbundleを作ります。追加指定から窓を外すと次のbundleにその窓のファイルは入りません。他窓の期限は自動延長しません。
 - dry-run・実配備の順序は既存手順どおりです。この複数まど対応は既存previewへ反映済みです。写真の継続供給と自動配信の稼働は別です。
 
-- 更新: 元の入力を変えてpublisherで新しい版を生成し、bundle → dry-run → 配備の順で差し替える。未来の写真は、その公開時刻以降の再生成が必要。
+- 更新: 元の入力を変えてpublisherで新しい版を生成し、bundle → dry-run → 配備の順で差し替える。承認済みの翌24時間分は事前に収録・JPEG先読みできる。それより先の写真は次回生成が必要。
 - 取り下げ: 対象を入力から外して新しい版を作る。公開フォルダーにも旧JPEGを残さない。Workerも現在のcatalogにないJPEGを拒否する。
 - 停止: publisherの `--paused` で新しい停止版を作り、同じWorkerへ配備する。アプリが停止catalogを取得すると端末内の写真を破棄する。
 - catalogは最大48時間で失効する。今回は定時の写真供給や自動更新の稼働は約束していない。継続配信開始時に写真供給に合わせて運用頻度を定める。
@@ -99,7 +99,7 @@ node tools/prepare_bundle.mjs --assets C:/official-window-review/official-001 --
 
 ## 黒猫のまどを1日1枚でループする（ローカル候補）
 
-現在の候補は `tools/prepare_black_cat_days.mjs --loop-config ...`。最初は確認済み10枚を日本時間0時に1枚ずつ切り替え、010の次は001へ戻る。開始日と並びは1つの設定にまとめる。確認後の末尾追加は現在の周回を保持し、明示したリセットだけ指定日の001へ戻す。Workerがその日の24時間catalogを生成するので、毎日の編集・cron・D1・期限延長の定期配備は不要。手順・入力条件・追加/リセットの境界は [黒猫の画像の受け渡しと準備](tools/README-black-cat-days.md) を参照。
+現在の候補は `tools/prepare_black_cat_days.mjs --loop-config ...`。最初は確認済み10枚を日本時間0時に1枚ずつ切り替え、010の次は001へ戻る。開始日と並びは1つの設定にまとめる。確認後の末尾追加は現在の周回を保持し、明示したリセットだけ指定日の001へ戻す。Workerが当日と翌日分の48時間catalog（各写真の表示期限は各日の終わり）を生成するので、毎日の編集・cron・D1・期限延長の定期配備は不要。手順・入力条件・追加/リセットの境界は [黒猫の画像の受け渡しと準備](tools/README-black-cat-days.md) を参照。
 
 内部版のアプリとWidgetは今日の黒猫1枚を表示する。`InternalBuildPresentationAvailability` が利用可能なときだけ黒猫の行を出し、猫カフェ・保護猫は灰色の「近日」行にする。公開版の一覧とWidgetの選び方・期限は従来どおり。表示クレジットは「ねこのまど（AI で作った画像）」。生成候補は既存staging用で、画像の受領・このローカル準備は素材の公開や配備の承認を意味しない。追加50枚は所有者確認後に扱う。
 
@@ -146,6 +146,6 @@ node tools/prepare_program.mjs --input C:/public-photos/approved-program.json --
 
 `dailyHistory` は直近7日までの実際に掲載した日を古い順に `{"photoID":"approved-001","publishedAt":"2026-11-01T09:00:00Z"}` で引き継ぐ。対応する写真も元の掲載可期間とともにphotosへ含める。日時をずらしたり、元のexpiresAtを延ばしたりしない。18時以外に始める差し替えでは、当日分が履歴になければ次の18時まで空にする。取り下げ時は対象を履歴・全チャンネルの選択から外した候補を用意する。生成時刻が古い版や同時刻の別版はアプリが拒否するため、新候補のstartsAtは直前の版より後にする。
 
-公開assetsにはcatalog/JPEGと配信に必要な内部programmeだけを置き、入力manifest・ファイルパス・publicationApprovedは含めない。内部programme、未来の写真、未知のまど、URLのquery、別originへの転送は公開しない。
+公開assetsにはcatalog/JPEGと配信に必要な内部programmeだけを置き、入力manifest・ファイルパス・publicationApprovedは含めない。内部programme、catalogに含まれない写真、未知のまど、URLのquery、別originへの転送は公開しない。承認済みの翌24時間分は先読み対象となるが、Appの表示時刻を早めない。
 
 読み取り側の互換用: `OfficialWindowClient.weeklyThemes(store:)` と `Theme.definition(relativeTo:)` は残しているが、新しい画面から今週のテーマへは案内しない。`OfficialWindowConfiguration.definitions` は内部版では黒猫だけを返し、公開版では従来の一覧を維持する。黒猫の行・詳細・Widgetと「近日」の2行はこのPRに含む。

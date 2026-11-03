@@ -188,18 +188,28 @@ class CatalogTests(unittest.TestCase):
             self.photo("new", publishedAt=catalog.utc_string(NOW)),
         ]
         result = self.build(rows)
-        self.assertEqual([row["id"] for row in result["photos"]], ["new", "old"])
+        self.assertEqual([row["id"] for row in result["photos"]], ["future", "new", "old"])
         # Identical pixels deduplicate the physical JPEG without aliasing IDs.
         self.assertEqual(len(list(self.output.glob("*.jpg"))), 1)
 
     def test_empty_enabled_catalog_does_not_copy_excluded_images(self):
-        result = self.build([self.photo(publishedAt=catalog.utc_string(NOW + timedelta(days=1)))])
+        result = self.build([self.photo(publishedAt=catalog.utc_string(NOW + timedelta(days=1, seconds=1)))])
         self.assertIs(result["enabled"], True)
         self.assertEqual(result["photos"], [])
         self.assertEqual([path.name for path in self.output.iterdir()], ["catalog.json"])
 
     def test_empty_input_is_allowed(self):
         self.assertEqual(self.build([])["photos"], [])
+
+    def test_next_jst_midnight_and_exact_24_hour_horizon(self):
+        # NOW is 21:00 JST: tomorrow's midnight must be downloadable tonight.
+        result = self.build([
+            self.photo("midnight", publishedAt=catalog.utc_string(NOW + timedelta(hours=3))),
+            self.photo("limit", publishedAt=catalog.utc_string(NOW + timedelta(hours=24))),
+            self.photo("later", publishedAt=catalog.utc_string(NOW + timedelta(hours=24, seconds=1))),
+        ])
+        self.assertEqual([row["id"] for row in result["photos"]], ["limit", "midnight"])
+        self.assertEqual(result["photos"][1]["publishedAt"], "2026-09-10T15:00:00Z")
 
     def test_catalog_validity_bounds(self):
         for hours in (0, 49, True, 1.5):

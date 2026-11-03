@@ -1497,7 +1497,7 @@ struct AppRecordSettingsView: View {
                 if PreservationExportFailureText.isShown(exporter) { PreservationExportFailureText(exporter: exporter) }
             }
             if authentication.isSignedIn || authentication.accountDeletionState != nil {
-                NavigationLink("アカウント") { ManagedPreservationView() }
+                NavigationLink("アカウント（削除・サインアウト）") { ManagedPreservationView() }
                     .accessibilityIdentifier("app-record-account")
                 if persistence.enabled, authentication.accountDeletionState == nil {
                     Button("このiPhoneで自動保存をやめる") { confirmsPause = true }

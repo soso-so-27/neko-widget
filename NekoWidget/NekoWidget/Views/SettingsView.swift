@@ -257,7 +257,7 @@ struct SettingsView: View {
                 }
                 if GroupWindowClientProvider.ui != nil {
                     NavigationLink { GroupHiddenMembersView() } label: {
-                        Label("表示しないようにした人", systemImage: "eye.slash")
+                        Label("表示しない・ブロックした人", systemImage: "eye.slash")
                     }
                     .accessibilityIdentifier("settings-group-hidden-members")
                 }

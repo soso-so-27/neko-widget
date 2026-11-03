@@ -238,7 +238,7 @@ def build_catalog(
         entries.sort(key=lambda entry: entry[0]["id"])
         entries.sort(key=lambda entry: entry[2], reverse=True)
         for public, path, published, expires in entries:
-            if not published <= clock < expires:
+            if published > clock + timedelta(hours=24) or clock >= expires:
                 continue
             data, width, height = jpeg_bytes(path)
             digest = hashlib.sha256(data).hexdigest()
