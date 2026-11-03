@@ -62,7 +62,7 @@ struct WidgetPlacementGuideView: View {
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .accessibilityIdentifier("widget-placement-steps")
 
-            Text("置いたウィジェットを長押しして「この子のくもりのまど」を選ぶと、押して晴らす、きょうの1枚になります。")
+            Text("置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。猫を登録すると、猫ごとにも選べます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

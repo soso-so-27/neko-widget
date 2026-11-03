@@ -1714,7 +1714,7 @@ struct GroupWindowListSection: View {
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
 
-    /// Test builds' new まど layout: 「わたしのまど」 with a small 「＋」, and no
+    /// Test builds' new まど layout: 「みんなのまど」 with a small 「＋」, and no
     /// large create button (making a window is rare; seeing them is daily).
     let compactHeader: Bool
 
@@ -1727,7 +1727,7 @@ struct GroupWindowListSection: View {
         VStack(alignment: .leading, spacing: 10) {
             if compactHeader {
                 HStack {
-                    Text("わたしのまど")
+                    Text("みんなのまど")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityAddTraits(.isHeader)
@@ -1786,12 +1786,18 @@ struct GroupWindowListSection: View {
                 // Nothing yet: one line and the way in.
                 VStack(spacing: 12) {
                     Text("まだまどがありません。").font(.subheadline).foregroundStyle(.secondary)
+                    Text("招待リンクを開くと参加できます。").font(.footnote).foregroundStyle(.secondary)
                     if compactHeader {
                         NavigationLink {
                             GroupWindowCreateScreen(client: model.client)
                         } label: {
-                            Label("まどを作る", systemImage: "plus").frame(minHeight: 44)
+                            HStack(spacing: 8) {
+                                Label("まどを作る", systemImage: "plus")
+                                FamilyNotebookPlusMark()
+                            }
+                            .frame(minHeight: 44)
                         }
+                        .accessibilityLabel("まどを作る、Plus")
                         .accessibilityIdentifier("group-window-empty-create")
                     }
                 }
