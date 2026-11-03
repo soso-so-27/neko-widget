@@ -76,6 +76,9 @@ final class GroupURLSessionTransport: GroupHTTPTransport, Sendable {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse, response.url == request.url,
                   response.expectedContentLength <= Int64(maximumBytes) else { throw GroupClientError.invalidResponse }
+            // A captive Wi-Fi portal answers any request with its own HTML
+            // page and a success status. That is no connection, not bad data.
+            if (200...299).contains(http.statusCode), http.mimeType?.lowercased() == "text/html" { throw GroupClientError.offline }
             var data = Data()
             for try await byte in bytes {
                 guard data.count < maximumBytes else { throw GroupClientError.invalidResponse }
