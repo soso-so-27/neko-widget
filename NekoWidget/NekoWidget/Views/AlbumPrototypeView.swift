@@ -289,6 +289,9 @@ struct AlbumPrototypeView: View {
         .onAppear {
             if enabledAt == 0 { enabledAt = Date().timeIntervalSince1970 }
         }
+        // The one place the app asks for notifications about works: here,
+        // and only when a work is on its way.
+        .task { await AlbumArrivalNotice.askIfNeeded() }
         // Ready before the tap: opening the newest work should not wait.
         .task(id: latestPreparationKey) {
             guard let key = latestPreparationKey else { return }
@@ -1108,10 +1111,13 @@ final class AlbumArrivalOpenInbox: ObservableObject {
 
 /// The day a work arrives, said once: 「10月の作品がとどきました」 on the 1st at
 /// 9:00, 「2026年の作品がとどきました」 on 12/6. Only for a work that will really
-/// come (this month already makes one, this year has its nine), and only when
-/// notifications are already allowed: the album never asks. A tap opens the album.
+/// come (this month already makes one, this year has its nine). The app asks
+/// for notifications once, in the album, when such a work is on its way; until
+/// then nothing is set. A tap opens the album.
 enum AlbumArrivalNotice {
     static let userInfoKey = "albumArrival"
+    /// A notice that waits only for the permission the app has not asked for yet.
+    @MainActor private static var waitingForPermission: (month: (start: Date, at: Date)?, year: (year: Int, at: Date)?)?
     private static let monthID = "album-arrival.month"
     private static let yearID = "album-arrival.year"
 #if DEBUG || INTERNAL_PRESENTATION
@@ -1139,9 +1145,16 @@ enum AlbumArrivalNotice {
     }
 
     /// Replaces what was set before; nil takes that notice away.
+    @MainActor
     static func schedule(month: (start: Date, at: Date)?, year: (year: Int, at: Date)?) async {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [monthID, yearID])
+        waitingForPermission = nil
+        guard month != nil || year != nil else { return }
+        if await center.notificationSettings().authorizationStatus == .notDetermined {
+            waitingForPermission = (month, year)
+            return
+        }
         guard await isAllowed(center) else { return }
         if let month {
             let number = Calendar.current.component(.month, from: month.start)
@@ -1150,6 +1163,17 @@ enum AlbumArrivalNotice {
         if let year {
             await add(yearID, "\(year.year)年の作品がとどきました。", trigger: calendarTrigger(year.at))
         }
+    }
+
+    /// From the album tab: ask once when a work is on its way, then set its
+    /// notice. Nothing happens when nothing waits or the answer is known.
+    @MainActor
+    static func askIfNeeded() async {
+        guard let waiting = waitingForPermission else { return }
+        let center = UNUserNotificationCenter.current()
+        guard await center.notificationSettings().authorizationStatus == .notDetermined else { return }
+        _ = try? await center.requestAuthorization(options: [.alert])
+        await schedule(month: waiting.month, year: waiting.year)
     }
 
 #if DEBUG || INTERNAL_PRESENTATION
