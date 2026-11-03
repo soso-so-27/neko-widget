@@ -1,3 +1,5 @@
+import { billingRetentionTransactionSequence, billingRetentionWriteCondition, requireBillingAccountNotErasing } from './billing-retention-executor';
+import { requireBillingRetentionSnapshot } from './billing-retention-journal';
 import {
   fetchAppleSubscriptionStatusViaService,
   verifyAppleNotificationViaService,
@@ -147,12 +149,14 @@ async function storeNotification(
   relevance: "ignored" | "unmatched" | "linked",
 ): Promise<void> {
   const transaction = value.transaction;
-  await env.DB.prepare(
+  const retention=transaction ? billingRetentionWriteCondition(env,transaction.billingAccountId,
+    await billingRetentionTransactionSequence(env,transaction)) : {sql:'1',bindings:[]};
+  const inserted=await env.DB.prepare(
     `INSERT INTO billing_apple_notification_events(
        notification_uuid, payload_hash, notification_type, subtype,
        signed_date_ms, environment, apple_status, relevance,
        transaction_id, original_transaction_id, billing_account_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${retention.sql} RETURNING notification_uuid`,
   ).bind(
     value.notificationUUID,
     payloadHash,
@@ -164,8 +168,9 @@ async function storeNotification(
     relevance,
     transaction?.transactionId ?? null,
     transaction?.originalTransactionId ?? null,
-    transaction?.billingAccountId ?? null,
+    transaction?.billingAccountId ?? null, ...retention.bindings,
   ).run();
+  if(inserted.results.length!==1) throw new Error("retention fence changed");
 }
 
 /**
@@ -179,11 +184,24 @@ export async function ingestVerifiedAppleBillingNotification(
   value: VerifiedAppleNotification,
   payloadHash: string,
 ): Promise<void> {
+  await requireBillingRetentionSnapshot(env);
   if (ownerOnlyBillingRequired(env)) {
     // Authentic TEST/irrelevant notifications have no owner. Acknowledge without
     // storing them; a different purchaser must never enter this pilot ledger.
     if (!value.relevant || value.transaction === null) return;
     await requireOwnerSandboxAccount(env, value.transaction.billingAccountId);
+  }
+  if(value.transaction!==null) {
+    try { await billingRetentionTransactionSequence(env,value.transaction); }
+    catch(error) {
+      if(!(error instanceof ApiError) || !['billing_account_erased','billing_retention_old_transaction'].includes(error.code)) throw error;
+      // Acknowledge/history-checkpoint the verified envelope without restoring
+      // any Apple transaction/account identifiers or reconciliation cause.
+      const replay=await notificationReplay(env,value.notificationUUID,value.environment);
+      if(replay) { if(replay.payload_hash!==payloadHash) throw new ApiError(409,'apple_notification_conflict','Notification conflict.'); return; }
+      await storeNotification(env,{...value,relevant:false,transaction:null},payloadHash,'ignored');
+      return;
+    }
   }
   const existing = await notificationReplay(env, value.notificationUUID, value.environment);
   if (existing !== null) {
@@ -321,6 +339,14 @@ async function recordAuthorityObservations(
     fingerprint: string;
   }> = [];
   const statements: D1PreparedStatement[] = [];
+  const fenceSQL = `EXISTS (
+    SELECT 1 FROM billing_reconciliation_jobs
+     WHERE environment = ? AND original_transaction_id = ? AND request_generation = ? AND lease_token = ?
+       AND lease_expires_at > ?
+  ) AND EXISTS (
+    SELECT 1 FROM billing_runtime_gate
+     WHERE singleton = 1 AND subscription_reconciliation_enabled = 1
+  )`;
   for (const item of matching) {
     const transaction = item.transaction;
     const renewal = item.renewal;
@@ -335,7 +361,7 @@ async function recordAuthorityObservations(
          is_in_billing_retry_period, grace_period_expires_date_ms,
          renewal_date_ms, transaction_signed_date_ms, renewal_signed_date_ms,
          fetched_at_ms, ownership_type
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${fenceSQL}`,
     ).bind(
       fingerprint,
       originalTransactionId,
@@ -358,7 +384,7 @@ async function recordAuthorityObservations(
       transaction.signedDateMs,
       renewal.signedDateMs,
       status.fetchedAtMs,
-      transaction.ownershipType,
+      transaction.ownershipType, job.environment, originalTransactionId,job.request_generation,leaseToken,completedAt,
     ));
   }
 
@@ -372,14 +398,6 @@ async function recordAuthorityObservations(
   const transaction = selectedItem.transaction;
   const renewal = selectedItem.renewal;
   const decisionId = randomBase64url(16);
-  const fenceSQL = `EXISTS (
-    SELECT 1 FROM billing_reconciliation_jobs
-     WHERE environment = ? AND original_transaction_id = ? AND request_generation = ? AND lease_token = ?
-       AND lease_expires_at > ?
-  ) AND EXISTS (
-    SELECT 1 FROM billing_runtime_gate
-     WHERE singleton = 1 AND subscription_reconciliation_enabled = 1
-  )`;
   statements.push(env.DB.prepare(
     `INSERT INTO billing_effective_entitlement_decisions(
        decision_id, observation_fingerprint, original_transaction_id,
@@ -390,7 +408,7 @@ async function recordAuthorityObservations(
        grants_plus, access_until_ms, authority_stale_at_ms, evaluated_at_ms
      )
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      WHERE ${fenceSQL}`,
+      WHERE ${fenceSQL} RETURNING decision_id`,
   ).bind(
     decisionId,
     selected.fingerprint,
@@ -456,7 +474,7 @@ async function recordAuthorityObservations(
        updated_at = unixepoch()
      WHERE excluded.request_generation > billing_effective_entitlement_current.request_generation
         OR (excluded.request_generation = billing_effective_entitlement_current.request_generation
-            AND excluded.evaluated_at_ms >= billing_effective_entitlement_current.evaluated_at_ms)`,
+            AND excluded.evaluated_at_ms >= billing_effective_entitlement_current.evaluated_at_ms) RETURNING decision_id`,
   ).bind(
     originalTransactionId,
     lineage.billing_account_id,
@@ -491,7 +509,7 @@ async function recordAuthorityObservations(
   const written = await env.DB.batch(statements);
   // A lost fence is not a completed reconciliation. Keep its retry instead of
   // deleting the job or postponing it for a full periodic interval.
-  if (written.at(-2)?.meta.changes !== 1 || written.at(-1)?.meta.changes !== 1) {
+  if (written.at(-2)?.results.length !== 1 || written.at(-1)?.results.length !== 1) {
     throw new ApiError(409, "billing_reconciliation_superseded", "Billing is temporarily unavailable.");
   }
   return selectedItem.status === 1 || selectedItem.status === 3 || selectedItem.status === 4;
@@ -599,6 +617,7 @@ export async function runBillingSubscriptionReconciliation(
   now = Math.floor(Date.now() / 1_000),
   completedAtOverride?: number,
 ): Promise<void> {
+  await requireBillingRetentionSnapshot(env);
   const ownerAccount = ownerOnlyBillingRequired(env) ? await ownerSandboxBillingAccount(env) : null;
   if (ownerOnlyBillingRequired(env) && ownerAccount === null) return;
   const gate = await loadGate(env);
@@ -632,6 +651,7 @@ export async function reconcileBillingTransactionNow(
   now = Math.floor(Date.now() / 1_000),
   storeEnvironment = env.BILLING_STORE_ENVIRONMENT,
 ): Promise<void> {
+  await requireBillingAccountNotErasing(env,billingAccountId);
   if (!billingSubscriptionReconciliationRuntimeEnabled(env)
     || !billingStoreEnvironmentAccepted(env, storeEnvironment)) return;
   if ((await loadGate(env))?.subscription_reconciliation_enabled !== 1) return;

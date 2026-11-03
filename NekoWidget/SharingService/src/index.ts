@@ -1,3 +1,6 @@
+import { requestBillingTransactionDeletion, billingTransactionDeletionStatus, scheduleBillingTransactionRetention } from './billing-retention-api';
+import { requireBillingRetentionSnapshot } from './billing-retention-journal';
+import { runBillingTransactionDeletion } from './billing-retention-executor';
 import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {runGroupReportOperations,drainGroupReportMail} from './group-report-operations';
 import {
@@ -252,6 +255,10 @@ export async function route(
       "billing_runtime_disabled",
       "Billing is temporarily unavailable.",
     );
+  if(!pathname.startsWith('/v1/billing/transaction-deletion-requests/')) await requireBillingRetentionSnapshot(env);
+  if(request.method==='POST' && pathname==='/v1/billing/transaction-deletion-requests') return requestBillingTransactionDeletion(request,env);
+  const deletionStatus=pathname.match(/^\/v1\/billing\/transaction-deletion-requests\/([^/]+)\/status$/u);
+  if(request.method==='GET' && deletionStatus) return billingTransactionDeletionStatus(request,env,deletionStatus[1]!);
   if (request.method === "POST" && pathname === "/v1/billing/accounts") {
     return createBillingAccount(request, env);
   }
@@ -635,6 +642,10 @@ export default {
     }
   },
   async scheduled(controller, env, ctx): Promise<void> {
+    // Independent cleanup keeps its existing deadline even when billing recovery is unavailable.
+    ctx.waitUntil(runBillingTransactionDeletion(env).then(async()=>{
+      if(controller.cron===LEGACY_CLEANUP_CRON) await scheduleBillingTransactionRetention(env);
+    }));
     if (controller.cron === MOMENT_CLEANUP_CRON) {
       // Independent promises: an operations/mail failure must never postpone
       // the ordinary seven-day evidence cleanup.
@@ -650,10 +661,10 @@ export default {
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
       if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {
-        ctx.waitUntil(runAppleNotificationHistoryRecovery(env));
+        ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runAppleNotificationHistoryRecovery(env)));
       }
       if (billingSubscriptionReconciliationRuntimeEnabled(env)) {
-        ctx.waitUntil(runBillingSubscriptionReconciliation(env));
+        ctx.waitUntil(requireBillingRetentionSnapshot(env).then(()=>runBillingSubscriptionReconciliation(env)));
       }
     }
   },
