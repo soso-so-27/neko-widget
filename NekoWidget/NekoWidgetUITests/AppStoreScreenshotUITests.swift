@@ -533,6 +533,14 @@ final class AppStoreScreenshotUITests: XCTestCase {
             + ["--app-store-screenshot-fixture", "--review-public-presentation", "--app-store-screenshot-cat-care"]
         app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "tool-profiles"
         app.launch()
+        // The next capture starts on Albums: leave that tab selected even when
+        // this test stops early.
+        addTeardownBlock {
+            MainActor.assumeIsolated {
+                _ = self.tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム")
+                app.terminate()
+            }
+        }
         XCTAssertTrue(tapTab(application: app, identifier: "main-tab-tools", fallbackLabel: "ツール"), app.debugDescription)
         let care = app.buttons["tools-care-open"]
         XCTAssertTrue(care.waitForExistence(timeout: 10), app.debugDescription)
@@ -541,8 +549,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(profile.waitForExistence(timeout: 10), app.debugDescription)
         profile.tap()
         // 「預けるとき」 opens first; its link leads to 「この子のこと」.
-        let catCare = app.buttons["care-open-cat-care"]
+        let catCare = app.descendants(matching: .any)["care-open-cat-care"].firstMatch
         XCTAssertTrue(catCare.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(scrollUpUntilHittable(catCare, application: app), app.debugDescription)
         catCare.tap()
         XCTAssertTrue(app.buttons["cat-care-family-notebook"].waitForExistence(timeout: 10), app.debugDescription)
         // Open 「暮らし」 so the shot shows what was written (接し方・ごはん・トイレ).
@@ -556,9 +565,6 @@ final class AppStoreScreenshotUITests: XCTestCase {
                       app.debugDescription)
         sleep(1)
         captureScreenshot(named: "09-cat-care")
-        // The next capture starts on Albums, the tab this one leaves selected.
-        XCTAssertTrue(tapTab(application: app, identifier: "main-tab-memories", fallbackLabel: "アルバム"), app.debugDescription)
-        app.terminate()
     }
 
     /// App Store candidates for the window screens: the まど tab and one
