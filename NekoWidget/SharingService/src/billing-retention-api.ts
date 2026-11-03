@@ -85,6 +85,26 @@ export async function billingAccountRetentionCandidate(env:Env,account:string,no
     factsHash:await retentionDigest(JSON.stringify(facts))};
 }
 
+/** A committed fresh authority is consumed immediately, independently of the
+ * account scanner's next turn. Large populations cannot repeatedly age out the
+ * same recheck before the cursor returns. */
+export async function scheduleBillingAccountRetention(env:Env,account:string,now=Date.now(),queueStale=false):Promise<void> {
+  if(env.BILLING_TRANSACTION_RETENTION_REQUIRED!=='YES') return;
+  await requireBillingRetentionSnapshot(env);
+    const control=await billingRetentionJournal(env).control();
+    const fence=await env.DB.prepare('SELECT state FROM billing_retention_fences WHERE billing_account_id=?').bind(account).first<{state:string}>();
+    if(!fence || fence.state==='active') {
+      const candidate=await billingAccountRetentionCandidate(env,account,now,queueStale);
+      if(candidate) {
+        await billingRetentionJournal(env).append({requestId:crypto.randomUUID(),billingAccountId:account,
+          receiptHash:await retentionDigest(randomBase64url(32)),reason:'subscription-ended',requestedAtMs:now,
+          endedAtMs:candidate.endedAt,cutoffMs:now,factsHash:candidate.factsHash,expectedRevision:candidate.revision},control.sequence);
+        await reconcileBillingRetentionJournal(env);
+      }
+    }
+
+}
+
 export async function scheduleBillingTransactionRetention(env:Env,now=Date.now()):Promise<void> {
   if(env.BILLING_TRANSACTION_RETENTION_REQUIRED!=='YES') return;
   await requireBillingRetentionSnapshot(env);
@@ -93,17 +113,7 @@ export async function scheduleBillingTransactionRetention(env:Env,now=Date.now()
   const rows=await env.DB.prepare(`SELECT rowid,id FROM billing_accounts WHERE rowid>? ORDER BY rowid LIMIT 4`)
     .bind(cursor.last_account_rowid).all<{rowid:number;id:string}>();
   for(const row of rows.results) {
-    const control=await billingRetentionJournal(env).control();
-    const fence=await env.DB.prepare('SELECT state FROM billing_retention_fences WHERE billing_account_id=?').bind(row.id).first<{state:string}>();
-    if(!fence || fence.state==='active') {
-      const candidate=await billingAccountRetentionCandidate(env,row.id,now,true);
-      if(candidate) {
-        await billingRetentionJournal(env).append({requestId:crypto.randomUUID(),billingAccountId:row.id,
-          receiptHash:await retentionDigest(randomBase64url(32)),reason:'subscription-ended',requestedAtMs:now,
-          endedAtMs:candidate.endedAt,cutoffMs:now,factsHash:candidate.factsHash,expectedRevision:candidate.revision},control.sequence);
-        await reconcileBillingRetentionJournal(env);
-      }
-    }
+    await scheduleBillingAccountRetention(env,row.id,now,true);
     await env.DB.prepare('UPDATE billing_retention_scan SET last_account_rowid=? WHERE singleton=1').bind(row.rowid).run();
   }
   if(!rows.results.length) await env.DB.prepare('UPDATE billing_retention_scan SET last_account_rowid=0 WHERE singleton=1').run();

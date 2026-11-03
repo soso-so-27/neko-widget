@@ -646,7 +646,7 @@ export default {
   },
   async scheduled(controller, env, ctx): Promise<void> {
     // Independent cleanup keeps its existing deadline even when billing recovery is unavailable.
-    ctx.waitUntil(runBillingTransactionDeletion(env).then(async()=>{
+    if(env.BILLING_TRANSACTION_RETENTION_REQUIRED==='YES') ctx.waitUntil(runBillingTransactionDeletion(env).then(async()=>{
       if(controller.cron===LEGACY_CLEANUP_CRON) await scheduleBillingTransactionRetention(env);
     }));
     if (controller.cron === MOMENT_CLEANUP_CRON) {

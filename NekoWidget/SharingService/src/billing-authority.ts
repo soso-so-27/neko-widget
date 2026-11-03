@@ -1,3 +1,4 @@
+import { scheduleBillingAccountRetention } from './billing-retention-api';
 import { billingRetentionTransactionSequence, billingRetentionWriteCondition, requireBillingAccountNotErasing } from './billing-retention-executor';
 import { requireBillingRetentionSnapshot } from './billing-retention-journal';
 import {
@@ -729,6 +730,7 @@ async function reconcileClaimedJob(
       completedAt,
     );
     await releaseSuccessfulLease(env, job, leaseToken, completedAt, keepPeriodic);
+    await scheduleBillingAccountRetention(env,lineage.billing_account_id,completedAt*1000);
   } catch (error) {
     const code = error instanceof ApiError
       ? error.code.replace(/[^a-z0-9_]/gu, "_").slice(0, 64)

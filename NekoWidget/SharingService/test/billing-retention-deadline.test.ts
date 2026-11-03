@@ -25,7 +25,7 @@ it('an unattended signed termination reaches the existing bounded authority queu
   await ingestVerifiedAppleBillingNotification(e,{notificationUUID:crypto.randomUUID(),notificationType:'EXPIRED',subtype:null,
     signedDateMs:end+1000,environment:'Production',bundleId:t.bundleId,status:2,relevant:true,transaction:t,renewal:null},'E'.repeat(43));
   await requestBillingReconciliation(e,t.originalTransactionId,past,'Production');
-  await runBillingSubscriptionReconciliation(e,async()=>status(past*1000),past,past);
+  await runBillingSubscriptionReconciliation({...e,BILLING_TRANSACTION_RETENTION_REQUIRED:'NO'},async()=>status(past*1000),past,past);
   expect(await e.DB.prepare('SELECT * FROM billing_reconciliation_jobs WHERE original_transaction_id=?').bind(t.originalTransactionId).first()).toBeNull();
   expect(await billingAccountRetentionCandidate(e,account,now)).toBeNull();
   await scheduleBillingTransactionRetention(e,now);
@@ -39,12 +39,14 @@ it('an unattended signed termination reaches the existing bounded authority queu
     .toEqual({attempts:2,not_before:Math.floor(now/1000)+60});
   const refreshed=Math.floor(now/1000)+61;
   await runBillingSubscriptionReconciliation(e,async()=>status(refreshed*1000),refreshed,refreshed);
-  expect(await billingAccountRetentionCandidate(e,account,refreshed*1000)).not.toBeNull();
-  await e.DB.prepare('UPDATE billing_retention_scan SET last_account_rowid=0').run();
-  await scheduleBillingTransactionRetention(e,refreshed*1000);
+  // A large account population can make the cursor's next turn >36h away.
+  // Fresh successful reconciliation must freeze the eligible account now,
+  // without waiting for that turn and becoming stale again.
+  expect(await e.DB.prepare('SELECT state FROM billing_retention_fences WHERE billing_account_id=?').bind(account).first())
+    .toEqual({state:'deleting'});
   expect((await e.DB.prepare('SELECT reason,state FROM billing_retention_requests WHERE billing_account_id=?').bind(account).first()))
     .toEqual({reason:'subscription-ended',state:'deleting'});
-  await runBillingTransactionDeletion(e,refreshed*1000+1);
+  await runBillingTransactionDeletion(e,refreshed*1000+40*3600000);
   expect(await remainingBillingTransactionRows(e,account)).toBe(0);
   expect((await e.DB.prepare('SELECT state FROM billing_retention_requests WHERE billing_account_id=?').bind(account).first())).toEqual({state:'completed'});
 });
