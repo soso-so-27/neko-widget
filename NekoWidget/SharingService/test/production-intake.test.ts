@@ -15,6 +15,11 @@ const routes = [
   ["GET", "/operator/v1/reports"], ["GET", "/unknown"],
 ] as const;
 
+// Local Requests have no edge-added cf metadata; the production entry accepts incoming Requests.
+function incoming(path: string, init: RequestInit) {
+  return new Request(origin + path, init) as Parameters<typeof worker.fetch>[0];
+}
+
 async function signedSpaceRequest() {
   const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
   const publicKey = base64urlEncode(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)));
@@ -26,8 +31,8 @@ async function signedSpaceRequest() {
     invitationProofPublicKey: publicKey,
     dailyBoundaryMinuteUTC: 540,
   };
-  const signature = await crypto.subtle.sign("Ed25519", keys.privateKey, creationTranscript(fields));
-  return new Request(origin + "/v1/spaces", {
+  const signature = await crypto.subtle.sign("Ed25519", keys.privateKey, new Uint8Array(creationTranscript(fields)));
+  return incoming("/v1/spaces", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ protocolVersion: 1, ...fields, creationSignature: base64urlEncode(new Uint8Array(signature)) }),
@@ -55,7 +60,8 @@ describe("sharing Worker production intake", () => {
     const network = vi.fn(() => { throw new Error("outbound request"); });
     vi.stubGlobal("fetch", network);
     const verify = vi.spyOn(crypto.subtle, "verify");
-    for (const req of [signed, ...routes.map(([method, path]) => new Request(origin + path, { method }))]) {
+    const requests = routes.map(([method, path]) => incoming(path, { method }));
+    for (const req of [signed, ...requests]) {
       const res = await worker.fetch(req, closed, ctx);
       expect(res.status).toBe(503);
       expect(res.headers.get("Cache-Control")).toBe("no-store");
