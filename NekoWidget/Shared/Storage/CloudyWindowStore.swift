@@ -157,7 +157,9 @@ struct CloudyWindowStore: Sendable {
     }
 
     func configuration() -> CloudyWindowConfiguration {
-        guard internalPresentation else { return .init() }
+        // Outside Version1 the cloudy window does not exist, whatever the
+        // stored or default value says.
+        guard internalPresentation else { return .init(enabled: false) }
         return (try? authorityStore.withAuthoritySnapshot { _ in try read().configuration }) ?? .init()
     }
 
