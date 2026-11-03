@@ -4,7 +4,7 @@ import { base64urlDecode,randomBase64url,sha256Base64url } from '../src/encoding
 import { groupFields } from '../src/group-protocol';
 import { groupHeartTranscript } from '../src/group-hearts';
 import { cleanupExpiredGroupPush,drainGroupNotifications } from '../src/group-push';
-import { apply,call,create,db,invitation,ok,person,send,sign,signed,testEnv,transition,type Person } from './group-fixture';
+import { apply,call,create,db,invitation,ok,person,member,packet,send,sign,signed,testEnv,transition,type Person } from './group-fixture';
 import type { Env } from '../src/env';
 
 type Window=Awaited<ReturnType<typeof create>>;
@@ -68,12 +68,70 @@ describe('group-only push registration and just-before-send eligibility',()=>{
     await photo(owner,w,settings);ok((await register(bob,w,settings,r.token)).result);
     const generation=async()=> (await db.prepare('SELECT generation FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first<{generation:number}>())!.generation;
     expect(await generation()).toBe(1);
+    await db.prepare('INSERT INTO group_join_push_subscriptions SELECT * FROM group_push_subscriptions WHERE space_id=?').bind(w.windowId).run();
     ok((await register(bob,w,{...settings,GROUP_APNS_RUNTIME_ENABLED:'NO'},r.token,true)).result);
-    expect(await generation()).toBe(2);ok((await register(bob,w,settings,r.token)).result);expect(await generation()).toBe(3);
+    expect(await generation()).toBe(2);
+    expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at,generation FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first())
+      .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2});
+    expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first())
+      .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0});
+    ok((await register(bob,w,settings,r.token)).result);expect(await generation()).toBe(3);
     expect((await drainGroupNotifications(settings,undefined,noNetwork)).skipped).toBe(1);
     await cleanupExpiredGroupPush(settings,Math.floor(Date.now()/1000)+36*86400);
     const row=await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,generation FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first();
     expect(row).toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',generation:3});
+  });
+  it.each(['leave','remove'] as const)('purges departing member tokens on %s while retaining other recipients',async(kind)=>{
+    const fixture=await setup(),{owner,bob,settings}=fixture;let w=fixture.w;
+    const phone=await person(bob.identity),extra=await member(phone,w.windowId);
+    const members=w.roster.members.map(m=>m.personId===bob.id?{...m,devices:[...m.devices,...extra.devices]}:m);
+    const added=await transition(owner,w,'addDevice',phone.deviceId,members,{personSponsorSignature:extra.devices[0]!.personAuthorization});ok(added.response);w=added.next;
+    ok((await register(phone,w,settings)).result);
+    ok((await register(owner,w,settings)).result);ok((await register(bob,w,settings)).result);
+    await db.prepare('INSERT INTO group_join_push_subscriptions SELECT * FROM group_push_subscriptions WHERE space_id=?').bind(w.windowId).run();
+    const pending=await person(bob.identity),invited=await invitation(owner,w),request=await apply(pending,w,invited);ok(request.response,201);
+    ok(await send(await signed(pending,`/v3/group-windows/${w.windowId}/join-push-subscription`,{operationId:crypto.randomUUID(),token:randomBase64url(32),environment:'production'}),settings));
+    const joinOwnerBefore=await db.prepare('SELECT * FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,owner.deviceId).first();
+    const ownerBefore=await db.prepare('SELECT * FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,owner.deviceId).first();
+    await photo(owner,w,settings);
+    const participant=w.roster.members.find(m=>m.personId===bob.id)!.participantId;
+    if(kind==='leave') {
+      const operationId=crypto.randomUUID(),body={operationId,expectedRevision:w.roster.revision,
+        selfSignature:await sign(bob.signing.privateKey,groupFields(['NW3.LEAVE',w.windowId,participant,String(w.roster.revision),operationId]))};
+      ok(await call(bob,`/v3/group-windows/${w.windowId}/leave`,body));
+      ok(await call(bob,`/v3/group-windows/${w.windowId}/leave`,body));
+    } else {
+      ok((await transition(owner,w,'remove',participant,w.roster.members.filter(m=>m.personId!==bob.id))).response);
+    }
+    expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at,generation FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first())
+      .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2});
+    expect(await db.prepare('SELECT * FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,owner.deviceId).first()).toEqual(ownerBefore);
+    expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at,generation FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,phone.deviceId).first())
+      .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2});
+    for(const deviceId of [bob.deviceId,phone.deviceId,pending.deviceId])
+      expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at,generation FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,deviceId).first())
+        .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2});
+    expect(await db.prepare('SELECT * FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,owner.deviceId).first()).toEqual(joinOwnerBefore);
+    expect((await drainGroupNotifications(settings,undefined,noNetwork)).skipped).toBe(2);
+  });
+  it('purges only the removed device token',async()=>{
+    const fixture=await setup(),{owner,bob,settings}=fixture;let w=fixture.w;
+    const phone=await person(bob.identity),extra=await member(phone,w.windowId);
+    const members=w.roster.members.map(m=>m.personId===bob.id?{...m,devices:[...m.devices,...extra.devices]}:m);
+    const added=await transition(owner,w,'addDevice',phone.deviceId,members,{personSponsorSignature:extra.devices[0]!.personAuthorization});ok(added.response);w=added.next;
+    ok((await register(phone,w,settings)).result);ok((await register(bob,w,settings)).result);
+    await db.prepare('INSERT INTO group_join_push_subscriptions SELECT * FROM group_push_subscriptions WHERE space_id=?').bind(w.windowId).run();
+    const joinBefore=await db.prepare('SELECT * FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first();
+    const before=await db.prepare('SELECT * FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first();
+    const {hash,...wire}=await packet(owner,{...w.roster,revision:w.roster.revision+1,keyEpoch:w.roster.keyEpoch+1,previousHash:w.hash,
+      members:w.roster.members.map(m=>({...m,devices:m.devices.filter(d=>d.id!==phone.deviceId)}))});void hash;
+    ok(await call(owner,`/v3/group-windows/${w.windowId}/devices/${phone.deviceId}/remove`,{operationId:crypto.randomUUID(),expectedRevision:w.roster.revision,kind:'removeDevice',targetId:phone.deviceId,...wire}));
+    expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at,generation FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,phone.deviceId).first())
+      .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2});
+    expect(await db.prepare('SELECT * FROM group_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first()).toEqual(before);
+    expect(await db.prepare('SELECT token_ciphertext,token_nonce,token_digest,expires_at,generation FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,phone.deviceId).first())
+      .toEqual({token_ciphertext:'',token_nonce:'',token_digest:'',expires_at:0,generation:2});
+    expect(await db.prepare('SELECT * FROM group_join_push_subscriptions WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first()).toEqual(joinBefore);
   });
   it.each(['block','left','new-token','delivery-expired','new-roster','actor-revoked','window-closed','gate'] as const)(
     'rechecks %s after token decryption and makes no APNs request',async(reason)=>{

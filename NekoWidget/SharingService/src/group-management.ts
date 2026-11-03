@@ -1,3 +1,4 @@
+import {groupPushRevocationStatements} from './group-push-revocation';
 import { base64urlDecode,sha256Base64url,verifyEd25519 } from './encoding';
 import { ApiError,jsonResponse } from './errors';
 import type { Env } from './env';
@@ -40,7 +41,7 @@ export async function manageGroupWindow(env:Env,actor:GroupActor,windowId:string
         env.DB.prepare("UPDATE group_join_requests SET state='cancelled' WHERE space_id=? AND state='pending'").bind(windowId),
         env.DB.prepare("UPDATE group_members SET state='left',left_revision=? WHERE space_id=? AND state='active'").bind(revision+1,windowId),
         env.DB.prepare("UPDATE group_window_devices SET state='revoked',removed_revision=? WHERE space_id=? AND state='active'").bind(revision+1,windowId),
-        env.DB.prepare("UPDATE group_push_subscriptions SET expires_at=0,generation=generation+1,token_ciphertext='',token_nonce='' WHERE space_id=?").bind(windowId),
+        ...groupPushRevocationStatements(env,windowId),
         env.DB.prepare('INSERT INTO group_window_closures VALUES (?,?,?,?,?,?,?)').bind(windowId,actor.deviceId,operationId,revision,keyEpoch,signature,actor.now));
     } else {
       if(access.rotationRequired)throw new ApiError(409,'stale_epoch','Rotate the membership keys before renaming.');
