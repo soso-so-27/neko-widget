@@ -1,3 +1,4 @@
+import {advanceIdentityDeletion,deletionRequired,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
 import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {runGroupReportOperations,drainGroupReportMail} from './group-report-operations';
@@ -128,6 +129,13 @@ export async function route(
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
+  if(isIdentityDeletionPath(pathname))return identityDeletionAPI(request,env,ctx);
+  if(deletionRequired(env) && (pathname.startsWith('/v3/group-')||pathname.startsWith('/v3/family-notebooks')))
+    return protectedGroupRead(env,()=>dispatch(request,env,ctx));
+  return dispatch(request,env,ctx);
+}
+async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<Response>{
+  const url=new URL(request.url),pathname=url.pathname;
   let runtimeGatePromise: ReturnType<typeof loadRuntimeGate> | undefined;
   let billingRuntimeGatePromise:
     | ReturnType<typeof loadBillingRuntimeGate>
@@ -639,16 +647,17 @@ export default {
     if (controller.cron === MOMENT_CLEANUP_CRON) {
       // Independent promises: an operations/mail failure must never postpone
       // the ordinary seven-day evidence cleanup.
-      ctx.waitUntil(runGroupReportOperations(env));
+      ctx.waitUntil(advanceIdentityDeletion(env));
+      ctx.waitUntil(protectedGroupRead(env,()=>runGroupReportOperations(env)));
       ctx.waitUntil(runMomentCleanup(env));
       // Withdrawals remain cleanup-eligible even when the pilot gate is off.
       ctx.waitUntil(runFamilyRecordCleanup(env));
       ctx.waitUntil(cleanupDissolvedFamilyRosters(env));
       ctx.waitUntil(runGroupRelayCleanup(env));
     } else if (controller.cron === APNS_DRAIN_CRON) {
-      ctx.waitUntil(drainGroupReportMail(env));
+      ctx.waitUntil(protectedGroupRead(env,()=>drainGroupReportMail(env)));
       ctx.waitUntil(drainNotificationOutbox(env));
-      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)]));
+      if(env.GROUP_APNS_RUNTIME_ENABLED === 'YES') ctx.waitUntil(protectedGroupRead(env,()=>Promise.all([drainGroupNotifications(env),drainGroupAdmissionNotifications(env)])));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
       if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {

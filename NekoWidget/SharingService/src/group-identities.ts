@@ -1,3 +1,4 @@
+import { requireCurrentIdentity } from './group-identity-service';
 import { base64urlDecode, randomBase64url, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import type { Env } from "./env";
@@ -43,6 +44,7 @@ export async function registerGroupIdentity(request:Request,env:Env):Promise<Res
   if(!await verifyEd25519(personPublicKey,personSignature,transcript) || !await verifyEd25519(signingPublicKey,deviceSignature,transcript))
     throw new ApiError(401,"invalid_proof","The device registration proof is invalid.");
   const personId=await sha256Base64url(base64urlDecode(personPublicKey,32));
+  await requireCurrentIdentity(env,personId);
   const deviceId=await groupDeviceKeyHash(signingPublicKey,hpkePublicKey),requestHash=await sha256Base64url(bytes);
   const prior=await env.DB.prepare(`SELECT r.request_hash,d.person_id,d.state,p.state AS person_state FROM group_identity_registrations r
       JOIN group_person_devices d ON d.id=r.device_id JOIN group_people p ON p.id=d.person_id

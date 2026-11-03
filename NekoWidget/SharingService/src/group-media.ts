@@ -1,3 +1,5 @@
+import { putGroupUpload } from './group-identity-upload';
+import { requireCurrentIdentity } from './group-identity-service';
 import { groupCaption,parseGroupCaption,type GroupCaptionDescriptor } from './group-captions';
 import { base64urlDecode,randomBase64url,sha256Base64url,verifyEd25519 } from './encoding';
 import { ApiError,jsonResponse } from './errors';
@@ -95,8 +97,11 @@ export async function uploadGroupPhoto(env:Env,actor:GroupActor,windowId:string,
   }
   await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'upload')]);
   const storage=bucket(env);
-  const written=await storage.put(objectKey,bytes,{onlyIf:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/octet-stream'},
-    customMetadata:{digest:hash,scope:'group-v3'}});
+  const written=await putGroupUpload(env,storage,objectKey,bytes,{httpMetadata:{contentType:'application/octet-stream'},
+    customMetadata:{digest:hash,scope:'group-v3'}},async()=>{
+      await requireCurrentIdentity(env,actor.personId);
+      await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:row.roster_revision}),...groupMediaChecks(env,actor,momentId,'upload')]);
+    });
   if(written===null) {
     const existing=await storage.get(objectKey);
     if(!existing || existing.size!==size || await sha256Base64url(new Uint8Array(await existing.arrayBuffer()))!==hash) unavailable('hash_mismatch',400);

@@ -1,3 +1,6 @@
+import { putGroupUpload } from './group-identity-upload';
+import { requireCurrentIdentity } from './group-identity-service';
+import { deletedReportDelivery } from './group-deleted-delivery';
 import { base64urlEncode, randomBase64url, sha256, sha256Base64url } from './encoding';
 import { ApiError, jsonResponse } from './errors';
 import type { Env } from './env';
@@ -19,14 +22,14 @@ interface Report {
   id:string;space_id:string;moment_id:string;reporter_person_id:string;reporter_participant_id:string;reporter_device_id:string;
   reason_code:string;moderation_key_id:string;ciphertext_size:number;ciphertext_sha256:string;object_key:string;dedupe_key:string;
   state:'reserved'|'uploaded'|'committed'|'expired';created_at:number;upload_expires_at:number;
-  uploaded_at:number|null;committed_at:number|null;content_expires_at:number|null;
+  deleted_delivery_until:number|null;uploaded_at:number|null;committed_at:number|null;content_expires_at:number|null;
 }
 function fail(code:string,status=409):never { throw new ApiError(status,code,'The encrypted report could not be accepted.'); }
 function bucket(env:Env):R2Bucket { if(!env.MODERATION_MEDIA)fail('report_storage_unavailable',503);return env.MODERATION_MEDIA; }
 function response(row:Report) {
   return {protocolVersion:3,report:{id:row.id,receiptNumber:row.receipt_number,windowId:row.space_id,momentId:row.moment_id,state:row.state,
     moderationKeyId:row.moderation_key_id,ciphertextSize:row.ciphertext_size,ciphertextSHA256:row.ciphertext_sha256,
-    uploadExpiresAt:row.upload_expires_at,committedAt:row.committed_at,contentExpiresAt:row.content_expires_at}};
+    uploadExpiresAt:Math.min(row.upload_expires_at,row.deleted_delivery_until??Infinity),committedAt:row.committed_at,contentExpiresAt:row.content_expires_at}};
 }
 async function load(env:Env,actor:GroupActor,windowId:string,id:string):Promise<Report> {
   const row=await env.DB.prepare('SELECT * FROM group_reports WHERE id=? AND space_id=? AND reporter_person_id=? AND reporter_device_id=?')
@@ -34,7 +37,7 @@ async function load(env:Env,actor:GroupActor,windowId:string,id:string):Promise<
   if(!row)fail('report_not_found',404);row.receipt_number=await groupReceiptNumber(env.DB,id);return row;
 }
 function live(row:Report,now=Math.floor(Date.now()/1000)):void {
-  if(row.state==='expired' || (row.committed_at===null?row.upload_expires_at<=now:(row.content_expires_at??0)<=now))fail('reservation_expired',410);
+  if(row.state==='expired' || (row.deleted_delivery_until!==null && row.deleted_delivery_until<=now) || (row.committed_at===null?row.upload_expires_at<=now:(row.content_expires_at??0)<=now))fail('reservation_expired',410);
 }
 function checks(env:Env,actor:GroupActor,windowId:string,generation:number):D1PreparedStatement[] {
   const id=crypto.randomUUID();
@@ -65,11 +68,13 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
   const prior=await replay(env,actor,windowId,generation,operationId);if(prior)return prior;
   // Historical delivery, not current media access: blocking/leaving must not
   // disable reporting. Never download the group ciphertext or a group key.
-  const delivered=await env.DB.prepare(`SELECT c.participant_id,m.sender_participant_id FROM group_report_credentials c
+  const original=await env.DB.prepare(`SELECT c.participant_id,m.sender_participant_id FROM group_report_credentials c
     JOIN group_moment_deliveries d ON d.device_id=c.device_id AND d.participant_id=c.participant_id
     JOIN group_moments m ON m.id=d.moment_id AND m.space_id=c.space_id
     WHERE c.space_id=? AND c.device_id=? AND m.id=? AND m.committed_at IS NOT NULL AND m.sender_participant_id<>c.participant_id`)
     .bind(windowId,actor.deviceId,momentId).first<{participant_id:string;sender_participant_id:string}>();
+  const marker=original?null:await deletedReportDelivery(env.DB,windowId,momentId,actor.personId,actor.deviceId);
+  const delivered=original??marker;
   if(!delivered)fail('reportable_moment_not_found',404);
   const dedupe=await sha256Base64url(groupFields(['NW3.REPORT-DEDUPE',windowId,momentId,actor.personId]));
   const previous=await env.DB.prepare(`SELECT * FROM group_reports WHERE moment_id=? AND reporter_person_id=?
@@ -88,20 +93,22 @@ async function reserve(env:Env,actor:GroupActor,windowId:string,generation:numbe
   if(Math.abs(consentAt-actor.now)>300)fail('reporter_consent_required');
   const id=randomBase64url(16),objectKey=`groups/reports/v3/${id}/${randomBase64url(24)}`;
   const row={id,receipt_number:newGroupReceiptNumber(),space_id:windowId,moment_id:momentId,state:'reserved',moderation_key_id:key,ciphertext_size:size,ciphertext_sha256:hash,
-    upload_expires_at:actor.now+GROUP_REPORT_UPLOAD_SECONDS,committed_at:null,content_expires_at:null} as Report;
+    upload_expires_at:actor.now+GROUP_REPORT_UPLOAD_SECONDS,deleted_delivery_until:marker?.expiresAt??null,committed_at:null,content_expires_at:null} as Report;
   const receipt=response(row),statements=[...checks(env,actor,windowId,generation)];
   if(previous && previous.state!=='expired')statements.push(
     env.DB.prepare("UPDATE group_reports SET state='expired',expired_at=? WHERE id=? AND state IN ('reserved','uploaded') AND upload_expires_at<=?")
       .bind(actor.now,previous.id,actor.now),
     env.DB.prepare("INSERT INTO group_report_object_deletions SELECT id,object_key,0,?,'pending' FROM group_reports WHERE id=? AND state='expired' ON CONFLICT(report_id) DO NOTHING")
       .bind(actor.now,previous.id));
+  if(marker)statements.push(marker.authorize(id));
   statements.push(env.DB.prepare(`INSERT INTO group_reports (id,space_id,moment_id,reporter_person_id,reporter_participant_id,reporter_device_id,
     accused_participant_id,reason_code,moderation_key_id,ciphertext_size,ciphertext_sha256,reporter_consent_version,reporter_consented_at,
-    object_key,dedupe_key,state,created_at,upload_expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,'reserved',?,?)`)
+    object_key,dedupe_key,state,created_at,upload_expires_at${marker?',deleted_delivery_until':''}) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,'reserved',?,?${marker?',?':''})`)
     .bind(id,windowId,momentId,actor.personId,delivered.participant_id,actor.deviceId,delivered.sender_participant_id,reason,key,size,hash,consentAt,
-      objectKey,dedupe,actor.now,actor.now+GROUP_REPORT_UPLOAD_SECONDS),
+      objectKey,dedupe,actor.now,actor.now+GROUP_REPORT_UPLOAD_SECONDS,...(marker?[marker.expiresAt]:[])),
     env.DB.prepare('INSERT INTO group_report_numbers(report_id,receipt_number) VALUES (?,?)').bind(id,row.receipt_number),
     groupMutationStatement(env,actor,operationId,receipt));
+  if(marker)statements.push(env.DB.prepare('DELETE FROM group_deleted_delivery_commands WHERE report_id=?').bind(id));
   try { await env.DB.batch(statements); }
   catch(error) {
     const raced=await replay(env,actor,windowId,generation,operationId);if(raced)return raced;
@@ -121,8 +128,12 @@ async function upload(env:Env,actor:GroupActor,windowId:string,generation:number
   await env.DB.batch([...checks(env,actor,windowId,generation)]);
   const storage=bucket(env);
   if(row.state==='reserved') {
-    const object=await storage.put(row.object_key,bytes.slice().buffer,{onlyIf:{etagDoesNotMatch:'*'},sha256:(await sha256(bytes)).slice().buffer,
-      httpMetadata:{contentType:'application/octet-stream'}});
+    const object=await putGroupUpload(env,storage,row.object_key,bytes,{sha256:(await sha256(bytes)).slice().buffer,
+      httpMetadata:{contentType:'application/octet-stream'}},async()=>{
+        await requireCurrentIdentity(env,actor.personId);
+        live(await load(env,actor,windowId,id));
+        await env.DB.batch(checks(env,actor,windowId,generation));
+      });
     if(!matches(object??await storage.head(row.object_key),row))fail('stored_object_unavailable',503);
     try {
       await env.DB.batch([...checks(env,actor,windowId,generation),env.DB.prepare("UPDATE group_reports SET state='uploaded',uploaded_at=unixepoch() WHERE id=? AND state='reserved'").bind(id)]);

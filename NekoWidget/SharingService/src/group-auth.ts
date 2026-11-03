@@ -1,3 +1,4 @@
+import { requireCurrentIdentity,isIdentityDeletionPath } from './group-identity-service';
 import { base64urlDecode, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError } from "./errors";
 import type { Env } from "./env";
@@ -47,6 +48,7 @@ export async function authenticateGroupRequest(request: Request, env: Env,maximu
   const requestHash = await sha256Base64url(groupFields(["NW3.OPERATION",request.method,pathname,base64urlDecode(bodyHash,32)]));
   const message = groupFields(["NW3.REQUEST","3",deviceId,timestamp,nonce,request.method,pathname,base64urlDecode(bodyHash,32)]);
   if (!await verifyEd25519(row.signingPublicKey,signature,message)) throw new ApiError(401,"invalid_authentication","Group authentication failed.");
+  if(!isIdentityDeletionPath(pathname)) await requireCurrentIdentity(env,row.personId);
   await enforceRateLimit(env,env.MEMBER_RATE_LIMITER,`group-device:${deviceId}`);
   // Claim after signature validation, before any handler reads or side effects.
   // A rejected/rolled-back handler must not make these signed bytes reusable.

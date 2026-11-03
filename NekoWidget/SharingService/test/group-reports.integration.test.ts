@@ -1,3 +1,5 @@
+import {applyD1Migrations,reset,type D1Migration} from 'cloudflare:test';
+import { captureDeletedDeliveries,deletedDeliveryStatements } from '../src/group-deleted-delivery';
 import { beforeEach,describe,expect,it,vi } from 'vitest';
 import { plusOwner,pauseOwner } from './group-billing-fixture';
 import { base64urlDecode,randomBase64url,sha256Base64url } from '../src/encoding';
@@ -400,6 +402,72 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
   });
   });
 
+  it('accepts only the signed acknowledged receiver after deletion, using the original accused FK and quota',async()=>{
+    const {owner,bob,w}=await family(), ack=await photo(owner,w), pending=await photo(owner,w);
+    ok(await call(bob,`/v3/group-windows/${w.windowId}/moments/${ack.id}/ack`,
+      {operationId:crypto.randomUUID(),ciphertextSHA256:await sha256Base64url(ack.bytes)}));
+    const now=Math.floor(Date.now()/1000), until=now+600;
+    await db.prepare('INSERT INTO group_report_access VALUES (?,?,?)').bind(w.windowId,bob.deviceId,until).run();
+    const markers=await captureDeletedDeliveries(db,owner.id,3,now);
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toMatchObject({generation:3,expiresAt:until});
+    expect(()=>deletedDeliveryStatements(db,markers,4,now)).toThrow('Invalid deletion delivery marker');
+    expect(()=>deletedDeliveryStatements(db,[{...markers[0]!,expiresAt:now+86401}],3,now)).toThrow('Invalid deletion delivery marker');
+    const projection=()=>db.batch(deletedDeliveryStatements(db,markers,3,now));
+    await projection();await projection();
+    await db.prepare('DELETE FROM group_moments WHERE id IN (?,?)').bind(ack.id,pending.id).run();
+    expect(await db.prepare('SELECT count(*) FROM group_moment_deliveries WHERE moment_id IN (?,?)').bind(ack.id,pending.id).first('count(*)')).toBe(0);
+    const accused=w.roster.members.find(member=>member.personId===owner.id)!.participantId;
+    const row=await db.prepare('SELECT * FROM group_deleted_deliveries WHERE sender_participant_digest=?').bind(markers[0]!.senderParticipant).first();
+    expect(Object.keys(row!).sort()).toEqual(['window_digest','moment_digest','sender_person_digest','sender_participant_digest',
+      'receiver_person_digest','receiver_device_digest','generation','expires_at'].sort());
+    for(const raw of [owner.id,accused,ack.id,bob.deviceId,bob.id,w.windowId])expect(JSON.stringify(row)).not.toContain(raw);
+    const samePersonOtherDevice=await person(bob.identity);
+    for(const p of [owner,samePersonOtherDevice,await person()]) {
+      const denied=await reserve(p,w,ack.id);
+      expect(denied.result.data.error.code).toBe('reportable_moment_not_found');
+    }
+    expect((await reserve(bob,w,pending.id)).result.status).toBe(404);
+    expect((await reserve(bob,await create(await plusOwner()),ack.id)).result.status).toBe(404);
+    const desc=await descriptor(ack.id), bad=await signed(bob,root(w)+'/reserve',desc.body);
+    bad.headers.set('neko-signature',randomBase64url(64));expect((await send(bad,reports)).status).toBe(401);
+    const r=await reserve(bob,w,ack.id);
+    expect(accepted(r.result).uploadExpiresAt).toBe(until);
+    expect((await complete(bob,w,r)).state).toBe('committed');
+    expect(accepted(await reportCall(bob,root(w)+'/reserve',r.body)).id).toBe(r.id);
+    expect((await reserve(bob,w,ack.id)).result.data.error.code).toBe('already_reported');
+    expect(await db.prepare('SELECT accused_participant_id,deleted_delivery_until FROM group_reports WHERE id=?')
+      .bind(r.id).first()).toEqual({accused_participant_id:accused,deleted_delivery_until:until});
+    expect(await db.prepare('SELECT attempts FROM group_report_daily_usage WHERE person_id=?').bind(bob.id).first('attempts')).toBe(1);
+    expect(await db.prepare('SELECT count(*) FROM group_deleted_delivery_commands').first('count(*)')).toBe(0);
+    expect(await db.prepare('PRAGMA foreign_key_check').all().then(rows=>rows.results)).toEqual([]);
+    await expect(db.batch(deletedDeliveryStatements(db,[{...markers[0]!,expiresAt:until+1}],3,now))).rejects.toThrow(/deleted_delivery_mismatch/);
+    expect(await db.prepare('SELECT expires_at FROM group_deleted_deliveries WHERE sender_participant_digest=?').bind(markers[0]!.senderParticipant).first('expires_at')).toBe(until);
+  });
+  it('enforces the original deadline during upload and commit and never republishes an expired marker',async()=>{
+    const {owner,bob,w}=await family(), p=await photo(owner,w);
+    ok(await call(bob,`/v3/group-windows/${w.windowId}/moments/${p.id}/ack`,
+      {operationId:crypto.randomUUID(),ciphertextSHA256:await sha256Base64url(p.bytes)}));
+    const now=Math.floor(Date.now()/1000), until=now+4;
+    await db.prepare('INSERT INTO group_report_access VALUES (?,?,?)').bind(w.windowId,bob.deviceId,until).run();
+    const markers=await captureDeletedDeliveries(db,owner.id,7,now);
+    await db.batch(deletedDeliveryStatements(db,markers,7,now));
+    await db.prepare('DELETE FROM group_moments WHERE id=?').bind(p.id).run();
+    const r=await reserve(bob,w,p.id);
+    expect(accepted(r.result).uploadExpiresAt).toBe(until);
+    const path=root(w)+'/'+r.id;
+    accepted(await reportCall(bob,path+'/ciphertext',r.bytes,reports,'PUT'));
+    await new Promise(resolve=>setTimeout(resolve,Math.max(0,until*1000-Date.now())+60));
+    expect((await reportCall(bob,path+'/commit',{operationId:crypto.randomUUID()})).status).toBe(410);
+    expect((await reportCall(bob,path+'/ciphertext',r.bytes,reports,'PUT')).status).toBe(410);
+    expect((await reportCall(bob,root(w)+'/reserve',r.body)).status).toBe(410);
+    expect((await reserve(bob,w,p.id)).result.status).toBe(404);
+    await expect(db.prepare("UPDATE group_reports SET state='committed',committed_at=unixepoch(),content_expires_at=unixepoch()+604800 WHERE id=?").bind(r.id).run()).rejects.toThrow(/group_report_not_authorized/);
+    await runGroupReportCleanup(reports);
+    await db.batch(deletedDeliveryStatements(db,markers,7,now));
+    expect(await db.prepare('SELECT count(*) FROM group_deleted_deliveries WHERE moment_digest=?').bind(markers[0]!.moment).first('count(*)')).toBe(0);
+  },12000);
+
   // Keep the irreversible installation fixture last: it intentionally closes
   // the shared test database's report-key policy for all subsequent requests.
   it('rejects an owner-scope/key change during upload and does not accept further reports',async()=>{
@@ -419,4 +487,18 @@ describe('group encrypted report receiver (independent gate OFF by default)',()=
     expect((await db.prepare('SELECT state FROM group_reports WHERE id=?').bind(r.id).first<{state:string}>())?.state).toBe('reserved');
     expect((await reportCall(bob,`${root(w)}/reserve`,r.body)).data.error.code).toBe('moderation_key_required');
   });
+  it('serves existing reports and expires their grants on the schema preceding 0073',async()=>{
+    await reset();
+    const migrations=(testEnv as unknown as {TEST_MIGRATIONS:D1Migration[]}).TEST_MIGRATIONS;
+    expect(migrations.some(m=>m.name.startsWith('0073_'))).toBe(true);
+    await applyD1Migrations(db,migrations.filter(m=>!m.name.startsWith('0073_')));
+    await db.prepare('UPDATE personal_staging_runtime_gate SET generation=generation+1,report_ingestion_enabled=1,media_enabled=1,updated_at=unixepoch() WHERE singleton=1').run();
+    const {owner,bob,w}=await family(),p=await photo(owner,w),r=await reserve(bob,w,p.id);
+    expect((await complete(bob,w,r)).state).toBe('committed');
+    expect((await reserve(bob,w,randomBase64url(16))).result.data.error.code).toBe('reportable_moment_not_found');
+    await db.prepare('INSERT INTO group_report_access VALUES (?,?,unixepoch()-1)').bind(w.windowId,bob.deviceId).run();
+    await runGroupReportCleanup(reports);
+    expect(await db.prepare('SELECT 1 FROM group_report_access WHERE space_id=? AND device_id=?').bind(w.windowId,bob.deviceId).first()).toBeNull();
+    expect(await db.prepare("SELECT 1 FROM sqlite_master WHERE name='group_deleted_deliveries'").first()).toBeNull();
+  },30000);
 });
