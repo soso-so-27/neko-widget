@@ -221,7 +221,14 @@ test('retention observer preserves generations, leases, backoff and closed purch
     bind(...values) { return statement(sql, values); },
     async first() { return sqlite.prepare(sql).get(...args) ?? null; },
     async all() { return { results: sqlite.prepare(sql).all(...args) }; },
-    async run() { return { meta: { changes: Number(sqlite.prepare(sql).run(...args).changes) } }; },
+    async run() {
+      const prepared=sqlite.prepare(sql);
+      if(prepared.columns().length) {
+        const results=prepared.all(...args);
+        return {results,meta:{changes:Number(sqlite.prepare('SELECT changes() AS n').get().n)}};
+      }
+      return {results:[],meta:{changes:Number(prepared.run(...args).changes)}};
+    },
   });
   const DB = { prepare: statement, async batch(statements) {
     sqlite.exec('BEGIN');
@@ -369,7 +376,14 @@ test('retention observer Production HTTPS transport and cancellation', { timeout
     bind(...values) { return statement(sql, values); },
     async first() { return sqlite.prepare(sql).get(...args) ?? null; },
     async all() { return { results: sqlite.prepare(sql).all(...args) }; },
-    async run() { return { meta: { changes: Number(sqlite.prepare(sql).run(...args).changes) } }; },
+    async run() {
+      const prepared=sqlite.prepare(sql);
+      if(prepared.columns().length) {
+        const results=prepared.all(...args);
+        return {results,meta:{changes:Number(sqlite.prepare('SELECT changes() AS n').get().n)}};
+      }
+      return {results:[],meta:{changes:Number(prepared.run(...args).changes)}};
+    },
   });
   const DB = { prepare: statement, async batch(statements) {
     sqlite.exec('BEGIN');
