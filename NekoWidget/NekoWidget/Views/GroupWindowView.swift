@@ -29,6 +29,16 @@ protocol GroupWindowMediaClient: GroupWindowClient {
               persist: @escaping @Sendable (GroupPhoto, Data) async throws -> Void) async throws
     func sendPhoto(normalizedJPEG: Data, windowID: String, operationID: UUID) async throws -> GroupPhoto
     func sendPhoto(normalizedJPEG: Data, caption: String?, windowID: String, operationID: UUID) async throws -> GroupPhoto
+    /// A photo sealed on this iPhone whose sending never finished (the app
+    /// was closed mid-send). Nil when there is none.
+    func pendingDelivery(windowID: String) async -> GroupPendingDelivery?
+    /// Removes that sealed copy once the person stops sending it.
+    func discardPendingDelivery(operationID: UUID) async
+}
+
+extension GroupWindowMediaClient {
+    func pendingDelivery(windowID: String) async -> GroupPendingDelivery? { nil }
+    func discardPendingDelivery(operationID: UUID) async {}
 }
 
 extension ProductionGroupWindowClient: GroupWindowMediaClient {
@@ -223,6 +233,13 @@ final class GroupWindowScreenModel: ObservableObject {
             }
             receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)
             message = nil
+            // A photo whose sending stopped when the app closed: offer it again.
+            if failedDelivery == nil, !isSending, latest.state == .active,
+               let pending = await client.pendingDelivery(windowID: windowID) {
+                failedDelivery = FailedDelivery(
+                    photo: PreparedPhoto(jpeg: pending.jpeg, photoIdentifier: nil, operationID: pending.operationID),
+                    memo: pending.caption ?? "")
+            }
         } catch {
             message = GroupWindowPresentation.message(for: error)
         }
@@ -341,6 +358,10 @@ final class GroupWindowScreenModel: ObservableObject {
                 case .some(.staleEpoch), .some(.rotationPending), .some(.idempotencyConflict): keepsOperation = false
                 default: keepsOperation = true
                 }
+                if !keepsOperation {
+                    // The old sealed copy can no longer be sent; the retry seals anew.
+                    await client.discardPendingDelivery(operationID: prepared.operationID)
+                }
                 let retry = keepsOperation
                     ? prepared : PreparedPhoto(jpeg: prepared.jpeg, photoIdentifier: prepared.photoIdentifier)
                 failedDelivery = FailedDelivery(photo: retry, memo: memo)
@@ -367,6 +388,9 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     func discardFailedDelivery() {
+        if let operationID = failedDelivery?.photo.operationID {
+            Task { await client.discardPendingDelivery(operationID: operationID) }
+        }
         failedDelivery = nil
         message = nil
     }

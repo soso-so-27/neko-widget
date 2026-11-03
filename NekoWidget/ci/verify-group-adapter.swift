@@ -691,7 +691,30 @@ private struct GroupAdapterChecks {
         let afterInvalidName = await nameRelay.stats()
         try check(namedStats.1.count == afterInvalidName.1.count, "invalid creator name makes no creation request")
         try await verifyManagement(endpoint: endpoint, folder: folder.appendingPathComponent("management"))
+        try await verifyOutboxHousekeeping(endpoint: endpoint, folder: folder.appendingPathComponent("outbox-housekeeping"))
         print("Group adapter: wire, signed names, HPKE, durable retries and device-root separation passed")
+    }
+
+    /// A sealed copy left by an interrupted send is offered again only while
+    /// it is readable and at most 30 days old; stopping removes it here only.
+    private static func verifyOutboxHousekeeping(endpoint: URL, folder: URL) async throws {
+        let client = try ProductionGroupWindowClient(endpoint: endpoint, secrets: MemorySecrets(), transport: EchoTransport(),
+            outboxDirectory: folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let old = UUID(), fresh = UUID(), windowID = GroupWire.randomID()
+        let oldFile = folder.appendingPathComponent(old.uuidString.lowercased() + ".json")
+        let freshFile = folder.appendingPathComponent(fresh.uuidString.lowercased() + ".json")
+        try Data("{}".utf8).write(to: oldFile)
+        try Data("{}".utf8).write(to: freshFile)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-31 * 86_400)], ofItemAtPath: oldFile.path)
+        let none = await client.pendingDelivery(windowID: windowID)
+        try check(none == nil, "an unreadable sealed copy is never offered")
+        try check(!FileManager.default.fileExists(atPath: oldFile.path), "a sealed copy older than 30 days is removed")
+        try check(FileManager.default.fileExists(atPath: freshFile.path), "a recent sealed copy is kept for its own retry")
+        let invalid = await client.pendingDelivery(windowID: "../outbox")
+        try check(invalid == nil, "an invalid window ID reads no outbox")
+        await client.discardPendingDelivery(operationID: fresh)
+        try check(!FileManager.default.fileExists(atPath: freshFile.path), "stopping a delivery removes its sealed copy")
     }
 
     private static func verifyManagement(endpoint: URL, folder: URL) async throws {

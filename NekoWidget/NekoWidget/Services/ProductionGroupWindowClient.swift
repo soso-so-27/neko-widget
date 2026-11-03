@@ -1595,3 +1595,58 @@ extension ProductionGroupWindowClient {
         photoMetadata = [:]; closedWindows = []; registrationTask = nil
     }
 }
+
+/// A sender's own sealed photo, opened again from this iPhone's outbox.
+struct GroupPendingDelivery: Sendable, Equatable {
+    let operationID: UUID
+    let jpeg: Data
+    let caption: String?
+}
+
+@available(iOS 17.0, macOS 14.0, *)
+extension ProductionGroupWindowClient {
+    /// Sealed copies older than this are removed without being offered again.
+    static let outboxRetention: TimeInterval = 30 * 24 * 60 * 60
+
+    /// The oldest photo this iPhone sealed for the window but never finished
+    /// sending, for example because the app closed mid-send. A copy the relay
+    /// already committed is skipped: the next sync brings that photo back.
+    func pendingDelivery(windowID: String) -> GroupPendingDelivery? {
+        pendingDelivery(windowID: windowID, now: Date())
+    }
+
+    func pendingDelivery(windowID: String, now: Date) -> GroupPendingDelivery? {
+        guard GroupCanonical.validID(windowID),
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: outboxDirectory, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
+        var oldest: (Date, GroupPendingDelivery)?
+        for file in files where file.pathExtension == "json" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  file.lastPathComponent == id.uuidString.lowercased() + ".json" else { continue }
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? now
+            if now.timeIntervalSince(modified) > Self.outboxRetention {
+                try? FileManager.default.removeItem(at: file)
+                continue
+            }
+            guard let data = try? Data(contentsOf: file),
+                  let prepared = try? GroupWire.decode(GroupPreparedPhoto.self, data),
+                  prepared.operationID == id, prepared.windowID == windowID else { continue }
+            if let committed = try? load(GroupPendingHTTP.self, "op:" + prepared.commitOperationID.uuidString.lowercased()),
+               committed.response != nil { continue }
+            guard let jpeg = try? recoverPendingPhoto(operationID: id) else { continue }
+            let caption: String?
+            do { caption = try recoverPendingCaption(operationID: id) } catch { continue }
+            if oldest.map({ modified < $0.0 }) ?? true {
+                oldest = (modified, GroupPendingDelivery(operationID: id, jpeg: jpeg, caption: caption))
+            }
+        }
+        return oldest?.1
+    }
+
+    /// Removes only this iPhone's sealed copy. Nothing is sent to the relay.
+    func discardPendingDelivery(operationID: UUID) {
+        let file = outboxDirectory.appendingPathComponent(operationID.uuidString.lowercased() + ".json")
+        try? FileManager.default.removeItem(at: file)
+    }
+}
