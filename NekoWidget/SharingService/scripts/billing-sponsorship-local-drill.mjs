@@ -84,6 +84,7 @@ const expectedMigrationNames = [
   "0063_group_environment_policy.sql",
   "0064_family_environment_policy.sql",
   "0065_group_first_day_reminder.sql",
+  "0067_group_received_report_retention.sql",
 ];
 
 const databaseGateColumns = [
