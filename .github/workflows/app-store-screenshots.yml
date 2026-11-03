@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       review_test:
-        description: "対象のtestReviewメソッド。空欄は1.0のApp Store用6枚"
+        description: "対象のtestReviewメソッド。空欄は1.0のApp Store用7枚"
         type: string
         default: ""
 

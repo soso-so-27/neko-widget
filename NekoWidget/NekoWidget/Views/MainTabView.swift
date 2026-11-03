@@ -622,7 +622,15 @@ struct MainTabView: View {
             || Bundle.main.object(forInfoDictionaryKey: "GroupWindowsEnabled") as? String == "YES"
             || OfficialWindowConfiguration.definitions.contains(where: { $0.endpoint != nil }) {
             NavigationStack {
+#if DEBUG
+                if let nowa = AppStoreScreenshotFixture.nowaWindow {
+                    WindowListView(publicWindows: [nowa])
+                } else {
+                    WindowListView()
+                }
+#else
                 WindowListView()
+#endif
             }
             // The window screens start 「写真を届ける」 from these cat photos.
             // Set on the stack: pushed screens take the stack's environment.

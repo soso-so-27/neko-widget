@@ -543,7 +543,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = japaneseLaunchArguments
             + ["--app-store-screenshot-fixture", "--group-window-screens-fixture"]
-        if publicPresentation { app.launchArguments.append("--review-public-presentation") }
+        if publicPresentation { app.launchArguments += ["--review-public-presentation", "--app-store-screenshot-nowa"] }
         app.launch()
         if publicPresentation {
             let tabs = app.tabBars.buttons
@@ -568,6 +568,16 @@ final class AppStoreScreenshotUITests: XCTestCase {
         XCTAssertTrue(room.waitForExistence(timeout: 10), app.debugDescription)
         sleep(2)
         captureScreenshot(named: "06-windows-tab")
+        if publicPresentation {
+            // のわのまど, received: today's のわ and its line.
+            let nowa = app.buttons["public-window-entry-black-cats"]
+            XCTAssertTrue(nowa.waitForExistence(timeout: 10), app.debugDescription)
+            nowa.tap()
+            XCTAssertTrue(app.buttons["official-window-photo-app-store-nowa"].waitForExistence(timeout: 15),
+                          app.debugDescription)
+            sleep(2)
+            captureScreenshot(named: "08-nowa-window")
+        }
         app.terminate()
     }
 
