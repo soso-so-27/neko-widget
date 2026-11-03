@@ -1,3 +1,4 @@
+import { requireBillingAccountNotErasing } from './billing-retention-executor';
 import type { VerifiedSubscriptionStatusItem } from "./billing-apple-client";
 import { billingStoreEnvironmentAccepted, type Env } from "./env";
 
@@ -188,6 +189,7 @@ export async function effectiveBillingEntitlement(
   billingAccountId: string,
   evaluatedAtMs = Date.now(),
 ): Promise<EffectiveBillingEntitlement> {
+  await requireBillingAccountNotErasing(env,billingAccountId);
   const rows = await env.DB.prepare(
     `SELECT environment, original_transaction_id, ownership_type, apple_status, product_id,
             expires_date_ms, revocation_date_ms, revocation_reason, is_upgraded,

@@ -1,3 +1,4 @@
+import { billingRetentionTransactionSequence, billingRetentionWriteCondition } from './billing-retention-executor';
 import {
   authenticateBillingSignedRequest,
   consumeBillingNonce,
@@ -319,6 +320,8 @@ export async function storeVerifiedTransaction(
   if (source.kind === "app" && value.billingAccountId !== source.submitter.billingAccountId) {
     throw new ApiError(409, "billing_account_mismatch", "The App Store transaction is invalid.");
   }
+  const retentionSequence=await billingRetentionTransactionSequence(env,value);
+  const retention=billingRetentionWriteCondition(env,value.billingAccountId,retentionSequence);
   const fingerprint = await semanticFingerprint(value);
   const replay = await loadEvent(env, fingerprint);
   if (replay !== null) return replay;
@@ -340,14 +343,14 @@ export async function storeVerifiedTransaction(
   }
   recheckOwnerSandboxAdmission(env);
   try {
-    await env.DB.batch([
+    const written=await env.DB.batch([
       env.DB.prepare(
         `INSERT OR IGNORE INTO billing_transaction_lineages(
            original_transaction_id, billing_account_id, environment, subscription_group_id
-         ) VALUES (?, ?, ?, ?)`,
+         ) SELECT ?, ?, ?, ? WHERE ${retention.sql}`,
       ).bind(
         value.originalTransactionId, value.billingAccountId,
-        value.environment, value.subscriptionGroupId,
+        value.environment, value.subscriptionGroupId, ...retention.bindings,
       ),
       env.DB.prepare(
         `INSERT INTO billing_transaction_events(
@@ -357,7 +360,7 @@ export async function storeVerifiedTransaction(
            transaction_reason, purchase_date_ms, original_purchase_date_ms,
            expires_date_ms, signed_date_ms, revocation_date_ms,
            revocation_reason, is_upgraded
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${retention.sql} RETURNING event_fingerprint`,
       ).bind(
         fingerprint, value.transactionId, value.originalTransactionId,
         value.billingAccountId,
@@ -366,9 +369,10 @@ export async function storeVerifiedTransaction(
         value.subscriptionGroupId, value.environment, value.ownershipType,
         value.transactionReason, value.purchaseDateMs, value.originalPurchaseDateMs,
         value.expiresDateMs, value.signedDateMs, value.revocationDateMs,
-        value.revocationReason, value.isUpgraded ? 1 : 0,
+        value.revocationReason, value.isUpgraded ? 1 : 0, ...retention.bindings,
       ),
     ]);
+    if(written[1]?.results.length!==1) throw new Error("retention fence changed");
   } catch {
     const raced = await loadEvent(env, fingerprint);
     if (raced !== null) return raced;
