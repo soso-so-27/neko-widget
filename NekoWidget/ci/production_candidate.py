@@ -277,7 +277,7 @@ def main():
         settings(contract)
         require(os.environ.get("PRODUCTION_CANDIDATE_APPROVED") == "YES", "Protected candidate approval missing")
         require(all(os.environ.get(k, "false") == "false" for k in
-                    ("UPLOAD_TO_TESTFLIGHT", "INTERNAL_REPORTS_REQUESTED", "GROUP_WINDOWS_REQUESTED", "PRESERVATION_REQUESTED", "BILLING_REQUESTED")), "Candidate cannot use internal switches or upload")
+                    ("UPLOAD_TO_TESTFLIGHT", "INTERNAL_REPORTS_REQUESTED", "GROUP_WINDOWS_REQUESTED", "FAMILY_NOTEBOOK_STAGING_REQUESTED", "PRESERVATION_REQUESTED", "BILLING_REQUESTED")), "Candidate cannot use internal switches or upload")
         args.contract.write_text(json.dumps(contract), encoding="utf-8")
         with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
             env.write("SHARING_EXPECTED_MODE=production\nRELEASE_ENVIRONMENT=production\nRELEASE_INTERNAL_REPORTS_ENABLED=false\nRELEASE_MODE_SUMMARY=production/App Store candidate (archive and export only)\n")

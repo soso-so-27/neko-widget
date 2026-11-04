@@ -59,6 +59,11 @@ on:
         required: false
         default: false
         type: boolean
+      family_notebook_staging:
+        description: "家族の手帳を実際のstaging APIで確認。owner-internalと承認済みgroup_windowsが必要。既定OFF"
+        required: false
+        default: false
+        type: boolean
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -96,6 +101,7 @@ jobs:
       DISTRIBUTION_PROFILE: ${{ inputs.distribution_profile }}
       INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
       GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
+      FAMILY_NOTEBOOK_STAGING_REQUESTED: ${{ inputs.family_notebook_staging || false }}
       GROUP_WINDOWS_APPROVAL: ${{ vars.GROUP_WINDOWS_STAGING_ENABLED }}
 
     steps:
@@ -755,6 +761,7 @@ jobs:
           set -euo pipefail
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --env-file "$GITHUB_ENV"
@@ -1323,6 +1330,7 @@ jobs:
             OFFICIAL_WINDOW_FEED_URL="$RELEASE_OFFICIAL_WINDOW_FEED_URL" \
             SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
             GROUP_WINDOWS_ENABLED="$RELEASE_GROUP_WINDOWS_ENABLED" \
+            FAMILY_NOTEBOOK_PRODUCTION_ENABLED="$RELEASE_FAMILY_NOTEBOOK_ENABLED" \
             SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             PERSONAL_ARCHIVE_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             MANAGED_PRESERVATION_ENABLED="$RELEASE_MANAGED_PRESERVATION_ENABLED" \
@@ -1583,6 +1591,7 @@ jobs:
             --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --app-info-plist "$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist" \
@@ -1619,6 +1628,7 @@ jobs:
           fi
           python3 "$PROJECT_DIRECTORY/ci/group-window-release.py" \
             --requested "${GROUP_WINDOWS_REQUESTED:-false}" \
+            --family-requested "${FAMILY_NOTEBOOK_STAGING_REQUESTED:-false}" --profile "$DISTRIBUTION_PROFILE" \
             --mode "$SHARING_EXPECTED_MODE" \
             --approval "${GROUP_WINDOWS_APPROVAL:-}" \
             --ipa "$ipa_path" \
