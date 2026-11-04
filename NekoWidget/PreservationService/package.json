@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/operating-readiness.node-tests.mjs test/payload-disconnect.node-tests.mjs && vitest run",
+    "test": "node --test test/production-closed.node-tests.mjs test/operating-readiness.node-tests.mjs test/payload-disconnect.node-tests.mjs && vitest run",
     "test:migration": "node scripts/verify-notice-evidence-migration.mjs && node scripts/verify-purge-fence-migration.mjs && node scripts/verify-record-recovery-migration.mjs && node scripts/verify-owner-recovery-migration.mjs && node scripts/verify-purge-intent-migration.mjs"
   },
   "dependencies": {

@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "triggers": {
+    "crons": []
+  },
+  "name": "neko-preservation-jpeg-production",
+  "main": "src/container-worker.mjs",
+  "vars": {
+    "ENVIRONMENT": "production",
+    "JPEG_VALIDATOR_ENABLED": "NO"
+  },
+  "containers": [
+    {
+      "class_name": "JPEGValidatorContainer",
+      "image": "registry.cloudflare.com/829a34ef925a39d81b0e9e08800d7c7f/neko-preservation-jpeg-disabled-jpegvalidatorcontainer@sha256:c1f901a5c05706ce021ae49813c2953a99bcf561ce1fa4f71af5f5d5d890a639",
+      "max_instances": 1,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VALIDATOR_CONTAINER",
+        "class_name": "JPEGValidatorContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "JPEGValidatorContainer"
+      ]
+    }
+  ]
+}

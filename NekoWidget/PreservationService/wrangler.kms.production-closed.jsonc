@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "triggers": {
+    "crons": []
+  },
+  "name": "neko-preservation-kms-production",
+  "main": "src/aws-kms-key-wrapper.ts",
+  "vars": {
+    "ENVIRONMENT": "production",
+    "PRESERVATION_KMS_ENABLED": "NO",
+    "KMS_REGION": "ap-northeast-1"
+  }
+}

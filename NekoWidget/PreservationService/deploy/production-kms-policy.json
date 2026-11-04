@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OnlyPreservationProductionWrapUnwrapWithExactContextKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt"
+      ],
+      "Resource": "arn:aws:kms:ap-northeast-1:164892691568:key/a220f07e-5db4-4918-8127-639616566ad0",
+      "Condition": {
+        "Null": {
+          "kms:EncryptionContextKeys": false
+        },
+        "ForAllValues:StringEquals": {
+          "kms:EncryptionContextKeys": "neko-preservation-context-sha256"
+        }
+      }
+    }
+  ]
+}
