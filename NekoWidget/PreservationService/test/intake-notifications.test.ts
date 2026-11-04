@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, expect, it } from 'vitest';
 import { notifyIntakeState } from '../src/intake-notifications';
-import { sendGroupReportMail } from '../../SharingService/src/group-report-mail';
+import { sendOperatorMail } from '../../SharingService/src/group-report-mail';
 import { renewIntake } from '../src/intake-renewal';
 import { renewalPolicy } from '../src/intake-renewal-policy';
 import { ServiceError } from '../src/contracts';
@@ -54,8 +54,8 @@ it('rejected cost credentials persist a scrubbed reason and keep writes closed',
 });
 it('operator mail only uses configured single recipient and fixed text; invalid headers fail',async()=>{
  const messages:any[]=[];const mail={GROUP_REPORT_EMAIL_ENABLED:'YES',GROUP_REPORT_EMAIL_TO:'owner@example.invalid',GROUP_REPORT_EMAIL_FROM:'notices@example.invalid',GROUP_REPORT_EMAIL:{send:async(x:any)=>{messages.push(x);}} as unknown as SendEmail};
- await sendGroupReportMail(mail,'warning');expect(messages[0]).toEqual({from:'notices@example.invalid',to:'owner@example.invalid',subject:'保存の実測費用が警戒額に達しました',text:'保存の実測費用が警戒額に達しました'});
- await expect(sendGroupReportMail({...mail,GROUP_REPORT_EMAIL_TO:'x@example.invalid\r\nBcc: y@example.invalid'},'closed')).rejects.toThrow();expect(messages).toHaveLength(1);
+ await sendOperatorMail(mail,'warning');expect(messages[0]).toEqual({from:'notices@example.invalid',to:'owner@example.invalid',subject:'保存の実測費用が警戒額に達しました',text:'保存の実測費用が警戒額に達しました'});
+ await expect(sendOperatorMail({...mail,GROUP_REPORT_EMAIL_TO:'x@example.invalid\r\nBcc: y@example.invalid'},'closed')).rejects.toThrow();expect(messages).toHaveLength(1);
 });
 
 it('a concurrent collector still checking does not emit a false closure',async()=>{

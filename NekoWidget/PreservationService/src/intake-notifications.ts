@@ -1,11 +1,11 @@
-import { sendGroupReportMail, type GroupReportMailEnv, type OperatorMailKind } from '../../SharingService/src/group-report-mail';
+import { sendOperatorMail, type GroupReportMailEnv, type OperatorMailKind } from '../../SharingService/src/group-report-mail';
 type Kind = Exclude<OperatorMailKind, 'received' | 'undecided'> | 'normal';
 export interface NotificationEnv extends GroupReportMailEnv { DB: D1Database; }
 /** No personal data, credentials, provider response or report identifier in logs/mail.
  * One notification per state transition; failed/uncertain sends retry after 6h.
  * A provider response lost after delivery can cause a duplicate, never an intake change. */
 export async function notifyIntakeState(env: NotificationEnv, now = Date.now(),
-  send = sendGroupReportMail, log: (event: object) => void = event => console.log(JSON.stringify(event))): Promise<void> {
+  send = sendOperatorMail, log: (event: object) => void = event => console.log(JSON.stringify(event))): Promise<void> {
   const row = await env.DB.prepare(`SELECT r.enabled AS renewal_enabled,r.approved_until,r.last_result,r.warning,r.lease_until,
     c.enabled,c.valid_until FROM pa_intake_renewal r JOIN pa_intake_control c USING(singleton) WHERE r.singleton=1`).first<any>();
   if (!row || !Number.isSafeInteger(now) || now < 0) throw Error('Invalid notification state');

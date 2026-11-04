@@ -31,7 +31,7 @@ export const operatorMailTexts = Object.freeze({
 export type OperatorMailKind = keyof typeof operatorMailTexts;
 
 /** Sends only fixed operator text. Configuration comes from Env, never a report. */
-export async function sendGroupReportMail(
+export async function sendOperatorMail(
   env: GroupReportMailEnv,
   kind: OperatorMailKind,
 ): Promise<void> {
@@ -57,4 +57,10 @@ export async function sendGroupReportMail(
     // queue retryable without carrying those diagnostics into logs/status.
     throw new Error("group_report_email_delivery_failed");
   }
+}
+
+/** Report queues remain restricted to their two report kinds. */
+export async function sendGroupReportMail(env: GroupReportMailEnv, kind: 'received' | 'undecided'): Promise<void> {
+  if (kind !== 'received' && kind !== 'undecided') throw new Error('group_report_email_invalid_kind');
+  await sendOperatorMail(env, kind);
 }
