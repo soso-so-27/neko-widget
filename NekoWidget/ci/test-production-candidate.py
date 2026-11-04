@@ -44,6 +44,11 @@ class ProductionCandidateTests(unittest.TestCase):
     def test_complete_three_product_contract(self):
         self.verify()
 
+    def test_official_channel_url_cannot_be_used_as_base(self):
+        self.contract["values"]["OFFICIAL_WINDOW_FEED_URL"] = "https://official.candidate.test/windows/black-cats/catalog.json"
+        with self.assertRaisesRegex(ValueError, "app appends"):
+            candidate.settings(self.contract, synthetic=True)
+
     def signature_fixture(self):
         team = "SYNTHETIC1"
         signed, profiles = {}, {}
