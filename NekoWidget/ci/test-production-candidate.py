@@ -3,6 +3,7 @@ import copy
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import plistlib
 import re
@@ -222,6 +223,17 @@ class ProductionCandidateTests(unittest.TestCase):
         for key, value in [("testFlightInternalTestingOnly", True), ("destination", "upload"), ("method", "debugging"),
                            ("signingStyle", "automatic"), ("manageAppVersionAndBuildNumber", True)]:
             with self.assertRaises(ValueError): candidate.verify_export({**options, key: value})
+
+    def test_public_prepare_rejects_the_internal_family_switch_before_writing(self):
+        output = Path(self.temp.name) / "public-contract.json"
+        envfile = Path(self.temp.name) / "env"
+        env = {"PRODUCTION_CANDIDATE_CONFIG": json.dumps(self.contract), "PRODUCTION_CANDIDATE_APPROVED": "YES",
+               "FAMILY_NOTEBOOK_STAGING_REQUESTED": "true", "GITHUB_ENV": str(envfile)}
+        with patch.dict(os.environ, env, clear=True), patch("sys.argv", ["candidate", "prepare", "--contract", str(output)]), \
+             patch.object(candidate, "settings", return_value=self.settings), self.assertRaisesRegex(ValueError, "internal switches"):
+            candidate.main()
+        self.assertFalse(output.exists())
+        self.assertFalse(envfile.exists())
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 """Exercise staging/public release isolation against real plist/IPA inputs."""
 import importlib.util
 import plistlib
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -18,6 +20,44 @@ def info(flag="YES"):
 
 
 class GroupWindowReleaseTests(unittest.TestCase):
+    def test_real_family_requires_explicit_owner_staging_and_approved_groups(self):
+        self.assertEqual(release.resolve_family(True, "owner-internal", "media-staging", "YES"), "YES")
+        for profile in ("owner-internal", "existing-reviewed", "app-store-candidate", ""):
+            for mode in ("media-staging", "production", "disabled"):
+                for groups in ("YES", "NO"):
+                    self.assertEqual(release.resolve_family(False, profile, mode, groups), "NO")
+                    if (profile, mode, groups) != ("owner-internal", "media-staging", "YES"):
+                        with self.subTest(profile=profile, mode=mode, groups=groups), self.assertRaises(ValueError):
+                            release.resolve_family(True, profile, mode, groups)
+        with self.assertRaises(ValueError):
+            release.resolve_family("true", "owner-internal", "media-staging", "YES")
+
+    def test_family_archive_ipa_and_export_are_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = root / "Info.plist"
+            ipa = root / "app.ipa"
+            export = root / "ExportOptions.plist"
+            env = root / "env"
+            app.write_bytes(plistlib.dumps({**info(), "FamilyNotebookProductionEnabled": "YES"}))
+            export.write_bytes(plistlib.dumps({"method": "app-store-connect"}))
+            with zipfile.ZipFile(ipa, "w") as archive:
+                archive.writestr("Payload/NekoWidget.app/Info.plist", app.read_bytes())
+            args = [sys.executable, str(Path(__file__).with_name("group-window-release.py")),
+                    "--requested", "true", "--approval", "YES", "--mode", "media-staging",
+                    "--family-requested", "true", "--profile", "owner-internal", "--env-file", str(env),
+                    "--app-info-plist", str(app), "--ipa", str(ipa), "--export-options-plist", str(export)]
+            subprocess.run(args, check=True, capture_output=True)
+            self.assertIn("RELEASE_FAMILY_NOTEBOOK_ENABLED=YES\n", env.read_text())
+            self.assertIs(plistlib.loads(export.read_bytes())["testFlightInternalTestingOnly"], True)
+            for changed in ({"FamilyNotebookProductionEnabled": "NO"}, {"FamilyNotebookProductionEnabled": True},
+                            {"FamilyNotebookProductionEnabled": "$(FAMILY_NOTEBOOK_PRODUCTION_ENABLED)"},
+                            {"SharingAPIBaseURL": "https://api.nekonomado.com"}):
+                with self.subTest(changed=changed), self.assertRaises(ValueError):
+                    release.verify_info({**info(), "FamilyNotebookProductionEnabled": "YES", **changed}, "YES", "YES")
+            with self.assertRaises(ValueError):
+                release.verify_ipa(ipa, "YES", "NO")
+
     def test_default_never_follows_media_or_protected_approval(self):
         for mode in ("disabled", "review-preview", "pairing-only", "media-staging"):
             self.assertEqual(release.resolve(False, mode, "YES"), "NO")
