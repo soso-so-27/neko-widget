@@ -1,0 +1,85 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-window-sharing-production",
+  "account_id": "829a34ef925a39d81b0e9e08800d7c7f",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "logpush": false,
+  "vars": {
+    "ENVIRONMENT": "production",
+    "INTAKE_ENABLED": "NO",
+    "MOMENT_RUNTIME_ENABLED": "NO",
+    "GROUP_RUNTIME_ENABLED": "NO",
+    "GROUP_IDENTITY_ERASURE_ENABLED": "NO",
+    "GROUP_REPORT_RUNTIME_ENABLED": "NO",
+    "GROUP_MODERATION_RUNTIME_ENABLED": "NO",
+    "GROUP_APNS_RUNTIME_ENABLED": "NO",
+    "GROUP_WINDOW_MANAGEMENT_RUNTIME_ENABLED": "NO",
+    "REPORT_INGESTION_RUNTIME_ENABLED": "NO",
+    "REACTION_RUNTIME_ENABLED": "NO",
+    "WINDOW_NAME_RUNTIME_ENABLED": "NO",
+    "FAMILY_RECORD_RUNTIME_ENABLED": "NO",
+    "FAMILY_NOTEBOOK_API_RUNTIME_ENABLED": "NO",
+    "FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED": "NO",
+    "APNS_RUNTIME_ENABLED": "NO",
+    "LEGACY_SHARING_RUNTIME_ENABLED": "NO",
+    "FAMILY_NOTEBOOK_MAX_MEMBERS": "6",
+    "INVITATION_TTL_SECONDS": "86400",
+    "CHALLENGE_TTL_SECONDS": "300",
+    "PENDING_TTL_SECONDS": "86400",
+    "IDEMPOTENCY_TTL_SECONDS": "172800",
+    "SPACE_INACTIVITY_TTL_SECONDS": "2592000"
+  },
+  "triggers": {
+    "crons": []
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "neko-window-sharing-production",
+      "database_id": "f0622d76-41d5-4af2-87c4-54f0ebc4015f",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "neko-window-sharing-production-media-private"
+    },
+    {
+      "binding": "MODERATION_MEDIA",
+      "bucket_name": "neko-window-sharing-production-moderation-private"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "CREATE_RATE_LIMITER",
+      "namespace_id": "720001",
+      "simple": {
+        "limit": 5,
+        "period": 60
+      }
+    },
+    {
+      "name": "INVITE_RATE_LIMITER",
+      "namespace_id": "720002",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "MEMBER_RATE_LIMITER",
+      "namespace_id": "720003",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ]
+}

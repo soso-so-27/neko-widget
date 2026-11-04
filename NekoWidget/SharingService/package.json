@@ -11,7 +11,7 @@
     "check:invitation-assets": "node --test test/invitation-assets.node-tests.mjs",
     "check:billing-retention": "node --no-warnings --test test/billing-retention-closure.node-tests.mjs",
     "check:moderation-ai-boundary": "node --test test/moderation-ai-boundary.node-tests.mjs",
-    "check:staging-config": "node --test scripts/staging-config.node-tests.mjs",
+    "check:staging-config": "node --test scripts/staging-config.node-tests.mjs test/production-closed-config.node-tests.mjs",
     "check:billing-control-staging-config": "node --test test/billing-control-staging-config.node-tests.mjs",
     "check:billing-staging-runtime-gate": "node --test test/billing-staging-runtime-gate.node-tests.mjs",
     "check:billing-notification-history-staging-control": "node --test test/billing-notification-history-staging-control.node-tests.mjs",
