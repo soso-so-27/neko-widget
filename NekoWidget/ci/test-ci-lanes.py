@@ -1225,8 +1225,9 @@ final class UnrelatedUITests: XCTestCase {
     def test_actual_workflow_keeps_app_ui_in_first_five_without_losing_evidence(self):
         jobs = workflow_jobs()
         normal_jobs = {
-            "quick-check": ("Build, unit tests, and launch", "run-quick-ios-checks.sh", 25),
-            "safety-check": ("Privacy, saved data, and sharing checks", "run-cheap-safety-checks.sh", 15),
+            "quick-check": ("Build, unit tests, and launch", "run-quick-ios-checks.sh public", 25),
+            "owner-products": ("Build and inspect owner-only products", "run-quick-ios-checks.sh owner", 25),
+            "safety-check": ("Privacy, saved data, and sharing checks", "run-cheap-safety-checks.sh", 20),
         }
         self.assertEqual(set(jobs), set(normal_jobs) | {
             "plan", "build-without-signing", "simulator-smoke-test", "sharing-app-ui",
@@ -1242,7 +1243,7 @@ final class UnrelatedUITests: XCTestCase {
             self.assertIn("run: bash NekoWidget/ci/" + runner + "\n", body)
             self.assertNotRegex(body, r"(?m)^    needs:")
             self.assertNotIn("continue-on-error", body)
-        self.assertIn("    needs: [quick-check, safety-check]\n", jobs["plan"])
+        self.assertIn("    needs: [quick-check, safety-check, owner-products]\n", jobs["plan"])
         self.assertIn("    if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks\n", jobs["plan"])
         # Normal and extended Mac jobs are separate phases, including failures.
         normal_running = len(normal_jobs)
@@ -1357,7 +1358,7 @@ final class UnrelatedUITests: XCTestCase {
     def test_extended_plan_waits_for_normal_results_without_hiding_evidence(self):
         jobs = workflow_jobs()
         plan = jobs["plan"]
-        self.assertIn("    needs: [quick-check, safety-check]\n", plan)
+        self.assertIn("    needs: [quick-check, safety-check, owner-products]\n", plan)
         condition = re.search(r"^    if: (.+)$", plan, re.M)[1]
         self.assertEqual(condition, "always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks")
         terminal = ("success", "failure", "cancelled", "skipped")
@@ -1367,12 +1368,12 @@ final class UnrelatedUITests: XCTestCase {
             expression = condition.replace("always()", "True").replace("&&", "and")
             expression = expression.replace("github.event_name", repr(event)).replace("inputs.extended_checks", repr(extended))
             enabled = 0
-            for quick, safety in itertools.product(states, repeat=2):
-                ready = quick in terminal and safety in terminal
+            for quick, safety, owner in itertools.product(states, repeat=3):
+                ready = quick in terminal and safety in terminal and owner in terminal
                 runs = ready and eval(expression, {"__builtins__": {}}, {})
                 self.assertEqual(runs, ready and event == "workflow_dispatch" and extended)
                 enabled += runs
-            self.assertEqual(enabled, 16 if event == "workflow_dispatch" and extended else 0)
+            self.assertEqual(enabled, 64 if event == "workflow_dispatch" and extended else 0)
         # Explicit status checks prevent a failed normal ancestor from making
         # independent extended evidence disappear. A failed plan still blocks it.
         for identifier, output in (("build-without-signing", "build"),
@@ -1397,7 +1398,7 @@ final class UnrelatedUITests: XCTestCase {
     def test_full_gallery_released_smoke_slot_never_overbooks(self):
         # Exhaust all reachable terminal subsets, including the normal phase.
         # Each terminal result releases capacity; failure never becomes success.
-        normal = {"quick-check", "safety-check"}
+        normal = {"quick-check", "safety-check", "owner-products"}
         initial = {"build", "smoke", "solo1", "solo2", "other"}
         dependencies = {name: set() for name in normal}
         dependencies["plan"] = normal
@@ -1420,8 +1421,8 @@ final class UnrelatedUITests: XCTestCase {
 
         observed = reachable_running(dependencies)
         self.assertEqual(max(observed), 5)
-        self.assertIn(2, observed)
-        for missing in ({"quick-check"}, {"safety-check"}, normal):
+        self.assertIn(3, observed)
+        for missing in ({"quick-check"}, {"safety-check"}, {"owner-products"}, normal):
             with self.subTest(missing=missing):
                 changed = dependencies | {"plan": normal - missing}
                 self.assertGreater(max(reachable_running(changed)), 5)

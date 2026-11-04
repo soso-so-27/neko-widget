@@ -3,6 +3,8 @@
 # Full Photos/Widget/UI regressions remain in the opt-in workflow jobs.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+check_mode="${1:-all}"
+case "$check_mode" in all|public|owner) ;; *) echo "Use all, public, or owner" >&2; exit 2 ;; esac
 
 # Shared photo/memo fixtures remain available after removing the pair-window UI.
 # Parse DEBUG sources too: the shipping Release build does not compile these branches.
@@ -85,6 +87,30 @@ xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget -configuration Relea
   -sdk iphonesimulator -xcconfig Config.Production.xcconfig -showBuildSettings -json \
   > "$RUNNER_TEMP/production-group-share-settings.json"
 python3 ci/preflight-group-share-settings.py "${production_settings_paths[@]}"
+
+check_owner_products() {
+  # Owner-only reporting-OFF products: compile, inspect all three products, and
+  # execute the configuration policy against those exact plists. Do not install
+  # this staging-connected product or contact services from CI.
+  xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
+    -configuration Release -sdk iphonesimulator "${owner_build_settings[@]}" \
+    -destination "generic/platform=iOS Simulator" ONLY_ACTIVE_ARCH=YES ARCHS="$(uname -m)" \
+    -derivedDataPath "$RUNNER_TEMP/QuickOwnerBuild" \
+    SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
+    CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
+    build
+  local app="$RUNNER_TEMP/QuickOwnerBuild/Build/Products/Release-iphonesimulator/NekoWidget.app"
+  python3 ci/distribution_profile.py --profile owner-internal --mode media-staging \
+    --internal-reports false --app "$app"
+  xcrun --sdk macosx swiftc -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
+    ci/verify-owner-internal-products.swift -o "$RUNNER_TEMP/owner-internal-products"
+  "$RUNNER_TEMP/owner-internal-products" "$app"
+}
+
+if [[ "$check_mode" == owner ]]; then
+  check_owner_products
+  exit 0
+fi
 
 # CoreSimulator installation can hang after a successful build. Bound the
 # simulator commands so an environment stall cannot consume the entire job.
@@ -328,18 +354,4 @@ quick_launch_active=false
 mkdir -p "$RUNNER_TEMP/ci-screenshots"
 xcrun simctl io "$device" screenshot "$RUNNER_TEMP/ci-screenshots/first-launch.png"
 
-# Owner-only reporting-OFF products: compile, inspect all three products, and
-# execute the configuration policy against those exact plists. Do not install
-# this staging-connected product or contact services from CI.
-xcodebuild -project NekoWidget.xcodeproj -scheme NekoWidget \
-  -configuration Release -sdk iphonesimulator "${owner_build_settings[@]}" \
-  -destination "platform=iOS Simulator,id=$device" ONLY_ACTIVE_ARCH=YES \
-  -derivedDataPath "$RUNNER_TEMP/QuickBuild" \
-  SWIFT_OPTIMIZATION_LEVEL=-Onone SWIFT_COMPILATION_MODE=singlefile \
-  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- AD_HOC_CODE_SIGNING_ALLOWED=YES \
-  build
-python3 ci/distribution_profile.py --profile owner-internal --mode media-staging \
-  --internal-reports false --app "$app"
-xcrun --sdk macosx swiftc -parse-as-library Shared/Sharing/SharingAPIConfiguration.swift \
-  ci/verify-owner-internal-products.swift -o "$RUNNER_TEMP/owner-internal-products"
-"$RUNNER_TEMP/owner-internal-products" "$app"
+if [[ "$check_mode" == all ]]; then check_owner_products; fi
