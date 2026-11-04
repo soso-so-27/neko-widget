@@ -34,7 +34,7 @@ export function createLocalGroupOwnerReviewHost(adapters) {
           // this host returns; a local sink copy is not delivery to the browser.
           active();
         },
-      }, ({jpeg}) => {active(); output = Uint8Array.from(jpeg);}, {signal});
+      }, ({jpeg}) => {active(); output = Uint8Array.from(jpeg);}, {signal, onFailure: adapters.onReviewFailure});
       active();
       if (!output) fail();
       return output;

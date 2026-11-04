@@ -5,6 +5,47 @@ import {createGroupModerationFixture, syntheticID, SYNTHETIC_CANONICAL_JPEG} fro
 import {groupModerationReviewSourceBinding, withBoundGroupModerationReview} from '../scripts/group-moderation-bound-review-lib.mjs';
 import {createLocalGroupOwnerReviewHost, createGroupOwnerR2Transport} from '../scripts/group-moderation-r2-transport.mjs';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+test('one long-lived host recovers from a malformed envelope without reusing its read state',async()=>{
+  const bad=createGroupModerationFixture({aadWidth:2}),good=createGroupModerationFixture();
+  good.ref.caseReferenceHmac='b'.repeat(64);good.source.caseReferenceHmac=good.ref.caseReferenceHmac;
+  let selected=bad;const events=[];
+  const host=createLocalGroupOwnerReviewHost({async readCiphertext(){return selected.envelopeBytes;},async readReviewedKey(){return selected.reviewed;}});
+  const input=()=>({source:selected.source,sourceSHA256:groupModerationReviewSourceBinding(selected.source,selected.ref).sourceSHA256,
+    signal:new AbortController().signal,async readCurrentSource(){return selected.source;},async audit(phase){events.push(phase);}});
+  await assert.rejects(host(input()),{message:'group_moderation_review_unavailable'});
+  selected=good;const jpeg=await host(input());assert.deepEqual(Buffer.from(jpeg),SYNTHETIC_CANONICAL_JPEG);jpeg.fill(0);
+  assert.deepEqual(events,['started','started','disclosure_ready']);
+});
+test('failed review reports only a local phase; diagnostics cannot disclose evidence or change rejection',async()=>{
+  const f=createGroupModerationFixture({aadWidth:2}), diagnostics=[];
+  const host=createLocalGroupOwnerReviewHost({
+    async readCiphertext(){return f.envelopeBytes;},async readReviewedKey(){return f.reviewed;},
+    onReviewFailure(event){diagnostics.push(event);throw Error('synthetic private exception');},
+  });
+  const input={source:f.source,sourceSHA256:groupModerationReviewSourceBinding(f.source,f.ref).sourceSHA256,
+    signal:new AbortController().signal,async readCurrentSource(){return f.source;},async audit(){}};
+  await assert.rejects(host(input),{message:'group_moderation_review_unavailable'});
+  assert.equal(diagnostics.length,1);
+  assert.deepEqual(Object.keys(diagnostics[0]).sort(),['cancelled','component','elapsedMs','phase']);
+  assert.equal(diagnostics[0].component,'group-review');assert.equal(diagnostics[0].phase,'decrypt');
+  assert.equal(diagnostics[0].cancelled,false);assert.ok(Number.isSafeInteger(diagnostics[0].elapsedMs));
+  for(const forbidden of [f.source.objectKey,f.ref.caseReferenceHmac,f.privateKeyBytes.toString('hex'),
+    f.envelopeBytes.toString('base64'),SYNTHETIC_CANONICAL_JPEG.toString('base64'),'synthetic private exception']){
+    assert.ok(!JSON.stringify(diagnostics).includes(forbidden));
+  }
+});
+test('transport failure identifies its local stage without returning object or exception details',async()=>{
+  const f=createGroupModerationFixture(),diagnostics=[];
+  const host=createGroupOwnerR2Transport({keyDirectory:process.cwd(),publicKeySHA256:'a'.repeat(64),
+    pipeName:'unused',brokerRecordFile:'unused',async assertScope(){},
+    bucket:{async get(){throw Error('synthetic secret object detail');}},onReviewFailure:event=>diagnostics.push(event)});
+  await assert.rejects(host({source:f.source,sourceSHA256:groupModerationReviewSourceBinding(f.source,f.ref).sourceSHA256,
+    signal:new AbortController().signal,async readCurrentSource(){return f.source;},async audit(){}}),
+    {message:'owner_review_unavailable'});
+  assert.deepEqual(diagnostics.map(d=>[d.component,d.phase]),[['group-review','ciphertext'],['review-transport','ciphertext-get']]);
+  assert.ok(!JSON.stringify(diagnostics).includes('synthetic secret object detail'));
+  assert.ok(!JSON.stringify(diagnostics).includes(f.source.objectKey));
+});
 function fixture() {
   const f = createGroupModerationFixture(); f.events = []; f.sourcesRead = 0;
   f.adapters = {
