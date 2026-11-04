@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": false
+  },
+  "triggers": {
+    "crons": []
+  },
+  "name": "neko-preservation-billing-production",
+  "main": "src/billing-authority.ts",
+  "vars": {
+    "ENVIRONMENT": "production",
+    "PRESERVATION_BILLING_ENABLED": "NO",
+    "PRESERVATION_LINK_AUDIENCE": "neko-preservation-production",
+    "BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED": "NO",
+    "BILLING_STORE_ENVIRONMENT": "Production",
+    "BILLING_ACCEPT_SANDBOX_IN_PRODUCTION": "NO",
+    "BILLING_SANDBOX_OWNER_ONLY_REQUIRED": "NO"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "neko-window-sharing-production",
+      "database_id": "f0622d76-41d5-4af2-87c4-54f0ebc4015f"
+    }
+  ],
+  "services": [
+    {
+      "binding": "RETENTION_BILLING_REFRESH",
+      "service": "neko-window-sharing-production",
+      "entrypoint": "RetentionBillingObserver"
+    }
+  ]
+}

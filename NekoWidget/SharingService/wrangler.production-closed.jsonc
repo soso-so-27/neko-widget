@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "neko-window-sharing-production",
   "account_id": "829a34ef925a39d81b0e9e08800d7c7f",
-  "main": "src/index.ts",
+  "main": "src/production-entry.ts",
   "compatibility_date": "2026-10-01",
   "workers_dev": false,
   "preview_urls": false,
@@ -33,7 +33,8 @@
     "CHALLENGE_TTL_SECONDS": "300",
     "PENDING_TTL_SECONDS": "86400",
     "IDEMPOTENCY_TTL_SECONDS": "172800",
-    "SPACE_INACTIVITY_TTL_SECONDS": "2592000"
+    "SPACE_INACTIVITY_TTL_SECONDS": "2592000",
+    "PRESERVATION_RETENTION_REFRESH_ENABLED": "NO"
   },
   "triggers": {
     "crons": []
