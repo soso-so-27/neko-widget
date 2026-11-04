@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "details": [{
+      "appIDs": ["FF96XYPPH2.jp.nekowidget.app"],
+      "components": [
+        { "/": "/join" },
+        { "/": "/family-join" }
+      ]
+    }]
+  }
+}

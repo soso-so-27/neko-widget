@@ -2,6 +2,16 @@
 
 This directory is the GitHub Pages source for `ねこのまど`.
 
+Invitation assets are also sourced here. `join.html`, `family-join.html` and
+`.well-known/apple-app-site-association` are packaged by
+`NekoWidget/SharingService/scripts/invitation-assets.mjs` for the existing
+Cloudflare Static Assets host `nekonomado.com`. GitHub Pages alone does not
+serve that host. Package to a new directory and set `html_handling: "none"`
+and `not_found_handling: "none"` to preserve the exact extensionless paths.
+The package has no scripts, analytics, form, redirects or business bindings.
+Keep the signed application identifier and both exact paths in AASA; HTTP
+checks do not substitute for installed-device Universal Link verification.
+
 - Current profile: `public-1.0` — `/`, `/privacy/`, `/community/`, `/support/`, `/guide/`.
 - Proposed canonical guide URL: `https://nekonomado.com/guide/`.
 - Guide content is authored in #716. Publishing that page and adding navigation

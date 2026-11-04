@@ -34,8 +34,9 @@ jobs:
     # Same-repository push already validates the PR head; forks use PR CI.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15
-    # A successful cold run reached 19m49s before artifact upload/cleanup.
-    # Keep the 90s launch bound; this budget covers the complete job.
+    # Public launch and owner-only products have independent budgets. Run
+    # every check, but do not discard a passed public launch while rebuilding
+    # the second configuration. Keep the independent 90s launch bound.
     timeout-minutes: 25
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -44,7 +45,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build, run unit tests, and launch once
-        run: bash NekoWidget/ci/run-quick-ios-checks.sh
+        run: bash NekoWidget/ci/run-quick-ios-checks.sh public
       - name: Attach launch screenshot
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -62,6 +63,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
           compression-level: 0
+
+  owner-products:
+    name: Build and inspect owner-only products
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Build and verify owner-only products without launching staging
+        run: bash NekoWidget/ci/run-quick-ios-checks.sh owner
 
   safety-check:
     name: Privacy, saved data, and sharing checks
@@ -89,9 +104,9 @@ jobs:
 
   plan:
     name: Select iOS checks and verify reusable evidence
-    # Finish the two normal Mac jobs before admitting the extended Mac lanes.
+    # Finish all three normal Mac jobs before admitting the extended Mac lanes.
     # Their failure must remain visible without suppressing independent evidence.
-    needs: [quick-check, safety-check]
+    needs: [quick-check, safety-check, owner-products]
     if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_checks
     runs-on: ubuntu-24.04
     timeout-minutes: 5
