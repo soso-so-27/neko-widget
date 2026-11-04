@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-official-cats-production",
+  "account_id": "829a34ef925a39d81b0e9e08800d7c7f",
+  "main": "src/production.js",
+  "compatibility_date": "2026-11-04",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "triggers": { "crons": [] },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "INTAKE_ENABLED": "NO",
+    "OFFICIAL_PROGRAM_PREFIX": "UNCONFIGURED"
+  },
+  "r2_buckets": [
+    { "binding": "OFFICIAL", "bucket_name": "neko-official-cats-production-private" }
+  ]
+}
