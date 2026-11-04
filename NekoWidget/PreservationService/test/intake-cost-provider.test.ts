@@ -69,3 +69,7 @@ it('never interprets forbidden, empty, foreign-account, stale or future Cloudfla
 it('missing credentials make no provider requests',async()=>{
  let calls=0;await expect(collectCosts({},()=>now,async()=>{calls++;throw Error();})).rejects.toThrow();expect(calls).toBe(0);
 });
+
+it('401 and 403 classify rejected credentials without retaining provider diagnostics',async()=>{
+ for(const status of [401,403]) await expect(collectCosts(config,()=>now,async()=>new Response('secret diagnostic',{status}))).rejects.toMatchObject({code:'COST_CREDENTIAL_REJECTED'});
+});

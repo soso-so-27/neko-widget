@@ -20,15 +20,25 @@ function isMailbox(value: unknown): value is string {
     /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label));
 }
 
+export const operatorMailTexts = Object.freeze({
+  received: '通報が 1 件届きました',
+  undecided: '判断がまだの通報があります',
+  warning: '保存の実測費用が警戒額に達しました',
+  closed: '新しい保存の受付を閉じました',
+  expired: '保存の受付または更新許可の期限が切れました',
+  credentials: '費用の取得資格が拒否されました。保存の受付は閉じています',
+});
+export type OperatorMailKind = keyof typeof operatorMailTexts;
+
 /** Sends only fixed operator text. Configuration comes from Env, never a report. */
-export async function sendGroupReportMail(
+export async function sendOperatorMail(
   env: GroupReportMailEnv,
-  kind: "received" | "undecided",
+  kind: OperatorMailKind,
 ): Promise<void> {
   if (env.GROUP_REPORT_EMAIL_ENABLED !== "YES") {
     throw new Error("group_report_email_disabled");
   }
-  if (kind !== "received" && kind !== "undecided") {
+  if (!Object.hasOwn(operatorMailTexts, kind)) {
     throw new Error("group_report_email_invalid_kind");
   }
   const to = env.GROUP_REPORT_EMAIL_TO;
@@ -37,7 +47,7 @@ export async function sendGroupReportMail(
   if (!isMailbox(to) || !isMailbox(from) || typeof binding?.send !== "function") {
     throw new Error("group_report_email_invalid_configuration");
   }
-  const text = kind === "received" ? "通報が 1 件届きました" : "判断がまだの通報があります";
+  const text = operatorMailTexts[kind];
   try {
     // The native structured API creates MIME. Do not forward arbitrary Env or
     // report fields, custom headers, HTML, attachments, CC or BCC.
@@ -47,4 +57,10 @@ export async function sendGroupReportMail(
     // queue retryable without carrying those diagnostics into logs/status.
     throw new Error("group_report_email_delivery_failed");
   }
+}
+
+/** Report queues remain restricted to their two report kinds. */
+export async function sendGroupReportMail(env: GroupReportMailEnv, kind: 'received' | 'undecided'): Promise<void> {
+  if (kind !== 'received' && kind !== 'undecided') throw new Error('group_report_email_invalid_kind');
+  await sendOperatorMail(env, kind);
 }

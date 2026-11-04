@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, expect, it } from 'vitest';
 import { renewIntake } from '../src/intake-renewal';
-import { renewalPolicy as p, forecastYen, type CostObservation } from '../src/intake-renewal-policy';
+import { renewalPolicy as p, forecastYen, measuredCostYen, type CostObservation } from '../src/intake-renewal-policy';
 import worker from '../src/intake-renewal-worker';
 import { IntakeControl } from '../src/intake-control';
 const db = (env as unknown as { DB: D1Database }).DB;
@@ -17,10 +17,10 @@ beforeEach(async () => {
     .bind(...Object.values(p.limits),base-1000,base+100000).run();
 });
 const state = () => db.prepare('SELECT enabled,reviewed_at,valid_until,monthly_attempts,monthly_bytes FROM pa_intake_control').first<any>();
-it('renews only approved limits, preserves counters, warns and bounds lifetime', async () => {
+it('renews only approved limits, preserves counters, avoids model-only warning and bounds lifetime', async () => {
   expect(await renewIntake(db,()=>base,async()=>evidence())).toBe('renewed');
   expect(await state()).toMatchObject({enabled:1,reviewed_at:base,valid_until:base+p.lifetimeMs,monthly_attempts:3,monthly_bytes:123});
-  expect(await db.prepare('SELECT warning FROM pa_intake_renewal').first()).toEqual({warning:1});
+  expect(await db.prepare('SELECT warning FROM pa_intake_renewal').first()).toEqual({warning:0});
 });
 it('provider failure closes new writes before IO and does not touch owner records', async () => {
   const ownersBefore = (await db.prepare('SELECT * FROM pa_owners').all()).results;
@@ -80,4 +80,28 @@ it('public entry is 404 and OFF scheduled invocation touches no dependency', asy
   const noDB=new Proxy({} as D1Database,{get(){throw Error('must not read');}});
   await worker.scheduled({} as ScheduledController,{ENVIRONMENT:'production',INTAKE_RENEWAL_ENABLED:'NO',DB:noDB});
   await worker.scheduled({} as ScheduledController,{ENVIRONMENT:'staging',INTAKE_RENEWAL_ENABLED:'YES',DB:noDB});
+});
+
+it('measured 5000 yen warns without adding model floor or preservation reserve', async () => {
+  const o={...evidence(),awsMonthlyUsd:14,cloudflareMonthlyUsd:0};
+  expect(measuredCostYen(o,base)).toBeGreaterThanOrEqual(5000);
+  expect(forecastYen(o,base)).toBe(8610);
+  expect(await renewIntake(db,()=>base,async()=>o)).toBe('renewed');
+  expect(await db.prepare('SELECT warning FROM pa_intake_renewal').first()).toEqual({warning:1});
+});
+it('forecast at or above 10000 closes even while measured cost is less', async () => {
+  const o={...evidence(),awsMonthlyUsd:23,cloudflareMonthlyUsd:0};
+  expect(measuredCostYen(o,base)).toBeLessThan(10000);
+  expect(forecastYen(o,base)).toBeGreaterThanOrEqual(10000);
+  expect(await renewIntake(db,()=>base,async()=>o)).toBe('closed');
+  expect((await state()).enabled).toBe(0);
+});
+
+it('future cost API budget is not actual warning spending and stop forecast stays unchanged',async()=>{
+ const o={...evidence(),awsMonthlyUsd:12,cloudflareMonthlyUsd:0};
+ expect(measuredCostYen(o,base)).toBeCloseTo(4664);
+ expect(forecastYen(o,base)).toBe(8610);
+ expect(await renewIntake(db,()=>base,async()=>o)).toBe('renewed');
+ expect(await db.prepare('SELECT warning FROM pa_intake_renewal').first()).toEqual({warning:0});
+ const high={...o,awsMonthlyUsd:23};expect(forecastYen(high,base)).toBe(Math.ceil((23+5+9.5+2.48)*160*1.1+3000));
 });

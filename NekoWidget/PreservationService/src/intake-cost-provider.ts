@@ -12,6 +12,7 @@ const unavailable = () => new ServiceError('COST_EVIDENCE_UNAVAILABLE', 503);
 async function json(fetcher: CostFetch, url: RequestInfo | URL, init: RequestInit): Promise<any> {
   const signal = AbortSignal.timeout(8000);
   const response = await fetcher(url, { ...init, signal, redirect: 'manual' });
+  if (response.status === 401 || response.status === 403) throw new ServiceError('COST_CREDENTIAL_REJECTED', 503);
   if (response.status !== 200 || !response.body) throw unavailable();
   const bytes = await readBoundedBody(response.body, 2 * 1024 * 1024, unavailable, signal);
   return JSON.parse(new TextDecoder().decode(bytes));

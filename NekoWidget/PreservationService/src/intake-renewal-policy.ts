@@ -20,7 +20,7 @@ export interface CostObservation {
   oldestCoveredAt: number;
   includesEntireAccounts: true;
 }
-export function forecastYen(o: CostObservation, now: number): number {
+export function measuredCostYen(o: CostObservation, now: number): number {
   if (!Number.isSafeInteger(o.collectedAt) || o.collectedAt > now || o.collectedAt <= now - 60000
       || !Number.isSafeInteger(o.oldestCoveredAt) || o.oldestCoveredAt > now
       || o.oldestCoveredAt < now - 48 * 60 * 60 * 1000 || o.includesEntireAccounts !== true
@@ -29,8 +29,12 @@ export function forecastYen(o: CostObservation, now: number): number {
     throw Error('Cost evidence unavailable');
   }
   // Credits never erase costs. Include full shared account usage conservatively,
-  // Cloudflare's fixed plan, Apple/domain allocation and bounded CE polling.
-  const measured = (o.awsMonthlyUsd + o.cloudflareMonthlyUsd + 5 + 9.5 + 2.48)
+  // Cloudflare's fixed plan and Apple/domain allocation. Future CE polling
+  // is a reserve for stopping, not measured spending for warning.
+  const measured = (o.awsMonthlyUsd + o.cloudflareMonthlyUsd + 5 + 9.5)
     * renewalPolicy.yenPerUsd * renewalPolicy.taxMultiplier;
-  return Math.ceil(Math.max(renewalPolicy.modelFloorYen, measured) + renewalPolicy.preservationReserveYen);
+  return measured;
+}
+export function forecastYen(o: CostObservation, now: number): number {
+  return Math.ceil(Math.max(renewalPolicy.modelFloorYen, measuredCostYen(o, now) + 2.48 * renewalPolicy.yenPerUsd * renewalPolicy.taxMultiplier) + renewalPolicy.preservationReserveYen);
 }
