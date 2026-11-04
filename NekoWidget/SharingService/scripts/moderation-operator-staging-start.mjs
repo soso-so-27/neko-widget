@@ -13,9 +13,16 @@ const service=path.resolve(import.meta.dirname,'..'),repo=path.resolve(service,'
 const fail=()=>{throw Error('invalid_staging_owner_config')};
 const exact=(o,keys)=>{if(!o||Object.getPrototypeOf(o)!==Object.prototype||Reflect.ownKeys(o).length!==keys.length||keys.some(k=>!Object.hasOwn(o,k)))fail()};
 const inside=(root,p)=>{const r=path.relative(root,p);return r===''||r==='..'||r.startsWith('..'+path.sep)?r==='':!path.isAbsolute(r)};
+export const productionOwnerScope=Object.freeze({
+ accountID:'829a34ef925a39d81b0e9e08800d7c7f',databaseID:'f0622d76-41d5-4af2-87c4-54f0ebc4015f',
+ serviceIdentity:'neko-window-sharing-production',reportBucket:'neko-window-sharing-production-moderation-private',
+ accessIssuer:'https://shrill-wind-26d2.cloudflareaccess.com',
+ accessAudience:'fe39782502a92dcd9a7c716dc5b0940a5cd64aaefcff26130fc4bfd2a4079b74',
+ origin:'https://operator.nekonomado.com',rpId:'operator.nekonomado.com',
+});
 export function validateStagingOwnerConfig(value){
  exact(value,['schemaVersion','mode','localConfigurationFile','runtimeDirectory','port','scope','keyDirectory','pipeName','caseHmacKeyFile','brokerRecordFile','verificationCaseReferences',...(value?.schemaVersion===2?['groupModerationEnabled']:[])]);
- if(![1,2].includes(value.schemaVersion)||(value.schemaVersion===2&&typeof value.groupModerationEnabled!=='boolean')||value.mode!=='owner-staging'||!Number.isInteger(value.port)||value.port<1||value.port>65535
+ if(![1,2].includes(value.schemaVersion)||(value.schemaVersion===2&&typeof value.groupModerationEnabled!=='boolean')||!['owner-staging','owner-production'].includes(value.mode)||!Number.isInteger(value.port)||value.port<1||value.port>65535
   ||!/^neko-owner-key-check-[0-9a-f-]{36}$/u.test(value.pipeName))fail();
  if(!Array.isArray(value.verificationCaseReferences)||value.verificationCaseReferences.length>1||value.verificationCaseReferences.some(v=>!/^[0-9a-f]{64}$/u.test(v)))fail();
  for(const name of ['localConfigurationFile','runtimeDirectory','keyDirectory','caseHmacKeyFile','brokerRecordFile'])if(!path.isAbsolute(value[name]))fail();
@@ -24,14 +31,18 @@ export function validateStagingOwnerConfig(value){
  if(!/^[0-9a-f]{32}$/u.test(value.scope.accountID)||!/^[0-9a-f-]{36}$/u.test(value.scope.databaseID)
   ||!/^[a-z0-9-]{1,63}$/u.test(value.scope.serviceIdentity)||!/^[a-z0-9-]{3,63}$/u.test(value.scope.reportBucket)
   ||value.scope.moderationKeyId!=='moderation-v2'||!/^[0-9a-f]{64}$/u.test(value.scope.publicKeySHA256))fail();
+ if(value.mode==='owner-production'){
+  if(value.schemaVersion!==2||Object.entries(productionOwnerScope).some(([key,expected])=>value.scope[key]!==expected))fail();
+ }else if(['databaseID','serviceIdentity','reportBucket','accessAudience','origin','rpId'].some(key=>value.scope[key]===productionOwnerScope[key]))fail();
  return structuredClone(value);
 }
 export async function openStagingOwnerBindings(config){
+ config=validateStagingOwnerConfig(config);
  const generated={name:'neko-operator-report-bridge',account_id:config.scope.accountID,compatibility_date:'2026-08-17',workers_dev:false,preview_urls:false,
   d1_databases:[{binding:'REPORT_DB',database_name:config.scope.serviceIdentity,database_id:config.scope.databaseID,remote:true}],
   r2_buckets:[{binding:'REPORT_MEDIA',bucket_name:config.scope.reportBucket,remote:true}]};
  await mkdir(config.runtimeDirectory,{recursive:true});
- const file=path.join(config.runtimeDirectory,'wrangler.owner-staging.json'),empty=path.join(config.runtimeDirectory,'owner-staging.vars.empty');
+ const file=path.join(config.runtimeDirectory,`wrangler.${config.mode}.json`),empty=path.join(config.runtimeDirectory,`${config.mode}.vars.empty`);
  // No inherited credentials, .dev.vars, extra buckets, services, routes or cron.
  for(const key of Object.keys(process.env))if(/^(?:CLOUDFLARE_|CF_|AWS_)/u.test(key))delete process.env[key];
  await writeFile(file,JSON.stringify(generated));await writeFile(empty,'');
@@ -39,9 +50,10 @@ export async function openStagingOwnerBindings(config){
  if(Object.keys(proxy.env).sort().join(',')!=='REPORT_DB,REPORT_MEDIA'){await proxy.dispose();fail()}
  return proxy;
 }
-export async function main(args){
+export async function main(args,expectedMode){
  if(args.length!==3||args[0]!=='--config'||!path.isAbsolute(args[1])||!['--check','--serve'].includes(args[2]))fail();
  const config=validateStagingOwnerConfig(JSON.parse(await readFile(args[1],'utf8')));
+ if(expectedMode!==undefined&&config.mode!==expectedMode)fail();
  const original=validateLocalOperatorConfig(JSON.parse(await readFile(config.localConfigurationFile,'utf8')));
  if(config.scope.origin!==original.origin||config.scope.rpId!==original.rpId||config.scope.accessIssuer!==original.access.issuer
   ||config.scope.accessAudience!==original.access.audience||config.scope.databaseID===original.enrollment.scope.databaseID)fail();
@@ -72,7 +84,7 @@ export async function main(args){
     accessIssuer:access.issuer,accessAudience:access.audience,expectedOrigin:original.origin,expectedRPID:original.rpId}},
    syntheticCaseReferences:config.verificationCaseReferences,
    reviewEvidence:createOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope})});
-  const unavailable=()=>new Response(JSON.stringify({error:'owner_staging_unavailable'}),{status:503,headers:{'Cache-Control':'no-store','Content-Type':'application/json'}});
+  const unavailable=()=>new Response(JSON.stringify({error:config.mode==='owner-production'?'owner_production_unavailable':'owner_staging_unavailable'}),{status:503,headers:{'Cache-Control':'no-store','Content-Type':'application/json'}});
   const handler=async request=>{
    try{
     await assertScope();const url=new URL(request.url);
@@ -100,7 +112,7 @@ export async function main(args){
     const response=await localHost(request);await assertScope();return response;
    }catch{return unavailable()}
   };
-  const ready={remoteBindings:true,evidenceMode:'owner-staging-r2',ownerReviewConfigured:true,scopeVerified:true,operatorGrantsCreated:false,liveOperationVerified:false};
+  const ready={remoteBindings:true,evidenceMode:config.mode+'-r2',ownerReviewConfigured:true,scopeVerified:true,operatorGrantsCreated:false,liveOperationVerified:false};
   if(args[2]==='--check'){console.log(JSON.stringify({configurationValid:true,...ready}));return}
   // Native storage custody measured ~9s per check, twice per disclosure, plus
   // current D1 guards. Preserve the owner handler's finite 60s disclosure bound.
