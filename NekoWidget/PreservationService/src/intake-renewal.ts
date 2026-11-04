@@ -1,4 +1,4 @@
-import { renewalPolicy as p, forecastYen, type CostObservation } from './intake-renewal-policy';
+import { renewalPolicy as p, forecastYen, measuredCostYen, type CostObservation } from './intake-renewal-policy';
 type Row = Record<string, number | string | null>;
 export type RenewalResult = 'disabled' | 'not-due' | 'renewed' | 'closed' | 'superseded';
 /** This service has no owner/session/content operations. A failed acquisition
@@ -21,12 +21,16 @@ export async function renewIntake(db: D1Database, now: () => number,
   const generation = (result[0]?.results[0] as { generation: number } | undefined)?.generation;
   if (generation === undefined) return 'not-due';
   const before = result[2]?.results[0] as Row | undefined;
-  let forecast: number | null = null;
+  let forecast: number | null = null, warning = false;
+  let failure = 'closed';
   try {
     if (!before || !Object.entries(p.limits).every(([k, v]) => before[k] === v)) throw Error('Unapproved limits');
-    forecast = forecastYen(await collect(), now());
+    const observation = await collect(), observedAt = now();
+    forecast = forecastYen(observation, observedAt);
+    warning = measuredCostYen(observation, observedAt) >= p.warningYen;
     const finished = now();
-    if (finished < start || finished >= start + p.leaseMs || forecast >= p.stopYen) throw Error('Expired or over budget');
+    if (finished < start || finished >= start + p.leaseMs) { failure = 'expired'; throw Error('Expired'); }
+    if (forecast >= p.stopYen) throw Error('Over budget');
     const validUntil = finished + p.lifetimeMs;
     // Match every observed field, including live counters and operator edits.
     // Any concurrent admission/control change leaves the already-closed row closed.
@@ -42,14 +46,15 @@ export async function renewIntake(db: D1Database, now: () => number,
           generation, claim, finished, validUntil),
       db.prepare(`UPDATE pa_intake_renewal SET last_result=CASE WHEN changes()=1 THEN 'renewed' ELSE 'superseded' END,
         checked_at=?,forecast_yen=?,warning=?,lease_until=0 WHERE singleton=1 AND generation=? AND claim_id=?`)
-        .bind(finished, forecast, forecast >= p.warningYen ? 1 : 0, generation, claim),
+        .bind(finished, forecast, warning ? 1 : 0, generation, claim),
     ]);
     return rows[0]?.results.length === 1 ? 'renewed' : 'superseded';
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'COST_CREDENTIAL_REJECTED') failure = 'credentials';
     // Do not undo a newer operator generation or a newer completed review.
-    await db.prepare(`UPDATE pa_intake_renewal SET last_result='closed',checked_at=?,
+    await db.prepare(`UPDATE pa_intake_renewal SET last_result=?,checked_at=?,
       forecast_yen=?,warning=?,lease_until=0 WHERE singleton=1 AND generation=? AND claim_id=?`)
-      .bind(now(), forecast, forecast !== null && forecast >= p.warningYen ? 1 : 0, generation, claim).run();
+      .bind(failure, now(), forecast, warning ? 1 : 0, generation, claim).run();
     return 'closed';
   }
 }

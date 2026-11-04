@@ -29,3 +29,10 @@ Cost Explorerは少なくとも24時間ごとの更新で、リアルタイム�
 警戒/閉鎖結果を運営の通知・メール・ログへ接続し、担当不在時の扱いを整える。現在のWorkerはlast_result/checked_at/forecast_yen/warningだけを保存し、メールを送らない。本人や写真の識別子を費用記録へ入れない。
 
 Sources: https://aws.amazon.com/aws-cost-management/aws-cost-explorer/pricing/ ; https://aws.amazon.com/aws-cost-management/aws-cost-explorer/ ; https://developers.cloudflare.com/api/resources/billing/subresources/usage/methods/paygo/
+## Stage 6 operator notification boundary (1102zq)
+
+Warning uses measured AWS/Cloudflare 31-day usage plus fixed costs and the bounded cost-API allocation. It excludes the model floor and preservation reserve. Stop forecasting still includes both. The notification sender reuses the report mail binding and fixed templates; recipients and sender addresses must be Worker secrets, with the private binding restricted to the approved mailbox/sender. No separate provider API key is needed for the native binding.
+
+Migration 0051 adds only notification state. A state transition emits a fixed structured log and, when mail is explicitly enabled, a fixed message. Concurrent claims suppress duplicates. Failed or uncertain delivery retries no sooner than six hours; provider acknowledgement is not proof of inbox delivery. Logs never contain provider diagnostics, mailbox, photo, report identifier or credentials. Rejected credentials (401/403) are distinct from unavailable cost evidence. Expired authorization can be observed without collecting costs. An in-progress collection is not a closure alert.
+
+The production renewal gate, mail gate and cron remain OFF. The scheduled path observes status after a permitted renewal invocation; it is not an independent watchdog while cron is OFF, and cannot report a scheduler/platform outage by itself. Enabling production gates/cron and registering the production operator are separate owner steps. Do not copy staging operator keys or registered credentials. A production read/decision test requires the production origin, Access audience and per-action WebAuthn verification.
