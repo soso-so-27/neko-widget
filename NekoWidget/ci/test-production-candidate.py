@@ -1,5 +1,6 @@
 """Offline adversarial contract tests; macOS CI checks the actual generated products."""
 import copy
+import datetime
 import base64
 import hashlib
 import json
@@ -42,6 +43,78 @@ class ProductionCandidateTests(unittest.TestCase):
 
     def test_complete_three_product_contract(self):
         self.verify()
+
+    def signature_fixture(self):
+        team = "SYNTHETIC1"
+        signed, profiles = {}, {}
+        for target, (relative, _, _) in candidate.TARGETS.items():
+            directory = self.app / relative
+            info = plistlib.loads((directory / "Info.plist").read_bytes())
+            values = {"application-identifier": f"{team}.{info['CFBundleIdentifier']}",
+                      "com.apple.developer.team-identifier": team, "get-task-allow": False,
+                      "com.apple.security.application-groups": [info["AppGroupIdentifier"]]}
+            if target != "NekoWidgetWidgetExtension":
+                values["keychain-access-groups"] = [f"{team}.{info['CFBundleIdentifier']}", info["GroupShareKeychainGroup"]]
+                values["com.apple.developer.sensitivecontentanalysis.client"] = ["analysis"]
+            if target == "NekoWidget":
+                values.update({"com.apple.developer.applesignin": ["Default"], "aps-environment": "production",
+                               "com.apple.developer.icloud-container-identifiers": [info["PersonalArchiveContainerIdentifier"]],
+                               "com.apple.developer.icloud-services": ["CloudKit"],
+                               "com.apple.developer.icloud-container-environment": "Production",
+                               "com.apple.developer.associated-domains": ["applinks:nekonomado.com"]})
+            allowed = copy.deepcopy(values)
+            if "keychain-access-groups" in allowed:
+                allowed["keychain-access-groups"] = [team + ".*", "com.apple.token"]
+            if target == "NekoWidget":
+                # Observed Apple profile shapes, with synthetic identities only.
+                allowed["com.apple.developer.associated-domains"] = "*"
+                allowed["com.apple.developer.icloud-services"] = "*"
+                allowed["com.apple.developer.icloud-container-environment"] = ["Production", "Development"]
+            signed[str(directory)] = values
+            profiles[str(directory / "embedded.mobileprovision")] = {
+                "Entitlements": allowed, "TeamIdentifier": [team],
+                "ExpirationDate": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=1)}
+        return signed, profiles
+
+    def verify_signature_fixture(self, signed, profiles):
+        from types import SimpleNamespace
+        def run(args, **kwargs):
+            if args[:2] == ["codesign", "--verify"]:
+                return SimpleNamespace(stdout=b"")
+            source = profiles if args[0] == "security" else signed
+            return SimpleNamespace(stdout=plistlib.dumps(source[args[-1]]))
+        with patch.dict(os.environ, {"APPLE_TEAM_ID": "SYNTHETIC1"}), patch.object(candidate.subprocess, "run", side_effect=run):
+            candidate.verify_signatures(self.app)
+
+    def test_apple_profile_grant_shapes_accept_exact_production_products(self):
+        self.verify_signature_fixture(*self.signature_fixture())
+
+    def test_profile_wildcards_do_not_expand_reviewed_product_scope(self):
+        for key, value in (("com.apple.developer.associated-domains", ["applinks:other.example"]),
+                           ("com.apple.developer.icloud-services", ["CloudKit", "CloudDocuments"]),
+                           ("com.apple.developer.icloud-container-environment", "Development")):
+            with self.subTest(key=key):
+                signed, profiles = self.signature_fixture()
+                signed[str(self.app)][key] = value
+                with self.assertRaises(ValueError):
+                    self.verify_signature_fixture(signed, profiles)
+
+    def test_missing_or_mismatched_profile_grants_still_reject(self):
+        for key, value in (("com.apple.developer.associated-domains", None),
+                           ("com.apple.developer.associated-domains", ["applinks:other.example"]),
+                           ("com.apple.developer.icloud-services", ["CloudDocuments"]),
+                           ("com.apple.developer.icloud-container-environment", ["Development"]),
+                           ("com.apple.developer.sensitivecontentanalysis.client", "*"),
+                           ("com.apple.security.application-groups", "*")):
+            with self.subTest(key=key, value=value):
+                signed, profiles = self.signature_fixture()
+                permitted = profiles[str(self.app / "embedded.mobileprovision")]["Entitlements"]
+                if value is None:
+                    permitted.pop(key)
+                else:
+                    permitted[key] = value
+                with self.assertRaises(ValueError):
+                    self.verify_signature_fixture(signed, profiles)
 
     def test_public_candidate_requires_recipient_before_any_build(self):
         contract = copy.deepcopy(self.contract)

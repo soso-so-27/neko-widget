@@ -174,6 +174,28 @@ def verify_export(options, *, owner_only=False):
             and options.get("manageAppVersionAndBuildNumber") is False, "Public candidate export boundary changed")
 
 
+def verify_profile_entitlements(entitlements, permitted):
+    """A signed profile grants capabilities; its value shape can differ from
+    the concrete signature. Only normalize the observed Apple grant forms.
+    Exact product scopes are still checked separately in verify_signatures.
+    """
+    for key, actual in entitlements.items():
+        allowed = permitted.get(key)
+        if key in {"com.apple.developer.associated-domains", "com.apple.developer.icloud-services"} and allowed == "*":
+            require(isinstance(actual, list) and actual and all(isinstance(item, str) and item for item in actual),
+                    "Invalid signed capability: " + key)
+            allowed = ["*"]
+        if key == "com.apple.developer.icloud-container-environment" and isinstance(allowed, list):
+            require(isinstance(actual, str) and all(isinstance(item, str) for item in allowed)
+                    and actual in allowed, "Signed capability not authorized by profile: " + key)
+        elif isinstance(actual, list):
+            require(isinstance(allowed, list) and all(any(
+                fnmatch.fnmatchcase(item, pattern) if isinstance(item, str) and isinstance(pattern, str)
+                else item == pattern for pattern in allowed) for item in actual), "Signed capability not authorized by profile: " + key)
+        else:
+            require(actual == allowed, "Signed capability differs from profile: " + key)
+
+
 def verify_signatures(app):
     """Inspect actual distribution signatures after archive AND after IPA export."""
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
@@ -192,14 +214,7 @@ def verify_signatures(app):
                 > datetime.datetime.now(datetime.timezone.utc), "Distribution profile is expired")
         require(entitlements.get("application-identifier") == f"{team}.{info['CFBundleIdentifier']}"
                 and profile["Entitlements"].get("application-identifier") == entitlements["application-identifier"], "Signature identity differs from profile")
-        for key, actual in entitlements.items():
-            allowed = profile["Entitlements"].get(key)
-            if isinstance(actual, list):
-                require(isinstance(allowed, list) and all(any(
-                    fnmatch.fnmatchcase(item, pattern) if isinstance(item, str) and isinstance(pattern, str)
-                    else item == pattern for pattern in allowed) for item in actual), "Signed capability not authorized by profile: " + key)
-            else:
-                require(actual == allowed, "Signed capability differs from profile: " + key)
+        verify_profile_entitlements(entitlements, profile["Entitlements"])
         require(entitlements.get("get-task-allow", False) is False and profile["Entitlements"].get("get-task-allow") is False
                 and not profile.get("ProvisionedDevices") and not profile.get("ProvisionsAllDevices"), "Not an App Store distribution signature")
         require(entitlements.get("com.apple.security.application-groups") == [info["AppGroupIdentifier"]], "App Group signature differs")
