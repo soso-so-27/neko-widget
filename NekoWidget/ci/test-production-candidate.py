@@ -235,6 +235,25 @@ class ProductionCandidateTests(unittest.TestCase):
         self.assertFalse(output.exists())
         self.assertFalse(envfile.exists())
 
+    def test_owner_export_does_not_change_production_app_configuration(self):
+        options = plistlib.loads((candidate.ROOT / "ci/ExportOptions.plist.template").read_bytes())
+        with self.assertRaises(ValueError): candidate.verify_export(options, owner_only=True)
+        options['testFlightInternalTestingOnly'] = True
+        candidate.verify_export(options, owner_only=True)
+        with self.assertRaises(ValueError): candidate.verify_export(options)
+        self.assertEqual(candidate.settings(self.contract, synthetic=True), self.settings)
+
+    def test_upload_requires_both_owner_only_selection_and_protected_approval(self):
+        output = Path(self.temp.name) / 'contract.json'
+        env = {'PRODUCTION_CANDIDATE_CONFIG': json.dumps(self.contract), 'PRODUCTION_CANDIDATE_APPROVED': 'YES',
+               'UPLOAD_TO_TESTFLIGHT': 'true', 'GITHUB_ENV': str(Path(self.temp.name) / 'env')}
+        for selection, approval in [('false','YES'),('true','NO')]:
+            with patch.dict(os.environ, {**env,'PRODUCTION_CANDIDATE_OWNER_ONLY':selection,'PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED':approval}, clear=True), \
+                 patch('sys.argv',['candidate','prepare','--contract',str(output)]), \
+                 patch.object(candidate,'settings',return_value=self.settings), self.assertRaisesRegex(ValueError,'owner-only approval'):
+                candidate.main()
+            self.assertFalse(output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

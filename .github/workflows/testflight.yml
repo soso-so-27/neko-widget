@@ -23,8 +23,13 @@ on:
           - owner-internal
           - existing-reviewed
           - app-store-candidate
+      production_candidate_owner_only:
+        description: "production候補を本人限定の内部TestFlightへ（アプリ内の内部機能はOFFのまま）"
+        required: false
+        default: false
+        type: boolean
       release_mode:
-        description: "配布範囲。App Store候補はproduction＋app-store-candidate（署名・exportのみ）、review-previewは画面確認、pairing-onlyは内部限定、media-stagingは内部またはBuild 71候補の外部1人限定"
+        description: "配布範囲。App Store候補はproduction＋app-store-candidate（通常はexportのみ、明示指定で本人内部配布）、review-previewは画面確認、pairing-onlyは内部限定、media-stagingは内部またはBuild 71候補の外部1人限定"
         required: true
         default: disabled
         type: choice
@@ -98,6 +103,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       PROJECT_DIRECTORY: NekoWidget
       RELEASE_SOURCE_SHA: ${{ inputs.expected_main_sha || github.sha }}
+      PRODUCTION_CANDIDATE_OWNER_ONLY: ${{ inputs.production_candidate_owner_only || false }}
       DISTRIBUTION_PROFILE: ${{ inputs.distribution_profile }}
       INTERNAL_REPORTS_REQUESTED: ${{ inputs.internal_reports }}
       GROUP_WINDOWS_REQUESTED: ${{ inputs.group_windows || false }}
@@ -147,6 +153,7 @@ jobs:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
         run: |
           set -euo pipefail
+          if [[ "$PRODUCTION_CANDIDATE_OWNER_ONLY" == "true" && "$DISTRIBUTION_PROFILE" != "app-store-candidate" ]]; then exit 1; fi
           python3 "$PROJECT_DIRECTORY/ci/distribution_profile.py" \
             --profile "$DISTRIBUTION_PROFILE" --mode "$SELECTED_RELEASE_MODE" \
             --internal-reports "$INTERNAL_REPORTS_REQUESTED"
@@ -891,6 +898,7 @@ jobs:
         env:
           PRODUCTION_CANDIDATE_CONFIG: ${{ vars.PRODUCTION_CANDIDATE_CONFIG }}
           PRODUCTION_CANDIDATE_APPROVED: ${{ vars.PRODUCTION_CANDIDATE_APPROVED }}
+          PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED: ${{ vars.PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED }}
           UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
           PRESERVATION_REQUESTED: ${{ inputs.preservation_pilot }}
           BILLING_REQUESTED: ${{ inputs.billing_sandbox }}
@@ -1763,29 +1771,35 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-      - name: Retain encrypted production candidate (no upload to Apple)
+      - name: Retain encrypted production candidate
         if: ${{ inputs.retain_signed_artifacts && inputs.distribution_profile == 'app-store-candidate' }}
         shell: bash
         env:
           SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail
-          COPYFILE_DISABLE=1 tar -C "$RUNNER_TEMP" -czf - NekoWidget.xcarchive Export \
+          COPYFILE_DISABLE=1 tar -C "$RUNNER_TEMP" -czf - NekoWidget.xcarchive Export ExportOptions.plist production-candidate.json \
             | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
                 -pass env:SIGNED_ARTIFACT_ENCRYPTION_PASSWORD \
                 -out "$RUNNER_TEMP/production-candidate.tar.gz.enc"
+          if [[ "$PRODUCTION_CANDIDATE_OWNER_ONLY" == "true" ]]; then
+            python3 "$PROJECT_DIRECTORY/ci/production-owner-artifact.py" create --root "$RUNNER_TEMP" --ipa "$IPA_PATH"
+          fi
       - name: Upload encrypted production candidate artifact
         if: ${{ inputs.retain_signed_artifacts && inputs.distribution_profile == 'app-store-candidate' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: production-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/production-candidate.tar.gz.enc
+          path: |
+            ${{ runner.temp }}/production-candidate.tar.gz.enc
+            ${{ runner.temp }}/production-owner-metadata.json
+            ${{ runner.temp }}/production-owner-authentication.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
 
       - name: Install App Store Connect API private key
-        if: ${{ inputs.upload_to_testflight && inputs.distribution_profile != 'app-store-candidate' }}
+        if: ${{ inputs.upload_to_testflight && (inputs.distribution_profile != 'app-store-candidate' || inputs.production_candidate_owner_only) }}
         shell: bash
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -1800,7 +1814,7 @@ jobs:
           chmod 600 "$private_key_path"
 
       - name: Validate and upload IPA to TestFlight
-        if: ${{ inputs.upload_to_testflight && inputs.distribution_profile != 'app-store-candidate' }}
+        if: ${{ inputs.upload_to_testflight && (inputs.distribution_profile != 'app-store-candidate' || inputs.production_candidate_owner_only) }}
         working-directory: ${{ runner.temp }}
         shell: bash
         env:
@@ -1812,7 +1826,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${{ inputs.retain_signed_artifacts }}" == "true" ]]; then
+          if [[ "$DISTRIBUTION_PROFILE" == "app-store-candidate" ]]; then
+            node "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/check-owner-testflight-recipient.mjs" --production-owner-artifact "$RUNNER_TEMP" --ipa "$IPA_PATH"
+          elif [[ "${{ inputs.retain_signed_artifacts }}" == "true" ]]; then
             # Re-authenticate the retained evidence immediately before checking the
             # exact IPA bytes that altool will receive. Authentication must precede
             # digest comparison so a rewritten metadata file cannot bless a new IPA.
