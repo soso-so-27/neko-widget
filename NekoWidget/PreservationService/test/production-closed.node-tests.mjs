@@ -55,7 +55,7 @@ test('actual closed entrypoints reject before database, object storage, or provi
   // Deliberately supply no D1/R2/provider bindings: touching them cannot succeed.
   // The front is synthetic; every target is the actual deployed entry module.
   let outbound = 0;
-  const targets = [...configs.slice(0, 4), { main: '../SharingService/src/index.ts',
+  const targets = [...configs.slice(0, 4), { main: '../SharingService/src/production-entry.ts',
     compatibility_date: '2026-08-17', compatibility_flags: ['nodejs_compat'],
     vars: { ENVIRONMENT: 'production', INTAKE_ENABLED: 'NO', PRESERVATION_RETENTION_REFRESH_ENABLED: 'NO' } }];
   const workers = await Promise.all(targets.map(async (config, i) => {
@@ -71,7 +71,7 @@ test('actual closed entrypoints reject before database, object storage, or provi
     KMS: { name: 'closed-1', entrypoint: 'PreservationKeyWrapper' },
     BILLING: { name: 'closed-2', entrypoint: 'BillingAuthority' },
     RETENTION: { name: 'closed-4', entrypoint: 'RetentionBillingObserver' }, DELETION: 'closed-3',
-    KMS_PUBLIC: 'closed-1', BILLING_PUBLIC: 'closed-2',
+    KMS_PUBLIC: 'closed-1', BILLING_PUBLIC: 'closed-2', SHARING_PUBLIC: 'closed-4',
   };
   const mf = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'front', modules: true,
     compatibilityDate: '2026-08-17', serviceBindings: bindings,
@@ -89,7 +89,7 @@ test('actual closed entrypoints reject before database, object storage, or provi
       ['BILLING', '/membership/verified-retention-status', 503, {}],
       ['RETENTION', '/internal/retention/refresh', 503, {}],
       ['DELETION', '/', 404, {}], ['KMS_PUBLIC', '/', 404, {}],
-      ['BILLING_PUBLIC', '/', 404, {}],
+      ['BILLING_PUBLIC', '/', 404, {}], ['SHARING_PUBLIC', '/v3/family-notebooks', 503, {}],
     ]) {
       const result = await mf.dispatchFetch(`https://synthetic${path}?binding=${binding}`, {
         method: 'POST', body: JSON.stringify(body), headers: {

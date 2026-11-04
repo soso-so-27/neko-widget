@@ -1,5 +1,3 @@
-// Private named service only; the default HTTP router remains unchanged.
-export { RetentionBillingObserver } from './billing-gateway';
 import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
 import { requestBillingTransactionDeletion, billingTransactionDeletionStatus, scheduleBillingTransactionRetention } from './billing-retention-api';
