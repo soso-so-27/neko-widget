@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
+import { renderProductionKmsPolicy } from '../deploy/render-production-kms-policy.mjs';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 
 const files = ['wrangler.production-closed.jsonc', 'wrangler.kms.production-closed.jsonc',
@@ -46,7 +47,16 @@ test('AWS writer, version eraser, and key wrapper have disjoint production permi
     }
   }
   const kms = policies[2].Statement[0];
-  assert.equal(kms.Resource, 'arn:aws:kms:ap-northeast-1:164892691568:key/a220f07e-5db4-4918-8127-639616566ad0');
+  assert.equal(kms.Resource, '${PRODUCTION_PRESERVATION_KMS_KEY_ARN}');
+  const syntheticArn = 'arn:aws:kms:ap-northeast-1:123456789012:key/12345678-1234-4234-8234-123456789abc';
+  const rendered = renderProductionKmsPolicy(policies[2], syntheticArn);
+  assert.deepEqual(rendered, { ...policies[2], Statement: [{ ...kms, Resource: syntheticArn }] });
+  assert.match(rendered.Statement[0].Resource, /^arn:aws:kms:ap-northeast-1:\d{12}:key\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+  for (const invalid of ['*', [syntheticArn], syntheticArn + ',*', syntheticArn.replace('ap-northeast-1', 'us-east-1'), syntheticArn.replace('key/', 'alias/'), undefined]) {
+    assert.throws(() => renderProductionKmsPolicy(policies[2], invalid));
+  }
+  assert.throws(() => renderProductionKmsPolicy({ ...policies[2], Statement: [...policies[2].Statement, kms] }, syntheticArn));
+  assert.throws(() => renderProductionKmsPolicy({ ...policies[2], Statement: [{ ...kms, Condition: {} }] }, syntheticArn));
   assert.equal(kms.Condition.Null['kms:EncryptionContextKeys'], false);
   assert.equal(kms.Condition['ForAllValues:StringEquals']['kms:EncryptionContextKeys'], 'neko-preservation-context-sha256');
 });
