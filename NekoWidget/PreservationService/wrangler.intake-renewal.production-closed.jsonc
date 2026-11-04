@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-preservation-intake-renewal-production",
+  "main": "src/intake-renewal-worker.ts",
+  "compatibility_date": "2026-08-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {"enabled": false},
+  "triggers": {"crons": []},
+  "vars": {
+    "ENVIRONMENT": "production",
+    "INTAKE_RENEWAL_ENABLED": "NO",
+    "COST_AWS_ACCOUNT_ID": "164892691568",
+    "COST_CLOUDFLARE_ACCOUNT_ID": "829a34ef925a39d81b0e9e08800d7c7f"
+  },
+  "d1_databases": [{
+    "binding": "DB", "database_name": "neko-preservation-production",
+    "database_id": "e1f34d4a-dcb4-472b-9cbc-37233a52c5b1", "migrations_dir": "migrations"
+  }]
+}
