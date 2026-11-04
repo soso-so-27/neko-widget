@@ -83,7 +83,7 @@ it('public entry is 404 and OFF scheduled invocation touches no dependency', asy
 });
 
 it('measured 5000 yen warns without adding model floor or preservation reserve', async () => {
-  const o={...evidence(),awsMonthlyUsd:12,cloudflareMonthlyUsd:0};
+  const o={...evidence(),awsMonthlyUsd:14,cloudflareMonthlyUsd:0};
   expect(measuredCostYen(o,base)).toBeGreaterThanOrEqual(5000);
   expect(forecastYen(o,base)).toBe(8610);
   expect(await renewIntake(db,()=>base,async()=>o)).toBe('renewed');
@@ -95,4 +95,13 @@ it('forecast at or above 10000 closes even while measured cost is less', async (
   expect(forecastYen(o,base)).toBeGreaterThanOrEqual(10000);
   expect(await renewIntake(db,()=>base,async()=>o)).toBe('closed');
   expect((await state()).enabled).toBe(0);
+});
+
+it('future cost API budget is not actual warning spending and stop forecast stays unchanged',async()=>{
+ const o={...evidence(),awsMonthlyUsd:12,cloudflareMonthlyUsd:0};
+ expect(measuredCostYen(o,base)).toBeCloseTo(4664);
+ expect(forecastYen(o,base)).toBe(8610);
+ expect(await renewIntake(db,()=>base,async()=>o)).toBe('renewed');
+ expect(await db.prepare('SELECT warning FROM pa_intake_renewal').first()).toEqual({warning:0});
+ const high={...o,awsMonthlyUsd:23};expect(forecastYen(high,base)).toBe(Math.ceil((23+5+9.5+2.48)*160*1.1+3000));
 });
