@@ -33,7 +33,7 @@
   "services": [
     {
       "binding": "RETENTION_BILLING_REFRESH",
-      "service": "neko-preservation-retention-production",
+      "service": "neko-window-sharing-production",
       "entrypoint": "RetentionBillingObserver"
     }
   ]
