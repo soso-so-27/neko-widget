@@ -134,10 +134,16 @@ export async function confirmBuild319(get, groupID) {
 
 async function main() {
   const args = process.argv.slice(2);
-  requireValue(args.length === 0 || ([4, 6].includes(args.length) && args[0] === '--authenticated-artifact' && args[2] === '--ipa'
+  const productionOwner = args.length === 4 && args[0] === '--production-owner-artifact' && args[2] === '--ipa';
+  requireValue(productionOwner || args.length === 0 || ([4, 6].includes(args.length) && args[0] === '--authenticated-artifact' && args[2] === '--ipa'
     && (args.length === 4 || (args[4] === '--confirm-build' && args[5] === '319'))),
     'Expected authenticated artifact and exact IPA arguments, or read-only diagnosis without arguments.');
-  const authenticatedInternalOnly = args.length >= 4 ? await verifyInternalOnlyArtifact(args[1], args[3]) : false;
+  let authenticatedInternalOnly = false;
+  if (productionOwner) {
+    await promisify(execFile)('python3', [path.join(path.dirname(fileURLToPath(import.meta.url)), 'production-owner-artifact.py'),
+      'verify', '--root', args[1], '--ipa', args[3]]);
+    authenticatedInternalOnly = true;
+  } else if (args.length >= 4) authenticatedInternalOnly = await verifyInternalOnlyArtifact(args[1], args[3]);
   const { OWNER_INTERNAL_GROUP_ID: groupID, OWNER_INTERNAL_TESTER_ID: testerID,
     APP_STORE_CONNECT_KEY_ID: keyID, APP_STORE_CONNECT_ISSUER_ID: issuer } = process.env;
   requireValue(resourceID(groupID) && resourceID(testerID), 'Owner recipient pins are missing; do not distribute.');

@@ -1,4 +1,4 @@
-"""Complete public candidate contract. No service provisioning or Apple upload.
+"""Complete production candidate contract; no service provisioning.
 
 The synthetic contract is deliberately confined to Simulator builds. It is never
 accepted by the signed archive/export commands, even if supplied in protected vars.
@@ -167,9 +167,9 @@ def verify_products(app, contract, *, synthetic=False):
     return infos
 
 
-def verify_export(options):
+def verify_export(options, *, owner_only=False):
     require(options.get("method") == "app-store-connect" and options.get("destination") == "export"
-            and options.get("testFlightInternalTestingOnly", False) is False
+            and options.get("testFlightInternalTestingOnly", False) is owner_only
             and options.get("signingStyle") == "manual"
             and options.get("manageAppVersionAndBuildNumber") is False, "Public candidate export boundary changed")
 
@@ -276,11 +276,17 @@ def main():
         contract = json.loads(os.environ["PRODUCTION_CANDIDATE_CONFIG"])
         settings(contract)
         require(os.environ.get("PRODUCTION_CANDIDATE_APPROVED") == "YES", "Protected candidate approval missing")
+        owner_only = os.environ.get("PRODUCTION_CANDIDATE_OWNER_ONLY", "false")
+        require(owner_only in ("true", "false"), "Explicit candidate recipient boundary required")
+        require(os.environ.get("UPLOAD_TO_TESTFLIGHT", "false") == "false" or
+                (owner_only == "true" and os.environ.get("PRODUCTION_CANDIDATE_OWNER_UPLOAD_APPROVED") == "YES"),
+                "Candidate upload requires protected owner-only approval")
         require(all(os.environ.get(k, "false") == "false" for k in
-                    ("UPLOAD_TO_TESTFLIGHT", "INTERNAL_REPORTS_REQUESTED", "GROUP_WINDOWS_REQUESTED", "FAMILY_NOTEBOOK_STAGING_REQUESTED", "PRESERVATION_REQUESTED", "BILLING_REQUESTED")), "Candidate cannot use internal switches or upload")
+                    ("INTERNAL_REPORTS_REQUESTED", "GROUP_WINDOWS_REQUESTED", "FAMILY_NOTEBOOK_STAGING_REQUESTED", "PRESERVATION_REQUESTED", "BILLING_REQUESTED")), "Candidate cannot use internal switches")
         args.contract.write_text(json.dumps(contract), encoding="utf-8")
         with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
-            env.write("SHARING_EXPECTED_MODE=production\nRELEASE_ENVIRONMENT=production\nRELEASE_INTERNAL_REPORTS_ENABLED=false\nRELEASE_MODE_SUMMARY=production/App Store candidate (archive and export only)\n")
+            destination = "owner-only internal TestFlight" if owner_only == "true" else "archive and export only"
+            env.write("SHARING_EXPECTED_MODE=production\nRELEASE_ENVIRONMENT=production\nRELEASE_INTERNAL_REPORTS_ENABLED=false\nRELEASE_MODE_SUMMARY=production/App Store candidate (" + destination + ")\n")
         return
     contract = json.loads(args.contract.read_text(encoding="utf-8"))
     settings(contract, synthetic=args.synthetic)
@@ -292,7 +298,12 @@ def main():
             verify_signatures(args.path)
     elif args.command == "export":
         require(not args.synthetic, "Synthetic candidate cannot export")
-        verify_export(plistlib.loads(args.path.read_bytes()))
+        owner_only = os.environ.get("PRODUCTION_CANDIDATE_OWNER_ONLY", "false") == "true"
+        options = plistlib.loads(args.path.read_bytes())
+        if owner_only:
+            options["testFlightInternalTestingOnly"] = True
+            args.path.write_bytes(plistlib.dumps(options))
+        verify_export(options, owner_only=owner_only)
     elif args.command == "ipa":
         require(not args.synthetic, "Synthetic candidate cannot export")
         with tempfile.TemporaryDirectory() as directory, zipfile.ZipFile(args.path) as archive:
