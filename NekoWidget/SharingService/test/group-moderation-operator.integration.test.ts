@@ -140,6 +140,21 @@ beforeEach(async()=>{
 });
 
 describe('group operator selected-evidence workflow',()=>{
+  it('a failed evidence read cannot poison the next case in the same owner session',async()=>{
+    const f=await fixture();await f.anotherReport();const [bad,good]=await f.queue();
+    f.local.group.reviewEvidence=async input=>{
+      if(input.source.caseReferenceHmac===bad!.caseReference){await input.audit('started');throw Error('synthetic invalid envelope');}
+      return review(input);
+    };
+    const failed=await f.issue(`/operator/group/v1/cases/${bad!.caseReference}/read`);
+    expect((await f.prove(failed)).status).toBe(409);
+    expect(await count('group_moderation_receipts')).toBe(0);
+    const receipt=await f.read(good!.caseReference);
+    expect((await f.prove(await f.issue(`/operator/group/v1/cases/${good!.caseReference}/no_action/${receipt}`))).status).toBe(200);
+    expect((await f.prove(failed)).status).toBe(409);
+    expect(await count('group_moderation_decisions')).toBe(1);
+    expect(await db.prepare("SELECT phase,COUNT(*) n FROM group_moderation_read_events GROUP BY phase ORDER BY phase").all()).toMatchObject({results:[{phase:'delivered',n:1},{phase:'disclosure_ready',n:1},{phase:'started',n:2}]});
+  });
   it('lists a received case, reads submitted evidence, restricts only its photo and exposes the reporter reply',async()=>{
     const f=await fixture(),cases=await f.queue();expect(cases).toHaveLength(1);
     const c=cases[0]!;expect(c).toMatchObject({revision:0,outcome:'received',evidenceAvailable:1,receiptNumber:f.report.receiptNumber});

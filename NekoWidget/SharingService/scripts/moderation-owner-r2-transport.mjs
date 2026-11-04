@@ -36,44 +36,53 @@ export function createOwnerR2Transport(config){
  return createOwnerR2TransportForReviewHost(config,createLocalOwnerReviewHost);
 }
 // Fixed trusted startup code only; never selected from an HTTP request or JSON.
-export function createOwnerR2TransportForReviewHost({bucket,keyDirectory,publicKeySHA256,pipeName,brokerRecordFile,assertScope},trustedHostFactory){
+export function createOwnerR2TransportForReviewHost({bucket,keyDirectory,publicKeySHA256,pipeName,brokerRecordFile,assertScope,onReviewFailure},trustedHostFactory){
  if(typeof trustedHostFactory!=='function')fail();
  if(!bucket||typeof bucket.get!=='function'||typeof assertScope!=='function'||!path.isAbsolute(keyDirectory)||!/^[0-9a-f]{64}$/u.test(publicKeySHA256))fail();
  return async input=>{
-  const owned=[];
+  const owned=[];const started=performance.now();let phase='review-host';
   try{
    const host=trustedHostFactory({
+    onReviewFailure,
     async readCiphertext(source,signal){
+     phase='ciphertext-scope';
      await assertScope();if(signal.aborted)fail();
      // Source object keys come ONLY from the current authorized D1 snapshot.
      if(source.metadata.moderationKeyId!=='moderation-v2'||source.metadata.ciphertextSize>1048576)fail();
-     const object=await bucket.get(source.objectKey);if(signal.aborted){await object?.body?.cancel().catch(()=>{});fail()}if(!object||object.size!==source.metadata.ciphertextSize)fail();
+     phase='ciphertext-get';const object=await bucket.get(source.objectKey);if(signal.aborted){await object?.body?.cancel().catch(()=>{});fail()}if(!object||object.size!==source.metadata.ciphertextSize)fail();
+     phase='ciphertext-stream';
      const reader=object.body.getReader(),buffer=Buffer.alloc(object.size);owned.push(buffer);let offset=0;
      const cancel=()=>{void reader.cancel().catch(()=>{})};signal.addEventListener('abort',cancel,{once:true});
      try{while(true){if(signal.aborted)fail();const chunk=await reader.read();if(signal.aborted)fail();if(chunk.done)break;
       if(offset+chunk.value.length>buffer.length)fail();buffer.set(chunk.value,offset);offset+=chunk.value.length;}
       if(offset!==buffer.length)fail();
      }finally{signal.removeEventListener('abort',cancel);await reader.cancel().catch(()=>{})}
-     await assertScope();if(signal.aborted)fail();return buffer;
+     phase='ciphertext-final-scope';await assertScope();if(signal.aborted)fail();phase='review-host';return buffer;
     },
     async readReviewedKey(id,signal){
-     if(id!=='moderation-v2')fail();await assertScope();
+     phase='key-scope';if(id!=='moderation-v2')fail();await assertScope();
+     phase='custody-before';
      const before=await verifyWindowsKeyCustody({pipeName,publicKeySHA256,keyDirectory,brokerRecordFile},signal);
      const identities=[],read=(name,size)=>{
       const file=path.join(keyDirectory,name),identity=validateExistingRestrictedFile(file,{expectedFilename:name,expectedBytes:size});identities.push(identity);
       if(!before.files.some(f=>f.name===name&&BigInt(f.inode)===identity.inode&&f.size===size))fail();
       const bytes=readBoundedRegularFile(file,size,'owner review key',{requireOwnerOnly:true});owned.push(bytes);return bytes;
      };
-     const privateKeyBytes=read(id+'.private.raw',32),companionPublicKeyBytes=read(id+'.public.base64url',43);
+     phase='restricted-key-read';const privateKeyBytes=read(id+'.private.raw',32),companionPublicKeyBytes=read(id+'.public.base64url',43);
      // Validate the current ACL/storage again after reading. The broker neither
      // reads nor transports private keys; its proofs are nonce-bound, uncached.
-     const proofAfter=await verifyWindowsKeyCustody({pipeName,publicKeySHA256,keyDirectory,brokerRecordFile},signal);
+     phase='custody-after';const proofAfter=await verifyWindowsKeyCustody({pipeName,publicKeySHA256,keyDirectory,brokerRecordFile},signal);
+     phase='identity-after';
      for(const identity of identities){const after=statSync(identity.path,{bigint:true});if(after.dev!==identity.device||after.ino!==identity.inode||after.nlink!==1n
       ||!proofAfter.files.some(f=>f.name===path.basename(identity.path)&&BigInt(f.inode)===identity.inode&&f.size===identity.bytes))fail()}
-     await assertScope();return {privateKeyBytes,companionPublicKeyBytes,reviewedKeyId:id,expectedPublicKeySHA256:publicKeySHA256};
+     phase='key-final-scope';await assertScope();phase='review-host';return {privateKeyBytes,companionPublicKeyBytes,reviewedKeyId:id,expectedPublicKeySHA256:publicKeySHA256};
     },
    });
    return await host(input);
-  }catch{fail()}finally{for(const bytes of owned)bytes.fill(0)}
+  }catch{
+   if(phase!=='review-host')try{onReviewFailure?.(Object.freeze({component:'review-transport',phase,
+    elapsedMs:Math.max(0,Math.round(performance.now()-started)),cancelled:input?.signal?.aborted===true}));}catch{}
+   fail();
+  }finally{for(const bytes of owned)bytes.fill(0)}
  };
 }

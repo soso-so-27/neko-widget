@@ -77,13 +77,16 @@ export async function main(args,expectedMode){
   subjectKey=new Uint8Array(await readFile(original.access.subjectHmacKeyFile));caseKey=new Uint8Array(await readFile(config.caseHmacKeyFile));
   if(subjectKey.length!==32||caseKey.length!==32)fail();
   const access={issuer:original.access.issuer,audience:original.access.audience,subjectHmacKey:subjectKey,subjectHmacKeyVersion:original.access.subjectHmacKeyVersion,cache:new ModerationAccessJwksCache()};
+  // Local stderr gets only fixed phase names and elapsed time. No credential,
+  // case identity, source, key, picture or exception text is logged.
+  const onReviewFailure=event=>console.error(JSON.stringify(event));
   const localHost=createLocalModerationOperatorHost({environment:'local',runtimeEnabled:'YES',db,origin:original.origin,rpId:original.rpId,access,
    ...(config.groupModerationEnabled===true?{group:{runtimeEnabled:'YES',caseHmacKey:caseKey,
-    reviewEvidence:createGroupOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope})}}:{}),
+    reviewEvidence:createGroupOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope,onReviewFailure})}}:{}),
    enrollment:{...original.enrollment,scope:{accountID:config.scope.accountID,databaseID:config.scope.databaseID,serviceIdentity:config.scope.serviceIdentity,
     accessIssuer:access.issuer,accessAudience:access.audience,expectedOrigin:original.origin,expectedRPID:original.rpId}},
    syntheticCaseReferences:config.verificationCaseReferences,
-   reviewEvidence:createOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope})});
+   reviewEvidence:createOwnerR2Transport({bucket:proxy.env.REPORT_MEDIA,keyDirectory:config.keyDirectory,publicKeySHA256:config.scope.publicKeySHA256,pipeName:config.pipeName,brokerRecordFile:config.brokerRecordFile,assertScope,onReviewFailure})});
   const unavailable=()=>new Response(JSON.stringify({error:config.mode==='owner-production'?'owner_production_unavailable':'owner_staging_unavailable'}),{status:503,headers:{'Cache-Control':'no-store','Content-Type':'application/json'}});
   const handler=async request=>{
    try{

@@ -47,14 +47,15 @@ export function groupModerationReviewSourceBinding(value, expectedReference) {
  * The result proves submitted-evidence provenance, not human review or a grant.
  * Already delivered bytes cannot be recalled from every browser/runtime copy. */
 export async function withBoundGroupModerationReview(expectedReference, adapters, consume,
-  {maximumDurationMs = 60000, signal: parentSignal} = {}) {
+  {maximumDurationMs = 60000, signal: parentSignal, onFailure} = {}) {
   const ref = reference(expectedReference);
   for (const name of ['readCurrentSource', 'readCiphertext', 'readReviewedKey', 'audit']) {
     if (typeof adapters?.[name] !== 'function') fail();
   }
   if (typeof consume !== 'function' || !Number.isInteger(maximumDurationMs)
       || maximumDurationMs < 1 || maximumDurationMs > 60000
-      || (parentSignal !== undefined && !(parentSignal instanceof AbortSignal))) fail();
+      || (parentSignal !== undefined && !(parentSignal instanceof AbortSignal))
+      || (onFailure !== undefined && typeof onFailure !== 'function')) fail();
   const {readCurrentSource, readCiphertext, readReviewedKey, audit} = adapters;
   let expiresAt = Date.now() + maximumDurationMs;
   const monotonicStart = performance.now(), controller = new AbortController();
@@ -77,41 +78,54 @@ export async function withBoundGroupModerationReview(expectedReference, adapters
       });
     } finally {clearTimeout(timer); controller.signal.removeEventListener('abort', onAbort);}
   }
-  let ciphertext, privateKey, publicKey, jpeg, event;
+  let ciphertext, privateKey, publicKey, jpeg, event, phase = 'initial-source';
   try {
     const bound = groupModerationReviewSourceBinding(await step(s => readCurrentSource(ref, s)), ref);
     expiresAt = Math.min(expiresAt, bound.source.metadata.contentExpiresAt * 1000);
     event = Object.freeze({schema: 'jp.nekowidget.group-moderation-local-review.v1', ...ref, sourceSHA256: bound.sourceSHA256});
     async function recheck() {
+      phase = 'source-recheck';
       active();
       const current = await step(s => readCurrentSource(ref, s));
       if (groupModerationReviewSourceBinding(current, ref).sourceSHA256 !== bound.sourceSHA256) fail();
       active();
     }
+    phase = 'audit-started';
     await step(s => audit(Object.freeze({...event, phase: 'started'}), s));
     await recheck();
+    phase = 'ciphertext';
     const fetched = await step(s => readCiphertext(bound.source, s));
     if (!(fetched instanceof Uint8Array) || fetched.byteLength !== bound.source.metadata.ciphertextSize) fail();
     ciphertext = Buffer.from(fetched);
     await recheck();
+    phase = 'reviewed-key';
     const reviewed = await step(s => readReviewedKey(bound.source.metadata.moderationKeyId, s));
     if (!(reviewed?.privateKeyBytes instanceof Uint8Array) || reviewed.privateKeyBytes.byteLength !== 32
         || !(reviewed.companionPublicKeyBytes instanceof Uint8Array) || reviewed.companionPublicKeyBytes.byteLength !== 43) fail();
     privateKey = Buffer.from(reviewed.privateKeyBytes);
     publicKey = Buffer.from(reviewed.companionPublicKeyBytes);
+    phase = 'key-match';
     verifyReviewedModerationPrivateKey({reviewedKeyId: reviewed.reviewedKeyId, metadataKeyId: 'moderation-v2',
       privateKeyBytes: privateKey, companionPublicKeyBytes: publicKey, expectedPublicKeySHA256: reviewed.expectedPublicKeySHA256});
     await recheck();
+    phase = 'decrypt';
     const decoded = decryptGroupModerationReport(bound.source.metadata, ciphertext, privateKey);
     jpeg = decoded.canonicalJPEG;
     const receipt = Object.freeze({...event, jpegSHA256: hash(jpeg),
       width: decoded.dimensions.width, height: decoded.dimensions.height, expiresAt});
+    phase = 'audit-disclosure';
     await step(s => audit(Object.freeze({...event, phase: 'disclosure_ready'}), s));
     await recheck();
+    phase = 'sink';
     await step(s => consume(Object.freeze({jpeg, receipt}), s));
+    phase = 'audit-completed';
     await step(s => audit(Object.freeze({...event, phase: 'sink_completed'}), s));
     return receipt;
   } catch {
+    // Fixed local callback only. Never include the exception, source, IDs,
+    // ciphertext, key, JPEG or receipt in diagnostics or in the HTTP response.
+    try {onFailure?.(Object.freeze({component: 'group-review', phase,
+      elapsedMs: Math.max(0, Math.round(performance.now() - monotonicStart)), cancelled: controller.signal.aborted}));} catch {}
     if (event) {
       try {await step(s => audit(Object.freeze({...event, phase: 'failed_or_delivery_unknown'}), s));} catch { /* unresolved audit remains unresolved */ }
     }
