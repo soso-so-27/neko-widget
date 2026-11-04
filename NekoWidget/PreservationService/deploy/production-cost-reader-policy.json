@@ -1,0 +1,4 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{"Sid":"ReadAccountCostOnly","Effect":"Allow","Action":"ce:GetCostAndUsage","Resource":"*"}]
+}
