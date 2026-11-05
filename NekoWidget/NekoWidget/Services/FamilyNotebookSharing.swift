@@ -23,7 +23,9 @@ final class FamilyNotebookSharing: ObservableObject {
         self.service = service
     }
 
-    func refresh() async {
+    /// Background passes stay quiet: only something the person did, or asked to
+    /// check again, shows a failure (11/5: the alert repeated while polling).
+    func refresh(reportsFailure: Bool = false) async {
         guard !refreshing else { return }
         refreshing = true; defer { refreshing = false }
         do {
@@ -33,13 +35,17 @@ final class FamilyNotebookSharing: ObservableObject {
                 FamilyNotebookPrototype.shared.attachReal(real)
                 requests = state.membership == nil ? [] : try await real.pendingRequests()
             }
-        } catch { failure = error as? FamilySharingError ?? .serviceUnavailable }
+        } catch {
+            if reportsFailure { failure = error as? FamilySharingError ?? .serviceUnavailable }
+        }
     }
 
     /// Runs one operation with a fresh ID, then reads the state again.
     @discardableResult
     func perform(_ operation: (UUID) async throws -> Void) async -> Bool {
-        guard !isWorking, !refreshing else { return false }
+        // A background pass in flight must not swallow the person's tap.
+        while refreshing { try? await Task.sleep(for: .milliseconds(100)) }
+        guard !isWorking else { return false }
         isWorking = true
         defer { isWorking = false }
         do {
