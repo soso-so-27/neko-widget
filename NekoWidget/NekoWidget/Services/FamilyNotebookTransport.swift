@@ -44,6 +44,7 @@ actor FamilyNotebookTransport {
         let request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: nil, identity: identity)
         let reply: GroupHTTPReply
         do { reply = try await transport.send(request, maximumBytes: 1_600_000) }
+        catch is CancellationError { throw CancellationError() }
         catch { throw FamilyNotebookTransportError.unavailable }
         return try Self.check(reply)
     }

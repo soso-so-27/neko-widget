@@ -87,7 +87,8 @@ actor FamilyNotebookMembershipClient {
             let data = try await wire.read(path(familyID) + "/payer")
             return try JSONDecoder().decode(FamilyNotebookPayerState.self, from: data)
                 .validated(family: familyID.uuidString.lowercased(), person: personID, minimumGeneration: minimumGeneration)
-        } catch { throw Self.presentation(error) }
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw Self.presentation(error) }
     }
 
     func loadPause(familyID: UUID) async throws -> FamilySharingPause? {
@@ -100,7 +101,8 @@ actor FamilyNotebookMembershipClient {
             let data = try await wire.read(path(familyID) + "/payer/handover")
             return try JSONDecoder().decode(FamilyPayerHandover.self, from: data)
                 .validated(family: familyID, person: personID, minimumGeneration: minimumGeneration)
-        } catch { throw Self.presentation(error) }
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw Self.presentation(error) }
     }
 
     func nominatePayer(familyID: UUID, personID: String, expectedGeneration: Int64, operationID: UUID) async throws {
