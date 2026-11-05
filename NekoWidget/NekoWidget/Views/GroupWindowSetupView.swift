@@ -516,11 +516,11 @@ struct GroupWindowMembersView: View {
             }
         }
         .confirmationDialog(
-            "このまどを閉じますか？",
+            "このまどを終わりにしますか？",
             isPresented: $showsCloseConfirmation,
             titleVisibility: .visible
         ) {
-            Button("まどを閉じる", role: .destructive) {
+            Button("終わりにする", role: .destructive) {
                 Task {
                     guard await model.close() else { return }
                     if let onLeft { onLeft() } else { dismiss() }
@@ -528,7 +528,7 @@ struct GroupWindowMembersView: View {
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("閉じると、メンバー全員が写真を届けられなくなります。")
+            Text("終わりにすると、メンバー全員が写真を届けられなくなります。")
         }
         .confirmationDialog(
             "このまどから抜けますか？",
@@ -549,27 +549,19 @@ struct GroupWindowMembersView: View {
                             presenting: rejectionTarget, actions: rejectionActions)
     }
 
-    /// The same links as the two-person window: privacy, the community
-    /// standards, and where to report a problem.
+    /// Replies to this person's reports only. The policy, the standards and
+    /// the contact page live in 設定 › サポート, not here as well.
     @ViewBuilder private var safetySection: some View {
-        let configuration = SharingAPIConfiguration.current
         let reports = GroupSafety.shared.service.isAvailable
-        if reports || configuration.privacyURL != nil || configuration.communityStandardsURL != nil || configuration.supportURL != nil {
-            Section {
-                if reports {
-                    NavigationLink("通報への返答") { GroupReportsView(windowID: model.windowID) }
-                        .accessibilityIdentifier("group-window-reports")
-                }
-                if let url = configuration.privacyURL { Link("プライバシーポリシー", destination: url) }
-                if let url = configuration.communityStandardsURL { Link("コミュニティ基準", destination: url) }
-                if let url = configuration.supportURL { Link("問い合わせる", destination: url) }
-            } header: {
-                Text("安全と決まり")
-            } footer: {
-                Text(reports
-                     ? "困る写真が届いたら、写真の「…」から通報やブロックができます。"
-                     : "困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
+        Section {
+            if reports {
+                NavigationLink("通報への返答") { GroupReportsView(windowID: model.windowID) }
+                    .accessibilityIdentifier("group-window-reports")
             }
+        } footer: {
+            Text(reports
+                 ? "困る写真が届いたら、写真の「…」から通報やブロックができます。"
+                 : "困る写真が届いたときは、写真の「…」から、その人の写真を表示しないようにできます。")
         }
     }
 
@@ -642,7 +634,7 @@ struct GroupWindowMembersView: View {
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("group-window-rotation-pending")
                 } else if window.state == .closed {
-                    Label("このまどは閉じられました。", systemImage: "person.2.slash")
+                    Label("このまどは終わりました。", systemImage: "person.2.slash")
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("group-window-closed")
                 }
@@ -864,7 +856,7 @@ struct GroupWindowMembersView: View {
             Button("名前を変える") { showsRename = true }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-rename")
-            Button("このまどを閉じる", role: .destructive) { showsCloseConfirmation = true }
+            Button("このまどを終わりにする", role: .destructive) { showsCloseConfirmation = true }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-close")
         }

@@ -227,7 +227,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-group-hidden-members")
                     if let client = GroupWindowClientProvider.production {
                         NavigationLink { GroupIdentityDeletionView(client: client) } label: {
-                            Label("まどのデータと ID を削除", systemImage: "person.crop.circle.badge.xmark")
+                            Label("まどと家族の手帳から抜ける", systemImage: "person.crop.circle.badge.xmark")
                         }
                         .accessibilityIdentifier("settings-group-identity-deletion")
                     }
@@ -236,7 +236,7 @@ struct SettingsView: View {
                 }
             }
 
-            // 保存 (10/31): 自動保存 first, then moving to a new iPhone, right here.
+            // 保存 (10/31): 自動保存 first, then the cat profile file for another iPhone.
             Section {
                 if ManagedPreservationConfiguration.current.isEnabled {
                     NavigationLink { AppRecordSettingsView() } label: { AutoSaveSettingsRow() }
@@ -246,7 +246,7 @@ struct SettingsView: View {
                     CatProfileTransferView(actions: catProfilesActions,
                         hasProfiles: !catProfilesPresentation.profiles.isEmpty)
                 } label: {
-                    Label("機種変更のとき", systemImage: "arrow.triangle.2.circlepath")
+                    Label("プロフィールの引き継ぎ", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .accessibilityIdentifier("settings-cat-profile-transfer")
             } header: {

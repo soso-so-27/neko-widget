@@ -810,7 +810,7 @@ struct FamilyNotebookView: View {
                     }
                 }
             }
-            if !visibleRecentFromFamily.isEmpty {
+            if !model.recentFromFamily.isEmpty {
                 Section("最近の書き込み") {
                     ForEach(visibleRecentFromFamily) { operation in
                         LabeledContent {
@@ -823,6 +823,15 @@ struct FamilyNotebookView: View {
                             // Hiding is local to this iPhone; nobody is told.
                             Button("この書き込みを表示しない", systemImage: "eye.slash") { hide(operation) }
                         }
+                    }
+                    // Undo, in the same form as まど's 「表示しない・ブロックした人」.
+                    if visibleRecentFromFamily.count < model.recentFromFamily.count {
+                        NavigationLink {
+                            FamilyHiddenOperationsView()
+                        } label: {
+                            Label("表示しない書き込み", systemImage: "eye.slash")
+                        }
+                        .accessibilityIdentifier("family-notebook-hidden-operations")
                     }
                 }
             }
@@ -1714,5 +1723,48 @@ struct FamilyNotebookNote: ViewModifier {
 extension View {
     func familyNotebookNote(_ toolCatID: UUID?, _ field: FamilyNotebookField) -> some View {
         modifier(FamilyNotebookNote(toolCatID: toolCatID, field: field))
+    }
+}
+
+/// The family's entries this iPhone chose not to show, each with 「表示する」.
+/// The same form as まど's 「表示しない・ブロックした人」; kept on this iPhone only.
+struct FamilyHiddenOperationsView: View {
+    @ObservedObject private var model = FamilyNotebookPrototype.shared
+    @AppStorage("family.hiddenOperations.v1") private var hiddenOperationIDs = ""
+
+    private var hidden: [FamilyNotebookOperation] {
+        let ids = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        return model.recentFromFamily.filter { ids.contains(String(describing: $0.id)) }
+    }
+
+    var body: some View {
+        List {
+            ForEach(hidden) { operation in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.place(of: operation))
+                        Text("\(operation.author.displayName)・\(operation.editedAt.formatted(.dateTime.month(.defaultDigits).day()))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("表示する") { show(operation) }
+                        .buttonStyle(.bordered)
+                }
+                .frame(minHeight: 44)
+            }
+        }
+        .overlay {
+            if hidden.isEmpty {
+                ContentUnavailableView("表示しない書き込みはありません", systemImage: "eye.slash")
+            }
+        }
+        .navigationTitle("表示しない書き込み")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func show(_ operation: FamilyNotebookOperation) {
+        var ids = Set(hiddenOperationIDs.split(separator: ",").map(String.init))
+        ids.remove(String(describing: operation.id))
+        hiddenOperationIDs = ids.sorted().joined(separator: ",")
     }
 }
