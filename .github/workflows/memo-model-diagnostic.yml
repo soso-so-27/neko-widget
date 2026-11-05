@@ -92,4 +92,6 @@ jobs:
           persist-credentials: false
       - name: Check isolated stores, encrypted sync, membership and private record preservation
         working-directory: NekoWidget
-        run: bash ci/run-family-notebook-checks.sh
+        run: |
+          bash ci/run-family-notebook-checks.sh
+          bash ci/run-family-notebook-network-checks.sh

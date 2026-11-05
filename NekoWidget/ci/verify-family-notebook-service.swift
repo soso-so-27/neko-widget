@@ -12,7 +12,8 @@ private actor Relay: GroupHTTPTransport {
     var members = Set<String>(), payer: String?
     var invite: [String: Any]?, join: [String: Any]?
     var receipts: [String: (Data, Data)] = [:], sent: [(String, Data)] = []
-    var lose: String?, corrupt = false
+    var lose: String?, cancelRead: String?, corrupt = false
+    func cancelNextRead(_ suffix: String) { cancelRead = suffix }
     init(_ identities: [GroupDeviceIdentity]) throws {
         for identity in identities { self.identities[try identity.deviceID] = identity }
     }
@@ -29,6 +30,7 @@ private actor Relay: GroupHTTPTransport {
         func reply(_ value: [String: Any], status: Int = 200) throws -> GroupHTTPReply { .init(status: status, data: try JSONSerialization.data(withJSONObject: value)) }
         let familyString = family?.uuidString.lowercased() ?? ""
         if method == "GET" {
+            if let suffix = cancelRead, path.hasSuffix(suffix) { cancelRead = nil; throw CancellationError() }
             if path.hasSuffix("/me") {
                 let own: Any = members.contains(identity.personID) ? ["familyId": familyString, "generation": generation, "role": identity.personID == payer ? "payer" : "member"] : NSNull()
                 var pending: [[String: Any]] = []
@@ -118,6 +120,10 @@ private actor Relay: GroupHTTPTransport {
             billing: { billingCalls += 1 }, displayName: { "合成の本人" }, catNames: { [] })
         try check(initialized == 0 && service.sendsInvitations, "real service is lazy and does not construct prototype")
         try check(try await service.loadState() == .notInFamily, "only server directory determines membership")
+        await relay.cancelNextRead("/me")
+        do { _ = try await service.loadState(); throw Failure.check("cancelled directory must not succeed") }
+        catch is CancellationError { }
+        try check(try await service.loadState() == .notInFamily, "cancellation releases busy state for the next refresh")
         let family = UUID()
         await relay.loseNext("/v3/family-notebooks")
         try await rejects { try await service.createFamily(operationID: family) }
@@ -127,6 +133,16 @@ private actor Relay: GroupHTTPTransport {
         try check(billingCalls == 1, "no repeated billing connection for retry")
         let own = try await creator.admission.directory()
         try check(own.family?.familyID == family, "server ACK identifies original family")
+        for suffix in ["/members", "/payer"] {
+            await relay.cancelNextRead(suffix)
+            do { _ = try await service.loadState(); throw Failure.check("cancelled member/payer read must not succeed") }
+            catch is CancellationError { }
+        }
+        await relay.cancelNextRead("/requests")
+        do { _ = try await service.pendingRequests(); throw Failure.check("cancelled request list must not succeed") }
+        catch is CancellationError { }
+        try check(try await service.pendingRequests().isEmpty, "cancelled list can reload without a false service failure")
+        print("Family cancellation: directory, members, payer and requests preserved cancellation and allowed retry")
         let raw = try FamilyNotebookCryptoRoster(familyID: family, epoch: 1, previousHash: Data(repeating: 0, count: 32),
             keyCommitment: GroupCanonical.hash(Data(repeating: 7, count: 32)), members: [
                 .init(personID: a.personID, identityPublicKey: a.personPublicKey, devices: [a.certificate(windowID: family.uuidString.lowercased())])])
