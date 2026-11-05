@@ -41,12 +41,22 @@ actor FamilyNotebookTransport {
     }
     func read(_ path: String) async throws -> Data {
         try pathAllowed(path)
-        let request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: nil, identity: identity)
-        let reply: GroupHTTPReply
-        do { reply = try await transport.send(request, maximumBytes: 1_600_000) }
-        catch is CancellationError { throw CancellationError() }
-        catch { throw FamilyNotebookTransportError.unavailable }
-        return try Self.check(reply)
+        // A suspended/replayed signed GET can outlive its timestamp or nonce.
+        // Retry one read with a freshly signed request; never reuse signed bytes,
+        // renew an identity, or automatically repeat a mutation here.
+        for attempt in 0...1 {
+            try Task.checkCancellation()
+            let request = try GroupHTTPRequest.make(endpoint: endpoint, path: path, body: nil, identity: identity)
+            let reply: GroupHTTPReply
+            do { reply = try await transport.send(request, maximumBytes: 1_600_000) }
+            catch is CancellationError { throw CancellationError() }
+            catch { throw FamilyNotebookTransportError.unavailable }
+            do { return try Self.check(reply) }
+            catch FamilyNotebookTransportError.authenticationRequired where reply.status == 401 && attempt == 0 {
+                continue
+            }
+        }
+        throw FamilyNotebookTransportError.authenticationRequired
     }
 
     /// intent hashes the semantic operation (family, target, author, value),

@@ -54,6 +54,28 @@ private actor Relay: GroupHTTPTransport {
         return .init(status: 200, data: reply)
     }
 }
+/// No real identity/network: verifies fresh signatures after a rejected read.
+private actor ReadRelay: GroupHTTPTransport {
+    let identity: GroupDeviceIdentity
+    let codes: [String]
+    var requests: [URLRequest] = []
+    init(identity: GroupDeviceIdentity, codes: [String]) { self.identity = identity; self.codes = codes }
+    func sent() -> [URLRequest] { requests }
+    func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
+        requests.append(request)
+        try check(request.httpMethod == "GET" && request.httpBody == nil, "only a read is retried")
+        let message = try GroupCanonical.fields(["NW3.REQUEST", "3", identity.deviceID,
+            request.value(forHTTPHeaderField: "Neko-Timestamp")!, request.value(forHTTPHeaderField: "Neko-Nonce")!,
+            "GET", request.url!.path].map(GroupCanonical.text) + [GroupCanonical.hash(Data())])
+        try check(try identity.signingKey.publicKey.isValidSignature(
+            GroupWire.bytes(request.value(forHTTPHeaderField: "Neko-Signature")!, count: 64), for: message), "fresh read signature")
+        let index = requests.count - 1
+        if index < codes.count {
+            return .init(status: 401, data: try JSONSerialization.data(withJSONObject: ["error": ["code": codes[index]]]))
+        }
+        return .init(status: 200, data: Data("{}".utf8))
+    }
+}
 private final class BrokenJournal: GroupSecretStore, @unchecked Sendable {
     func read(_ account: String) throws -> Data? { nil }
     func write(_ data: Data, account: String, createOnly: Bool) throws { throw Failure.storage }
@@ -66,6 +88,21 @@ private enum VerifyFamilyNotebookTransport {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-transport-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         var identity = GroupDeviceIdentity.firstDevice(); identity.registered = true
+        for code in ["replay", "invalid_authentication", "invalid_proof"] {
+            let reads = ReadRelay(identity: identity, codes: [code])
+            let reader = try FamilyNotebookTransport(endpoint: URL(string: "https://read.invalid")!, identity: identity,
+                transport: reads, journal: GroupOperationStore(directory: root.appendingPathComponent(code)))
+            _ = try await reader.read("/v3/family-notebooks/me")
+            let sent = await reads.sent()
+            try check(sent.count == 2 && sent[0].value(forHTTPHeaderField: "Neko-Nonce") != sent[1].value(forHTTPHeaderField: "Neko-Nonce"), "one retry uses a new nonce")
+        }
+        let denied = ReadRelay(identity: identity, codes: ["invalid_authentication", "invalid_authentication", "invalid_authentication"])
+        let deniedReader = try FamilyNotebookTransport(endpoint: URL(string: "https://read.invalid")!, identity: identity,
+            transport: denied, journal: GroupOperationStore(directory: root.appendingPathComponent("denied")))
+        try await rejects(.authenticationRequired) { _ = try await deniedReader.read("/v3/family-notebooks/me") }
+        try check(await denied.sent().count == 2, "persistent authentication rejection stays blocked without a loop")
+        print("Family reads: fresh nonce/signature retry and persistent authentication rejection passed")
+
         let family = UUID(), path = "/v3/family-notebooks/\(family.uuidString.lowercased())/crypto/operations"
         let relay = Relay(family: family, identity: identity), intent = GroupCanonical.hash(Data("synthetic logical edit".utf8))
         func client(endpoint: String = "https://family.invalid") throws -> FamilyNotebookTransport {
