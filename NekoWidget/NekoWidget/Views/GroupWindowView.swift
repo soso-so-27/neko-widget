@@ -1749,6 +1749,7 @@ struct GroupWindowListSection: View {
     @State private var openedWindowID: String?
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
+    @Environment(\.membershipAccess) private var membershipAccess
 
     /// Test builds' new まど layout: 「みんなのまど」 with a small 「＋」, and no
     /// large create button (making a window is rare; seeing them is daily).
@@ -1833,7 +1834,8 @@ struct GroupWindowListSection: View {
                             }
                             .frame(minHeight: 44)
                         }
-                        .accessibilityLabel("まどを作る、Plus")
+                        .accessibilityLabel(FamilyNotebookPlusMark.isShown(for: membershipAccess)
+                            ? "まどを作る、Plus" : "まどを作る")
                         .accessibilityIdentifier("group-window-empty-create")
                     }
                 }

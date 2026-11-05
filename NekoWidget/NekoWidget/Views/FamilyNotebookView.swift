@@ -1245,13 +1245,23 @@ struct FamilyNotebookIntroView: View {
 }
 
 /// 「Plus」 on the button that needs it, the way apps mark a paid action.
+/// A confirmed member already has it, so the mark is not shown to them (11/5).
 struct FamilyNotebookPlusMark: View {
+    @Environment(\.membershipAccess) private var access
+
+    static func isShown(for access: MembershipAccessContext, now: Date = .now) -> Bool {
+        if case let .verified(validUntil) = access.personal, validUntil > now { return false }
+        return true
+    }
+
     var body: some View {
-        Text(verbatim: "Plus")
-            .font(.caption2.weight(.bold))
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(.white.opacity(0.25), in: Capsule())
-            .accessibilityHidden(true)
+        if Self.isShown(for: access) {
+            Text(verbatim: "Plus")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(.white.opacity(0.25), in: Capsule())
+                .accessibilityHidden(true)
+        }
     }
 }
 

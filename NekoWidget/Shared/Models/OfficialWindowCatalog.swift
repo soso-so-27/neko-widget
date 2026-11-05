@@ -45,7 +45,9 @@ struct PublicWindowDefinition: Identifiable, Hashable, Sendable {
         self.catID = catID
     }
 
-    var widgetSourceID: String {
+    var widgetSourceID: String { Self.widgetSourceID(forWindowID: id) }
+
+    static func widgetSourceID(forWindowID id: String) -> String {
         id == OfficialWindowCatalog.sourceID ? id : "public-window:" + id
     }
 
