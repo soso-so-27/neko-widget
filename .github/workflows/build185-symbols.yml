@@ -11,6 +11,7 @@ on:
         options:
           - '185'
           - '309'
+          - '325-328-plus-config'
 
 permissions:
   contents: read
@@ -21,6 +22,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plus-config:
+    if: inputs.build == '325-328-plus-config' && github.ref == 'refs/heads/main' && github.repository == 'soso-so-27/neko-widget'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testflight
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check the read-only diagnostic with synthetic encrypted data
+        run: python3 NekoWidget/ci/test-inspect-plus-release-config.py
+      - name: Read public configuration from fixed authenticated releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          diagnostic="$(mktemp -d "$RUNNER_TEMP/neko-plus-config.XXXXXX")"
+          cleanup() {
+            case "$diagnostic" in
+              "$RUNNER_TEMP"/neko-plus-config.*) rm -rf -- "$diagnostic" ;;
+              *) return 1 ;;
+            esac
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          for release in '325 41319182447 13088873181' '328 41829816288 13323237995'; do
+            read -r build run artifact <<< "$release"
+            mkdir "$diagnostic/$build"
+            gh api "repos/soso-so-27/neko-widget/actions/runs/$run" > "$diagnostic/$build/run.json"
+            gh api "repos/soso-so-27/neko-widget/actions/artifacts/$artifact" > "$diagnostic/$build/artifact.json"
+            gh api "repos/soso-so-27/neko-widget/actions/artifacts/$artifact/zip" > "$diagnostic/$build/artifact.zip"
+            python3 NekoWidget/ci/inspect-plus-release-config.py --build "$build" --input-directory "$diagnostic/$build"
+          done
+
   resolve:
     if: inputs.build == '185' && github.ref == 'refs/heads/main' && github.repository == 'soso-so-27/neko-widget'
     runs-on: macos-15

@@ -26,8 +26,20 @@ const transactionPattern = /^\d{1,32}$/u;
 async function existing(env: Env, requestId: string): Promise<Existing | null> {
   return env.DB.prepare(
     `SELECT request_hash, billing_account_id, new_billing_key_id, recovered_at
-       FROM billing_account_recovery_requests WHERE client_request_id = ?`,
-  ).bind(requestId).first<Existing>();
+       FROM billing_account_recovery_requests WHERE client_request_id = ?
+     UNION ALL
+     SELECT receipt.request_hash, receipt.billing_account_id, receipt.billing_key_id AS new_billing_key_id,
+            receipt.created_at AS recovered_at
+       FROM billing_account_bootstrap_requests AS receipt
+       JOIN billing_account_keys AS key ON key.id=receipt.billing_key_id AND key.state='active'
+      WHERE receipt.client_request_id = ?
+        AND EXISTS(SELECT 1 FROM billing_account_apple_identities AS identity
+          JOIN billing_transaction_lineages AS lineage
+            ON lineage.environment=identity.environment AND lineage.original_transaction_id=identity.first_original_transaction_id
+          WHERE identity.billing_account_id=receipt.billing_account_id AND lineage.billing_account_id=receipt.billing_account_id)
+        AND NOT EXISTS(SELECT 1 FROM billing_retention_fences AS fence
+          WHERE fence.billing_account_id=receipt.billing_account_id AND fence.state<>'active')`,
+  ).bind(requestId, requestId).first<Existing>();
 }
 
 export async function recoverBillingAccount(
@@ -90,13 +102,24 @@ export async function recoverBillingAccount(
     if (replay.request_hash !== requestHash) throw new ApiError(409, "billing_recovery_conflict", "The billing request ID was already used.");
     return jsonResponse({ protocolVersion: 1, clientRequestId, billingAccountId: replay.billing_account_id, billingKeyId: replay.new_billing_key_id, recoveredAt: replay.recovered_at });
   }
+  // Freeze the generation before awaiting Apple so concurrent attempts cannot
+  // adopt and revoke the key that another in-flight attempt just installed.
+  const state = await env.DB.prepare(
+    `SELECT state.generation, key.id AS billing_key_id
+       FROM billing_account_key_state AS state
+       JOIN billing_account_keys AS key ON key.billing_account_id = state.billing_account_id
+      WHERE state.billing_account_id = ? AND key.state = 'active'`,
+  ).bind(billingAccountId).first<State>();
   const evidence = await verify({ signedAppTransactionInfo, signedTransactionInfo,
     deviceVerificationId, expectedAppTransactionId, expectedTransactionId, expectedOriginalTransactionId, billingAccountId }, env);
   let lineage = await env.DB.prepare(
     `SELECT billing_account_id, environment, subscription_group_id
        FROM billing_transaction_lineages WHERE environment = ? AND original_transaction_id = ?`,
   ).bind(evidence.transaction.environment, expectedOriginalTransactionId).first<CurrentLineage>();
-  if(lineage===null && retention && ['closed','active'].includes(retention.state)) {
+  const missingLineage = lineage === null;
+  if (missingLineage) {
+    // An absent local ledger is not evidence that Apple never sold this
+    // subscription. This is provisional only: no write precedes live authority.
     lineage={billing_account_id:billingAccountId,environment:evidence.transaction.environment,
       subscription_group_id:evidence.transaction.subscriptionGroupId};
   }
@@ -125,11 +148,16 @@ export async function recoverBillingAccount(
   const item = selectAuthoritativeStatusItem(matches);
   const now = Date.now();
   const accessUntil = item.status === 4 ? item.renewal.gracePeriodExpiresDateMs : item.transaction.expiresDateMs;
-  if ((retention && (!Number.isSafeInteger(authority.fetchedAtMs) || authority.fetchedAtMs>now || now-authority.fetchedAtMs>60_000))
+  if ((!Number.isSafeInteger(authority.fetchedAtMs) || authority.fetchedAtMs>now || now-authority.fetchedAtMs>60_000)
     || authority.environment !== evidence.transaction.environment
     || item.transaction.environment !== evidence.transaction.environment
     || item.renewal.environment !== evidence.transaction.environment
     || item.transaction.subscriptionGroupId !== lineage.subscription_group_id
+    || item.transaction.bundleId !== evidence.transaction.bundleId
+    || item.transaction.productId !== evidence.transaction.productId
+    || item.transaction.originalTransactionId !== expectedOriginalTransactionId
+    || item.renewal.originalTransactionId !== expectedOriginalTransactionId
+    || item.renewal.billingAccountId !== billingAccountId
     || (item.status !== 1 && item.status !== 4)
     || item.transaction.transactionId !== expectedTransactionId
     || item.transaction.billingAccountId !== billingAccountId
@@ -139,17 +167,38 @@ export async function recoverBillingAccount(
     throw new ApiError(409, "billing_recovery_authority_denied", "The subscription is not eligible for recovery.");
   }
 
-  const state = await env.DB.prepare(
-    `SELECT state.generation, key.id AS billing_key_id
-       FROM billing_account_key_state AS state
-       JOIN billing_account_keys AS key ON key.billing_account_id = state.billing_account_id
-      WHERE state.billing_account_id = ? AND key.state = 'active'`,
-  ).bind(billingAccountId).first<State>();
-  if (state === null) throw new ApiError(409, "billing_recovery_conflict", "Billing recovery conflicted with another request.");
   const recoveredAt = Math.floor(Date.now() / 1_000);
   await requireOwnerSandboxAccount(env, billingAccountId);
   const newKeyId = randomBase64url(16);
   try {
+    const enqueue = env.DB.prepare(
+      `INSERT OR IGNORE INTO billing_reconciliation_jobs(environment,original_transaction_id,requested_at,not_before,request_generation)
+       VALUES(?,?,?,?,COALESCE((SELECT request_generation+1 FROM billing_effective_entitlement_current WHERE environment=? AND original_transaction_id=?),1))`,
+    ).bind(evidence.transaction.environment,expectedOriginalTransactionId,recoveredAt,recoveredAt,
+      evidence.transaction.environment,expectedOriginalTransactionId);
+    if (state === null) {
+      // Initial import, not a rotation of a fabricated old key. The existing
+      // bootstrap receipt makes an identical retry idempotent; its hash is the
+      // domain-separated, signed recovery transcript, not a bootstrap signature.
+      // A competing initial import or an inconsistent existing account aborts
+      // this whole batch at the account PK. It cannot revoke the winning key.
+      if (!missingLineage || retention) throw new Error('inconsistent initial recovery');
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO billing_accounts(id,created_at)
+          SELECT ?,? WHERE EXISTS(SELECT 1 FROM billing_runtime_gate WHERE singleton=1 AND account_recovery_enabled=1)`)
+          .bind(billingAccountId,recoveredAt),
+        env.DB.prepare(`INSERT INTO billing_account_keys(id,billing_account_id,signing_public_key,state,created_at)
+          VALUES(?,?,?,'active',?)`).bind(newKeyId,billingAccountId,signingPublicKey,recoveredAt),
+        env.DB.prepare(`INSERT INTO billing_account_bootstrap_requests(client_request_id,request_hash,billing_account_id,billing_key_id,created_at)
+          VALUES(?,?,?,?,?)`).bind(clientRequestId,requestHash,billingAccountId,newKeyId,recoveredAt),
+        env.DB.prepare(`INSERT INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id)
+          VALUES(?,?,?,?)`).bind(expectedOriginalTransactionId,billingAccountId,evidence.transaction.environment,lineage.subscription_group_id),
+        env.DB.prepare(`INSERT INTO billing_account_apple_identities(billing_account_id,app_transaction_id_hash,environment,first_original_transaction_id)
+          VALUES(?,?,?,?)`).bind(billingAccountId,evidence.appTransactionIdHash,evidence.transaction.environment,expectedOriginalTransactionId),
+        enqueue,
+      ]);
+      return jsonResponse({ protocolVersion: 1, clientRequestId, billingAccountId, billingKeyId: newKeyId, recoveredAt });
+    }
     const rotate=env.DB.prepare(
       `INSERT INTO billing_account_recovery_requests(
          environment, client_request_id, request_hash, billing_account_id, expected_generation,
@@ -176,11 +225,16 @@ export async function recoverBillingAccount(
         env.DB.prepare(`INSERT OR IGNORE INTO billing_retention_recoveries(billing_account_id,sequence,environment,lineage_hash,transaction_hash,request_id)
           VALUES(?,?,?,?,?,?)`).bind(billingAccountId,retention.sequence,evidence.transaction.environment,lineageHash,transactionHash,clientRequestId),
         rotate,
-        env.DB.prepare(`INSERT OR IGNORE INTO billing_reconciliation_jobs(environment,original_transaction_id,requested_at,not_before,request_generation)
-          VALUES(?,?,?,?,COALESCE((SELECT request_generation+1 FROM billing_effective_entitlement_current WHERE environment=? AND original_transaction_id=?),1))`)
-          .bind(evidence.transaction.environment,expectedOriginalTransactionId,recoveredAt,recoveredAt,evidence.transaction.environment,expectedOriginalTransactionId),
+        enqueue,
       ]);
       if(result[0]?.meta.changes!==1) throw new Error('retention recovery fence changed');
+    } else if (missingLineage) {
+      await env.DB.batch([
+        env.DB.prepare(`INSERT OR IGNORE INTO billing_transaction_lineages(original_transaction_id,billing_account_id,environment,subscription_group_id)
+          VALUES(?,?,?,?)`).bind(expectedOriginalTransactionId,billingAccountId,evidence.transaction.environment,lineage.subscription_group_id),
+        rotate,
+        enqueue,
+      ]);
     } else await rotate.run();
   } catch {
     const raced = await existing(env, clientRequestId);
