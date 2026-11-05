@@ -25,6 +25,7 @@ enum FamilyNotebookCatCareBridgeVerifier {
         let removal = try sender.edit(target: .init(familyCatID: f.familyA, field: .sharingEnded), value: nil, author: author)
         let removed = try sender.snapshot()
         try require(removed.outbox.contains(removal), "unshare is durable until acknowledged")
+        try require(try sender.pendingOperations().filter { $0.target.familyCatID == f.familyA } == [removal], "unshare suppresses previously queued private edits without deleting history")
         try require(!removed.activeMappings.contains { $0.familyCatID == f.familyA }, "removed cat is not selectable for sharing")
         try require(removed.mappings == before.mappings, "unshare retains historical identity and consent bindings")
         // A second offline phone can have a later clock. Removal still wins.
@@ -33,6 +34,7 @@ enum FamilyNotebookCatCareBridgeVerifier {
         try receiver.receive([removal]); try sender.receive(late)
         let a = try sender.snapshot(), b = try receiver.snapshot()
         try require(a.operations == b.operations, "delivery order converges")
+        try require(try !receiver.pendingOperations().contains { $0.target.familyCatID == f.familyA }, "remote unshare prevents new sends of offline edits")
         try require(a.fieldState(for: .init(familyCatID: f.familyA, field: .water))?.isDeleted == true, "late edit cannot revive removed sharing")
         for snapshot in [a,b] {
             let care = try FamilyNotebookCatCareBridge.apply(snapshot, to: f.care)

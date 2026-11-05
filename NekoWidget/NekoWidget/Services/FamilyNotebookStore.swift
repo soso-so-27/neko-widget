@@ -89,7 +89,11 @@ final class FamilyNotebookStore: @unchecked Sendable {
 
     func pendingOperations() throws -> [FamilyNotebookOperation] {
         let current = try snapshot()
-        return current.sharingEnded ? [] : current.outbox
+        guard !current.sharingEnded else { return [] }
+        // Keep superseded edits in the durable history, but do not start a
+        // new transmission of them after this cat's sharing has ended.
+        let ended = current.unsharedCatIDs
+        return current.outbox.filter { !ended.contains($0.target.familyCatID) || $0.target.field == .sharingEnded }
     }
 
     /// Preserve the complete notebook, including its unsent operations. No
