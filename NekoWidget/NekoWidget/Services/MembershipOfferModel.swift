@@ -131,8 +131,40 @@ struct MembershipOfferPresentation: Equatable {
     }
 }
 
+enum MembershipRestoreFailure: Equatable {
+    case appleConfirmation, purchaseEvidence, localRegistration, connection, server, unknown
+
+    static func recovering(_ error: Error) -> Self {
+        guard let error = error as? BillingClientError else { return .unknown }
+        switch error {
+        case .billingAccountRecoveryUnavailable, .billingAccountRecoveryEvidenceChanged, .identityMismatch:
+            return .purchaseEvidence
+        case .protectedDataUnavailable, .keychainUnavailable, .localStateUnavailable,
+             .malformedCredential, .billingCredentialMissing, .installationChanged, .credentialChanged:
+            return .localRegistration
+        case .transportUnavailable: return .connection
+        case .requestRejected: return .server
+        default: return .unknown
+        }
+    }
+
+    var message: String {
+        let reason: String
+        switch self {
+        case .appleConfirmation: reason = "Appleの購入情報を同期できませんでした。"
+        case .purchaseEvidence: reason = "引き継ぎに必要な購入情報を確認できませんでした。"
+        case .localRegistration: reason = "このiPhoneにある購入情報を読み書きできませんでした。"
+        case .connection: reason = "購入情報を引き継ぐサービスに通信できませんでした。"
+        case .server: reason = "サービスで購入情報の引き継ぎを完了できませんでした。"
+        case .unknown: reason = "購入情報の引き継ぎを完了できませんでした。"
+        }
+        return reason + "もう一度購入せず、時間をおいて「購入を復元」をお試しください。"
+    }
+}
+
 enum MembershipOfferActionResult: Equatable {
     case completed, cancelled, waiting, nothingToRestore, unavailable, failed, offerChanged
+    case restoreFailed(MembershipRestoreFailure)
 }
 
 /// Ephemeral presentation state only. It never grants an entitlement, writes
@@ -149,6 +181,7 @@ final class MembershipOfferModel: ObservableObject {
     private var purchases: PlusPurchaseStore?
     private var observation: AnyCancellable?
     private var expiryTask: Task<Void, Never>?
+    private var restoreFailure: MembershipRestoreFailure?
 #if DEBUG || INTERNAL_PRESENTATION
     private var fixtureStatus: MembershipOfferFixtureStatus?
     private var fixtureExpiresAt: Date?
@@ -224,6 +257,7 @@ final class MembershipOfferModel: ObservableObject {
 
     func restore() async -> MembershipOfferActionResult {
         guard canRestore else { return .unavailable }
+        restoreFailure = nil
         isWorking = true
         defer { isWorking = false }
         let result = await restoreAction()
@@ -238,6 +272,7 @@ final class MembershipOfferModel: ObservableObject {
     private func apply(_ result: MembershipOfferActionResult, restoring: Bool) {
         switch result {
         case .completed, .cancelled:
+            restoreFailure = nil
             message = nil
             if result == .completed { isWaiting = false }
         case .waiting:
@@ -253,6 +288,9 @@ final class MembershipOfferModel: ObservableObject {
                 : "購入できたか確認できませんでした。「購入を復元」で確かめられます。"
         case .offerChanged:
             message = "料金か無料期間が変わりました。表示を確かめてから、もう一度お申し込みください。"
+        case let .restoreFailed(reason):
+            restoreFailure = reason
+            message = reason.message
         }
     }
 
@@ -295,6 +333,7 @@ final class MembershipOfferModel: ObservableObject {
 
     func refresh() async {
         guard canRefresh else { return }
+        restoreFailure = nil
         isWorking = true
         if let purchases {
             await purchases.refreshAfterForegroundEntry()
@@ -325,6 +364,12 @@ final class MembershipOfferModel: ObservableObject {
     }
 
     private func updateMembershipState() {
+        // A repeated authority publication must not erase the explicit restore
+        // result. A confirmed membership or a new user action clears it.
+        defer {
+            if isMember { restoreFailure = nil }
+            else if let restoreFailure { message = restoreFailure.message }
+        }
         expiryTask?.cancel()
         if let purchases {
             isMember = purchases.entitlementState.permitsPersonalPlus
@@ -385,8 +430,9 @@ final class MembershipOfferModel: ObservableObject {
     }
 
 #if DEBUG || INTERNAL_PRESENTATION
-    static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil) -> MembershipOfferModel {
-        let model = preview(eligibleForIntroOffer: false)
+    static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil,
+                        restoreResult: MembershipOfferActionResult = .completed) -> MembershipOfferModel {
+        let model = preview(restoreResult: restoreResult, eligibleForIntroOffer: false)
         model.fixtureStatus = state
         if state == .active, let expiresAfter {
             model.fixtureExpiresAt = .now.addingTimeInterval(expiresAfter)
@@ -551,14 +597,14 @@ private final class MembershipStoreKitClient {
                 await purchases.refreshAfterForegroundEntry()
                 if purchases.entitlementState.grantsPlus { return .completed }
                 outcome = .indeterminate
-            } catch { return .failed }
+            } catch { return .restoreFailed(.recovering(error)) }
         }
         switch outcome {
         case .entitlementFound: return .completed
         case .nothingToRestore: return .nothingToRestore
         case .indeterminate: return .waiting
         case .unavailable: return .unavailable
-        case .failed: return .failed
+        case .failed: return .restoreFailed(.appleConfirmation)
         }
     }
 
@@ -863,6 +909,9 @@ struct MembershipOfferPreviewView: View {
 
     private var previewModel: MembershipOfferModel {
 #if DEBUG
+        if CommandLine.arguments.contains("--membership-restore-apple-failure") {
+            return .preview(state: .unknown, restoreResult: .restoreFailed(.appleConfirmation))
+        }
         if CommandLine.arguments.contains("--membership-catalog-refresh") { return .catalogRefreshPreview() }
 #endif
         return membershipState.map { .preview(state: $0, expiresAfter: expiresAfter) }
