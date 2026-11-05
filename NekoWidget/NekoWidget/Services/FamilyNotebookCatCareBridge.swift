@@ -11,7 +11,7 @@ enum FamilyNotebookCatCareBridge {
     static let lists: [FamilyNotebookCollection] = [.weight, .medication, .vaccination, .meal]
 
     static func mappings(for snapshot: FamilyNotebookSnapshot, existingLocalIDs: Set<UUID> = [], makeID: () -> UUID = UUID.init) throws -> [FamilyNotebookLocalMapping] {
-        var result = snapshot.mappings
+        var result = snapshot.activeMappings
         for cat in Set(snapshot.operations.map { $0.target.familyCatID }).sorted(by: { $0.uuidString < $1.uuidString }) {
             if !result.contains(where: { $0.familyCatID == cat && $0.recordID == nil && $0.toolCatID != nil }) {
                 // A tombstone without a local copy need not create an empty cat.
@@ -43,7 +43,7 @@ enum FamilyNotebookCatCareBridge {
     }
     static func apply(_ snapshot: FamilyNotebookSnapshot, to original: CatCareState) throws -> CatCareState {
         var state = original
-        for mapping in snapshot.mappings where mapping.recordID == nil {
+        for mapping in snapshot.activeMappings where mapping.recordID == nil {
             guard let local = mapping.toolCatID else { continue }
             let cat = mapping.familyCatID
             let removed = snapshot.fieldState(for: .init(familyCatID: cat, field: nil))
@@ -59,7 +59,7 @@ enum FamilyNotebookCatCareBridge {
                 try put(value, field, into: &state.cats[index], operation: resolved.operation)
             }
             for collection in lists {
-                for item in snapshot.mappings where item.familyCatID == cat && item.recordID != nil {
+                for item in snapshot.activeMappings where item.familyCatID == cat && item.recordID != nil {
                     guard let record = item.recordID, let localID = localRecordID(item, cat: local, collection: collection) else { continue }
                     if collection == .vaccination && [FamilyNotebookVaccinationAnswer.recordID(cat: cat), FamilyNotebookMicrochipAnswer.recordID(cat: cat)].contains(record) { continue }
                     let values = Values(snapshot: snapshot, cat: cat, collection: collection, record: record)

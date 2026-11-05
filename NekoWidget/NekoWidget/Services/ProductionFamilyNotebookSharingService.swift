@@ -172,7 +172,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         guard let store = context.notebook else { throw FamilySharingError.membershipChecking }
         let snapshot = try store.snapshot()
         guard !snapshot.sharingEnded else { throw FamilySharingError.removedOrDissolved }
-        let mappings = snapshot.mappings.filter { $0.recordID == nil && $0.toolCatID == tool }
+        let mappings = snapshot.activeMappings.filter { $0.recordID == nil && $0.toolCatID == tool }
         guard let mapping = mappings.first, Set(mappings.map(\.familyCatID)).count == 1,
               Set(mappings.compactMap(\.profileID)).count <= 1 else { throw FamilySharingError.notAllowed }
         return (store, mapping)

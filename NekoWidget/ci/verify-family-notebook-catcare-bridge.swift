@@ -1,8 +1,66 @@
 import Foundation
 
 enum FamilyNotebookCatCareBridgeVerifier {
+    static func unsharingPreservesRecords() throws {
+        let f = FamilyNotebookMigrationVerifier.Fixture()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-unshare-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let author = FamilyNotebookMigrationVerifier.author
+        func require(_ condition: Bool, _ message: String) throws { try FamilyNotebookMigrationVerifier.require(condition, message) }
+        let senderURL = root.appendingPathComponent("sender")
+        let sender = try FamilyNotebookStore(directory: senderURL, familyID: f.family, deviceID: "sender")
+        let plan = try FamilyNotebookMigration.prepare(source: f.source(), familyID: f.family, mappings: f.links).plan
+        try sender.applyImport(plan, author: author)
+        let before = try sender.snapshot()
+        let receiver = try FamilyNotebookStore(directory: root.appendingPathComponent("receiver"), familyID: f.family, deviceID: "receiver")
+        try receiver.receive(before.operations)
+        // Explicit local bindings; no name-based identity guess on either phone.
+        try receiver.applyImport(.init(familyID: f.family, entries: [], mappings: before.mappings), author: author)
+        let failing = try FamilyNotebookStore(directory: senderURL, familyID: f.family, deviceID: "sender",
+            write: { _, _ in throw FamilyNotebookMigrationVerifier.Failure.injectedWriteFailure })
+        try FamilyNotebookMigrationVerifier.rejects("unshare failure must not hide the cat") {
+            _ = try failing.edit(target: .init(familyCatID: f.familyA, field: .sharingEnded), value: nil, author: author)
+        }
+        try require(try sender.snapshot() == before, "failed unshare preserves notebook and outbox")
+        let removal = try sender.edit(target: .init(familyCatID: f.familyA, field: .sharingEnded), value: nil, author: author)
+        let removed = try sender.snapshot()
+        try require(removed.outbox.contains(removal), "unshare is durable until acknowledged")
+        try require(!removed.activeMappings.contains { $0.familyCatID == f.familyA }, "removed cat is not selectable for sharing")
+        try require(removed.mappings == before.mappings, "unshare retains historical identity and consent bindings")
+        // A second offline phone can have a later clock. Removal still wins.
+        for n in 0..<3 { _ = try receiver.edit(target: .init(familyCatID: f.familyA, field: .water), value: .text("offline-\(n)"), author: author) }
+        let late = try receiver.snapshot().operations
+        try receiver.receive([removal]); try sender.receive(late)
+        let a = try sender.snapshot(), b = try receiver.snapshot()
+        try require(a.operations == b.operations, "delivery order converges")
+        try require(a.fieldState(for: .init(familyCatID: f.familyA, field: .water))?.isDeleted == true, "late edit cannot revive removed sharing")
+        for snapshot in [a,b] {
+            let care = try FamilyNotebookCatCareBridge.apply(snapshot, to: f.care)
+            let handoff = try FamilyNotebookToolBridge.apply(snapshot, to: f.handoff)
+            let visits = try FamilyNotebookToolBridge.apply(snapshot, to: f.visits)
+            try require(care.cats.first { $0.catID == f.toolA } == f.care.cats[0], "all private cat fields, lists and photo references survive")
+            try require(handoff.cats.first { $0.toolCatID == f.toolA } == f.handoff.cats[0], "private handoff survives")
+            try require(visits == f.visits, "private consultations survive")
+        }
+        try FamilyNotebookMigrationVerifier.rejects("new write must not revive removed sharing") {
+            _ = try sender.edit(target: .init(familyCatID: f.familyA, field: .name), value: .text("revive"), author: author)
+        }
+        // A stale plan submitted after removal is harmless, including its old mappings.
+        try sender.applyLocalChanges(plan, author: author)
+        let newCat = UUID()
+        let newLink = FamilyNotebookLocalMapping(sourceKey: f.links[0].sourceKey, familyCatID: newCat, profileID: f.profileA, toolCatID: f.toolA)
+        let again = try FamilyNotebookMigration.prepare(source: f.source(), familyID: f.family, mappings: sender.snapshot().activeMappings + [newLink]).plan
+        try sender.applyImport(again, author: author)
+        let reopened = try FamilyNotebookStore(directory: senderURL, familyID: f.family, deviceID: "sender").snapshot()
+        try require(reopened.activeMappings.filter { $0.toolCatID == f.toolA && $0.recordID == nil }.map(\.familyCatID) == [newCat], "readd has exactly one new shared identity after restart")
+        try require(reopened.fieldState(for: .init(familyCatID: newCat, field: .name))?.operation.value == .text("同じ名前"), "old import ledger cannot suppress readd")
+        try require(reopened.operations.contains(removal), "readd never erases the old removal")
+        try require(reopened.operations.contains { $0.target.familyCatID == newCat && $0.target.collection == .weight }, "readd includes child records")
+        print("Family unshare: atomic failure, private records, offline conflict, restart and readd passed")
+    }
     static func run() throws {
         try absenceAnswers()
+        try unsharingPreservesRecords()
         let fixture = FamilyNotebookMigrationVerifier.Fixture()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("family-catcare-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
