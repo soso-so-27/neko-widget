@@ -42,8 +42,8 @@ struct NekoWidgetView: View {
 
     var body: some View {
         // Only the capsule reveals a cloudy window (11/3: a stray tap used to
-        // clear it). Elsewhere a tap opens the app; the URL is nil while
-        // cloudy, so the photo itself is never opened before the reveal.
+        // clear it). Elsewhere a cloudy tap does nothing (11/5); the URL is nil
+        // while cloudy, so the photo itself is never opened before the reveal.
         photoContent.widgetURL(entry.photoURL)
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
@@ -87,6 +87,16 @@ struct NekoWidgetView: View {
                         if entry.cloudyWindowSelection != nil {
                             CloudyFogPuffs(isCloudy: entry.cloudyWindowSelection?.revealedAt == nil,
                                            size: proxy.size, reduceMotion: reduceMotion)
+                        }
+
+                        // While cloudy, a tap beside the capsule stays on the
+                        // Home Screen instead of opening the app (11/5).
+                        if let selection = entry.cloudyWindowSelection, selection.revealedAt == nil {
+                            Button(intent: CloudyWindowIdleTapIntent()) {
+                                Color.clear.contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHidden(true)
                         }
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)

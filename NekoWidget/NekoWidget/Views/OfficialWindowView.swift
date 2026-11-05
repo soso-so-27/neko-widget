@@ -374,6 +374,8 @@ struct OfficialWindowView: View {
     @State private var confirmsStop = false
     @State private var stoppedHere = false
     @State private var offersWidgetSetup = false
+    /// A placed widget already shows this window: no placement guide (11/5).
+    @State private var widgetPlacedHere = false
     @State private var widgetPlacement = WidgetPlacement.first
     @State private var showsOverview = false
     @State private var hasCheckedFeed = false
@@ -452,6 +454,8 @@ struct OfficialWindowView: View {
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
+            widgetPlacedHere = await WidgetInstallationChecker.isShowing(
+                sourceID: PublicWindowDefinition.widgetSourceID(forWindowID: store.windowID)) == true
             await refresh()
         }
         .task(id: nextPhotoDeadline) {
@@ -655,7 +659,7 @@ struct OfficialWindowView: View {
                 Button("あとで") { offersWidgetSetup = false }
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .accessibilityIdentifier("official-window-widget-later")
-            } else {
+            } else if !widgetPlacedHere {
                 Button { showsWidgetGuide = true } label: {
                     Label("ウィジェットの置き方", systemImage: "plus.rectangle.on.rectangle")
                         .font(.subheadline)

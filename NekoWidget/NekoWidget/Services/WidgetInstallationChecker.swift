@@ -20,6 +20,25 @@ final class WidgetInstallationChecker: ObservableObject {
         state.shouldOfferPlacementGuide
     }
 
+    /// Whether a placed widget shows this photo source. `nil` when WidgetKit
+    /// cannot answer; callers then keep their guide visible.
+    nonisolated static func isShowing(sourceID: String) async -> Bool? {
+        let kind = "NekoWidget"
+        return await withCheckedContinuation { continuation in
+            WidgetCenter.shared.getCurrentConfigurations { result in
+                guard case .success(let configurations) = result else {
+                    continuation.resume(returning: nil); return
+                }
+                let shown = configurations.contains { widget in
+                    widget.kind == kind
+                        && (widget.widgetConfigurationIntent(of: NekoWidgetConfigurationIntent.self)?
+                            .photoSource ?? .personalLibrary).id == sourceID
+                }
+                continuation.resume(returning: shown)
+            }
+        }
+    }
+
     /// Starts a non-blocking WidgetKit lookup.
     ///
     /// The completion and skip buttons in `WidgetPlacementGuideView` do not
