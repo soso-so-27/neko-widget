@@ -639,7 +639,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 if let known = error as? ManagedPreservationError,
                    known == .membershipRequired || known == .accessUnconfirmed {
                     self.membership = nil
-                    self.membershipMessage = "Plusを確認できませんでした。「購入を復元」を押してから、もう一度お試しください。"
+                    self.membershipMessage = "Plusを確認できませんでした。「もう一度確認」を押してから、もう一度お試しください。"
                 }
                 throw error
             }

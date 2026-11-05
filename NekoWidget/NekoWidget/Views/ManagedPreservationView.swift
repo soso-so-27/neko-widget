@@ -665,8 +665,8 @@ struct ManagedPreservationView: View {
         } else if coordinator.membership == nil {
             Text(coordinator.membershipMessage ?? "保存できるか確認できませんでした。")
                 .font(.footnote).foregroundStyle(.secondary)
-            Button("購入を復元") { coordinator.restoreMembership() }
-                .disabled(coordinator.membershipRestoring)
+            // A connection retry only: a network failure never leads to Apple sign-in.
+            Button("もう一度確認") { coordinator.checkMembership() }
                 .accessibilityIdentifier("preservation-eligibility-retry")
         } else if coordinator.membership?.canSave != true {
             plusOfferEntry

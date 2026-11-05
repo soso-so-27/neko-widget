@@ -375,10 +375,15 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("guard isSignedIn, !membershipRestoring, let owner = authenticatedOwnerID else { return }",
                       restore_membership)
         view = source("NekoWidget/Views/ManagedPreservationView.swift")
-        self.assertEqual(view.count('Button("購入を復元") { coordinator.restoreMembership() }'), 3)
+        self.assertEqual(view.count('Button("購入を復元") { coordinator.restoreMembership() }'), 2)
         self.assertEqual(len(re.findall(
             r'Button\("購入を復元"\) \{ coordinator\.restoreMembership\(\) \}\n'
-            r'(?:\s*\.accessibilityIdentifier\("[^"]+"\)\n)?\s*\.disabled\(coordinator\.membershipRestoring\)', view)), 3)
+            r'(?:\s*\.accessibilityIdentifier\("[^"]+"\)\n)?\s*\.disabled\(coordinator\.membershipRestoring\)', view)), 2)
+        # A connection failure keeps its own retry: never an Apple sign-in.
+        retry = section(view, "} else if coordinator.membership == nil {", "} else if coordinator.membership?.canSave != true {")
+        self.assertIn('Button("もう一度確認") { coordinator.checkMembership() }', retry)
+        self.assertNotIn("restoreMembership", retry)
+        self.assertIn("「もう一度確認」を押してから", coordinator)
         persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
         self.assertIn('Button("購入を復元") { authentication.restoreMembership() }', persistence)
 
