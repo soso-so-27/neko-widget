@@ -3437,6 +3437,36 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testMembershipRestoreFailureStaysVisible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-offer-ui-fixture", "--membership-restore-apple-failure"]
+        app.launch()
+        XCTAssertTrue(app.buttons["membership-preview-open"].waitForExistence(timeout: 10))
+        app.buttons["membership-preview-open"].tap()
+        let restore = app.buttons["membership-offer-restore"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !restore.isHittable { app.swipeUp() }
+        restore.tap()
+        let message = app.staticTexts["membership-offer-message"]
+        let failure = NSPredicate(format: "label CONTAINS %@", "Appleの購入情報を同期できませんでした")
+        expectation(for: failure, evaluatedWith: message)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(restore.isEnabled)
+        XCTAssertFalse(app.buttons["membership-offer-purchase"].isEnabled)
+        XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
+        // An explicit authority refresh may confirm membership and clear the
+        // old action error; merely publishing an unknown state may not.
+        let refresh = app.buttons["membership-offer-refresh"]
+        for _ in 0..<3 where !refresh.isHittable { app.swipeUp() }
+        refresh.tap()
+        let active = NSPredicate(format: "label == %@", "Plusを利用中です")
+        expectation(for: active, evaluatedWith: app.buttons["membership-offer-purchase"])
+        waitForExpectations(timeout: 5)
+        XCTAssertFalse(message.exists)
+        app.terminate()
+    }
+
+    @MainActor
     private func checkJoinedMembershipCannotOfferAnotherPurchase() {
         for largeText in [false, true] {
             let app = XCUIApplication()
