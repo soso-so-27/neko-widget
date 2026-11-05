@@ -1913,7 +1913,7 @@ struct GroupWindowListSection: View {
                 showsLeftWindowNotice = true
             }
         }
-        .alert("このまどは抜けました", isPresented: $showsLeftWindowNotice) {
+        .alert("このまどはもうありません", isPresented: $showsLeftWindowNotice) {
             Button("閉じる", role: .cancel) {}
         }
         .navigationDestination(isPresented: Binding(
