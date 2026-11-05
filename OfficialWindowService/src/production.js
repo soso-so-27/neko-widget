@@ -13,6 +13,16 @@ export default {
     if (typeof prefix !== 'string' || !/^programs\/[a-f0-9]{64}$/.test(prefix)) {
       return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }
+    // Build 328 shipped a channel URL as the base feed. Its client appends the
+    // channel again, including when fetching the relative image filename.
+    // Keep that already-installed client working without a redirect (which
+    // the app correctly rejects), and keep all normal feed validation below.
+    const url = new URL(request.url);
+    const shippedPath = /^\/windows\/black-cats\/windows\/black-cats\/(catalog\.json|[a-f0-9]{64}\.jpg)$/.exec(url.pathname);
+    if (shippedPath) {
+      url.pathname = '/windows/black-cats/' + shippedPath[1];
+      request = new Request(url, request);
+    }
     return program.fetch(request, { OFFICIAL_ASSETS: { async fetch(input) {
       const pathname = new URL(input.url).pathname;
       const isIndex = pathname === '/__program/index.json';

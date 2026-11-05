@@ -107,6 +107,8 @@ def settings(contract, *, synthetic=False):
         if match:
             result[match[1]] = match[2].strip()
     result.update(values)
+    require(urlsplit(values["OFFICIAL_WINDOW_FEED_URL"]).path == "/catalog.json",
+            "Official feed must use base /catalog.json; the app appends each channel path")
     result.update({"INTERNAL_PRESENTATION_CONDITION": "",
                    "OWNER_INTERNAL_REPORTS_DISABLED": "NO",
                    "SHARE_EXTENSION_INFOPLIST_FILE": "NekoWidgetShareExtension/Info.plist",

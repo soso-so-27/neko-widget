@@ -24,6 +24,26 @@ function setup() {
 const request = (env,route='/windows/black-cats/catalog.json',method='GET') =>
   worker.fetch(new Request('https://official.invalid'+route,{method}),env);
 
+test('328 channel-base compatibility serves the same validated feed and relative image without redirect', async t => {
+  t.mock.method(Date,'now',()=>start); const f=setup();
+  const oldBase='/windows/black-cats/windows/black-cats/';
+  const canonical=await request(f.env), compatible=await request(f.env,oldBase+'catalog.json');
+  assert.equal(compatible.status,200); assert.equal(compatible.headers.get('location'),null);
+  assert.equal(await compatible.text(),await canonical.text());
+  const photo=await request(f.env,oldBase+a+'.jpg');
+  assert.equal(photo.status,200); assert.equal(hash(Buffer.from(await photo.arrayBuffer())),a);
+  const head=await request(f.env,oldBase+a+'.jpg','HEAD');
+  assert.equal(head.status,200); assert.equal(await head.text(),'');
+  for(const route of [oldBase+'catalog.json?other=1',oldBase+'__program/index.json',
+    oldBase+'windows/black-cats/catalog.json',oldBase+'f'.repeat(64)+'.jpg']) {
+    assert.equal((await request(f.env,route)).status,404);
+  }
+  assert.equal((await request(f.env,oldBase+'catalog.json','POST')).status,405);
+  const closed=setup(); closed.env.INTAKE_ENABLED='NO';
+  assert.equal((await request(closed.env,oldBase+'catalog.json')).status,503);
+  assert.deepEqual(closed.reads,[]);
+});
+
 test('gate and environment reject before any binding access, including HEAD and hidden URLs', async () => {
   for (const value of [undefined,'NO','yes',' YES','YES ',true,1]) {
     for (const method of ['GET','HEAD','POST']) {
