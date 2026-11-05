@@ -827,9 +827,11 @@ struct FamilyNotebookView: View {
                 }
             } header: {
                 Text("家族")
-            } footer: {
-                Text("招待された人は無料です。")
             }
+            // No footer here: on 332 its height flipped by 14px on every
+            // redraw while the notebook loaded, and everything under 「招待する」
+            // jolted (screen recording 11/5 21:39). The invite sheet already
+            // says invited people are free.
             if model.isReal {
                 Section("猫") {
                     ForEach(model.familyCats) { cat in
