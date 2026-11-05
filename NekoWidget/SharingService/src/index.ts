@@ -1,3 +1,4 @@
+import { beginReadDiagnostic, finishReadDiagnostic, readStage } from './read-failure-diagnostic';
 import {advanceIdentityDeletion,deletionRequired,scopeIdentityCheck,identityDeletionAPI,isIdentityDeletionPath,protectedGroupRead} from './group-identity-service';
 import { cleanupDissolvedFamilyRosters } from './family-notebook-roster-cleanup';
 import { requestBillingTransactionDeletion, billingTransactionDeletionStatus, scheduleBillingTransactionRetention } from './billing-retention-api';
@@ -124,7 +125,19 @@ import { groupReportingAvailabilityPath } from './group-reporting-availability';
 import { drainGroupAdmissionNotifications } from './group-admission-push';
 import { drainGroupNotifications } from './group-push';
 
-export async function route(
+export async function route(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+  beginReadDiagnostic(request);
+  try {
+    const response = await routeInternal(request, env, ctx);
+    finishReadDiagnostic(request);
+    return response;
+  } catch (error) {
+    finishReadDiagnostic(request, error);
+    throw error;
+  }
+}
+
+async function routeInternal(
   request: Request,
   env: Env,
   ctx?: ExecutionContext,
@@ -160,6 +173,7 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
   // are open. Absent/NO retains the previous unreachable public surface.
   if ((pathname === '/v3/family-notebooks' || pathname.startsWith('/v3/family-notebooks/'))
       && env.FAMILY_NOTEBOOK_API_RUNTIME_ENABLED === 'YES') {
+    readStage(request, 'retention_guard');
     await requireBillingRetentionSnapshot(env);
     // Neither closed switch may consult family data. Preserve the separate
     // billing guard above, then guard every reachable family data handler.
@@ -275,6 +289,7 @@ async function dispatch(request:Request,env:Env,ctx?:ExecutionContext):Promise<R
       "billing_runtime_disabled",
       "Billing is temporarily unavailable.",
     );
+  readStage(request, 'retention_guard');
   if(!pathname.startsWith('/v1/billing/transaction-deletion-requests/')) await requireBillingRetentionSnapshot(env);
   if(request.method==='POST' && pathname==='/v1/billing/transaction-deletion-requests') return requestBillingTransactionDeletion(request,env);
   const deletionStatus=pathname.match(/^\/v1\/billing\/transaction-deletion-requests\/([^/]+)\/status$/u);

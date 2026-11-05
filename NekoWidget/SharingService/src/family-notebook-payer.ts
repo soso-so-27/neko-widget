@@ -1,3 +1,4 @@
+import { readStage } from './read-failure-diagnostic';
 import { authenticateGroupRequest, groupId, groupAuthorizationStatements, type GroupActor } from './group-auth';
 import { billingEffectiveEntitlementRuntimeEnabled, billingStoreEnvironmentAccepted, type Env } from './env';
 import { ApiError, jsonResponse } from './errors';
@@ -129,6 +130,7 @@ function receiptResponse(operationId: string, row: Receipt): Response {
 export async function familyNotebookPayer(request: Request, env: Env, familyValue: string,
   operation?: Operation): Promise<Response> {
   try {
+    readStage(request, 'family_gate');
     await gate(env);
     const familyId = groupId(familyValue);
     const path = `/v3/family-notebooks/${familyId}` + (operation === 'leave' ? '/leave' : operation === 'claim' ? '/payer/claim' : '/payer');
@@ -136,11 +138,14 @@ export async function familyNotebookPayer(request: Request, env: Env, familyValu
     if (operation === undefined ? request.method !== 'GET' : request.method !== 'POST') {
       throw new ApiError(405, 'method_not_allowed', 'Unsupported family operation.');
     }
+    readStage(request, 'authentication');
     const { actor, body: bytes } = await authenticateGroupRequest(request, env, 2048);
     if (operation === undefined) {
       requireEmptyBody(bytes);
+      readStage(request, 'family_state');
       const row = await load(env, actor, familyId);
       const checkId = crypto.randomUUID();
+      readStage(request, 'family_authorization');
       const result = await env.DB.batch<FamilyRow>([...groupAuthorizationStatements(env, actor),
         env.DB.prepare('INSERT INTO family_notebook_access_checks VALUES (?,?,?,?,?)').bind(checkId, familyId, actor.personId, actor.deviceId, row.generation),
         env.DB.prepare('DELETE FROM family_notebook_access_checks WHERE id=?').bind(checkId),
