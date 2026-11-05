@@ -29,3 +29,16 @@ struct RevealCloudyWindowIntent: AppIntent {
         return .result()
     }
 }
+
+/// A tap on a cloudy window outside the 「タップで きょうの 1 枚」 capsule.
+/// Without it WidgetKit opens the app on the last screen (11/5). Only the
+/// capsule reveals (11/3), so this does nothing and never opens the app.
+struct CloudyWindowIdleTapIntent: AppIntent {
+    static var title: LocalizedStringResource = "くもりのまど"
+    static var isDiscoverable = false
+    static var openAppWhenRun = false
+
+    init() {}
+
+    func perform() async throws -> some IntentResult { .result() }
+}
