@@ -335,6 +335,14 @@ private struct SeasonalMovieArchiveVideoPeriod: Hashable, Sendable {
     let identifiers: Set<String>
 }
 
+/// A Widget tap with no photo to open asks for the photo tab (E3). Waits here
+/// across a cold start until the tabs are on screen.
+@MainActor
+final class PhotosTabOpenInbox: ObservableObject {
+    static let shared = PhotosTabOpenInbox()
+    @Published var pending = false
+}
+
 private struct SeasonalMovieArchiveValidationKey: Hashable {
     let access: SeasonalMovieArchiveAccessKey
     let isActive: Bool
@@ -551,6 +559,7 @@ struct MainTabView: View {
     @AppStorage(AlbumPrototype.enabledAtKey) private var albumPrototypeEnabledAt: Double = 0
     @AppStorage(AlbumPrototype.openedKey) private var albumPrototypeOpened = ""
     @ObservedObject private var albumArrivalInbox = AlbumArrivalOpenInbox.shared
+    @ObservedObject private var photosTabInbox = PhotosTabOpenInbox.shared
     @State private var arrivalStory: MonthlyWindowPresentation?
     @State private var arrivalUnavailable = false
 
@@ -767,6 +776,15 @@ struct MainTabView: View {
             guard windowID != nil else { return }
             showsSettings = false
             selectedTab = .windows
+        }
+        .onChange(of: photosTabInbox.pending, initial: true) { _, pending in
+            guard pending else { return }
+            photosTabInbox.pending = false
+            relatedPhotoUsesLibraryScope = false
+            relatedPhotoRoute = nil
+            showsSettings = false
+            didApplyInitialTab = true
+            selectedTab = .photos
         }
         .onChange(of: albumArrivalInbox.pending, initial: true) { _, _ in openAlbumArrivalIfReady() }
         .onChange(of: albumArrivalInbox.showsAlbum, initial: true) { _, shows in

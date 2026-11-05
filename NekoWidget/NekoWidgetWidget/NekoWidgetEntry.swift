@@ -80,8 +80,8 @@ struct NekoWidgetEntry: TimelineEntry {
         if let windowID = PublicWindowDefinition.windowID(from: photoSourceIdentifier) {
             return OfficialWindowRoute(windowID: windowID, photoID: officialPhoto?.id).url
         }
-        guard emptyStateReason != .sourceUnavailable else { return nil }
         if WidgetPhotoSource.isFamilyWindowSourceID(photoSourceIdentifier) {
+            guard emptyStateReason != .sourceUnavailable else { return nil }
             guard let localWindowID = WidgetPhotoSource.localWindowID(
                 from: photoSourceIdentifier
             )
@@ -101,7 +101,10 @@ struct NekoWidgetEntry: TimelineEntry {
             }
             return DeepLink.familyWindow(localWindowID: localWindowID)
         }
-        guard let localIdentifier else { return nil }
+        // This iPhone's photos and the cloudy windows: with nothing to open
+        // (preparing, unavailable, or the cat was deleted), the photo tab (E3).
+        guard emptyStateReason != .sourceUnavailable else { return PhotosTabRoute.url }
+        guard let localIdentifier else { return PhotosTabRoute.url }
         return DeepLink.photo(localIdentifier: localIdentifier, shownAt: date)
     }
 
