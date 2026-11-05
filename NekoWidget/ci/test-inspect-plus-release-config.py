@@ -25,6 +25,26 @@ def module(name):
 
 
 class InspectionTests(unittest.TestCase):
+    def test_workflow_head_and_selected_release_are_independently_pinned(self):
+        inspect = module("inspect-plus-release-config")
+        for build, (run_id, artifact_id, source) in inspect.RELEASES.items():
+            head = inspect.WORKFLOW_HEADS[build]
+            run = {"id": run_id, "run_attempt": 1, "head_sha": head, "head_branch": "main",
+                "event": "workflow_dispatch", "status": "completed", "conclusion": "success",
+                "path": ".github/workflows/testflight.yml", "repository": {"full_name": "soso-so-27/neko-widget"}}
+            prefix = "production-candidate" if build == "328" else "nekowidget-signed-artifacts"
+            artifact = {"id": artifact_id, "expired": False, "name": f"{prefix}-{run_id}-1",
+                "workflow_run": {"id": run_id, "head_sha": head}}
+            inspect.validate_provenance(build, run, artifact)
+            with self.assertRaises(inspect.d.DiagnosticError):
+                inspect.validate_provenance(build, {**run, "head_sha": "0" * 40}, artifact)
+            with self.assertRaises(inspect.d.DiagnosticError):
+                inspect.validate_provenance(build, run, {**artifact, "workflow_run": {"id": run_id, "head_sha": "0" * 40}})
+            if build == "325":
+                self.assertNotEqual(head, source)
+                with self.assertRaises(inspect.d.DiagnosticError):
+                    inspect.validate_provenance(build, {**run, "head_sha": source}, artifact)
+
     def test_authenticated_ipa_allowlist_tamper_rejection_and_cleanup(self):
         inspect = module("inspect-plus-release-config")
         auth = module("signed-artifact-authentication")

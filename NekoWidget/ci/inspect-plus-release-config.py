@@ -29,6 +29,12 @@ RELEASES = {
     "325": (41319182447, 13088873181, "b6a2009e7eada182b69542fc192ac7fdbe92bbd0"),
     "328": (41829816288, 13323237995, "665ce2cfcd592b79c5f1b3c1b84891e06957c80d"),
 }
+# A dispatched workflow can select an earlier, CI-qualified release SHA.
+# Bind the workflow run and signed product independently, never conflate them.
+WORKFLOW_HEADS = {
+    "325": "9d08cf03b36d1b6044cff2812cb769a8a232de67",
+    "328": "665ce2cfcd592b79c5f1b3c1b84891e06957c80d",
+}
 
 
 def public_configuration(info, build):
@@ -39,11 +45,11 @@ def public_configuration(info, build):
     return result
 
 
-def inspect(root, build):
-    run_id, artifact_id, source = RELEASES[build]
-    run, artifact = d.read_object(root / "run.json"), d.read_object(root / "artifact.json")
+def validate_provenance(build, run, artifact):
+    run_id, artifact_id, _source = RELEASES[build]
+    workflow_head = WORKFLOW_HEADS[build]
     d.require(all(run.get(k) == v for k, v in {
-        "id": run_id, "run_attempt": 1, "head_sha": source, "head_branch": "main",
+        "id": run_id, "run_attempt": 1, "head_sha": workflow_head, "head_branch": "main",
         "event": "workflow_dispatch", "status": "completed", "conclusion": "success",
         "path": ".github/workflows/testflight.yml",
     }.items()) and run.get("repository", {}).get("full_name") == "soso-so-27/neko-widget", "Unexpected source run")
@@ -51,7 +57,12 @@ def inspect(root, build):
     d.require(artifact.get("id") == artifact_id and artifact.get("expired") is False
               and artifact.get("name") == f"{prefix}-{run_id}-1"
               and artifact.get("workflow_run", {}).get("id") == run_id
-              and artifact.get("workflow_run", {}).get("head_sha") == source, "Unexpected source artifact")
+              and artifact.get("workflow_run", {}).get("head_sha") == workflow_head, "Unexpected source artifact")
+
+
+def inspect(root, build):
+    run_id, _artifact_id, source = RELEASES[build]
+    validate_provenance(build, d.read_object(root / "run.json"), d.read_object(root / "artifact.json"))
     if build == "328":
         d.CIPHERTEXT, d.METADATA, d.AUTHENTICATION = (
             "production-candidate.tar.gz.enc", "production-owner-metadata.json", "production-owner-authentication.json")
@@ -109,7 +120,12 @@ def main():
     signal.signal(signal.SIGINT, d.interrupted)
     try:
         print(json.dumps(inspect(args.input_directory, args.build), sort_keys=True))
-    except Exception:
+    except d.DiagnosticError as error:
+        # DiagnosticError messages are fixed in this module/helper. They never
+        # interpolate private tool output or decrypted values.
+        print("FAIL: " + str(error), file=sys.stderr)
+        return 1
+    except (Exception, SystemExit):
         print("FAIL: authenticated configuration inspection did not complete; private details suppressed", file=sys.stderr)
         return 1
     return 0
