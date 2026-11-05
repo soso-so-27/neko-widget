@@ -269,11 +269,18 @@ final class MembershipOfferModel: ObservableObject {
         return result
     }
 
+    /// The one 「購入を復元」 (11/5): the purchase re-check first, then the
+    /// App Store restore. A member the re-check confirms needs no Apple sign-in.
     func restore() async -> MembershipOfferActionResult {
         guard canRestore else { return .unavailable }
         actionResult = nil
         isWorking = true
         defer { isWorking = false }
+        if await recheckConfirmsMembership() {
+            apply(.completed, restoring: true)
+            updateMembershipState()
+            return .completed
+        }
         let result = await restoreAction()
 #if DEBUG || INTERNAL_PRESENTATION
         if result == .completed, fixtureStatus != nil { fixtureStatus = .active }
@@ -281,6 +288,40 @@ final class MembershipOfferModel: ObservableObject {
         apply(result, restoring: true)
         updateMembershipState()
         return result
+    }
+
+    /// The re-check half of 「購入を復元」: the shared purchase authority only,
+    /// never a purchase or AppStore.sync. A preview moves its fixture as the
+    /// server would.
+    private func recheckConfirmsMembership() async -> Bool {
+        if let purchases {
+            await purchases.refreshAfterForegroundEntry()
+            return purchases.entitlementState.permitsPersonalPlus
+        }
+#if DEBUG || INTERNAL_PRESENTATION
+        if let fixtureStatus {
+            switch fixtureStatus {
+            case .unknown, .authorityPending:
+                self.fixtureStatus = .active
+                return true
+            case .expired: self.fixtureStatus = .fresh
+            case .fresh, .active, .applePending: break
+            }
+        }
+#endif
+        return false
+    }
+
+    /// 「購入を復元」 from a screen without the Plus sheet (saving): the same
+    /// re-check and restore. Returns the result line to keep on that screen,
+    /// or nil when Plus was found or there is nothing to tell.
+    static func restoreForAnotherScreen() async -> String? {
+        let model = live(presentsOffer: false)
+        await model.load()
+        switch await model.restore() {
+        case .completed, .cancelled, .unavailable: return nil
+        default: return model.message
+        }
     }
 
     private func apply(_ result: MembershipOfferActionResult, restoring: Bool) {
@@ -434,10 +475,10 @@ final class MembershipOfferModel: ObservableObject {
 #endif
             message = applePending
                 ? "Appleでの購入手続きが終わるのを待っています。もう一度購入しないでください。"
-                : "購入の確認を待っています。もう一度購入せずに、「購入状況を再確認」を押してください。"
+                : "購入の確認を待っています。もう一度購入せずに、「購入を復元」を押してください。"
         } else if verificationRequired {
             purchaseTitle = "購入状況の確認が必要です"
-            message = "購入状況を確認できません。もう一度購入せずに、「購入状況を再確認」を押してください。"
+            message = "購入状況を確認できません。もう一度購入せずに、「購入を復元」を押してください。"
         } else {
             purchaseTitle = nil
             message = nil
@@ -445,8 +486,13 @@ final class MembershipOfferModel: ObservableObject {
     }
 
 #if DEBUG || INTERNAL_PRESENTATION
-    static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil,
-                        restoreResult: MembershipOfferActionResult = .completed) -> MembershipOfferModel {
+    /// After the re-check, the restore answers as Apple would: a pending
+    /// purchase is still waiting, and an ended Plus finds nothing.
+    static func preview(state: MembershipOfferFixtureStatus, expiresAfter: TimeInterval? = nil) -> MembershipOfferModel {
+        let restoreResult: MembershipOfferActionResult
+        if state == .applePending { restoreResult = .waiting }
+        else if state == .expired || expiresAfter != nil { restoreResult = .nothingToRestore }
+        else { restoreResult = .completed }
         let model = preview(restoreResult: restoreResult, eligibleForIntroOffer: false)
         model.fixtureStatus = state
         if state == .active, let expiresAfter {
@@ -481,16 +527,22 @@ final class MembershipOfferModel: ObservableObject {
 
 #endif
 #if DEBUG
-    static func restorationWithoutCatalogPreview() -> MembershipOfferModel {
+    /// The first restore fails and the next finds Plus. Apple's purchase is
+    /// still pending, so the re-check cannot confirm Plus before the restore.
+    static func restoreFailsOncePreview(presentsOffer: Bool) -> MembershipOfferModel {
         var attempts = 0
-        let model = MembershipOfferModel(isPreview: true, presentsOffer: false,
-            load: { nil },
+        let model = MembershipOfferModel(isPreview: true, presentsOffer: presentsOffer,
+            load: {
+                presentsOffer
+                    ? MembershipOfferPresentation.monthly(displayPrice: "¥980", trialPeriod: nil, isPreview: true)
+                    : nil
+            },
             purchase: { _ in .unavailable },
             restore: {
                 attempts += 1
                 return attempts == 1 ? .restoreFailed(.appleConfirmation) : .completed
             })
-        model.fixtureStatus = .unknown
+        model.fixtureStatus = .applePending
         model.updateMembershipState()
         return model
     }
@@ -774,8 +826,9 @@ struct PlusOfferPrompt: View {
 }
 
 /// The Plus row in Settings: "Plusについて" before joining, "Plus利用中" with
-/// Apple's subscription management after, and a recheck when the purchase
-/// state cannot be confirmed. "購入を復元" stays inside this section.
+/// Apple's subscription management after, and "購入を復元" (the re-check and
+/// the App Store restore in one) when the purchase state cannot be confirmed.
+/// "購入を復元" stays inside this section in every state but a member's.
 /// Hidden entirely (by the caller) while the product is not configured.
 @MainActor
 struct PlusSettingsSection: View {
@@ -783,7 +836,6 @@ struct PlusSettingsSection: View {
     @State private var showsOffer = false
     @State private var showsRestore = false
     @State private var showsManagement = false
-    @State private var isRechecking = false
     @State private var purchasedJustNow = false
     @State private var offersAutoSave = false
     @State private var showsAutoSave = false
@@ -817,16 +869,9 @@ struct PlusSettingsSection: View {
                 SettingsActionRow("サブスクリプションを管理", systemImage: "checkmark.seal") { showsManagement = true }
                     .accessibilityIdentifier("settings-membership-manage")
             case .unknown:
-                SettingsActionRow(isRechecking ? "確認しています…" : "購入状況を再確認",
-                                  systemImage: "exclamationmark.arrow.circlepath") {
-                    isRechecking = true
-                    Task {
-                        await purchases.refreshAfterForegroundEntry()
-                        isRechecking = false
-                    }
-                }
-                .disabled(isRechecking)
-                .accessibilityIdentifier("settings-membership-recheck")
+                // One button for the re-check and the App Store restore (11/5).
+                SettingsActionRow("購入を復元", systemImage: "arrow.clockwise") { showsRestore = true }
+                    .accessibilityIdentifier("settings-membership-restore")
             case .checking:
                 HStack(spacing: 10) {
                     ProgressView()
@@ -837,7 +882,8 @@ struct PlusSettingsSection: View {
             }
             // Restore stays reachable while checking: a check that never ends
             // must not leave a member without a way back (App Review requires it).
-            if status != .member {
+            // The unknown state already shows it as its one row.
+            if status == .notMember || status == .checking {
                 Button("購入を復元") { showsRestore = true }
                     .font(.footnote)
                     .frame(maxWidth: .infinity)
@@ -933,7 +979,7 @@ struct MembershipOfferPreviewView: View {
             if let offerContext {
 #if DEBUG
                 if CommandLine.arguments.contains("--membership-restore-without-catalog") {
-                    MembershipRestoreSheet(model: .restorationWithoutCatalogPreview())
+                    MembershipRestoreSheet(model: .restoreFailsOncePreview(presentsOffer: false))
                 } else {
                     offerSheet(offerContext)
                 }
@@ -962,7 +1008,7 @@ struct MembershipOfferPreviewView: View {
     private var previewModel: MembershipOfferModel {
 #if DEBUG
         if CommandLine.arguments.contains("--membership-restore-apple-failure") {
-            return .preview(state: .unknown, restoreResult: .restoreFailed(.appleConfirmation))
+            return .restoreFailsOncePreview(presentsOffer: true)
         }
         if CommandLine.arguments.contains("--membership-catalog-refresh") { return .catalogRefreshPreview() }
 #endif

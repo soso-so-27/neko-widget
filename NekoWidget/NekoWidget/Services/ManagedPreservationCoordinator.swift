@@ -295,6 +295,8 @@ final class ManagedPreservationCoordinator: ObservableObject {
     @Published private(set) var membership: ManagedPreservationMembership?
     @Published private(set) var membershipMessage: String?
     @Published private(set) var membershipLoading = false
+    /// While 「購入を復元」 runs. A Plus check in progress never disables it.
+    @Published private(set) var membershipRestoring = false
     @Published private(set) var saveFailureCode: String?
     @Published private(set) var saveFailureMessage: String?
     @Published private(set) var noticeContact: ManagedPreservationNoticeContact?
@@ -506,6 +508,30 @@ final class ManagedPreservationCoordinator: ObservableObject {
         loadMembership(viewEpoch, owner: owner)
     }
 
+    /// The one 「購入を復元」 (11/5): the purchase re-check and the App Store
+    /// restore, then this screen's Plus check. A result other than Plus stays
+    /// on screen until the next action.
+    func restoreMembership() {
+        guard isSignedIn, !membershipRestoring, let owner = authenticatedOwnerID else { return }
+        let ticket = viewEpoch
+        membershipRestoring = true
+        Task { [weak self] in
+            let note = await MembershipOfferModel.restoreForAnotherScreen()
+            guard let self else { return }
+            self.membershipRestoring = false
+            guard self.viewEpoch == ticket, self.authenticatedOwnerID == owner else { return }
+            let before = self.membershipRequestID
+            self.checkMembership()
+            guard self.membershipRequestID != before else { return }
+            let requestID = self.membershipRequestID
+            await self.membershipTask?.value
+            guard let note, self.viewEpoch == ticket, self.authenticatedOwnerID == owner,
+                  self.membershipRequestID == requestID, self.membership?.canSave != true,
+                  self.membershipMessage == nil else { return }
+            self.membershipMessage = note
+        }
+    }
+
     func checkNoticeContact() {
         guard isSignedIn, !isBusy else { return }
         noticeContact = nil
@@ -535,7 +561,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
     func connectMembership(consent: Bool) {
         guard isSignedIn, consent, !isBusy else { return }
         membershipTask?.cancel(); membershipTask = nil; membershipRequestID = UUID(); membershipLoading = false
-        membership = nil; membershipMessage = "連携できたか分からないときは、「購入状況を再確認」で確かめられます。"
+        membership = nil; membershipMessage = "連携できたか分からないときは、「購入を復元」で確かめられます。"
         retention = nil
         run { ticket in
             let owner = try await self.requireCurrentOwner(ticket)
@@ -613,7 +639,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 if let known = error as? ManagedPreservationError,
                    known == .membershipRequired || known == .accessUnconfirmed {
                     self.membership = nil
-                    self.membershipMessage = "Plusを確認できませんでした。「購入状況を再確認」を押してから、もう一度お試しください。"
+                    self.membershipMessage = "Plusを確認できませんでした。「購入を復元」を押してから、もう一度お試しください。"
                 }
                 throw error
             }

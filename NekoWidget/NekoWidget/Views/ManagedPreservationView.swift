@@ -327,7 +327,7 @@ struct ManagedPreservationView: View {
                     Label("Plusは連携済みです", systemImage: "person.crop.circle.badge.checkmark")
                         .accessibilityIdentifier("preservation-membership-linked")
                     Text(membership.status == .expired
-                         ? "Plusが切れているため、新しく保存できません。同じApple AccountでPlusを再開したら、「購入状況を再確認」を押してください。保存した写真はこれまでどおり開けます。"
+                         ? "Plusが切れているため、新しく保存できません。同じApple AccountでPlusを再開したら、「購入を復元」を押してください。保存した写真はこれまでどおり開けます。"
                          : "Plusをまだ確認できません。保存した写真は下の一覧から開けます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
@@ -340,11 +340,17 @@ struct ManagedPreservationView: View {
                     .font(.subheadline)
             }
             plusOfferEntry
-            Button(coordinator.membership?.access == .pilot ? "保管枠を確認"
-                   : coordinator.membershipMessage == nil ? "購入状況を再確認" : "購入状況を再確認") {
-                coordinator.checkMembership()
-            }.accessibilityIdentifier("preservation-membership-check")
-                .disabled(coordinator.membershipLoading)
+            if coordinator.membership?.access == .pilot {
+                Button("保管枠を確認") { coordinator.checkMembership() }
+                    .accessibilityIdentifier("preservation-membership-check")
+                    .disabled(coordinator.membershipLoading)
+            } else if coordinator.membership?.canSave != true {
+                // One button for the re-check and the App Store restore (11/5),
+                // reachable while a check is still running.
+                Button("購入を復元") { coordinator.restoreMembership() }
+                    .accessibilityIdentifier("preservation-membership-check")
+                    .disabled(coordinator.membershipRestoring)
+            }
             if let message = coordinator.membershipMessage {
                 Text(message).font(.footnote).foregroundStyle(.secondary)
             }
@@ -659,7 +665,8 @@ struct ManagedPreservationView: View {
         } else if coordinator.membership == nil {
             Text(coordinator.membershipMessage ?? "保存できるか確認できませんでした。")
                 .font(.footnote).foregroundStyle(.secondary)
-            Button("もう一度確認") { coordinator.checkMembership() }
+            Button("購入を復元") { coordinator.restoreMembership() }
+                .disabled(coordinator.membershipRestoring)
                 .accessibilityIdentifier("preservation-eligibility-retry")
         } else if coordinator.membership?.canSave != true {
             plusOfferEntry
@@ -671,7 +678,8 @@ struct ManagedPreservationView: View {
             } else {
                 Text("いまは新しく保存できません。保存した記録は下の一覧から開けます。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("購入状況を再確認") { coordinator.checkMembership() }
+                Button("購入を復元") { coordinator.restoreMembership() }
+                    .disabled(coordinator.membershipRestoring)
                     .accessibilityIdentifier("preservation-eligibility-retry")
             }
         }

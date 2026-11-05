@@ -191,10 +191,7 @@ struct MembershipRestoreSheet: View {
                     }
                 }.buttonStyle(.borderedProminent).disabled(!model.canRestore)
                     .accessibilityIdentifier("membership-restore-submit")
-                if model.canRefresh {
-                    Button("購入状況を再確認") { Task { await model.refresh() } }
-                        .accessibilityIdentifier("membership-restore-refresh")
-                }
+                // The one button also re-checks the purchase (11/5): no second button.
                 if model.isWorking { ProgressView() }
                 if let message = model.message {
                     Text(message).font(.footnote)

@@ -3471,7 +3471,10 @@ final class SoloMemoriesUITests: XCTestCase {
         let message = app.staticTexts["membership-restore-message"]
         XCTAssertTrue(message.waitForExistence(timeout: 5))
         XCTAssertFalse(message.label.contains("料金"))
-        XCTAssertTrue(app.buttons["membership-restore-refresh"].isEnabled)
+        // One button: 「購入を復元」 also re-checks, so no second button (11/5).
+        XCTAssertEqual(restore.label, "購入を復元")
+        XCTAssertFalse(app.buttons["membership-restore-refresh"].exists)
+        XCTAssertFalse(app.buttons["購入状況を再確認"].exists)
         restore.tap()
         let failure = NSPredicate(format: "label CONTAINS %@", "Appleの購入情報を同期できませんでした")
         expectation(for: failure, evaluatedWith: message)
@@ -3507,14 +3510,13 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(restore.isEnabled)
         XCTAssertFalse(app.buttons["membership-offer-purchase"].isEnabled)
         XCTAssertFalse(app.staticTexts["membership-preview-result"].exists)
-        // An explicit authority refresh may confirm membership and clear the
-        // old action error; merely publishing an unknown state may not.
-        let refresh = app.buttons["membership-offer-refresh"]
-        for _ in 0..<3 where !refresh.isHittable { app.swipeUp() }
-        refresh.tap()
-        let active = NSPredicate(format: "label == %@", "Plusを利用中です")
-        expectation(for: active, evaluatedWith: app.buttons["membership-offer-purchase"])
-        waitForExpectations(timeout: 5)
+        // One button: no separate re-check next to 「購入を復元」 (11/5).
+        XCTAssertFalse(app.buttons["membership-offer-refresh"].exists)
+        XCTAssertFalse(app.buttons["購入状況を再確認"].exists)
+        // The next tap that finds Plus closes the sheet; the old error goes with it.
+        restore.tap()
+        XCTAssertTrue(app.staticTexts["membership-preview-result"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["membership-preview-result"].label.contains("確認を終えて"))
         XCTAssertFalse(message.exists)
         app.terminate()
     }
@@ -3570,10 +3572,13 @@ final class SoloMemoriesUITests: XCTestCase {
             XCTAssertFalse(purchase.isEnabled, "Unknown and pending states must not invite another purchase")
             XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("もう一度購入せず")
                           || app.staticTexts["membership-offer-message"].label.contains("もう一度購入しない"))
-            let refresh = app.buttons["membership-offer-refresh"]
-            for _ in 0..<5 where !refresh.isHittable { app.swipeUp() }
-            XCTAssertTrue(refresh.isHittable)
-            XCTAssertTrue(refresh.isEnabled)
+            // One button: 「購入を復元」 re-checks and restores (11/5).
+            XCTAssertFalse(app.buttons["membership-offer-refresh"].exists)
+            XCTAssertFalse(app.buttons["購入状況を再確認"].exists)
+            let restore = app.buttons["membership-offer-restore"]
+            for _ in 0..<5 where !restore.isHittable { app.swipeUp() }
+            XCTAssertTrue(restore.isHittable)
+            XCTAssertTrue(restore.isEnabled)
             if state == "unknown" {
                 let attachment = XCTAttachment(screenshot: app.screenshot())
                 attachment.name = "membership-confirmation-required"
@@ -3581,23 +3586,27 @@ final class SoloMemoriesUITests: XCTestCase {
                 add(attachment)
                 checkMembershipManagementPreviewKeepsState(app, expectedPurchaseTitle: "購入状況の確認が必要です",
                                                            captureName: "unknown")
-                for _ in 0..<5 where !refresh.isHittable { app.swipeDown() }
+                for _ in 0..<5 where !restore.isHittable { app.swipeUp() }
             }
-            refresh.tap()
+            restore.tap()
             if state == "expired" || state == "expiring" {
+                // Nothing to restore: the sheet stays, the result stays, and buying is open again.
                 let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: purchase)
                 XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+                XCTAssertTrue(app.staticTexts["membership-offer-message"].label.contains("見つかりませんでした"))
+                XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
+                               "A restore that finds nothing must not close the sheet")
             } else if state == "apple-pending" {
                 XCTAssertFalse(purchase.isEnabled)
                 XCTAssertEqual(purchase.label, "購入の確認待ちです")
+                XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
+                               "A purchase still pending at Apple must not close the sheet")
             } else {
-                let joined = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Plusを利用中です"), object: purchase)
-                XCTAssertEqual(XCTWaiter.wait(for: [joined], timeout: 5), .completed)
-                XCTAssertFalse(purchase.isEnabled)
-                XCTAssertFalse(app.staticTexts["membership-offer-price"].exists)
+                // The re-check confirms Plus: the sheet closes as a restore does.
+                let result = app.staticTexts["membership-preview-result"]
+                XCTAssertTrue(result.waitForExistence(timeout: 5))
+                XCTAssertTrue(result.label.contains("確認を終えて"))
             }
-            XCTAssertFalse(app.staticTexts["membership-preview-result"].exists,
-                           "Status refresh must not invoke purchase, explicit restore, or close the sheet")
             app.terminate()
         }
     }
@@ -5423,7 +5432,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         for identifier in ["app-record-enable", "app-record-signin", "app-record-membership-manage", "preservation-copy-save"] {
             XCTAssertFalse(app.buttons[identifier].exists, "A copy's read-only status must not expose \(identifier).")
         }
-        for title in ["購入状況を再確認", "サブスクリプションを管理", "購入を復元", "このiPhoneで自動保存をやめる"] {
+        for title in ["サブスクリプションを管理", "購入を復元", "このiPhoneで自動保存をやめる"] {
             XCTAssertFalse(app.buttons[title].exists, "A copy's status must not expose unrelated action: \(title).")
         }
         attach(app, name: "icloud-copy-readonly-save-status")
