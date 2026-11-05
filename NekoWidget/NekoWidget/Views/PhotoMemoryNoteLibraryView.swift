@@ -15,7 +15,9 @@ final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
         self.store = store
     }
 
-    func reload() async {
+    /// Coming back to the app reads again quietly: a failed pass keeps the
+    /// list on screen (11/5). A pull or 「もう一度読み込む」 says it failed.
+    func reload(reportsFailure: Bool = false) async {
         let token = UUID()
         request = token
         do {
@@ -29,8 +31,7 @@ final class PhotoMemoryNoteLibraryPresentation: ObservableObject {
             isLoaded = true
         } catch {
             guard request == token, !Task.isCancelled else { return }
-            records = []
-            failed = true
+            if reportsFailure || !isLoaded { failed = true }
             isLoaded = true
         }
     }
@@ -190,7 +191,7 @@ struct PhotoMemoryNotesListView: View {
                 if library.failed {
                     Section {
                         Label("このiPhoneのメモを読み込めませんでした", systemImage: "exclamationmark.circle")
-                        Button("もう一度読み込む") { Task { await library.reload() } }
+                        Button("もう一度読み込む") { Task { await library.reload(reportsFailure: true) } }
                     }
                 }
                 if !library.isLoaded {
@@ -280,7 +281,7 @@ struct PhotoMemoryNotesListView: View {
             .padding(.horizontal, 8)
             .background(Color(.systemGroupedBackground))
         }
-        .refreshable { await library.reload() }
+        .refreshable { await library.reload(reportsFailure: true) }
         .navigationTitle(isEmbedded ? "写真" : "メモあり")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { readingToolbar }
@@ -464,7 +465,7 @@ struct PhotoMemoryNoteDetailView: View {
                 } description: {
                     Text("少し待ってから、もう一度お試しください。")
                 } actions: {
-                    Button("もう一度読み込む") { Task { await reload() } }
+                    Button("もう一度読み込む") { Task { await reload(reportsFailure: true) } }
                 }
             } else if let record {
                 PhotoMemoDetailContent(text: record.note.text,
@@ -506,10 +507,10 @@ struct PhotoMemoryNoteDetailView: View {
         .navigationTitle("メモ")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { detailToolbar }
-        .sheet(isPresented: $editing, onDismiss: { Task { await reload() } }) {
+        .sheet(isPresented: $editing, onDismiss: { Task { await reload(reportsFailure: true) } }) {
             if let record {
                 PhotoMemoryNoteEditor(record: record, photo: access.photo(for: record.photoIdentifier), store: store) {
-                    Task { await reload() }
+                    Task { await reload(reportsFailure: true) }
                 }
             }
         }
@@ -583,7 +584,9 @@ struct PhotoMemoryNoteDetailView: View {
         return .shared
     }
 
-    private func reload() async {
+    /// Coming back to the app reads again quietly: a failed pass keeps the
+    /// open memo on screen (11/5). The person's own reload says it failed.
+    private func reload(reportsFailure: Bool = false) async {
         let token = UUID()
         request = token
         do {
@@ -596,8 +599,10 @@ struct PhotoMemoryNoteDetailView: View {
             loaded = true
         } catch {
             guard request == token, !Task.isCancelled else { return }
-            record = nil
-            failed = true
+            if reportsFailure || !loaded {
+                record = nil
+                failed = true
+            }
             loaded = true
         }
     }
@@ -658,10 +663,15 @@ struct PhotoMemoryNotePhotoDestination<PhotoContent: View>: View {
         .onDisappear { access.stop() }
     }
 
+    /// A failed read keeps the photo already on screen (11/5: coming back to
+    /// the app emptied it).
     private func reload() async {
-        savedPhotoURL = try? await store.photoURL(for: recordID)
-        let value = try? await store.record(id: recordID)
+        var url = savedPhotoURL
+        var value = record
+        do { url = try await store.photoURL(for: recordID) } catch {}
+        do { value = try await store.record(id: recordID) } catch {}
         guard !Task.isCancelled else { return }
+        savedPhotoURL = url
         record = value
         loaded = true
     }

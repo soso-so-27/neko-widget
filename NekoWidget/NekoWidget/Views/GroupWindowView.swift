@@ -1114,6 +1114,11 @@ private struct GroupLibraryDeliveryStep: View {
     @State private var checked = false
     @State private var memo = ""
 
+    private var unavailableReason: String {
+        model.isPaused ? GroupWindowPresentation.message(for: GroupSubscriptionError.windowPaused)
+            : "このまどには、いま写真を届けられません。"
+    }
+
     var body: some View {
         Group {
             if model.sendCompleted {
@@ -1157,10 +1162,12 @@ private struct GroupLibraryDeliveryStep: View {
                     .accessibilityIdentifier("group-library-delivery-send")
                     .padding().background(.regularMaterial)
                 }
-            } else if checked, let message = model.message {
+            } else if checked {
+                // A window that cannot take photos (paused, closed, left) says
+                // so instead of checking forever (11/5).
                 ContentUnavailableView {
                     Label("届けられません", systemImage: "exclamationmark.triangle")
-                } description: { Text(message) } actions: {
+                } description: { Text(model.message ?? unavailableReason) } actions: {
                     Button("閉じる", action: close)
                 }
             } else {

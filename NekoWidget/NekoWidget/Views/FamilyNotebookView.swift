@@ -78,7 +78,9 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     /// Called after a service pass, including a failed network pass when a
     /// retained local copy is available. No prototype store is consulted.
-    func attachReal(_ service: ProductionFamilyNotebookSharingService) {
+    /// A background pass stays quiet; only a check the person asked for says
+    /// that something could not be read (11/5).
+    func attachReal(_ service: ProductionFamilyNotebookSharingService, reportsFailure: Bool = false) {
         guard isReal else { return }
         if let liveStore = service.notebook { store = liveStore }
         if let author = service.author { realAuthor = author }
@@ -95,8 +97,8 @@ final class FamilyNotebookPrototype: ObservableObject {
             let mappings = try FamilyNotebookCatCareBridge.mappings(for: snapshot,
                 existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []))
             if mappings != snapshot.activeMappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
-            reload(); applyFamilyWrites()
-        } catch { message = "家族の手帳を開けませんでした。少し待ってから、もう一度お試しください。" }
+            reload(); applyFamilyWrites(reportsFailure: reportsFailure)
+        } catch { if reportsFailure { message = "家族の手帳を開けませんでした。少し待ってから、もう一度お試しください。" } }
     }
 
     /// Explicit personal-to-family boundary. Only the selected tool cats and
@@ -361,8 +363,9 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// Puts what someone else wrote into 「この子のこと」, so every tool reads it.
     /// Your own writes are already there. When two people changed an item at
     /// once, the newer one is kept without asking, as in shared Notes; the
-    /// other stays in the item's history.
-    func applyFamilyWrites() {
+    /// other stays in the item's history. Background passes stay quiet: a
+    /// failure is said only when the person asked (11/5: the alert repeated).
+    func applyFamilyWrites(reportsFailure: Bool = false) {
         if isReal {
             guard hasFamily, let snapshot, let care = CatCareStore.shared.state, CatCareStore.shared.canSave else { return }
             do {
@@ -375,9 +378,9 @@ final class FamilyNotebookPrototype: ObservableObject {
                 try CareHandoffStore.shared.receiveFamilyChanges()
                 Task {
                     do { try await VeterinaryVisitStore.shared.receiveFamilyChanges() }
-                    catch { message = "家族が書いた診察メモを取り込めませんでした。少し待ってから、もう一度お試しください。" }
+                    catch { if reportsFailure { message = "家族が書いた診察メモを取り込めませんでした。少し待ってから、もう一度お試しください。" } }
                 }
-            } catch { message = "家族が書いた内容を「この子のこと」に取り込めませんでした。少し待ってから、もう一度お試しください。" }
+            } catch { if reportsFailure { message = "家族が書いた内容を「この子のこと」に取り込めませんでした。少し待ってから、もう一度お試しください。" } }
             return
         }
         guard hasFamily, let snapshot, let care = CatCareStore.shared.state,

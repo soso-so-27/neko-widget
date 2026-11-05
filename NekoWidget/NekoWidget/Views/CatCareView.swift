@@ -203,6 +203,9 @@ struct CatCareDetailView: View {
     @State private var catID: UUID?
     @State private var autosave: Task<Void, Never>?
     @State private var saveFailed = false
+    /// Autosave did not go through. Said once on the screen, not as an alert
+    /// each time typing stops (11/5); the next save that works clears it.
+    @State private var autosaveFailed = false
     @State private var editing: CatCareListEditor?
     @State private var microchipInvalid = false
 
@@ -225,6 +228,15 @@ struct CatCareDetailView: View {
                     Label("開けない記録があるので、いまは保存できません。アプリを最新にしてください。",
                           systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
+                }
+            }
+            if autosaveFailed {
+                Section {
+                    Label("保存できませんでした。", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("cat-care-save-failed")
+                    Button("もう一度") { save() }
+                        .accessibilityIdentifier("cat-care-save-retry")
                 }
             }
             if farewell == nil {
@@ -268,7 +280,7 @@ struct CatCareDetailView: View {
             if phase != .active { autosave?.cancel(); save() }
         }
         .onDisappear { autosave?.cancel(); save() }
-        .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed)
+        .appRecordEditing(retainWhileHidden: draft != savedDraft || editing != nil || saveFailed || autosaveFailed)
         .onChange(of: familyNotebook.familyWritesToCatCare) { _, _ in takeFamilyWrites() }
         .toolbar {
             // The family, at the top right like sharing in Notes, so it is
@@ -608,7 +620,8 @@ struct CatCareDetailView: View {
                         by: state.deviceID, now: Date())
         }
         // What was actually stored: an unfinished chip number stays out of it.
-        if saved { savedDraft = value } else { saveFailed = true }
+        if saved { savedDraft = value }
+        autosaveFailed = !saved
     }
 
     /// The family's writing came into 「この子のこと」 (test builds): show it.

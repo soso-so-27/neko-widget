@@ -2763,9 +2763,15 @@ class GroupWindowUITests(unittest.TestCase):
             self.assertNotIn(forbidden, limits)
 
         # A failed refresh keeps the last known members and requests.
-        load = section(view, "func load() async {", "func createInvitation() async {")
+        load = section(view, "func load(reportsFailure: Bool = true) async {", "func createInvitation() async {")
         self.assertNotIn("window = nil", load)
         self.assertNotIn("pendingRequests = []", load)
+        # 11/5: the 8-second pass stays quiet and waits while a sheet is open.
+        self.assertIn("if reportsFailure || window == nil {", load)
+        self.assertIn("if !presentsSheet { await model.load(reportsFailure: false) }", view)
+        join = section(view, "func refresh(reportsFailure: Bool = false) async {", "func cancel() async {")
+        self.assertIn("if reportsFailure { errorMessage = GroupWindowPresentation.message(for: error) }", join)
+        self.assertIn(".refreshable { await model.refresh(reportsFailure: true) }", view)
 
         # The fixture is DEBUG-only and reached by a launch argument.
         debug = section(view, "// MARK: - DEBUG fixture entry", "#endif")
@@ -3571,7 +3577,7 @@ class GroupWindowAuditFixTests(unittest.TestCase):
         self.assertIn("latest.state == .rotationRequired, latest.canManage", sync)
         self.assertIn("client.rotate(", sync)
         members = source("NekoWidget/Views/GroupWindowSetupView.swift")
-        self.assertIn("try? await client.rotate(", section(members, "    func load() async {", "func createInvitation()"))
+        self.assertIn("try? await client.rotate(", section(members, "    func load(reportsFailure: Bool = true) async {", "func createInvitation()"))
         self.assertIn("func rotate(windowID: String, operation: GroupOperation) async throws -> GroupWindow",
                       source("NekoWidget/Services/GroupWindowContract.swift"))
 
@@ -3665,6 +3671,10 @@ class CatCareOnePlaceTests(unittest.TestCase):
         view = source("NekoWidget/Views/CatCareView.swift")
         save = section(view, "private func save() {", "private func apply(")
         self.assertIn("if saved { savedDraft = value }", save)
+        # 11/5: a failed autosave is one line on the page, not an alert each pause.
+        self.assertIn("autosaveFailed = !saved", save)
+        self.assertNotIn("saveFailed = true", save)
+        self.assertIn('"cat-care-save-retry"', view)
         self.assertIn("guard loadedKey != subject.key else { return }", view)
         self.assertIn('TextField("体重（kg）例：4.2"', view)
         self.assertIn("case let .toolCat(id, name):", view)
