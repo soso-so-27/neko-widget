@@ -1,6 +1,6 @@
 import { ApiError } from './errors';
 
-type ReadRoute = 'billing_entitlement' | 'family_payer';
+type ReadRoute = 'billing_entitlement';
 export type ReadStage = 'routing' | 'retention_guard' | 'billing_gate' | 'rate_limit'
   | 'body' | 'authentication' | 'billing_nonce' | 'entitlement'
   | 'family_gate' | 'family_state' | 'family_authorization'
@@ -14,12 +14,11 @@ const reasons = new Set([
   'billing_retention_unavailable', 'billing_account_unavailable',
 ]);
 
-/** Only two read routes, with no raw URL, identifiers, headers, error text or body. */
+/** Only a fixed ID-free path; provider metadata can include the original pathname. */
 export function beginReadDiagnostic(request: Request): void {
   if (request.method !== 'GET') return;
   const path = new URL(request.url).pathname;
-  const route = path === '/v1/billing/entitlement' ? 'billing_entitlement'
-    : /^\/v3\/family-notebooks\/[A-Za-z0-9_-]{1,128}\/payer$/u.test(path) ? 'family_payer' : null;
+  const route = path === '/v1/billing/entitlement' ? 'billing_entitlement' : null;
   if (route) contexts.set(request, { route, stage: 'routing' });
 }
 export function readStage(request: Request, stage: ReadStage): void {
