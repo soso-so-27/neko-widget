@@ -1,3 +1,4 @@
+import { readStage } from './read-failure-diagnostic';
 import { requireCurrentIdentity,isIdentityDeletionPath } from './group-identity-service';
 import { base64urlDecode, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError } from "./errors";
@@ -20,20 +21,25 @@ export function groupId(value: string): string {
   return value;
 }
 export async function authenticateGroupRequest(request: Request, env: Env,maximumBody=128*1024,reportWindowId?:string): Promise<{actor:GroupActor;body:Uint8Array}> {
+  readStage(request, 'rate_limit');
   await enforceRateLimit(env,env.MEMBER_RATE_LIMITER,transientNetworkKey(request,"group-member"));
+  readStage(request, 'body');
   const body = await readBody(request,maximumBody);
   const now = Math.floor(Date.now()/1000);
   const deviceId = request.headers.get("neko-device-id") ?? "";
   const timestamp = request.headers.get("neko-timestamp") ?? "";
   const nonce = request.headers.get("neko-nonce") ?? "";
   const signature = request.headers.get("neko-signature") ?? "";
+  readStage(request, 'auth_headers');
   if (request.headers.get("neko-protocol-version") !== "3" || !/^[A-Za-z0-9_-]{1,128}$/u.test(deviceId)
       || !Number.isSafeInteger(Number(timestamp)) || String(Number(timestamp)) !== timestamp
       || Math.abs(now-Number(timestamp)) > 300) throw new ApiError(401,"invalid_authentication","Group authentication failed.");
+  readStage(request, 'auth_encoding');
   try { base64urlDecode(nonce,16); base64urlDecode(signature,64); }
   catch { throw new ApiError(401,"invalid_authentication","Group authentication failed."); }
   // Ordinary traffic must work before the additive report migration exists.
   // Only the report router may opt into scoped, expiring report-only access.
+  readStage(request, 'auth_key_lookup');
   const credentialPredicate=reportWindowId===undefined?"d.state='active' AND p.state='active'":
     "((d.state='active' AND p.state='active') OR EXISTS (SELECT 1 FROM group_report_access a WHERE a.device_id=d.id AND a.space_id=? AND a.expires_at>unixepoch()))";
   const credentialQuery = env.DB.prepare(`SELECT d.id AS deviceId,d.person_id AS personId,d.signing_public_key AS signingPublicKey,
@@ -47,13 +53,18 @@ export async function authenticateGroupRequest(request: Request, env: Env,maximu
   const pathname = new URL(request.url).pathname;
   const requestHash = await sha256Base64url(groupFields(["NW3.OPERATION",request.method,pathname,base64urlDecode(bodyHash,32)]));
   const message = groupFields(["NW3.REQUEST","3",deviceId,timestamp,nonce,request.method,pathname,base64urlDecode(bodyHash,32)]);
+  readStage(request, 'auth_signature');
   if (!await verifyEd25519(row.signingPublicKey,signature,message)) throw new ApiError(401,"invalid_authentication","Group authentication failed.");
+  readStage(request, 'auth_identity');
   if(!isIdentityDeletionPath(pathname)) await requireCurrentIdentity(env,row.personId);
+  readStage(request, 'auth_device_rate_limit');
   await enforceRateLimit(env,env.MEMBER_RATE_LIMITER,`group-device:${deviceId}`);
   // Claim after signature validation, before any handler reads or side effects.
   // A rejected/rolled-back handler must not make these signed bytes reusable.
+  readStage(request, 'auth_nonce_cleanup');
   await env.DB.prepare("DELETE FROM group_request_nonces WHERE rowid IN (SELECT rowid FROM group_request_nonces WHERE device_id=? AND expires_at<? LIMIT 100)")
     .bind(deviceId,now).run();
+  readStage(request, 'auth_nonce_claim');
   const claimed = await env.DB.prepare("INSERT INTO group_request_nonces VALUES (?,?,?) ON CONFLICT(device_id,nonce) DO NOTHING RETURNING nonce")
     .bind(deviceId,nonce,now+601).first();
   if (!claimed) throw new ApiError(401,"replay","Group authentication failed.");

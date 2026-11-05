@@ -1,3 +1,4 @@
+import { readStage } from './read-failure-diagnostic';
 import { billingRetentionTransactionSequence, billingRetentionWriteCondition } from './billing-retention-executor';
 import {
   authenticateBillingSignedRequest,
@@ -389,18 +390,24 @@ export async function storeVerifiedTransaction(
 }
 
 export async function getBillingEntitlement(request: Request, env: Env): Promise<Response> {
+  readStage(request, 'billing_gate');
   if ((await loadBillingGate(env)).effective_entitlement_enabled !== 1) {
     throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   }
+  readStage(request, 'rate_limit');
   await enforceRateLimit(
     env,
     env.BILLING_RATE_LIMITER,
     transientNetworkKey(request, "billing-entitlement"),
   );
+  readStage(request, 'body');
   const body = await readBody(request, 0);
   requireEmptyBody(body);
+  readStage(request, 'authentication');
   const account = await authenticateBillingSignedRequest(request, env, body);
+  readStage(request, 'billing_nonce');
   await consumeBillingNonce(env, account);
+  readStage(request, 'entitlement');
   return jsonResponse({
     protocolVersion: BILLING_PROTOCOL_VERSION,
     billingAccountId: account.billingAccountId,

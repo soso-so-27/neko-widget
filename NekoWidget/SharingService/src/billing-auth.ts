@@ -1,3 +1,4 @@
+import { readStage } from './read-failure-diagnostic';
 import { requireBillingAccountNotErasing } from './billing-retention-executor';
 import { base64urlDecode, sha256Base64url, verifyEd25519 } from "./encoding";
 import { ApiError } from "./errors";
@@ -26,6 +27,7 @@ export async function authenticateBillingSignedRequest(
   env: Env,
   body: Uint8Array,
 ): Promise<AuthenticatedBillingAccount> {
+  readStage(request, 'auth_headers');
   if (request.headers.get("neko-billing-protocol-version") !== "1") {
     throw new ApiError(401, "invalid_billing_authentication", "Billing authentication failed.");
   }
@@ -54,6 +56,7 @@ export async function authenticateBillingSignedRequest(
     throw new ApiError(401, "stale_billing_request", "Billing authentication failed.");
   }
 
+  readStage(request, 'auth_key_lookup');
   const key = await env.DB.prepare(
     `SELECT billing_account_id, id AS billing_key_id, signing_public_key
        FROM billing_account_keys
@@ -71,6 +74,7 @@ export async function authenticateBillingSignedRequest(
     pathname: new URL(request.url).pathname,
     bodySHA256: await sha256Base64url(body),
   });
+  readStage(request, 'auth_signature');
   let valid = false;
   try {
     valid = await verifyEd25519(key.signing_public_key, signature, transcript);
@@ -80,6 +84,7 @@ export async function authenticateBillingSignedRequest(
   if (!valid) {
     throw new ApiError(401, "invalid_billing_authentication", "Billing authentication failed.");
   }
+  readStage(request, 'auth_identity');
   await requireOwnerSandboxAccount(env, billingAccountId);
   if(new URL(request.url).pathname!=='/v1/billing/transaction-deletion-requests') await requireBillingAccountNotErasing(env,billingAccountId);
   return { billingAccountId, billingKeyId, nonce, now };
