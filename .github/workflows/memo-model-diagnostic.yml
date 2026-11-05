@@ -97,5 +97,5 @@ jobs:
       - name: Check isolated stores, encrypted sync, membership and private record preservation
         working-directory: NekoWidget
         run: |
-          bash ci/run-family-notebook-checks.sh
+          if [[ "${{ inputs.notebook_network_only }}" != "true" ]]; then bash ci/run-family-notebook-checks.sh; fi
           bash ci/run-family-notebook-network-checks.sh
