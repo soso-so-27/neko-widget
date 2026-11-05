@@ -117,7 +117,7 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
         case .membershipLinkConflict: "すでにほかのアカウントやPlusと連携されているため、変更できません。購入し直さずに、サポートにお問い合わせください。保存した記録はこれまでどおり使えます。"
         case .membershipLinkExpired: "時間がたったため、連携できませんでした。もう一度「Plusを連携する」を押してください。"
         case .billingIdentityUnavailable: "このiPhoneのPlusの購入情報を確認できません。購入し直さずに、サポートにお問い合わせください（購入情報の引き継ぎが必要なことがあります）。保存した記録はこれまでどおり使えます。"
-        case .billingIdentityChanged: "購入情報が変わったため、途中で止まりました。「購入状況を再確認」を押してから、やり直してください。"
+        case .billingIdentityChanged: "購入情報が変わったため、途中で止まりました。「購入を復元」を押してから、やり直してください。"
         }
     }
 }

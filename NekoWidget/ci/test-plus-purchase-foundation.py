@@ -1,5 +1,6 @@
 from pathlib import Path
 import plistlib
+import re
 import unittest
 
 
@@ -332,6 +333,59 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("if isMember {", view)
         self.assertLess(view.index("if isMember {"), view.index("Text(offer.afterTrialText ?? offer.priceText)"))
         self.assertIn(".disabled(isWorking || !canPurchase || offer == nil)", view)
+
+    def test_restore_is_one_button_that_also_rechecks(self) -> None:
+        # 11/5: 「購入状況を再確認」 and 「購入を復元」 are one button, 「購入を復元」.
+        for path in sorted((ROOT / "NekoWidget").rglob("*.swift")):
+            self.assertNotIn("購入状況を再確認", path.read_text(encoding="utf-8"), str(path))
+        for identifier in ("membership-offer-refresh", "membership-restore-refresh",
+                           "settings-membership-recheck", "app-record-membership-recheck"):
+            for path in sorted((ROOT / "NekoWidget").rglob("*.swift")):
+                self.assertNotIn(f'"{identifier}"', path.read_text(encoding="utf-8"), str(path))
+        model = source("NekoWidget/Services/MembershipOfferModel.swift")
+        restore = section(model, "    func restore() async -> MembershipOfferActionResult", "    private func apply(")
+        # The re-check comes first and a confirmed member skips AppStore.sync.
+        self.assertLess(restore.index("await recheckConfirmsMembership()"), restore.index("await restoreAction()"))
+        recheck = section(restore, "private func recheckConfirmsMembership()", "static func restoreForAnotherScreen()")
+        self.assertIn("await purchases.refreshAfterForegroundEntry()", recheck)
+        self.assertIn("purchases.entitlementState.permitsPersonalPlus", recheck)
+        self.assertNotIn("restoreAction", recheck)
+        self.assertNotIn("purchaseAction", recheck)
+        self.assertIn("await model.restore()", section(model, "static func restoreForAnotherScreen()", "    private func apply("))
+        # Settings: the unknown state's one row is the restore, and restore
+        # stays reachable while launch is still checking.
+        settings = section(model, "struct PlusSettingsSection: View {", "private func refreshMembership()")
+        unknown = section(settings, "case .unknown:", "case .checking:")
+        self.assertIn('SettingsActionRow("購入を復元"', unknown)
+        self.assertIn("showsRestore = true", unknown)
+        self.assertIn('.accessibilityIdentifier("settings-membership-restore")', unknown)
+        self.assertIn("if status == .notMember || status == .checking {", settings)
+        # The restore sheet and the Plus sheet carry the one restore button only.
+        sheet = section(source("NekoWidget/Services/MembershipAccessContext.swift"),
+                        "struct MembershipRestoreSheet: View {", "private struct MembershipFeatureGate")
+        self.assertEqual(sheet.count("Button("), 2, "購入を復元 and 閉じる only")
+        self.assertIn("await model.restore()", sheet)
+        self.assertNotIn("model.refresh()", sheet)
+        # Saving screens: the same restore, then that screen's Plus check.
+        coordinator = source("NekoWidget/Services/ManagedPreservationCoordinator.swift")
+        restore_membership = section(coordinator, "func restoreMembership()", "func checkNoticeContact()")
+        self.assertLess(restore_membership.index("await MembershipOfferModel.restoreForAnotherScreen()"),
+                        restore_membership.index("self.checkMembership()"))
+        # A Plus check still running never disables the restore.
+        self.assertIn("guard isSignedIn, !membershipRestoring, let owner = authenticatedOwnerID else { return }",
+                      restore_membership)
+        view = source("NekoWidget/Views/ManagedPreservationView.swift")
+        self.assertEqual(view.count('Button("購入を復元") { coordinator.restoreMembership() }'), 2)
+        self.assertEqual(len(re.findall(
+            r'Button\("購入を復元"\) \{ coordinator\.restoreMembership\(\) \}\n'
+            r'(?:\s*\.accessibilityIdentifier\("[^"]+"\)\n)?\s*\.disabled\(coordinator\.membershipRestoring\)', view)), 2)
+        # A connection failure keeps its own retry: never an Apple sign-in.
+        retry = section(view, "} else if coordinator.membership == nil {", "} else if coordinator.membership?.canSave != true {")
+        self.assertIn('Button("もう一度確認") { coordinator.checkMembership() }', retry)
+        self.assertNotIn("restoreMembership", retry)
+        self.assertIn("「もう一度確認」を押してから", coordinator)
+        persistence = source("NekoWidget/Services/AppRecordPersistence.swift")
+        self.assertIn('Button("購入を復元") { authentication.restoreMembership() }', persistence)
 
     def test_new_purchase_presentation_never_uses_network_failure_or_incomplete_identity_as_fresh(self) -> None:
         reconcile = section(self.store, "private func performCurrentEntitlementReconciliation()", "@discardableResult")

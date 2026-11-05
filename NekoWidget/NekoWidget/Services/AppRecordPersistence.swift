@@ -1453,9 +1453,9 @@ struct AppRecordSettingsView: View {
                 // This iPhone has Plus; the saving side has not caught up yet (11/5).
                 Label("Plusを確認しています", systemImage: "arrow.clockwise.icloud")
                     .accessibilityIdentifier("app-record-save-status")
-                Button("購入状況を再確認") { authentication.checkMembership() }
-                    .disabled(authentication.membershipLoading)
-                    .accessibilityIdentifier("app-record-membership-recheck")
+                Button("購入を復元") { authentication.restoreMembership() }
+                    .disabled(authentication.membershipRestoring)
+                    .accessibilityIdentifier("app-record-membership-restore")
             } else if plusEnded {
                 Label("止まっています", systemImage: "icloud.slash")
                     .accessibilityIdentifier("app-record-save-status")

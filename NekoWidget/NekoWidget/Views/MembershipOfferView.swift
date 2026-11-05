@@ -251,13 +251,7 @@ struct MembershipOfferView: View {
                     .announcesWhenShown(message)
             }
 
-            if let onRefresh, canRefresh {
-                Button("購入状況を再確認", action: onRefresh)
-                    .frame(minHeight: 44)
-                    .disabled(isWorking || !canRefresh)
-                    .accessibilityIdentifier("membership-offer-refresh")
-            }
-
+            // No separate re-check: 「購入を復元」 below does both (11/5).
             if let onManageSubscription, isMember || canRefresh {
                 Button("サブスクリプションを管理", action: onManageSubscription)
                     .frame(minHeight: 44)
