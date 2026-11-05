@@ -1324,9 +1324,6 @@ private struct GroupPhotoDetail: View {
                         Button("このiPhoneから消す", systemImage: "trash", role: .destructive) {
                             showsRemoveConfirmation = true
                         }
-                        if let url = SharingAPIConfiguration.current.supportURL {
-                            Link(destination: url) { Label("問い合わせる", systemImage: "exclamationmark.bubble") }
-                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -1748,6 +1745,7 @@ struct GroupWindowListSection: View {
     @StateObject private var model: GroupWindowListModel
     @State private var openedWindowID: String?
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
+    @State private var showsLeftWindowNotice = false
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
     @Environment(\.membershipAccess) private var membershipAccess
 
@@ -1909,7 +1907,14 @@ struct GroupWindowListSection: View {
             // Open only a window this iPhone is still a member of.
             if model.windows.contains(where: { $0.id == requested }) {
                 openedWindowID = requested
+            } else if model.hasLoaded, model.message == nil {
+                // A Widget of a window left or ended: say so, once (E1).
+                // Offline says nothing; the window may still be there.
+                showsLeftWindowNotice = true
             }
+        }
+        .alert("このまどはもうありません", isPresented: $showsLeftWindowNotice) {
+            Button("閉じる", role: .cancel) {}
         }
         .navigationDestination(isPresented: Binding(
             get: { openedWindowID != nil },
@@ -2139,7 +2144,7 @@ struct GroupHiddenMembersView: View {
     }
 }
 
-/// 設定「まどのデータと ID を削除」(A1): one state, one sentence, one button.
+/// 設定「まどと家族の手帳から抜ける」(A1): one state, one sentence, one button.
 struct GroupIdentityDeletionView: View {
     let client: ProductionGroupWindowClient
     @State private var record: GroupIdentityDeletion?
@@ -2152,17 +2157,17 @@ struct GroupIdentityDeletionView: View {
         List {
             Section {
                 if let record, record.completedAt != nil {
-                    Label("削除しました", systemImage: "checkmark.circle")
+                    Label("抜けました", systemImage: "checkmark.circle")
                     Text("この iPhone に届いた写真は「前のまど」に残ります。").foregroundStyle(.secondary)
                 } else if let record, record.acceptedAt != nil {
-                    Label("削除しています", systemImage: "hourglass")
+                    Label("抜けています", systemImage: "hourglass")
                     Text("終わるまで少しかかることがあります。").foregroundStyle(.secondary)
                     Button("確かめる") { Task { await refresh() } }
                         .frame(minHeight: 44)
                         .disabled(working)
                 } else {
                     Text("参加しているまどと家族の手帳から抜け、あなたが届けた写真・ひとこと・ハートと、まどの ID をサーバーから消します。")
-                    Button("まどのデータと ID を削除", role: .destructive) { confirms = true }
+                    Button("まどと家族の手帳から抜ける", role: .destructive) { confirms = true }
                         .frame(minHeight: 44)
                         .disabled(working || !loaded)
                         .accessibilityIdentifier("group-identity-delete")
@@ -2177,13 +2182,13 @@ struct GroupIdentityDeletionView: View {
                 }
             }
         }
-        .confirmationDialog("まどのデータと ID を削除しますか？", isPresented: $confirms, titleVisibility: .visible) {
-            Button("削除する", role: .destructive) { Task { await delete() } }
+        .confirmationDialog("まどと家族の手帳から抜けますか？", isPresented: $confirms, titleVisibility: .visible) {
+            Button("抜ける", role: .destructive) { Task { await delete() } }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("あなたが作ったまども閉じます。メンバーの iPhone に届いた写真は残ります。")
+            Text("あなたが作ったまども終わりになります。メンバーの iPhone に届いた写真は残ります。")
         }
-        .navigationTitle("まどのデータと ID")
+        .navigationTitle("まどと家族の手帳から抜ける")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             record = try? await client.identityDeletion()
