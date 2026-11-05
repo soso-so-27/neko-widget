@@ -145,11 +145,16 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
                 try context.confirmedOutsideFamily()
                 return directory.pendingRequests.isEmpty ? .notInFamily : .pendingApproval
             }
-            let members = try await context.admission.members(family.familyID)
+            // Both reads use fresh signed requests. Validate the combined generation
+            // before activation; concurrent reads never authorize stale membership.
+            async let memberRead = context.admission.members(family.familyID)
+            async let payerRead = context.membership.loadPayer(familyID: family.familyID, minimumGeneration: family.generation)
+            let members = try await memberRead
             guard members.generation >= family.generation,
                   let own = members.members.first(where: { $0.personID == context.identity.personID }),
                   own.identityPublicKey == context.identity.personPublicKey else { throw FamilyNotebookTransportError.invalidResponse }
-            let state = try await context.membership.loadPayer(familyID: family.familyID, minimumGeneration: members.generation)
+            let state = try await payerRead.validated(family: family.familyID.uuidString.lowercased(),
+                person: context.identity.personID, minimumGeneration: members.generation)
             let store = try context.activate(family: family.familyID, admittedGeneration: own.admittedGeneration)
             currentFamilyID = family.familyID; lastMembers = members.members
             // Paused sharing still has a real membership and a retained local
