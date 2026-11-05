@@ -855,7 +855,15 @@ SOLO_AUTOMATIC_RESTORE_METHODS = (
     "testAutomaticRestoreProtectsUnsavedMemoDraft",
     "testAutomaticRestoredShowcaseWithoutPhotoAccess",
 )
+SOLO_FAMILY_MEMBERSHIP_METHODS = (
+    "testFamilyNotebookUnshareRequiresConfirmation",
+    "testMembershipRestoreFailureStaysVisible",
+    "testRestorationDoesNotRequireProductCatalog",
+)
 SOLO_ADDITIONAL_TEST_METHODS = {
+    "testFamilyNotebookUnshareRequiresConfirmation": 0,
+    "testMembershipRestoreFailureStaysVisible": 0,
+    "testRestorationDoesNotRequireProductCatalog": 1,
     "testToolBackupRestoresPrivateCopiesWithoutPhotoLibraryIdentity": 1,
     "testAutomaticRestoreProtectsUnsavedMemoDraft": 0,
     "testAutomaticRestoredShowcaseWithoutPhotoAccess": 1,
@@ -3955,13 +3963,13 @@ def solo_test_methods(source: str) -> tuple[str, ...]:
         complete = tuple(sorted(complete + (foreground,)))
     # Admit the unchanged main source while the product tests land separately.
     # A missing probe in any other source, including partial additions, fails.
-    before_partitioned = tuple(name for name in complete if name != SOLO_PARTITIONED_RECORDS_METHOD)
+    before_partitioned = tuple(name for name in complete if name != SOLO_PARTITIONED_RECORDS_METHOD and name not in SOLO_FAMILY_MEMBERSHIP_METHODS)
     before_automatic = tuple(name for name in before_partitioned if name not in SOLO_AUTOMATIC_RESTORE_METHODS)
     # Keep the pre-retirement snapshots tied to their original digest. The
     # removed method was last, so no surviving base method changes its shard.
     historical_base = tuple(sorted(SOLO_TEST_METHODS + SOLO_RETIRED_METHODS))
     historical_complete = tuple(sorted(
-        tuple(name for name in complete if name not in SOLO_SAVE_PROBE_METHODS)
+        tuple(name for name in complete if name not in SOLO_SAVE_PROBE_METHODS + SOLO_FAMILY_MEMBERSHIP_METHODS)
         + SOLO_RETIRED_METHODS))
     historical_partitioned = tuple(name for name in historical_complete if name != SOLO_PARTITIONED_RECORDS_METHOD)
     historical_automatic = tuple(name for name in historical_partitioned if name not in SOLO_AUTOMATIC_RESTORE_METHODS)
