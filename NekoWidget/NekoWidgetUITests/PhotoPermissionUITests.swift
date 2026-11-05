@@ -3437,6 +3437,39 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testRestorationDoesNotRequireProductCatalog() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--membership-offer-ui-fixture", "--membership-restore-without-catalog"]
+        app.launch()
+        let open = app.buttons["membership-preview-open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        open.tap()
+        let restore = app.buttons["membership-restore-submit"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 5))
+        XCTAssertTrue(restore.isEnabled)
+        XCTAssertFalse(app.buttons["membership-offer-purchase"].exists)
+        let message = app.staticTexts["membership-restore-message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertFalse(message.label.contains("料金"))
+        XCTAssertTrue(app.buttons["membership-restore-refresh"].isEnabled)
+        restore.tap()
+        let failure = NSPredicate(format: "label CONTAINS %@", "Appleの購入情報を同期できませんでした")
+        expectation(for: failure, evaluatedWith: message)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(restore.isEnabled)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "restore-without-product-catalog"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        // A successful restore closes the real sheet even with no catalog.
+        restore.tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertTrue(open.isHittable)
+        XCTAssertFalse(restore.exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testMembershipRestoreFailureStaysVisible() {
         let app = XCUIApplication()
         app.launchArguments = ["--membership-offer-ui-fixture", "--membership-restore-apple-failure"]

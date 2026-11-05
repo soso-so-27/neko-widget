@@ -167,7 +167,11 @@ struct MembershipAccessNotice: View {
 
 struct MembershipRestoreSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var model = MembershipOfferModel.live()
+    @StateObject private var model: MembershipOfferModel
+
+    init(model: MembershipOfferModel = .live(presentsOffer: false)) {
+        _model = StateObject(wrappedValue: model)
+    }
 
     var body: some View {
         NavigationStack {
@@ -178,8 +182,16 @@ struct MembershipRestoreSheet: View {
                         if await model.restore() == .completed { dismiss() }
                     }
                 }.buttonStyle(.borderedProminent).disabled(!model.canRestore)
+                    .accessibilityIdentifier("membership-restore-submit")
+                if model.canRefresh {
+                    Button("購入状況を再確認") { Task { await model.refresh() } }
+                        .accessibilityIdentifier("membership-restore-refresh")
+                }
                 if model.isWorking { ProgressView() }
-                if let message = model.message { Text(message).font(.footnote) }
+                if let message = model.message {
+                    Text(message).font(.footnote)
+                        .accessibilityIdentifier("membership-restore-message")
+                }
             }.padding().navigationTitle("購入を復元").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
         }.task { await model.load() }

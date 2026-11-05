@@ -315,7 +315,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
     def test_offer_observes_shared_authority_without_enabling_unknown_or_active_purchase(self) -> None:
         model = source("NekoWidget/Services/MembershipOfferModel.swift")
         view = source("NekoWidget/Views/MembershipOfferView.swift")
-        live_factory = section(model, "static func live()", "func refresh() async")
+        live_factory = section(model, "static func live(", "func refresh() async")
         self.assertIn("PlusPurchaseStore.productionShared", live_factory)
         self.assertIn("store.objectWillChange.sink", live_factory)
         self.assertNotIn("PlusPurchaseStore()", model)

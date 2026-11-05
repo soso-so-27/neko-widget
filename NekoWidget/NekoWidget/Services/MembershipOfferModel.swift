@@ -192,6 +192,7 @@ final class MembershipOfferModel: ObservableObject {
 
     var canRefresh: Bool { !isWorking && !isMember && (verificationRequired || isWaiting) }
     let isPreview: Bool
+    private let presentsOffer: Bool
     private var hasLoaded = false
     private let loadAction: () async -> MembershipOfferPresentation?
     private let prepareOfferAction: () async -> Void
@@ -215,12 +216,14 @@ final class MembershipOfferModel: ObservableObject {
 
     private init(
         isPreview: Bool,
+        presentsOffer: Bool = true,
         load: @escaping () async -> MembershipOfferPresentation?,
         prepareOffer: @escaping () async -> Void = {},
         purchase: @escaping (MembershipOfferPresentation) async -> MembershipOfferActionResult,
         restore: @escaping () async -> MembershipOfferActionResult
     ) {
         self.isPreview = isPreview
+        self.presentsOffer = presentsOffer
         loadAction = load
         prepareOfferAction = prepareOffer
         purchaseAction = purchase
@@ -232,6 +235,9 @@ final class MembershipOfferModel: ObservableObject {
     func load() async {
         guard !hasLoaded else { return }
         hasLoaded = true
+        // Restoring an existing purchase does not need a product quote. The
+        // dedicated restore sheet has no price field or purchase action.
+        guard presentsOffer else { updateMembershipState(); return }
         isWorking = true
         await prepareOfferAction()
         await reloadOfferPresentation()
@@ -294,11 +300,12 @@ final class MembershipOfferModel: ObservableObject {
         }
     }
 
-    static func live() -> MembershipOfferModel {
+    static func live(presentsOffer: Bool = true) -> MembershipOfferModel {
         let store = PlusPurchaseStore.productionShared
         let client = MembershipStoreKitClient(purchases: store)
         let model = MembershipOfferModel(
             isPreview: false,
+            presentsOffer: presentsOffer,
             load: { await client.load() },
             prepareOffer: { await store.refreshProductsForOffer() },
             purchase: { await client.purchase(presentedOffer: $0) },
@@ -310,7 +317,7 @@ final class MembershipOfferModel: ObservableObject {
             Task { @MainActor in
                 guard let model else { return }
                 model.updateMembershipState()
-                if model.observedCatalogRevision != store.productCatalogRevision {
+                if model.presentsOffer && model.observedCatalogRevision != store.productCatalogRevision {
                     model.observedCatalogRevision = store.productCatalogRevision
                     await model.reloadOfferPresentation()
                 }
@@ -466,6 +473,20 @@ final class MembershipOfferModel: ObservableObject {
 
 #endif
 #if DEBUG
+    static func restorationWithoutCatalogPreview() -> MembershipOfferModel {
+        var attempts = 0
+        let model = MembershipOfferModel(isPreview: true, presentsOffer: false,
+            load: { nil },
+            purchase: { _ in .unavailable },
+            restore: {
+                attempts += 1
+                return attempts == 1 ? .restoreFailed(.appleConfirmation) : .completed
+            })
+        model.fixtureStatus = .unknown
+        model.updateMembershipState()
+        return model
+    }
+
     /// Deterministic rendering regression for a quote changing between display
     /// and an explicit tap. No StoreKit, identity, or network is involved.
     static func catalogRefreshPreview() -> MembershipOfferModel {
@@ -891,13 +912,25 @@ struct MembershipOfferPreviewView: View {
         .sheet(isPresented: Binding(get: { offerContext != nil },
                                     set: { if !$0 { offerContext = nil } })) {
             if let offerContext {
-                MembershipOfferSheet(model: previewModel, context: offerContext) { result in
-                    self.offerContext = nil
-                    resultText = result == .completed
-                        ? "確認を終えて、元の画面に戻りました。契約は変更していません。"
-                        : "取り消して、元の画面に戻りました。"
+#if DEBUG
+                if CommandLine.arguments.contains("--membership-restore-without-catalog") {
+                    MembershipRestoreSheet(model: .restorationWithoutCatalogPreview())
+                } else {
+                    offerSheet(offerContext)
                 }
+#else
+                offerSheet(offerContext)
+#endif
             }
+        }
+    }
+
+    private func offerSheet(_ offerContext: PlusOfferContext) -> some View {
+        MembershipOfferSheet(model: previewModel, context: offerContext) { result in
+            self.offerContext = nil
+            resultText = result == .completed
+                ? "確認を終えて、元の画面に戻りました。契約は変更していません。"
+                : "取り消して、元の画面に戻りました。"
         }
     }
 
