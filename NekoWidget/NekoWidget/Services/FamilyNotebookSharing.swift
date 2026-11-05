@@ -29,11 +29,20 @@ final class FamilyNotebookSharing: ObservableObject {
         guard !refreshing else { return }
         refreshing = true; defer { refreshing = false }
         do {
-            state = try await service.loadState()
-            pause = state.membership == nil ? nil : try await service.loadPause()
+            let loaded = try await service.loadState()
+            // A further pass of a notebook already on screen (more history, a
+            // key rotation) keeps it there instead of flipping to 「準備しています」
+            // and back every few seconds (11/5: the open notebook jolted).
+            let syncing = loaded == .waitingForKeys && state.membership != nil
+            let next = syncing ? state : loaded
+            let nextPause = next.membership == nil ? nil : syncing ? pause : try await service.loadPause()
+            // Unchanged values are not published again, so the list is not redrawn.
+            if next != state { state = next }
+            if nextPause != pause { pause = nextPause }
             if let real = service as? ProductionFamilyNotebookSharingService {
                 FamilyNotebookPrototype.shared.attachReal(real)
-                requests = state.membership == nil ? [] : try await real.pendingRequests()
+                let nextRequests = next.membership == nil ? [] : syncing ? requests : try await real.pendingRequests()
+                if nextRequests != requests { requests = nextRequests }
             }
         } catch is CancellationError {
             // Leaving the screen is not a service failure.

@@ -177,7 +177,9 @@ final class FamilyNotebookPrototype: ObservableObject {
     }
 
     private func reload() {
-        do { snapshot = try store?.snapshot() }
+        // Each background pass reads the notebook again; the same one is not
+        // published again, so the open list is not redrawn for nothing (11/5).
+        do { let next = try store?.snapshot(); if next != snapshot { snapshot = next } }
         catch { message = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。" }
     }
 
@@ -683,11 +685,12 @@ struct FamilyNotebookView: View {
     }
     @ToolbarContentBuilder private var closeToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
-        // Only notebooks of a family this iPhone left; the current one is the
-        // screen itself (11/5: 「保存した手帳」 read as a history of this one).
+        // Only notebooks of a family this iPhone left or that ended; the current
+        // one is the screen itself (11/5: 「保存した手帳」 read as a history of
+        // this one, and 「前の手帳」 gave no rule for what is in it).
         if !formerCopies.isEmpty {
             ToolbarItem(placement: .primaryAction) {
-                NavigationLink("前の手帳") { FamilyNotebookSavedCopiesView(excludedFamilyID: model.snapshot?.familyID) }
+                NavigationLink("共有が終わった手帳") { FamilyNotebookSavedCopiesView(excludedFamilyID: model.snapshot?.familyID) }
             }
         }
     }
@@ -1491,8 +1494,19 @@ struct FamilyNotebookCatSelectionView: View {
                 }
             }
             .navigationTitle("追加する猫を選ぶ")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) } }
-            .alert("共有できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) }
+                // The action says what the title asks for (11/5: 「家族と共有する」
+                // under 「追加する猫を選ぶ」 read as a different step).
+                if shown?.isEmpty == false {
+                    ToolbarItem(placement: .confirmationAction) {
+                        if saving { ProgressView() }
+                        else { Button("追加", action: add).disabled(selected.isEmpty || !care.canSave) }
+                    }
+                }
+            }
+            .alert("追加できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
                 message: { Text("少し待ってから、もう一度お試しください。") }
         }
         .onAppear { if shown == nil { shown = available } }
@@ -1509,16 +1523,18 @@ struct FamilyNotebookCatSelectionView: View {
             } footer: {
                 Text("選んだ猫の「この子のこと」と、病院・預けるときに書いたことを家族と共有します。")
             }
-            Button(saving ? "共有しています…" : "家族と共有する") {
-                saving = true
-                Task {
-                    do {
-                        try await model.sharePersonalCats(selected)
-                        await FamilyNotebookSharing.shared.refresh(); dismiss()
-                    } catch { failed = true }
-                    saving = false
-                }
-            }.disabled(saving || selected.isEmpty || !care.canSave)
+        }
+        .disabled(saving)
+    }
+
+    private func add() {
+        saving = true
+        Task {
+            do {
+                try await model.sharePersonalCats(selected)
+                await FamilyNotebookSharing.shared.refresh(); dismiss()
+            } catch { failed = true }
+            saving = false
         }
     }
 }
@@ -1576,11 +1592,11 @@ private struct FamilyNotebookSavedCopiesView: View {
     var body: some View {
         List {
             Section {
-                if failed { Text("前の手帳を読み込めませんでした。") }
-                else if copies.isEmpty { Text("前の手帳はありません。") }
+                if failed { Text("読み込めませんでした。") }
+                else if copies.isEmpty { Text("共有が終わった手帳はありません。") }
                 ForEach(copies) { copy in
                     NavigationLink {
-                        FamilyNotebookSavedCopyView(copy: copy)
+                        FamilyNotebookSavedCopyView(copy: copy, title: title(copy.snapshot))
                     } label: {
                         VStack(alignment: .leading) {
                             Text(title(copy.snapshot))
@@ -1592,7 +1608,7 @@ private struct FamilyNotebookSavedCopiesView: View {
                 }
             }
         }
-        .navigationTitle("前の手帳")
+        .navigationTitle("共有が終わった手帳")
         .task {
             do { copies = try FamilyNotebookBackup.copies().filter { $0.state.familyID != excludedFamilyID } }
             catch { failed = true }
@@ -1609,6 +1625,8 @@ private struct FamilyNotebookSavedCopiesView: View {
 
 private struct FamilyNotebookSavedCopyView: View {
     let copy: FamilyNotebookBackup.Copy
+    /// The cats' names, as in the list it was opened from.
+    let title: String
     var body: some View {
         List {
             Section {
@@ -1626,7 +1644,7 @@ private struct FamilyNotebookSavedCopyView: View {
                     }.textSelection(.enabled)
                 }
             }
-        }.navigationTitle("手帳の控え")
+        }.navigationTitle(title)
     }
 }
 
