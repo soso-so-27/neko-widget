@@ -78,7 +78,7 @@ describe('bounded read failure diagnostics', () => {
     expect(limited.status).toBe(429);
     expect(warn).not.toHaveBeenCalled();
   });
-  it('records payer replay separately from invalid authentication, without a family or device ID', async () => {
+  it('never logs payer authentication errors or exceptions on an ID-bearing path', async () => {
     const p = await person(), family = crypto.randomUUID();
     await db.prepare('UPDATE family_notebook_runtime_gate SET enabled=1 WHERE singleton=1').run();
     const enabled = { ...settings, FAMILY_NOTEBOOK_API_RUNTIME_ENABLED: 'YES', FAMILY_NOTEBOOK_PAYER_RUNTIME_ENABLED: 'YES' } as Env;
@@ -88,11 +88,14 @@ describe('bounded read failure diagnostics', () => {
     expect(first.status).toBe(404); // No family: valid authentication already consumed the nonce.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect((await response(new Request(request.url, { headers: request.headers }), enabled)).status).toBe(401);
-    expect(JSON.parse(warn.mock.calls[0]![0] as string)).toEqual({ event: 'neko_read_failure_v1',
-      route: 'family_payer', stage: 'auth_nonce_claim', status: 401, reason: 'replay' });
-    warn.mockClear();
+    expect(warn).not.toHaveBeenCalled();
     expect((await response(new Request('https://example.invalid'+url), enabled)).status).toBe(401);
-    expect(JSON.parse(warn.mock.calls[0]![0] as string)).toMatchObject({ stage: 'auth_headers', reason: 'invalid_authentication' });
+    const failure = await response(new Request('https://example.invalid'+url), {
+      ...enabled, BILLING_TRANSACTION_RETENTION_REQUIRED: 'YES',
+      MEDIA: { get: async () => { throw new Error('SECRET '+family); } } as unknown as R2Bucket,
+    } as Env);
+    expect(failure.status).toBeGreaterThanOrEqual(500);
+    expect(warn).not.toHaveBeenCalled();
     expect(JSON.stringify(warn.mock.calls)).not.toContain(family);
     expect(JSON.stringify(warn.mock.calls)).not.toContain(p.deviceId);
   });
