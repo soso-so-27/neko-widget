@@ -2,6 +2,15 @@ name: Private memo model diagnostic
 
 on:
   workflow_dispatch:
+    inputs:
+      notebook_models:
+        description: Run isolated family notebook models only
+        type: boolean
+        default: false
+      notebook_network_only:
+        description: Preserve successful model checks and run only family transport/service probes
+        type: boolean
+        default: false
   push:
     branches: ['diagnostic/memo-veterinary-*']
     paths:
@@ -55,7 +64,7 @@ jobs:
           if-no-files-found: warn
 
   personal-store:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.notebook_models
     name: Personal store concurrency probe - not release evidence
     runs-on: macos-15
     timeout-minutes: 5
@@ -73,3 +82,20 @@ jobs:
             Shared/Storage/PersonalRediscoveryStore.swift ci/verify-personal-rediscovery.swift \
             -o "$RUNNER_TEMP/verify-personal-rediscovery"
           "$RUNNER_TEMP/verify-personal-rediscovery"
+
+  family-notebook:
+    if: github.event_name == 'workflow_dispatch' && inputs.notebook_models
+    name: Family notebook model probe - not release evidence
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check isolated stores, encrypted sync, membership and private record preservation
+        working-directory: NekoWidget
+        run: |
+          if [[ "${{ inputs.notebook_network_only }}" != "true" ]]; then bash ci/run-family-notebook-checks.sh; fi
+          bash ci/run-family-notebook-network-checks.sh

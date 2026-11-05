@@ -4,7 +4,7 @@ import Foundation
 /// matching, household contact, photo transfer or membership claim lives here.
 enum FamilyNotebookToolBridge {
     static func linked(_ tool: UUID?, _ profile: UUID?, in snapshot: FamilyNotebookSnapshot) -> Bool {
-        snapshot.mappings.contains { $0.recordID == nil &&
+        snapshot.activeMappings.contains { $0.recordID == nil &&
             ((tool != nil && $0.toolCatID == tool) || (profile != nil && $0.profileID == profile)) }
     }
     static func selected(_ plan: CareHandoffPlan, snapshot: FamilyNotebookSnapshot) -> CareHandoffPlan {
@@ -19,7 +19,7 @@ enum FamilyNotebookToolBridge {
     }
     static func changes(before: FamilyNotebookMigrationSource, after: FamilyNotebookMigrationSource,
                         snapshot: FamilyNotebookSnapshot, now: Date = Date()) throws -> FamilyNotebookImportPlan {
-        let next = try FamilyNotebookMigration.prepare(source: after, familyID: snapshot.familyID, mappings: snapshot.mappings, now: now).plan
+        let next = try FamilyNotebookMigration.prepare(source: after, familyID: snapshot.familyID, mappings: snapshot.activeMappings, now: now).plan
         let old = try FamilyNotebookMigration.prepare(source: before, familyID: snapshot.familyID, mappings: next.mappings, now: now).plan
         let previous = Dictionary(uniqueKeysWithValues: old.entries.map { ($0.target,$0) })
         let current = Dictionary(uniqueKeysWithValues: next.entries.map { ($0.target,$0) })
@@ -47,7 +47,7 @@ enum FamilyNotebookToolBridge {
         return UUID(uuidString: String(source.dropFirst(prefix.count)))
     }
     static func mappings(_ snapshot: FamilyNotebookSnapshot, makeID: () -> UUID = UUID.init) throws -> [FamilyNotebookLocalMapping] {
-        var result = snapshot.mappings
+        var result = snapshot.activeMappings
         for collection in [FamilyNotebookCollection.handoff,.visit] {
             let prefix = collection == .handoff ? "migration:v1:handoff:" : "migration:v1:visit:"
             for cat in Set(snapshot.operations.map { $0.target.familyCatID }).sorted(by: { $0.uuidString < $1.uuidString }) {
@@ -102,9 +102,9 @@ enum FamilyNotebookToolBridge {
 
     static func apply(_ snapshot: FamilyNotebookSnapshot, to original: CareHandoffPlan) throws -> CareHandoffPlan {
         var plan = original
-        for mapping in snapshot.mappings {
+        for mapping in snapshot.activeMappings {
             guard let record = mapping.recordID, let id = localID(mapping.sourceKey, prefix: "migration:v1:handoff:"),
-                  let catMapping = snapshot.mappings.first(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.toolCatID != nil }),
+                  let catMapping = snapshot.activeMappings.first(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.toolCatID != nil }),
                   let tool = catMapping.toolCatID else { continue }
             let values = Values(snapshot: snapshot, cat: mapping.familyCatID, collection: .handoff, record: record)
             var cat = plan.cats.first { $0.id == id } ?? CareCat(id: id, toolCatID: tool, meals: [])
@@ -134,7 +134,7 @@ enum FamilyNotebookToolBridge {
             guard let status = CareCat.HealthStatus(rawValue: health.isEmpty ? "unknown" : health) else { throw FamilyNotebookError.invalidValue }
             cat.healthStatus = status; cat.healthDetails = try values.text(.healthDetails, cat.healthDetails)
             var orders: [UUID:Int] = [:]
-            for child in snapshot.mappings where child.familyCatID == mapping.familyCatID {
+            for child in snapshot.activeMappings where child.familyCatID == mapping.familyCatID {
                 guard let childRecord = child.recordID, let mealID = localID(child.sourceKey, prefix: mapping.sourceKey + ":meal:") else { continue }
                 let childValues = Values(snapshot: snapshot, cat: mapping.familyCatID, collection: .handoffMeal, record: childRecord, parent: record)
                 if childValues.deleted { cat.meals.removeAll { $0.id == mealID }; continue }
@@ -155,12 +155,12 @@ enum FamilyNotebookToolBridge {
 
     static func apply(_ snapshot: FamilyNotebookSnapshot, to original: [VeterinaryVisit]) throws -> [VeterinaryVisit] {
         var visits = original
-        for mapping in snapshot.mappings {
+        for mapping in snapshot.activeMappings {
             guard let record = mapping.recordID, let id = localID(mapping.sourceKey, prefix: "migration:v1:visit:"),
-                  let cat = snapshot.mappings.first(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil })?.toolCatID else { continue }
+                  let cat = snapshot.activeMappings.first(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil })?.toolCatID else { continue }
             let values = Values(snapshot: snapshot, cat: mapping.familyCatID, collection: .visit, record: record)
             let old = visits.first { $0.id == id }
-            guard old == nil || old?.catID == cat || snapshot.mappings.contains(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.profileID == old?.catID }) else { throw FamilyNotebookError.mappingConflict }
+            guard old == nil || old?.catID == cat || snapshot.activeMappings.contains(where: { $0.familyCatID == mapping.familyCatID && $0.recordID == nil && $0.profileID == old?.catID }) else { throw FamilyNotebookError.mappingConflict }
             if values.deleted {
                 if let i = visits.firstIndex(where: { $0.id == id }), visits[i].familyDetached != true {
                     visits[i].familyDetached = true; visits[i].revision = UUID()
@@ -173,7 +173,7 @@ enum FamilyNotebookToolBridge {
                 revision: old?.revision ?? UUID(), startedOn: started.isEmpty ? nil : started,
                 observations: try values.text(.observations, old?.observations ?? ""), questions: try values.text(.questions, old?.questions ?? ""),
                 entries: old?.entries ?? [], completedAt: try values.date(.completedAt, old?.completedAt), familyRecordID: record)
-            for child in snapshot.mappings where child.familyCatID == mapping.familyCatID {
+            for child in snapshot.activeMappings where child.familyCatID == mapping.familyCatID {
                 guard let childRecord = child.recordID, let entryID = localID(child.sourceKey, prefix: mapping.sourceKey + ":entry:") else { continue }
                 let v = Values(snapshot: snapshot, cat: mapping.familyCatID, collection: .visitEntry, record: childRecord, parent: record)
                 if v.deleted {
@@ -230,7 +230,7 @@ enum FamilyNotebookToolSharing {
     private static func received() throws -> FamilyNotebookSnapshot? {
         guard let (store,author) = try context() else { return nil }
         let snapshot = try store.snapshot(), mappings = try FamilyNotebookToolBridge.mappings(snapshot)
-        if mappings != snapshot.mappings {
+        if mappings != snapshot.activeMappings {
             return try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author)
         }
         return snapshot

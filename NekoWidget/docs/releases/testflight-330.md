@@ -1,0 +1,10 @@
+# TestFlight 330 — family notebook (candidate)
+
+- Production / app-store-candidate, owner-only internal distribution to the existing single-person group. No production configuration or stored user records changed by this patch.
+- Swipe a shared cat row left, choose 「手帳から外す」, then confirm 「外す」. The encrypted shared-cat tombstone hides it for updated family clients while preserving each person's local cat, health, handoff, veterinary and photo-reference records. Re-adding creates a new shared identity.
+- Concurrent and late edits cannot resurrect the old shared identity; superseded queued edits remain in local history but are not newly sent.
+- Clients through 329 do not understand the new tombstone and stop that sync page without applying it. All participating devices must update to 330 or later before using unshare.
+- Cancelled family reads retain CancellationError rather than showing a service failure. Cancelled waits for a background refresh stop without spinning. Mutation unknown outcomes remain pending.
+- Rejected signed reads get one freshly signed retry, then retain the authentication failure if still rejected. No identity reset, authentication bypass, or automatic mutation retry.
+- Direct synthetic validation: 41967958116 passed cancellation, fresh nonce/signature, persistent denial, private-record preservation, offline edits, atomic failure and re-add checks. Actual production-row swipe, confirmation and removal passed in 41969044920; the screenshot was visually inspected. The original destructive swipe hid the row before confirmation; the swipe now uses a normal red button and only the confirmed action is destructive. Normal CI is required before upload.
+- The 12:18–12:22 production observation found 150 HTTP 200 and 5 client-closed 499 requests. The later 13:16 payer 401 and billing entitlement 500 are separate observations; their response details were not retained. No claim that the retry proves the historical cause or that 330 has passed real-device verification.

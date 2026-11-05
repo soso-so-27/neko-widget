@@ -103,7 +103,8 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
             let context: FamilyNotebookSession
             if let session { context = session } else { context = try await provider(); session = context }
             return try await action(context)
-        } catch { throw Self.presentation(error) }
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw Self.presentation(error) }
     }
     private static func presentation(_ error: Error) -> FamilySharingError {
         if let error = error as? FamilySharingError { return error }
@@ -172,7 +173,7 @@ final class ProductionFamilyNotebookSharingService: FamilyNotebookSharingService
         guard let store = context.notebook else { throw FamilySharingError.membershipChecking }
         let snapshot = try store.snapshot()
         guard !snapshot.sharingEnded else { throw FamilySharingError.removedOrDissolved }
-        let mappings = snapshot.mappings.filter { $0.recordID == nil && $0.toolCatID == tool }
+        let mappings = snapshot.activeMappings.filter { $0.recordID == nil && $0.toolCatID == tool }
         guard let mapping = mappings.first, Set(mappings.map(\.familyCatID)).count == 1,
               Set(mappings.compactMap(\.profileID)).count <= 1 else { throw FamilySharingError.notAllowed }
         return (store, mapping)

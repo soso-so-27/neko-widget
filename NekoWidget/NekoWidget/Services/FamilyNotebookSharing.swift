@@ -35,6 +35,8 @@ final class FamilyNotebookSharing: ObservableObject {
                 FamilyNotebookPrototype.shared.attachReal(real)
                 requests = state.membership == nil ? [] : try await real.pendingRequests()
             }
+        } catch is CancellationError {
+            // Leaving the screen is not a service failure.
         } catch {
             if reportsFailure { failure = error as? FamilySharingError ?? .serviceUnavailable }
         }
@@ -44,14 +46,19 @@ final class FamilyNotebookSharing: ObservableObject {
     @discardableResult
     func perform(_ operation: (UUID) async throws -> Void) async -> Bool {
         // A background pass in flight must not swallow the person's tap.
-        while refreshing { try? await Task.sleep(for: .milliseconds(100)) }
-        guard !isWorking else { return false }
+        while refreshing {
+            do { try await Task.sleep(for: .milliseconds(100)) }
+            catch { return false }
+        }
+        guard !Task.isCancelled, !isWorking else { return false }
         isWorking = true
         defer { isWorking = false }
         do {
             try await operation(UUID())
             await refresh()
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             failure = error as? FamilySharingError ?? .unknownOutcome
             await refresh()

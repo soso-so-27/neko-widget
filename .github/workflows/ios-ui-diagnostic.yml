@@ -77,7 +77,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/neko-ui-diagnostic"
-          bash ci/run-sharing-runtime-matrix.sh 2>&1 | tee "$RUNNER_TEMP/neko-ui-diagnostic/diagnostic.log"
+          if [[ "$NEKO_IOS_DIAGNOSTIC_TEST_CLASS" == "SoloMemoriesUITests" && "$NEKO_IOS_DIAGNOSTIC_TEST_METHOD" == "testFamilyNotebookUnshareRequiresConfirmation" ]]; then
+            bash ci/run-family-notebook-row-ui-probe.sh 2>&1 | tee "$RUNNER_TEMP/neko-ui-diagnostic/diagnostic.log"
+          else
+            bash ci/run-sharing-runtime-matrix.sh 2>&1 | tee "$RUNNER_TEMP/neko-ui-diagnostic/diagnostic.log"
+          fi
           python3 - <<'PY'
           import json
           import os

@@ -101,6 +101,9 @@ enum FamilyNotebookCollection: String, Codable, CaseIterable, Hashable, Sendable
 }
 
 enum FamilyNotebookField: String, Codable, CaseIterable, Hashable, Sendable {
+    // Old clients reject this unknown field before applying the packet. A
+    // shared removal must never look like deletion of someone's personal cat.
+    case sharingEnded
     case farewellDay
     case name, sex, neutered, birthday, coat, marks, microchip, indoorOnly
     case conditions, allergyStatus, allergyText, specialDiet, water, litter, temperament
@@ -131,7 +134,7 @@ struct FamilyNotebookTarget: Codable, Hashable, Sendable {
     }
 
     func removes(_ other: Self) -> Bool {
-        guard field == nil, familyCatID == other.familyCatID else { return false }
+        guard (field == nil || field == .sharingEnded), familyCatID == other.familyCatID else { return false }
         if collection == .cat { return true }
         if collection == .visit, other.collection == .visitEntry, recordID == other.parentRecordID { return true }
         if collection == .handoff, other.collection == .handoffMeal, recordID == other.parentRecordID { return true }
@@ -198,7 +201,7 @@ struct FamilyNotebookFieldState: Equatable, Sendable {
     let operation: FamilyNotebookOperation
     let status: FamilyNotebookStatus
     let history: [FamilyNotebookHistoryEntry]
-    var isDeleted: Bool { operation.target.field == nil }
+    var isDeleted: Bool { operation.target.field == nil || operation.target.field == .sharingEnded }
 }
 
 // These IDs are local reconciliation aids. They are never part of Operation.
@@ -258,6 +261,12 @@ struct FamilyNotebookSnapshot: Equatable, Sendable {
     let sharingEnded: Bool
     var farewellDecisions: [FamilyNotebookFarewellDecision] = []
 
+    var unsharedCatIDs: Set<UUID> {
+        Set(operations.filter { $0.target.collection == .cat && $0.target.field == .sharingEnded }.map { $0.target.familyCatID })
+    }
+    /// Retain old mappings for history/consent, but never use them for new local writes.
+    var activeMappings: [FamilyNotebookLocalMapping] { mappings.filter { !unsharedCatIDs.contains($0.familyCatID) } }
+
     func fieldState(for target: FamilyNotebookTarget) -> FamilyNotebookFieldState? {
         FamilyNotebookCore.resolve(target: target, operations: operations,
                                    outboxIDs: Set(outbox.map(\.id)), acknowledgements: acknowledgements)
@@ -275,6 +284,10 @@ enum FamilyNotebookCore {
               target.recordID == nil || target.recordID != target.familyCatID,
               target.parentRecordID == nil || (target.parentRecordID != target.recordID && target.parentRecordID != target.familyCatID)
         else { throw FamilyNotebookError.invalidTarget }
+        if target.field == .sharingEnded {
+            guard target.collection == .cat, value == nil else { throw FamilyNotebookError.invalidTarget }
+            return
+        }
         guard let field = target.field else {
             guard value == nil else { throw FamilyNotebookError.invalidValue }; return
         }
@@ -381,7 +394,7 @@ enum FamilyNotebookCore {
     static func resolve(target: FamilyNotebookTarget, operations: [FamilyNotebookOperation],
                         outboxIDs: Set<UUID> = [], acknowledgements: [FamilyNotebookAcknowledgement] = []) -> FamilyNotebookFieldState? {
         let candidates = operations.filter { $0.target == target || $0.target.removes(target) }
-        let tombstones = candidates.filter { $0.target.field == nil }
+        let tombstones = candidates.filter { $0.target.field == nil || $0.target.field == .sharingEnded }
         guard let winner = (tombstones.isEmpty ? candidates : tombstones).max(by: { $0.version < $1.version }) else { return nil }
         let byID = Dictionary(operations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var seen = Set<UUID>(), remaining = winner.observedOperationIDs

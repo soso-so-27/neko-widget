@@ -169,7 +169,7 @@ enum FamilyNotebookMigration {
             guard targets.insert(target).inserted else { return }
             // Store.applyImport separates this source date from the new author's
             // import time. Clinical dates are also preserved as explicit values.
-            entries.append(.init(ledgerKey: source + ":" + collection.rawValue + ":" + (field?.rawValue ?? "deleted"),
+            entries.append(.init(ledgerKey: catID.uuidString.lowercased() + ":" + source + ":" + collection.rawValue + ":" + (field?.rawValue ?? "deleted"),
                                  target: target, value: value, editedAt: date, reassertSameValue: reassertSameValue))
         }
 

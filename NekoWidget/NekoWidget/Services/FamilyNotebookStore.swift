@@ -89,7 +89,11 @@ final class FamilyNotebookStore: @unchecked Sendable {
 
     func pendingOperations() throws -> [FamilyNotebookOperation] {
         let current = try snapshot()
-        return current.sharingEnded ? [] : current.outbox
+        guard !current.sharingEnded else { return [] }
+        // Keep superseded edits in the durable history, but do not start a
+        // new transmission of them after this cat's sharing has ended.
+        let ended = current.unsharedCatIDs
+        return current.outbox.filter { !ended.contains($0.target.familyCatID) || $0.target.field == .sharingEnded }
     }
 
     /// Preserve the complete notebook, including its unsent operations. No
@@ -125,7 +129,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
             guard plan.familyID == familyID else { throw FamilyNotebookError.familyMismatch }
             guard state.sharingEnded != true else { throw FamilyNotebookError.sharingEnded }
             for mapping in plan.mappings {
-                if let old = state.mappings.first(where: { $0.sourceKey == mapping.sourceKey }) {
+                if state.mappings.contains(mapping) { continue }
+                if let old = state.snapshot.activeMappings.first(where: { $0.sourceKey == mapping.sourceKey }) {
                     guard old == mapping else { throw FamilyNotebookError.mappingConflict }
                 } else { state.mappings.append(mapping) }
             }
@@ -191,8 +196,9 @@ final class FamilyNotebookStore: @unchecked Sendable {
             guard now.timeIntervalSince1970.isFinite,
                   Set(plan.entries.map(\.ledgerKey)).count == plan.entries.count else { throw FamilyNotebookError.invalidValue }
             for mapping in plan.mappings {
+                if state.mappings.contains(mapping) { continue }
                 guard FamilyNotebookCore.validIdentifier(mapping.sourceKey) else { throw FamilyNotebookError.invalidValue }
-                if let old = state.mappings.first(where: { $0.sourceKey == mapping.sourceKey }) {
+                if let old = state.snapshot.activeMappings.first(where: { $0.sourceKey == mapping.sourceKey }) {
                     guard old == mapping else { throw FamilyNotebookError.mappingConflict }
                 } else { state.mappings.append(mapping) }
             }
@@ -362,7 +368,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
         else { throw FamilyNotebookError.familyMismatch }
         let operations = try FamilyNotebookCore.merge([], state.operations)
         guard operations.count == state.operations.count, state.clock >= (operations.map(\.version.clock).max() ?? 0),
-              Set(state.mappings.map(\.sourceKey)).count == state.mappings.count,
+              Set(state.snapshot.activeMappings.map(\.sourceKey)).count == state.snapshot.activeMappings.count,
+              Set(state.mappings.map { $0.familyCatID.uuidString + ":" + $0.sourceKey }).count == state.mappings.count,
               state.mappings.allSatisfy({ FamilyNotebookCore.validIdentifier($0.sourceKey) }),
               state.ledgerKeys.allSatisfy(FamilyNotebookCore.validIdentifier),
               Set(state.acknowledgements.map(\.operationID)).count == state.acknowledgements.count,
@@ -378,7 +385,8 @@ final class FamilyNotebookStore: @unchecked Sendable {
                   mapping.recordID == nil || (mapping.recordID != mapping.familyCatID && mapping.recordID != familyID),
                   mapping.recordID == nil || (mapping.profileID == nil && mapping.toolCatID == nil)
             else { throw FamilyNotebookError.mappingConflict }
-            for other in state.mappings where other.sourceKey != mapping.sourceKey {
+            for other in state.snapshot.activeMappings where other != mapping {
+                if state.snapshot.unsharedCatIDs.contains(mapping.familyCatID) { continue }
                 let sameProfile = mapping.profileID != nil && mapping.profileID == other.profileID
                 let sameTool = mapping.toolCatID != nil && mapping.toolCatID == other.toolCatID
                 let sameRecord = mapping.recordID != nil && mapping.recordID == other.recordID

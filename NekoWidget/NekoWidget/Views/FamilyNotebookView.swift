@@ -69,7 +69,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     var familyCats: [FamilyCat] {
         guard let snapshot else { return [] }
         var seen = Set<UUID>()
-        return snapshot.mappings.compactMap { mapping in
+        return snapshot.activeMappings.compactMap { mapping in
             guard mapping.recordID == nil, let toolID = mapping.toolCatID, seen.insert(mapping.familyCatID).inserted,
                   snapshot.fieldState(for: .init(familyCatID: mapping.familyCatID, field: nil))?.isDeleted != true else { return nil }
             return FamilyCat(id: mapping.familyCatID, toolID: toolID, name: name(of: mapping.familyCatID))
@@ -94,7 +94,7 @@ final class FamilyNotebookPrototype: ObservableObject {
         do {
             let mappings = try FamilyNotebookCatCareBridge.mappings(for: snapshot,
                 existingLocalIDs: Set(CatCareStore.shared.state?.cats.map(\.catID) ?? []))
-            if mappings != snapshot.mappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
+            if mappings != snapshot.activeMappings { _ = try store.applyImport(.init(familyID: snapshot.familyID, entries: [], mappings: mappings), author: author) }
             reload(); applyFamilyWrites()
         } catch { message = "家族の手帳を開けませんでした。少し待ってから、もう一度お試しください。" }
     }
@@ -106,7 +106,7 @@ final class FamilyNotebookPrototype: ObservableObject {
               CatCareStore.shared.canSave else { throw FamilySharingError.notAllowed }
         care.cats = care.cats.filter { selected.contains($0.catID) && $0.deletedAt == nil }
         guard Set(care.cats.map(\.catID)) == selected else { throw FamilyNotebookMigrationError.unreadableSource }
-        let mappings = Self.catMappings(snapshot.mappings, care: care, handoff: nil, visits: [])
+        let mappings = Self.catMappings(snapshot.activeMappings, care: care, handoff: nil, visits: [])
         let profiles = Set(care.cats.compactMap(\.profileID))
         var handoff = CareHandoffStore.shared.loadError == nil ? CareHandoffStore.shared.plan : nil
         if var plan = handoff {
@@ -119,6 +119,15 @@ final class FamilyNotebookPrototype: ObservableObject {
         let source = try FamilyNotebookMigrationSource(catCare: .init(state: care, unreadableCatCount: 0), handoff: handoff, visits: visits)
         let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings)
         _ = try store.applyImport(prepared.plan, author: writer())
+        reload()
+    }
+
+    func unshareCat(_ cat: UUID) throws {
+        guard isReal, hasFamily, let store, let snapshot,
+              snapshot.activeMappings.contains(where: { $0.familyCatID == cat && $0.recordID == nil })
+        else { throw FamilySharingError.notAllowed }
+        _ = try store.edit(target: .init(familyCatID: cat, field: .sharingEnded), value: nil, author: writer(),
+                           expectedRevision: snapshot.revision)
         reload()
     }
 
@@ -222,7 +231,7 @@ final class FamilyNotebookPrototype: ObservableObject {
         guard let store, let snapshot else { return }
         let source = try FamilyNotebookMigrationSource(
             catCare: care.map { CatCareDecoding.Result(state: $0, unreadableCatCount: 0) }, handoff: handoff, visits: visits)
-        let mappings = Self.catMappings(snapshot.mappings, care: care, handoff: handoff, visits: visits)
+        let mappings = Self.catMappings(snapshot.activeMappings, care: care, handoff: handoff, visits: visits)
         let prepared = try FamilyNotebookMigration.prepare(source: source, familyID: snapshot.familyID, mappings: mappings)
         try store.applyImport(prepared.plan, author: Self.me)
         reload()
@@ -289,7 +298,7 @@ final class FamilyNotebookPrototype: ObservableObject {
         guard !applyingRemote, hasFamily, let store, let snapshot else { return }
         if isReal { reload(); return }
         do {
-            let mappings = Self.catMappings(snapshot.mappings, care: after, handoff: nil, visits: [])
+            let mappings = Self.catMappings(snapshot.activeMappings, care: after, handoff: nil, visits: [])
             let now = try Self.plan(after, family: snapshot.familyID, mappings: mappings)
             // New cats, new entries and newly filled items come in whole.
             try store.applyImport(now, author: Self.me)
@@ -325,11 +334,11 @@ final class FamilyNotebookPrototype: ObservableObject {
             }
             return
         }
-        let linked = Set(snapshot.mappings.filter { $0.recordID == nil }.compactMap(\.toolCatID))
+        let linked = Set(snapshot.activeMappings.filter { $0.recordID == nil }.compactMap(\.toolCatID))
         var selectedBefore = before, selectedAfter = after
         selectedBefore.cats = before.cats.filter { linked.contains($0.catID) }
         selectedAfter.cats = after.cats.filter { linked.contains($0.catID) }
-        let now = try Self.plan(selectedAfter, family: snapshot.familyID, mappings: snapshot.mappings)
+        let now = try Self.plan(selectedAfter, family: snapshot.familyID, mappings: snapshot.activeMappings)
         let then = try Self.plan(selectedBefore, family: snapshot.familyID, mappings: now.mappings)
         let entries = now.entries.filter { entry in
             guard let previous = then.entries.first(where: { $0.target == entry.target }) else { return true }
@@ -370,11 +379,11 @@ final class FamilyNotebookPrototype: ObservableObject {
             return
         }
         guard hasFamily, let snapshot, let care = CatCareStore.shared.state,
-              let here = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.mappings) else { return }
+              let here = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.activeMappings) else { return }
         var current: [FamilyNotebookTarget: FamilyNotebookValue] = [:]
         for entry in here.entries { if let value = entry.value { current[entry.target] = value } }
         var changes: [(UUID, FamilyNotebookField, FamilyNotebookValue, FamilyNotebookOperation)] = []
-        for mapping in snapshot.mappings where mapping.recordID == nil {
+        for mapping in snapshot.activeMappings where mapping.recordID == nil {
             guard let toolID = mapping.toolCatID, care.record(catID: toolID) != nil else { continue }
             for field in Self.catFields {
                 let target = FamilyNotebookTarget(familyCatID: mapping.familyCatID, field: field)
@@ -491,7 +500,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     var recentFromFamily: [FamilyNotebookOperation] {
         guard let snapshot else { return [] }
         var seen = Set<FamilyNotebookTarget>()
-        return Array(snapshot.operations.filter { !isMe($0.author) && $0.target.field != nil }
+        return Array(snapshot.operations.filter { !isMe($0.author) && $0.target.field != nil && !snapshot.unsharedCatIDs.contains($0.target.familyCatID) }
             .sorted { $0.version > $1.version }
             .filter { seen.insert($0.target).inserted }
             .prefix(5))
@@ -626,8 +635,8 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     private func catCareValue(_ toolID: UUID, _ field: FamilyNotebookField) -> FamilyNotebookValue? {
         guard let snapshot, let care = CatCareStore.shared.state,
-              let cat = snapshot.mappings.first(where: { $0.recordID == nil && $0.toolCatID == toolID })?.familyCatID,
-              let plan = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.mappings) else { return nil }
+              let cat = snapshot.activeMappings.first(where: { $0.recordID == nil && $0.toolCatID == toolID })?.familyCatID,
+              let plan = try? Self.plan(care, family: snapshot.familyID, mappings: snapshot.activeMappings) else { return nil }
         return plan.entries.first { $0.target == FamilyNotebookTarget(familyCatID: cat, field: field) }?.value
     }
 
@@ -692,6 +701,7 @@ struct FamilyNotebookView: View {
                         Section {
                             ForEach(model.familyCats) { cat in
                                 NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
+
                             }
                         } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
                         Button("もう一度確認") { Task { await sharing.refresh(reportsFailure: true) } }
@@ -789,7 +799,10 @@ struct FamilyNotebookView: View {
             if model.isReal {
                 Section("猫") {
                     ForEach(model.familyCats) { cat in
-                        NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
+                        FamilyNotebookSharedCatRow(name: cat.name, remove: {
+                            do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
+                            catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
+                        }) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
                     }
                     Button { showsCats = true } label: { Label("猫を追加", systemImage: "plus") }
                         .accessibilityIdentifier("family-notebook-add-cat")
