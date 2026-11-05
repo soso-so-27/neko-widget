@@ -196,3 +196,19 @@ struct DeepLink: Equatable, Sendable {
         }
     }
 }
+
+/// A Widget with no photo to open (still preparing, unreadable, or a cloudy
+/// window whose cat was deleted) opens the photo tab, not whatever screen was
+/// left open (11/5). Carries nothing but the tab.
+enum PhotosTabRoute {
+    static let url = URL(string: "nekowidget://photos")!
+
+    static func matches(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        return components.scheme?.lowercased() == "nekowidget"
+            && components.host?.lowercased() == "photos"
+            && components.path.isEmpty
+            && components.queryItems == nil
+            && components.fragment == nil
+    }
+}

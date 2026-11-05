@@ -13,6 +13,7 @@ struct ManagedPreservationView: View {
     @State private var confirmsDeletion = false
     @State private var confirmsAccountDeletion = false
     @State private var confirmsSignOut = false
+    @State private var askedNoticeContact = false
     @State private var confirmsForgetSignIn = false
     @State private var needsResume = false
     @State private var confirmsMembershipLink = false
@@ -88,6 +89,7 @@ struct ManagedPreservationView: View {
             }
         }
         .onChange(of: coordinator.isSignedIn) { _, signedIn in
+            if !signedIn { askedNoticeContact = false }
             if !signedIn && !coordinator.exportAuthenticationNeeded { exporter.invalidate(); confirmsMembershipLink = false }
         }
         .onChange(of: exporter.preparing) { _, preparing in
@@ -183,8 +185,6 @@ struct ManagedPreservationView: View {
                 if allowsRecordBrowsing {
                     if allowsManualSaving { toolBackupSection }
                     if !coordinator.pendingMemoDrafts.isEmpty { pendingMemoSection }
-                    // The whole account comes out as one file, even with no list to show.
-                    if isAccountEntry { exportSection }
                     // One-by-one copies left from testing; nobody else has a list to see.
                     if !isAccountEntry || !coordinator.records.isEmpty || coordinator.hasMore { recordsSection }
                 }
@@ -216,7 +216,7 @@ struct ManagedPreservationView: View {
                         .disabled(coordinator.isBusy)
                         .confirmationDialog("サインアウトしますか？", isPresented: $confirmsSignOut, titleVisibility: .visible) {
                             Button("サインアウト", role: .destructive) { coordinator.signOut() }
-                        } message: { Text("保存した記録は残ります。このiPhoneでの自動保存は止まり、サインインし直すと続きます。") }
+                        } message: { Text("記録は残ります。自動保存を止めるだけなら、サインアウトはいりません。") }
                     if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
                         Button("アカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
                             .disabled(coordinator.hasUnsecuredMemo)
@@ -362,13 +362,24 @@ struct ManagedPreservationView: View {
                     Text("お知らせ用のメールアドレスを確認できません")
                         .accessibilityIdentifier("preservation-notice-contact-missing")
                 }
-            } else {
-                Text("お知らせを受け取るメールアドレスを確認できます")
+            } else if coordinator.isBusy || !askedNoticeContact {
+                Text("確認しています…")
                     .foregroundStyle(.secondary)
+            } else {
+                // Only after the automatic read failed: one line, one button.
+                Text("メールアドレスを読み込めませんでした")
+                    .foregroundStyle(.secondary)
+                Button("もう一度") { coordinator.checkNoticeContact() }
+                    .accessibilityIdentifier("preservation-notice-contact-check")
             }
-            Button("連絡先を確認") { coordinator.checkNoticeContact() }
-                .accessibilityIdentifier("preservation-notice-contact-check")
         } header: { Text("お知らせの送り先") }
+        // The address is read once when the screen settles, not behind a button.
+        .task(id: coordinator.isSignedIn && !coordinator.isBusy) {
+            guard coordinator.isSignedIn, !coordinator.isBusy,
+                  coordinator.noticeContact == nil, !askedNoticeContact else { return }
+            askedNoticeContact = true
+            coordinator.checkNoticeContact()
+        }
     }
 
     private var usageSection: some View {
@@ -663,14 +674,6 @@ struct ManagedPreservationView: View {
                 Button("購入状況を再確認") { coordinator.checkMembership() }
                     .accessibilityIdentifier("preservation-eligibility-retry")
             }
-        }
-    }
-
-    private var exportSection: some View {
-        Section {
-            Button("保存したものを書き出す") { coordinator.exportAllCopies(using: exporter) }
-                .disabled(!coordinator.canExportAllCopies)
-                .accessibilityIdentifier("preservation-export-all")
         }
     }
 

@@ -229,9 +229,9 @@ struct CatProfileDetailView: View {
                 }
             }
             // When a cat has died, deleting is usually where people go. Offer
-            // to keep the cat instead, in words that suit any reason for deleting.
+            // to record the day instead; the button says what it opens.
             if Version1.isOn, CatFarewell.days(farewellJSON)[profile.identifier] == nil {
-                Button("思い出として残す") { showsFarewellEditor = true }
+                Button("旅立った日を記録する") { showsFarewellEditor = true }
             }
             Button("キャンセル", role: .cancel) {}
         } message: {

@@ -231,6 +231,10 @@ struct AppRootView: View {
             officialWindowRoute = route
             return
         }
+        if PhotosTabRoute.matches(url) {
+            PhotosTabOpenInbox.shared.pending = true
+            return
+        }
         Task { @MainActor in
             await viewModel.syncLikesForPresentation(trigger: "deeplink")
             viewModel.handleURL(url)

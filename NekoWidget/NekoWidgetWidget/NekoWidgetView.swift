@@ -632,7 +632,11 @@ struct NekoWidgetView: View {
     }
 
     private var emptyStateSubtitle: String {
-        if PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) != nil { return "タップしてまどを開く" }
+        if let windowID = PublicWindowDefinition.windowID(from: entry.photoSourceIdentifier) {
+            // A retired official window says the same as its title (E2).
+            guard OfficialWindowConfiguration.definition(for: windowID) != nil else { return "ウィジェットを編集してください" }
+            return "タップしてまどを開く"
+        }
         if effectiveEmptyStateReason == .sourceUnavailable {
             return "ウィジェットを編集してください"
         }
