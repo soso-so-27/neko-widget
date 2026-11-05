@@ -167,9 +167,11 @@ struct MembershipAccessNotice: View {
 
 struct MembershipRestoreSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var model: MembershipOfferModel
+    @StateObject private var model = MembershipOfferModel.live(presentsOffer: false)
 
-    init(model: MembershipOfferModel = .live(presentsOffer: false)) {
+    init() { }
+
+    init(model: MembershipOfferModel) {
         _model = StateObject(wrappedValue: model)
     }
 
