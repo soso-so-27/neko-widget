@@ -831,7 +831,9 @@ struct PlusSettingsSection: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("settings-membership-checking")
             }
-            if status == .notMember || status == .unknown {
+            // Restore stays reachable while checking: a check that never ends
+            // must not leave a member without a way back (App Review requires it).
+            if status != .member {
                 Button("購入を復元") { showsRestore = true }
                     .font(.footnote)
                     .frame(maxWidth: .infinity)
