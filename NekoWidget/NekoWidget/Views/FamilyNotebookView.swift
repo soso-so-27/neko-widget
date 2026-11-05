@@ -520,6 +520,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     /// is labelled; who can do what shows only on a person's own page.
     var members: [FamilyNotebookAuthor] {
         if isReal {
+            if realMemberIDs.isEmpty, let shown { return shown.members }
             return realMemberIDs.map { id in
                 if id == realAuthor?.personID, let realAuthor { return realAuthor }
                 return snapshot?.operations.filter { $0.author.personID == id }.max { $0.version < $1.version }?.author
@@ -534,6 +535,29 @@ final class FamilyNotebookPrototype: ObservableObject {
             people.append(operation.author)
         }
         return people
+    }
+
+    /// The family as last shown, kept on this iPhone only, so the notebook
+    /// opens in its own layout at once instead of a placeholder swapped out
+    /// when the server answers (11/5 on 331: slow, then it jolted).
+    private struct ShownFamily: Codable, Equatable {
+        let familyID: UUID, personID: String, isPayer: Bool, members: [FamilyNotebookAuthor]
+    }
+    private static let shownKey = "familyNotebook.lastShown.v1"
+    private var shown: ShownFamily? {
+        guard isReal, hasFamily, let id = snapshot?.familyID, let me = realAuthor?.personID,
+              let data = UserDefaults.standard.data(forKey: Self.shownKey),
+              let value = try? JSONDecoder().decode(ShownFamily.self, from: data),
+              value.familyID == id, value.personID == me else { return nil }
+        return value
+    }
+    var lastShownMembership: FamilyMembership? { shown.map { FamilyMembership(role: $0.isPayer ? .payer : .member) } }
+    /// Written only when something changed, after a pass, never while scrolling.
+    func rememberShown(_ membership: FamilyMembership) {
+        guard isReal, hasFamily, !realMemberIDs.isEmpty, let id = snapshot?.familyID, let me = realAuthor?.personID else { return }
+        let value = ShownFamily(familyID: id, personID: me, isPayer: membership.role == .payer, members: members)
+        guard value != shown, let data = try? JSONEncoder().encode(value) else { return }
+        UserDefaults.standard.set(data, forKey: Self.shownKey)
     }
 
     /// Takes someone out of the family: what they wrote stays (test builds:
@@ -674,6 +698,10 @@ struct FamilyNotebookView: View {
     @State private var showsRestore = false
     @State private var showsName = false
     @State private var showsCats = false
+    /// The server's answer, or before it comes, the family as last shown here.
+    private var shownMembership: FamilyMembership? {
+        sharing.state.membership ?? (sharing.state == .checking ? model.lastShownMembership : nil)
+    }
     private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats || showsRestore }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
@@ -689,6 +717,11 @@ struct FamilyNotebookView: View {
     var body: some View {
         NavigationStack {
             Group {
+                // One branch for the notebook whether the server answered yet
+                // or not, so the list is not rebuilt when it does.
+                if let membership = shownMembership {
+                    notebook(membership)
+                } else {
                 switch sharing.state {
                 case .checking where model.snapshot != nil:
                     List {
@@ -713,8 +746,9 @@ struct FamilyNotebookView: View {
                 case .waitingForKeys:
                     ContentUnavailableView("準備しています", systemImage: "key",
                                            description: Text("家族の手帳を受け取っています。"))
-                case let .inFamily(membership):
-                    notebook(membership)
+                case .inFamily:
+                    EmptyView()
+                }
                 }
             }
             .navigationTitle("家族の手帳")
@@ -758,6 +792,7 @@ struct FamilyNotebookView: View {
                 // the person by the background pass (11/5: the sheets jumped).
                 if !presentsSheet {
                     if !sharing.isWorking { await sharing.refresh() }
+                    if let membership = sharing.state.membership { model.rememberShown(membership) }
                     if model.hasFamily { try? await model.copyTools(); model.applyFamilyWrites() }
                 }
                 guard model.isReal else { return }
