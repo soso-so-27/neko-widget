@@ -671,7 +671,7 @@ struct FamilyNotebookView: View {
     @State private var showsRestore = false
     @State private var showsName = false
     @State private var showsCats = false
-    private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats }
+    private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats || showsRestore }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
 
