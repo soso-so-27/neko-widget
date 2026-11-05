@@ -294,9 +294,12 @@ struct ManagedPreservationView: View {
     /// The "保存" entry of the one Plus screen (ADR-027 5章). Shown only
     /// while saving is unavailable, Plus is configured, and this device has
     /// no Plus purchase, so an existing member is never asked to buy again.
+    /// The same check as 自動保存 (`permitsPersonalPlus`), and never next to
+    /// 「新しい写真を保存できます」 (11/5).
     @ViewBuilder private var plusOfferEntry: some View {
-        if coordinator.membership?.access != .pilot, PlusOfferAvailability.isConfigured,
-           !PlusPurchaseStore.productionShared.entitlementState.grantsPlus {
+        if coordinator.membership?.access != .pilot, coordinator.membership?.canSave != true,
+           PlusOfferAvailability.isConfigured,
+           !PlusPurchaseStore.productionShared.entitlementState.permitsPersonalPlus {
             Button(PlusOfferContext.preservation.entryTitle) { showsPlusOffer = true }
                 .accessibilityIdentifier("plus-offer-entry-preservation")
                 .sheet(isPresented: $showsPlusOffer, onDismiss: {

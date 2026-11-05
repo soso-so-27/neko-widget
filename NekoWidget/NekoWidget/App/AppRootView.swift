@@ -23,6 +23,7 @@ struct AppRootView: View {
     @ObservedObject var viewModel: AppViewModel
 
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.membershipAccess) private var membershipAccess
     @AppStorage("hasSeenInitialScanResult.v1") private var hasSeenInitialScanResult = false
     @AppStorage(OnboardingPresentationPersistence.completedVersionKey)
     private var onboardingCompletedVersion = 0
@@ -178,7 +179,8 @@ struct AppRootView: View {
         .sheet(isPresented: $showsWidgetPlacementGuide) {
             WidgetPlacementGuideView(
                 onComplete: dismissWidgetPlacementGuide,
-                onSkip: dismissWidgetPlacementGuide
+                onSkip: dismissWidgetPlacementGuide,
+                hasCats: viewModel.catHouseholdIdentity?.profiles.isEmpty == false
             )
         }
         .sheet(item: $firstRunPhoto) { photo in
@@ -1195,8 +1197,15 @@ struct AppRootView: View {
         OnboardingPresentationState(
             persistedResumePageIndex: onboardingResumePageIndex,
             persistedCompletedVersion: onboardingCompletedVersion,
-            offersPlus: PlusOfferAvailability.isConfigured
+            offersPlus: PlusOfferAvailability.isConfigured && !skipsPlusOfferForMember
         )
+    }
+
+    /// A Plus member (a reinstall) skips the Plus page. Someone already on it
+    /// keeps it, so buying there does not move the page back.
+    private var skipsPlusOfferForMember: Bool {
+        membershipAccess.hasPersonalPlus()
+            && onboardingResumePageIndex < OnboardingPresentationPage.plusOffer.rawValue
     }
 
     private var onboardingPage: Binding<OnboardingPresentationPage> {

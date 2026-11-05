@@ -410,6 +410,8 @@ struct GroupWindowMembersView: View {
     @State private var showsRevokeConfirmation = false
     @State private var showsLeaveConfirmation = false
     @State private var showsPlusOffer = false
+    @State private var showsRestore = false
+    @Environment(\.membershipAccess) private var membershipAccess
     @State private var showsRename = false
     @State private var showsCloseConfirmation = false
     @State private var rejectionTarget: GroupJoinRequest?
@@ -498,6 +500,12 @@ struct GroupWindowMembersView: View {
                     showsPlusOffer = false
                 }
             }
+        }
+        .sheet(isPresented: $showsRestore, onDismiss: {
+            NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            Task { await model.load() }
+        }) {
+            MembershipRestoreSheet()
         }
         .confirmationDialog(
             removalTarget.map { "\(GroupDisplayName.withSan($0.displayName))をこのまどから外しますか？" } ?? "外しますか？",
@@ -598,7 +606,19 @@ struct GroupWindowMembersView: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("group-window-paused")
             if GroupWindowPresentation.isMyWindow(window) {
-                if plusOfferModel != nil {
+                if membershipAccess.hasPersonalPlus() {
+                    // This iPhone has Plus but the server does not see it yet:
+                    // restore, never the offer (11/5).
+                    Button {
+                        showsRestore = true
+                    } label: {
+                        Text("購入を復元")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("group-window-restore-plus")
+                } else if plusOfferModel != nil {
                     Button {
                         showsPlusOffer = true
                     } label: {

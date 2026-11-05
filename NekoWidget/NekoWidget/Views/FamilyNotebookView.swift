@@ -671,9 +671,10 @@ struct FamilyNotebookView: View {
     @State private var invites = false
     @State private var triesInvitation = false
     @State private var showsPlusOffer = false
+    @State private var showsRestore = false
     @State private var showsName = false
     @State private var showsCats = false
-    private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats }
+    private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats || showsRestore }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -734,6 +735,12 @@ struct FamilyNotebookView: View {
             }) {
                 // ADR-027 5章 "家族の手帳を続ける": the same single subscription.
                 MembershipOfferSheet(model: .live(), context: .continueFamily) { _ in showsPlusOffer = false }
+            }
+            .sheet(isPresented: $showsRestore, onDismiss: {
+                NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+                Task { await sharing.refresh() }
+            }) {
+                MembershipRestoreSheet()
             }
             .alert("家族の手帳", isPresented: Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) {
                 Button("閉じる", role: .cancel) {}
@@ -915,6 +922,15 @@ extension FamilyNotebookView {
                     .buttonStyle(.borderedProminent)
                     .disabled(sharing.isWorking)
                     .accessibilityIdentifier("family-notebook-claim-payer")
+                } else if access.hasPersonalPlus() {
+                    // This iPhone has Plus but the family side does not see it yet:
+                    // restore, never the offer (11/5).
+                    Button { showsRestore = true } label: {
+                        Text("購入を復元").font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("family-notebook-restore-plus")
                 } else {
                     Button { showsPlusOffer = true } label: {
                         HStack(spacing: 8) {
@@ -1225,6 +1241,7 @@ struct FamilyNotebookIntroView: View {
     var create: (@MainActor () -> Void)?
     /// Test builds only: open an invitation as the invited person sees it.
     var tryInvitation: (@MainActor () -> Void)?
+    @Environment(\.membershipAccess) private var access
 
     var body: some View {
         VStack(spacing: 16) {
@@ -1252,7 +1269,7 @@ struct FamilyNotebookIntroView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(create == nil || creating)
-            .accessibilityLabel("家族を作る、Plus")
+            .accessibilityLabel(FamilyNotebookPlusMark.isShown(for: access) ? "家族を作る、Plus" : "家族を作る")
             Text("招待された人は無料です。")
                 .font(.footnote).foregroundStyle(.secondary)
             if let tryInvitation {
@@ -1266,13 +1283,14 @@ struct FamilyNotebookIntroView: View {
 }
 
 /// 「Plus」 on the button that needs it, the way apps mark a paid action.
-/// A confirmed member already has it, so the mark is not shown to them (11/5).
+/// Shown only when the same decision that gates the button says Plus is
+/// needed. A member, even offline or while launch is still checking, does not
+/// see it (11/5).
 struct FamilyNotebookPlusMark: View {
     @Environment(\.membershipAccess) private var access
 
     static func isShown(for access: MembershipAccessContext, now: Date = .now) -> Bool {
-        if case let .verified(validUntil) = access.personal, validUntil > now { return false }
-        return true
+        access.decision(for: .createOwnWindow, now: now) == .membershipRequired
     }
 
     var body: some View {
