@@ -40,7 +40,7 @@ final class FamilyNotebookSharing: ObservableObject {
             if next != state { state = next }
             if nextPause != pause { pause = nextPause }
             if let real = service as? ProductionFamilyNotebookSharingService {
-                FamilyNotebookPrototype.shared.attachReal(real)
+                FamilyNotebookPrototype.shared.attachReal(real, reportsFailure: reportsFailure)
                 let nextRequests = next.membership == nil ? [] : syncing ? requests : try await real.pendingRequests()
                 if nextRequests != requests { requests = nextRequests }
             }

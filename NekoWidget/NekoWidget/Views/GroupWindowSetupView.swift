@@ -205,7 +205,9 @@ final class GroupWindowMembersModel: ObservableObject {
         activeInvitation != nil || !pendingRequests.isEmpty
     }
 
-    func load() async {
+    /// The 8-second pass stays quiet: the orange line is for a load the person
+    /// started, or when nothing is on screen yet (11/5: it came and went).
+    func load(reportsFailure: Bool = true) async {
         do {
             let results = (try? await client.reconcileAdmissions()) ?? []
             admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
@@ -227,7 +229,9 @@ final class GroupWindowMembersModel: ObservableObject {
         } catch {
             // Keep the last known window and requests. Only say that the
             // latest could not be checked; never clear a list on a failure.
-            loadFailureMessage = GroupWindowPresentation.message(for: error)
+            if reportsFailure || window == nil {
+                loadFailureMessage = GroupWindowPresentation.message(for: error)
+            }
         }
     }
 
@@ -409,6 +413,12 @@ struct GroupWindowMembersView: View {
     @State private var showsRename = false
     @State private var showsCloseConfirmation = false
     @State private var rejectionTarget: GroupJoinRequest?
+    /// Renaming, Plus or a confirmation is open: the list underneath is not
+    /// redrawn by the 8-second pass (11/5: the screen moved under the person).
+    private var presentsSheet: Bool {
+        showsRename || showsPlusOffer || showsRemoval || showsRevokeConfirmation
+            || showsLeaveConfirmation || showsCloseConfirmation || rejectionTarget != nil
+    }
     /// Admissions already shown once, so 「〇〇さんが参加しました」 is said once
     /// and not every time the screen opens. Written only when leaving.
     @AppStorage("group.admissionsSeen.v1") private var seenAdmissions = ""
@@ -468,7 +478,7 @@ struct GroupWindowMembersView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(8))
                 guard !Task.isCancelled else { return }
-                await model.load()
+                if !presentsSheet { await model.load(reportsFailure: false) }
             }
         }
         .refreshable { await model.load() }
@@ -1050,15 +1060,18 @@ final class GroupJoinModel: ObservableObject {
         }
     }
 
-    func refresh() async {
+    /// The 8-second check stays quiet; a pull to refresh says what failed
+    /// (11/5: the red line came and went while waiting).
+    func refresh(reportsFailure: Bool = false) async {
         guard case let .pending(request) = phase, let client else { return }
         do {
             let latest = try await client.joinStatus(requestID: request.id)
             update(with: latest)
-            errorMessage = nil
+            // A quiet pass leaves the last result on screen unless the state moved on.
+            if reportsFailure || !isPending { errorMessage = nil }
         } catch {
             // Keep waiting; the application is still on the relay.
-            errorMessage = GroupWindowPresentation.message(for: error)
+            if reportsFailure { errorMessage = GroupWindowPresentation.message(for: error) }
         }
     }
 
@@ -1139,7 +1152,7 @@ struct GroupJoinView: View {
                 await model.refresh()
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { await model.refresh(reportsFailure: true) }
     }
 
     @ViewBuilder
