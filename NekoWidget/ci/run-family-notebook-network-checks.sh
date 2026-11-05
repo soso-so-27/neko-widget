@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+python3 ci/prepare-family-seen-notification-probe.py "$RUNNER_TEMP/family-seen-probe.swift"
+xcrun --sdk macosx swiftc -parse-as-library "$RUNNER_TEMP/family-seen-probe.swift" -o "$RUNNER_TEMP/family-seen-probe"
+"$RUNNER_TEMP/family-seen-probe"
 xcrun --sdk macosx swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   Shared/Sharing/GroupWindowCore.swift NekoWidget/Services/GroupWindowContract.swift \
   NekoWidget/Services/GroupWindowWire.swift NekoWidget/Services/GroupInvitationLink.swift NekoWidget/Services/GroupWindowStorage.swift \

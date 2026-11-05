@@ -579,7 +579,9 @@ final class FamilyNotebookPrototype: ObservableObject {
 
     func markSeen() {
         guard let clock = snapshot?.clock else { return }
-        UserDefaults.standard.set(Int(clamping: clock), forKey: currentSeenKey)
+        let next = Int(clamping: clock)
+        guard UserDefaults.standard.integer(forKey: currentSeenKey) != next else { return }
+        UserDefaults.standard.set(next, forKey: currentSeenKey)
         objectWillChange.send()
     }
 
