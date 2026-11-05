@@ -237,7 +237,11 @@ final class MembershipOfferModel: ObservableObject {
         hasLoaded = true
         // Restoring an existing purchase does not need a product quote. The
         // dedicated restore sheet has no price field or purchase action.
-        guard presentsOffer else { updateMembershipState(); return }
+        guard presentsOffer else {
+            updateMembershipState()
+            isWorking = false
+            return
+        }
         isWorking = true
         await prepareOfferAction()
         await reloadOfferPresentation()
