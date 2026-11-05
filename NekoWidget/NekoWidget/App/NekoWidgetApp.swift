@@ -63,7 +63,9 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if CommandLine.arguments.contains("--app-records-ui-fixture") {
+            if CommandLine.arguments.contains("--family-unshare-ui-fixture") {
+                FamilyNotebookUnshareFixture()
+            } else if CommandLine.arguments.contains("--app-records-ui-fixture") {
                 AppRecordPersistenceFixtureView()
             } else if CommandLine.arguments.contains("--tool-backup-ui-fixture") {
                 ToolBackupFixtureView()

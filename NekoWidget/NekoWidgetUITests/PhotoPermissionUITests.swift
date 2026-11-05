@@ -3437,6 +3437,26 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testFamilyNotebookUnshareRequiresConfirmation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--family-unshare-ui-fixture"]
+        app.launch()
+        let row = app.buttons["試験の猫"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.swipeLeft()
+        app.buttons["手帳から外す"].tap()
+        XCTAssertTrue(app.staticTexts["この猫を家族の手帳から外しますか？"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["各自の記録は残ります。"].exists)
+        XCTAssertFalse(app.staticTexts["unshare-completed"].exists)
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = "family-unshare-confirmation"; image.lifetime = .keepAlways; add(image)
+        app.buttons["外す"].tap()
+        XCTAssertTrue(app.staticTexts["unshare-completed"].waitForExistence(timeout: 3))
+        XCTAssertFalse(row.exists)
+        app.terminate()
+    }
+
+    @MainActor
     func testRestorationDoesNotRequireProductCatalog() {
         let app = XCUIApplication()
         app.launchArguments = ["--membership-offer-ui-fixture", "--membership-restore-without-catalog"]

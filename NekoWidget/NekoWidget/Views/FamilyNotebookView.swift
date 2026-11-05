@@ -500,7 +500,7 @@ final class FamilyNotebookPrototype: ObservableObject {
     var recentFromFamily: [FamilyNotebookOperation] {
         guard let snapshot else { return [] }
         var seen = Set<FamilyNotebookTarget>()
-        return Array(snapshot.operations.filter { !isMe($0.author) && $0.target.field != nil }
+        return Array(snapshot.operations.filter { !isMe($0.author) && $0.target.field != nil && !snapshot.unsharedCatIDs.contains($0.target.familyCatID) }
             .sorted { $0.version > $1.version }
             .filter { seen.insert($0.target).inserted }
             .prefix(5))
@@ -668,7 +668,6 @@ struct FamilyNotebookView: View {
     @State private var showsPlusOffer = false
     @State private var showsName = false
     @State private var showsCats = false
-    @State private var removingCat: FamilyNotebookPrototype.FamilyCat?
     @State private var hasSavedCopies = false
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
@@ -696,9 +695,7 @@ struct FamilyNotebookView: View {
                         Section {
                             ForEach(model.familyCats) { cat in
                                 NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button("手帳から外す", role: .destructive) { removingCat = cat }
-                            }
+
                             }
                         } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
                         Button("もう一度確認") { Task { await sharing.refresh() } }
@@ -790,10 +787,10 @@ struct FamilyNotebookView: View {
             if model.isReal {
                 Section("一緒に書く猫") {
                     ForEach(model.familyCats) { cat in
-                        NavigationLink(cat.name) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button("手帳から外す", role: .destructive) { removingCat = cat }
-                            }
+                        FamilyNotebookSharedCatRow(name: cat.name, remove: {
+                            do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
+                            catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
+                        }) { CatCareDetailView(toolCatID: cat.toolID, name: cat.name) }
                     }
                     Button("この iPhone の猫を追加") { showsCats = true }
                 }
@@ -846,15 +843,6 @@ struct FamilyNotebookView: View {
                 Text("試した結果は、この画面のいちばん上に出ます。「家族が書いた」は「この子のこと」の接し方・トイレに（試し）の文が入ります。家族を終えると元に戻ります。")
             } }
         }
-        .confirmationDialog("この猫を家族の手帳から外しますか？", isPresented: Binding(
-            get: { removingCat != nil }, set: { if !$0 { removingCat = nil } }), titleVisibility: .visible) {
-                Button("外す", role: .destructive) {
-                    guard let cat = removingCat else { return }
-                    do { try model.unshareCat(cat.id); Task { await sharing.refresh() } }
-                    catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
-                    removingCat = nil
-                }
-            } message: { Text("各自の記録は残ります。") }
         .refreshable { if !sharing.isWorking { await sharing.refresh() } }
     }
 
@@ -1751,3 +1739,35 @@ extension View {
         modifier(FamilyNotebookNote(toolCatID: toolCatID, field: field))
     }
 }
+
+/// The same row and confirmation are exercised by the offline UI fixture.
+struct FamilyNotebookSharedCatRow<Destination: View>: View {
+    let name: String
+    let remove: () -> Void
+    @ViewBuilder let destination: () -> Destination
+    @State private var confirming = false
+    var body: some View {
+        NavigationLink(name, destination: destination)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button("手帳から外す", role: .destructive) { confirming = true }
+            }
+            .confirmationDialog("この猫を家族の手帳から外しますか？", isPresented: $confirming, titleVisibility: .visible) {
+                Button("外す", role: .destructive, action: remove)
+            } message: { Text("各自の記録は残ります。") }
+    }
+}
+
+#if DEBUG
+struct FamilyNotebookUnshareFixture: View {
+    @State private var shared = true
+    var body: some View {
+        NavigationStack {
+            List {
+                if shared {
+                    FamilyNotebookSharedCatRow(name: "試験の猫", remove: { shared = false }) { Text("猫の記録") }
+                } else { Text("共有の猫は0匹").accessibilityIdentifier("unshare-completed") }
+            }.navigationTitle("家族の手帳")
+        }
+    }
+}
+#endif
