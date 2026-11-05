@@ -12,6 +12,9 @@ private actor Relay: GroupHTTPTransport {
     var members = Set<String>(), payer: String?
     var invite: [String: Any]?, join: [String: Any]?
     var receipts: [String: (Data, Data)] = [:], sent: [(String, Data)] = []
+    var parallelProbe = false, activeReads = 0, peakReads = 0, stalePayer = false, cryptoReads = 0
+    func probe(stale: Bool = false) { parallelProbe = true; activeReads = 0; peakReads = 0; cryptoReads = 0; stalePayer = stale }
+    func probeResult() -> (Int, Int) { parallelProbe = false; stalePayer = false; return (peakReads, cryptoReads) }
     var lose: String?, cancelRead: String?, corrupt = false
     func cancelNextRead(_ suffix: String) { cancelRead = suffix }
     init(_ identities: [GroupDeviceIdentity]) throws {
@@ -23,6 +26,12 @@ private actor Relay: GroupHTTPTransport {
     func forgetMembership(_ person: String) { members.remove(person) }
     func send(_ request: URLRequest, maximumBytes: Int) async throws -> GroupHTTPReply {
         let path = request.url!.path, body = request.httpBody ?? Data(), method = request.httpMethod!
+        if path.contains("/crypto/") { cryptoReads += 1 }
+        if parallelProbe && (path.hasSuffix("/members") || path.hasSuffix("/payer")) {
+            activeReads += 1; peakReads = max(peakReads, activeReads)
+            defer { activeReads -= 1 }
+            try await Task.sleep(for: .milliseconds(100))
+        }
         let device = request.value(forHTTPHeaderField: "Neko-Device-Id")!, identity = identities[device]!
         let transcript = try GroupCanonical.fields(["NW3.REQUEST", "3", device, request.value(forHTTPHeaderField: "Neko-Timestamp")!,
             request.value(forHTTPHeaderField: "Neko-Nonce")!, method, path].map(GroupCanonical.text) + [GroupCanonical.hash(body)])
@@ -44,7 +53,7 @@ private actor Relay: GroupHTTPTransport {
                     ["personId": $0.personID, "identityPublicKey": GroupWire.base64($0.personPublicKey), "state": "active",
                      "role": $0.personID == payer ? "payer" : "member", "admittedGeneration": $0.personID == payer ? 1 : 2] as [String: Any]
                 }
-                return try reply(["schemaVersion": 1, "familyId": familyString, "generation": generation, "members": rows])
+                return try reply(["schemaVersion": 1, "familyId": familyString, "generation": stalePayer ? generation + 1 : generation, "members": rows])
             }
             if path.hasSuffix("/requests") {
                 return try reply(["schemaVersion": 1, "familyId": familyString, "generation": generation, "requests": join.map { [$0] } ?? []])
@@ -138,6 +147,14 @@ private actor Relay: GroupHTTPTransport {
             do { _ = try await service.loadState(); throw Failure.check("cancelled member/payer read must not succeed") }
             catch is CancellationError { }
         }
+        await relay.probe()
+        try await rejects { _ = try await service.loadState() }
+        let parallelResult = await relay.probeResult()
+        try check(parallelResult.0 == 2, "member and payer requests overlap")
+        await relay.probe(stale: true)
+        try await rejects { _ = try await service.loadState() }
+        let staleResult = await relay.probeResult()
+        try check(staleResult.0 == 2 && staleResult.1 == 0, "stale payer is rejected before key access")
         await relay.cancelNextRead("/requests")
         do { _ = try await service.pendingRequests(); throw Failure.check("cancelled request list must not succeed") }
         catch is CancellationError { }
