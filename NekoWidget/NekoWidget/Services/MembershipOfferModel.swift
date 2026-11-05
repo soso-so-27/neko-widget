@@ -784,10 +784,12 @@ struct PlusSettingsSection: View {
     @State private var offersAutoSave = false
     @State private var showsAutoSave = false
 
-    private enum Status { case notMember, member, unknown }
+    private enum Status { case notMember, member, unknown, checking }
 
     private var status: Status {
         if purchases.entitlementState.permitsPersonalPlus { return .member }
+        // Just after launch: neither the offer nor restore until the answer is in (11/5).
+        if purchases.entitlementState == .checking { return .checking }
         if case .indeterminate = purchases.entitlementState { return .unknown }
         if purchases.pendingProductID != nil || purchases.awaitingServerConfirmation { return .unknown }
         return .notMember
@@ -821,8 +823,15 @@ struct PlusSettingsSection: View {
                 }
                 .disabled(isRechecking)
                 .accessibilityIdentifier("settings-membership-recheck")
+            case .checking:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("確認しています…").foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("settings-membership-checking")
             }
-            if status != .member {
+            if status == .notMember || status == .unknown {
                 Button("購入を復元") { showsRestore = true }
                     .font(.footnote)
                     .frame(maxWidth: .infinity)

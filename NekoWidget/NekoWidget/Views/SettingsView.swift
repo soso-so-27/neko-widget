@@ -206,7 +206,7 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink {
-                    WidgetPlacementGuidePage()
+                    WidgetPlacementGuidePage(hasCats: !catProfilesPresentation.profiles.isEmpty)
                 } label: {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
@@ -1273,10 +1273,11 @@ struct SettingsActionRow: View {
 
 /// The widget guide as a page inside 設定; finishing or skipping goes back.
 struct WidgetPlacementGuidePage: View {
+    var hasCats = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() })
+        WidgetPlacementGuideView(onComplete: { dismiss() }, onSkip: { dismiss() }, hasCats: hasCats)
             .navigationBarTitleDisplayMode(.inline)
     }
 }

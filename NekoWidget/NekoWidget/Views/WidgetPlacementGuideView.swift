@@ -7,6 +7,8 @@ import SwiftUI
 struct WidgetPlacementGuideView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
+    /// Cats are already registered: the line about registering is left out.
+    var hasCats = false
     @State private var page = 0
 
     /// One picture per step: the iOS screens the person will see, in order.
@@ -62,7 +64,9 @@ struct WidgetPlacementGuideView: View {
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .accessibilityIdentifier("widget-placement-steps")
 
-            Text("置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。猫を登録すると、猫ごとにも選べます。")
+            Text(hasCats
+                 ? "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。"
+                 : "置いたら、そのままくもりのまどです。札を押すと、きょうの1枚が出ます。猫を登録すると、猫ごとにも選べます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

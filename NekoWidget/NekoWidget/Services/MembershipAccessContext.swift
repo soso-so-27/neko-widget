@@ -54,6 +54,12 @@ struct MembershipAccessContext: Equatable {
             personal: personal, window: window, now: now)
     }
 
+    /// This iPhone's own Plus is usable now (verified, or the bounded offline
+    /// fallback). Only where Plus is enforced: a beta build is not a member.
+    func hasPersonalPlus(now: Date = .now) -> Bool {
+        enforcementEnabled && decision(for: .createPersonalMemo, now: now) == .allowed
+    }
+
     /// Call only with this window's participant-scoped, validated state.
     /// A personal subscription never authorizes someone else's window.
     /// ADR-027: まどの支援（sponsorship）はゲートとして停止した。`addSharedContent`

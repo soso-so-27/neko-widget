@@ -1367,8 +1367,11 @@ struct AppRecordSettingsView: View {
     }
 
     private var hasPlusHere: Bool { purchases.entitlementState.permitsPersonalPlus }
-    /// Buying is offered only where it can happen; a member is never asked.
-    private var offersPlus: Bool { PlusOfferAvailability.isConfigured && !hasPlusHere }
+    /// Buying is offered only where it can happen; a member is never asked,
+    /// and nothing is offered while launch is still checking (11/5).
+    private var offersPlus: Bool {
+        PlusOfferAvailability.isConfigured && !hasPlusHere && purchases.entitlementState != .checking
+    }
     private var plusEnded: Bool {
         guard let membership = authentication.membership else { return false }
         return membership.linked && !membership.canSave
@@ -1446,7 +1449,14 @@ struct AppRecordSettingsView: View {
     @ViewBuilder private var settingsSections: some View {
         Section {
             // Plus ending outranks any retry message: nothing new is saved until it comes back.
-            if plusEnded {
+            if plusEnded && hasPlusHere {
+                // This iPhone has Plus; the saving side has not caught up yet (11/5).
+                Label("Plusを確認しています", systemImage: "arrow.clockwise.icloud")
+                    .accessibilityIdentifier("app-record-save-status")
+                Button("購入状況を再確認") { authentication.checkMembership() }
+                    .disabled(authentication.membershipLoading)
+                    .accessibilityIdentifier("app-record-membership-recheck")
+            } else if plusEnded {
                 Label("止まっています", systemImage: "icloud.slash")
                     .accessibilityIdentifier("app-record-save-status")
                 Text("Plusが終わったため、新しい保存は止まっています。")
@@ -1556,7 +1566,8 @@ struct AppRecordSettingsView: View {
                     .accessibilityIdentifier("app-record-retry")
             }
         }
-        if !plusEnded && authentication.membership?.linked == false && !hasPlusHere {
+        if !plusEnded && authentication.membership?.linked == false && !hasPlusHere
+            && purchases.entitlementState != .checking {
             Section {
                 Text("Plusを始めると、保存が始まります。")
                 if offersPlus { plusOfferButton }
