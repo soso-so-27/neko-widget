@@ -181,7 +181,10 @@ final class MembershipOfferModel: ObservableObject {
     private var purchases: PlusPurchaseStore?
     private var observation: AnyCancellable?
     private var expiryTask: Task<Void, Never>?
-    private var restoreFailure: MembershipRestoreFailure?
+    /// The result of the person's last purchase or restore tap (not found,
+    /// unavailable, failed, a changed offer). Kept on screen until the next
+    /// tap or a confirmed membership, as the restore failure (#786, 11/5).
+    private var actionResult: String?
 #if DEBUG || INTERNAL_PRESENTATION
     private var fixtureStatus: MembershipOfferFixtureStatus?
     private var fixtureExpiresAt: Date?
@@ -252,6 +255,7 @@ final class MembershipOfferModel: ObservableObject {
 
     func purchase() async -> MembershipOfferActionResult {
         guard canPurchase, let presentedOffer = offer else { return .unavailable }
+        actionResult = nil
         isWorking = true
         defer { isWorking = false }
         let result = await purchaseAction(presentedOffer)
@@ -267,7 +271,7 @@ final class MembershipOfferModel: ObservableObject {
 
     func restore() async -> MembershipOfferActionResult {
         guard canRestore else { return .unavailable }
-        restoreFailure = nil
+        actionResult = nil
         isWorking = true
         defer { isWorking = false }
         let result = await restoreAction()
@@ -282,26 +286,26 @@ final class MembershipOfferModel: ObservableObject {
     private func apply(_ result: MembershipOfferActionResult, restoring: Bool) {
         switch result {
         case .completed, .cancelled:
-            restoreFailure = nil
+            actionResult = nil
             message = nil
             if result == .completed { isWaiting = false }
         case .waiting:
             isWaiting = true
             message = "Appleでの購入手続きが終わるのを待っています。もう一度購入せずに、しばらくしてから「購入を復元」を押してください。"
         case .nothingToRestore:
-            message = "Plusの購入が見つかりませんでした。購入したときと同じApple Accountでサインインしているか確かめてください。"
+            actionResult = "Plusの購入が見つかりませんでした。購入したときと同じApple Accountでサインインしているか確かめてください。"
         case .unavailable:
-            message = "いまは購入できません。写真やメモはそのままです。"
+            actionResult = "いまは購入できません。写真やメモはそのままです。"
         case .failed:
-            message = restoring
+            actionResult = restoring
                 ? "購入を確認できませんでした。写真やメモはそのままです。"
                 : "購入できたか確認できませんでした。「購入を復元」で確かめられます。"
         case .offerChanged:
-            message = "料金か無料期間が変わりました。表示を確かめてから、もう一度お申し込みください。"
+            actionResult = "料金か無料期間が変わりました。表示を確かめてから、もう一度お申し込みください。"
         case let .restoreFailed(reason):
-            restoreFailure = reason
-            message = reason.message
+            actionResult = reason.message
         }
+        if let actionResult { message = actionResult }
     }
 
     static func live(presentsOffer: Bool = true) -> MembershipOfferModel {
@@ -344,7 +348,7 @@ final class MembershipOfferModel: ObservableObject {
 
     func refresh() async {
         guard canRefresh else { return }
-        restoreFailure = nil
+        actionResult = nil
         isWorking = true
         if let purchases {
             await purchases.refreshAfterForegroundEntry()
@@ -375,11 +379,11 @@ final class MembershipOfferModel: ObservableObject {
     }
 
     private func updateMembershipState() {
-        // A repeated authority publication must not erase the explicit restore
-        // result. A confirmed membership or a new user action clears it.
+        // A repeated authority publication must not erase the explicit purchase
+        // or restore result. A confirmed membership or a new user action clears it.
         defer {
-            if isMember { restoreFailure = nil }
-            else if let restoreFailure { message = restoreFailure.message }
+            if isMember { actionResult = nil }
+            else if let actionResult { message = actionResult }
         }
         expiryTask?.cancel()
         if let purchases {
