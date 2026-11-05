@@ -177,7 +177,9 @@ final class FamilyNotebookPrototype: ObservableObject {
     }
 
     private func reload() {
-        do { snapshot = try store?.snapshot() }
+        // Each background pass reads the notebook again; the same one is not
+        // published again, so the open list is not redrawn for nothing (11/5).
+        do { let next = try store?.snapshot(); if next != snapshot { snapshot = next } }
         catch { message = "家族の手帳を読み込めませんでした。少し待ってから、もう一度お試しください。" }
     }
 
@@ -668,11 +670,6 @@ struct FamilyNotebookView: View {
     @State private var showsPlusOffer = false
     @State private var showsName = false
     @State private var showsCats = false
-    /// Copies of notebooks this iPhone kept from families it is no longer in.
-    @State private var savedCopies: [FamilyNotebookBackup.Copy] = []
-    private var formerCopies: [FamilyNotebookBackup.Copy] {
-        savedCopies.filter { $0.state.familyID != model.snapshot?.familyID }
-    }
     private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
@@ -683,13 +680,6 @@ struct FamilyNotebookView: View {
     }
     @ToolbarContentBuilder private var closeToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
-        // Only notebooks of a family this iPhone left; the current one is the
-        // screen itself (11/5: 「保存した手帳」 read as a history of this one).
-        if !formerCopies.isEmpty {
-            ToolbarItem(placement: .primaryAction) {
-                NavigationLink("前の手帳") { FamilyNotebookSavedCopiesView(excludedFamilyID: model.snapshot?.familyID) }
-            }
-        }
     }
 
     var body: some View {
@@ -726,7 +716,6 @@ struct FamilyNotebookView: View {
             .navigationTitle("家族の手帳")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { closeToolbar }
-            .task { savedCopies = (try? FamilyNotebookBackup.copies()) ?? [] }
             .sheet(isPresented: $invites) { FamilyNotebookInviteView() }
             .sheet(isPresented: $triesInvitation) { FamilyNotebookJoinView() }
             .sheet(isPresented: $showsName) {
@@ -1491,8 +1480,19 @@ struct FamilyNotebookCatSelectionView: View {
                 }
             }
             .navigationTitle("追加する猫を選ぶ")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) } }
-            .alert("共有できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("やめる") { dismiss() }.disabled(saving) }
+                // The action says what the title asks for (11/5: 「家族と共有する」
+                // under 「追加する猫を選ぶ」 read as a different step).
+                if shown?.isEmpty == false {
+                    ToolbarItem(placement: .confirmationAction) {
+                        if saving { ProgressView() }
+                        else { Button("追加", action: add).disabled(selected.isEmpty || !care.canSave) }
+                    }
+                }
+            }
+            .alert("追加できませんでした", isPresented: $failed) { Button("閉じる", role: .cancel) {} }
                 message: { Text("少し待ってから、もう一度お試しください。") }
         }
         .onAppear { if shown == nil { shown = available } }
@@ -1509,16 +1509,18 @@ struct FamilyNotebookCatSelectionView: View {
             } footer: {
                 Text("選んだ猫の「この子のこと」と、病院・預けるときに書いたことを家族と共有します。")
             }
-            Button(saving ? "共有しています…" : "家族と共有する") {
-                saving = true
-                Task {
-                    do {
-                        try await model.sharePersonalCats(selected)
-                        await FamilyNotebookSharing.shared.refresh(); dismiss()
-                    } catch { failed = true }
-                    saving = false
-                }
-            }.disabled(saving || selected.isEmpty || !care.canSave)
+        }
+        .disabled(saving)
+    }
+
+    private func add() {
+        saving = true
+        Task {
+            do {
+                try await model.sharePersonalCats(selected)
+                await FamilyNotebookSharing.shared.refresh(); dismiss()
+            } catch { failed = true }
+            saving = false
         }
     }
 }
@@ -1565,69 +1567,6 @@ extension View {
     /// Poll only while an actual shared tool is visible in the foreground.
     /// The sharing service still enforces participation, pause and entitlement.
     func familyNotebookToolSync() -> some View { modifier(FamilyNotebookToolSyncModifier()) }
-}
-
-/// A retained backup is readable without joining or resuming its old outbox.
-private struct FamilyNotebookSavedCopiesView: View {
-    /// The family this iPhone is in now: its notebook is the screen itself.
-    var excludedFamilyID: UUID?
-    @State private var copies: [FamilyNotebookBackup.Copy] = []
-    @State private var failed = false
-    var body: some View {
-        List {
-            Section {
-                if failed { Text("前の手帳を読み込めませんでした。") }
-                else if copies.isEmpty { Text("前の手帳はありません。") }
-                ForEach(copies) { copy in
-                    NavigationLink {
-                        FamilyNotebookSavedCopyView(copy: copy)
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(title(copy.snapshot))
-                            if let date = copy.state.operations.map(\.editedAt).max() {
-                                Text(date, format: .dateTime.year().month().day()).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle("前の手帳")
-        .task {
-            do { copies = try FamilyNotebookBackup.copies().filter { $0.state.familyID != excludedFamilyID } }
-            catch { failed = true }
-        }
-    }
-    private func title(_ snapshot: FamilyNotebookSnapshot) -> String {
-        let ids = Set(snapshot.operations.map { $0.target.familyCatID }).sorted { $0.uuidString < $1.uuidString }
-        let names = ids.compactMap { id in
-            FamilyNotebookWords.text(snapshot.fieldState(for: .init(familyCatID: id, field: .name))?.operation.value, .name)
-        }
-        return names.isEmpty ? "家族の手帳" : names.joined(separator: "・")
-    }
-}
-
-private struct FamilyNotebookSavedCopyView: View {
-    let copy: FamilyNotebookBackup.Copy
-    var body: some View {
-        List {
-            Section {
-                // Keep the full history, including unsent text and deletion
-                // events. Reading it never constructs a sharing service.
-                ForEach(copy.state.operations.sorted { $0.version > $1.version }) { operation in
-                    VStack(alignment: .leading, spacing: 6) {
-                        let name = FamilyNotebookWords.text(copy.snapshot.fieldState(for: .init(familyCatID: operation.target.familyCatID, field: .name))?.operation.value, .name) ?? "猫の記録"
-                        Text(name).font(.headline)
-                        if let field = operation.target.field {
-                            Text(FamilyNotebookWords.label(field)).font(.caption).foregroundStyle(.secondary)
-                            Text(FamilyNotebookWords.text(operation.value, field) ?? "空欄にしました")
-                        } else { Text("削除しました") }
-                        Text(FamilyNotebookWords.byline(operation)).font(.caption).foregroundStyle(.secondary)
-                    }.textSelection(.enabled)
-                }
-            }
-        }.navigationTitle("手帳の控え")
-    }
 }
 
 /// How the notebook's items read on screen.
