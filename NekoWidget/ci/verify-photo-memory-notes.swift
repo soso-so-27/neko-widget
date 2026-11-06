@@ -20,6 +20,7 @@ enum PhotoMemoryNoteVerifier {
             try measuresLongTermStore(at: root)
             return
         }
+        verifiesPortablePhotoRelinking()
         try verifiesLibraryScopeAndOrdering()
         try verifiesWeightValues()
         try verifiesReadFailuresNeverMeanEmptyAndLateRequestsStayIsolated()
@@ -40,6 +41,25 @@ enum PhotoMemoryNoteVerifier {
         try await verifiesWeightPersistence(at: root.appendingPathComponent("weight/state.json"))
         try await verifiesMissingPartitionNeverReplacesRecords(at: root.appendingPathComponent("partition-failure/state.json"))
         print("Photo memory note verifier passed: editing, conflict, persistence, migration, records, metadata, failure recovery")
+    }
+
+    private static func verifiesPortablePhotoRelinking() {
+        var note = PhotoMemoryNote(text: "synthetic", updatedAt: Date(), revision: UUID().uuidString)
+        note.photoFile = "synthetic.jpg"; note.photoCloudIdentifier = "synthetic-cloud-id"
+        let saved = "saved:" + note.id.uuidString
+        let remote = PhotoMemoryNoteSnapshot(schemaVersion: 4, notes: [saved: note])
+        let mapped = PhotoMemoryNoteRelink.apply(remote, local: nil, resolved: ["synthetic-cloud-id": "new-phone-photo"])
+        precondition(mapped.notes["new-phone-photo"] == note && mapped.notes.count == 1)
+        let missing = PhotoMemoryNoteRelink.apply(remote, local: nil, resolved: [:])
+        precondition(missing.notes[saved] == note, "unavailable Photos mapping retains the note and saved JPEG")
+        let local = PhotoMemoryNoteSnapshot(schemaVersion: 4, notes: ["this-phone-photo": note])
+        let samePhone = PhotoMemoryNoteRelink.apply(remote, local: local, resolved: [:])
+        precondition(samePhone.notes["this-phone-photo"] == note, "same note UUID preserves the existing local photo link")
+        var other = PhotoMemoryNote(text: "other", updatedAt: Date(), revision: UUID().uuidString)
+        other.photoCloudIdentifier = note.photoCloudIdentifier
+        let collision = PhotoMemoryNoteRelink.apply(.init(schemaVersion: 4, notes: [saved: note, "saved:other": other]),
+            local: nil, resolved: ["synthetic-cloud-id": "new-phone-photo"])
+        precondition(collision.notes.count == 2 && Set(collision.notes.values.map(\.id)) == [note.id, other.id], "colliding links never overwrite either memo")
     }
 
     private static func verifiesMissingPartitionNeverReplacesRecords(at url: URL) async throws {

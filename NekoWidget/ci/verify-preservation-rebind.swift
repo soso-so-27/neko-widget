@@ -1,7 +1,7 @@
 @main struct Check {
     enum Stop: Error { case fence }
     static func check(_ condition: Bool, _ message: String) { precondition(condition, message) }
-    static func seed(active: Bool = true) throws -> (URL, [String:Data], [String:Data], URL, Data) {
+    static func seed(active: Bool = true, sameOrigin: Bool = false) throws -> (URL, [String:Data], [String:Data], URL, Data) {
         AppRecordDataset.support=FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-rebind-"+UUID().uuidString)
         let c=AppRecordDataset.control, id=UUID()
         let old=AppRecordDataset.Pointer(version:1,datasetID:id,owner:"old-owner",origin:"https://staging.invalid",manifests:["CatCare/state.json"])
@@ -12,13 +12,33 @@
         try AppRecordRebinding.write(raw,to:root.appendingPathComponent("dataset.json"))
         var previous=["binding.json":Data("{\"owner\":\"old-owner\",\"origin\":\"https://staging.invalid\"}".utf8)]
         if active { previous["active.json"]=raw; previous["owner.json"]=raw }
-        var next=["binding.json":Data("{\"owner\":\"new-owner\",\"origin\":\"https://production.invalid\"}".utf8),
-                  "owner.json":try JSONEncoder().encode(AppRecordDataset.Pointer(version:1,datasetID:id,owner:"new-owner",origin:"https://production.invalid"))]
-        if active { next["active.json"]=try JSONEncoder().encode(AppRecordDataset.Pointer(version:1,datasetID:id,owner:"new-owner",origin:"https://production.invalid",manifests:old.manifests,sourceReceipt:raw)) }
+        let newOrigin = sameOrigin ? "https://staging.invalid" : "https://production.invalid"
+        var next=["binding.json":Data(("{\"owner\":\"new-owner\",\"origin\":\"" + newOrigin + "\"}").utf8),
+                  "owner.json":try JSONEncoder().encode(AppRecordDataset.Pointer(version:1,datasetID:id,owner:"new-owner",origin:newOrigin))]
+        if active { next["active.json"]=try JSONEncoder().encode(AppRecordDataset.Pointer(version:1,datasetID:id,owner:"new-owner",origin:newOrigin,manifests:old.manifests,sourceReceipt:raw)) }
         for(n,d) in previous {try AppRecordRebinding.write(d,to:c.appendingPathComponent(n))}
         return(c,previous,next,root,data)
     }
     static func main() throws {
+        let intent = AppRecordSaveIntent(), ticket = intent.ticket()
+        var published = false
+        let fence = intent.fence(ticket, { try $0() })
+        intent.invalidate()
+        do { try fence { published = true }; preconditionFailure("paused restore published") }
+        catch is CancellationError {}
+        check(!published, "pause wins over a late restore/authentication publication")
+        let nextFence = intent.fence(intent.ticket(), { try $0() })
+        try nextFence { published = true }
+        check(published, "a later explicit start has a fresh intent")
+        do {
+            let(c,old,next,root,data)=try seed(sameOrigin:true)
+            defer {try? FileManager.default.removeItem(at:AppRecordDataset.support)}
+            try AppRecordRebinding.begin(at:c,previous:old,next:next,fence:{})
+            try AppRecordDataset.requireScope(owner:"new-owner",origin:"https://staging.invalid")
+            check(try Data(contentsOf:root.appendingPathComponent("CatCare/state.json"))==data,"account switch retains local bytes")
+            let marker=try JSONDecoder().decode(AppRecordRebinding.Marker.self,from:Data(contentsOf:c.appendingPathComponent("rebind.json")))
+            check(try Data(contentsOf:c.appendingPathComponent("previous-settings/"+marker.id.uuidString+"/binding.json"))==old["binding.json"],"same-origin switch retains old binding")
+        }
         for mask in 0..<8 {
             let (c,old,next,root,data)=try seed()
             defer {try? FileManager.default.removeItem(at:AppRecordDataset.support)}

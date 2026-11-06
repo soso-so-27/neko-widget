@@ -6,6 +6,49 @@ import StoreKit
 import AuthenticationServices
 import ImageIO
 import UIKit
+import Photos
+
+private enum AppRecordPhotoIdentity {
+    private actor Cache {
+        var values: [String: String] = [:]
+        func read(_ keys: [String]) -> [String: String] { let wanted = Set(keys); return values.filter { wanted.contains($0.key) } }
+        func save(_ added: [String: String]) {
+            if values.count + added.count > 10_000 { values.removeAll() }
+            values.merge(added) { _, new in new }
+        }
+    }
+    private static let cache = Cache()
+    static func cloud(_ localIDs: [String]) async -> [String: String] {
+        let known = await cache.read(localIDs), missing = localIDs.filter { known[$0] == nil }
+        if missing.isEmpty { return known }
+        let added: [String: String] = await Task.detached(priority: .utility) {
+            guard !missing.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
+            let values = PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: missing)
+            var result: [String: String] = [:]
+            for local in missing {
+                guard let mapping = values[local], case let .success(cloud) = mapping else { continue }
+                result[local] = cloud.stringValue
+            }
+            return result
+        }.value
+        await cache.save(added)
+        return known.merging(added) { _, new in new }
+    }
+    static func local(_ cloudIDs: [String]) async -> [String: String] {
+        await Task.detached(priority: .utility) {
+            guard !cloudIDs.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
+            let identifiers = cloudIDs.map(PHCloudIdentifier.init(stringValue:))
+            let values = PHPhotoLibrary.shared().localIdentifierMappings(for: identifiers)
+            var result: [String: String] = [:]
+            for (cloud, identifier) in zip(cloudIDs, identifiers) {
+                guard let mapping = values[identifier], case let .success(local) = mapping, !local.isEmpty else { continue }
+                guard PHAsset.fetchAssets(withLocalIdentifiers: [local], options: nil).count == 1 else { continue }
+                result[cloud] = local
+            }
+            return result
+        }.value
+    }
+}
 
 extension Notification.Name {
     static let appRecordsCommitted = Notification.Name("neko.app-records.committed.v1")
@@ -419,6 +462,17 @@ enum AppRecordDataset {
                 try AppRecordJSON.write(FamilyNotebookBackup.restored(AppRecordJSON.read(target)), to: target)
             }
         }
+        let notesURL = destination.appendingPathComponent("PhotoMemoryNotes/state.json")
+        if FileManager.default.fileExists(atPath: notesURL.path) {
+            let remote = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: AppRecordJSON.read(notesURL))
+            let current = directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+            let local = FileManager.default.fileExists(atPath: current.path)
+                ? try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: AppRecordJSON.read(current)) : nil
+            let cloudIDs = Array(Set(remote.notes.values.compactMap(\.photoCloudIdentifier))).filter { !$0.isEmpty && $0.utf8.count <= 4096 }
+            let resolved = await AppRecordPhotoIdentity.local(cloudIDs)
+            let linked = PhotoMemoryNoteRelink.apply(remote, local: local, resolved: resolved)
+            try AppRecordJSON.write(JSONEncoder().encode(linked), to: notesURL)
+        }
         receipt.manifests?.sort()
         let identity = destination.appendingPathComponent("CatIdentity/state.json")
         if FileManager.default.fileExists(atPath: identity.path) {
@@ -517,6 +571,25 @@ struct AppRecordHead: Codable, Equatable, Sendable {
 
 /// Owns the actual save, independently of the timer or a disappearing view's Task.
 /// A background grant can only finish work that has already started.
+/// A pause invalidates outstanding asynchronous work before it can publish.
+/// The lock makes the final check atomic with the dataset pointer swap.
+final class AppRecordSaveIntent: @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private var generation: UInt64 = 0
+    func ticket() -> UInt64 { lock.lock(); defer { lock.unlock() }; return generation }
+    func invalidate() { lock.lock(); defer { lock.unlock() }; generation &+= 1 }
+    func require(_ ticket: UInt64) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard ticket == generation else { throw CancellationError() }
+    }
+    func fence(_ ticket: UInt64, _ base: @escaping ManagedPreservationClient.LocalSessionFence) -> ManagedPreservationClient.LocalSessionFence {
+        { [self] publish in
+            lock.lock(); defer { lock.unlock() }
+            try require(ticket); try base(publish)
+        }
+    }
+}
+
 @MainActor
 final class AppRecordSaveLifetime {
     typealias Begin = (@escaping @MainActor @Sendable () -> Void) -> Int?
@@ -625,6 +698,7 @@ final class AppRecordPersistence: ObservableObject {
     private let bindingURL: URL
     private var loop: Task<Void, Never>?
     private let saveLifetime = AppRecordSaveLifetime.system()
+    private let saveIntent = AppRecordSaveIntent()
     private var active = false
     private var observer: NSObjectProtocol?
     private var datasetObserver: NSObjectProtocol?
@@ -709,6 +783,7 @@ final class AppRecordPersistence: ObservableObject {
     }
 
     private func reportSyncFailure(_ error: Error, cleanup: Bool, accepted: AcceptedSave?) {
+        guard enabled else { title = "自動保存はオフです"; detail = nil; return }
         // A cleanup failure is not an upload failure. Keep its retry scheduled,
         // including when the last retirement ID was already durably removed.
         requested = true
@@ -862,7 +937,8 @@ final class AppRecordPersistence: ObservableObject {
             guard let raw = previous["binding.json"] else { throw AppRecordBindingError.rebinding }
             let old = try JSONDecoder().decode(Binding.self, from: raw)
             guard old.version == 1, old.consent == Self.consentVersion, !old.owner.isEmpty,
-                  URL(string: old.origin)?.scheme == "https", old.origin != origin else { throw AppRecordBindingError.rebinding }
+                  URL(string: old.origin)?.scheme == "https",
+                  old.origin != origin || old.owner != checkpoint.ownerID else { throw AppRecordBindingError.rebinding }
             try AppRecordDataset.requireScope(owner: old.owner, origin: old.origin)
             let root = try AppRecordDataset.root()
             let pointer = try AppRecordDataset.pointer()
@@ -902,7 +978,9 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
     func enable() async {
+        let intent = saveIntent.ticket()
         await yieldCleanup()
+        guard (try? saveIntent.require(intent)) != nil else { return }
         guard !busy else { report(AppRecordBindingError.busy); return }
         guard let origin = configuration.origin?.absoluteString else { report(AppRecordBindingError.rebinding); return }
         busy = true
@@ -912,9 +990,11 @@ final class AppRecordPersistence: ObservableObject {
             var changingDestination = false
             do { previous = try binding() }
             catch AppRecordBindingError.destination { changingDestination = true }
-            let checkpoint = try await client.prepareSession(expectedOwner: previous?.owner)
-            let fence = try await client.localSessionFence(checkpoint)
-            if changingDestination {
+            // Explicit start may use the newly authenticated Apple account.
+            // Automatic/background work remains fenced to the previous owner.
+            let checkpoint = try await client.prepareSession()
+            let fence = saveIntent.fence(intent, try await client.localSessionFence(checkpoint))
+            if changingDestination || (previous != nil && previous?.owner != checkpoint.ownerID) {
                 try rebind(origin: origin, checkpoint: checkpoint, fence: fence)
             } else {
                 try fence {
@@ -936,11 +1016,15 @@ final class AppRecordPersistence: ObservableObject {
             await synchronize()
         } catch {
             busy = false
+            guard (try? saveIntent.require(intent)) != nil else { return }
             report(error)
             if !(error is AppRecordBindingError) { detail = (detail ?? "保存を始められませんでした。") + "（P04）" }
         }
     }
     func pause() {
+        saveIntent.invalidate()
+        enabled = false; requested = false; conflict = false
+        title = "自動保存はオフです"; detail = nil
         cleanupYield = true; cachedIndex = nil; cachedMembership = nil
         do {
             guard var value = try binding() else { return }
@@ -950,7 +1034,9 @@ final class AppRecordPersistence: ObservableObject {
     }
     func retry() async { flushEdits(); requested = true; conflict = false; nextAttempt = .distantPast; await synchronize() }
     func resolveConflict(useRemote: Bool) async {
+        let intent = saveIntent.ticket()
         await yieldCleanup()
+        guard (try? saveIntent.require(intent)) != nil else { return }
         guard !busy else { return }
         busy = true
         do {
@@ -968,8 +1054,9 @@ final class AppRecordPersistence: ObservableObject {
             try await require(value, restoredCheckpoint)
             guard try await remoteHead(headID)?.0.revision == remote.0.revision else { throw ManagedPreservationError.conflict }
             if useRemote {
-                let fence = try await client.localSessionFence(restoredCheckpoint)
+                let fence = saveIntent.fence(intent, try await client.localSessionFence(restoredCheckpoint))
                 try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: fingerprint, validateSession: fence)
+                try saveIntent.require(intent)
                 value.fingerprint = try AppRecordDataset.fingerprint()
                 value.pending = nil; value.pendingFingerprint = nil; value.pendingBase = nil
             } else {
@@ -981,16 +1068,20 @@ final class AppRecordPersistence: ObservableObject {
             }
             value.revision = remote.0.revision; value.snapshotID = remote.1.snapshotID
             try await require(value, restoredCheckpoint); try write(value)
-            conflict = false; requested = true; detail = "切り替える前の記録も、このiPhoneに残っています。"
-        } catch { report(error) }
+            try saveIntent.require(intent)
+            conflict = false; requested = true; nextAttempt = .distantPast; flushEdits()
+            title = "保存の準備中…"; detail = nil
+        } catch {
+            if (try? saveIntent.require(intent)) != nil { report(error) }
+        }
         busy = false
-        if !conflict { await synchronize() }
+        if enabled, !conflict, (try? saveIntent.require(intent)) != nil { await synchronize() }
     }
     private func require(_ value: Binding, _ checkpoint: ManagedPreservationClient.SessionCheckpoint) async throws {
         try Task.checkCancellation()
         try await client.requireSessionCheckpoint(checkpoint)
         try AppRecordDataset.requireScope(owner: value.owner, origin: value.origin)
-        guard checkpoint.ownerID == value.owner, let current = try binding(),
+        guard enabled, checkpoint.ownerID == value.owner, let current = try binding(),
               current.owner == value.owner, current.origin == value.origin, current.enabled,
               current.consent == value.consent else { throw ManagedPreservationError.staleSession }
     }
@@ -1105,7 +1196,8 @@ final class AppRecordPersistence: ObservableObject {
         }
     }
     private func synchronizeOnce() async {
-        guard active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
+        let intent = saveIntent.ticket()
+        guard enabled, active || requested, !busy, !conflict, Date() >= nextAttempt else { return }
         busy = true
         defer { busy = false }
         var phase = "保存設定を確認"
@@ -1165,8 +1257,9 @@ final class AppRecordPersistence: ObservableObject {
                     let saved = restored.saved
                     try await require(value, restored.checkpoint)
                     guard try await remoteHead(headID)?.0.revision == remote.0.revision else { throw ManagedPreservationError.conflict }
-                    let fence = try await client.localSessionFence(restored.checkpoint)
+                    let fence = saveIntent.fence(intent, try await client.localSessionFence(restored.checkpoint))
                     try await AppRecordDataset.activate(saved, origin: value.origin, expectedFingerprint: currentFingerprint, validateSession: fence)
+                    try saveIntent.require(intent)
                     value.revision = remote.0.revision; value.snapshotID = saved.id
                     value.fingerprint = try AppRecordDataset.fingerprint(); value.pending = nil
                     value.pendingFingerprint = nil; value.pendingBase = nil; try write(value)
@@ -1616,13 +1709,13 @@ struct AppRecordSettingsView: View {
                 running = "このiPhoneの記録を使う"
                 Task { await persistence.resolveConflict(useRemote: false) }
             }
-        } message: { Text("ほかのiPhoneの記録も、このiPhoneに残しておきます。") }
+        } message: { Text("このiPhoneの記録で、これからの保存を続けます。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
             Button("ほかのiPhoneの記録を使う") {
                 running = "ほかのiPhoneの記録を使う"
                 Task { await persistence.resolveConflict(useRemote: true) }
             }
-        } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
+        } message: { Text("いま使う記録を、ほかのiPhoneで保存した記録に切り替えます。") }
         .onChange(of: persistence.busy) { _, busy in if !busy { running = nil } }
     }
 
@@ -1851,8 +1944,10 @@ enum AppRecordCapture {
                 var state = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: bytes)
                 guard (2...4).contains(state.schemaVersion) else { throw ToolBackupError.invalid }
                 var portable: [String: PhotoMemoryNote] = [:]
+                let cloudIDs = await AppRecordPhotoIdentity.cloud(state.notes.filter { !$0.key.hasPrefix("saved:") && $0.value.photoCloudIdentifier == nil }.map(\.key))
                 for (identifier, input) in state.notes {
                     var note = input
+                    if note.photoCloudIdentifier == nil { note.photoCloudIdentifier = cloudIDs[identifier] }
                     let id = note.id
                     let name = id.uuidString + ".jpg"
                     if indexVersion == 4, previouslyStoredPhotos.contains(tool + "/" + name) {
