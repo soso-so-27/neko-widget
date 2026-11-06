@@ -700,6 +700,10 @@ struct FamilyNotebookView: View {
     @State private var invites = false
     @State private var triesInvitation = false
     @State private var showsPlusOffer = false
+    /// 「家族を作る」 led to Plus: once bought, go on to the name (11/6:
+    /// without Plus, 作る ended in an alert with only 「閉じる」).
+    @State private var createsAfterPlus = false
+    @State private var boughtPlus = false
     @State private var showsRestore = false
     @State private var showsName = false
     @State private var showsCats = false
@@ -760,7 +764,9 @@ struct FamilyNotebookView: View {
                     ProgressView()
                 case .notInFamily:
                     FamilyNotebookIntroView(creating: sharing.isWorking, create: {
-                        if model.isReal { showsName = true }
+                        if model.isReal, access.decision(for: .createOwnWindow) == .membershipRequired {
+                            createsAfterPlus = true; showsPlusOffer = true
+                        } else if model.isReal { showsName = true }
                         else { Task { await sharing.perform { try await sharing.service.createFamily(operationID: $0) } } }
                     }, tryInvitation: prototypeInvitationAction)
                 case .pendingApproval:
@@ -789,9 +795,14 @@ struct FamilyNotebookView: View {
             .sheet(isPresented: $showsPlusOffer, onDismiss: {
                 NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
                 Task { await sharing.refresh() }
+                if createsAfterPlus { createsAfterPlus = false; showsName = boughtPlus }
+                boughtPlus = false
             }) {
                 // ADR-027 5章 "家族の手帳を続ける": the same single subscription.
-                MembershipOfferSheet(model: .live(), context: .continueFamily) { _ in showsPlusOffer = false }
+                MembershipOfferSheet(model: .live(), context: .continueFamily) { result in
+                    boughtPlus = result == .completed
+                    showsPlusOffer = false
+                }
             }
             .sheet(isPresented: $showsRestore, onDismiss: {
                 NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
@@ -803,6 +814,10 @@ struct FamilyNotebookView: View {
                 Button("閉じる", role: .cancel) {}
             } message: { Text(model.message ?? "") }
             .alert("家族の手帳", isPresented: Binding(get: { sharing.failure != nil }, set: { if !$0 { sharing.failure = nil } })) {
+                // Making a family needs Plus: the way to it, not only 「閉じる」.
+                if sharing.failure == .plusRequired {
+                    Button("Plusについて") { createsAfterPlus = true; showsPlusOffer = true }
+                }
                 Button("閉じる", role: .cancel) {}
             } message: { Text(sharing.failure?.message ?? "") }
             .confirmationDialog(decliningTitle, isPresented: decliningPresented, titleVisibility: .visible,

@@ -1606,6 +1606,9 @@ struct AppRecordSettingsView: View {
     @StateObject private var exporter = RecordExportController()
     @Environment(\.scenePhase) private var scenePhase
     @State private var starting = false
+    /// Plus was bought from this screen: link it to saving as soon as this
+    /// iPhone has it, even when saving was turned on before (11/6).
+    @State private var linksAfterPurchase = false
     @State private var confirmsLocal = false
     @State private var confirmsPause = false
     @State private var confirmsRemote = false
@@ -1662,9 +1665,14 @@ struct AppRecordSettingsView: View {
         .sheet(isPresented: $showsPlusOffer, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
             authentication.checkMembership()
+            linkAfterPurchaseIfReady()
         }) {
-            MembershipOfferSheet(model: .live(), context: .preservation) { _ in showsPlusOffer = false }
+            MembershipOfferSheet(model: .live(), context: .preservation) { result in
+                if result == .completed { linksAfterPurchase = true }
+                showsPlusOffer = false
+            }
         }
+        .onChange(of: hasPlusHere) { _, _ in linkAfterPurchaseIfReady() }
         .task { authentication.start(observingOnly: true) }
         .onDisappear {
             AppIdleTimer.setPreventSleep(false, for: "preservation-export")
@@ -1686,7 +1694,7 @@ struct AppRecordSettingsView: View {
             authentication.refreshUsage()
         }
         .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
-        .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
+        .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting(); linkAfterPurchaseIfReady() } }
         .onChange(of: authentication.membership?.canSave) { previous, canSave in
             if canSave == true, persistence.enabled, previous == false || persistence.planEnded {
                 Task { await persistence.retry() }
@@ -1885,6 +1893,15 @@ struct AppRecordSettingsView: View {
 
     /// Links this iPhone's Plus once, right after the person chose to start.
     /// The button they pressed states that the link cannot be moved later.
+    /// The 「Plusを始める」 here says starting Plus starts saving: once this
+    /// iPhone has the Plus just bought, it is linked without another press.
+    private func linkAfterPurchaseIfReady() {
+        guard linksAfterPurchase, hasPlusHere, authentication.isSignedIn, !authentication.isBusy,
+              authentication.membership?.linked == false else { return }
+        linksAfterPurchase = false
+        authentication.connectMembership(consent: true)
+    }
+
     private func linkPlusIfStarting() {
         guard starting, authentication.isSignedIn, !authentication.isBusy,
               let membership = authentication.membership else { return }
