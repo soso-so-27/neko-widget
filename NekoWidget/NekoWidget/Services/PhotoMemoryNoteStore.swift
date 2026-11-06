@@ -237,6 +237,8 @@ struct PhotoMemoryNote: Codable, Equatable, Sendable {
     let context: PhotoMemoryNoteContext?
     var weight: PhotoMemoWeight? = nil
     var photoFile: String? = nil
+    /// iCloud Photos identity, stored only inside the private encrypted backup.
+    var photoCloudIdentifier: String? = nil
 
     init(
         id: UUID = UUID(),
@@ -267,6 +269,27 @@ struct PhotoMemoryNoteRecord: Identifiable, Equatable, Sendable {
 struct PhotoMemoryNoteSnapshot: Codable {
     let schemaVersion: Int
     var notes: [String: PhotoMemoryNote]
+}
+
+/// Exact identity only. Missing/ambiguous Photos mappings keep the saved JPEG
+/// and note together under the saved key; they never attach to a guessed photo.
+enum PhotoMemoryNoteRelink {
+    static func apply(_ remote: PhotoMemoryNoteSnapshot, local: PhotoMemoryNoteSnapshot?,
+                      resolved: [String: String]) -> PhotoMemoryNoteSnapshot {
+        var result = remote, notes: [String: PhotoMemoryNote] = [:]
+        let localIDs = Dictionary((local?.notes ?? [:]).filter { !$0.key.hasPrefix("saved:") }.map { ($0.value.id, $0.key) },
+                                  uniquingKeysWith: { _, _ in "" })
+        for (key, note) in remote.notes.sorted(by: { $0.key < $1.key }) {
+            let target = localIDs[note.id].flatMap { $0.isEmpty ? nil : $0 }
+                ?? note.photoCloudIdentifier.flatMap { resolved[$0] }
+            if let target, !target.isEmpty, notes[target] == nil,
+               remote.notes[target] == nil || target == key {
+                notes[target] = note
+            } else { notes[key] = note }
+        }
+        result.notes = notes
+        return result
+    }
 }
 
 /// Explicit consent and an outbox are device-local. Neither identifiers nor
@@ -618,6 +641,7 @@ actor PhotoMemoryNoteStore {
             context: preservedContext, weight: weight
         )
         note?.photoFile = existing?.photoFile
+        note?.photoCloudIdentifier = existing?.photoCloudIdentifier
         state.notes[identifier] = note
         if var binding = state.archiveBindings?[identifier] {
             binding.pending = PhotoMemoryNoteReflection(operationID: UUID(), text: text,
@@ -743,6 +767,7 @@ actor PhotoMemoryNoteStore {
                 guard note.weight == nil || state.schemaVersion == 4,
                       note.text == note.text.trimmingCharacters(in: .whitespacesAndNewlines),
                       note.text.count <= Self.maximumCharacters,
+                      note.photoCloudIdentifier.map({ !$0.isEmpty && $0.utf8.count <= 4096 }) ?? true,
                       UUID(uuidString: note.revision) != nil,
                       note.updatedAt.timeIntervalSinceReferenceDate.isFinite,
                       note.writtenAt?.timeIntervalSinceReferenceDate.isFinite ?? true,

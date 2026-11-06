@@ -6,6 +6,48 @@ import StoreKit
 import AuthenticationServices
 import ImageIO
 import UIKit
+import Photos
+
+private enum AppRecordPhotoIdentity {
+    private actor Cache {
+        var values: [String: String] = [:]
+        func read(_ keys: [String]) -> [String: String] { let wanted = Set(keys); return values.filter { wanted.contains($0.key) } }
+        func save(_ added: [String: String]) {
+            if values.count + added.count > 10_000 { values.removeAll() }
+            values.merge(added) { _, new in new }
+        }
+    }
+    private static let cache = Cache()
+    static func cloud(_ localIDs: [String]) async -> [String: String] {
+        let known = await cache.read(localIDs), missing = localIDs.filter { known[$0] == nil }
+        if missing.isEmpty { return known }
+        let added: [String: String] = await Task.detached(priority: .utility) {
+            guard !missing.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
+            let values = PHPhotoLibrary.shared().cloudIdentifiers(forLocalIdentifiers: missing)
+            guard values.count == missing.count else { return [:] }
+            var result: [String: String] = [:]
+            for (local, cloud) in zip(missing, values) where cloud != PHCloudIdentifier.notFound {
+                result[local] = cloud.stringValue
+            }
+            return result
+        }.value
+        await cache.save(added)
+        return known.merging(added) { _, new in new }
+    }
+    static func local(_ cloudIDs: [String]) async -> [String: String] {
+        await Task.detached(priority: .utility) {
+            guard !cloudIDs.isEmpty, [.authorized, .limited].contains(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return [:] }
+            let values = PHPhotoLibrary.shared().localIdentifiers(for: cloudIDs.map(PHCloudIdentifier.init(stringValue:)))
+            guard values.count == cloudIDs.count else { return [:] }
+            var result: [String: String] = [:]
+            for (cloud, local) in zip(cloudIDs, values) where local != PHLocalIdentifierNotFound && !local.isEmpty {
+                guard PHAsset.fetchAssets(withLocalIdentifiers: [local], options: nil).count == 1 else { continue }
+                result[cloud] = local
+            }
+            return result
+        }.value
+    }
+}
 
 extension Notification.Name {
     static let appRecordsCommitted = Notification.Name("neko.app-records.committed.v1")
@@ -418,6 +460,17 @@ enum AppRecordDataset {
             } else {
                 try AppRecordJSON.write(FamilyNotebookBackup.restored(AppRecordJSON.read(target)), to: target)
             }
+        }
+        let notesURL = destination.appendingPathComponent("PhotoMemoryNotes/state.json")
+        if FileManager.default.fileExists(atPath: notesURL.path) {
+            let remote = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: AppRecordJSON.read(notesURL))
+            let current = directory("PhotoMemoryNotes").appendingPathComponent("state.json")
+            let local = FileManager.default.fileExists(atPath: current.path)
+                ? try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: AppRecordJSON.read(current)) : nil
+            let cloudIDs = Array(Set(remote.notes.values.compactMap(\.photoCloudIdentifier))).filter { !$0.isEmpty && $0.utf8.count <= 4096 }
+            let resolved = await AppRecordPhotoIdentity.local(cloudIDs)
+            let linked = PhotoMemoryNoteRelink.apply(remote, local: local, resolved: resolved)
+            try AppRecordJSON.write(JSONEncoder().encode(linked), to: notesURL)
         }
         receipt.manifests?.sort()
         let identity = destination.appendingPathComponent("CatIdentity/state.json")
@@ -1655,13 +1708,13 @@ struct AppRecordSettingsView: View {
                 running = "このiPhoneの記録を使う"
                 Task { await persistence.resolveConflict(useRemote: false) }
             }
-        } message: { Text("ほかのiPhoneの記録も、このiPhoneに残しておきます。") }
+        } message: { Text("このiPhoneの記録で、これからの保存を続けます。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
             Button("ほかのiPhoneの記録を使う") {
                 running = "ほかのiPhoneの記録を使う"
                 Task { await persistence.resolveConflict(useRemote: true) }
             }
-        } message: { Text("このiPhoneのいまの記録も残したまま、ほかのiPhoneの記録に切り替えます。") }
+        } message: { Text("いま使う記録を、ほかのiPhoneで保存した記録に切り替えます。") }
         .onChange(of: persistence.busy) { _, busy in if !busy { running = nil } }
     }
 
@@ -1890,8 +1943,10 @@ enum AppRecordCapture {
                 var state = try JSONDecoder().decode(PhotoMemoryNoteSnapshot.self, from: bytes)
                 guard (2...4).contains(state.schemaVersion) else { throw ToolBackupError.invalid }
                 var portable: [String: PhotoMemoryNote] = [:]
+                let cloudIDs = await AppRecordPhotoIdentity.cloud(state.notes.filter { !$0.key.hasPrefix("saved:") && $0.value.photoCloudIdentifier == nil }.map(\.key))
                 for (identifier, input) in state.notes {
                     var note = input
+                    if note.photoCloudIdentifier == nil { note.photoCloudIdentifier = cloudIDs[identifier] }
                     let id = note.id
                     let name = id.uuidString + ".jpg"
                     if indexVersion == 4, previouslyStoredPhotos.contains(tool + "/" + name) {
