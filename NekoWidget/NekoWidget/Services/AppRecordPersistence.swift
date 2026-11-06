@@ -1225,6 +1225,14 @@ final class AppRecordPersistence: ObservableObject {
             // eight-second timer must not extend device idle expiry or call Apple.
             let checkpoint = try await client.prepareSession(expectedOwner: value.owner)
             try await require(value, checkpoint)
+            // An unchanged saved dataset must still clear a previously ended plan
+            // after fresh server confirmation, before the saved fast return.
+            if planEnded {
+                let resumed = try await saveMembership(checkpoint)
+                try await require(value, checkpoint)
+                guard resumed.canSave else { throw ManagedPreservationError.membershipRequired }
+                planEnded = false
+            }
             releaseUploadedPayload(value.snapshotID, owner: value.owner)
             if let pending = value.pending {
                 phase = "中断した送信を再開"
@@ -1686,7 +1694,6 @@ struct AppRecordSettingsView: View {
             }
             // Signing in again to continue an export must not start other reads.
             guard !exporter.preparing else { return }
-            if starting { Task { await persistence.enable() } }
             linkPlusIfStarting()
         }
         .onChange(of: persistence.title) { _, title in
@@ -1696,6 +1703,7 @@ struct AppRecordSettingsView: View {
         .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
         .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting(); linkAfterPurchaseIfReady() } }
         .onChange(of: authentication.membership?.canSave) { previous, canSave in
+            linkPlusIfStarting()
             if canSave == true, persistence.enabled, previous == false || persistence.planEnded {
                 Task { await persistence.retry() }
             }
@@ -1887,7 +1895,6 @@ struct AppRecordSettingsView: View {
 
     private func start() {
         starting = true
-        Task { await persistence.enable() }
         linkPlusIfStarting()
     }
 
@@ -1899,14 +1906,20 @@ struct AppRecordSettingsView: View {
         guard linksAfterPurchase, hasPlusHere, authentication.isSignedIn, !authentication.isBusy,
               authentication.membership?.linked == false else { return }
         linksAfterPurchase = false
+        starting = true
         authentication.connectMembership(consent: true)
     }
 
     private func linkPlusIfStarting() {
         guard starting, authentication.isSignedIn, !authentication.isBusy,
               let membership = authentication.membership else { return }
+        if !membership.linked, hasPlusHere {
+            authentication.connectMembership(consent: true)
+            return
+        }
+        guard membership.canSave else { return }
         starting = false
-        if !membership.linked, hasPlusHere { authentication.connectMembership(consent: true) }
+        Task { await persistence.enable() }
     }
 }
 
@@ -2443,6 +2456,13 @@ private final class AppRecordFixture {
         }
         Self.measurementSummary = "AUTOSAVE_EFFICIENCY savedSeconds=\(saveSeconds) \(counts(atSave)); totalSeconds=\(allSeconds) \(counts(all)); photoPUT=0"
         print(Self.measurementSummary)
+        // Resuming Plus with no new edits must clear the stopped row without PUTs.
+        persistence.notePlanEnded(true)
+        let beforeResume = await server.counts()
+        await persistence.retry()
+        let afterResume = await server.counts()
+        guard !persistence.planEnded, persistence.title == "保存済み",
+              beforeResume.1 == afterResume.1 else { throw ToolBackupError.storage }
         Self.preparationPhase = "片づけ途中でも新しい保存を優先"
         await server.holdNextDeletion()
         plan.contact += " 片づけを待たない変更"
