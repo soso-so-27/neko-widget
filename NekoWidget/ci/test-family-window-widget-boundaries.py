@@ -3514,6 +3514,23 @@ class ReviewRequestTests(unittest.TestCase):
         self.assertEqual(album.count("requestReview()"), 1)
 
 
+class WindowStateTests(unittest.TestCase):
+    def test_gone_window_rotation_wait_and_kept_failure_reason(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn("} catch GroupClientError.notMember {\n            window = nil; failedDelivery = nil; message = nil; isGone = true", window)
+        self.assertIn("if !model.isFormer && !model.isGone { sendBar }", window)
+        self.assertIn("if message == nil, !isGone { message = reason }", window)
+        self.assertIn("window.state == .rotationRequired, !window.canManage", window)
+        self.assertIn("model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo)", window)
+
+    def test_recent_writes_never_show_internal_field_names(self) -> None:
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        label = section(notebook, "static func label(_ field: FamilyNotebookField) -> String {", "/// The picked (not typed) items")
+        self.assertNotIn("field.rawValue", label)
+        for name in ("grams", "usualFood", "observations", "farewellDay"):
+            self.assertIn("case ." + name, label)
+
+
 class RecommendAppTests(unittest.TestCase):
     def test_settings_can_recommend_the_app_once_the_listing_exists(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
