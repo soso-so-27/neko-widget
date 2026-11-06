@@ -1717,13 +1717,13 @@ struct AppRecordSettingsView: View {
                 running = "このiPhoneの記録を使う"
                 Task { await persistence.resolveConflict(useRemote: false) }
             }
-        } message: { Text("このiPhoneの記録で、これからの保存を続けます。") }
+        } message: { Text("このiPhoneの記録で、これからの保存を続けます。ほかのiPhoneで保存した記録は、使わなくなります。") }
         .confirmationDialog("ほかのiPhoneで保存した記録に切り替えますか？", isPresented: $confirmsRemote, titleVisibility: .visible) {
             Button("ほかのiPhoneの記録を使う") {
                 running = "ほかのiPhoneの記録を使う"
                 Task { await persistence.resolveConflict(useRemote: true) }
             }
-        } message: { Text("いま使う記録を、ほかのiPhoneで保存した記録に切り替えます。") }
+        } message: { Text("このiPhoneのいまの記録は、ほかのiPhoneで保存した記録に置き換わります。") }
         .onChange(of: persistence.busy) { _, busy in if !busy { running = nil } }
     }
 

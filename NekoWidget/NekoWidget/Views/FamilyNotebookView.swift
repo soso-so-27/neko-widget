@@ -711,6 +711,19 @@ struct FamilyNotebookView: View {
     private var shownMembership: FamilyMembership? {
         sharing.state.membership ?? (sharing.state == .checking ? model.lastShownMembership : nil)
     }
+    /// The newest of this person's own join requests, when it ended in the
+    /// last week without joining.
+    private var endedJoinNotice: String? {
+        guard let latest = sharing.ownJoinResults.max(by: { $0.expiresAt < $1.expiresAt }),
+              Date(timeIntervalSince1970: TimeInterval(latest.expiresAt)) > Date.now.addingTimeInterval(-7 * 86_400)
+        else { return nil }
+        switch latest.state {
+        case .rejected: return "家族の手帳に参加できませんでした。招待した人に、もう一度確かめてください。"
+        case .expired, .cancelled: return "参加の申し込みは終わりました。もう一度参加するには、新しい招待リンクを送ってもらってください。"
+        case .pending, .approved: return nil
+        }
+    }
+
     private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats || showsRestore }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
@@ -763,6 +776,15 @@ struct FamilyNotebookView: View {
                 case .checking, .leaving:
                     ProgressView()
                 case .notInFamily:
+                    // A join this person asked for ended without them: say so
+                    // once it has, instead of quietly showing the intro (11/6).
+                    if let ended = endedJoinNotice {
+                        Label(ended, systemImage: "person.crop.circle.badge.xmark")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 20).padding(.top, 12)
+                            .accessibilityIdentifier("family-notebook-join-ended")
+                    }
                     FamilyNotebookIntroView(creating: sharing.isWorking, create: {
                         if model.isReal, access.decision(for: .createOwnWindow) == .membershipRequired {
                             createsAfterPlus = true; showsPlusOffer = true
@@ -991,6 +1013,23 @@ extension FamilyNotebookView {
             .padding(.vertical, 4)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("family-notebook-paused")
+            if case .payerPlusUnverified(isPayer: true) = pause {
+                // The payer's own Plus lapsed: renewing it brings everyone back
+                // (11/6: the notebook said it would come back by itself).
+                if access.hasPersonalPlus() {
+                    Button { showsRestore = true } label: {
+                        Text("購入を復元").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("family-notebook-payer-restore")
+                } else {
+                    Button { showsPlusOffer = true } label: {
+                        Text("Plus を続けて再開する").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("family-notebook-payer-renew")
+                }
+            }
             if case let .noPayer(canClaim, handoverPending) = pause, !handoverPending {
                 if canClaim {
                     Button {
@@ -1512,9 +1551,13 @@ struct FamilyNotebookJoinView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if result == .pendingApproval || result == .waitingForKeys {
+                if let prior = preview?.priorRequestState, ["rejected", "cancelled", "expired"].contains(prior), result == nil {
+                    Text("この招待では参加できません。新しい招待リンクを送ってもらってください。")
+                        .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                } else if result == .pendingApproval || result == .waitingForKeys
+                            || (result == nil && (preview?.priorRequestState == "pending" || sharing.state == .pendingApproval)) {
                     // Sent is not joined: say what it is waiting for.
-                    Text(result == .pendingApproval ? "家族が受け入れるのを待っています。" : "家族の手帳を受け取っています。")
+                    Text(result == .waitingForKeys ? "家族の手帳を受け取っています。" : "家族が受け入れるのを待っています。")
                         .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("閉じる") { dismiss() }
                 } else if inFamily {
@@ -1567,7 +1610,12 @@ struct FamilyNotebookJoinView: View {
         .task {
             await sharing.refresh()
             do { preview = try await sharing.service.previewInvitation(link) }
-            catch { sharing.failure = error as? FamilySharingError ?? .serviceUnavailable }
+            catch {
+                // Already waiting: the used link is not an error to this person.
+                if sharing.state != .pendingApproval {
+                    sharing.failure = error as? FamilySharingError ?? .serviceUnavailable
+                }
+            }
         }
     }
 }
@@ -1754,9 +1802,9 @@ enum FamilyNotebookWords {
         case .noPayer:
             return "Plus を使っていた人が家族から抜けたので、新しく書いたことは家族に届きません。だれか 1 人が Plus を始めると、また共有できます。"
         case .payerPlusUnverified(isPayer: true):
-            return "あなたのPlusを確認できないため、共有が止まっています。確認できたら自動で戻ります。"
+            return "あなたのPlusを確認できないため、共有が止まっています。Plusを続けると、家族みんなの共有が戻ります。"
         case .payerPlusUnverified(isPayer: false):
-            return "家族の共有に使っているPlusを確認できないため、共有が止まっています。"
+            return "家族の共有に使っているPlusを確認できないため、共有が止まっています。払っている人がPlusを続けると戻ります。書いたものは消えません。"
         }
     }
 

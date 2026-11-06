@@ -39,6 +39,12 @@ enum GroupWindowPresentation {
                 return "このまどは止まっています。作った人がPlusを続けると、また写真を届けられます。"
             }
         }
+        if let error = error as? GroupInvitationError {
+            switch error {
+            case .alreadyMember: return "もうこのまどに入っています。「まど」タブから開けます。"
+            case .windowClosed: return "このまどは終わりました。"
+            }
+        }
         guard let error = error as? GroupClientError else {
             return "まどを読み込めませんでした。少し待ってから、もう一度お試しください。"
         }

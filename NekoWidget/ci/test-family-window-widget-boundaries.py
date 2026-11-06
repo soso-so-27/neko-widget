@@ -3577,6 +3577,24 @@ class SharedWorkMarkTests(unittest.TestCase):
         self.assertIn('"この季節も、ここまで"', ending)
 
 
+class CodexWiringTests(unittest.TestCase):
+    def test_outcomes_from_the_relay_reach_the_screen(self) -> None:
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        self.assertIn('static let appID: String? = "6801962436"', settings)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn('case .alreadyMember: return "もうこのまどに入っています。', setup)
+        self.assertIn('case .windowClosed: return "このまどは終わりました。"', setup)
+        reporting = source("NekoWidget/Services/ProductionGroupReporting.swift")
+        self.assertIn("case .disabled, .notAuthorized, .consentRequired, .notFound: current.record.progress = .unavailable", reporting)
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        self.assertIn("sharing.ownJoinResults.max(by: { $0.expiresAt < $1.expiresAt })", notebook)
+        self.assertIn('preview?.priorRequestState == "pending"', notebook)
+        self.assertIn("if case .payerPlusUnverified(isPayer: true) = pause {", notebook)
+        self.assertNotIn("確認できたら自動で戻ります", notebook)
+        saving = source("NekoWidget/Services/AppRecordPersistence.swift")
+        self.assertIn("ほかのiPhoneで保存した記録は、使わなくなります。", saving)
+
+
 class SensitiveCheckOptionalTests(unittest.TestCase):
     def test_photos_go_through_when_the_system_check_is_off(self) -> None:
         service = source("NekoWidget/Services/MomentSharePreparationService.swift")
