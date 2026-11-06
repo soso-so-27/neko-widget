@@ -615,6 +615,7 @@ private struct OnboardingPlusOfferPage: View {
             // A purchase closes the sheet and enters the app; closing without
             // buying leaves this page so "あとで" stays the person's choice.
             if purchased { finishAfterPurchase() }
+            NotificationCenter.default.post(name: .onboardingPlusSheetClosed, object: nil)
         }) {
             MembershipOfferSheet(model: .live(), context: .onboarding) { result in
                 purchased = result == .completed

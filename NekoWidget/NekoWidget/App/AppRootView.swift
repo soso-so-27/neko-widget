@@ -117,6 +117,17 @@ struct AppRootView: View {
         }) { invitation in
             GroupInvitationJoinSheet(invitation: invitation)
         }
+        .onReceive(GroupWindowOpenInbox.shared.$pendingWindowID) { windowID in
+            if windowID != nil { officialWindowRoute = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .onboardingPlusSheetClosed)) { _ in
+            // A link opened while the Plus sheet was up could not be shown
+            // over it; offer it now (11/7).
+            guard OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion),
+                  let invitation = invitationInbox.pending else { return }
+            onboardingInvitation = nil
+            DispatchQueue.main.async { onboardingInvitation = invitation }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .onboardingInvitationReceived)) { _ in
             guard SharingAPIConfiguration.current.isReviewVisible else { return }
             showsInvitationJoin = true

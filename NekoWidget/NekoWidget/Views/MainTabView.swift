@@ -775,6 +775,8 @@ struct MainTabView: View {
             // A group window's home-screen photo: show the まど tab, where
             // the group list opens that window.
             guard windowID != nil else { return }
+            relatedPhotoUsesLibraryScope = false
+            relatedPhotoRoute = nil
             showsSettings = false
             selectedTab = .windows
         }
