@@ -1915,7 +1915,7 @@ extension GroupWidgetCache {
         try? update(windowID: windowID, windowName: previous.windowName, photoID: newest?.id, jpeg: jpeg,
                     senderDisplayName: newest.flatMap { $0.isOwn ? nil : $0.senderDisplayName },
                     capturedAt: newest?.createdAt, isPaused: previous.isPaused,
-                    myHeartActive: newest?.id == previous.photoID ? previous.myHeartActive : false)
+                    myHeartActive: newest?.id == previous.photoID ? (previous.myHeartActive ?? false) : false)
         if previous != entry(windowID: windowID) {
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
         }
