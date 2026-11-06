@@ -3449,8 +3449,8 @@ class CatPageSharedLabelTests(unittest.TestCase):
         care = source("NekoWidget/Views/CatCareView.swift")
         self.assertIn("familyNotebook.familyCats.contains { $0.toolID == catID }", care)
         # Faces, not a sentence: in the notebook as a picture, elsewhere as the way in.
-        self.assertIn("FamilyFaces(names: familyNotebook.members.map(\.displayName))", care)
-        self.assertIn("FamilyNotebookButton(sharedNames: familyNotebook.members.map(\.displayName))", care)
+        self.assertIn("FamilyFaces(names: familyNotebook.members.map(\\.displayName))", care)
+        self.assertIn("FamilyNotebookButton(sharedNames: familyNotebook.members.map(\\.displayName))", care)
         self.assertNotIn("家族の手帳で共有しています", care)
         notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
         self.assertIn("struct FamilyFaces: View {", notebook)
