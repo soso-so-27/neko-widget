@@ -1665,6 +1665,16 @@ struct GroupWindowCreateScreen: View {
     private var tooLong: Bool { !GroupDisplayName.fits(trimmed) || !GroupDisplayName.fits(trimmedOwner) }
 
     var body: some View {
+        // The new window takes this page's place, so Back goes to the list,
+        // not to the form that already made it (11/6: Back reopened the form).
+        if let createdWindowID {
+            GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
+        } else {
+            form
+        }
+    }
+
+    private var form: some View {
         Form {
             Section {
                 TextField("例：実家のまど", text: $name)
@@ -1713,14 +1723,6 @@ struct GroupWindowCreateScreen: View {
         }) {
             // The relay said Plus is needed (for example, the trial ended on another iPhone).
             MembershipOfferSheet(model: .live(), context: .createWindow) { _ in model.needsPlus = false }
-        }
-        .navigationDestination(isPresented: Binding(
-            get: { createdWindowID != nil },
-            set: { if !$0 { createdWindowID = nil } }
-        )) {
-            if let createdWindowID {
-                GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
-            }
         }
     }
 }
