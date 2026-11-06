@@ -3577,6 +3577,14 @@ class SharedWorkMarkTests(unittest.TestCase):
         self.assertIn('"この季節も、ここまで"', ending)
 
 
+class FormerReportsEntryTests(unittest.TestCase):
+    def test_a_left_window_shows_its_report_answers(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertIn('Button("通報への返答", systemImage: "exclamationmark.bubble")', window)
+        self.assertIn("showsFormerReports = true", window)
+        self.assertIn("GroupReportsView(windowID: model.windowID)", window)
+
+
 class JoinOwnWindowTests(unittest.TestCase):
     def test_a_link_to_a_window_already_joined_opens_it(self) -> None:
         setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
