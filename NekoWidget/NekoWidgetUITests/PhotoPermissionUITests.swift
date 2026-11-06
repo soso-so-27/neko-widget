@@ -1477,6 +1477,35 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticSaveRefreshesVisibleUsage() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-records-ui-fixture", "--app-records-opening-usage-ui",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        XCTAssertTrue(app.buttons["保存・復元"].waitForExistence(timeout: 60), app.debugDescription)
+        app.buttons["保存・復元"].tap()
+        let count = app.descendants(matching: .any)["app-record-quota-records"].firstMatch
+        // Before enable the quota section is intentionally hidden. The fixture's
+        // opening GET returns zero; after the first saved head it returns three.
+        let start = app.buttons["app-record-enable"]
+        if !start.isHittable { app.swipeUp() }
+        XCTAssertTrue(start.waitForExistence(timeout: 10), app.debugDescription)
+        start.tap()
+        XCTAssertTrue(count.waitForExistence(timeout: 120), app.debugDescription)
+        let saved = NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "3 / 3,000", "3 / 3,000")
+        expectation(for: saved, evaluatedWith: count)
+        waitForExpectations(timeout: 120)
+        let storage = app.descendants(matching: .any)["app-record-quota-storage"].firstMatch
+        let capacity = storage.label + " " + (storage.value as? String ?? "") + " "
+            + storage.descendants(matching: .staticText).allElementsBoundByIndex.map(\.label).joined(separator: " ")
+        XCTAssertTrue(capacity.contains("4") && capacity.contains("GB"), capacity)
+        XCTAssertFalse(capacity.contains("0 KB /"), capacity)
+        XCTAssertTrue(app.staticTexts["保存済み"].exists, app.debugDescription)
+        capture("automatic-save-usage-after-save")
+    }
+
+    @MainActor
     func testAutomaticSaveSettingsDoNotInvalidateSession() {
         continueAfterFailure = false
         let app = XCUIApplication()

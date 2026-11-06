@@ -1585,9 +1585,12 @@ struct AppRecordSettingsView: View {
             }
             // Signing in again to continue an export must not start other reads.
             guard !exporter.preparing else { return }
-            authentication.refreshUsage()
             if starting { Task { await persistence.enable() } }
             linkPlusIfStarting()
+        }
+        .onChange(of: persistence.title) { _, title in
+            guard title == "保存済み", !exporter.preparing else { return }
+            authentication.refreshUsage()
         }
         .onChange(of: authentication.membership?.linked) { _, _ in linkPlusIfStarting() }
         .onChange(of: authentication.isBusy) { _, busy in if !busy { linkPlusIfStarting() } }
@@ -1945,6 +1948,8 @@ private actor AppRecordFixtureServer {
     func releaseDeletion() { let waiter = deletionWaiter; deletionWaiter = nil; waiter?.resume() }
     func measuredRequestCounts() -> [String: Int] { measuredRoutes }
     func useUninterruptedMetadataBatches() { metadataBatchMode = true; interruptMetadataPart = false }
+    private var productUsageFixture = false
+    func enableProductUsageFixture() { productUsageFixture = true }
     private var accountReadsUnavailable = false
     func simulateAccountReadFailure() { accountReadsUnavailable = true }
     private var rejectVisibleInventory = false
@@ -2116,6 +2121,22 @@ private actor AppRecordFixtureServer {
         if url.path == "/v1/notice-contact" { return try response(["version": 1, "email": "synthetic@example.invalid", "source": "apple"]) }
         if url.path == "/v1/retention" { return try response(["version": 1, "status": "active", "dueAt": NSNull(), "paused": false]) }
         if url.path == "/v1/usage" {
+            if productUsageFixture {
+                let used = headWrites > 0 ? 4096 : 0
+                let saved = headWrites > 0 ? 3 : 0
+                return try response(["version": 1, "accounting": "encrypted-records-v1",
+                    "toolSnapshots": ["maximumIndexVersion": 4, "strictPartDeletion": true, "metadataBatchVersion": 1],
+                    "storage": ["usedBytes": used, "reservedBytes": 0, "limitBytes": 3000000000, "availableBytes": 3000000000-used, "overLimit": false],
+                    "records": ["saved": saved, "pending": 0, "maximumRecords": 3000, "creationLimitReached": false],
+                    "productQuota": ["configurationStatus": "valid", "accountingStatus": "ready", "enforcementStatus": "enabled",
+                        "policy": ["version": 2, "byteUnit": "decimal", "recordUnit": "visible-records-v1",
+                            "plus": ["limitBytes": 3000000000, "maximumRecords": 3000, "includesAppleFamily": false],
+                            "trial": ["limitBytes": 100000000, "maximumRecords": 3000, "durationDays": 14],
+                            "familyParticipationRequiresPersonalStoragePurchase": false],
+                        "usage": ["version": 1, "accounting": "committed-visible-records-v1", "tier": "plus",
+                            "storage": ["usedBytes": used, "limitBytes": 3000000000, "availableBytes": 3000000000-used, "overLimit": false],
+                            "records": ["saved": saved, "maximumRecords": 3000, "available": 3000-saved, "overLimit": false]]]])
+            }
             return try response(["version": 1, "accounting": "encrypted-records-v1",
                 "toolSnapshots": ["maximumIndexVersion": maximumIndexVersion, "strictPartDeletion": true, "metadataBatchVersion": metadataBatchMode ? 1 : 0],
                 "storage": ["usedBytes": 0, "reservedBytes": 0, "limitBytes": 100000000,
@@ -2449,6 +2470,19 @@ private final class AppRecordFixture {
         try await settle(account)
         guard !account.isSignedIn, account.preparedSignIn == nil, account.errorMessage != nil,
               try store.load() == expired, await server.counts().0 == before else { throw ToolBackupError.storage }
+        account.stop()
+
+        Self.preparationPhase = "初回の期限切れは一度だけ静かに再確認"
+        _ = try installRenewableFixtureCredential(expired: true)
+        let renewForFixture = Task { @MainActor in
+            try await Task.sleep(for: .milliseconds(100))
+            return try self.installRenewableFixtureCredential(expired: false)
+        }
+        account.start(observingOnly: true)
+        try await settle(account)
+        let renewedForFixture = try await renewForFixture.value
+        guard account.isSignedIn, account.errorMessage == nil, account.preparedSignIn == nil,
+              try store.load() == renewedForFixture else { throw ToolBackupError.storage }
         account.stop()
 
         Self.preparationPhase = "照会中の本当のowner切替は拒否"
@@ -3082,6 +3116,12 @@ struct AppRecordPersistenceFixtureView: View {
             }
             do {
                 let prepared = try await AppRecordFixture.make()
+                if CommandLine.arguments.contains("--app-records-opening-usage-ui") {
+                    await prepared.server.enableProductUsageFixture()
+                    await prepared.server.useUninterruptedMetadataBatches()
+                    fixture = prepared
+                    return
+                }
                 if CommandLine.arguments.contains("--app-records-observation-ui") {
                     await prepared.persistence.enable()
                     guard prepared.persistence.title == "保存済み" else { throw ToolBackupError.storage }

@@ -253,6 +253,22 @@ enum ManagedPreservationExport {
     }
 }
 
+/// One bounded read retry; cancellation and identity failures are never hidden.
+enum PreservationOpeningCheck {
+    @MainActor static func read<T>(observingOnly: Bool,
+        pause: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
+        operation: () async throws -> T) async throws -> T {
+        do { return try await operation() }
+        catch {
+            guard observingOnly, (error as? ManagedPreservationError) == .unavailable else { throw error }
+            try Task.checkCancellation()
+            try await pause()
+            try Task.checkCancellation()
+            return try await operation()
+        }
+    }
+}
+
 /// Owns only this screen's state. Does not enroll PhotoKit, local notes, CloudKit
 /// or shared windows, and never treats a purchase/account ID as preservation identity.
 @MainActor
@@ -378,14 +394,20 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
                 return
             }
-            try await self.client.reloadSessionFromSecureStorage()
-            let authenticated: Bool
-            if observingOnly { authenticated = try await self.client.observeSessionIfAvailable() }
-            else { authenticated = try await self.client.prepareSessionIfAvailable() }
-            try self.check(ticket)
+            // A launch-time renewal may finish between the two observations.
+            // Re-read only: opening settings must never rotate a save's credential.
+            let authenticated = try await PreservationOpeningCheck.read(observingOnly: observingOnly) {
+                try self.check(ticket)
+                try await self.client.reloadSessionFromSecureStorage()
+                let available: Bool
+                if observingOnly { available = try await self.client.observeSessionIfAvailable() }
+                else { available = try await self.client.prepareSessionIfAvailable() }
+                try self.check(ticket)
+                if available { try await self.loadPresentation(ticket) }
+                return available
+            }
             self.isSignedIn = authenticated
-            if authenticated { try await self.loadPresentation(ticket) }
-            else {
+            if !authenticated {
                 let challenge = try await self.client.prepareSignIn()
                 try self.check(ticket)
                 self.preparedSignIn = challenge
@@ -1018,6 +1040,7 @@ final class ManagedPreservationCoordinator: ObservableObject {
         isSignedIn = true
         authenticatedOwnerID = checkpoint.ownerID
         loadMembership(ticket, owner: checkpoint.ownerID)
+        loadUsage(ticket, owner: checkpoint.ownerID)
     }
 
     private func loadFirstPage(_ ticket: UUID) async throws {
@@ -1149,7 +1172,13 @@ final class ManagedPreservationCoordinator: ObservableObject {
                 }
             }
             do {
-                if self.purpose != .account { _ = try await self.client.prepareSession(expectedOwner: owner) }
+                if self.purpose == .account {
+                    // Saving may have renewed the same owner's credential since this screen opened.
+                    guard try await self.client.observeSessionIfAvailable(),
+                          try await self.client.accountObservationOwnerID() == owner else {
+                        throw ManagedPreservationError.staleSession
+                    }
+                } else { _ = try await self.client.prepareSession(expectedOwner: owner) }
                 try self.check(ticket)
                 let result = try await self.client.usage(observingOnly: self.purpose == .account)
                 try self.check(ticket)
