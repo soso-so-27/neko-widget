@@ -282,6 +282,8 @@ struct ManagedPreservationView: View {
                     request.nonce = challenge.nonce
                     request.state = challenge.state
                 } onCompletion: { result in coordinator.completeSignIn(result) }
+                    .id(challenge.state)
+                    .disabled(coordinator.isBusy)
                     .frame(height: 48)
                     .signInWithAppleButtonStyle(.black)
                 Button("サインインをやり直す") { coordinator.prepareSignIn() }

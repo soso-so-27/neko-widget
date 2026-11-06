@@ -7242,6 +7242,15 @@ actor SharingRuntimeSelfTestRunner {
             guard !coordinator.isBusy else { throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-007", ManagedPreservationError.interrupted) }
         }
         coordinator.prepareSignIn(); try await settle()
+        let previousState = coordinator.preparedSignIn?.state
+        coordinator.prepareSignIn()
+        guard coordinator.preparedSignIn == nil else {
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-010", ManagedPreservationError.invalidResponse)
+        }
+        try await settle()
+        guard let next = coordinator.preparedSignIn, next.state != previousState else {
+            throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-011", ManagedPreservationError.invalidResponse)
+        }
         coordinator.completeSignIn(.failure(ASAuthorizationError(.failed))); try await settle()
         guard coordinator.errorMessage == ManagedPreservationError.appleAuthorizationFailed(1004).errorDescription else {
             throw SharingRuntimeSelfTestRunner.recordAssertionFailure("MPM-SIGNIN-008", ManagedPreservationError.invalidResponse)

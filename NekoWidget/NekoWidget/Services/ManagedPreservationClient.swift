@@ -42,6 +42,20 @@ enum ManagedPreservationError: Error, LocalizedError, Equatable, Sendable {
     enum AuthenticationStep: String, Sendable {
         case appleResponse = "A01", credential = "A02", challenge = "A03", state = "A04"
         case challengeExpired = "A05", payload = "A06", sessionExpired = "A07"
+        case serverConfiguration = "A08", appleUnavailable = "A09", appleResponseInvalid = "A10"
+        case identityProtection = "A11", authStorage = "A12", recoveryUnavailable = "A13"
+    }
+    /// Only fixed server codes from the sign-in exchange; never echo arbitrary response text.
+    static func signInServerStep(_ code: String?) -> AuthenticationStep? {
+        switch code {
+        case "PRESERVATION_NOT_CONFIGURED", "APPLE_CONFIGURATION_ERROR", "APPLE_SIGNIN_DISABLED": .serverConfiguration
+        case "APPLE_UNAVAILABLE": .appleUnavailable
+        case "APPLE_RESPONSE_INVALID": .appleResponseInvalid
+        case "identity_key_unavailable": .identityProtection
+        case "auth_unavailable": .authStorage
+        case "OWNER_RECOVERY_UNAVAILABLE", "RECOVERY_POLICY_INACTIVE": .recoveryUnavailable
+        default: nil
+        }
     }
     case disabled, authenticationRequired, authenticationFailed, staleSession
     case authenticationStepFailed(AuthenticationStep), appleAuthorizationFailed(Int)
@@ -1598,6 +1612,10 @@ actor ManagedPreservationClient {
             guard (200...299).contains(http.statusCode) else {
                 let failure = (try? ManagedPreservationWire.decoder().decode(Failure.self, from: data))?.error
                 let code = failure?.code
+                if method == "POST", path == "/v1/auth/sessions", http.statusCode >= 500,
+                   let step = ManagedPreservationError.signInServerStep(code) {
+                    throw ManagedPreservationError.authenticationStepFailed(step)
+                }
                 if method == "GET", path == "/v1/export-page", http.statusCode == 404, code == "NOT_FOUND" {
                     throw ManagedPreservationError.exportUnsupported
                 }

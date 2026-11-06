@@ -394,6 +394,9 @@ final class ManagedPreservationCoordinator: ObservableObject {
     }
 
     func prepareSignIn() {
+        guard isEnabled, !isBusy else { return }
+        // Remove the old Apple request before awaiting a replacement challenge.
+        preparedSignIn = nil
         run(authenticatedOperation: false) { ticket in
             try await self.client.reloadSessionFromSecureStorage()
             let challenge = try await self.client.prepareSignIn()
