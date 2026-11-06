@@ -105,3 +105,4 @@ jobs:
             ${{ runner.temp }}/autosave-observation.xcresult
           retention-days: 7
           if-no-files-found: warn
+# 1102zzc: run the single rebind UI case on this diagnostic ref.
