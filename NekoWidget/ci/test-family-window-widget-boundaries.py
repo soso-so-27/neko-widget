@@ -3487,6 +3487,18 @@ class ReviewRequestTests(unittest.TestCase):
         self.assertEqual(album.count("requestReview()"), 1)
 
 
+class PlusRouteTests(unittest.TestCase):
+    def test_making_a_family_and_saving_lead_to_plus(self) -> None:
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        self.assertIn("access.decision(for: .createOwnWindow) == .membershipRequired", notebook)
+        self.assertIn("if createsAfterPlus { createsAfterPlus = false; showsName = boughtPlus }", notebook)
+        self.assertIn("if sharing.failure == .plusRequired {", notebook)
+        saving = source("NekoWidget/Services/AppRecordPersistence.swift")
+        link = section(saving, "private func linkAfterPurchaseIfReady() {", "private func linkPlusIfStarting() {")
+        self.assertIn("authentication.connectMembership(consent: true)", link)
+        self.assertIn(".onChange(of: hasPlusHere) { _, _ in linkAfterPurchaseIfReady() }", saving)
+
+
 class RecommendAppTests(unittest.TestCase):
     def test_settings_can_recommend_the_app_once_the_listing_exists(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
