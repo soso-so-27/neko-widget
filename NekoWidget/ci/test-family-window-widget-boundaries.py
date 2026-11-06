@@ -3506,6 +3506,17 @@ class SharedWorkMarkTests(unittest.TestCase):
         self.assertIn('"この季節も、ここまで"', ending)
 
 
+class SensitiveCheckOptionalTests(unittest.TestCase):
+    def test_photos_go_through_when_the_system_check_is_off(self) -> None:
+        service = source("NekoWidget/Services/MomentSharePreparationService.swift")
+        moderation = section(service, "actor MomentModerationService: MomentModerating {", "func requireSafeImage(at url: URL) async throws {\n        // 「")
+        self.assertIn("SCSensitivityAnalyzer()", moderation)
+        require = section(service, "func requireSafeImage(at url: URL) async throws {\n        // 「", "} catch {")
+        self.assertIn("guard analyzer.analysisPolicy != .disabled else { return }", require)
+        self.assertNotIn("throw MomentSharingError.moderationDisabled", require)
+        self.assertIn("throw MomentSharingError.sensitiveContent", require)
+
+
 class AlbumPurposeTests(unittest.TestCase):
     def test_album_shows_each_cat_upcoming_summaries_and_plus_honestly(self) -> None:
         album = source("NekoWidget/Views/LikedPhotosView.swift")
