@@ -119,3 +119,4 @@ jobs:
             ${{ runner.temp }}/autosave-observation.xcresult
           retention-days: 7
           if-no-files-found: warn
+# Run the corrected visible-usage method only; preserve the passed session result.
