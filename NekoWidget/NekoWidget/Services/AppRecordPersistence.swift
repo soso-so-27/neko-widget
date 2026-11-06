@@ -194,7 +194,9 @@ enum AppRecordDataset {
         let root = datasets.appendingPathComponent(pointer.datasetID.uuidString, isDirectory: true)
         let receipt = try JSONDecoder().decode(Pointer.self, from: ToolBackupFiles.read(root.appendingPathComponent("dataset.json"), maximum: 4096))
         let expected = try pointer.sourceReceipt.map { try JSONDecoder().decode(Pointer.self, from: $0) } ?? pointer
-        guard receipt == expected, expected.datasetID == pointer.datasetID,
+        guard receipt == expected, expected.version == 1, expected.sourceReceipt == nil,
+              !expected.owner.isEmpty, URL(string: expected.origin)?.scheme == "https",
+              expected.datasetID == pointer.datasetID,
               expected.manifests == pointer.manifests else { throw ToolBackupError.invalid }
         for path in receipt.manifests ?? [] {
             guard knownManifestPaths.contains(path), FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path) else { throw ToolBackupError.invalid }
