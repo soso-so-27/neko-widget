@@ -1239,7 +1239,7 @@ private struct ActivityView: UIViewControllerRepresentable {
 /// The app's App Store page. The id comes from App Store Connect once the
 /// listing exists; until then nothing that points at it is shown.
 enum AppStoreListing {
-    static let appID: String? = nil
+    static let appID: String? = "6801962436"
     static var pageURL: URL? {
         guard let appID, !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return nil }
         return URL(string: "https://apps.apple.com/jp/app/id\(appID)")

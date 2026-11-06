@@ -291,7 +291,9 @@ final class ProductionGroupReporting: GroupReportingService {
                 case .reservationExpired: current.record.progress = .expired
                 case .alreadyReported: current.record.progress = .alreadyReported
                 case .authenticationRequired: current.record.progress = .authenticationRequired
-                case .disabled, .notAuthorized, .consentRequired: current.record.progress = .unavailable
+                // Gone from the relay (old, deleted or restricted): no retry can
+                // succeed, so it is not offered as 「もう一度送る」 (11/6).
+                case .disabled, .notAuthorized, .consentRequired, .notFound: current.record.progress = .unavailable
                 default: current.record.progress = .retryable
                 }
                 do { try store.write(current) }

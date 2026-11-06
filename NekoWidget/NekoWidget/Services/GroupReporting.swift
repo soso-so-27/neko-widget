@@ -72,7 +72,7 @@ enum GroupSafetyError: Error, Equatable, Sendable {
     var message: String {
         switch self {
         case .notAuthorized: "いまは送れません。届いた写真はそのままです。"
-        case .notFound: "この写真が見つかりませんでした。"
+        case .notFound: "この写真は、もう通報できません。届いてから時間がたったか、消された写真です。"
         case .alreadyReported: "この写真はもう通報しています。"
         case .conflict: "うまく送れませんでした。写真を開き直して、もう一度お試しください。"
         case .consentRequired: "理由を選んで、もう一度「送る」を押してください。"
