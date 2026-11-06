@@ -1476,32 +1476,50 @@ extension ProductionGroupWindowClient {
         let reservation = try GroupWire.decode(GroupAPIModel.PhotoReservation.self, await mutation(operationID: operationID,
             intent: "reserve:\(windowID):\(prepared.photo.clientMomentID)", path: root + "/reserve", body: GroupWire.encode(reserve)))
         guard GroupCanonical.validID(reservation.momentID) else { throw GroupClientError.invalidResponse }
-        var upload = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/ciphertext", body: prepared.photo.ciphertext, identity: identity, method: "PUT")
-        upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        _ = try GroupHTTPRequest.check(await transport.send(upload, maximumBytes: 4096))
-        if let encrypted = prepared.caption {
-            var request = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/caption-ciphertext",
-                body: encrypted.ciphertext, identity: identity, method: "PUT")
-            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            _ = try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 4096))
+        let commitIntent = "commit:\(windowID):\(reservation.momentID)"
+        // Once commit was attempted, both uploads already succeeded. Retry only
+        // that exact persisted commit; never PUT again over a committed photo.
+        if try pending(prepared.commitOperationID, intent: commitIntent) == nil {
+            var upload = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/ciphertext", body: prepared.photo.ciphertext, identity: identity, method: "PUT")
+            upload.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            _ = try GroupHTTPRequest.check(await transport.send(upload, maximumBytes: 4096))
+            if let encrypted = prepared.caption {
+                var request = try GroupHTTPRequest.make(endpoint: endpoint, path: root + "/\(reservation.momentID)/caption-ciphertext",
+                    body: encrypted.ciphertext, identity: identity, method: "PUT")
+                request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                _ = try GroupHTTPRequest.check(await transport.send(request, maximumBytes: 4096))
+            }
         }
         let commit = GroupAPIModel.CommitPhoto(operationID: prepared.commitOperationID.uuidString.lowercased(), expectedRevision: prepared.rosterRevision,
             keyEpoch: prepared.keyEpoch, ciphertextSHA256: hash)
-        _ = try await mutation(operationID: prepared.commitOperationID, intent: "commit:\(windowID):\(reservation.momentID)",
-            path: root + "/\(reservation.momentID)/commit", body: GroupWire.encode(commit))
+        let receipt: GroupPhotoCommitReceipt
+        do {
+            let response = try await mutation(operationID: prepared.commitOperationID, intent: commitIntent,
+                path: root + "/\(reservation.momentID)/commit", body: GroupWire.encode(commit), validateResponse: { data in
+                    try GroupWire.decode(GroupPhotoCommitReceipt.self, data).validate(
+                        operationID: prepared.commitOperationID, windowID: windowID, photoID: reservation.momentID,
+                        participantID: current.myParticipantID, deviceID: prepared.photo.senderDeviceID,
+                        revision: prepared.rosterRevision, epoch: prepared.keyEpoch)
+                })
+            receipt = try GroupWire.decode(GroupPhotoCommitReceipt.self, response)
+            try receipt.validate(operationID: prepared.commitOperationID, windowID: windowID,
+                photoID: reservation.momentID, participantID: current.myParticipantID,
+                deviceID: prepared.photo.senderDeviceID, revision: prepared.rosterRevision, epoch: prepared.keyEpoch)
+        } catch {
+            if error is URLError || error is CancellationError
+                || error as? GroupClientError == .offline || error as? GroupClientError == .unavailable
+                || error as? GroupClientError == .invalidResponse || error is DecodingError {
+                throw GroupDeliveryConfirmationPending(photoID: reservation.momentID)
+            }
+            throw error
+        }
         photoMetadata.removeValue(forKey: windowID + ":" + reservation.momentID)
-        let row = try await photoRow(windowID: windowID, photoID: reservation.momentID)
-        guard row.clientMomentID == prepared.photo.clientMomentID,
-              row.senderDeviceID == prepared.photo.senderDeviceID,
-              row.keyEpoch == prepared.keyEpoch, row.rosterRevision == prepared.rosterRevision,
-              row.rosterHash == prepared.rosterHash,
-              row.ciphertextSize == prepared.photo.ciphertext.count,
-              row.ciphertextSHA256 == hash, row.senderSignature == prepared.photo.signature,
-              row.caption?.ciphertextSHA256 == prepared.caption.map({ GroupCanonical.hash($0.ciphertext) }),
-              row.caption?.senderSignature == prepared.caption?.signature else { throw GroupClientError.invalidResponse }
-        var result = try await displayPhoto(row, current: current)
-        result.caption = caption
-        return result
+        // Commit is authoritative. A later list/download failure cannot undo it.
+        return GroupPhoto(id: receipt.momentID, windowID: windowID,
+            senderParticipantID: current.myParticipantID,
+            senderDisplayName: current.members.first { $0.id == current.myParticipantID }?.displayName ?? "自分",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(receipt.createdAt)),
+            fixtureAssetName: nil, hearts: [], caption: caption)
     }
 }
 
@@ -1618,6 +1636,7 @@ struct GroupPendingDelivery: Sendable, Equatable {
     let operationID: UUID
     let jpeg: Data
     let caption: String?
+    var confirmationPhotoID: String? = nil
 }
 
 @available(iOS 17.0, macOS 14.0, *)
@@ -1655,7 +1674,11 @@ extension ProductionGroupWindowClient {
             let caption: String?
             do { caption = try recoverPendingCaption(operationID: id) } catch { continue }
             if oldest.map({ modified < $0.0 }) ?? true {
-                oldest = (modified, GroupPendingDelivery(operationID: id, jpeg: jpeg, caption: caption))
+                let attempted = try? load(GroupPendingHTTP.self, "op:" + prepared.commitOperationID.uuidString.lowercased())
+                let reservation = try? pending(id, intent: "reserve:\(windowID):\(prepared.photo.clientMomentID)")
+                let photoID = reservation?.response.flatMap { try? GroupWire.decode(GroupAPIModel.PhotoReservation.self, $0).momentID }
+                oldest = (modified, GroupPendingDelivery(operationID: id, jpeg: jpeg, caption: caption,
+                    confirmationPhotoID: attempted == nil ? nil : photoID))
             }
         }
         return oldest?.1

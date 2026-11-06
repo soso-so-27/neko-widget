@@ -177,6 +177,7 @@ final class GroupWindowScreenModel: ObservableObject {
     struct FailedDelivery {
         let photo: PreparedPhoto
         let memo: String
+        var confirmationPhotoID: String? = nil
     }
 
     func imageURL(for entry: GroupWindowLocalPhotoStore.Entry) async -> URL? {
@@ -250,7 +251,15 @@ final class GroupWindowScreenModel: ObservableObject {
                let pending = await client.pendingDelivery(windowID: windowID) {
                 failedDelivery = FailedDelivery(
                     photo: PreparedPhoto(jpeg: pending.jpeg, photoIdentifier: nil, operationID: pending.operationID),
-                    memo: pending.caption ?? "")
+                    memo: pending.caption ?? "", confirmationPhotoID: pending.confirmationPhotoID)
+            }
+            if let pending = failedDelivery, let photoID = pending.confirmationPhotoID,
+               photos.contains(where: { $0.id == photoID && $0.senderParticipantID == latest.myParticipantID }),
+               await store.contains(photoID: photoID, windowID: windowID) {
+                await saveMemo(pending.memo, for: pending.photo.photoIdentifier)
+                await client.discardPendingDelivery(operationID: pending.photo.operationID)
+                failedDelivery = nil
+                sendCompleted = true
             }
         } catch GroupClientError.notMember {
             window = nil; failedDelivery = nil; message = nil; isGone = true
@@ -379,6 +388,10 @@ final class GroupWindowScreenModel: ObservableObject {
             await saveMemo(memo, for: prepared.photoIdentifier)
             sendCompleted = true
             message = nil
+            await sync()
+        } catch let pending as GroupDeliveryConfirmationPending {
+            failedDelivery = FailedDelivery(photo: prepared, memo: memo, confirmationPhotoID: pending.photoID)
+            message = "届いたか確かめています。"
             await sync()
         } catch {
             message = Self.deliveryMessage(for: error)
@@ -935,7 +948,7 @@ struct GroupWindowScreen: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .accessibilityHidden(true)
                 }
-                Text("届けられなかった写真があります")
+                Text(failed.confirmationPhotoID == nil ? "届けられなかった写真があります" : "届いたか確かめています")
                     .font(.footnote.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -946,11 +959,11 @@ struct GroupWindowScreen: View {
                     .confirmationDialog("この写真を届けるのをやめますか？", isPresented: $confirmsDiscardFailedDelivery,
                                         titleVisibility: .visible) {
                         Button("届けるのをやめる", role: .destructive) { model.discardFailedDelivery() }
-                    } message: { Text("この写真はまどに届きません。iPhoneの写真はそのままです。") }
+                    } message: { Text(failed.confirmationPhotoID == nil ? "この写真はまどに届きません。iPhoneの写真はそのままです。" : "このiPhoneでの確認をやめます。すでに届いた写真はまどに残ります。iPhoneの写真はそのままです。") }
                 Button {
                     Task { await model.retryFailedDelivery() }
                 } label: {
-                    Label("もう一度届ける", systemImage: "arrow.clockwise")
+                    Label(failed.confirmationPhotoID == nil ? "もう一度届ける" : "届いたか確かめる", systemImage: "arrow.clockwise")
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
