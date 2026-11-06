@@ -250,10 +250,14 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     /// The Widget reads only this copy, written after verification and the
-    /// on-device check. Hidden photos are never handed over.
-    private func updateHomeScreenPhoto() async {
-        guard let window else { return }
-        let newest = entries.first { !$0.isHidden }
+    /// on-device check. Hidden and reported photos are never handed over.
+    /// The window's name comes from the widget's own copy when the relay
+    /// could not be read, so hiding or reporting offline still takes the
+    /// photo off the home screen (11/6).
+    func updateHomeScreenPhoto() async {
+        guard let windowName = window?.name ?? GroupWidgetCache.entry(windowID: windowID)?.windowName else { return }
+        let safety = GroupSafety.shared
+        let newest = entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }
         var jpeg: Data?
         if let newest, let url = await store.imageURL(photoID: newest.id, windowID: windowID) {
             jpeg = try? Data(contentsOf: url)
@@ -261,7 +265,7 @@ final class GroupWindowScreenModel: ObservableObject {
         let previous = GroupWidgetCache.entry(windowID: windowID)
         do {
             try GroupWidgetCache.update(
-                windowID: windowID, windowName: window.name, photoID: newest?.id, jpeg: jpeg,
+                windowID: windowID, windowName: windowName, photoID: newest?.id, jpeg: jpeg,
                 // No "さんから" line under a photo this iPhone sent.
                 senderDisplayName: newest.flatMap { $0.isOwn ? nil : $0.senderDisplayName },
                 capturedAt: newest?.createdAt, isPaused: isPaused,
@@ -464,14 +468,14 @@ final class GroupWindowScreenModel: ObservableObject {
             return
         }
         entries = await store.entries(windowID: windowID)
-        if !isFormer { await updateHomeScreenPhoto() }
+        await updateHomeScreenPhoto()
     }
 
     /// Stops showing this person's photos here. They are not told.
     func hideSender(of entry: GroupWindowLocalPhotoStore.Entry, blocked: Bool = false) async {
         await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: blocked)
         entries = await store.entries(windowID: windowID)
-        if !isFormer { await updateHomeScreenPhoto() }
+        await updateHomeScreenPhoto()
         let name = GroupDisplayName.withSan(entry.senderDisplayName)
         actionMessage = blocked
             ? "\(name)をブロックしました。設定の「表示しない・ブロックした人」から戻せます。"
@@ -800,6 +804,10 @@ struct GroupWindowScreen: View {
                 .navigationTitle("まどに届ける")
                 .navigationBarTitleDisplayMode(.inline)
             }
+        }
+        // A report taken here takes the photo off the home screen at once.
+        .onReceive(GroupSafety.shared.$records.dropFirst()) { _ in
+            Task { await model.updateHomeScreenPhoto() }
         }
         .task {
             // Photos this person reported stay covered on this iPhone, from the first frame.
@@ -1634,6 +1642,9 @@ final class GroupWindowListModel: ObservableObject {
 #endif
             message = nil
             hasLoaded = true
+            if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id))) {
+                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            }
         } catch is CancellationError {
 #if DEBUG || INTERNAL_PRESENTATION
             outcome = "中断"
@@ -2126,8 +2137,9 @@ private struct GroupWindowCard: View {
         }
         // Not yet on the Widget: the newest photo this iPhone received.
         let store = GroupWindowLocalPhotoStore.shared
+        await GroupSafety.shared.loadRecords(windowID: window.id)
         let newest = await store.entries(windowID: window.id)
-            .filter { !$0.isHidden }
+            .filter { !$0.isHidden && !GroupSafety.shared.hasReported($0.id, in: window.id) }
             .max { $0.createdAt < $1.createdAt }
         guard let newest, let url = await store.imageURL(photoID: newest.id, windowID: window.id) else { return }
         cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value
