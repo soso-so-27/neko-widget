@@ -499,6 +499,16 @@ private struct GroupAdapterChecks {
         try check(GroupWindowListOrder.precedes(id: "a", received: recent, created: 1,
             otherID: "z", otherReceived: recent, otherCreated: 1), "stable tie")
 
+        let receiptOperation = UUID()
+        let receipt = GroupPhotoCommitReceipt(operationID: receiptOperation.uuidString.lowercased(), momentID: "photo", windowID: "window",
+            revision: 3, keyEpoch: 2, state: "committed", senderParticipantID: "person", senderDeviceID: "device", createdAt: 1)
+        try receipt.validate(operationID: receiptOperation, windowID: "window", photoID: "photo", participantID: "person", deviceID: "device", revision: 3, epoch: 2)
+        try rejects("commit receipt from another photo") {
+            try receipt.validate(operationID: receiptOperation, windowID: "window", photoID: "other", participantID: "person", deviceID: "device", revision: 3, epoch: 2)
+        }
+        try rejects("commit receipt from another sender") {
+            try receipt.validate(operationID: receiptOperation, windowID: "window", photoID: "photo", participantID: "other", deviceID: "device", revision: 3, epoch: 2)
+        }
         try await admissionLifecycle()
         let paths = CommandLine.arguments
         guard paths.count == 3 else { throw Failure.check("two public vectors required") }
