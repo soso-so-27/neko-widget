@@ -150,6 +150,8 @@ final class GroupWindowMembersModel: ObservableObject {
     @Published private(set) var loadFailureMessage: String?
     @Published private(set) var actionErrorMessage: String?
     @Published private(set) var actionCompletionMessage: String?
+    /// True only while load() runs; read only by the load-failure retry (11/6).
+    @Published private(set) var isLoading = false
 
     let windowID: String
     private let client: any GroupWindowClient
@@ -208,6 +210,8 @@ final class GroupWindowMembersModel: ObservableObject {
     /// The 8-second pass stays quiet: the orange line is for a load the person
     /// started, or when nothing is on screen yet (11/5: it came and went).
     func load(reportsFailure: Bool = true) async {
+        isLoading = true
+        defer { isLoading = false }
         do {
             let results = (try? await client.reconcileAdmissions()) ?? []
             admissionResults = results.filter { $0.windowID == windowID && !$0.joinedLocally }
@@ -415,6 +419,9 @@ struct GroupWindowMembersView: View {
     @State private var showsRename = false
     @State private var showsCloseConfirmation = false
     @State private var rejectionTarget: GroupJoinRequest?
+    /// The button whose action is running, so only it says so (11/6). Set in
+    /// the confirm action; cleared when the model stops working.
+    @State private var running: String?
     /// Renaming, Plus or a confirmation is open: the list underneath is not
     /// redrawn by the 8-second pass (11/5: the screen moved under the person).
     private var presentsSheet: Bool {
@@ -455,8 +462,10 @@ struct GroupWindowMembersView: View {
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("group-window-load-failure")
                         .announcesWhenShown(model.loadFailureMessage)
-                    Button("もう一度") { Task { await model.load() } }
-                        .disabled(model.isWorking)
+                    Button { Task { await model.load() } } label: {
+                        WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)
+                    }
+                        .disabled(model.isWorking || model.isLoading)
                         .accessibilityIdentifier("group-window-load-retry")
                 }
             } else {
@@ -472,6 +481,7 @@ struct GroupWindowMembersView: View {
             capabilities.invitations && model.window?.canManage == true ? "メンバーと招待" : "メンバー"
         )
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: model.isWorking) { _, working in if !working { running = nil } }
         .task { await model.load() }
         .task(id: model.shouldAutoRefresh) {
             // No manual "check again" button: while an invitation is open or
@@ -513,7 +523,7 @@ struct GroupWindowMembersView: View {
             titleVisibility: .visible,
             presenting: removalTarget
         ) { member in
-            Button("外す", role: .destructive) { Task { await model.remove(member) } }
+            Button("外す", role: .destructive) { running = "外す:\(member.id)"; Task { await model.remove(member) } }
             Button("戻る", role: .cancel) {}
         } message: { _ in
             Text("すでに届いた写真は、その人のiPhoneに残ります。")
@@ -523,7 +533,7 @@ struct GroupWindowMembersView: View {
             isPresented: $showsRevokeConfirmation,
             titleVisibility: .visible
         ) {
-            Button("招待を取り消す", role: .destructive) { Task { await model.revokeInvitation() } }
+            Button("招待を取り消す", role: .destructive) { running = "招待を取り消す"; Task { await model.revokeInvitation() } }
             Button("戻る", role: .cancel) {}
         } message: {
             Text("取り消すと、このリンクからは誰も参加できなくなります。")
@@ -539,6 +549,7 @@ struct GroupWindowMembersView: View {
             titleVisibility: .visible
         ) {
             Button("終わりにする", role: .destructive) {
+                running = "終わりにする"
                 Task {
                     guard await model.close() else { return }
                     if let onLeft { onLeft() } else { dismiss() }
@@ -554,6 +565,7 @@ struct GroupWindowMembersView: View {
             titleVisibility: .visible
         ) {
             Button("抜ける", role: .destructive) {
+                running = "抜ける"
                 Task {
                     guard await model.leave() else { return }
                     if let onLeft { onLeft() } else { dismiss() }
@@ -743,9 +755,13 @@ struct GroupWindowMembersView: View {
                 .lineLimit(1)
             if canRemove {
                 // Removal stays a visible button, small, under the face.
-                Button("外す") {
+                Button {
                     removalTarget = member
                     showsRemoval = true
+                } label: {
+                    WorkingLabel(title: "外す", workingTitle: "外しています…", working: running == "外す:\(member.id)")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 }
                 .font(.caption.weight(.semibold))
                 .buttonStyle(.bordered)
@@ -778,7 +794,7 @@ struct GroupWindowMembersView: View {
         Binding(get: { rejectionTarget != nil }, set: { if !$0 { rejectionTarget = nil } })
     }
     @ViewBuilder private func rejectionActions(_ request: GroupJoinRequest) -> some View {
-        Button("断る", role: .destructive) { Task { await model.reject(request) } }
+        Button("断る", role: .destructive) { running = "断る:\(request.id)"; Task { await model.reject(request) } }
         Button("戻る", role: .cancel) {}
     }
 
@@ -802,7 +818,8 @@ struct GroupWindowMembersView: View {
                     Button {
                         rejectionTarget = request
                     } label: {
-                        Text("断る").frame(minWidth: 64, minHeight: 44)
+                        WorkingLabel(title: "断る", workingTitle: "断っています…", working: running == "断る:\(request.id)")
+                            .frame(minWidth: 64, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
                     .disabled(model.isWorking)
@@ -836,8 +853,10 @@ struct GroupWindowMembersView: View {
                     "有効期限",
                     value: invitation.expiresAt.formatted(.dateTime.month().day().hour().minute())
                 )
-                Button("招待を取り消す", role: .destructive) {
+                Button(role: .destructive) {
                     showsRevokeConfirmation = true
+                } label: {
+                    WorkingLabel(title: "招待を取り消す", workingTitle: "取り消しています…", working: running == "招待を取り消す")
                 }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-revoke-invitation")
@@ -845,16 +864,25 @@ struct GroupWindowMembersView: View {
                 LabeledContent("前に作った招待", value: earlier.expiresAt.formatted(.dateTime.month().day().hour().minute()) + "まで有効")
                 Text("送り直すときは、取り消してから新しく作ってください。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("招待を取り消す", role: .destructive) {
+                Button(role: .destructive) {
                     showsRevokeConfirmation = true
+                } label: {
+                    WorkingLabel(title: "招待を取り消す", workingTitle: "取り消しています…", working: running == "招待を取り消す")
                 }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-revoke-earlier-invitation")
             } else if model.canInvite {
                 Button {
+                    running = "招待リンクを作る"
                     Task { await model.createInvitation() }
                 } label: {
-                    Label("招待リンクを作る", systemImage: "link.badge.plus")
+                    Group {
+                        if running == "招待リンクを作る" {
+                            WorkingLabel(title: "招待リンクを作る", workingTitle: "作っています…", working: true)
+                        } else {
+                            Label("招待リンクを作る", systemImage: "link.badge.plus")
+                        }
+                    }
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
@@ -886,7 +914,9 @@ struct GroupWindowMembersView: View {
             Button("名前を変える") { showsRename = true }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-rename")
-            Button("このまどを終わりにする", role: .destructive) { showsCloseConfirmation = true }
+            Button(role: .destructive) { showsCloseConfirmation = true } label: {
+                WorkingLabel(title: "このまどを終わりにする", workingTitle: "終わりにしています…", working: running == "終わりにする")
+            }
                 .disabled(model.isWorking)
                 .accessibilityIdentifier("group-window-close")
         }
@@ -904,8 +934,10 @@ struct GroupWindowMembersView: View {
             }
         } else {
             Section {
-                Button("このまどから抜ける", role: .destructive) {
+                Button(role: .destructive) {
                     showsLeaveConfirmation = true
+                } label: {
+                    WorkingLabel(title: "このまどから抜ける", workingTitle: "抜けています…", working: running == "抜ける")
                 }
                 .disabled(model.isWorking || window.state == .closed)
                 .accessibilityIdentifier("group-window-leave")
@@ -920,6 +952,8 @@ struct GroupWindowRenameSheet: View {
     let currentName: String
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
+    /// The keyboard goes away when 「保存」 is pressed, so the progress shows (11/6).
+    @FocusState private var typing: Bool
 
     init(model: GroupWindowMembersModel, currentName: String) {
         self.model = model
@@ -935,6 +969,8 @@ struct GroupWindowRenameSheet: View {
             Form {
                 Section {
                     TextField("例：実家のまど", text: $name)
+                        .focused($typing)
+                        .disabled(model.isWorking)
                         .accessibilityIdentifier("group-window-rename-field")
                 } footer: {
                     Text(tooLong ? GroupDisplayName.tooLongMessage : "名前はメンバー全員に表示されます。")
@@ -953,6 +989,7 @@ struct GroupWindowRenameSheet: View {
                         ProgressView()
                     } else {
                         Button("保存") {
+                            typing = false
                             Task { if await model.rename(to: trimmed) { dismiss() } }
                         }
                         .disabled(trimmed.isEmpty || trimmed == currentName || tooLong)
@@ -1113,6 +1150,10 @@ final class GroupJoinModel: ObservableObject {
 
 struct GroupJoinView: View {
     @State private var confirmsCancel = false
+    /// 「参加をやめる」 was confirmed, so that button says it is working (11/6).
+    @State private var running: String?
+    /// The keyboard goes away when 「参加する」 is pressed, so the progress shows (11/6).
+    @FocusState private var typingName: Bool
     @ObservedObject var model: GroupJoinModel
     var onOpenWindow: (() -> Void)? = nil
 
@@ -1154,6 +1195,7 @@ struct GroupJoinView: View {
         }
         .navigationTitle("まどに参加")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: model.isWorking) { _, working in if !working { running = nil } }
         .task { await model.resume() }
         .task(id: model.isPending) {
             // Approval shows up by itself; nothing to press while waiting (M2).
@@ -1190,11 +1232,21 @@ struct GroupJoinView: View {
     private var applySection: some View {
         Section {
             TextField("まどでの名前（例：お父さん）", text: $model.displayName)
+                .focused($typingName)
+                .disabled(model.isWorking)
                 .accessibilityIdentifier("group-join-name")
             Button {
+                typingName = false
                 Task { await model.apply() }
             } label: {
-                Label("参加する", systemImage: "person.badge.plus")
+                Group {
+                    // While the relay takes the application, the button says so (11/6).
+                    if model.isWorking {
+                        WorkingLabel(title: "参加する", workingTitle: "参加しています…", working: true)
+                    } else {
+                        Label("参加する", systemImage: "person.badge.plus")
+                    }
+                }
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -1227,11 +1279,13 @@ struct GroupJoinView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("group-join-admission-paused")
             }
-            Button("参加をやめる", role: .destructive) { confirmsCancel = true }
+            Button(role: .destructive) { confirmsCancel = true } label: {
+                WorkingLabel(title: "参加をやめる", workingTitle: "やめています…", working: running == "参加をやめる")
+            }
             .disabled(model.isWorking)
             .accessibilityIdentifier("group-join-cancel")
             .confirmationDialog("参加をやめますか？", isPresented: $confirmsCancel, titleVisibility: .visible) {
-                Button("参加をやめる", role: .destructive) { Task { await model.cancel() } }
+                Button("参加をやめる", role: .destructive) { running = "参加をやめる"; Task { await model.cancel() } }
             } message: { Text("もう一度参加するには、新しい招待リンクが要ります。") }
         }
     }

@@ -707,6 +707,10 @@ struct FamilyNotebookView: View {
     private var presentsSheet: Bool { invites || triesInvitation || showsPlusOffer || showsName || showsCats || showsRestore }
     @State private var decliningRequest: FamilyNotebookJoinRequest?
     @Environment(\.scenePhase) private var scenePhase
+    /// The pressed 受け入れる/受け入れない, so only it says it is working (11/6).
+    @State private var running: String?
+    /// 「もう一度確認」 was pressed and its check is running (11/6).
+    @State private var rechecking = false
 
     private var prototypeInvitationAction: (@MainActor () -> Void)? {
         guard !model.isReal else { return nil }
@@ -714,6 +718,11 @@ struct FamilyNotebookView: View {
     }
     @ToolbarContentBuilder private var closeToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } }
+        // A change started here (or on a member's page, which closes first)
+        // shows in the bar, never as a new row: rows here must not move (11/6).
+        ToolbarItem(placement: .topBarTrailing) {
+            if sharing.isWorking { ProgressView().accessibilityLabel("家族の手帳を変えています") }
+        }
     }
 
     var body: some View {
@@ -733,7 +742,16 @@ struct FamilyNotebookView: View {
 
                             }
                         } footer: { Text("このiPhoneに残っている記録です。家族との共有を確認しています。") }
-                        Button("もう一度確認") { Task { await sharing.refresh(reportsFailure: true) } }
+                        Button {
+                            rechecking = true
+                            Task {
+                                defer { rechecking = false }
+                                await sharing.refresh(reportsFailure: true)
+                            }
+                        } label: {
+                            WorkingLabel(title: "もう一度確認", workingTitle: "確認しています…", working: rechecking)
+                        }
+                        .disabled(rechecking)
                     }
                 case .checking, .leaving:
                     ProgressView()
@@ -787,6 +805,7 @@ struct FamilyNotebookView: View {
             .confirmationDialog(decliningTitle, isPresented: decliningPresented, titleVisibility: .visible,
                                 presenting: decliningRequest, actions: decliningActions)
         }
+        .onChange(of: sharing.isWorking) { _, working in if !working { running = nil } }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             repeat {
@@ -851,8 +870,14 @@ struct FamilyNotebookView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(request.displayName)
                                 HStack {
-                                    Button("受け入れる") { decide(request, approve: true) }
-                                    Button("受け入れない", role: .destructive) { decliningRequest = request }
+                                    Button { running = "受け入れる:\(request.id)"; decide(request, approve: true) } label: {
+                                        WorkingLabel(title: "受け入れる", workingTitle: "返事をしています…",
+                                                     working: running == "受け入れる:\(request.id)")
+                                    }
+                                    Button(role: .destructive) { decliningRequest = request } label: {
+                                        WorkingLabel(title: "受け入れない", workingTitle: "返事をしています…",
+                                                     working: running == "受け入れない:\(request.id)")
+                                    }
                                 }.buttonStyle(.bordered).disabled(sharing.isWorking)
                             }
                         }
@@ -921,7 +946,7 @@ struct FamilyNotebookView: View {
         Binding(get: { decliningRequest != nil }, set: { if !$0 { decliningRequest = nil } })
     }
     @ViewBuilder private func decliningActions(_ request: FamilyNotebookJoinRequest) -> some View {
-        Button("受け入れない", role: .destructive) { decide(request, approve: false) }
+        Button("受け入れない", role: .destructive) { running = "受け入れない:\(request.id)"; decide(request, approve: false) }
         Button("戻る", role: .cancel) {}
     }
 
@@ -1008,6 +1033,8 @@ struct FamilyFarewellShareSheet: View {
     @State private var working = false
     @State private var errorMessage: String?
     @State private var confirmsRevoke = false
+    /// The pressed button, so only it says it is working (11/6).
+    @State private var running: String?
 
     private var service: any FamilyNotebookSharingService { FamilyNotebookSharing.shared.service }
 
@@ -1037,11 +1064,12 @@ struct FamilyFarewellShareSheet: View {
                 }
             }
             .confirmationDialog("この日付の共有をやめますか？", isPresented: $confirmsRevoke, titleVisibility: .visible) {
-                Button("共有をやめる", role: .destructive) { Task { await revoke() } }
+                Button("共有をやめる", role: .destructive) { running = "共有をやめる"; Task { await revoke() } }
             } message: {
                 Text(state?.revocationExplanation ?? "")
             }
             .interactiveDismissDisabled(working)
+            .onChange(of: working) { _, working in if !working { running = nil } }
         }
         .task { await load() }
     }
@@ -1089,8 +1117,12 @@ struct FamilyFarewellShareSheet: View {
         .accessibilityIdentifier("family-farewell-state")
         if state.localDay != nil, !state.hasConsentForLocalDay, !state.sharingPending {
             Section {
-                Button(state.consentedDay == nil ? "家族と共有する" : "この日付を共有し直す") {
+                Button {
+                    running = "家族と共有する"
                     Task { await loadPreview() }
+                } label: {
+                    WorkingLabel(title: state.consentedDay == nil ? "家族と共有する" : "この日付を共有し直す",
+                                 workingTitle: "準備しています…", working: running == "家族と共有する")
                 }
                 .disabled(working)
                 .accessibilityIdentifier("family-farewell-share")
@@ -1098,7 +1130,9 @@ struct FamilyFarewellShareSheet: View {
         }
         if state.consentedDay != nil, !state.revocationPending {
             Section {
-                Button("共有をやめる", role: .destructive) { confirmsRevoke = true }
+                Button(role: .destructive) { confirmsRevoke = true } label: {
+                    WorkingLabel(title: "共有をやめる", workingTitle: "やめています…", working: running == "共有をやめる")
+                }
                     .disabled(working)
                     .accessibilityIdentifier("family-farewell-revoke")
             } footer: {
@@ -1434,6 +1468,8 @@ struct FamilyNotebookJoinView: View {
     @State private var preview: FamilyInvitationPreview?
     @State private var result: FamilyJoinResult?
     @State private var displayName = GroupDisplayName.remembered
+    /// The keyboard goes away when 「参加する」 is pressed, so the progress shows (11/6).
+    @FocusState private var typingName: Bool
 
     private var inFamily: Bool { sharing.state.membership != nil }
 
@@ -1462,9 +1498,12 @@ struct FamilyNotebookJoinView: View {
                     if sharing.service.sendsInvitations {
                         TextField("家族に表示するあなたの名前", text: $displayName)
                             .textFieldStyle(.roundedBorder)
+                            .focused($typingName)
+                            .disabled(sharing.isWorking)
                             .accessibilityIdentifier("family-notebook-display-name")
                     }
                     Button {
+                        typingName = false
                         guard let preview else { return }
                         if sharing.service.sendsInvitations {
                             guard let name = try? GroupWire.name(displayName) else { return }

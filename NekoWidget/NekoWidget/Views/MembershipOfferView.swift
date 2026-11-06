@@ -23,6 +23,9 @@ struct MembershipOfferView: View {
     let onPurchase: () -> Void
     let onRestore: () -> Void
     let onClose: () -> Void
+    /// 「購入を復元」 was pressed, so its spinner sits on that link, not on the
+    /// purchase button (11/6). Cleared when the work ends.
+    @State private var running: String?
 
     static let heading = "うちの子との毎日を、続ける"
     /// What Plus is, in the LP's words, plus saving (part of the 980 yen since 10/20).
@@ -119,6 +122,7 @@ struct MembershipOfferView: View {
             }
         }
         .accessibilityIdentifier("membership-offer")
+        .onChange(of: isWorking) { _, working in if !working { running = nil } }
     }
 
     private var photoHeader: some View {
@@ -215,9 +219,12 @@ struct MembershipOfferView: View {
 
     private var actions: some View {
         VStack(spacing: 8) {
-            Button(action: onPurchase) {
+            Button {
+                running = "購入"
+                onPurchase()
+            } label: {
                 HStack(spacing: 8) {
-                    if isWorking { ProgressView().tint(.white) }
+                    if isWorking && running != "購入を復元" { ProgressView().tint(.white) }
                     Text(purchaseTitle ?? offer?.purchaseTitle ?? (isWorking ? "料金を確認中…" : "料金を確認できません"))
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
@@ -286,7 +293,12 @@ struct MembershipOfferView: View {
     }
 
     @ViewBuilder private var footerLinkContent: some View {
-        Button("購入を復元", action: onRestore)
+        Button {
+            running = "購入を復元"
+            onRestore()
+        } label: {
+            WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: running == "購入を復元" && isWorking)
+        }
             .frame(minHeight: 44)
             .disabled(isWorking || !canRestore)
             .accessibilityIdentifier("membership-offer-restore")

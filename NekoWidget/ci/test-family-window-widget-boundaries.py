@@ -3305,7 +3305,7 @@ class GroupWindowUsabilityTests(unittest.TestCase):
         # Plain words: no keys, no "却下", one name for the phrase.
         for word in ("鍵を", "却下", "確認語", "今後の版"):
             self.assertNotIn(word, setup)
-        self.assertIn('Text("断る")', setup)
+        self.assertIn('WorkingLabel(title: "断る"', setup)
         # Removing a member has a visible button and a VoiceOver action, not only a swipe.
         self.assertIn('"group-window-remove-member"', setup)
         self.assertIn('.accessibilityAction(named: Text("外す"))', setup)
@@ -3328,9 +3328,119 @@ class WindowCreationEntryTests(unittest.TestCase):
         window = source("NekoWidget/Views/GroupWindowView.swift")
         create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowListSection: View {")
         self.assertIn("typing = nil", section(create, "private func create() {", "private var trimmed"))
-        self.assertIn('HStack(spacing: 8) { ProgressView(); Text("作っています…") }', create)
+        self.assertIn('WorkingLabel(title: "作る", workingTitle: "作っています…", working: model.isWorking)', create)
         self.assertEqual(create.count(".focused($typing, equals:"), 2)
         self.assertEqual(create.count(".disabled(model.isWorking)"), 2)
+
+
+class WorkingFeedbackTests(unittest.TestCase):
+    """11/6: a press that waits on the network or a slow file says so on its
+    own button (「〜しています…」), instead of only graying out."""
+
+    def test_working_label_is_shared(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        label = section(window, "struct WorkingLabel: View {", "struct GroupWindowListSection: View {")
+        self.assertIn("let workingTitle: String", label)
+        self.assertIn("if working { HStack(spacing: 8) { ProgressView(); Text(workingTitle) } } else { Text(title) }", label)
+        self.assertEqual(window.count("struct WorkingLabel: View {"), 1)
+        create = section(window, "struct GroupWindowCreateScreen: View {", "struct GroupWindowStandardsAgreement: View {")
+        self.assertIn('WorkingLabel(title: "作る", workingTitle: "作っています…", working: model.isWorking)', create)
+
+    def test_key_buttons_say_what_they_are_doing(self) -> None:
+        expected = {
+            "NekoWidget/Views/GroupWindowView.swift": (
+                'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isSyncing)',
+                'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)',
+                'workingTitle: "追加しています…"',
+                'WorkingLabel(title: "確かめる", workingTitle: "確かめています…", working: working)',
+                '"解除しています…" : "表示しています…"',
+                'WorkingLabel(title: "もう一度送る", workingTitle: "送っています…", working: running == record.id)',
+            ),
+            "NekoWidget/Views/GroupWindowSetupView.swift": (
+                'WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)',
+                'WorkingLabel(title: "外す", workingTitle: "外しています…"',
+                'workingTitle: "取り消しています…"',
+                'workingTitle: "終わりにしています…"',
+                'workingTitle: "抜けています…"',
+                'WorkingLabel(title: "断る", workingTitle: "断っています…"',
+                'WorkingLabel(title: "招待リンクを作る", workingTitle: "作っています…"',
+                'WorkingLabel(title: "参加をやめる", workingTitle: "やめています…"',
+            ),
+            "NekoWidget/Views/FamilyNotebookView.swift": (
+                'WorkingLabel(title: "もう一度確認", workingTitle: "確認しています…", working: rechecking)',
+                'workingTitle: "返事をしています…"',
+                'workingTitle: "準備しています…"',
+                'WorkingLabel(title: "共有をやめる", workingTitle: "やめています…"',
+            ),
+            "NekoWidget/Views/ManagedPreservationView.swift": (
+                'WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: coordinator.membershipRestoring)',
+                'WorkingLabel(title: "メモを保存", workingTitle: "保存しています…"',
+            ),
+            "NekoWidget/Services/AppRecordPersistence.swift": (
+                'WorkingLabel(title: "購入を復元", workingTitle: "確認しています…", working: authentication.membershipRestoring)',
+                'workingTitle: "切り替えています…"',
+            ),
+            "NekoWidget/Views/MembershipOfferView.swift": (
+                'WorkingLabel(title: "購入を復元", workingTitle: "確認しています…"',
+            ),
+            "NekoWidget/Views/ShowcasePhotoView.swift": (
+                'workingTitle: "追加しています…", working: isSaving',
+                'WorkingLabel(title: "おすすめで選ぶ", workingTitle: "選んでいます…"',
+            ),
+            "NekoWidget/Views/VeterinaryVisitView.swift": ('workingTitle: "作っています…"',),
+            "NekoWidget/Views/CareHandoffView.swift": ('workingTitle: "作っています…"',),
+            "NekoWidget/Views/EvacuationPreparationView.swift": ('workingTitle: "作っています…"',),
+        }
+        for path, needles in expected.items():
+            text = source(path)
+            for needle in needles:
+                self.assertIn(needle, text, f"{path}: {needle}")
+
+    def test_new_flags_are_set_only_while_their_work_runs(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        load = section(window, "    func load() async {", "    func create(name: String, ownerName: String)")
+        self.assertIn("isLoading = true\n        defer { isLoading = false }", load)
+        favorite = section(window, "func addToFavorites(", "func remove(")
+        self.assertIn("addingFavoriteID = entry.id\n        defer { addingFavoriteID = nil }", favorite)
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        members = section(setup, "func load(reportsFailure: Bool = true) async {", "func createInvitation()")
+        self.assertIn("isLoading = true\n        defer { isLoading = false }", members)
+        # Family changes show in the bar, never as a new row in the notebook list.
+        notebook = source("NekoWidget/Views/FamilyNotebookView.swift")
+        bar = section(notebook, "@ToolbarContentBuilder private var closeToolbar", "var body: some View {")
+        self.assertIn("if sharing.isWorking { ProgressView()", bar)
+        sharing = source("NekoWidget/Services/FamilyNotebookSharing.swift")
+        self.assertEqual(sharing.count("isWorking = true"), 1)
+        self.assertIn("isWorking = true", section(sharing, "func perform(", "/// Test builds"))
+
+    def test_exports_show_their_label_before_drawing(self) -> None:
+        for path, start in (("NekoWidget/Views/VeterinaryVisitView.swift", "private func makeExport(pdf: Bool) async {"),
+                            ("NekoWidget/Views/CareHandoffView.swift", "private func createExport() async {"),
+                            ("NekoWidget/Views/EvacuationPreparationView.swift", "private func makeBook() async {"),
+                            ("NekoWidget/Views/EvacuationPreparationView.swift", "private func createExport() async {")):
+            body = source(path)
+            body = body[body.index(start):]
+            self.assertLess(body.index("try? await Task.sleep(for: .milliseconds(100))"), body.index("Exporter.create"), path)
+        evacuation = source("NekoWidget/Views/EvacuationPreparationView.swift")
+        export = section(evacuation, "private func createExport() async {", "private struct EvacuationActivitySheet")
+        self.assertIn("busy = true\n        defer { busy = false }", export)
+
+    def test_join_and_rename_put_the_keyboard_away(self) -> None:
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        join = section(setup, "struct GroupJoinView: View {", "// MARK: - Today's two-person window")
+        apply = section(join, "private var applySection: some View {", "private func pendingSection(")
+        self.assertIn(".focused($typingName)", apply)
+        self.assertLess(apply.index("typingName = false"), apply.index("await model.apply()"))
+        rename = section(setup, "struct GroupWindowRenameSheet: View {", "struct GroupMemberAvatar: View {")
+        self.assertIn(".focused($typing)", rename)
+        self.assertLess(rename.index("typing = false"), rename.index("await model.rename(to: trimmed)"))
+        family = section(source("NekoWidget/Views/FamilyNotebookView.swift"),
+                         "struct FamilyNotebookJoinView: View {", "struct FamilyNotebookNameView: View {")
+        self.assertIn(".focused($typingName)", family)
+        self.assertLess(family.index("typingName = false"), family.index("service.join(preview"))
+        report = section(source("NekoWidget/Views/GroupWindowView.swift"),
+                         "struct GroupReportSheet: View {", "private func send() async {")
+        self.assertIn(".disabled(record != nil || safety.isWorking)", report)
 
 
 class AlbumPurposeTests(unittest.TestCase):

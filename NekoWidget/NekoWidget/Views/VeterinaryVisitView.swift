@@ -681,6 +681,8 @@ private struct VeterinaryReadView: View {
     /// Set while the confirmation before handing over is open.
     @State private var pendingExportIsPDF: Bool?
     @State private var lastExportIsPDF = true
+    /// True while the memo for the desk is being made (11/6).
+    @State private var exporting = false
 
     private var catCareFields: [(String, String)] {
         CatCareSummary.veterinaryFields(
@@ -750,18 +752,39 @@ private struct VeterinaryReadView: View {
 
     @ViewBuilder private var exportButtons: some View {
         Button { pendingExportIsPDF = true } label: {
-            Label("PDFで渡す", systemImage: "doc").frame(maxWidth: .infinity, minHeight: 44)
+            Group {
+                if exporting && lastExportIsPDF {
+                    WorkingLabel(title: "PDFで渡す", workingTitle: "作っています…", working: true)
+                } else {
+                    Label("PDFで渡す", systemImage: "doc")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent).accessibilityIdentifier("vet-export-pdf")
+        .disabled(exporting)
         Button { pendingExportIsPDF = false } label: {
-            Label("画像で渡す", systemImage: "photo").frame(maxWidth: .infinity, minHeight: 44)
+            Group {
+                if exporting && !lastExportIsPDF {
+                    WorkingLabel(title: "画像で渡す", workingTitle: "作っています…", working: true)
+                } else {
+                    Label("画像で渡す", systemImage: "photo")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered).accessibilityIdentifier("vet-export-images")
+        .disabled(exporting)
     }
 
     /// One sheet for the reception desk: 「この子のこと」, what was noticed,
     /// questions, and the chosen notes. The first chosen photo is included.
     private func makeExport(pdf: Bool) async {
+        // The file is drawn on the main thread, which stops the screen; give
+        // 「作っています…」 a moment to show first, so the press is not silent (11/6).
+        exporting = true
+        defer { exporting = false }
+        try? await Task.sleep(for: .milliseconds(100))
         var fields = catCareFields
         if let day = visit.startedOn { fields.append(("気付いた日", DayText.japanese(day))) }
         if !visit.observations.isEmpty { fields.append(("家で気付いたこと", visit.observations)) }

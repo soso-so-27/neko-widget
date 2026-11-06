@@ -131,6 +131,8 @@ final class GroupWindowScreenModel: ObservableObject {
     @Published private(set) var failedDelivery: FailedDelivery?
     /// The result of 「お気に入りに追加」 or 「このiPhoneから消す」.
     @Published var actionMessage: String?
+    /// The photo being copied by 「お気に入りに追加」, so its button says so (11/6).
+    @Published private(set) var addingFavoriteID: String?
 
     let windowID: String
     let client: any GroupWindowMediaClient
@@ -411,6 +413,8 @@ final class GroupWindowScreenModel: ObservableObject {
     /// two-person window, then the ordinary favorite, so it can join albums.
     func addToFavorites(_ entry: GroupWindowLocalPhotoStore.Entry) async {
         guard !entry.isOwn, !entry.isHidden else { return }
+        addingFavoriteID = entry.id
+        defer { addingFavoriteID = nil }
         let service = ReceivedPhotoMemoryImportService()
         do {
             var identifier = entry.favoriteLocalIdentifier
@@ -679,7 +683,9 @@ struct GroupWindowScreen: View {
                 .accessibilityIdentifier("group-window-screen-message")
             // sync() re-reads the window and its photos; a failed delivery
             // keeps its own 「もう一度届ける」 bar.
-            Button("もう一度") { Task { await model.sync() } }
+            Button { Task { await model.sync() } } label: {
+                WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isSyncing)
+            }
                 .font(.footnote)
                 .frame(minHeight: 44)
                 .disabled(model.isSyncing)
@@ -1474,13 +1480,17 @@ private struct GroupPhotoDetail: View {
                     } label: {
                         VStack(spacing: 3) {
                             Image(systemName: "bookmark").font(.title2)
-                            Text("お気に入り").font(.caption2)
+                            WorkingLabel(title: "お気に入り", workingTitle: "追加しています…",
+                                         working: model.addingFavoriteID == entry.id)
+                                .font(.caption2)
+                                .controlSize(.small)
                         }
                         .frame(maxWidth: .infinity, minHeight: 56)
                         .foregroundStyle(Color.secondary)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(model.addingFavoriteID != nil)
                     .accessibilityLabel("自分のお気に入りに追加")
                     .accessibilityIdentifier("group-photo-favorite")
                 }
@@ -1589,6 +1599,8 @@ final class GroupWindowListModel: ObservableObject {
     @Published private(set) var message: String?
     @Published private(set) var isWorking = false
     @Published private(set) var hasLoaded = false
+    /// True only while load() runs; read only by the retry buttons (11/6).
+    @Published private(set) var isLoading = false
     let client: any GroupWindowMediaClient
 
     init(client: any GroupWindowMediaClient) { self.client = client }
@@ -1601,6 +1613,8 @@ final class GroupWindowListModel: ObservableObject {
 
 #endif
     func load() async {
+        isLoading = true
+        defer { isLoading = false }
 #if DEBUG || INTERNAL_PRESENTATION
         let started = ProcessInfo.processInfo.systemUptime
         let trace = InternalBuildPresentationAvailability.isAvailable ? GroupListTrace() : nil
@@ -1752,14 +1766,8 @@ struct GroupWindowCreateScreen: View {
                         create()
                     } label: {
                         // While the relay makes it, the button says so instead of only graying out.
-                        Group {
-                            if model.isWorking {
-                                HStack(spacing: 8) { ProgressView(); Text("作っています…") }
-                            } else {
-                                Text("作る")
-                            }
-                        }
-                        .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                        WorkingLabel(title: "作る", workingTitle: "作っています…", working: model.isWorking)
+                            .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(trimmed.isEmpty || trimmedOwner.isEmpty || tooLong || model.isWorking)
@@ -1809,6 +1817,16 @@ struct GroupWindowStandardsAgreement: View {
         .font(.footnote)
         .padding(.top, 8)
         .accessibilityIdentifier("group-window-standards-agreement")
+    }
+}
+
+/// While a press is being done, the button says so instead of only graying out (11/6).
+struct WorkingLabel: View {
+    let title: String
+    let workingTitle: String
+    let working: Bool
+    var body: some View {
+        if working { HStack(spacing: 8) { ProgressView(); Text(workingTitle) } } else { Text(title) }
     }
 }
 
@@ -1927,8 +1945,10 @@ struct GroupWindowListSection: View {
                     // Nothing to show and the relay could not be reached: say so, with a retry.
                     VStack(spacing: 12) {
                         Text(message).font(.footnote).foregroundStyle(.secondary)
-                        Button("もう一度") { Task { await model.load() } }
-                            .disabled(model.isWorking)
+                        Button { Task { await model.load() } } label: {
+                            WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)
+                        }
+                            .disabled(model.isWorking || model.isLoading)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
@@ -1937,9 +1957,11 @@ struct GroupWindowListSection: View {
                     // A refresh that failed is not an emergency: say so quietly, with a retry.
                     HStack(spacing: 8) {
                         Text("いまは新しい内容を読み込めません。").font(.footnote).foregroundStyle(.secondary)
-                        Button("もう一度") { Task { await model.load() } }
+                        Button { Task { await model.load() } } label: {
+                            WorkingLabel(title: "もう一度", workingTitle: "読み込んでいます…", working: model.isLoading)
+                        }
                             .font(.footnote.weight(.semibold))
-                            .disabled(model.isWorking)
+                            .disabled(model.isWorking || model.isLoading)
                     }
                     .accessibilityIdentifier("group-window-list-stale")
                 }
@@ -2167,6 +2189,8 @@ private struct KnownWindowCard: View {
 struct GroupHiddenMembersView: View {
     @State private var windows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @State private var loaded = false
+    /// The row whose button was pressed, so only that one says it is working (11/6).
+    @State private var running: String?
     @ObservedObject private var safety = GroupSafety.shared
 
     private struct Row: Identifiable {
@@ -2189,11 +2213,17 @@ struct GroupHiddenMembersView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(item.member.blocked == true ? "ブロックを解除" : "表示する") {
-                        Task { await restore(item) }
+                    Button {
+                        running = item.id
+                        // Cleared here, not on safety.isWorking: 「表示する」 never sets it.
+                        Task { await restore(item); running = nil }
+                    } label: {
+                        WorkingLabel(title: item.member.blocked == true ? "ブロックを解除" : "表示する",
+                                     workingTitle: item.member.blocked == true ? "解除しています…" : "表示しています…",
+                                     working: running == item.id)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(safety.isWorking)
+                    .disabled(safety.isWorking || running != nil)
                 }
                 .frame(minHeight: 44)
             }
@@ -2247,12 +2277,16 @@ struct GroupIdentityDeletionView: View {
                 } else if let record, record.acceptedAt != nil {
                     Label("抜けています", systemImage: "hourglass")
                     Text("終わるまで少しかかることがあります。").foregroundStyle(.secondary)
-                    Button("確かめる") { Task { await refresh() } }
+                    Button { Task { await refresh() } } label: {
+                        WorkingLabel(title: "確かめる", workingTitle: "確かめています…", working: working)
+                    }
                         .frame(minHeight: 44)
                         .disabled(working)
                 } else {
                     Text("参加しているまどと家族の手帳から抜け、あなたが届けた写真・ひとこと・ハートと、まどの ID をサーバーから消します。")
-                    Button("まどと家族の手帳から抜ける", role: .destructive) { confirms = true }
+                    Button(role: .destructive) { confirms = true } label: {
+                        WorkingLabel(title: "まどと家族の手帳から抜ける", workingTitle: "抜けています…", working: working)
+                    }
                         .frame(minHeight: 44)
                         .disabled(working || !loaded)
                         .accessibilityIdentifier("group-identity-delete")
@@ -2483,7 +2517,7 @@ struct GroupReportSheet: View {
                                     if reason == candidate { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
                                 }
                             }
-                            .disabled(record != nil)
+                            .disabled(record != nil || safety.isWorking)
                         }
                     } header: {
                         Text("理由")
@@ -2502,9 +2536,14 @@ struct GroupReportSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(record?.progress == .received ? "閉じる" : "やめる") { dismiss() }
+                        .disabled(safety.isWorking)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if record?.progress != .received {
+                    // While the report is being sent, the button's place says so (11/6).
+                    if safety.isWorking {
+                        ProgressView()
+                            .accessibilityLabel("送っています")
+                    } else if record?.progress != .received {
                         Button(record?.progress == .retryable ? "もう一度送る" : "送る") { Task { await send() } }
                             .disabled(reason == nil || safety.isWorking)
                             .accessibilityIdentifier("group-report-send")
@@ -2546,6 +2585,8 @@ struct GroupReportSheet: View {
 struct GroupReportsView: View {
     let windowID: String
     @ObservedObject private var safety = GroupSafety.shared
+    /// The report whose 「もう一度送る」 was pressed (11/6).
+    @State private var running: String?
 
     private var records: [GroupReportRecord] { safety.records[windowID] ?? [] }
 
@@ -2569,10 +2610,13 @@ struct GroupReportsView: View {
                             .textSelection(.enabled)
                     }
                     if record.progress == .retryable {
-                        Button("もう一度送る") {
+                        Button {
+                            running = record.id
                             Task {
                                 await safety.run(windowID: windowID) { try await safety.service.resumeReport(draftID: record.id) }
                             }
+                        } label: {
+                            WorkingLabel(title: "もう一度送る", workingTitle: "送っています…", working: running == record.id)
                         }
                         .font(.footnote)
                         .disabled(safety.isWorking)
@@ -2595,6 +2639,7 @@ struct GroupReportsView: View {
         }
         .navigationTitle("通報への返答")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: safety.isWorking) { _, working in if !working { running = nil } }
         .task { await safety.refresh(windowID: windowID) }
         .refreshable { await safety.refresh(windowID: windowID) }
     }
