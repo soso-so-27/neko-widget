@@ -110,6 +110,8 @@ protocol GroupReportingService: AnyObject {
     func resumeReport(draftID: String) async throws -> GroupReportRecord
     /// This person's reports in this window, kept even after leaving it.
     func reports(windowID: String) async -> [GroupReportRecord]
+    /// Device-local suppression only: no receipt, reply or former identity is exposed.
+    func locallyReportedPhotoIDs(windowID: String) async throws -> Set<String>
     /// Asks the server for this exact report's state and answer.
     func refreshReport(draftID: String) async throws -> GroupReportRecord
     func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock]
@@ -117,6 +119,9 @@ protocol GroupReportingService: AnyObject {
 }
 
 extension GroupReportingService {
+    func locallyReportedPhotoIDs(windowID: String) async throws -> Set<String> {
+        Set(await reports(windowID: windowID).map(\.photoID))
+    }
     func refreshAvailability() async {}
     func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock] { [] }
 }
@@ -126,6 +131,8 @@ extension GroupReportingService {
 final class GroupSafety: ObservableObject {
     static let shared = GroupSafety(service: GroupReportingProvider.make())
 
+    @Published private var locallyReportedPhotos: [String: Set<String>] = [:]
+    @Published private var unreadableSuppression = Set<String>()
     @Published private(set) var records: [String: [GroupReportRecord]] = [:]
     @Published private(set) var pendingBlocks: [String: [GroupPendingBlock]] = [:]
     @Published var failure: GroupSafetyError?
@@ -143,6 +150,14 @@ final class GroupSafety: ObservableObject {
 
     /// This iPhone's own records only, without asking the server.
     func loadRecords(windowID: String) async {
+        do {
+            locallyReportedPhotos[windowID] = try await service.locallyReportedPhotoIDs(windowID: windowID)
+            unreadableSuppression.remove(windowID)
+        } catch {
+            // An unreadable local record must never uncover a reported photo.
+            unreadableSuppression.insert(windowID)
+            failure = .storageUnavailable
+        }
         records[windowID] = await service.reports(windowID: windowID)
         do { pendingBlocks[windowID] = try await service.pendingBlocks(windowID: windowID) }
         catch { failure = error as? GroupSafetyError ?? .storageUnavailable }
@@ -151,7 +166,9 @@ final class GroupSafety: ObservableObject {
     /// A photo this person reported stays covered on their iPhone, whatever
     /// the team decides; the others in the window still see it until then.
     func hasReported(_ photoID: String, in windowID: String) -> Bool {
-        records[windowID]?.contains { $0.photoID == photoID } ?? false
+        unreadableSuppression.contains(windowID)
+            || locallyReportedPhotos[windowID]?.contains(photoID) == true
+            || records[windowID]?.contains { $0.photoID == photoID } == true
     }
 
     /// Asks again for every report that can still change.

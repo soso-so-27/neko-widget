@@ -353,6 +353,7 @@ private struct VerifyGroupReporting {
         try await reportingPhase("receipt number validation") { try await invalidReceiptNumbers(root, jpeg) }
         try await reportingPhase("accepted reports after evidence expiry") { try await evidenceExpiry(root, jpeg) }
         try await reportingPhase("identity and departure") { try await identitiesAndDeparture(root, jpeg) }
+        try await reportingPhase("former report and device-local suppression") { try await formerSuppression(root, jpeg) }
         try await reportingPhase("blocking") { try await blocking(root, jpeg) }
         try await reportingPhase("OFF") { try await disabled(root, jpeg) }
         print("Group reporting native adapter checks passed: exact evidence, durable retries, signed requests, identity/status, receipt numbers, evidence expiry, blocks and OFF.")
@@ -587,6 +588,39 @@ private struct VerifyGroupReporting {
         try await fails(.authenticationRequired, "replacement identity cannot request old status") { _ = try await departed.refreshReport(draftID: id) }
         try require(await env.echo.log().count == count, "unauthorized status rejected locally")
     }
+    private static func formerSuppression(_ root: URL, _ jpeg: Data) async throws {
+        let env = try ReportingEnvironment(root: root, name: "former-suppression", jpeg: jpeg)
+        let bytes = try env.secrets.read("window:" + env.windowID)!
+        var local = try GroupWire.decode(GroupLocalWindow.self, bytes)
+        local.left = true
+        try env.secrets.write(GroupWire.encode(local), account: "window:" + env.windowID, createOnly: false)
+        let service = try env.service(), id = try await env.prepare(service)
+        _ = try await service.submitReport(draftID: id)
+        try require(try await service.locallyReportedPhotoIDs(windowID: env.windowID) == [env.photoID], "former member reports a received photo")
+        try env.secrets.remove("identity")
+        let restarted = try env.service()
+        try require(await restarted.reports(windowID: env.windowID).isEmpty, "erased identity exposes no report metadata")
+        try require(try await restarted.locallyReportedPhotoIDs(windowID: env.windowID) == [env.photoID], "local hide survives erasure and restart")
+        try await fails(.authenticationRequired, "erased identity cannot read server reply") { _ = try await restarted.refreshReport(draftID: id) }
+        let replacement = try env.replaceIdentity()
+        try env.secrets.write(replacement, account: "identity", createOnly: false)
+        try require(try await restarted.locallyReportedPhotoIDs(windowID: env.windowID) == [env.photoID], "replacement identity cannot uncover photo")
+        try require(await restarted.reports(windowID: env.windowID).isEmpty, "replacement identity cannot see receipt or reply")
+        let before = await env.mutationLog().count
+        do {
+            _ = try await env.prepare(restarted)
+            throw ReportingCheckFailure.failed("replacement identity accepted old roster")
+        } catch let error as GroupSafetyError {
+            try require([.disabled, .authenticationRequired, .notAuthorized].contains(error), "replacement identity refused")
+        }
+        try require(await env.mutationLog().count == before, "replacement identity sends no report mutation")
+        // Corrupt only this disposable fixture row: failed reads must not expose photos.
+        try reportingSQL(env.directory, "UPDATE reports SET data=X'00'")
+        let safety = GroupSafety(service: restarted)
+        await safety.loadRecords(windowID: env.windowID)
+        try require(safety.hasReported(env.photoID, in: env.windowID), "unreadable suppression fails closed")
+    }
+
     private static func blocking(_ root: URL, _ jpeg: Data) async throws {
         let env = try ReportingEnvironment(root: root, name: "block", jpeg: jpeg), service = try env.service()
         let target = GroupWire.base64(Data(repeating: 11, count: 16)), operation = UUID()

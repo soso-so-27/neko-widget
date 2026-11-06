@@ -17,7 +17,7 @@ enum GroupReportingProvider {
               GroupWindowClientProvider.production != nil, let endpoint = config.baseURL,
               let publicKey = config.moderationPublicKey,
               let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return UnavailableGroupReporting()
+            return UnavailableGroupReporting(suppressionUnavailable: true)
         }
         do {
             return try ProductionGroupReporting(endpoint: endpoint,
@@ -40,7 +40,7 @@ enum GroupReportingProvider {
                     // Do not disclose the optional private caption under photo-only consent.
                     return GroupReportEvidence(windowID: windowID, photoID: photoID, canonicalJPEG: canonical.jpeg)
                 }
-        } catch { return UnavailableGroupReporting() }
+        } catch { return UnavailableGroupReporting(suppressionUnavailable: true) }
 #else
         return internalFallback()
 #endif
@@ -59,6 +59,12 @@ enum GroupReportingProvider {
 @MainActor
 private final class UnavailableGroupReporting: GroupReportingService {
     let isAvailable = false
+    private let suppressionUnavailable: Bool
+    init(suppressionUnavailable: Bool = false) { self.suppressionUnavailable = suppressionUnavailable }
+    func locallyReportedPhotoIDs(windowID: String) async throws -> Set<String> {
+        if suppressionUnavailable { throw GroupSafetyError.storageUnavailable }
+        return []
+    }
     func prepareReport(windowID: String, photoID: String, senderName: String, reason: GroupReportReason, consent: GroupReportConsent) async throws -> String { throw GroupSafetyError.disabled }
     func submitReport(draftID: String) async throws -> GroupReportRecord { throw GroupSafetyError.disabled }
     func resumeReport(draftID: String) async throws -> GroupReportRecord { throw GroupSafetyError.disabled }
