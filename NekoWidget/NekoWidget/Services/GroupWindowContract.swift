@@ -295,3 +295,19 @@ struct GroupNotificationRoute: Sendable {
         value.utf8.count == 22 && value.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }
     }
 }
+
+struct GroupDeliveryConfirmationPending: Error { let photoID: String }
+
+struct GroupPhotoCommitReceipt: Decodable {
+    let operationID: String; let momentID: String; let windowID: String
+    let revision: Int; let keyEpoch: Int; let state: String
+    let senderParticipantID: String; let senderDeviceID: String; let createdAt: Int
+    func validate(operationID: UUID, windowID: String, photoID: String,
+                  participantID: String, deviceID: String, revision: Int, epoch: Int) throws {
+        guard self.operationID == operationID.uuidString.lowercased(), self.windowID == windowID,
+              momentID == photoID, senderParticipantID == participantID, senderDeviceID == deviceID,
+              self.revision == revision, keyEpoch == epoch, state == "committed", createdAt > 0 else {
+            throw GroupClientError.invalidResponse
+        }
+    }
+}
