@@ -86,9 +86,9 @@ final class ProductionGroupReporting: GroupReportingService {
             throw GroupSafetyError.authenticationRequired
         }
     }
-    private func participant(windowID: String, actor: GroupDeviceIdentity) throws -> String {
+    private func participant(windowID: String, actor: GroupDeviceIdentity, allowingFormer: Bool = false) throws -> String {
         guard GroupCanonical.validID(windowID), let data = try secrets.read("window:" + windowID),
-              let local = try? GroupWire.decode(GroupLocalWindow.self, data), !local.left,
+              let local = try? GroupWire.decode(GroupLocalWindow.self, data), (allowingFormer || !local.left),
               local.anchor.windowID == windowID, let roster = try local.verified(),
               let me = roster.device(id: try actor.deviceID), me.member.personID == actor.personID,
               me.device.signingPublicKey == (try actor.signingKey.publicKey.rawRepresentation) else {
@@ -159,7 +159,7 @@ final class ProductionGroupReporting: GroupReportingService {
         guard inFlight.insert(scope).inserted else { throw GroupSafetyError.conflict }
         defer { inFlight.remove(scope) }
         await refreshAvailability(); guard isAvailable else { throw GroupSafetyError.disabled }
-        let actor = try identity(), participantID = try participant(windowID: windowID, actor: actor)
+        let actor = try identity(), participantID = try participant(windowID: windowID, actor: actor, allowingFormer: true)
         if let saved = try store.all().first(where: {
             $0.personID == actor.personID && $0.deviceID == (try? actor.deviceID) && $0.record.windowID == windowID
                 && $0.record.photoID == photoID && $0.record.progress != .expired
@@ -303,6 +303,15 @@ final class ProductionGroupReporting: GroupReportingService {
         }
     }
     func resumeReport(draftID: String) async throws -> GroupReportRecord { try await submitReport(draftID: draftID) }
+    func locallyReportedPhotoIDs(windowID: String) async throws -> Set<String> {
+        guard GroupCanonical.validID(windowID) else { throw GroupSafetyError.invalidResponse }
+        // Keep this iPhone's hide intent after leaving/erasing an identity.
+        // Actual report/status access below remains bound to its original actor.
+        return Set(try store.all().filter {
+            $0.endpoint == endpoint.absoluteString && $0.record.windowID == windowID
+        }.map { $0.record.photoID })
+    }
+
     func reports(windowID: String) async -> [GroupReportRecord] {
         guard let actor = try? identity(), let all = try? store.all() else { return [] }
         return all.filter { $0.endpoint == endpoint.absoluteString && $0.personID == actor.personID
