@@ -390,9 +390,14 @@ actor BillingAccountRecoveryCoordinator {
         let installationMarker = try loadInstallationMarker()
         let markerValue = installationMarker.uuidString.lowercased()
         let previous = try loadCredential()
+        // Explicit restoration must check the Apple lineage even when this
+        // installation already registered a different, unused billing account.
+        // Never replace it until the server verifies the device-bound proof.
+        let currentEvidence = try await collectEvidence().validated()
         if let previous,
            previous.phase == .registered,
-           previous.installationMarker == markerValue {
+           previous.installationMarker == markerValue,
+           previous.billingAccountID == currentEvidence.billingAccountID {
             try removeCommittedAttempt(previous)
             return previous
         }
@@ -405,7 +410,6 @@ actor BillingAccountRecoveryCoordinator {
         // Current device-bound StoreKit proof is required on every explicit
         // retry. The exact first request remains in ThisDeviceOnly Keychain so
         // a lost response can resend byte-equivalent evidence and signature.
-        let currentEvidence = try await collectEvidence().validated()
         let candidate = try BillingAccountRecoveryAttempt.pending(
             evidence: currentEvidence
         )

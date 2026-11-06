@@ -152,6 +152,10 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     var isFormer: Bool { formerName != nil }
+    /// The relay no longer counts this iPhone in the window: its owner ended
+    /// it, or took this person out. Nothing can be sent; what arrived stays
+    /// (11/6: 「写真を届ける」 stayed and failed every time).
+    @Published private(set) var isGone = false
 
     var isPaused: Bool { window.map(GroupWindowPresentation.isPaused) ?? false }
 
@@ -235,6 +239,7 @@ final class GroupWindowScreenModel: ObservableObject {
             }
             receiveNotice = waiting.map(GroupPhotoModeration.receiveMessage)
             message = nil
+            isGone = false
             // A photo whose sending stopped when the app closed: offer it again.
             if failedDelivery == nil, !isSending, latest.state == .active,
                let pending = await client.pendingDelivery(windowID: windowID) {
@@ -242,6 +247,8 @@ final class GroupWindowScreenModel: ObservableObject {
                     photo: PreparedPhoto(jpeg: pending.jpeg, photoIdentifier: nil, operationID: pending.operationID),
                     memo: pending.caption ?? "")
             }
+        } catch GroupClientError.notMember {
+            window = nil; failedDelivery = nil; message = nil; isGone = true
         } catch {
             message = GroupWindowPresentation.message(for: error)
         }
@@ -250,10 +257,14 @@ final class GroupWindowScreenModel: ObservableObject {
     }
 
     /// The Widget reads only this copy, written after verification and the
-    /// on-device check. Hidden photos are never handed over.
-    private func updateHomeScreenPhoto() async {
-        guard let window else { return }
-        let newest = entries.first { !$0.isHidden }
+    /// on-device check. Hidden and reported photos are never handed over.
+    /// The window's name comes from the widget's own copy when the relay
+    /// could not be read, so hiding or reporting offline still takes the
+    /// photo off the home screen (11/6).
+    func updateHomeScreenPhoto() async {
+        guard let windowName = window?.name ?? GroupWidgetCache.entry(windowID: windowID)?.windowName else { return }
+        let safety = GroupSafety.shared
+        let newest = entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }
         var jpeg: Data?
         if let newest, let url = await store.imageURL(photoID: newest.id, windowID: windowID) {
             jpeg = try? Data(contentsOf: url)
@@ -261,7 +272,7 @@ final class GroupWindowScreenModel: ObservableObject {
         let previous = GroupWidgetCache.entry(windowID: windowID)
         do {
             try GroupWidgetCache.update(
-                windowID: windowID, windowName: window.name, photoID: newest?.id, jpeg: jpeg,
+                windowID: windowID, windowName: windowName, photoID: newest?.id, jpeg: jpeg,
                 // No "さんから" line under a photo this iPhone sent.
                 senderDisplayName: newest.flatMap { $0.isOwn ? nil : $0.senderDisplayName },
                 capturedAt: newest?.createdAt, isPaused: isPaused,
@@ -368,7 +379,10 @@ final class GroupWindowScreenModel: ObservableObject {
                     ? prepared : PreparedPhoto(jpeg: prepared.jpeg, photoIdentifier: prepared.photoIdentifier)
                 failedDelivery = FailedDelivery(photo: retry, memo: memo)
             }
+            let reason = message
             await sync()
+            // A sync that works must not erase why this photo was not sent.
+            if message == nil, !isGone { message = reason }
         }
     }
 
@@ -464,14 +478,14 @@ final class GroupWindowScreenModel: ObservableObject {
             return
         }
         entries = await store.entries(windowID: windowID)
-        if !isFormer { await updateHomeScreenPhoto() }
+        await updateHomeScreenPhoto()
     }
 
     /// Stops showing this person's photos here. They are not told.
     func hideSender(of entry: GroupWindowLocalPhotoStore.Entry, blocked: Bool = false) async {
         await store.hide(memberID: entry.senderParticipantID, name: entry.senderDisplayName, windowID: windowID, blocked: blocked)
         entries = await store.entries(windowID: windowID)
-        if !isFormer { await updateHomeScreenPhoto() }
+        await updateHomeScreenPhoto()
         let name = GroupDisplayName.withSan(entry.senderDisplayName)
         actionMessage = blocked
             ? "\(name)をブロックしました。設定の「表示しない・ブロックした人」から戻せます。"
@@ -705,8 +719,27 @@ struct GroupWindowScreen: View {
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("group-window-former")
                 }
+                if model.isGone {
+                    Label("このまどは終わったか、メンバーから外れました。届いた写真は、このiPhoneに残っています。",
+                          systemImage: "person.2.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 16)
+                        .accessibilityIdentifier("group-window-gone")
+                }
                 if let window = model.window, model.isPaused {
                     pausedCard(window)
+                }
+                // Someone left and the key is being renewed on the creator's
+                // iPhone: say why sending waits, here and not only in メンバー.
+                if let window = model.window, window.state == .rotationRequired, !window.canManage {
+                    Label(GroupWindowPresentation.message(for: GroupClientError.rotationPending), systemImage: "key")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 16)
+                        .accessibilityIdentifier("group-window-rotation-wait")
                 }
                 if let message = model.message {
                     screenMessage(message)
@@ -784,7 +817,7 @@ struct GroupWindowScreen: View {
             Text("消したあとは元に戻せません。")
         }
         .safeAreaInset(edge: .bottom) {
-            if !model.isFormer { sendBar }
+            if !model.isFormer && !model.isGone { sendBar }
         }
         .sheet(isPresented: $showsCatPicker) {
             GroupCatPhotoPickerSheet(photos: catPhotos, pickedItem: $pickedItem) { identifier in
@@ -800,6 +833,10 @@ struct GroupWindowScreen: View {
                 .navigationTitle("まどに届ける")
                 .navigationBarTitleDisplayMode(.inline)
             }
+        }
+        // A report taken here takes the photo off the home screen at once.
+        .onReceive(GroupSafety.shared.$records.dropFirst()) { _ in
+            Task { await model.updateHomeScreenPhoto() }
         }
         .task {
             // Photos this person reported stay covered on this iPhone, from the first frame.
@@ -1155,7 +1192,9 @@ private struct GroupLibraryDeliveryStep: View {
                 }
                 .safeAreaInset(edge: .bottom) {
                     Button {
-                        Task { await model.deliver(prepared, memo: memo) }
+                        // After a failure, the copy the model kept (a new seal
+                        // when the window's key changed), not the first one.
+                        Task { await model.deliver(model.failedDelivery?.photo ?? prepared, memo: memo) }
                     } label: {
                         Group {
                             if model.isSending {
@@ -1167,7 +1206,7 @@ private struct GroupLibraryDeliveryStep: View {
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isSending || GroupPhotoCaption.validationMessage(for: memo) != nil)
+                    .disabled(model.isSending || !model.canSend || GroupPhotoCaption.validationMessage(for: memo) != nil)
                     .accessibilityIdentifier("group-library-delivery-send")
                     .padding().background(.regularMaterial)
                 }
@@ -1634,6 +1673,9 @@ final class GroupWindowListModel: ObservableObject {
 #endif
             message = nil
             hasLoaded = true
+            if GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\.id))) {
+                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            }
         } catch is CancellationError {
 #if DEBUG || INTERNAL_PRESENTATION
             outcome = "中断"
@@ -2126,8 +2168,9 @@ private struct GroupWindowCard: View {
         }
         // Not yet on the Widget: the newest photo this iPhone received.
         let store = GroupWindowLocalPhotoStore.shared
+        await GroupSafety.shared.loadRecords(windowID: window.id)
         let newest = await store.entries(windowID: window.id)
-            .filter { !$0.isHidden }
+            .filter { !$0.isHidden && !GroupSafety.shared.hasReported($0.id, in: window.id) }
             .max { $0.createdAt < $1.createdAt }
         guard let newest, let url = await store.imageURL(photoID: newest.id, windowID: window.id) else { return }
         cover = await Task.detached(priority: .userInitiated) { GroupPhotoDecoder.image(at: url, maxPixel: 800) }.value

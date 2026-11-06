@@ -137,6 +137,16 @@ enum GroupWidgetCache {
         }
     }
 
+    /// After the relay's list loaded: a window it no longer lists (removed by
+    /// its owner, ended, left on another iPhone) leaves the home screen and the
+    /// widget's choices too (11/6). Returns whether anything went.
+    @discardableResult
+    static func keepOnly(windowIDs: Set<String>) -> Bool {
+        let gone = entries().map(\.windowID).filter { !windowIDs.contains($0) }
+        for windowID in gone { try? remove(windowID: windowID) }
+        return !gone.isEmpty
+    }
+
     /// Written by builds with group windows on. The Widget then offers group
     /// windows only, as the app does (the two-person window is not shown).
     static func markGroupWindowsOn() {

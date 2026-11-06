@@ -34,9 +34,11 @@ actor MomentModerationService: MomentModerating {
     private let analyzer = SCSensitivityAnalyzer()
 
     func requireSafeImage(at url: URL) async throws {
-        guard analyzer.analysisPolicy != .disabled else {
-            throw MomentSharingError.moderationDisabled
-        }
+        // 「センシティブな内容の警告」 is off by default for adults. Off, a
+        // photo is delivered and shown as it is: まど is invitation-only, and
+        // reporting and blocking answer what gets through. On, the analyzer
+        // decides as before (11/6, owner's decision: 案2).
+        guard analyzer.analysisPolicy != .disabled else { return }
         do {
             let analysis = try await analyzer.analyzeImage(at: url)
             guard !analysis.isSensitive else {
