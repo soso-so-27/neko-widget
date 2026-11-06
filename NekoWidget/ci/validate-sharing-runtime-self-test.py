@@ -56,7 +56,7 @@ ASSERTION_IDS = {
     "managed-preservation-membership-boundary": {
         f"{prefix}-{i:03}" for prefix, count in (
             ("MPM", 51), ("MPM-USAGE", 6), ("MPM-DELETE", 12),
-            ("MPM-SIGNIN", 9), ("MPM-SESSION", 29), ("MPM-ACCOUNT", 11)
+            ("MPM-SIGNIN", 11), ("MPM-SESSION", 29), ("MPM-ACCOUNT", 11)
         ) for i in range(1, count + 1)
     },
 }
