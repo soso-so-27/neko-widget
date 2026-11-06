@@ -72,7 +72,13 @@ struct AppRootView: View {
             Task { await viewModel.refreshCloudyWindow() }
         }
         .sheet(item: $familyLink, onDismiss: {
-            if joinedFamilyFromLink { joinedFamilyFromLink = false; showsFamilyNotebook = true }
+            if joinedFamilyFromLink {
+                joinedFamilyFromLink = false; showsFamilyNotebook = true
+                // Joined during the first run: the guide ends, as for a まど.
+                if OnboardingPresentationPersistence.requiresPresentation(completedVersion: onboardingCompletedVersion) {
+                    completeOnboardingForInvitation()
+                }
+            }
         }) { FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true }) }
         .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
         .sheet(isPresented: $showsInvitationJoin, onDismiss: {
@@ -107,7 +113,7 @@ struct AppRootView: View {
             guard GroupWindowOpenInbox.shared.pendingWindowID != nil || invitationInbox.pending == nil else { return }
             invitationInbox.discard()
             // The まど tab opens the joined window from GroupWindowOpenInbox.
-            completeOnboardingWithoutPhotoAccess()
+            completeOnboardingForInvitation()
         }) { invitation in
             GroupInvitationJoinSheet(invitation: invitation)
         }
@@ -222,7 +228,9 @@ struct AppRootView: View {
         }
     }
 
-    private func handleNonPhotoURL(_ url: URL) {
+    private func handleNonPhotoURL(_ incoming: URL) {
+        // 「アプリで開く」 on the invitation page: the same invitation (11/6).
+        let url = InvitationAppLink.universal(from: incoming) ?? incoming
         if FamilyNotebookServiceFactory.productionRequested, (try? FamilyNotebookInvitationCapability(url: url)) != nil {
             familyLink = FamilyLink(url: url)
             return
@@ -1270,6 +1278,19 @@ struct AppRootView: View {
         // "あとで" means entering the app without Photos access. Do not send
         // the user through a Widget guide they cannot verify yet.
         // Home remains the recovery point and explains how to grant access.
+        hasSeenInitialScanResult = true
+        onboardingScanErrorMessage = nil
+        viewModel.clearError()
+        widgetInstallationChecker.refresh()
+    }
+
+    /// Joined a まど or the family notebook from a link during the first run.
+    /// skipPhotoPermission only acts on the Photos page, and a link opened
+    /// right after installing arrives on the first page (11/6).
+    private func completeOnboardingForInvitation() {
+        var state = onboardingState
+        state.finishForInvitation()
+        persistOnboardingState(state)
         hasSeenInitialScanResult = true
         onboardingScanErrorMessage = nil
         viewModel.clearError()

@@ -254,6 +254,14 @@ struct SettingsView: View {
             }
 
             Section {
+                // Telling a friend, from where people look for the app's own
+                // things (11/6). Hidden until the App Store page exists.
+                if let url = AppStoreListing.pageURL {
+                    ShareLink(item: url, message: Text(AppStoreListing.recommendMessage)) {
+                        Label("ねこのまどを紹介する", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityIdentifier("settings-recommend-app")
+                }
                 if let url = AppPublicLinksConfiguration.current.supportURL {
                     Link(destination: url) {
                         ExternalLinkRow("お問い合わせ", systemImage: "questionmark.circle")
@@ -1228,6 +1236,17 @@ private struct ActivityView: UIViewControllerRepresentable {
 
 /// A row that leaves the app: tinted, with an arrow out, so blue means "opens outside".
 #endif
+/// The app's App Store page. The id comes from App Store Connect once the
+/// listing exists; until then nothing that points at it is shown.
+enum AppStoreListing {
+    static let appID: String? = nil
+    static var pageURL: URL? {
+        guard let appID, !appID.isEmpty, appID.allSatisfy(\.isNumber) else { return nil }
+        return URL(string: "https://apps.apple.com/jp/app/id\(appID)")
+    }
+    static let recommendMessage = "うちの猫の写真が、ホーム画面に。ねこのまど"
+}
+
 struct ExternalLinkRow: View {
     let title: String
     let systemImage: String

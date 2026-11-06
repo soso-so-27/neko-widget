@@ -1,5 +1,6 @@
 import Photos
 import PhotosUI
+import StoreKit
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -1745,6 +1746,10 @@ struct MonthlyBookView: View {
     @State private var shownKey: MonthlyStoryPreparationKey?
     @State private var index = 0
     @State private var cardShare = StoryCardShareState<UIImage>()
+    @Environment(\.requestReview) private var requestReview
+    /// Asked once, ever: at the last page of a month's work, the moment the
+    /// app has given the most (11/6). Apple decides whether it is shown.
+    @AppStorage("review.requestedAfterMonthlyBook.v1") private var reviewRequested = false
 
     static let paper = Color(red: 0.985, green: 0.98, blue: 0.97)
     static let ink = Color(red: 0.11, green: 0.10, blue: 0.09)
@@ -1810,6 +1815,15 @@ struct MonthlyBookView: View {
                 .ignoresSafeArea()
                 .sensoryFeedback(.selection, trigger: index)
                 .onAppear { AlbumPrototype.markOpened(letter.periodIdentifier) }
+                .task(id: index) {
+                    guard Version1.isOn, !reviewRequested, index == leaves.count - 1,
+                          case .colophon = leaves[index] else { return }
+                    // Let the last page be read first.
+                    try? await Task.sleep(for: .seconds(1.5))
+                    guard !Task.isCancelled, !reviewRequested else { return }
+                    reviewRequested = true
+                    requestReview()
+                }
             } else if isShown {
                 ContentUnavailableView {
                     Label("この作品は開けません", systemImage: "photo.stack")

@@ -440,7 +440,8 @@ struct ShowcasePhotoView: View {
 
 /// Draws up to nine photos as one square picture: three by three, square
 /// crops, a thin gap, and the cat's name on a dark band. Nothing but pixels
-/// from the kept photos goes into it.
+/// from the kept photos goes into it, plus the app's name, small, at the
+/// band's right end, so a shared picture says where it was made (11/6).
 enum BestNineComposer {
     static func image(_ photos: [UIImage], title: String?) -> UIImage? {
         guard !photos.isEmpty else { return nil }
@@ -475,6 +476,14 @@ enum BestNineComposer {
                 ]
                 (title as NSString).draw(in: CGRect(x: 0, y: side + (band - 48) / 2, width: side, height: 48),
                                          withAttributes: attributes)
+                let mark = "ねこのまど" as NSString
+                let markAttributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 20, weight: .medium),
+                    .foregroundColor: UIColor.white.withAlphaComponent(0.5)
+                ]
+                let markSize = mark.size(withAttributes: markAttributes)
+                mark.draw(at: CGPoint(x: side - markSize.width - 20, y: side + band - markSize.height - 12),
+                          withAttributes: markAttributes)
             }
         }
     }
