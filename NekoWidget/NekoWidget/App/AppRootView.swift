@@ -39,6 +39,9 @@ struct AppRootView: View {
     @ObservedObject private var familyNotebook = FamilyNotebookPrototype.shared
     private struct FamilyLink: Identifiable { let id = UUID(); let url: URL }
     @State private var familyLink: FamilyLink?
+    /// Joined a family from a link: the notebook opens once that sheet is gone.
+    @State private var joinedFamilyFromLink = false
+    @State private var showsFamilyNotebook = false
     @State private var onboardingInvitation: GroupInvitationLink?
     /// An invitation that arrived while the help sheet was open. It opens
     /// after that sheet has closed, so two sheets never switch at once.
@@ -68,7 +71,10 @@ struct AppRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .cloudyWindowConfigurationChanged)) { _ in
             Task { await viewModel.refreshCloudyWindow() }
         }
-        .sheet(item: $familyLink) { FamilyNotebookJoinView(link: $0.url) }
+        .sheet(item: $familyLink, onDismiss: {
+            if joinedFamilyFromLink { joinedFamilyFromLink = false; showsFamilyNotebook = true }
+        }) { FamilyNotebookJoinView(link: $0.url, onJoined: { joinedFamilyFromLink = true }) }
+        .sheet(isPresented: $showsFamilyNotebook) { FamilyNotebookView() }
         .sheet(isPresented: $showsInvitationJoin, onDismiss: {
             if let next = invitationAfterHelp {
                 invitationAfterHelp = nil

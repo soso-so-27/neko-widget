@@ -177,6 +177,8 @@ struct CatCareDetailView: View {
     /// Nil outside a family, or when it could not be read.
     @State private var farewellSharing: FamilyFarewellSharingState?
     @State private var showsFarewellSharing = false
+    /// Opened from inside the family notebook: no second notebook on top of it.
+    private var insideFamilyNotebook = false
 
     /// 1.0 (Version1), as the rest of the album.
     private var farewell: CatCareDay? {
@@ -190,10 +192,11 @@ struct CatCareDetailView: View {
         _selectedProfileID = selectedProfileID
     }
 
-    init(toolCatID: UUID, name: String) {
+    init(toolCatID: UUID, name: String, insideFamilyNotebook: Bool = false) {
         subject = .toolCat(id: toolCatID, name: name)
         otherProfiles = []
         _selectedProfileID = .constant(nil)
+        self.insideFamilyNotebook = insideFamilyNotebook
     }
 
     @Environment(\.scenePhase) private var scenePhase
@@ -285,7 +288,7 @@ struct CatCareDetailView: View {
         .toolbar {
             // The family, at the top right like sharing in Notes, so it is
             // out of the way for anyone who keeps to themselves.
-            if Version1.familyNotebook || familyNotebook.hasFamily {
+            if !insideFamilyNotebook, Version1.familyNotebook || familyNotebook.hasFamily {
                 ToolbarItem(placement: .topBarTrailing) { FamilyNotebookButton() }
             }
         }

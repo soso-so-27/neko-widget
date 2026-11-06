@@ -20,6 +20,10 @@ struct ManagedPreservationView: View {
     @State private var confirmsDraftDiscard = false
     @State private var confirmsToolDiscard = false
     @State private var showsPlusOffer = false
+    /// 自動保存 → アカウント: signed out, or a finished deletion closed. Back to
+    /// 自動保存 when that is done, not a second 「Appleでサインイン」 here (11/6).
+    @State private var returnsWhenDone = false
+    @Environment(\.dismiss) private var dismiss
     private let onUnsecuredMemoChange: ((Bool) -> Void)?
     private let allowsRecordBrowsing: Bool
     private let allowsManualSaving: Bool
@@ -94,6 +98,11 @@ struct ManagedPreservationView: View {
         }
         .onChange(of: exporter.preparing) { _, preparing in
             if !preparing { coordinator.cancelExportReauthentication() }
+        }
+        .onChange(of: coordinator.isBusy) { _, busy in
+            guard !busy, returnsWhenDone else { return }
+            returnsWhenDone = false
+            if coordinator.errorMessage == nil, !coordinator.isSignedIn, !coordinator.hasUnsecuredMemo { dismiss() }
         }
         .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification)
             .receive(on: DispatchQueue.main)) { _ in
@@ -215,7 +224,10 @@ struct ManagedPreservationView: View {
                     Button("サインアウト", role: .destructive) { confirmsSignOut = true }
                         .disabled(coordinator.isBusy)
                         .confirmationDialog("サインアウトしますか？", isPresented: $confirmsSignOut, titleVisibility: .visible) {
-                            Button("サインアウト", role: .destructive) { coordinator.signOut() }
+                            Button("サインアウト", role: .destructive) {
+                                returnsWhenDone = isAccountEntry
+                                coordinator.signOut()
+                            }
                         } message: { Text("記録は残ります。自動保存を止めるだけなら、サインアウトはいりません。") }
                     if allowsRecordBrowsing && coordinator.draft == nil && coordinator.selected == nil {
                         Button("アカウントを削除", role: .destructive) { confirmsAccountDeletion = true }
@@ -247,12 +259,12 @@ struct ManagedPreservationView: View {
                 Button("削除状況を確認") { coordinator.checkAccountDeletion() }
             case .completed:
                 Label("保存用のアカウントを削除しました", systemImage: "checkmark.circle")
-                Button("閉じる") { coordinator.dismissCompletedDeletion() }
+                Button("閉じる") { returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion() }
             case .requestedElsewhere:
                 Text("ほかのiPhoneでアカウントを削除しています")
                 Text("削除を依頼したiPhoneで、状況を確かめてください。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("閉じる") { coordinator.dismissCompletedDeletion() }
+                Button("閉じる") { returnsWhenDone = isAccountEntry; coordinator.dismissCompletedDeletion() }
             }
             Link("サブスクリプションを管理", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
         } footer: {

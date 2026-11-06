@@ -654,11 +654,14 @@ struct GroupWindowScreen: View {
             client: client, windowID: windowID, formerName: formerName))
     }
 
-    /// After leaving from the members screen: back to the list.
+    /// After leaving from the members screen: back to the list. The members
+    /// page is on top, so this page's own dismiss is not relied on.
     private func closeAfterLeaving() {
         try? GroupWidgetCache.remove(windowID: model.windowID)
         WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-        dismiss()
+        NotificationCenter.default.post(name: .groupWindowListNeedsReload, object: nil)
+        let navigation = GroupWindowListNavigation.shared
+        if navigation.openedWindow?.windowID == model.windowID { navigation.returnToList() } else { dismiss() }
     }
 
     private var membersScreen: some View {
@@ -1542,11 +1545,40 @@ final class GroupWindowOpenInbox: ObservableObject {
     @Published private(set) var pendingWindowID: String?
     @Published private(set) var showsCreatePrompt = false
 
-    func showCreateFromShare() { pendingWindowID = nil; showsCreatePrompt = true }
+    /// A new value rebuilds the まど tab's stack at the list.
+    @Published private(set) var listGeneration = UUID()
+
+    /// The まど tab's stack is rebuilt for this; no window page comes back with it.
+    func showCreateFromShare() {
+        GroupWindowListNavigation.shared.openedWindow = nil
+        pendingWindowID = nil; showsCreatePrompt = true
+    }
     func dismissCreatePrompt() { showsCreatePrompt = false }
 
-    func open(windowID: String) { pendingWindowID = windowID }
+    /// The list first, then this one window on it, so Back goes to the list
+    /// and not to what was open before (11/6).
+    func open(windowID: String) {
+        GroupWindowListNavigation.shared.openedWindow = nil
+        listGeneration = UUID()
+        pendingWindowID = windowID
+    }
     func consume() { pendingWindowID = nil }
+}
+
+/// The window page over the まど list. Pushed from the list's root, outside
+/// its lazy stacks, so Back and leaving both clear it. Kept apart from
+/// GroupWindowOpenInbox so a push does not redraw the whole tab view.
+@MainActor
+final class GroupWindowListNavigation: ObservableObject {
+    static let shared = GroupWindowListNavigation()
+    @Published var openedWindow: GroupWindowRoute?
+
+    /// After leaving or ending a window: the list, with its page gone.
+    func returnToList() { openedWindow = nil }
+}
+
+struct GroupWindowRoute: Hashable {
+    let windowID: String
 }
 
 // MARK: - The list in the まど tab
@@ -1655,9 +1687,17 @@ struct GroupWindowCreateScreen: View {
     @State private var name = ""
     @State private var ownerName = GroupDisplayName.remembered
     @State private var createdWindowID: String?
+    /// Plus was bought from the relay's 「Plus required」: make the window
+    /// once more by itself, without a second 「作る」.
+    @State private var createsAfterPurchase = false
+    @State private var retriedAfterPurchase = false
 
     init(client: any GroupWindowMediaClient) {
         _model = StateObject(wrappedValue: GroupWindowListModel(client: client))
+    }
+
+    private func create() {
+        Task { createdWindowID = await model.create(name: trimmed, ownerName: trimmedOwner)?.id }
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1665,6 +1705,16 @@ struct GroupWindowCreateScreen: View {
     private var tooLong: Bool { !GroupDisplayName.fits(trimmed) || !GroupDisplayName.fits(trimmedOwner) }
 
     var body: some View {
+        // The new window takes this page's place, so Back goes to the list,
+        // not to the form that already made it (11/6: Back reopened the form).
+        if let createdWindowID {
+            GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
+        } else {
+            form
+        }
+    }
+
+    private var form: some View {
         Form {
             Section {
                 TextField("例：実家のまど", text: $name)
@@ -1691,7 +1741,7 @@ struct GroupWindowCreateScreen: View {
                                     presentsImmediately: false)
                 } else {
                     Button {
-                        Task { createdWindowID = await model.create(name: trimmed, ownerName: trimmedOwner)?.id }
+                        create()
                     } label: {
                         Text("作る").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                     }
@@ -1710,16 +1760,15 @@ struct GroupWindowCreateScreen: View {
         .announcesWhenShown(model.message)
         .sheet(isPresented: $model.needsPlus, onDismiss: {
             NotificationCenter.default.post(name: .membershipAccessRefreshRequested, object: nil)
+            guard createsAfterPurchase, !retriedAfterPurchase else { return }
+            createsAfterPurchase = false
+            retriedAfterPurchase = true
+            create()
         }) {
             // The relay said Plus is needed (for example, the trial ended on another iPhone).
-            MembershipOfferSheet(model: .live(), context: .createWindow) { _ in model.needsPlus = false }
-        }
-        .navigationDestination(isPresented: Binding(
-            get: { createdWindowID != nil },
-            set: { if !$0 { createdWindowID = nil } }
-        )) {
-            if let createdWindowID {
-                GroupWindowMembersScreen(client: model.client, windowID: createdWindowID)
+            MembershipOfferSheet(model: .live(), context: .createWindow) { result in
+                createsAfterPurchase = result == .completed
+                model.needsPlus = false
             }
         }
     }
@@ -1750,10 +1799,10 @@ struct GroupWindowStandardsAgreement: View {
 /// Shown in the まど tab only in builds with group windows turned on.
 struct GroupWindowListSection: View {
     @StateObject private var model: GroupWindowListModel
-    @State private var openedWindowID: String?
     @State private var formerWindows: [GroupWindowLocalPhotoStore.KnownWindow] = []
     @State private var showsLeftWindowNotice = false
     @ObservedObject private var openInbox = GroupWindowOpenInbox.shared
+    @ObservedObject private var invitationInbox = GroupInvitationInbox.shared
     @Environment(\.membershipAccess) private var membershipAccess
 
     /// Test builds' new まど layout: 「みんなのまど」 with a small 「＋」, and no
@@ -1797,9 +1846,18 @@ struct GroupWindowListSection: View {
                     .foregroundStyle(.secondary)
                     .accessibilityAddTraits(.isHeader)
             }
+            if let invitation = invitationInbox.pending, invitationInbox.isSetAside, invitationInbox.isWaiting,
+               !model.windows.contains(where: { $0.id == invitation.windowID }) {
+                // A join still waiting, closed earlier: open it again from here.
+                Button { invitationInbox.reopen() } label: { waitingInvitationRow }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("group-window-waiting-invitation")
+            }
+            // The window page is pushed by the まど list itself (openedWindow),
+            // so a window opened from anywhere has the list under it.
             ForEach(model.windows) { window in
-                NavigationLink {
-                    GroupWindowScreen(client: model.client, windowID: window.id)
+                Button {
+                    GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: window.id)
                 } label: {
                     row(window)
                 }
@@ -1810,8 +1868,8 @@ struct GroupWindowListSection: View {
                 // Names kept on this iPhone from the last visit: shown while the
                 // list loads, and kept when the relay cannot be reached.
                 ForEach(known, id: \.windowID) { entry in
-                    NavigationLink {
-                        GroupWindowScreen(client: model.client, windowID: entry.windowID)
+                    Button {
+                        GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: entry.windowID)
                     } label: {
                         KnownWindowCard(entry: entry, subtitle: model.hasLoaded ? "前回の内容です" : "")
                     }
@@ -1913,7 +1971,7 @@ struct GroupWindowListSection: View {
             if !model.windows.contains(where: { $0.id == requested }) { await model.load() }
             // Open only a window this iPhone is still a member of.
             if model.windows.contains(where: { $0.id == requested }) {
-                openedWindowID = requested
+                GroupWindowListNavigation.shared.openedWindow = GroupWindowRoute(windowID: requested)
             } else if model.hasLoaded, model.message == nil {
                 // A Widget of a window left or ended: say so, once (E1).
                 // Offline says nothing; the window may still be there.
@@ -1923,15 +1981,19 @@ struct GroupWindowListSection: View {
         .alert("このまどはもうありません", isPresented: $showsLeftWindowNotice) {
             Button("閉じる", role: .cancel) {}
         }
-        .navigationDestination(isPresented: Binding(
-            get: { openedWindowID != nil },
-            set: { if !$0 { openedWindowID = nil } }
-        )) {
-            if let openedWindowID {
-                GroupWindowScreen(client: model.client, windowID: openedWindowID)
-            }
-        }
         .accessibilityIdentifier("group-window-list")
+    }
+
+    private var waitingInvitationRow: some View {
+        HStack(spacing: 12) {
+            Label("参加の手続き中です", systemImage: "hourglass")
+                .font(.body.weight(.semibold))
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .frame(minHeight: 44)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
     /// Windows with photos kept here that the relay no longer lists for this
@@ -2213,6 +2275,9 @@ struct GroupIdentityDeletionView: View {
             record = try await client.requestIdentityDeletion()
             for windowID in windowIDs { try? GroupWidgetCache.remove(windowID: windowID) }
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            // The まど tab under this sheet: no page of a left window, and a fresh list.
+            GroupWindowListNavigation.shared.returnToList()
+            NotificationCenter.default.post(name: .groupWindowListNeedsReload, object: nil)
         } catch {
             failure = GroupWindowPresentation.message(for: error)
         }
