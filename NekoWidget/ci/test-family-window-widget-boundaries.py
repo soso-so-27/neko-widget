@@ -3577,6 +3577,20 @@ class SharedWorkMarkTests(unittest.TestCase):
         self.assertIn('"この季節も、ここまで"', ending)
 
 
+class JoinOwnWindowTests(unittest.TestCase):
+    def test_a_link_to_a_window_already_joined_opens_it(self) -> None:
+        setup = source("NekoWidget/Views/GroupWindowSetupView.swift")
+        self.assertIn("alreadyMember = windowID.map { GroupWidgetCache.entry(windowID: $0) != nil } ?? false", setup)
+        self.assertIn("} catch GroupInvitationError.alreadyMember {\n            alreadyMember = true", setup)
+        self.assertIn('Label("もうこのまどに入っています", systemImage: "checkmark.circle")', setup)
+        self.assertIn("windowID: invitation.windowID)", setup)
+        self.assertNotIn('Text("招待されたまど")', setup)
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        self.assertNotIn("このiPhoneから消", window)
+        self.assertIn('Button("自分のまどから消す", systemImage: "trash", role: .destructive)', window)
+        self.assertIn("写真アプリの写真と、ほかの人のまどには残ります。", window)
+
+
 class ReviewBRestTests(unittest.TestCase):
     def test_remaining_review_items_on_screen(self) -> None:
         client = source("NekoWidget/Services/ManagedPreservationClient.swift")
