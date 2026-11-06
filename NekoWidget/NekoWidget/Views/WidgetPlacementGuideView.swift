@@ -17,7 +17,9 @@ struct WidgetPlacementGuideView: View {
             Array(zip(["onboarding-widget-step-1", "onboarding-widget-step-2-ios18", "onboarding-widget-step-3"],
                       OnboardingPresentationCopy.widgetModernPlacementSteps))
         } else {
-            Array(zip(["onboarding-widget-step-1", "onboarding-widget-step-3", "onboarding-widget-step-4"],
+            // No screenshot of iOS 17's 「＋」: a symbol there, and the search
+            // screen for the last step (11/6: the pictures were one step off).
+            Array(zip(["onboarding-widget-step-1", "", "onboarding-widget-step-3"],
                       OnboardingPresentationCopy.widgetLegacyPlacementSteps))
         }
     }
@@ -34,13 +36,22 @@ struct WidgetPlacementGuideView: View {
             TabView(selection: $page) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                     VStack(spacing: 12) {
-                        Image(step.image)
-                            .resizable()
-                            .scaledToFit()
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color(.separator), lineWidth: 0.5))
-                            .accessibilityHidden(true)
+                        Group {
+                            if step.image.isEmpty {
+                                Image(systemName: "plus.square.fill")
+                                    .font(.system(size: 96))
+                                    .foregroundStyle(.tint)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else {
+                                Image(step.image)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(Color(.separator), lineWidth: 0.5))
+                            }
+                        }
+                        .accessibilityHidden(true)
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text((index + 1).formatted())
                                 .font(.subheadline.bold())

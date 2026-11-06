@@ -168,6 +168,18 @@ struct AppRootView: View {
         .onDisappear {
             AppIdleTimer.setPreventSleep(false, for: "photo-scan")
         }
+        .onChange(of: viewModel.linkErrorMessage) { _, message in
+            guard let message, !message.isEmpty else { return }
+            // A link's problem is not the scan's: always the normal alert (11/6).
+            presentedError = PresentedError(message: message)
+            viewModel.clearLinkError()
+        }
+        // A scan that starts again (the app came back) clears its old failure.
+        .onChange(of: viewModel.isScanning) { _, scanning in
+            guard scanning, onboardingState.currentPage == .scanResult, onboardingScanErrorMessage != nil else { return }
+            onboardingScanErrorMessage = nil
+            viewModel.clearError()
+        }
         .onChange(of: viewModel.errorMessage) { _, message in
             guard let message, !message.isEmpty else { return }
             if onboardingState.currentPage == .scanResult {
@@ -1269,6 +1281,9 @@ struct AppRootView: View {
         var state = onboardingState
         state.skipPlusOffer()
         persistOnboardingState(state)
+        // As 「完了」 does: the guide ending must not leave the legacy scan
+        // result screen to show on every launch (11/6).
+        hasSeenInitialScanResult = true
     }
 
     private func completeOnboardingWithoutPhotoAccess() {
@@ -1327,6 +1342,7 @@ struct AppRootView: View {
         guard state.currentPage == .widgetGuide else { return }
         state.advance()
         persistOnboardingState(state)
+        hasSeenInitialScanResult = true
     }
 }
 

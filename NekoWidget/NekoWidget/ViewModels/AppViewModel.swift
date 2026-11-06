@@ -80,6 +80,10 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var currentAsset: AssetRecord?
     @Published private(set) var albumStatus: AlbumUpdateStatus = .idle
     @Published private(set) var errorMessage: String?
+    /// A link that could not be opened. Kept apart from scan errors, which
+    /// the first-run scan page shows as its own (11/6).
+    @Published private(set) var linkErrorMessage: String?
+    func clearLinkError() { linkErrorMessage = nil }
     @Published private(set) var exportedURL: URL?
     @Published private(set) var isLikeInteractionReady = false
     @Published private(set) var savedPhotoIdentifiers: Set<String> = []
@@ -1933,7 +1937,7 @@ final class AppViewModel: ObservableObject {
         if GroupInvitationLink.isCandidate(url) {
             guard let invitation = GroupInvitationLink(url: url) else {
                 SharedLog.app.warning("deeplink", "Rejected malformed group invitation link")
-                errorMessage = "この招待リンクは開けませんでした。招待した人に、新しいリンクを送ってもらってください。"
+                linkErrorMessage = "この招待リンクは開けませんでした。招待した人に、新しいリンクを送ってもらってください。"
                 return
             }
             GroupInvitationInbox.shared.receive(invitation)
@@ -1961,7 +1965,7 @@ final class AppViewModel: ObservableObject {
             )
         case .familyWindow:
             // Installed legacy Widget URLs must not activate a different window.
-            errorMessage = "このまどは利用できなくなりました。まどタブから、みんなのまどを開いてください。"
+            linkErrorMessage = "このまどは利用できなくなりました。まどタブから、みんなのまどを開いてください。"
             return
         }
         guard let readyRoute = candidatePhotoRouteGate.receive(
