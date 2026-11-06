@@ -2956,8 +2956,8 @@ class GroupWidgetCacheTests(unittest.TestCase):
             self.assertNotIn("GroupWidgetCache.update(", source(widget_file))
 
         screen = source("NekoWidget/Views/GroupWindowView.swift")
-        home = section(screen, "private func updateHomeScreenPhoto() async {", "private func receive(")
-        self.assertIn("entries.first { !$0.isHidden }", home)
+        home = section(screen, "    func updateHomeScreenPhoto() async {", "private func receive(")
+        self.assertIn("entries.first { !$0.isHidden && !safety.hasReported($0.id, in: windowID) }", home)
         self.assertIn("GroupWidgetCache.update(", home)
         self.assertIn('WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")', home)
 
@@ -3458,6 +3458,22 @@ class CatPageSharedLabelTests(unittest.TestCase):
         self.assertNotIn("家族と一緒に書いています。", care)
 
 
+class WidgetHygieneTests(unittest.TestCase):
+    def test_reported_hidden_and_gone_windows_leave_the_home_screen(self) -> None:
+        window = source("NekoWidget/Views/GroupWindowView.swift")
+        home = section(window, "    func updateHomeScreenPhoto() async {", "private func receive(")
+        # Works offline: the name comes from the widget's own copy.
+        self.assertIn("window?.name ?? GroupWidgetCache.entry(windowID: windowID)?.windowName", home)
+        self.assertNotIn("if !isFormer { await updateHomeScreenPhoto() }", window)
+        self.assertIn(".onReceive(GroupSafety.shared.$records.dropFirst())", window)
+        card = section(window, "private struct GroupWindowCard: View {", "private struct KnownWindowCard: View {")
+        self.assertIn("!GroupSafety.shared.hasReported($0.id, in: window.id)", card)
+        load = section(window, "    func load() async {", "    func create(name: String, ownerName: String)")
+        self.assertIn("GroupWidgetCache.keepOnly(windowIDs: Set(windows.map(\\.id)))", load)
+        cache = source("Shared/Sharing/GroupWidgetCache.swift")
+        self.assertIn("static func keepOnly(windowIDs: Set<String>) -> Bool {", cache)
+
+
 class InvitationAppLinkTests(unittest.TestCase):
     def test_app_scheme_invitation_becomes_the_same_https_link(self) -> None:
         link = source("NekoWidget/Services/GroupInvitationLink.swift")
@@ -3577,7 +3593,7 @@ class GroupWindowSpeedTests(unittest.TestCase):
     def test_kept_photos_and_known_windows_show_before_the_relay_answers(self) -> None:
         screen = source("NekoWidget/Views/GroupWindowView.swift")
         self.assertIn("await model.showStored()\n            await model.sync()", screen)
-        sync = section(screen, "func sync() async {", "private func updateHomeScreenPhoto()")
+        sync = section(screen, "func sync() async {", "    func updateHomeScreenPhoto()")
         loop = section(sync, "for photo in photos {", "message = nil")
         self.assertIn("entries = await store.entries(windowID: windowID)", loop)
         self.assertIn('"group-window-syncing"', screen)
@@ -3783,7 +3799,7 @@ class WindowListOrderTests(unittest.TestCase):
 class GroupWindowAuditFixTests(unittest.TestCase):
     def test_window_goes_on_after_a_member_leaves(self) -> None:
         window = source("NekoWidget/Views/GroupWindowView.swift")
-        sync = section(window, "    func sync() async {", "private func updateHomeScreenPhoto()")
+        sync = section(window, "    func sync() async {", "    func updateHomeScreenPhoto()")
         self.assertIn("latest.state == .rotationRequired, latest.canManage", sync)
         self.assertIn("client.rotate(", sync)
         members = source("NekoWidget/Views/GroupWindowSetupView.swift")
