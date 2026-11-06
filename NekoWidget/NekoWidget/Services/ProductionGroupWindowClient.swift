@@ -92,6 +92,12 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     private func identity() throws -> GroupDeviceIdentity {
         if let current = try load(GroupDeviceIdentity.self, "identity") { return current }
         if try secrets.read("device-link") != nil { throw GroupClientError.authenticationRequired }
+        // A new explicit identity must not reuse an accepted deletion receipt
+        // belonging to the identity that was removed. Preserve that old receipt.
+        if let deletion = try identityDeletion(), deletion.acceptedAt != nil {
+            try save(deletion, "identity-deletion-history:" + deletion.operationID.uuidString.lowercased())
+            try secrets.remove(Self.deletionAccount)
+        }
         let proposed = GroupDeviceIdentity.firstDevice()
         do { try save(proposed, "identity", createOnly: true); return proposed }
         catch GroupClientError.idempotencyConflict {
@@ -141,6 +147,10 @@ actor ProductionGroupWindowClient: GroupWindowClient {
 
     /// Family sharing reuses the registered app person/device, not photo-room
     /// membership. Only the host's explicitly enabled family factory calls it.
+    func hasExistingIdentity() throws -> Bool {
+        try secrets.read("identity") != nil
+    }
+
     func familyNotebookIdentity() async throws -> GroupDeviceIdentity {
         try await registeredIdentity()
     }
@@ -245,6 +255,8 @@ actor ProductionGroupWindowClient: GroupWindowClient {
     }
 
     func windows() async throws -> [GroupWindow] {
+        // Merely opening the tab never creates or registers another person.
+        guard try load(GroupDeviceIdentity.self, "identity") != nil else { return [] }
 #if DEBUG || INTERNAL_PRESENTATION
         GroupListMeasurement.current?.enteredClient()
 #endif
@@ -715,7 +727,7 @@ extension ProductionGroupWindowClient {
             // built offline must not be resent forever as that same expired
             // body: drop it, so the next try (the link itself may still be
             // valid) starts from a fresh challenge.
-            try? secrets.remove("op:" + operationID.uuidString.lowercased())
+            try? operations.remove("op:" + operationID.uuidString.lowercased())
             attempts.removeValue(forKey: invitationID); try? save(attempts, "join-attempts")
             throw GroupClientError.invitationExpired
         }
@@ -737,8 +749,12 @@ extension ProductionGroupWindowClient {
         for account in accounts.sorted() {
             guard let saved = try load(GroupLocalJoin.self, account), saved.request.invitationID == invitationID else { continue }
             guard saved.request.personID == actor.personID, saved.request.candidateDeviceID == (try actor.deviceID) else { throw GroupProtocolError.invalidSignature }
-            if [.pending, .approved].contains(saved.request.state) { return try await joinStatus(requestID: saved.request.id) }
-            return saved.request
+            if [.pending, .approved].contains(saved.request.state) {
+                let current = try await joinStatus(requestID: saved.request.id)
+                if [.pending, .approved].contains(current.state) { return current }
+            }
+            // Resolved historical requests do not block a new explicit join.
+            continue
         }
         return nil
     }
@@ -1588,7 +1604,8 @@ extension ProductionGroupWindowClient {
     }
 
     private func removeGroupKeys() throws {
-        for account in try secrets.accounts(prefix: "") where account != Self.deletionAccount {
+        for account in try secrets.accounts(prefix: "") where account != Self.deletionAccount
+            && !account.hasPrefix("identity-deletion-history:") {
             try secrets.remove(account)
         }
         verifiedWindows = [:]; verifiedListEntries = [:]; historicalRosters = [:]

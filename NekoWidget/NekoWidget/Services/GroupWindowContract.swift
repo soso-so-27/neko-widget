@@ -115,6 +115,10 @@ enum GroupClientError: Error, Equatable, Sendable {
     case idempotencyConflict
 }
 
+enum GroupInvitationError: Error, Equatable, Sendable {
+    case alreadyMember, windowClosed
+}
+
 enum GroupWindowManagementError: Error, Equatable, Sendable {
     case invalidName, unavailable, staleNameRevision, closed
     case reconciliationRequired, stateRefreshRequired

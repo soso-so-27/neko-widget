@@ -800,9 +800,10 @@ struct CatCareDraft: Equatable {
         temperament = record.temperament?.value ?? ""
         ownerContact = household.ownerContact?.value ?? ""
         backupContact = household.backupContact?.value ?? ""
-        vetStatus = household.vetStatus
-        vetName = vetStatus == .recorded ? household.vet?.value.name ?? "" : ""
-        vetPhone = vetStatus == .recorded ? household.vet?.value.phone ?? "" : ""
+        let effectiveVet = record.vetOverride?.value ?? household.vet?.value
+        vetStatus = record.vetStatus(household: household)
+        vetName = vetStatus == .recorded ? effectiveVet?.name ?? "" : ""
+        vetPhone = vetStatus == .recorded ? effectiveVet?.phone ?? "" : ""
         meetingPlace = household.meetingPlace?.value ?? ""
     }
 
@@ -842,10 +843,17 @@ struct CatCareDraft: Equatable {
         set(&h.ownerContact, text(ownerContact), empty: "")
         set(&h.backupContact, text(backupContact), empty: "")
         let vet = vetStatus == .recorded ? (text(vetName), text(vetPhone)) : ("", "")
-        let savedVet = h.vetStatus == .recorded ? (h.vet?.value.name ?? "", h.vet?.value.phone ?? "") : ("", "")
-        if vetStatus != h.vetStatus || vet != savedVet {
-            // 「決まっている」 with no name yet returns false and keeps what was saved.
-            h.setVet(status: vetStatus, name: vet.0, phone: vet.1, note: h.vet?.value.note ?? "", editedAt: now, editedBy: by)
+        let effectiveVet = r.vetOverride?.value ?? h.vet?.value
+        let savedStatus = r.vetStatus(household: h)
+        let savedVet = savedStatus == .recorded ? (effectiveVet?.name ?? "", effectiveVet?.phone ?? "") : ("", "")
+        if vetStatus != savedStatus || vet != savedVet {
+            // Edit the same value the family/page reads. A received cat's vet
+            // never overwrites unrelated cats' household-wide fallback.
+            if r.vetOverride != nil {
+                r.setVetOverride(status: vetStatus, name: vet.0, phone: vet.1, note: effectiveVet?.note ?? "", editedAt: now, editedBy: by)
+            } else {
+                h.setVet(status: vetStatus, name: vet.0, phone: vet.1, note: effectiveVet?.note ?? "", editedAt: now, editedBy: by)
+            }
         }
         set(&h.meetingPlace, text(meetingPlace), empty: "")
         r.reviewedAt = now

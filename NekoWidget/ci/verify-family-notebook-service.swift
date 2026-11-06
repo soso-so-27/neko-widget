@@ -125,6 +125,12 @@ private actor Relay: GroupHTTPTransport {
                 secrets: GroupOperationStore(directory: folder.appendingPathComponent("synthetic-secrets")), directory: folder.appendingPathComponent("notebooks"))
         }
         var initialized = 0, billingCalls = 0
+        let emptyIdentityService = ProductionFamilyNotebookSharingService(provider: {
+            initialized += 1; return try context(a)
+        }, billing: { billingCalls += 1 }, displayName: { "synthetic" }, catNames: { [] },
+        hasExistingIdentity: { false })
+        try check(try await emptyIdentityService.loadState() == .notInFamily && initialized == 0,
+                  "reading after identity removal does not create or register another identity")
         let service = ProductionFamilyNotebookSharingService(provider: { initialized += 1; return try context(a) },
             billing: { billingCalls += 1 }, displayName: { "合成の本人" }, catNames: { [] })
         try check(initialized == 0 && service.sendsInvitations, "real service is lazy and does not construct prototype")
@@ -140,6 +146,11 @@ private actor Relay: GroupHTTPTransport {
         try await creator.admission.create(operation: UUID())
         try check(await relay.bodies("/v3/family-notebooks").count == 2, "new UI ID resumes original creation after restart")
         try check(billingCalls == 1, "no repeated billing connection for retry")
+        let paidMember = ProductionFamilyNotebookSharingService(provider: { try context(a) },
+            billing: { billingCalls += 1 }, displayName: { "合成の本人" }, catNames: { [] }, hasPersonalPlus: { true })
+        let callsBeforePause = billingCalls
+        _ = try await paidMember.loadPause()
+        try check(billingCalls == callsBeforePause + 1, "verified purchase connects billing before payer eligibility read")
         let own = try await creator.admission.directory()
         try check(own.family?.familyID == family, "server ACK identifies original family")
         for suffix in ["/members", "/payer"] {
@@ -183,6 +194,8 @@ private actor Relay: GroupHTTPTransport {
         let resumedCreator = try context(a)
         try await resumedCreator.admission.resumePending()
         try check(try await !resumedCreator.admission.hasPendingOperation(), "saved request and validated ACK recover explicit approval")
+        try check(try await resumedCreator.admission.knownNames(family: family)[b.personID] == "合成の参加者", "approval name survives restart without a notebook edit")
+        try check(try await resumedGuest.admission.knownNames(family: family)[a.personID] == "合成の招待者", "join retains authenticated inviter name without a notebook edit")
         let directory = try await resumedGuest.admission.members(family)
         try check(directory.members.count == 2, "actual person roots and admitted generations validate")
         // Private-date preview is read-only; only the exact explicit action
@@ -227,6 +240,8 @@ private actor Relay: GroupHTTPTransport {
         let store = try resumedGuest.activate(family: family, admittedGeneration: 2)
         _ = try store.edit(target: .init(familyCatID: UUID(), collection: .cat, recordID: nil, parentRecordID: nil, field: .name),
                            value: .text("残す合成ねこ"), author: .init(personID: b.personID, displayName: "合成の参加者"))
+        let retainedLink = FamilyNotebookLocalMapping(sourceKey: "cat:synthetic-rejoin", familyCatID: UUID(), toolCatID: UUID())
+        try store.applyLocalChanges(.init(familyID: family, entries: [], mappings: [retainedLink]), author: .init(personID: b.personID, displayName: "synthetic"))
         await relay.loseNext("/leave")
         let outcome = try await resumedGuest.membership.leaveFamily(familyID: family, expectedGeneration: 2, operationID: UUID(), notebook: store)
         try check(outcome == .pending && !store.snapshot().sharingEnded, "unknown leave preserves local state until ACK")
@@ -235,6 +250,7 @@ private actor Relay: GroupHTTPTransport {
         try check(try reopened.notebook!.snapshot().sharingEnded && reopened.notebook!.snapshot().operations.count == 1, "restart ACK closes sharing but retains data")
         let next = try reopened.activate(family: family, admittedGeneration: 4)
         try check(try next.snapshot().operations.isEmpty && store.snapshot().operations.count == 1, "readmission uses separate copy without resending prior outbox")
+        try check(try next.snapshot().mappings == [retainedLink], "readmission retains only same-family local ID correspondence")
         let cap = try FamilyNotebookInvitationCapability(url: invitation.link)
         for suffix in ["/invitations", "/preview", "/join", "/approve"] {
             for body in await relay.bodies(suffix) {

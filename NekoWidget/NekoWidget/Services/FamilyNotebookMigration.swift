@@ -26,6 +26,69 @@ enum FamilyNotebookMicrochipAnswer {
     }
 }
 
+/// An encrypted shared-ID link, never a private tool/profile identifier.
+/// Older readers skip this reserved vaccination row because it has no date.
+enum FamilyNotebookCatRelink {
+    static let prefix = "family-cat-previous:"
+    static func recordID(cat: UUID) -> UUID {
+        var bytes = cat.uuid; bytes.0 ^= 0x20; return UUID(uuid: bytes)
+    }
+    static func target(cat: UUID) -> FamilyNotebookTarget {
+        .init(familyCatID: cat, collection: .vaccination, recordID: recordID(cat: cat), field: .kind)
+    }
+    static func preserving(_ plan: FamilyNotebookImportPlan, previous: FamilyNotebookSnapshot) throws -> FamilyNotebookImportPlan {
+        guard plan.familyID == previous.familyID else { throw FamilyNotebookError.familyMismatch }
+        var entries = plan.entries
+        for mapping in plan.mappings where mapping.recordID == nil && !previous.mappings.contains(mapping) {
+            guard let local = mapping.toolCatID else { continue }
+            let prior = previous.mappings.filter { $0.recordID == nil && $0.toolCatID == local && previous.unsharedCatIDs.contains($0.familyCatID) }
+            // Pick the last explicitly removed incarnation. Never guess by name.
+            guard let old = prior.max(by: { left, right in
+                let l = previous.operations.filter { $0.target.familyCatID == left.familyCatID && $0.target.field == .sharingEnded }.map(\.version).max()
+                let r = previous.operations.filter { $0.target.familyCatID == right.familyCatID && $0.target.field == .sharingEnded }.map(\.version).max()
+                return (l?.clock ?? 0) < (r?.clock ?? 0)
+            }) else { continue }
+            entries.append(.init(ledgerKey: "cat-relink:" + mapping.familyCatID.uuidString.lowercased(),
+                target: target(cat: mapping.familyCatID), value: .text(prefix + old.familyCatID.uuidString.lowercased()),
+                editedAt: Date()))
+            var rows: [String: String] = [:]
+            for next in plan.mappings where next.familyCatID == mapping.familyCatID && next.recordID != nil {
+                if let prior = previous.mappings.first(where: { $0.familyCatID == old.familyCatID && $0.sourceKey == next.sourceKey }),
+                   let priorID = prior.recordID, let nextID = next.recordID {
+                    rows[nextID.uuidString.lowercased()] = priorID.uuidString.lowercased()
+                }
+            }
+            let data = try JSONEncoder().encode(rows)
+            guard data.count <= 65_536, let text = String(data: data, encoding: .utf8) else { throw FamilyNotebookError.invalidValue }
+            entries.append(.init(ledgerKey: "cat-relink-records:" + mapping.familyCatID.uuidString.lowercased(),
+                target: .init(familyCatID: mapping.familyCatID, collection: .vaccination,
+                              recordID: recordID(cat: mapping.familyCatID), field: .note), value: .text(text), editedAt: Date()))
+        }
+        return .init(familyID: plan.familyID, entries: entries, mappings: plan.mappings)
+    }
+    static func previousCat(_ cat: UUID, in snapshot: FamilyNotebookSnapshot) -> UUID? {
+        guard let field = snapshot.fieldState(for: target(cat: cat)), !field.isDeleted,
+              case .text(let text) = field.operation.value, text.hasPrefix(prefix),
+              let prior = UUID(uuidString: String(text.dropFirst(prefix.count))), prior != cat,
+              snapshot.unsharedCatIDs.contains(prior) else { return nil }
+        return prior
+    }
+    static func retainedMapping(cat: UUID, record: UUID, in snapshot: FamilyNotebookSnapshot) throws -> FamilyNotebookLocalMapping? {
+        guard let previous = previousCat(cat, in: snapshot),
+              let field = snapshot.fieldState(for: .init(familyCatID: cat, collection: .vaccination,
+                  recordID: recordID(cat: cat), field: .note)), !field.isDeleted,
+              case .text(let text) = field.operation.value else { return nil }
+        let rows = try JSONDecoder().decode([String: String].self, from: Data(text.utf8))
+        guard rows.count <= 10_000, Set(rows.values).count == rows.count,
+              rows.allSatisfy({ UUID(uuidString: $0.key) != nil && UUID(uuidString: $0.value) != nil }) else {
+            throw FamilyNotebookError.mappingConflict
+        }
+        guard let old = rows[record.uuidString.lowercased()].flatMap(UUID.init(uuidString:)) else { return nil }
+        return snapshot.mappings.first { $0.familyCatID == previous && $0.recordID == old }
+    }
+
+}
+
 enum FamilyNotebookMigrationError: Error, Equatable {
     case unreadableSource, unsupportedSchema, invalidSource, missingCatMapping, ambiguousCatMapping, changedRecordMapping
 }

@@ -56,7 +56,9 @@ enum FamilyNotebookToolBridge {
                 for record in ids.sorted(by: { $0.uuidString < $1.uuidString }) {
                     var parent = result.first { $0.familyCatID == cat && $0.recordID == record && localID($0.sourceKey, prefix: prefix) != nil }
                     if parent == nil {
-                        let value = FamilyNotebookLocalMapping(sourceKey: prefix + makeID().uuidString.lowercased(), familyCatID: cat, recordID: record)
+                        let retained = try FamilyNotebookCatRelink.retainedMapping(cat: cat, record: record, in: snapshot)
+                        let source = retained?.sourceKey.hasPrefix(prefix) == true ? retained!.sourceKey : prefix + makeID().uuidString.lowercased()
+                        let value = FamilyNotebookLocalMapping(sourceKey: source, familyCatID: cat, recordID: record)
                         guard !result.contains(where: { $0.sourceKey == value.sourceKey }) else { throw FamilyNotebookError.mappingConflict }
                         result.append(value); parent = value
                     }
@@ -65,7 +67,9 @@ enum FamilyNotebookToolBridge {
                     let children = Set(snapshot.operations.filter { $0.target.familyCatID == cat && $0.target.collection == childCollection && $0.target.parentRecordID == record }.compactMap { $0.target.recordID })
                     for child in children.sorted(by: { $0.uuidString < $1.uuidString }) {
                         if result.contains(where: { $0.familyCatID == cat && $0.recordID == child && localID($0.sourceKey, prefix: childPrefix) != nil }) { continue }
-                        let value = FamilyNotebookLocalMapping(sourceKey: childPrefix + makeID().uuidString.lowercased(), familyCatID: cat, recordID: child)
+                        let retained = try FamilyNotebookCatRelink.retainedMapping(cat: cat, record: child, in: snapshot)
+                        let source = retained?.sourceKey.hasPrefix(childPrefix) == true ? retained!.sourceKey : childPrefix + makeID().uuidString.lowercased()
+                        let value = FamilyNotebookLocalMapping(sourceKey: source, familyCatID: cat, recordID: child)
                         guard !result.contains(where: { $0.sourceKey == value.sourceKey }) else { throw FamilyNotebookError.mappingConflict }
                         result.append(value)
                     }

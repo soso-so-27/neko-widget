@@ -6,7 +6,13 @@ import Foundation
 actor FamilyNotebookAdmissionClient {
     struct Family: Decodable, Sendable { let familyID: UUID; let generation: Int64; let role: String }
     struct PendingJoin: Decodable, Sendable { let familyID: UUID, requestID: UUID, invitationID: UUID; let expiresAt: Int64 }
-    struct Directory: Decodable, Sendable { let schemaVersion: Int; let personID: String; let family: Family?; let pendingRequests: [PendingJoin] }
+    struct JoinResult: Decodable, Sendable {
+        enum State: String, Decodable, Sendable { case pending, approved, rejected, cancelled, expired }
+        let familyID: UUID, requestID: UUID, invitationID: UUID
+        let expiresAt: Int64
+        let state: State
+    }
+    struct Directory: Decodable, Sendable { let schemaVersion: Int; let personID: String; let family: Family?; let pendingRequests: [PendingJoin]; let joinRequests: [JoinResult]? }
     struct Member: Decodable, Sendable {
         let personID: String, state: String, role: String
         let admittedGeneration: Int64
@@ -45,7 +51,7 @@ actor FamilyNotebookAdmissionClient {
         let endpoint: String, personID: String, deviceID: String
         let operation: String, familyID: UUID, operationID: UUID, targetID: UUID?
         let generation: Int64, path: String, body: Data
-        let approvedPersonID: String?, approvedRoot: Data?
+        let approvedPersonID: String?, approvedRoot: Data?, approvedName: String?
         var semantic: String { operation + ":" + familyID.uuidString + ":" + (targetID?.uuidString ?? "") }
     }
     private let endpoint: String, identity: GroupDeviceIdentity
@@ -81,6 +87,12 @@ actor FamilyNotebookAdmissionClient {
         guard value.schemaVersion == 1, value.personID == identity.personID, value.pendingRequests.count <= 64,
               Set(value.pendingRequests.map(\.requestID)).count == value.pendingRequests.count,
               value.pendingRequests.allSatisfy({ $0.expiresAt > 0 && $0.expiresAt <= 32_503_680_000 }) else { throw FamilyNotebookTransportError.invalidResponse }
+        if let results = value.joinRequests {
+            guard results.count <= 64, Set(results.map(\.requestID)).count == results.count,
+                  results.allSatisfy({ (1...32_503_680_000).contains($0.expiresAt) }) else {
+                throw FamilyNotebookTransportError.invalidResponse
+            }
+        }
         if let family = value.family {
             guard (1...1_000_000_000).contains(family.generation), ["payer", "member"].contains(family.role) else { throw FamilyNotebookTransportError.invalidResponse }
         }
@@ -125,7 +137,22 @@ actor FamilyNotebookAdmissionClient {
         try .init(endpoint: endpoint, personID: identity.personID, deviceID: identity.deviceID,
             operation: action, familyID: family, operationID: operation, targetID: target, generation: generation,
             path: path(action, family, target), body: GroupWire.encode(body),
-            approvedPersonID: approved?.personID, approvedRoot: approved?.identityPublicKey)
+            approvedPersonID: approved?.personID, approvedRoot: approved?.identityPublicKey,
+            approvedName: try approved.map { try requestName($0, family: family) })
+    }
+    func knownNames(family: UUID) throws -> [String: String] {
+        guard let bytes = try journal.read("op:fnb-names:" + family.uuidString.lowercased()) else { return [:] }
+        let names = try GroupWire.decode([String: String].self, bytes)
+        guard names.count <= 4096 else { throw FamilyNotebookTransportError.invalidResponse }
+        for (person, name) in names {
+            guard GroupCanonical.validID(person), try GroupWire.name(name) == name else { throw FamilyNotebookTransportError.invalidResponse }
+        }
+        return names
+    }
+    private func rememberName(_ name: String, person: String, family: UUID) throws {
+        var names = try knownNames(family: family)
+        names[person] = try GroupWire.name(name)
+        try journal.write(GroupWire.encode(names), account: "op:fnb-names:" + family.uuidString.lowercased(), createOnly: false)
     }
     private func execute(_ value: Pending) async throws -> Receipt {
         let data: Data
@@ -153,10 +180,14 @@ actor FamilyNotebookAdmissionClient {
         case "create": try await keys.registerCreatedFamily(value.familyID)
         case "join":
             guard let target = value.targetID else { throw FamilyNotebookTransportError.invalidResponse }
-            try await keys.registerInvitation(savedPreview(target, enforceExpiry: false))
+            let invitation = try savedPreview(target, enforceExpiry: false)
+            try await keys.registerInvitation(invitation)
+            try rememberName(invitation.content.inviterName,
+                person: GroupWire.base64(GroupCanonical.hash(invitation.capability.inviterIdentityPublicKey)), family: value.familyID)
         case "approve":
             guard let person = value.approvedPersonID, let root = value.approvedRoot else { throw FamilyNotebookTransportError.invalidResponse }
             try await keys.confirmApprovedAddition(family: value.familyID, personID: person, identityPublicKey: root)
+            if let name = value.approvedName { try rememberName(name, person: person, family: value.familyID) }
         default: break
         }
         try journal.remove(pendingAccount)
@@ -165,11 +196,11 @@ actor FamilyNotebookAdmissionClient {
     private static func definitive(_ error: Error) -> Bool {
         guard let value = error as? FamilyNotebookTransportError else { return false }
         switch value {
-        case .stale, .notMember: return true
+        case .stale, .notMember, .paused: return true
         case .server(let code, let status):
             return (status == 403 && ["family_notebook_not_allowed", "plus_entitlement_required"].contains(code))
                 || (status == 410 && code == "family_notebook_invitation_unavailable")
-                || (status == 409 && ["family_notebook_already_in_family", "family_notebook_member_limit", "family_notebook_request_not_pending"].contains(code))
+                || (status == 409 && ["family_notebook_already_in_family", "family_notebook_member_limit", "family_notebook_request_not_pending", "family_notebook_request_already_pending"].contains(code))
         default: return false
         }
     }

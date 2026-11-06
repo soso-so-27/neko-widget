@@ -32,6 +32,10 @@ enum FamilyNotebookServiceFactory {
         privateFarewellDay: { tool, profile in
             try FamilyNotebookPrivateFarewell.day(json: UserDefaults.standard.string(forKey: CatFarewell.key) ?? "",
                 toolCatID: tool, profileID: profile)
+        }, hasPersonalPlus: { PlusPurchaseStore.productionShared.entitlementState.permitsPersonalPlus },
+        hasExistingIdentity: {
+            guard let client = GroupWindowClientProvider.production else { throw FamilySharingError.serviceUnavailable }
+            return try await client.hasExistingIdentity()
         })
     }
 }

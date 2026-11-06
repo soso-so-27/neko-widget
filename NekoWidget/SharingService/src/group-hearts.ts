@@ -85,13 +85,21 @@ export async function listGroupHearts(env:Env,actor:GroupActor,windowId:string,m
 }
 export async function setGroupBlock(env:Env,actor:GroupActor,windowId:string,participantId:string,body:JsonRecord):Promise<Response> {
   exactKeys(body,['operationId','active']);
-  const access=await requireGroupMember(env,actor,windowId),operationId=uuidField(body,'operationId');
-  const prior=await storedGroupMutation(env,actor,operationId,{windowId});if(prior!==null)return jsonResponse(prior);
-  if(typeof body.active!=='boolean' || participantId===access.participantId)throw new ApiError(400,'invalid_request','The block state is invalid.');
+  if(typeof body.active!=='boolean')throw new ApiError(400,'invalid_request','The block state is invalid.');
+  const operationId=uuidField(body,'operationId');
+  // Removing one's own block does not grant window access. Permit that one
+  // operation after departure, bound to the authenticated person's old row.
+  const access=body.active?await requireGroupMember(env,actor,windowId):await env.DB.prepare(
+    'SELECT participant_id AS participantId FROM group_members WHERE space_id=? AND person_id=?')
+    .bind(groupId(windowId),actor.personId).first<{participantId:string}>();
+  if(!access)throw new ApiError(404,'not_found','The group record was not found.');
+  const scope=body.active?{windowId}:undefined;
+  const prior=await storedGroupMutation(env,actor,operationId,scope);if(prior!==null)return jsonResponse(prior);
+  if(participantId===access.participantId)throw new ApiError(400,'invalid_request','The block state is invalid.');
   const target=await env.DB.prepare('SELECT 1 AS present FROM group_members WHERE space_id=? AND participant_id=?').bind(windowId,groupId(participantId)).first();
   if(!target)throw new ApiError(404,'not_found','The participant was not found.');
   const response={operationId,participantId,active:body.active,serverNow:actor.now};
-  await env.DB.batch([...groupAuthorizationStatements(env,actor,{windowId,expectedRevision:access.revision}),
+  await env.DB.batch([...groupAuthorizationStatements(env,actor,scope),
     env.DB.prepare(`INSERT INTO group_participant_blocks VALUES (?,?,?,?,?) ON CONFLICT(space_id,blocker_id,blocked_id)
       DO UPDATE SET active=excluded.active,updated_at=excluded.updated_at`).bind(windowId,access.participantId,participantId,body.active?1:0,actor.now),
     groupMutationStatement(env,actor,operationId,response)]);

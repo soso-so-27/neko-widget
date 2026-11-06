@@ -6,6 +6,30 @@ import type {Env} from '../src/env';
 import {testEnv,db,key,sign,send,post,person,signed,call,ok,create,invitation,apply,transition,packet} from './group-fixture';
 
 describe('gated group HTTP identity, invitation and membership',()=>{
+  it('allows a fresh request after removal without rewriting the old approval',async()=>{
+    const owner=await plusOwner(),guest=await person();let w=await create(owner);
+    const invite=await invitation(owner,w),first=await apply(guest,w,invite);ok(first.response,201);
+    const admitted=await transition(owner,w,'admit',first.id,[...w.roster.members,first.member]);ok(admitted.response);w=admitted.next;
+    expect(ok(await call(guest,`/v3/group-windows/${w.windowId}/join-status`,{requestId:first.id})).state).toBe('approved');
+    const blockPath=`/v3/group-windows/${w.windowId}/blocks/${w.roster.members[0]!.participantId}`;
+    ok(await call(guest,blockPath,{operationId:crypto.randomUUID(),active:true}));
+    const removed=await transition(owner,w,'remove',first.member.participantId,w.roster.members.filter(m=>m.personId!==guest.id));ok(removed.response);w=removed.next;
+    expect(ok(await call(guest,`/v3/group-windows/${w.windowId}/join-status`,{requestId:first.id})).state).toBe('cancelled');
+    ok(await call(guest,blockPath,{operationId:crypto.randomUUID(),active:false}));
+    expect((await call(await person(),blockPath,{operationId:crypto.randomUUID(),active:false})).status).toBe(404);
+    expect((await call(guest,blockPath,{operationId:crypto.randomUUID(),active:true})).status).toBe(404);
+    const second=await apply(guest,w,invite);ok(second.response,201);expect(second.id).not.toBe(first.id);
+    expect((await db.prepare('SELECT state FROM group_join_requests WHERE id=?').bind(first.id).first<{state:string}>())?.state).toBe('approved');
+  });
+  it('rejects a new request at six members and distinguishes an existing member',async()=>{
+    const owner=await plusOwner();let w=await create(owner);const invite=await invitation(owner,w);
+    for(let n=0;n<5;n++){
+      const joined=await apply(await person(),w,invite);ok(joined.response,201);
+      const admitted=await transition(owner,w,'admit',joined.id,[...w.roster.members,joined.member]);ok(admitted.response);w=admitted.next;
+    }
+    expect((await apply(await person(),w,invite)).response.data.error.code).toBe('member_limit');
+    expect((await apply(owner,w,invite)).response.data.error.code).toBe('already_member');
+  });
   it('defaults closed, including registration, and respects the lower media gate',async()=>{
     const request=new Request('https://group.invalid/v3/group-identities/challenges',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
     const closed:Env={...testEnv};delete closed.GROUP_RUNTIME_ENABLED;

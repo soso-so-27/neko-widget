@@ -52,14 +52,19 @@ final class ProductionGroupReporting: GroupReportingService {
         return availabilityIdentity == (try? current.deviceID)
     }
     func refreshAvailability() async {
-        availabilityUntil = .distantPast; availabilityIdentity = nil
-        guard !reportsDisabled else { return }
+        guard !reportsDisabled else {
+            availabilityUntil = .distantPast; availabilityIdentity = nil
+            return
+        }
         do {
             let actor = try identity()
             let data = try await request("/v3/group-identities/reporting-availability", actor: actor)
             struct Availability: Decodable { let protocolVersion: Int; let reportingAvailable: Bool }
             let result = try GroupWire.decode(Availability.self, data)
-            guard result.protocolVersion == 3, result.reportingAvailable else { return }
+            guard result.protocolVersion == 3, result.reportingAvailable else {
+                availabilityUntil = .distantPast; availabilityIdentity = nil
+                return
+            }
             try sameIdentity(actor)
             availabilityIdentity = try actor.deviceID
             // This is an affordance, never authority. Every mutation checks the
@@ -299,7 +304,15 @@ final class ProductionGroupReporting: GroupReportingService {
     func reports(windowID: String) async -> [GroupReportRecord] {
         guard let actor = try? identity(), let all = try? store.all() else { return [] }
         return all.filter { $0.endpoint == endpoint.absoluteString && $0.personID == actor.personID
-            && $0.deviceID == (try? actor.deviceID) && $0.record.windowID == windowID }.map(\.record).sorted { $0.sentAt > $1.sentAt }
+            && $0.deviceID == (try? actor.deviceID) && $0.record.windowID == windowID }.map { draft in
+            var record = draft.record
+            // A process restart can leave the durable draft in an in-flight UI
+            // state. Offer its same idempotent operation again; never duplicate it.
+            if !inFlight.contains(record.id), [.preparing, .sending].contains(record.progress) {
+                record.progress = .retryable
+            }
+            return record
+        }.sorted { $0.sentAt > $1.sentAt }
     }
     func refreshReport(draftID: String) async throws -> GroupReportRecord {
         guard !reportsDisabled else { throw GroupSafetyError.disabled }
@@ -347,6 +360,24 @@ final class ProductionGroupReporting: GroupReportingService {
         draft.revision = state.revision; try store.write(draft)
         return draft.record
     }
+    func pendingBlocks(windowID: String) async throws -> [GroupPendingBlock] {
+        let actor = try identity()
+        struct Body: Decodable { let operationID: UUID; let active: Bool }
+        var result: [GroupPendingBlock] = []
+        for account in try blockStore.accounts(prefix: "op:") {
+            guard let bytes = try blockStore.read(account) else { continue }
+            let pending = try GroupWire.decode(GroupPendingHTTP.self, bytes)
+            guard pending.response == nil else { continue }
+            let parts = pending.path.split(separator: "/").map(String.init)
+            guard parts.count == 5, parts[0] == "v3", parts[1] == "group-windows", parts[2] == windowID,
+                  parts[3] == "blocks", GroupCanonical.validID(parts[4]) else { continue }
+            let body = try GroupWire.decode(Body.self, pending.body)
+            let hash = GroupCanonical.hash(try GroupCanonical.fields([endpoint.absoluteString, actor.personID, actor.deviceID, pending.path].map(GroupCanonical.text)) + pending.body)
+            guard body.operationID == pending.operationID, pending.intentHash == hash else { continue }
+            result.append(.init(id: pending.operationID, windowID: windowID, participantID: parts[4], active: body.active))
+        }
+        return result
+    }
     func setBlock(windowID: String, participantID: String, active: Bool, operationID: UUID) async throws {
         guard GroupCanonical.validID(windowID), GroupCanonical.validID(participantID) else { throw GroupSafetyError.notFound }
         let id = "block:" + operationID.uuidString.lowercased()
@@ -354,7 +385,11 @@ final class ProductionGroupReporting: GroupReportingService {
         defer { inFlight.remove(id) }
         await refreshAvailability(); guard isAvailable else { throw GroupSafetyError.disabled }
         let actor = try identity()
-        guard try participant(windowID: windowID, actor: actor) != participantID else { throw GroupSafetyError.blockSelf }
+        if active {
+            guard try participant(windowID: windowID, actor: actor) != participantID else { throw GroupSafetyError.blockSelf }
+        }
+        // Unblocking after departure is authorized against the person's
+        // historical membership by the server, not a possibly removed roster.
         let path = "/v3/group-windows/" + windowID + "/blocks/" + participantID
         struct Body: Encodable { let operationID: String; let active: Bool }
         let body = try GroupWire.encode(Body(operationID: operationID.uuidString.lowercased(), active: active))

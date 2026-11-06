@@ -2709,6 +2709,16 @@ private struct GroupPhotoSafetyDialogs: ViewModifier {
                 Text("このまどで、お互いの写真が届かなくなります。相手には知らせません。")
             }
             .alert("まど", isPresented: failureShown) {
+                if let pending = safety.pendingBlocks[windowID]?.first {
+                    Button("もう一度試す") {
+                        Task {
+                            _ = await safety.run(windowID: windowID) {
+                                try await safety.service.setBlock(windowID: windowID, participantID: pending.participantID,
+                                    active: pending.active, operationID: pending.id)
+                            }
+                        }
+                    }
+                }
                 Button("閉じる", role: .cancel) {}
             } message: { Text(safety.failure?.message ?? "") }
     }

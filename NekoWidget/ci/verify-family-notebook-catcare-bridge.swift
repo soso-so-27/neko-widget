@@ -52,7 +52,16 @@ enum FamilyNotebookCatCareBridgeVerifier {
         let newCat = UUID()
         let newLink = FamilyNotebookLocalMapping(sourceKey: f.links[0].sourceKey, familyCatID: newCat, profileID: f.profileA, toolCatID: f.toolA)
         let again = try FamilyNotebookMigration.prepare(source: f.source(), familyID: f.family, mappings: sender.snapshot().activeMappings + [newLink]).plan
-        try sender.applyImport(again, author: author)
+        let relinked = try FamilyNotebookCatRelink.preserving(again, previous: sender.snapshot())
+        try sender.applyImport(relinked, author: author)
+        try receiver.receive(sender.snapshot().operations)
+        let receivedLinks = try FamilyNotebookCatCareBridge.mappings(for: receiver.snapshot(), existingLocalIDs: Set(f.care.cats.map(\.catID)))
+        try receiver.applyLocalChanges(.init(familyID: f.family, entries: [], mappings: receivedLinks), author: author)
+        let receivedAgain = try FamilyNotebookCatCareBridge.apply(receiver.snapshot(), to: f.care)
+        try require(receivedAgain.cats.first { $0.catID == f.toolA }?.weights.count == f.care.cats.first { $0.catID == f.toolA }?.weights.count,
+                    "readd preserves the local weight row identity too")
+        try require(receivedAgain.cats.count == f.care.cats.count, "readded shared cat reuses explicit previous local identity on the receiving phone")
+        try require(try receiver.snapshot().activeMappings.first { $0.familyCatID == newCat && $0.recordID == nil }?.toolCatID == f.toolA, "readd uses shared ID relation, not name")
         let reopened = try FamilyNotebookStore(directory: senderURL, familyID: f.family, deviceID: "sender").snapshot()
         try require(reopened.activeMappings.filter { $0.toolCatID == f.toolA && $0.recordID == nil }.map(\.familyCatID) == [newCat], "readd has exactly one new shared identity after restart")
         try require(reopened.fieldState(for: .init(familyCatID: newCat, field: .name))?.operation.value == .text("同じ名前"), "old import ledger cannot suppress readd")
